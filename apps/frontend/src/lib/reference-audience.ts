@@ -1,11 +1,5 @@
-import type { JSONContent, ReferenceAudience, ReferenceAudienceInput } from "@threahq/types"
+import type { JSONContent, ReferenceAudience } from "@threahq/types"
 import { classifyDraftLink } from "@/lib/in-app-links"
-
-export type ReferenceAudienceTarget = ReferenceAudienceInput extends infer T
-  ? T extends unknown
-    ? Omit<T, "streamIds">
-    : never
-  : never
 
 export interface ComposerReference {
   kind: "share" | "link"
@@ -13,11 +7,13 @@ export interface ComposerReference {
   messageId: string | null
 }
 
+export type SendTone = "reveal" | "unreachable"
+
 export interface SendWarning {
-  tone: "reveal" | "unreachable"
+  tone: SendTone
   lead: ReferenceAudience
-  /** Every source the draft exposes; one answer covers them all. */
-  streamIds: string[]
+  /** Every source the draft exposes, by how: shares reveal, links are unreachable. One answer covers them all. */
+  exposed: Record<SendTone, string[]>
   /** What the alternative converts: shares on reveal, message links on unreachable. Empty means no alternative. */
   convertibleStreamIds: string[]
 }
@@ -96,24 +92,21 @@ export function resolveSendWarning(
   refs: ComposerReference[],
   byStreamId: ReadonlyMap<string, ReferenceAudience>
 ): SendWarning | null {
-  const exposedOf = (kind: ComposerReference["kind"]) =>
-    referenceStreamIds(refs.filter((ref) => ref.kind === kind && byStreamId.has(ref.streamId)))
-  const shareIds = exposedOf("share")
-  const linkIds = exposedOf("link")
-  const tone = shareIds.length > 0 ? "reveal" : "unreachable"
-  const leadIds = tone === "reveal" ? shareIds : linkIds
-  if (leadIds.length === 0) return null
+  const exposedWhere = (include: (ref: ComposerReference) => boolean) =>
+    referenceStreamIds(refs.filter((ref) => include(ref) && byStreamId.has(ref.streamId)))
+  const exposed = {
+    reveal: exposedWhere((ref) => ref.kind === "share"),
+    unreachable: exposedWhere((ref) => ref.kind === "link"),
+  }
+  const tone: SendTone = exposed.reveal.length > 0 ? "reveal" : "unreachable"
+  if (exposed[tone].length === 0) return null
 
-  const lead = leadIds
+  const lead = exposed[tone]
     .map((id) => byStreamId.get(id)!)
     .reduce((best, audience) => (audience.count > best.count ? audience : best))
   const convertibleStreamIds =
-    tone === "reveal"
-      ? shareIds
-      : referenceStreamIds(
-          refs.filter((ref) => ref.kind === "link" && ref.messageId !== null && byStreamId.has(ref.streamId))
-        )
-  return { tone, lead, streamIds: [...new Set([...shareIds, ...linkIds])].sort(), convertibleStreamIds }
+    tone === "reveal" ? exposed.reveal : exposedWhere((ref) => ref.kind === "link" && ref.messageId !== null)
+  return { tone, lead, exposed, convertibleStreamIds }
 }
 
 function joinNames(names: string[]): string {
@@ -128,7 +121,7 @@ function fullAudience(count: number, names: string[]): string {
   return `${shown.join(", ")} +${count - shown.length}`
 }
 
-function shortAudience(tone: SendWarning["tone"], count: number, names: string[]): string {
+function shortAudience(tone: SendTone, count: number, names: string[]): string {
   if (count === 1 && names.length > 0) return names[0]
   const noun = count === 1 ? "person" : "people"
   return tone === "reveal" ? `${count} new ${noun}` : `${count} ${noun}`

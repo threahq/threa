@@ -1476,7 +1476,7 @@ describe("MessageComposer", () => {
         warning: {
           tone,
           lead: { streamId: exposed[0], count: 3, sampleUserIds: ["usr_a"] },
-          streamIds: exposed,
+          exposed: { reveal: tone === "reveal" ? exposed : [], unreachable: tone === "unreachable" ? exposed : [] },
           convertibleStreamIds: tone === "reveal" ? exposed : [],
         },
         names: ["Ada"],
@@ -1600,7 +1600,7 @@ describe("MessageComposer", () => {
         warning: {
           tone: "unreachable",
           lead: { streamId: "stream_src", count: 2, sampleUserIds: [] },
-          streamIds: ["stream_src"],
+          exposed: { reveal: [], unreachable: ["stream_src"] },
           convertibleStreamIds: ["stream_src"],
         },
         names: [],

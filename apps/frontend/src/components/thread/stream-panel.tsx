@@ -189,10 +189,7 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
     e2eStreamId: e2eRoot,
   })
   // A draft thread's readers are its parent's.
-  const audienceTarget = useMemo(
-    () => (draftInfo ? referenceAudienceTargetFor(draftInfo.parentStreamId, parentStream) : null),
-    [draftInfo?.parentStreamId, parentStream === undefined, parentStream?.e2eEnabled]
-  )
+  const audienceTarget = draftInfo ? referenceAudienceTargetFor(draftInfo.parentStreamId, parentStream) : null
   const { sendWarning, audienceByStreamId, awaitSendWarning } = useReferenceAudience({
     workspaceId,
     target: audienceTarget,

@@ -21,9 +21,14 @@ import { serializeToMarkdown, parseMarkdown } from "@threahq/prosemirror"
 import type { JSONContent } from "@threahq/types"
 import type { Editor } from "@tiptap/react"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
+import { withoutDisplayStamps } from "@/lib/display-stamps"
 import { useStreamFromStore } from "@/stores/stream-store"
 
 const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Command" : "Control"
+
+function unstampedMarkdown(content: JSONContent): string {
+  return serializeToMarkdown(withoutDisplayStamps(content)).trim()
+}
 
 interface MessageEditFormProps {
   messageId: string
@@ -59,14 +64,16 @@ export function MessageEditForm({
   // through the body-level inline-edit presence attribute.
   // Re-chip in-app stream/message links the composer once chipped: the stored
   // body carries them as plain link marks, so without this an edit shows raw
-  // links instead of the chips the message renders. The undo-diff baseline stays
-  // the untransformed original (the chip round-trips to the same markdown).
+  // links instead of the chips the message renders.
   const [contentJson, setContentJson] = useState<JSONContent>(() =>
     inAppLinkMarksToNodes(initialContentJson ?? EMPTY_DOC)
   )
+  const contentRef = useRef(contentJson)
+  contentRef.current = contentJson
   const [isSaving, setIsSaving] = useState(false)
   const [docEditorOpen, setDocEditorOpen] = useState(false)
-  const [initialMarkdown] = useState(() => serializeToMarkdown(initialContentJson ?? EMPTY_DOC).trim())
+  // Chips stamp their resolved labels in on mount; an untouched edit must still read as unchanged.
+  const [initialMarkdown] = useState(() => unstampedMarkdown(contentJson))
 
   const [formatOpen, setFormatOpen] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
@@ -102,7 +109,7 @@ export function MessageEditForm({
     toastId: `share-privacy-edit-${messageId}`,
     content: contentJson,
     confirmLabel: "Save anyway",
-    onConfirm: (json) => void saveEdit(json, true),
+    onConfirm: () => void saveEdit(contentRef.current, true),
   })
 
   const saveEdit = useCallback(
@@ -117,8 +124,9 @@ export function MessageEditForm({
         queryClient.invalidateQueries({ queryKey: messageKeys.versions(workspaceId, messageId) })
         onSave()
       } catch (err) {
+        // Typing during the save moved the form on; the toast asks about what it shows now.
         if (isPrivacyConfirmationError(err)) {
-          blockOnPrivacy(json)
+          blockOnPrivacy(contentRef.current)
           return
         }
         if (isPermanentApiError(err)) {
@@ -140,13 +148,11 @@ export function MessageEditForm({
   )
 
   const handleSubmit = useCallback(async () => {
-    const contentMarkdown = serializeToMarkdown(contentJson)
-    const trimmed = contentMarkdown.trim()
-    if (!trimmed) {
+    if (!serializeToMarkdown(contentJson).trim()) {
       onDelete?.()
       return
     }
-    if (trimmed === initialMarkdown) {
+    if (unstampedMarkdown(contentJson) === initialMarkdown) {
       onCancel()
       return
     }
@@ -164,15 +170,13 @@ export function MessageEditForm({
         onDelete?.()
         return
       }
-      if (trimmed === initialMarkdown) {
-        setDocEditorOpen(false)
+      const content = inAppLinkMarksToNodes(parseMarkdown(trimmed))
+      setDocEditorOpen(false)
+      if (unstampedMarkdown(content) === initialMarkdown) {
         onCancel()
         return
       }
-      const json = parseMarkdown(trimmed)
-      setDocEditorOpen(false)
       // A refused save keeps the form open, so it must hold what the full editor sent.
-      const content = inAppLinkMarksToNodes(json)
       setContentJson(content)
       await saveEdit(content)
     },

@@ -20,7 +20,7 @@ function warning(tone: SendWarning["tone"], count: number, convertible: boolean)
   return {
     tone,
     lead: audience("stream_a", count),
-    streamIds: ["stream_a"],
+    exposed: { reveal: tone === "reveal" ? ["stream_a"] : [], unreachable: tone === "unreachable" ? ["stream_a"] : [] },
     convertibleStreamIds: convertible ? ["stream_a"] : [],
   }
 }
@@ -97,7 +97,7 @@ describe("resolveSendWarning", () => {
     ).toEqual({
       tone: "reveal",
       lead: audience("stream_s", 1),
-      streamIds: ["stream_l1", "stream_l2", "stream_s"],
+      exposed: { reveal: ["stream_s"], unreachable: ["stream_l1", "stream_l2"] },
       convertibleStreamIds: ["stream_s"],
     })
   })
@@ -106,13 +106,13 @@ describe("resolveSendWarning", () => {
     expect(resolveSendWarning(refs, exposingAudiences([audience("stream_l1", 5), audience("stream_l2", 2)]))).toEqual({
       tone: "unreachable",
       lead: audience("stream_l1", 5),
-      streamIds: ["stream_l1", "stream_l2"],
+      exposed: { reveal: [], unreachable: ["stream_l1", "stream_l2"] },
       convertibleStreamIds: ["stream_l2"],
     })
     expect(resolveSendWarning(refs, exposingAudiences([audience("stream_l1", 5)]))).toEqual({
       tone: "unreachable",
       lead: audience("stream_l1", 5),
-      streamIds: ["stream_l1"],
+      exposed: { reveal: [], unreachable: ["stream_l1"] },
       convertibleStreamIds: [],
     })
   })

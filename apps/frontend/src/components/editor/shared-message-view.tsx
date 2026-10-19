@@ -40,7 +40,11 @@ export function SharedMessageView({ node, deleteNode, selected, editor, getPos }
   const resolvedType = resolved?.actorType
   useEffect(() => {
     if (!resolvedName || !resolvedId || !resolvedType || attrs.authorName) return
-    stampNodeAttrs({ editor, getPos }, { authorName: resolvedName, authorId: resolvedId, actorType: resolvedType })
+    stampNodeAttrs({ editor, getPos }, "sharedMessage", {
+      authorName: resolvedName,
+      authorId: resolvedId,
+      actorType: resolvedType,
+    })
   }, [resolvedName, resolvedId, resolvedType, attrs.authorName, editor, getPos])
 
   const exposed = useReferenceExposed(attrs.streamId)

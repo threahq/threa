@@ -412,10 +412,7 @@ function MessageInputComponent({
     scopeId: composerScopeId,
     e2eStreamId: e2eRootStreamId,
   })
-  const audienceTarget = useMemo(
-    () => referenceAudienceTargetFor(streamId, stream),
-    [streamId, stream === undefined, stream?.e2eEnabled]
-  )
+  const audienceTarget = referenceAudienceTargetFor(streamId, stream)
   const { sendWarning, audienceByStreamId, awaitSendWarning } = useReferenceAudience({
     workspaceId,
     target: audienceTarget,
@@ -657,7 +654,7 @@ function MessageInputComponent({
     toastId: `share-privacy-draft-${streamId}`,
     content: composer.content,
     confirmLabel: "Share anyway",
-    onConfirm: (blocked) => void handleSubmit(blocked, { confirmedPrivacyWarning: true }),
+    onConfirm: () => void handleSubmit(undefined, { confirmedPrivacyWarning: true }),
   })
 
   const handleSubmit = useStableCallback(async (editorContent?: JSONContent, options?: ComposerSubmitOptions) => {

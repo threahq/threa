@@ -1010,19 +1010,28 @@ export function MessageComposer({
   const insertMention = useCallback(() => richEditorRef.current?.insertMention(), [])
   const insertSlash = useCallback(() => richEditorRef.current?.insertSlash(), [])
 
-  const sendAsk = useSendAsk({ sendWarning, awaitSendWarning, content })
-  const { question, dismiss: dismissQuestion } = sendAsk
+  const {
+    copy: askCopy,
+    question,
+    submit: submitAsking,
+    dismiss: dismissQuestion,
+    recordAlternative,
+  } = useSendAsk({ sendWarning, awaitSendWarning, content })
+
+  // Desktop moved focus to the question's button, which unmounts once it is answered.
+  const refocusEditor = useCallback(() => {
+    if (!isMobile) richEditorRef.current?.focus()
+  }, [isMobile])
 
   const closeQuestion = useCallback(() => {
     dismissQuestion()
-    // Desktop moved focus to the question's button, which unmounts now.
-    if (!isMobile) richEditorRef.current?.focus()
-  }, [dismissQuestion, isMobile])
+    refocusEditor()
+  }, [dismissQuestion, refocusEditor])
 
   const handleSubmit = useCallback(() => {
     if (!canSubmit) return
     const wasAsking = question !== null
-    void sendAsk.submit((options) => {
+    void submitAsking((options) => {
       setFormatOpen(false)
       resetMobileComposerSize()
       setMobileLinkPopoverOpen(false)
@@ -1031,20 +1040,18 @@ export function MessageComposer({
       // warnings before we snapshot the content below.
       micRef.current?.prepareSendAsIs()
       onSubmit(richEditorRef.current?.getEditor()?.getJSON() as JSONContent | undefined, options)
-      if (wasAsking && !isMobile) richEditorRef.current?.focus()
+      if (wasAsking) refocusEditor()
     })
-  }, [canSubmit, question, sendAsk, onSubmit, resetMobileComposerSize, isMobile])
+  }, [canSubmit, question, submitAsking, onSubmit, resetMobileComposerSize, refocusEditor])
 
   const handleAlternative = useCallback(() => {
     const editor = richEditorRef.current?.getEditor()
     if (!editor || !workspaceId || !question) return
     if (question.tone === "reveal") sharesToLinks(editor, workspaceId, question.convertibleStreamIds)
     else linksToShares(editor, question.convertibleStreamIds)
-    // Either choice answers the question: the converted refs come back as the
-    // other tone's warning for the same sources, which must not ask again.
-    sendAsk.consent()
-    if (!isMobile) richEditorRef.current?.focus()
-  }, [workspaceId, question, sendAsk, isMobile])
+    recordAlternative()
+    refocusEditor()
+  }, [workspaceId, question, recordAlternative, refocusEditor])
 
   const handleEditorFocus = useCallback(() => {
     dismissQuestion()
@@ -1219,7 +1226,7 @@ export function MessageComposer({
     />
   )
 
-  const sendAriaLabel = `${isSubmitting ? submittingLabel : submitLabel}${sendAsk.copy ? ` — ${sendAsk.copy.short}` : ""}`
+  const sendAriaLabel = `${isSubmitting ? submittingLabel : submitLabel}${askCopy ? ` — ${askCopy.short}` : ""}`
   const sendBadge = sendWarning ? <SendWarningBadge tone={sendWarning.warning.tone} /> : null
   const askRow = question ? (
     <SendAskRow

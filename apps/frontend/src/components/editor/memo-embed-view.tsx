@@ -3,6 +3,7 @@ import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react"
 import { useMemoEmbedSource } from "@/hooks/use-memo-embed-source"
 import { MemoChip } from "@/components/memo-embed/memo-chip"
 import type { MemoEmbedAttrs } from "./memo-embed-extension"
+import { stampNodeAttrs } from "./stamp-node-attrs"
 
 /**
  * In-composer memo-embed chip (TipTap NodeView). Resolves the live memo from
@@ -11,20 +12,17 @@ import type { MemoEmbedAttrs } from "./memo-embed-extension"
  * is written back to the node so serialization carries a real label instead of
  * the generic "Memo" fallback.
  */
-export function MemoEmbedView({ node, updateAttributes }: NodeViewProps) {
+export function MemoEmbedView({ node, editor, getPos }: NodeViewProps) {
   const attrs = node.attrs as MemoEmbedAttrs
   const source = useMemoEmbedSource(attrs.memoId)
 
   const resolvedTitle = source.status === "resolved" ? source.title : null
 
   // Stamp the resolved title onto the node only when it was inserted without
-  // one (pasted memo link). A user-cached title is left as-is so the write-back
-  // doesn't fight the editor or churn the undo history on every render.
+  // one (pasted memo link). A user-cached title is left as-is.
   useEffect(() => {
-    if (resolvedTitle && !attrs.title) {
-      updateAttributes({ title: resolvedTitle })
-    }
-  }, [resolvedTitle, attrs.title, updateAttributes])
+    if (resolvedTitle && !attrs.title) stampNodeAttrs({ editor, getPos }, "memoEmbed", { title: resolvedTitle })
+  }, [resolvedTitle, attrs.title, editor, getPos])
 
   return (
     <NodeViewWrapper as="span" data-type="memo-embed">

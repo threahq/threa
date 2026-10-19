@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { JSONContent } from "@threahq/types"
-import { audienceQuestionCopy, type AudienceQuestionCopy, type ComposerSendWarning } from "@/lib/reference-audience"
+import {
+  audienceQuestionCopy,
+  type AudienceQuestionCopy,
+  type ComposerSendWarning,
+  type SendTone,
+  type SendWarning,
+} from "@/lib/reference-audience"
+import { contentSignature } from "@/lib/display-stamps"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import type { ComposerSubmitOptions } from "./message-composer"
 
+type Send = (options?: ComposerSubmitOptions) => void
+
 export interface SendAskQuestion {
-  tone: ComposerSendWarning["warning"]["tone"]
+  tone: SendTone
   copy: AudienceQuestionCopy
   convertibleStreamIds: string[]
 }
@@ -13,11 +22,30 @@ export interface SendAskQuestion {
 function askKeyOf(sendWarning: ComposerSendWarning | null): string {
   if (!sendWarning) return ""
   const { warning, targetKey } = sendWarning
-  return `${targetKey}|${warning.tone}:${warning.streamIds.join(",")}`
+  return `${targetKey}|${warning.tone}:${warning.exposed.reveal.join(",")}:${warning.exposed.unreachable.join(",")}`
 }
 
-function consentKeys(sendWarning: ComposerSendWarning): string[] {
-  return sendWarning.warning.streamIds.map((id) => `${sendWarning.targetKey}|${id}`)
+/** A reveal and an unreachable link are separate consents: seeing one never answers the other. */
+function consentKeys(targetKey: string, exposed: SendWarning["exposed"]): string[] {
+  return (["reveal", "unreachable"] as const).flatMap((tone) =>
+    exposed[tone].map((streamId) => `${targetKey}|${tone}|${streamId}`)
+  )
+}
+
+/**
+ * What the draft exposes once the alternative converted its refs: shares
+ * turned into links stop revealing (the author declined that), message links
+ * turned into shares now reveal.
+ */
+function exposedAfterAlternative({ tone, exposed, convertibleStreamIds }: SendWarning): SendWarning["exposed"] {
+  const converted = new Set(convertibleStreamIds)
+  if (tone === "reveal") {
+    return {
+      reveal: exposed.reveal.filter((id) => !converted.has(id)),
+      unreachable: [...new Set([...exposed.unreachable, ...convertibleStreamIds])],
+    }
+  }
+  return { reveal: convertibleStreamIds, unreachable: exposed.unreachable }
 }
 
 /** Only an answer about exactly these refs may tell the server the reveal was seen. */
@@ -26,8 +54,9 @@ function submitOptionsFor(sendWarning: ComposerSendWarning | null): ComposerSubm
 }
 
 /**
- * Send asks once per exposing source and destination. Consent lasts until the
- * draft empties; an open question lasts until the draft or its warning changes.
+ * Send asks once per exposing source, tone and destination. Consent lasts until
+ * the draft empties; an open question lasts until the draft's content (not its
+ * display stamps) or its warning changes.
  */
 export function useSendAsk({
   sendWarning,
@@ -43,7 +72,7 @@ export function useSendAsk({
     [sendWarning]
   )
   const askKey = askKeyOf(sendWarning)
-  const [asked, setAsked] = useState<{ key: string; content: JSONContent } | null>(null)
+  const [asked, setAsked] = useState<{ key: string; signature: string } | null>(null)
   const consented = useRef(new Set<string>())
   const waiting = useRef(false)
   const contentRef = useRef(content)
@@ -54,56 +83,81 @@ export function useSendAsk({
     if (contentIsEmpty) consented.current = new Set()
   }, [contentIsEmpty])
 
+  const askedStillHolds = useMemo(
+    () => asked !== null && asked.key === askKey && asked.signature === contentSignature(content),
+    [asked, askKey, content]
+  )
   const question: SendAskQuestion | null =
-    sendWarning && copy && asked?.key === askKey && asked.content === content
+    sendWarning && copy && askedStillHolds
       ? { tone: sendWarning.warning.tone, copy, convertibleStreamIds: sendWarning.warning.convertibleStreamIds }
       : null
 
-  const consent = useCallback((answered: ComposerSendWarning | null) => {
-    if (answered) consented.current = new Set([...consented.current, ...consentKeys(answered)])
+  const record = useCallback((targetKey: string, exposed: SendWarning["exposed"]) => {
+    consented.current = new Set([...consented.current, ...consentKeys(targetKey, exposed)])
     setAsked(null)
   }, [])
 
-  const decide = useCallback(
-    (decided: ComposerSendWarning | null, send: (options?: ComposerSubmitOptions) => void) => {
-      if (decided && consentKeys(decided).some((key) => !consented.current.has(key))) {
-        setAsked({ key: askKeyOf(decided), content: contentRef.current })
-        return
-      }
-      send(submitOptionsFor(decided))
-      consent(decided)
+  const sendAndRecord = useCallback(
+    (answered: ComposerSendWarning | null, send: Send) => {
+      send(submitOptionsFor(answered))
+      if (answered) record(answered.targetKey, answered.warning.exposed)
+      else setAsked(null)
     },
-    [consent]
+    [record]
   )
 
-  const submit = useCallback(
-    async (send: (options?: ComposerSubmitOptions) => void) => {
-      if (waiting.current) return
-      if (question) {
-        send(submitOptionsFor(sendWarning))
-        consent(sendWarning)
-        return
-      }
-      if (!awaitSendWarning) {
-        decide(sendWarning, send)
+  const decide = useCallback(
+    (decided: ComposerSendWarning | null, send: Send) => {
+      const unanswered =
+        decided && consentKeys(decided.targetKey, decided.warning.exposed).some((key) => !consented.current.has(key))
+      if (unanswered) setAsked({ key: askKeyOf(decided), signature: contentSignature(contentRef.current) })
+      else sendAndRecord(decided, send)
+    },
+    [sendAndRecord]
+  )
+
+  const latest = useRef({ sendWarning, awaitSendWarning })
+  latest.current = { sendWarning, awaitSendWarning }
+
+  const settleThenDecide = useCallback(
+    async (send: Send): Promise<void> => {
+      const { sendWarning: current, awaitSendWarning: awaitSettled } = latest.current
+      if (!awaitSettled) {
+        decide(current, send)
         return
       }
       // A link pasted a moment ago has no answer yet; asking from the old one would skip it.
-      const before = contentRef.current
+      const before = contentSignature(contentRef.current)
+      const settled = await awaitSettled()
+      // The answer is about the content Send was pressed on; anything typed since is decided afresh.
+      if (contentSignature(contentRef.current) === before) decide(settled, send)
+      else await settleThenDecide(send)
+    },
+    [decide]
+  )
+
+  const submit = useCallback(
+    async (send: Send) => {
+      if (waiting.current) return
+      if (question) {
+        sendAndRecord(sendWarning, send)
+        return
+      }
       waiting.current = true
       try {
-        const settled = await awaitSendWarning()
-        if (contentRef.current !== before) return
-        decide(settled, send)
+        await settleThenDecide(send)
       } finally {
         waiting.current = false
       }
     },
-    [question, sendWarning, awaitSendWarning, decide, consent]
+    [question, sendWarning, sendAndRecord, settleThenDecide]
   )
 
   const dismiss = useCallback(() => setAsked(null), [])
-  const consentToCurrent = useCallback(() => consent(sendWarning), [consent, sendWarning])
+  /** The question's alternative converted refs; it answers for what the draft now holds. */
+  const recordAlternative = useCallback(() => {
+    if (sendWarning) record(sendWarning.targetKey, exposedAfterAlternative(sendWarning.warning))
+  }, [record, sendWarning])
 
-  return { copy, question, submit, dismiss, consent: consentToCurrent }
+  return { copy, question, submit, dismiss, recordAlternative }
 }

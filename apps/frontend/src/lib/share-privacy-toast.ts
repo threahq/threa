@@ -8,11 +8,6 @@ export function isPrivacyConfirmationError(err: unknown): err is ApiError {
   return ApiError.isApiError(err) && err.status === 409 && err.code === ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED
 }
 
-/**
- * The 409 asked for consent to send content the composer still holds. The
- * owner dismisses it (returned cleanup) once that content changes, so the
- * confirmation can never cover anything the author did not see it for.
- */
 export function surfacePrivacyConfirmToast(
   id: string,
   { confirmLabel, onConfirm, onCancel }: { confirmLabel: string; onConfirm: () => void; onCancel: () => void }
@@ -24,6 +19,11 @@ export function surfacePrivacyConfirmToast(
     cancel: { label: "Cancel", onClick: onCancel },
   })
   return () => toast.dismiss(id)
+}
+
+export interface SharePrivacyToastDeps {
+  retryMessage: (id: string, patch?: Record<string, unknown>) => Promise<void>
+  deleteMessage: (id: string) => Promise<void>
 }
 
 /**
@@ -42,11 +42,6 @@ export function surfacePrivacyConfirmToast(
  * `deleteMessage`) rather than touching `db.*` directly so we don't
  * bypass the React state cleanup the context performs.
  */
-export interface SharePrivacyToastDeps {
-  retryMessage: (id: string, patch?: Record<string, unknown>) => Promise<void>
-  deleteMessage: (id: string) => Promise<void>
-}
-
 export function surfacePrivacyBlockToast(clientMessageId: string, deps: SharePrivacyToastDeps): void {
   const dismiss = surfacePrivacyConfirmToast(`share-privacy-${clientMessageId}`, {
     confirmLabel: "Share anyway",

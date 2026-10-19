@@ -22,10 +22,7 @@ import { createChannel, expectApiOk, generateTestId, loginAndCreateWorkspace, lo
  * unit-test level in `hydration.test.ts` and `card-body.test.tsx`.
  */
 
-async function sendChannelMessageViaApi(page: Page, text: string): Promise<string> {
-  const match = page.url().match(/\/w\/([^/]+)\/s\/([^/?]+)/)
-  expect(match).toBeTruthy()
-  const [, workspaceId, streamId] = match!
+async function postMessageViaApi(page: Page, workspaceId: string, streamId: string, text: string): Promise<string> {
   const response = await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
     data: {
       streamId,
@@ -36,6 +33,13 @@ async function sendChannelMessageViaApi(page: Page, text: string): Promise<strin
   await expectApiOk(response, `Create stream message: ${text}`)
   const body = (await response.json()) as { message?: { id: string } }
   return body.message?.id ?? ""
+}
+
+async function sendChannelMessageViaApi(page: Page, text: string): Promise<string> {
+  const match = page.url().match(/\/w\/([^/]+)\/s\/([^/?]+)/)
+  expect(match).toBeTruthy()
+  const [, workspaceId, streamId] = match!
+  return postMessageViaApi(page, workspaceId, streamId, text)
 }
 
 /**
@@ -270,11 +274,17 @@ async function shareIntoPublic(page: Page, setup: PrivateToPublic): Promise<Loca
   return pane
 }
 
-/** User B's view of the public channel: the timeline's share pointers and link chips. */
+/**
+ * User B's view of the public channel: the timeline's share pointers and link chips. B posts a sentinel first and
+ * waits for it, so a count of 0 means the timeline loaded past anything sent earlier, not that it hasn't loaded.
+ */
 async function openAsOtherReader(setup: PrivateToPublic) {
   const page = setup.other.page
+  const sentinel = `loaded-${generateTestId()}`
+  await postMessageViaApi(page, setup.workspaceId, setup.pubStreamId, sentinel)
   await page.goto(`/w/${setup.workspaceId}/s/${setup.pubStreamId}`)
   await expect(page.getByRole("heading", { name: `#${setup.pubSlug}`, level: 1 })).toBeVisible({ timeout: 10000 })
+  await expect(mainMessageRow(page, sentinel)).toBeVisible({ timeout: 10000 })
   const timeline = page.getByRole("main").locator("[data-message-id]")
   return {
     pointers: timeline.locator("[data-type='shared-message']").filter({ hasText: setup.sourceText }),
@@ -345,6 +355,27 @@ test.describe("Composer asks before a reference reaches readers who can't open i
 
     await shareAnyway.click()
     await expect(reader.pointers).toBeVisible({ timeout: 10000 })
+  })
+
+  test("when the audience lookup fails, Cancel on the server's question drops the share unsent", async ({ page }) => {
+    const setup = current()
+    await page.route("**/messages/reference-audience", (route) => route.fulfill({ status: 500, body: "{}" }))
+    const pane = await shareIntoPublic(page, setup)
+    await pane.locator("[contenteditable='true']").focus()
+    await page.keyboard.press("Enter")
+
+    const toast = page
+      .locator("[data-sonner-toast]")
+      .filter({ has: page.getByRole("button", { name: "Share anyway" }) })
+    await expect(toast).toBeVisible({ timeout: 10000 })
+    const pendingShare = pane.locator("[data-message-id] [data-type='shared-message']")
+    await expect(pendingShare).toHaveCount(1)
+
+    await toast.getByRole("button", { name: "Cancel" }).click()
+    await expect(toast).toHaveCount(0)
+    await expect(pendingShare).toHaveCount(0)
+    const reader = await openAsOtherReader(setup)
+    await expect(reader.pointers).toHaveCount(0)
   })
 
   test("Escape drops the question and the share stays in the draft, unsent", async ({ page }) => {

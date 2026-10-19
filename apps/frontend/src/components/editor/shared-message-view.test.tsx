@@ -46,13 +46,20 @@ function shareAttrs(editor: Editor | null) {
 }
 
 // Past History's 500ms grouping window, as a network resolve would be; sooner and the stamp would merge into the conversion.
-function useChipResolvingLater(): ReturnType<typeof chipModule.useInAppLinkChip> {
+const RESOLVE_LATER_MS = 600
+const PAST_RESOLVE = { timeout: 3000 }
+
+function useResolvedLater(): boolean {
   const [resolved, setResolved] = useState(false)
   useEffect(() => {
-    const timer = setTimeout(() => setResolved(true), 600)
+    const timer = setTimeout(() => setResolved(true), RESOLVE_LATER_MS)
     return () => clearTimeout(timer)
   }, [])
-  return resolved ? { status: "resolved", label: "Src", icon: MessageSquare } : { status: "pending" }
+  return resolved
+}
+
+function useChipResolvingLater(): ReturnType<typeof chipModule.useInAppLinkChip> {
+  return useResolvedLater() ? { status: "resolved", label: "Src", icon: MessageSquare } : { status: "pending" }
 }
 
 afterEach(() => {
@@ -61,15 +68,22 @@ afterEach(() => {
 })
 
 describe("shared message node view", () => {
+  const resolvedSource = (authorName: string | undefined) => ({
+    status: "resolved",
+    contentMarkdown: "hello",
+    authorId: "usr_ada",
+    actorType: "user",
+    authorName,
+    editedAt: null,
+  })
+
   function resolveAs(authorName: string | undefined) {
-    spyOnExport(sourceModule, "useSharedMessageSource").mockReturnValue((() => ({
-      status: "resolved",
-      contentMarkdown: "hello",
-      authorId: "usr_ada",
-      actorType: "user",
-      authorName,
-      editedAt: null,
-    })) as never)
+    spyOnExport(sourceModule, "useSharedMessageSource").mockReturnValue((() => resolvedSource(authorName)) as never)
+  }
+
+  function resolveLaterAs(authorName: string) {
+    spyOnExport(sourceModule, "useSharedMessageSource").mockReturnValue((() =>
+      useResolvedLater() ? resolvedSource(authorName) : { status: "pending" }) as never)
   }
 
   it("stamps the resolved author onto a share that was inserted without one", async () => {
@@ -90,7 +104,7 @@ describe("shared message node view", () => {
   })
 
   it("undoes a link-to-share conversion in one step after both shares are stamped", async () => {
-    resolveAs("Ada")
+    resolveLaterAs("Ada")
     spyOnExport(chipModule, "useInAppLinkChip").mockReturnValue(() => ({ status: "pending" }))
     const chip = (messageId: string): JSONContent => ({
       type: "inAppLink",
@@ -105,12 +119,14 @@ describe("shared message node view", () => {
     const before = ready.getJSON()
 
     linksToShares(ready, ["stream_src"])
-    await waitFor(() =>
-      expect(
-        (ready.getJSON().content ?? [])
-          .filter((node) => node.type === "sharedMessage")
-          .map((node) => node.attrs?.authorName)
-      ).toEqual(["Ada", "Ada"])
+    await waitFor(
+      () =>
+        expect(
+          (ready.getJSON().content ?? [])
+            .filter((node) => node.type === "sharedMessage")
+            .map((node) => node.attrs?.authorName)
+        ).toEqual(["Ada", "Ada"]),
+      PAST_RESOLVE
     )
     ready.commands.undo()
 
@@ -137,7 +153,7 @@ describe("shared message node view", () => {
         if (node.type.name === "inAppLink") name = node.attrs.name
       })
       expect(name).toBe("Src")
-    })
+    }, PAST_RESOLVE)
     ready.commands.undo()
 
     expect(ready.getJSON()).toEqual(before)

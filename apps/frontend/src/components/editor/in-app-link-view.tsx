@@ -24,7 +24,10 @@ import { stampNodeAttrs } from "./stamp-node-attrs"
 export function InAppLinkView({ node, editor, getPos }: NodeViewProps) {
   const attrs = node.attrs as InAppLinkAttrs
   const { workspaceId } = useParams<{ workspaceId: string }>()
-  const stampName = useCallback((name: string) => stampNodeAttrs({ editor, getPos }, { name }), [editor, getPos])
+  const stampName = useCallback(
+    (name: string) => stampNodeAttrs({ editor, getPos }, "inAppLink", { name }),
+    [editor, getPos]
+  )
 
   if (!attrs.streamId) {
     return <ConversationChipView attrs={attrs} workspaceId={workspaceId ?? ""} stampName={stampName} />

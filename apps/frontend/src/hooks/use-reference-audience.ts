@@ -1,6 +1,12 @@
 import { useMemo } from "react"
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query"
-import { REFERENCE_AUDIENCE_MAX_STREAM_IDS, type JSONContent, type ReferenceAudience, type User } from "@threahq/types"
+import {
+  REFERENCE_AUDIENCE_MAX_STREAM_IDS,
+  type JSONContent,
+  type ReferenceAudience,
+  type ReferenceAudienceTarget,
+  type User,
+} from "@threahq/types"
 import { useMessageService } from "@/contexts"
 import { useActors } from "./use-actors"
 import { getDmDraftUserId, isDraftId } from "./use-stream-or-draft"
@@ -11,7 +17,6 @@ import {
   resolveSendWarning,
   type ComposerReference,
   type ComposerSendWarning,
-  type ReferenceAudienceTarget,
 } from "@/lib/reference-audience"
 
 const EMPTY_AUDIENCES: ReferenceAudience[] = []
@@ -35,13 +40,19 @@ function targetKeyOf(target: ReferenceAudienceTarget): string {
   return "streamId" in target ? `stream:${target.streamId}` : `dm:${target.dmUserId}`
 }
 
-function composeSendWarning(
-  refs: ComposerReference[],
-  audienceByStreamId: ReadonlyMap<string, ReferenceAudience>,
-  getUser: (id: string) => User | undefined,
-  settled: boolean,
+function composeSendWarning({
+  refs,
+  audienceByStreamId,
+  getUser,
+  settled,
+  targetKey,
+}: {
+  refs: ComposerReference[]
+  audienceByStreamId: ReadonlyMap<string, ReferenceAudience>
+  getUser: (id: string) => User | undefined
+  settled: boolean
   targetKey: string
-): ComposerSendWarning | null {
+}): ComposerSendWarning | null {
   const warning = resolveSendWarning(refs, audienceByStreamId)
   if (!warning) return null
   const names = warning.lead.sampleUserIds.flatMap((id) => {
@@ -107,7 +118,7 @@ export function useReferenceAudience({
   const answered = isSuccess && !isPlaceholderData
   const settled = answered && !truncated
   const sendWarning = useMemo(
-    () => composeSendWarning(refs, audienceByStreamId, getUser, settled, targetKey),
+    () => composeSendWarning({ refs, audienceByStreamId, getUser, settled, targetKey }),
     [refs, audienceByStreamId, getUser, settled, targetKey]
   )
 
@@ -117,7 +128,13 @@ export function useReferenceAudience({
         try {
           const response = await withTimeout(queryClient.fetchQuery({ queryKey, queryFn }), SETTLE_TIMEOUT_MS)
           if (!response) return null
-          return composeSendWarning(refs, exposingAudiences(response.audiences), getUser, true, targetKey)
+          return composeSendWarning({
+            refs,
+            audienceByStreamId: exposingAudiences(response.audiences),
+            getUser,
+            settled: true,
+            targetKey,
+          })
         } catch {
           return null
         }

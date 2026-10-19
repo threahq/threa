@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import type { JSONContent } from "@threahq/types"
+import { contentSignature } from "@/lib/display-stamps"
 import { surfacePrivacyConfirmToast } from "@/lib/share-privacy-toast"
 import { useStableCallback } from "./use-stable-callback"
 
 /**
  * A 409 asked consent for content the composer still holds. The question lasts
- * while that exact content stays under the same toast id; editing, switching
- * target, or unmounting withdraws it.
+ * while that content (display stamps aside) stays under the same toast id;
+ * editing, switching target, or unmounting withdraws it. Confirming sends what
+ * the composer holds now.
  */
 export function useSharePrivacyConfirm({
   toastId,
@@ -17,15 +19,16 @@ export function useSharePrivacyConfirm({
   toastId: string
   content: JSONContent
   confirmLabel: string
-  onConfirm: (blockedContent: JSONContent) => void
+  onConfirm: () => void
 }): { block: (blockedContent: JSONContent) => void; clear: () => void } {
   // A fresh object per 409, so a refusal after a swipe-dismissed toast surfaces it again.
-  const [blocked, setBlocked] = useState<{ toastId: string; content: JSONContent } | null>(null)
+  const [blocked, setBlocked] = useState<{ toastId: string; signature: string } | null>(null)
   const confirm = useStableCallback(onConfirm)
+  const signature = useMemo(() => (blocked ? contentSignature(content) : null), [blocked, content])
 
   useEffect(() => {
     if (!blocked) return
-    if (blocked.content !== content || blocked.toastId !== toastId) {
+    if (blocked.toastId !== toastId || blocked.signature !== signature) {
       setBlocked(null)
       return
     }
@@ -33,14 +36,14 @@ export function useSharePrivacyConfirm({
       confirmLabel,
       onConfirm: () => {
         setBlocked(null)
-        confirm(blocked.content)
+        confirm()
       },
       onCancel: () => setBlocked(null),
     })
-  }, [blocked, content, toastId, confirmLabel, confirm])
+  }, [blocked, signature, toastId, confirmLabel, confirm])
 
   const block = useCallback(
-    (blockedContent: JSONContent) => setBlocked({ toastId, content: blockedContent }),
+    (blockedContent: JSONContent) => setBlocked({ toastId, signature: contentSignature(blockedContent) }),
     [toastId]
   )
   const clear = useCallback(() => setBlocked(null), [])
