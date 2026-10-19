@@ -39,6 +39,8 @@ interface ActorAvatarInfo {
 
 export interface ActorLookup {
   getActorName: (actorId: string | null, actorType: AuthorType | null) => string
+  /** The actor's known name, or null where `getActorName` would show a placeholder. */
+  findActorName: (actorId: string | null, actorType: AuthorType | null) => string | null
   getActorInitials: (actorId: string | null, actorType: AuthorType | null) => string
   /** Returns avatar info including fallback text and persona slug (for SVG icon support) */
   getActorAvatar: (actorId: string | null, actorType: AuthorType | null) => ActorAvatarInfo
@@ -198,12 +200,21 @@ export function getActorLookup(
   const getPersona = (personaId: string): Persona | undefined => personaMap.get(personaId)
   const getBot = (botId: string): Bot | undefined => botMap.get(botId)
 
-  const getActorName = (actorId: string | null, actorType: AuthorType | null): string => {
-    if (!actorId) return "Unknown"
+  const findActorName = (actorId: string | null, actorType: AuthorType | null): string | null => {
+    if (!actorId) return null
     if (actorType === "system") return "Threa"
-    if (actorType === "persona") return personaMap.get(actorId)?.name ?? copyMap.get(actorId)?.name ?? "AI Companion"
-    if (actorType === "bot") return botMap.get(actorId)?.name ?? copyMap.get(actorId)?.name ?? "Bot"
-    return userMap.get(actorId)?.name || actorId.substring(0, 8)
+    if (actorType === "persona") return personaMap.get(actorId)?.name ?? copyMap.get(actorId)?.name ?? null
+    if (actorType === "bot") return botMap.get(actorId)?.name ?? copyMap.get(actorId)?.name ?? null
+    return userMap.get(actorId)?.name || null
+  }
+
+  const getActorName = (actorId: string | null, actorType: AuthorType | null): string => {
+    const name = findActorName(actorId, actorType)
+    if (name !== null) return name
+    if (!actorId) return "Unknown"
+    if (actorType === "persona") return "AI Companion"
+    if (actorType === "bot") return "Bot"
+    return actorId.substring(0, 8)
   }
 
   const getActorInitials = (actorId: string | null, actorType: AuthorType | null): string => {
@@ -265,7 +276,15 @@ export function getActorLookup(
     return { fallback }
   }
 
-  const lookup: ActorLookup = { getActorName, getActorInitials, getActorAvatar, getUser, getPersona, getBot }
+  const lookup: ActorLookup = {
+    getActorName,
+    findActorName,
+    getActorInitials,
+    getActorAvatar,
+    getUser,
+    getPersona,
+    getBot,
+  }
   const resolvers = byResolver ?? new WeakMap<(shortcode: string) => string | null, ActorLookupEntry>()
   resolvers.set(toEmoji, { workspaceId, personas, bots, actorCopies, lookup })
   actorLookups.set(users, resolvers)

@@ -42,7 +42,8 @@ import { ComposerLinkPreviews } from "./composer-link-previews"
 import { StashedDraftsPicker, type StashedDraftsPickerProps } from "./stashed-drafts-picker"
 import { ContextRefStrip } from "./context-ref-strip"
 import { SendAskRow, SendWarningBadge } from "./send-ask"
-import { audienceQuestionCopy, type ComposerSendWarning } from "@/lib/reference-audience"
+import type { ComposerSendWarning } from "@/lib/reference-audience"
+import { useSendAsk } from "./use-send-ask"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { cn } from "@/lib/utils"
 import { COLLAPSED_COMPOSER_ROW, COLLAPSED_COMPOSER_SHADOW } from "@/components/composer/collapsed-composer-bar"
@@ -120,7 +121,16 @@ const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Comman
  */
 const KEYBOARD_RESIZE_WAIT_MS = 300
 
-const NO_CONSENT: ReadonlySet<string> = new Set()
+function AskOverlay({ askRow, children }: { askRow: ReactNode; children: ReactNode }) {
+  return (
+    <>
+      <div className={cn(askRow && "invisible")} aria-hidden={askRow ? true : undefined}>
+        {children}
+      </div>
+      {askRow && <div className="absolute inset-0 flex items-center">{askRow}</div>}
+    </>
+  )
+}
 
 export interface ComposerControlHandle {
   focus(): void
@@ -274,6 +284,8 @@ export interface MessageComposerProps {
 
   /** Readers the draft's references would expose; Send asks once per exposing source before sending. */
   sendWarning?: ComposerSendWarning | null
+  /** Present while the warning for the current refs is still loading; Send waits on it briefly. */
+  awaitSendWarning?: (() => Promise<ComposerSendWarning | null>) | null
   /** Exposing source streams by id; tints the editor's references to them. */
   audienceByStreamId?: ReadonlyMap<string, ReferenceAudience>
 }
@@ -325,6 +337,7 @@ export function MessageComposer({
   scheduledMessagesTriggerFab,
   onOpenAside,
   sendWarning = null,
+  awaitSendWarning,
   audienceByStreamId,
 }: MessageComposerProps) {
   // Controls (buttons, file input) are disabled during both external disable and sending.
@@ -997,83 +1010,46 @@ export function MessageComposer({
   const insertMention = useCallback(() => richEditorRef.current?.insertMention(), [])
   const insertSlash = useCallback(() => richEditorRef.current?.insertSlash(), [])
 
-  const sendWarningValue = sendWarning?.warning ?? null
-  const exposedStreamIds = useMemo(
-    () =>
-      sendWarningValue
-        ? [...new Set([...sendWarningValue.exposedShareStreamIds, ...sendWarningValue.exposedLinkStreamIds])].sort()
-        : [],
-    [sendWarningValue]
-  )
-  const askCopy = useMemo(
-    () => (sendWarning ? audienceQuestionCopy(sendWarning.warning, sendWarning.names) : null),
-    [sendWarning]
-  )
-  const [asking, setAsking] = useState(false)
-  const [consentedStreamIds, setConsentedStreamIds] = useState(NO_CONSENT)
-  const needsConsent = exposedStreamIds.some((id) => !consentedStreamIds.has(id))
-  const showAsk = asking && askCopy !== null
-  const dismissAsk = useCallback(() => setAsking(false), [])
-  const askKey = sendWarningValue ? `${sendWarningValue.tone}:${exposedStreamIds.join(",")}` : ""
-  useEffect(() => {
-    setAsking(false)
-  }, [content, askKey])
-  const contentIsEmpty = isEmptyContent(content)
-  useEffect(() => {
-    if (contentIsEmpty) setConsentedStreamIds(NO_CONSENT)
-  }, [contentIsEmpty])
+  const sendAsk = useSendAsk({ sendWarning, awaitSendWarning, content })
+  const { question, dismiss: dismissQuestion } = sendAsk
+
+  const closeQuestion = useCallback(() => {
+    dismissQuestion()
+    // Desktop moved focus to the question's button, which unmounts now.
+    if (!isMobile) richEditorRef.current?.focus()
+  }, [dismissQuestion, isMobile])
 
   const handleSubmit = useCallback(() => {
     if (!canSubmit) return
-    if (needsConsent && !showAsk) {
-      setAsking(true)
-      return
-    }
-    setFormatOpen(false)
-    resetMobileComposerSize()
-    setMobileLinkPopoverOpen(false)
-    // End any in-flight take first: this flushes the live hypothesis into the
-    // editor (so the tail lands in the message) and drops the polish toggle +
-    // warnings before we snapshot the content below.
-    micRef.current?.prepareSendAsIs()
-    onSubmit(
-      richEditorRef.current?.getEditor()?.getJSON() as JSONContent | undefined,
-      sendWarning?.settled && sendWarningValue?.tone === "reveal" ? { confirmedPrivacyWarning: true } : undefined
-    )
-    if (exposedStreamIds.length > 0) setConsentedStreamIds((prev) => new Set([...prev, ...exposedStreamIds]))
-    if (showAsk) {
-      setAsking(false)
-      // Desktop moved focus to the question's button, which unmounts now.
-      if (!isMobile) richEditorRef.current?.focus()
-    }
-  }, [
-    canSubmit,
-    needsConsent,
-    showAsk,
-    onSubmit,
-    resetMobileComposerSize,
-    sendWarning,
-    sendWarningValue,
-    exposedStreamIds,
-    isMobile,
-  ])
+    const wasAsking = question !== null
+    void sendAsk.submit((options) => {
+      setFormatOpen(false)
+      resetMobileComposerSize()
+      setMobileLinkPopoverOpen(false)
+      // End any in-flight take first: this flushes the live hypothesis into the
+      // editor (so the tail lands in the message) and drops the polish toggle +
+      // warnings before we snapshot the content below.
+      micRef.current?.prepareSendAsIs()
+      onSubmit(richEditorRef.current?.getEditor()?.getJSON() as JSONContent | undefined, options)
+      if (wasAsking && !isMobile) richEditorRef.current?.focus()
+    })
+  }, [canSubmit, question, sendAsk, onSubmit, resetMobileComposerSize, isMobile])
 
   const handleAlternative = useCallback(() => {
     const editor = richEditorRef.current?.getEditor()
-    if (!editor || !workspaceId || !sendWarningValue) return
-    if (sendWarningValue.tone === "reveal") sharesToLinks(editor, workspaceId, sendWarningValue.exposedShareStreamIds)
-    else linksToShares(editor, sendWarningValue.exposedLinkStreamIds)
+    if (!editor || !workspaceId || !question) return
+    if (question.tone === "reveal") sharesToLinks(editor, workspaceId, question.convertibleStreamIds)
+    else linksToShares(editor, question.convertibleStreamIds)
     // Either choice answers the question: the converted refs come back as the
     // other tone's warning for the same sources, which must not ask again.
-    setConsentedStreamIds((prev) => new Set([...prev, ...exposedStreamIds]))
-    setAsking(false)
+    sendAsk.consent()
     if (!isMobile) richEditorRef.current?.focus()
-  }, [workspaceId, sendWarningValue, exposedStreamIds, isMobile])
+  }, [workspaceId, question, sendAsk, isMobile])
 
   const handleEditorFocus = useCallback(() => {
-    setAsking(false)
+    dismissQuestion()
     handleComposerFocus()
-  }, [handleComposerFocus])
+  }, [dismissQuestion, handleComposerFocus])
 
   // Stable ref so TipTap's captured closure always invokes the current handler
   // without needing to re-register on every render.
@@ -1158,15 +1134,14 @@ export function MessageComposer({
   )
   const composerEmpty = isEmptyContent(content) && pendingAttachments.length === 0
 
-  const handleStashKeyDown = useCallback(
+  const handleComposerKeyDownCapture = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       // Capture phase, ahead of the editor's own Escape (blur) and the expanded
       // shell's (collapse): the first Escape only takes the question away.
-      if (showAsk && event.key === "Escape") {
+      if (question && event.key === "Escape") {
         event.preventDefault()
         event.stopPropagation()
-        setAsking(false)
-        if (!isMobile) richEditorRef.current?.focus()
+        closeQuestion()
         return
       }
       if (!stashBinding) return
@@ -1180,7 +1155,7 @@ export function MessageComposer({
       }
       onStashDraft?.()
     },
-    [onStashDraft, stashBinding, composerEmpty, showAsk, isMobile]
+    [onStashDraft, stashBinding, composerEmpty, question, closeQuestion]
   )
 
   // Chip state is a view of the document: how many references each attachment
@@ -1244,28 +1219,19 @@ export function MessageComposer({
     />
   )
 
-  const sendAriaLabel = `${isSubmitting ? submittingLabel : submitLabel}${askCopy ? ` — ${askCopy.mobile}` : ""}`
-  const sendBadge = sendWarningValue ? <SendWarningBadge tone={sendWarningValue.tone} /> : null
-  const askRow =
-    showAsk && sendWarningValue ? (
-      <SendAskRow
-        tone={sendWarningValue.tone}
-        copy={askCopy}
-        compact={isMobile}
-        onPrimary={handleSubmit}
-        onAlternative={workspaceId ? handleAlternative : undefined}
-        mirrored={mirrored}
-        className="w-full"
-      />
-    ) : null
-  const askSlot = (bar: ReactNode) => (
-    <>
-      <div className={cn(askRow && "invisible")} aria-hidden={askRow ? true : undefined}>
-        {bar}
-      </div>
-      {askRow && <div className="absolute inset-0 flex items-center">{askRow}</div>}
-    </>
-  )
+  const sendAriaLabel = `${isSubmitting ? submittingLabel : submitLabel}${sendAsk.copy ? ` — ${sendAsk.copy.short}` : ""}`
+  const sendBadge = sendWarning ? <SendWarningBadge tone={sendWarning.warning.tone} /> : null
+  const askRow = question ? (
+    <SendAskRow
+      tone={question.tone}
+      copy={question.copy}
+      compact={isMobile}
+      onPrimary={handleSubmit}
+      onAlternative={workspaceId ? handleAlternative : undefined}
+      mirrored={mirrored}
+      className="w-full"
+    />
+  ) : null
 
   const sendButton = hasFailed ? (
     <Tooltip>
@@ -1391,7 +1357,7 @@ export function MessageComposer({
             className={cn("relative flex flex-col h-full bg-background", className)}
             tabIndex={-1}
             onKeyDown={handleExpandedShellKeyDown}
-            onKeyDownCapture={handleStashKeyDown}
+            onKeyDownCapture={handleComposerKeyDownCapture}
           >
             <p id={instructionsId} className="sr-only">
               {screenReaderInstructions}
@@ -1418,7 +1384,7 @@ export function MessageComposer({
                 // scrolls when the text itself needs it.
                 !isMobile && "[&_.tiptap]:min-h-[200px]"
               )}
-              onPointerDownCapture={dismissAsk}
+              onPointerDownCapture={dismissQuestion}
               onClick={(e) => {
                 if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']"))
                   return
@@ -1474,7 +1440,7 @@ export function MessageComposer({
                     e.preventDefault()
                   }}
                 >
-                  {askSlot(
+                  <AskOverlay askRow={askRow}>
                     <EditorActionBar
                       editorHandle={richEditorRef.current}
                       disabled={controlsDisabled}
@@ -1493,7 +1459,7 @@ export function MessageComposer({
                         </div>
                       }
                     />
-                  )}
+                  </AskOverlay>
                 </div>
                 {formatOpen && (
                   <div data-testid="composer-format-toolbar">
@@ -1646,8 +1612,8 @@ export function MessageComposer({
             {!isMobile && askRow && (
               <div
                 className={cn(
-                  "absolute bottom-[max(1rem,env(safe-area-inset-bottom))] z-10 max-w-[calc(100%-2rem)] rounded-[10px] border bg-background p-1 pl-2.5 shadow-md -mb-1",
-                  mirrored ? "left-4 -ml-1" : "right-4 -mr-1"
+                  "absolute inset-x-4 bottom-[max(1rem,env(safe-area-inset-bottom))] z-10 rounded-[10px] border bg-background p-1 pl-2.5 shadow-md -mb-1",
+                  mirrored ? "-ml-1" : "-mr-1"
                 )}
               >
                 {askRow}
@@ -1705,7 +1671,7 @@ export function MessageComposer({
           style={mobileRootStyle}
           onFocusCapture={isMobile ? handleFocusCapture : undefined}
           onBlurCapture={isMobile ? handleBlurCapture : undefined}
-          onKeyDownCapture={handleStashKeyDown}
+          onKeyDownCapture={handleComposerKeyDownCapture}
         >
           <p id={instructionsId} className="sr-only">
             {screenReaderInstructions}
@@ -1839,7 +1805,7 @@ export function MessageComposer({
                 <div
                   ref={mobileEditorScrollRef}
                   data-testid="composer-editor-scroll"
-                  onPointerDownCapture={dismissAsk}
+                  onPointerDownCapture={dismissQuestion}
                   className={cn(
                     isMobile && !mobileChromeOpen ? "h-0 overflow-hidden" : "flex-1 min-h-0",
                     !isMobile && "flex flex-col",
@@ -1879,8 +1845,8 @@ export function MessageComposer({
                       e.preventDefault()
                     }}
                   >
-                    {askSlot(
-                      isMobile ? (
+                    <AskOverlay askRow={askRow}>
+                      {isMobile ? (
                         <EditorActionBar
                           editorHandle={richEditorRef.current}
                           disabled={controlsDisabled}
@@ -1935,8 +1901,8 @@ export function MessageComposer({
                           scheduledMessagesTrigger={scheduledMessagesTrigger}
                           sendButton={sendButton}
                         />
-                      )
-                    )}
+                      )}
+                    </AskOverlay>
                   </div>
                 )}
               </div>

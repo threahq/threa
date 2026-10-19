@@ -16,9 +16,10 @@ export interface ComposerReference {
 export interface SendWarning {
   tone: "reveal" | "unreachable"
   lead: ReferenceAudience
-  exposedShareStreamIds: string[]
-  exposedLinkStreamIds: string[]
-  canShareInstead: boolean
+  /** Every source the draft exposes; one answer covers them all. */
+  streamIds: string[]
+  /** What the alternative converts: shares on reveal, message links on unreachable. Empty means no alternative. */
+  convertibleStreamIds: string[]
 }
 
 export interface ComposerSendWarning {
@@ -26,19 +27,21 @@ export interface ComposerSendWarning {
   names: string[]
   /** The answer covers every ref in the draft, so the send may carry consent. */
   settled: boolean
+  /** The destination the answer is about; consent never carries over to another one. */
+  targetKey: string
 }
 
 export interface AudienceQuestionCopy {
-  desktop: string
-  mobile: string
-  alternative: { desktop: string; mobile: string } | null
+  full: string
+  short: string
+  alternative: { full: string; short: string } | null
   primary: string
 }
 
-function linkMarkReference(node: JSONContent, origin: string | null | undefined): ComposerReference | null {
+function linkMarkReference(node: JSONContent): ComposerReference | null {
   const href = node.marks?.find((mark) => mark.type === "link")?.attrs?.href
   if (typeof href !== "string") return null
-  const link = classifyDraftLink(href, origin)
+  const link = classifyDraftLink(href)
   if (link?.kind === "stream") return { kind: "link", streamId: link.streamId, messageId: null }
   if (link?.kind === "message") return { kind: "link", streamId: link.streamId, messageId: link.messageId }
   return null
@@ -53,11 +56,7 @@ function attrReference(kind: ComposerReference["kind"], attrs: Record<string, un
   return streamId ? { kind, streamId, messageId: stringAttr(attrs.messageId) } : null
 }
 
-function nodeReference(
-  node: JSONContent,
-  targetStreamId: string | null,
-  origin: string | null | undefined
-): ComposerReference | null {
+function nodeReference(node: JSONContent, targetStreamId: string | null): ComposerReference | null {
   const attrs = node.attrs ?? {}
   switch (node.type) {
     case "sharedMessage":
@@ -67,20 +66,16 @@ function nodeReference(
     case "inAppLink":
       return attrReference("link", attrs)
     case "text":
-      return linkMarkReference(node, origin)
+      return linkMarkReference(node)
     default:
       return null
   }
 }
 
-export function collectComposerReferences(
-  content: JSONContent,
-  targetStreamId: string | null,
-  origin?: string | null
-): ComposerReference[] {
+export function collectComposerReferences(content: JSONContent, targetStreamId: string | null): ComposerReference[] {
   const refs: ComposerReference[] = []
   const walk = (node: JSONContent) => {
-    const ref = nodeReference(node, targetStreamId, origin)
+    const ref = nodeReference(node, targetStreamId)
     if (ref) refs.push(ref)
     node.content?.forEach(walk)
   }
@@ -103,19 +98,22 @@ export function resolveSendWarning(
 ): SendWarning | null {
   const exposedOf = (kind: ComposerReference["kind"]) =>
     referenceStreamIds(refs.filter((ref) => ref.kind === kind && byStreamId.has(ref.streamId)))
-  const exposedShareStreamIds = exposedOf("share")
-  const exposedLinkStreamIds = exposedOf("link")
-  const tone = exposedShareStreamIds.length > 0 ? "reveal" : "unreachable"
-  const leadIds = tone === "reveal" ? exposedShareStreamIds : exposedLinkStreamIds
+  const shareIds = exposedOf("share")
+  const linkIds = exposedOf("link")
+  const tone = shareIds.length > 0 ? "reveal" : "unreachable"
+  const leadIds = tone === "reveal" ? shareIds : linkIds
   if (leadIds.length === 0) return null
 
   const lead = leadIds
     .map((id) => byStreamId.get(id)!)
     .reduce((best, audience) => (audience.count > best.count ? audience : best))
-  const canShareInstead = refs.some(
-    (ref) => ref.kind === "link" && ref.messageId !== null && byStreamId.has(ref.streamId)
-  )
-  return { tone, lead, exposedShareStreamIds, exposedLinkStreamIds, canShareInstead }
+  const convertibleStreamIds =
+    tone === "reveal"
+      ? shareIds
+      : referenceStreamIds(
+          refs.filter((ref) => ref.kind === "link" && ref.messageId !== null && byStreamId.has(ref.streamId))
+        )
+  return { tone, lead, streamIds: [...new Set([...shareIds, ...linkIds])].sort(), convertibleStreamIds }
 }
 
 function joinNames(names: string[]): string {
@@ -123,14 +121,14 @@ function joinNames(names: string[]): string {
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
 }
 
-function desktopNames(count: number, names: string[]): string {
+function fullAudience(count: number, names: string[]): string {
   if (names.length === 0) return count === 1 ? "1 person" : `${count} people`
   if (count <= names.length) return joinNames(names.slice(0, count))
   const shown = names.slice(0, 2)
   return `${shown.join(", ")} +${count - shown.length}`
 }
 
-function mobileShort(tone: SendWarning["tone"], count: number, names: string[]): string {
+function shortAudience(tone: SendWarning["tone"], count: number, names: string[]): string {
   if (count === 1 && names.length > 0) return names[0]
   const noun = count === 1 ? "person" : "people"
   return tone === "reveal" ? `${count} new ${noun}` : `${count} ${noun}`
@@ -138,20 +136,20 @@ function mobileShort(tone: SendWarning["tone"], count: number, names: string[]):
 
 export function audienceQuestionCopy(warning: SendWarning, names: string[]): AudienceQuestionCopy {
   const { count } = warning.lead
-  const who = desktopNames(count, names)
-  const short = mobileShort(warning.tone, count, names)
+  const who = fullAudience(count, names)
+  const short = shortAudience(warning.tone, count, names)
   if (warning.tone === "reveal") {
     return {
-      desktop: `${who} will see this message`,
-      mobile: `${short} ${count === 1 ? "sees" : "see"} it`,
-      alternative: { desktop: "Use link", mobile: "Link" },
+      full: `${who} will see this message`,
+      short: `${short} ${count === 1 ? "sees" : "see"} it`,
+      alternative: { full: "Use link", short: "Link" },
       primary: "Send",
     }
   }
   return {
-    desktop: `${who} can't open this link`,
-    mobile: `${short} can't open it`,
-    alternative: warning.canShareInstead ? { desktop: "Share instead", mobile: "Share" } : null,
+    full: `${who} can't open this link`,
+    short: `${short} can't open it`,
+    alternative: warning.convertibleStreamIds.length > 0 ? { full: "Share instead", short: "Share" } : null,
     primary: "Send anyway",
   }
 }

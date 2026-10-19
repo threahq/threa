@@ -226,25 +226,30 @@ async function setupPrivateToPublic(browser: Browser, page: Page, prefix: string
   const otherName = `Reader ${testId}`
   const otherEmail = `${prefix}-other-${testId}@example.com`
   const other = await loginInNewContext(browser, otherEmail, otherName)
-  await expectApiOk(
-    await other.page.request.post(`/api/dev/workspaces/${workspaceId}/join`, {
-      data: { role: "member", name: otherName },
-    }),
-    "User B join workspace"
-  )
-  const memberId = await getWorkspaceUserIdByEmail(page, workspaceId, otherEmail)
-  await expectApiOk(
-    await page.request.post(`/api/workspaces/${workspaceId}/streams/${pubStreamId}/members`, { data: { memberId } }),
-    "Add User B to public channel"
-  )
+  try {
+    await expectApiOk(
+      await other.page.request.post(`/api/dev/workspaces/${workspaceId}/join`, {
+        data: { role: "member", name: otherName },
+      }),
+      "User B join workspace"
+    )
+    const memberId = await getWorkspaceUserIdByEmail(page, workspaceId, otherEmail)
+    await expectApiOk(
+      await page.request.post(`/api/workspaces/${workspaceId}/streams/${pubStreamId}/members`, { data: { memberId } }),
+      "Add User B to public channel"
+    )
 
-  await page.goto(`/w/${workspaceId}/s/${privStreamId}`)
-  await expect(page.getByRole("heading", { name: `#${privSlug}`, level: 1 })).toBeVisible({ timeout: 10000 })
-  const sourceText = `secret-${testId}`
-  const sourceMessageId = await sendChannelMessageViaApi(page, sourceText)
-  await expect(mainMessageRow(page, sourceText)).toBeVisible({ timeout: 5000 })
+    await page.goto(`/w/${workspaceId}/s/${privStreamId}`)
+    await expect(page.getByRole("heading", { name: `#${privSlug}`, level: 1 })).toBeVisible({ timeout: 10000 })
+    const sourceText = `secret-${testId}`
+    const sourceMessageId = await sendChannelMessageViaApi(page, sourceText)
+    await expect(mainMessageRow(page, sourceText)).toBeVisible({ timeout: 5000 })
 
-  return { workspaceId, pubSlug, pubStreamId, privStreamId, other, otherName, sourceText, sourceMessageId }
+    return { workspaceId, pubSlug, pubStreamId, privStreamId, other, otherName, sourceText, sourceMessageId }
+  } catch (error) {
+    await other.context.close()
+    throw error
+  }
 }
 
 type PrivateToPublic = Awaited<ReturnType<typeof setupPrivateToPublic>>
@@ -288,139 +293,157 @@ async function pasteIntoFocusedComposer(page: Page, text: string): Promise<void>
 }
 
 test.describe("Composer asks before a reference reaches readers who can't open it", () => {
-  test("a share asks in place and only goes out after the second Send", async ({ browser, page }) => {
-    const setup = await setupPrivateToPublic(browser, page, "ask-share")
-    try {
-      const pane = await shareIntoPublic(page, setup)
-      await expect(pane.getByTestId("send-warning-badge").first()).toHaveAttribute("data-tone", "reveal")
+  let setup: PrivateToPublic | undefined
+  const current = (): PrivateToPublic => {
+    if (!setup) throw new Error("setupPrivateToPublic did not run")
+    return setup
+  }
 
-      await pane.locator("[contenteditable='true']").focus()
-      await page.keyboard.press("Enter")
-      const ask = pane.getByTestId("send-ask")
-      await expect(ask).toContainText(`${setup.otherName} will see this message`)
-
-      const reader = await openAsOtherReader(setup)
-      await expect(reader.pointers).toHaveCount(0)
-
-      // The question's Send holds focus, so a second Enter is the deliberate confirm.
-      await page.keyboard.press("Enter")
-      await expect(ask).toHaveCount(0)
-      await expect(reader.pointers).toBeVisible({ timeout: 10000 })
-    } finally {
-      await setup.other.context.close()
-    }
+  test.beforeEach(async ({ browser, page }) => {
+    setup = undefined
+    setup = await setupPrivateToPublic(browser, page, "ask")
   })
 
-  test("when the audience lookup fails, the server still stops the share until Share anyway", async ({
-    browser,
-    page,
-  }) => {
-    const setup = await setupPrivateToPublic(browser, page, "ask-lookup-down")
-    try {
-      await page.route("**/messages/reference-audience", (route) => route.fulfill({ status: 500, body: "{}" }))
-      const pane = await shareIntoPublic(page, setup)
-      await pane.locator("[contenteditable='true']").focus()
-      await page.keyboard.press("Enter")
-      await expect(pane.getByTestId("send-ask")).toHaveCount(0)
-
-      const shareAnyway = page.getByRole("button", { name: "Share anyway" })
-      await expect(shareAnyway).toBeVisible({ timeout: 10000 })
-      const reader = await openAsOtherReader(setup)
-      await expect(reader.pointers).toHaveCount(0)
-
-      await shareAnyway.click()
-      await expect(reader.pointers).toBeVisible({ timeout: 10000 })
-    } finally {
-      await setup.other.context.close()
-    }
+  test.afterEach(async () => {
+    await setup?.other.context.close()
   })
 
-  test("Escape drops the question and the share stays in the draft, unsent", async ({ browser, page }) => {
-    const setup = await setupPrivateToPublic(browser, page, "ask-escape")
-    try {
-      const pane = await shareIntoPublic(page, setup)
-      const editor = pane.locator("[contenteditable='true']")
-      await editor.focus()
-      await page.keyboard.press("Enter")
-      await expect(pane.getByTestId("send-ask")).toBeVisible()
+  test("a share asks in place and only goes out after the second Send", async ({ page }) => {
+    const setup = current()
+    const pane = await shareIntoPublic(page, setup)
+    await expect(pane.getByTestId("send-warning-badge").filter({ visible: true })).toHaveAttribute(
+      "data-tone",
+      "reveal"
+    )
 
-      await page.keyboard.press("Escape")
-      await expect(pane.getByTestId("send-ask")).toHaveCount(0)
-      await expect(editor.locator("[data-type='shared-message']")).toHaveCount(1)
+    await pane.locator("[contenteditable='true']").focus()
+    await page.keyboard.press("Enter")
+    const ask = pane.getByTestId("send-ask")
+    await expect(ask).toContainText(`${setup.otherName} will see this message`)
 
-      // Long enough for a send that had slipped through to land.
-      await page.waitForTimeout(2000)
-      const reader = await openAsOtherReader(setup)
-      await expect(reader.pointers).toHaveCount(0)
-    } finally {
-      await setup.other.context.close()
-    }
+    const reader = await openAsOtherReader(setup)
+    await expect(reader.pointers).toHaveCount(0)
+
+    // The question's Send holds focus, so a second Enter is the deliberate confirm.
+    await page.keyboard.press("Enter")
+    await expect(ask).toHaveCount(0)
+    await expect(reader.pointers).toBeVisible({ timeout: 10000 })
   })
 
-  test("Use link swaps the share for a link and the next Send doesn't ask again", async ({ browser, page }) => {
-    const setup = await setupPrivateToPublic(browser, page, "ask-use-link")
-    try {
-      const pane = await shareIntoPublic(page, setup)
-      const editor = pane.locator("[contenteditable='true']")
-      await editor.focus()
-      await page.keyboard.press("Enter")
-      await pane
-        .getByTestId("send-ask")
-        .getByRole("button", { name: /^(Use )?link$/i })
-        .click()
+  test("when the audience lookup fails, the server still stops the share until Share anyway", async ({ page }) => {
+    const setup = current()
+    await page.route("**/messages/reference-audience", (route) => route.fulfill({ status: 500, body: "{}" }))
+    const pane = await shareIntoPublic(page, setup)
+    await pane.locator("[contenteditable='true']").focus()
+    await page.keyboard.press("Enter")
+    await expect(pane.getByTestId("send-ask")).toHaveCount(0)
 
-      await expect(editor.locator("[data-type='shared-message']")).toHaveCount(0)
-      await expect(editor.locator("[data-type='in-app-link-chip'] .lucide-lock")).toBeVisible({ timeout: 5000 })
-      await expect(pane.getByTestId("send-warning-badge").first()).toHaveAttribute("data-tone", "unreachable")
+    const shareAnyway = page.getByRole("button", { name: "Share anyway" })
+    await expect(shareAnyway).toBeVisible({ timeout: 10000 })
+    const reader = await openAsOtherReader(setup)
+    await expect(reader.pointers).toHaveCount(0)
 
-      await expect(editor).toBeFocused()
-      await page.keyboard.press("Enter")
-      await expect(pane.getByTestId("send-ask")).toHaveCount(0)
-
-      const reader = await openAsOtherReader(setup)
-      await expect(reader.chips).toHaveCount(1, { timeout: 10000 })
-      await expect(reader.pointers).toHaveCount(0)
-    } finally {
-      await setup.other.context.close()
-    }
+    await shareAnyway.click()
+    await expect(reader.pointers).toBeVisible({ timeout: 10000 })
   })
 
-  test("on a phone, a link someone can't open offers Share, and the share then sends", async ({ browser, page }) => {
-    const setup = await setupPrivateToPublic(browser, page, "ask-mobile")
-    try {
-      await page.setViewportSize(PHONE)
-      await page.goto(`/w/${setup.workspaceId}/s/${setup.pubStreamId}`)
-      const main = page.getByRole("main")
-      // At rest the phone composer's editor is a hairline; the card is the tap target.
-      const card = main.locator("[data-composer-card]").last()
-      const box = await card.boundingBox()
-      expect(box).not.toBeNull()
-      await page.mouse.click(box!.x + box!.width / 2, box!.y + 18)
-      const editor = main.locator("[data-editor-zone='main'] [contenteditable='true']").first()
-      await expect(editor).toBeFocused()
-      const origin = new URL(page.url()).origin
-      await pasteIntoFocusedComposer(
-        page,
-        `${origin}/w/${setup.workspaceId}/s/${setup.privStreamId}?m=${setup.sourceMessageId}`
-      )
-      await expect(editor.locator("[data-type='in-app-link-chip'] .lucide-lock")).toBeVisible({ timeout: 5000 })
+  test("Escape drops the question and the share stays in the draft, unsent", async ({ page }) => {
+    const setup = current()
+    const pane = await shareIntoPublic(page, setup)
+    const editor = pane.locator("[contenteditable='true']")
+    await editor.focus()
+    await page.keyboard.press("Enter")
+    await expect(pane.getByTestId("send-ask")).toBeVisible()
 
-      const send = main.getByRole("button", { name: `Send — ${setup.otherName} can't open it` })
-      await send.click()
-      const ask = main.getByTestId("send-ask")
-      await expect(ask).toContainText(`${setup.otherName} can't open it`)
+    await page.keyboard.press("Escape")
+    await expect(pane.getByTestId("send-ask")).toHaveCount(0)
+    await expect(editor.locator("[data-type='shared-message']")).toHaveCount(1)
 
-      await ask.getByRole("button", { name: "Share", exact: true }).click()
-      await expect(editor.locator("[data-type='shared-message']")).toHaveCount(1)
-      await expect(ask).toHaveCount(0)
+    // Long enough for a send that had slipped through to land.
+    await page.waitForTimeout(2000)
+    const reader = await openAsOtherReader(setup)
+    await expect(reader.pointers).toHaveCount(0)
+  })
 
-      // Choosing Share answered the question; the send goes out confirmed.
-      await main.getByRole("button", { name: /^Send\b/ }).click()
-      await expect(ask).toHaveCount(0)
-      const reader = await openAsOtherReader(setup)
-      await expect(reader.pointers).toBeVisible({ timeout: 10000 })
-    } finally {
-      await setup.other.context.close()
-    }
+  test("Use link swaps the share for a link and the next Send doesn't ask again", async ({ page }) => {
+    const setup = current()
+    const pane = await shareIntoPublic(page, setup)
+    const editor = pane.locator("[contenteditable='true']")
+    await editor.focus()
+    await page.keyboard.press("Enter")
+    await pane
+      .getByTestId("send-ask")
+      // The shared target opens as a narrow split pane, where a container query swaps in the short "Link" copy.
+      .getByRole("button", { name: /^(Use )?link$/i })
+      .click()
+
+    await expect(editor.locator("[data-type='shared-message']")).toHaveCount(0)
+    await expect(editor.locator("[data-type='in-app-link-chip'] .lucide-lock")).toBeVisible({ timeout: 5000 })
+    await expect(pane.getByTestId("send-warning-badge").filter({ visible: true })).toHaveAttribute(
+      "data-tone",
+      "unreachable"
+    )
+
+    await expect(editor).toBeFocused()
+    await page.keyboard.press("Enter")
+    await expect(pane.getByTestId("send-ask")).toHaveCount(0)
+
+    const reader = await openAsOtherReader(setup)
+    await expect(reader.chips).toHaveCount(1, { timeout: 10000 })
+    await expect(reader.pointers).toHaveCount(0)
+  })
+
+  test("on a phone, a link someone can't open offers Share, and the share then sends", async ({ page }) => {
+    const setup = current()
+    await page.setViewportSize(PHONE)
+    await page.goto(`/w/${setup.workspaceId}/s/${setup.pubStreamId}`)
+    const main = page.getByRole("main")
+    // At rest the phone composer's editor is a hairline; the card is the tap target.
+    const card = main.locator("[data-composer-card]").last()
+    const box = await card.boundingBox()
+    expect(box).not.toBeNull()
+    await page.mouse.click(box!.x + box!.width / 2, box!.y + 18)
+    const editor = main.locator("[data-editor-zone='main'] [contenteditable='true']").first()
+    await expect(editor).toBeFocused()
+    const origin = new URL(page.url()).origin
+    await pasteIntoFocusedComposer(
+      page,
+      `${origin}/w/${setup.workspaceId}/s/${setup.privStreamId}?m=${setup.sourceMessageId}`
+    )
+    await expect(editor.locator("[data-type='in-app-link-chip'] .lucide-lock")).toBeVisible({ timeout: 5000 })
+
+    const send = main.getByRole("button", { name: `Send — ${setup.otherName} can't open it` })
+    await send.click()
+    const ask = main.getByTestId("send-ask")
+    await expect(ask).toContainText(`${setup.otherName} can't open it`)
+
+    await ask.getByRole("button", { name: "Share", exact: true }).click()
+    await expect(editor.locator("[data-type='shared-message']")).toHaveCount(1)
+    await expect(ask).toHaveCount(0)
+
+    // Choosing Share answered the question; the send goes out confirmed.
+    await main.getByRole("button", { name: /^Send\b/ }).click()
+    await expect(ask).toHaveCount(0)
+    const reader = await openAsOtherReader(setup)
+    await expect(reader.pointers).toBeVisible({ timeout: 10000 })
+  })
+
+  test("the expanded compose pane shows the question at full width", async ({ page }) => {
+    const setup = current()
+    await page.setViewportSize({ width: 1600, height: 900 })
+    const pane = await shareIntoPublic(page, setup)
+    await pane.getByRole("link", { name: "Expand editor into a pane" }).click()
+
+    const composePane = page.locator(`[data-panel-tab="compose:${setup.pubStreamId}"]`)
+    const editor = composePane.getByRole("textbox", { name: "Expanded message editor" })
+    await expect(editor.locator("[data-type='shared-message']")).toHaveCount(1, { timeout: 5000 })
+    await editor.focus()
+    await page.keyboard.press("ControlOrMeta+Enter")
+
+    const ask = composePane.getByTestId("send-ask")
+    await expect(ask).toContainText(`${setup.otherName} will see this message`)
+    await expect(ask.getByRole("button", { name: "Send", exact: true })).toBeVisible()
+    const box = await ask.boundingBox()
+    expect(box?.width ?? 0).toBeGreaterThan(200)
   })
 })

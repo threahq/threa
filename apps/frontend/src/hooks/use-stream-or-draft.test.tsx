@@ -456,6 +456,33 @@ describe("useStreamOrDraft real stream send", () => {
   })
 })
 
+async function mountScratchpadDraftSend(suffix: string) {
+  await db.workspaceUsers.put({
+    id: `member_${suffix}`,
+    workspaceId: `ws_${suffix}`,
+    workosUserId: "workos_1",
+    email: "kris@example.com",
+    role: "owner",
+    slug: "kris",
+    name: "Kris",
+    joinedAt: "2026-08-14T06:00:00Z",
+    _cachedAt: Date.now(),
+  } as never)
+  await db.draftScratchpads.put({
+    id: `draft_${suffix}`,
+    workspaceId: `ws_${suffix}`,
+    displayName: null,
+    companionMode: "on",
+    createdAt: Date.now(),
+  })
+
+  const rendered = renderHook(() => useStreamOrDraft(`ws_${suffix}`, `draft_${suffix}`), {
+    wrapper: createWrapper(new QueryClient()),
+  })
+  await waitFor(() => expect(rendered.result.current.currentUserId).toBe(`member_${suffix}`))
+  return rendered
+}
+
 describe("useStreamOrDraft scratchpad draft send", () => {
   beforeEach(async () => {
     await clearAllCachedData()
@@ -465,33 +492,8 @@ describe("useStreamOrDraft scratchpad draft send", () => {
   })
 
   it("routes a follow-up queued during materialization into the promoted stream", async () => {
-    await db.workspaceUsers.put({
-      id: "member_promotion",
-      workspaceId: "ws_promotion",
-      workosUserId: "workos_1",
-      email: "kris@example.com",
-      role: "owner",
-      slug: "kris",
-      name: "Kris",
-      joinedAt: "2026-08-14T06:00:00Z",
-      _cachedAt: Date.now(),
-    } as never)
-    await db.draftScratchpads.put({
-      id: "draft_promotion",
-      workspaceId: "ws_promotion",
-      displayName: null,
-      companionMode: "on",
-      createdAt: Date.now(),
-    })
-
-    const queryClient = new QueryClient()
-    const { result } = renderHook(() => useStreamOrDraft("ws_promotion", "draft_promotion"), {
-      wrapper: createWrapper(queryClient),
-    })
-    await waitFor(() => {
-      expect(result.current.stream?.id).toBe("draft_promotion")
-      expect(result.current.currentUserId).toBe("member_promotion")
-    })
+    const { result } = await mountScratchpadDraftSend("promotion")
+    await waitFor(() => expect(result.current.stream?.id).toBe("draft_promotion"))
 
     await act(async () => {
       await result.current.sendMessage({
@@ -540,29 +542,7 @@ describe("useStreamOrDraft scratchpad draft send", () => {
   })
 
   it("carries the share-privacy consent onto the queued draft send", async () => {
-    await db.workspaceUsers.put({
-      id: "member_consent",
-      workspaceId: "ws_consent",
-      workosUserId: "workos_1",
-      email: "kris@example.com",
-      role: "owner",
-      slug: "kris",
-      name: "Kris",
-      joinedAt: "2026-08-14T06:00:00Z",
-      _cachedAt: Date.now(),
-    } as never)
-    await db.draftScratchpads.put({
-      id: "draft_consent",
-      workspaceId: "ws_consent",
-      displayName: null,
-      companionMode: "on",
-      createdAt: Date.now(),
-    })
-
-    const { result } = renderHook(() => useStreamOrDraft("ws_consent", "draft_consent"), {
-      wrapper: createWrapper(new QueryClient()),
-    })
-    await waitFor(() => expect(result.current.currentUserId).toBe("member_consent"))
+    const { result } = await mountScratchpadDraftSend("consent")
 
     await act(async () => {
       await result.current.sendMessage({

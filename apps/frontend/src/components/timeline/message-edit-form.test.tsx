@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { spyOnExport } from "@/test/spy"
-import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -26,6 +26,7 @@ type ToastOptions = {
 }
 
 let inputModeMockValue: inputModeModule.InputMode = "mouse"
+let drawerPointerDownOutside: ((event: { target: EventTarget; preventDefault: () => void }) => void) | undefined
 let editorStreamContext: MentionStreamContext | undefined
 
 beforeEach(() => {
@@ -41,14 +42,19 @@ beforeEach(() => {
   spyOnExport(drawerModule, "DrawerContent").mockReturnValue((({
     children,
     className,
+    onPointerDownOutside,
   }: {
     children: React.ReactNode
     className?: string
-  }) => (
-    <div data-testid="drawer-content" className={className}>
-      {children}
-    </div>
-  )) as unknown as typeof drawerModule.DrawerContent)
+    onPointerDownOutside?: typeof drawerPointerDownOutside
+  }) => {
+    drawerPointerDownOutside = onPointerDownOutside
+    return (
+      <div data-testid="drawer-content" className={className}>
+        {children}
+      </div>
+    )
+  }) as unknown as typeof drawerModule.DrawerContent)
   spyOnExport(drawerModule, "DrawerTitle").mockReturnValue((({
     children,
     className,
@@ -328,6 +334,54 @@ describe("MessageEditForm saving", () => {
     })
 
     await waitFor(() => expect(dismiss.mock.calls).toEqual([["share-privacy-edit-msg_1"]]))
+  })
+
+  function refuseForPrivacy() {
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      update: vi.fn().mockRejectedValue(new ApiError(409, ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED, "Confirm")),
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+  }
+
+  it("should ask again on the next Save after the Save anyway toast was swiped away", async () => {
+    const warningToast = vi.spyOn(toast, "warning").mockReturnValue("w4")
+    refuseForPrivacy()
+
+    await submitEdit(vi.fn())
+    await waitFor(() => expect(warningToast).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    await waitFor(() => expect(warningToast).toHaveBeenCalledTimes(2))
+  })
+
+  it("should withdraw the Save anyway question when the edit form closes", async () => {
+    vi.spyOn(toast, "warning").mockReturnValue("w5")
+    const dismiss = vi.spyOn(toast, "dismiss").mockReturnValue("w5")
+    refuseForPrivacy()
+
+    await submitEdit(vi.fn())
+    await waitFor(() => expect(toast.warning).toHaveBeenCalled())
+    cleanup()
+
+    expect(dismiss.mock.calls).toEqual([["share-privacy-edit-msg_1"]])
+  })
+
+  it("should keep the mobile edit drawer open when the Save anyway toast is pressed", () => {
+    inputModeMockValue = "touch"
+    renderForm()
+    const toaster = document.createElement("section")
+    toaster.setAttribute("data-sonner-toaster", "")
+    const toastButton = toaster.appendChild(document.createElement("button"))
+    const outside = document.createElement("button")
+    const toastPress = { target: toastButton, preventDefault: vi.fn() }
+    const outsidePress = { target: outside, preventDefault: vi.fn() }
+
+    drawerPointerDownOutside?.(toastPress)
+    drawerPointerDownOutside?.(outsidePress)
+
+    expect({
+      toast: toastPress.preventDefault.mock.calls.length,
+      outside: outsidePress.preventDefault.mock.calls.length,
+    }).toEqual({ toast: 1, outside: 0 })
   })
 
   it("should keep consent on an edit queued after Save anyway fails without a server verdict", async () => {

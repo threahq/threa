@@ -1,11 +1,6 @@
 import { createContext, useContext } from "react"
 import type { ReferenceAudience } from "@threahq/types"
 
-export const AUDIENCE_TONE_TEXT = {
-  unreachable: "text-amber-600 dark:text-amber-400",
-  reveal: "text-sky-600 dark:text-sky-400",
-} as const
-
 export const NO_REFERENCE_AUDIENCE: ReadonlyMap<string, ReferenceAudience> = new Map()
 
 /**

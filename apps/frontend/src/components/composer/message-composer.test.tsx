@@ -1476,12 +1476,12 @@ describe("MessageComposer", () => {
         warning: {
           tone,
           lead: { streamId: exposed[0], count: 3, sampleUserIds: ["usr_a"] },
-          exposedShareStreamIds: exposed,
-          exposedLinkStreamIds: [],
-          canShareInstead: false,
+          streamIds: exposed,
+          convertibleStreamIds: tone === "reveal" ? exposed : [],
         },
         names: ["Ada"],
         settled,
+        targetKey: "stream:stream_dest",
       }
     }
 
@@ -1600,12 +1600,12 @@ describe("MessageComposer", () => {
         warning: {
           tone: "unreachable",
           lead: { streamId: "stream_src", count: 2, sampleUserIds: [] },
-          exposedShareStreamIds: [],
-          exposedLinkStreamIds: ["stream_src"],
-          canShareInstead: true,
+          streamIds: ["stream_src"],
+          convertibleStreamIds: ["stream_src"],
         },
         names: [],
         settled: true,
+        targetKey: "stream:stream_dest",
       }
       const props = { ...defaultProps, workspaceId: "ws_1", canSubmit: true, onSubmit }
       const { rerender } = render(<MessageComposer {...props} content={editor.getJSON()} sendWarning={unreachable} />)

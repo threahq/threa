@@ -48,23 +48,15 @@ export interface SharePrivacyToastDeps {
 }
 
 export function surfacePrivacyBlockToast(clientMessageId: string, deps: SharePrivacyToastDeps): void {
-  const id = `share-privacy-${clientMessageId}`
-  toast.warning(SHARE_PRIVACY_WARNING_MESSAGE, {
-    id,
-    duration: Infinity,
-    action: {
-      label: "Share anyway",
-      onClick: async () => {
-        await deps.retryMessage(clientMessageId, { confirmedPrivacyWarning: true, status: undefined })
-        toast.dismiss(id)
-      },
+  const dismiss = surfacePrivacyConfirmToast(`share-privacy-${clientMessageId}`, {
+    confirmLabel: "Share anyway",
+    onConfirm: async () => {
+      await deps.retryMessage(clientMessageId, { confirmedPrivacyWarning: true, status: undefined })
+      dismiss()
     },
-    cancel: {
-      label: "Cancel",
-      onClick: async () => {
-        await deps.deleteMessage(clientMessageId)
-        toast.dismiss(id)
-      },
+    onCancel: async () => {
+      await deps.deleteMessage(clientMessageId)
+      dismiss()
     },
   })
 }

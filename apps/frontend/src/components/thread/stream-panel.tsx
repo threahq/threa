@@ -31,10 +31,10 @@ import {
 import { AsideCoversPanesContext } from "@/components/aside/aside-presentation"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { FloatingComposerShell, MessageComposer } from "@/components/composer"
-import type { ComposerSubmitOptions } from "@/components/composer/message-composer"
+import type { ComposerSubmitOptions, MessageComposerProps } from "@/components/composer"
 import { ComposerEncryptionNotice } from "@/components/encryption/stream-encryption-affordance"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
-import { useReferenceAudience } from "@/hooks/use-reference-audience"
+import { referenceAudienceTargetFor, useReferenceAudience } from "@/hooks/use-reference-audience"
 import { ThreadParentEvent } from "./thread-parent-event"
 import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
@@ -188,10 +188,12 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
     scopeId: draftInfo?.anchorId ?? "",
     e2eStreamId: e2eRoot,
   })
-  // Same E2E rule as the stream composer: no target until the parent is known plaintext.
-  const audienceParentId = parentStream && !parentStream.e2eEnabled ? draftInfo?.parentStreamId : undefined
-  const audienceTarget = useMemo(() => (audienceParentId ? { streamId: audienceParentId } : null), [audienceParentId])
-  const { sendWarning, audienceByStreamId } = useReferenceAudience({
+  // A draft thread's readers are its parent's.
+  const audienceTarget = useMemo(
+    () => (draftInfo ? referenceAudienceTargetFor(draftInfo.parentStreamId, parentStream) : null),
+    [draftInfo?.parentStreamId, parentStream === undefined, parentStream?.e2eEnabled]
+  )
+  const { sendWarning, audienceByStreamId, awaitSendWarning } = useReferenceAudience({
     workspaceId,
     target: audienceTarget,
     content: composer.content,
@@ -432,6 +434,34 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
 
   if (!draftInfo) return null
 
+  const draftComposerProps = {
+    content: composer.content,
+    sendWarning,
+    audienceByStreamId,
+    awaitSendWarning,
+    onContentChange: composer.handleContentChange,
+    pendingAttachments: composer.pendingAttachments,
+    onRemoveAttachment: composer.handleRemoveAttachment,
+    onCancelAttachmentUpload: composer.handleCancelAttachmentUpload,
+    fileInputRef: composer.fileInputRef,
+    onFileSelect: composer.handleFileSelect,
+    onFileUpload: composer.uploadFile,
+    imageCount: composer.imageCount,
+    onSubmit: handleSubmit,
+    canSubmit: composer.canSend,
+    isSubmitting: composer.isSending,
+    hasFailed: composer.hasFailed,
+    submitLabel: "Reply",
+    submittingLabel: "Creating...",
+    placeholder: replyPlaceholder,
+    workspaceId,
+    scopeId: panelId,
+    memoAnchorStreamId: draftInfo.parentStreamId,
+    streamContext: draftStreamContext,
+    onStashDraft: stash.handleStashDraft,
+    stashedDrafts,
+  } satisfies Partial<MessageComposerProps>
+
   return (
     <SidePanel className={className} data-editor-zone="panel">
       <PaneHeader
@@ -458,35 +488,7 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
           draftPortalTargetRef.current &&
           createPortal(
             <div ref={draftExpandedRef} className="absolute inset-0 z-30 bg-background">
-              <MessageComposer
-                content={composer.content}
-                sendWarning={sendWarning}
-                audienceByStreamId={audienceByStreamId}
-                onContentChange={composer.handleContentChange}
-                pendingAttachments={composer.pendingAttachments}
-                onRemoveAttachment={composer.handleRemoveAttachment}
-                onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
-                fileInputRef={composer.fileInputRef}
-                onFileSelect={composer.handleFileSelect}
-                onFileUpload={composer.uploadFile}
-                imageCount={composer.imageCount}
-                onSubmit={handleSubmit}
-                canSubmit={composer.canSend}
-                isSubmitting={composer.isSending}
-                hasFailed={composer.hasFailed}
-                submitLabel="Reply"
-                submittingLabel="Creating..."
-                placeholder={replyPlaceholder}
-                workspaceId={workspaceId}
-                scopeId={panelId}
-                memoAnchorStreamId={draftInfo.parentStreamId}
-                expanded
-                onCollapse={handleDraftCollapse}
-                autoFocus
-                streamContext={draftStreamContext}
-                onStashDraft={stash.handleStashDraft}
-                stashedDrafts={stashedDrafts}
-              />
+              <MessageComposer {...draftComposerProps} expanded onCollapse={handleDraftCollapse} autoFocus />
             </div>,
             draftPortalTargetRef.current
           )}
@@ -533,34 +535,7 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
         <FloatingComposerShell ref={draftComposerRef} hidden={draftExpanded}>
           <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={!!e2eRoot} streamId={e2eRoot} />
           {!draftExpanded && (
-            <MessageComposer
-              content={composer.content}
-              sendWarning={sendWarning}
-              audienceByStreamId={audienceByStreamId}
-              onContentChange={composer.handleContentChange}
-              pendingAttachments={composer.pendingAttachments}
-              onRemoveAttachment={composer.handleRemoveAttachment}
-              onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
-              fileInputRef={composer.fileInputRef}
-              onFileSelect={composer.handleFileSelect}
-              onFileUpload={composer.uploadFile}
-              imageCount={composer.imageCount}
-              onSubmit={handleSubmit}
-              canSubmit={composer.canSend}
-              isSubmitting={composer.isSending}
-              hasFailed={composer.hasFailed}
-              submitLabel="Reply"
-              submittingLabel="Creating..."
-              placeholder={replyPlaceholder}
-              autoFocus={!isMobile}
-              workspaceId={workspaceId}
-              scopeId={panelId}
-              memoAnchorStreamId={draftInfo.parentStreamId}
-              onExpandClick={handleDraftExpand}
-              streamContext={draftStreamContext}
-              onStashDraft={stash.handleStashDraft}
-              stashedDrafts={stashedDrafts}
-            />
+            <MessageComposer {...draftComposerProps} autoFocus={!isMobile} onExpandClick={handleDraftExpand} />
           )}
         </FloatingComposerShell>
       </SidePanelContent>

@@ -338,6 +338,39 @@ describe("actor lookup", () => {
     expect(settled).toBe(1)
   })
 
+  it("findActorName resolves known personas, bots, copies and users, and returns null for unknown ones", async () => {
+    await db.workspaceMetadata.put(makeMetadata())
+    await db.workspaceUsers.put(makeUser("usr_1", "Ada"))
+    await db.personas.put(makePersona("persona_1", "Ariadne"))
+    await db.bots.put(makeBot("bot_1", "Deployer"))
+    await db.actorCopies.put(makeCopy("persona_host", "Host Persona"))
+    const { result } = renderHook(() => useActors(WORKSPACE))
+    await waitFor(() => expect(result.current.findActorName("persona_1", "persona")).toBe("Ariadne"))
+
+    const find = result.current.findActorName
+    expect({
+      user: find("usr_1", "user"),
+      persona: find("persona_1", "persona"),
+      bot: find("bot_1", "bot"),
+      copy: find("persona_host", "persona"),
+      system: find("usr_1", "system"),
+      unknownUser: find("usr_missing", "user"),
+      unknownPersona: find("persona_missing", "persona"),
+      unknownBot: find("bot_missing", "bot"),
+      noId: find(null, null),
+    }).toEqual({
+      user: "Ada",
+      persona: "Ariadne",
+      bot: "Deployer",
+      copy: "Host Persona",
+      system: "Threa",
+      unknownUser: null,
+      unknownPersona: null,
+      unknownBot: null,
+      noId: null,
+    })
+  })
+
   it("an unknown actor id falls back exactly as before", async () => {
     await db.workspaceMetadata.put(makeMetadata())
     const { result } = renderHook(() => useActors(WORKSPACE))

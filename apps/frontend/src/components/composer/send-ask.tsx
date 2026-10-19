@@ -1,16 +1,8 @@
 import { useEffect, useId, useRef, type KeyboardEvent } from "react"
-import { Eye, Lock } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { AUDIENCE_TONE_TEXT } from "@/components/editor/reference-audience-context"
+import { AUDIENCE_TONE } from "@/components/editor/reference-audience-tone"
 import type { AudienceQuestionCopy, SendWarning } from "@/lib/reference-audience"
 import { cn } from "@/lib/utils"
-
-const TONE_FILL: Record<SendWarning["tone"], string> = {
-  unreachable: "bg-amber-600 dark:bg-amber-400",
-  reveal: "bg-sky-600 dark:bg-sky-400",
-}
-
-const TONE_ICON = { unreachable: Lock, reveal: Eye } as const
 
 interface SendAskRowProps {
   tone: SendWarning["tone"]
@@ -45,7 +37,7 @@ export function SendAskRow({
     if (!event.repeat) onPrimary()
   }
 
-  const Icon = TONE_ICON[tone]
+  const Icon = AUDIENCE_TONE[tone].icon
   const alternative = onAlternative ? copy.alternative : undefined
 
   return (
@@ -61,15 +53,15 @@ export function SendAskRow({
       )}
       onMouseDown={(event) => event.preventDefault()}
     >
-      <div className={cn("flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium", AUDIENCE_TONE_TEXT[tone])}>
+      <div className={cn("flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium", AUDIENCE_TONE[tone].text)}>
         <Icon aria-hidden className="h-4 w-4 shrink-0" />
         <span id={questionId} role="status" className="truncate">
-          <FitCopy compact={compact} wide={copy.desktop} narrow={copy.mobile} />
+          <FitCopy compact={compact} copy={copy} />
         </span>
       </div>
       {alternative && (
         <Button type="button" variant="ghost" size="sm" className="h-[30px] shrink-0 px-2.5" onClick={onAlternative}>
-          <FitCopy compact={compact} wide={alternative.desktop} narrow={alternative.mobile} />
+          <FitCopy compact={compact} copy={alternative} />
         </Button>
       )}
       <Button
@@ -92,19 +84,19 @@ export function SendAskRow({
   )
 }
 
-/** A split pane is desktop too narrow for the desktop sentence; there the row falls back to the phone copy. */
-function FitCopy({ compact, wide, narrow }: { compact: boolean; wide: string; narrow: string }) {
-  if (compact) return narrow
+/** A split pane is desktop too narrow for the full sentence; there the row falls back to the short copy. */
+function FitCopy({ compact, copy }: { compact: boolean; copy: { full: string; short: string } }) {
+  if (compact) return copy.short
   return (
     <>
-      <span className="hidden [@container(min-width:32rem)]:inline">{wide}</span>
-      <span className="[@container(min-width:32rem)]:hidden">{narrow}</span>
+      <span className="hidden [@container(min-width:32rem)]:inline">{copy.full}</span>
+      <span className="[@container(min-width:32rem)]:hidden">{copy.short}</span>
     </>
   )
 }
 
 export function SendWarningBadge({ tone }: { tone: SendWarning["tone"] }) {
-  const Icon = TONE_ICON[tone]
+  const Icon = AUDIENCE_TONE[tone].icon
   return (
     <span
       aria-hidden
@@ -112,7 +104,7 @@ export function SendWarningBadge({ tone }: { tone: SendWarning["tone"] }) {
       data-tone={tone}
       className={cn(
         "pointer-events-none absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full text-white ring-2 ring-background dark:text-background",
-        TONE_FILL[tone]
+        AUDIENCE_TONE[tone].fill
       )}
     >
       <Icon className="!size-[9px]" strokeWidth={3} />

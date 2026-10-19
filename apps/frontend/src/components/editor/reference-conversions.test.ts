@@ -3,7 +3,7 @@ import { Editor } from "@tiptap/core"
 import type { JSONContent } from "@tiptap/react"
 import { createEditorExtensions } from "./editor-extensions"
 import { linksToShares, sharesToLinks } from "./reference-conversions"
-import { buildMessageLink } from "@/lib/stream-links"
+import { buildMessageLink, buildStreamLink } from "@/lib/stream-links"
 
 const WS = "ws_1"
 
@@ -26,10 +26,14 @@ const text = (value: string): JSONContent => ({ type: "text", text: value })
 const paragraph = (...content: JSONContent[]): JSONContent => ({ type: "paragraph", content })
 
 function chip(streamId: string, messageId: string | null): JSONContent {
-  const base = buildMessageLink(WS, streamId, messageId ?? "")
-  const url = messageId ? base : base.replace("?m=", "")
+  const url = messageId ? buildMessageLink(WS, streamId, messageId) : buildStreamLink(WS, streamId)
   return { type: "inAppLink", attrs: { url, streamId, messageId, name: "" } }
 }
+
+const list = (...items: JSONContent[]): JSONContent => ({
+  type: "bulletList",
+  content: items.map((item) => ({ type: "listItem", content: [item] })),
+})
 
 const share = (streamId: string, messageId: string): JSONContent => ({
   type: "sharedMessage",
@@ -69,10 +73,6 @@ describe("linksToShares", () => {
   })
 
   it("moves shares for links nested in a list or quote after the outer block, in order", () => {
-    const list = (...items: JSONContent[]): JSONContent => ({
-      type: "bulletList",
-      content: items.map((item) => ({ type: "listItem", content: [item] })),
-    })
     const editor = createEditor([
       list(paragraph(text("x "), chip("stream_a", "msg_1")), paragraph(chip("stream_a", "msg_2"), text(" y"))),
       { type: "blockquote", content: [paragraph(text("q "), chip("stream_a", "msg_3"))] },
@@ -84,6 +84,45 @@ describe("linksToShares", () => {
       sharedAttrs("stream_a", "msg_2"),
       { type: "blockquote", content: [paragraph(text("q "))] },
       sharedAttrs("stream_a", "msg_3"),
+    ])
+  })
+
+  it("drops a list item a chip filled, and replaces a quote a chip filled with the share in place", () => {
+    const editor = createEditor([
+      list(paragraph(chip("stream_a", "msg_1")), paragraph(text("kept"))),
+      { type: "blockquote", content: [paragraph(chip("stream_a", "msg_2"))] },
+      paragraph(text("end")),
+    ])
+    linksToShares(editor, ["stream_a"])
+    expect(docContent(editor)).toEqual([
+      list(paragraph(text("kept"))),
+      sharedAttrs("stream_a", "msg_1"),
+      sharedAttrs("stream_a", "msg_2"),
+      paragraph(text("end")),
+    ])
+  })
+
+  it("drops a list item two chips filled together, keeping both shares in order", () => {
+    const editor = createEditor([
+      list(paragraph(text("kept")), paragraph(chip("stream_a", "msg_1"), chip("stream_a", "msg_2"))),
+    ])
+    linksToShares(editor, ["stream_a"])
+    expect(docContent(editor)).toEqual([
+      list(paragraph(text("kept"))),
+      sharedAttrs("stream_a", "msg_1"),
+      sharedAttrs("stream_a", "msg_2"),
+    ])
+  })
+
+  it("keeps the paragraph a list item requires when a chip filled it above a nested list", () => {
+    const nested = list(paragraph(text("child")))
+    const editor = createEditor([
+      { type: "bulletList", content: [{ type: "listItem", content: [paragraph(chip("stream_a", "msg_1")), nested] }] },
+    ])
+    linksToShares(editor, ["stream_a"])
+    expect(docContent(editor)).toEqual([
+      { type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph" }, nested] }] },
+      sharedAttrs("stream_a", "msg_1"),
     ])
   })
 

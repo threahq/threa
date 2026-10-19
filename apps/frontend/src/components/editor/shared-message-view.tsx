@@ -1,12 +1,14 @@
 import { useEffect } from "react"
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react"
-import { X, Share2, Eye } from "lucide-react"
+import { X, Share2 } from "lucide-react"
 import { useParams } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { useSharedMessageSource } from "@/hooks/use-shared-message-source"
 import { SharedMessageCardBody } from "@/components/shared-messages/card-body"
 import type { SharedMessageAttrs } from "./shared-message-extension"
-import { AUDIENCE_TONE_TEXT, useReferenceExposed } from "./reference-audience-context"
+import { useReferenceExposed } from "./reference-audience-context"
+import { AUDIENCE_TONE } from "./reference-audience-tone"
+import { stampNodeAttrs } from "./stamp-node-attrs"
 
 /**
  * Live pointer to a message in another stream. Resolves the preview content
@@ -20,7 +22,7 @@ import { AUDIENCE_TONE_TEXT, useReferenceExposed } from "./reference-audience-co
  * remove-button, and selection highlighting — not the per-state body
  * rendering.
  */
-export function SharedMessageView({ node, deleteNode, selected, updateAttributes }: NodeViewProps) {
+export function SharedMessageView({ node, deleteNode, selected, editor, getPos }: NodeViewProps) {
   const attrs = node.attrs as SharedMessageAttrs
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const source = useSharedMessageSource({
@@ -37,26 +39,26 @@ export function SharedMessageView({ node, deleteNode, selected, updateAttributes
   const resolvedId = resolved?.authorId
   const resolvedType = resolved?.actorType
   useEffect(() => {
-    if (resolvedName && resolvedId && resolvedType && !attrs.authorName) {
-      updateAttributes({ authorName: resolvedName, authorId: resolvedId, actorType: resolvedType })
-    }
-  }, [resolvedName, resolvedId, resolvedType, attrs.authorName, updateAttributes])
+    if (!resolvedName || !resolvedId || !resolvedType || attrs.authorName) return
+    stampNodeAttrs({ editor, getPos }, { authorName: resolvedName, authorId: resolvedId, actorType: resolvedType })
+  }, [resolvedName, resolvedId, resolvedType, attrs.authorName, editor, getPos])
 
   const exposed = useReferenceExposed(attrs.streamId)
-  const Icon = exposed ? Eye : Share2
+  const tone = AUDIENCE_TONE.reveal
+  const Icon = exposed ? tone.icon : Share2
 
   return (
     <NodeViewWrapper
       className={cn(
         "my-1 flex items-start gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm select-none",
         "group/shared-message reveal-host",
-        exposed && "border-sky-600/50 dark:border-sky-400/50",
+        exposed && tone.surface,
         selected && "ring-2 ring-primary/30"
       )}
       data-type="shared-message"
     >
       <Icon
-        className={cn("mt-0.5 h-4 w-4 shrink-0", exposed ? AUDIENCE_TONE_TEXT.reveal : "text-muted-foreground")}
+        className={cn("mt-0.5 h-4 w-4 shrink-0", exposed ? tone.text : "text-muted-foreground")}
         aria-hidden="true"
       />
       <div className="min-w-0 flex-1">

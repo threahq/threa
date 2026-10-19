@@ -190,6 +190,37 @@ describe("useSharedMessageSource", () => {
     })
   })
 
+  it("should name a persona or bot author of a cached event from the workspace", async () => {
+    await db.personas.put({ id: "persona_1", workspaceId: "ws_1", name: "Ariadne", slug: "ariadne" } as never)
+    await db.bots.put({ id: "bot_1", workspaceId: "ws_1", name: "Deployer", slug: "deployer" } as never)
+    const cachedEvent = (messageId: string, actorId: string, actorType: "persona" | "bot") => ({
+      id: `evt_${messageId}`,
+      workspaceId: "ws_1",
+      streamId: "stream_src",
+      sequence: "1",
+      _sequenceNum: 1,
+      eventType: "message_created" as const,
+      payload: { messageId, contentMarkdown: "agent reply" },
+      actorId,
+      actorType,
+      createdAt: "2026-04-23T10:00:00Z",
+      _cachedAt: Date.now(),
+    })
+    await db.events.bulkPut([
+      cachedEvent("msg_persona", "persona_1", "persona"),
+      cachedEvent("msg_bot", "bot_1", "bot"),
+    ])
+
+    const { result } = renderHook(() => ({ persona: unpinned("msg_persona"), bot: unpinned("msg_bot") }))
+
+    await waitFor(() =>
+      expect({
+        persona: result.current.persona.status === "resolved" ? result.current.persona.authorName : null,
+        bot: result.current.bot.status === "resolved" ? result.current.bot.authorName : null,
+      }).toEqual({ persona: "Ariadne", bot: "Deployer" })
+    )
+  })
+
   it("should resolve the requested workspace's own copy when two workspaces hold the same message id", async () => {
     const copiedEvent = (workspaceId: string, contentMarkdown: string, actorId: string) => ({
       id: "evt_copied",

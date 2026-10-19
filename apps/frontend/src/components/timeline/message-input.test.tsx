@@ -288,6 +288,7 @@ beforeEach(async () => {
   spyOnExport(referenceAudienceModule, "useReferenceAudience").mockReturnValue(() => ({
     sendWarning: null,
     audienceByStreamId: new Map(),
+    awaitSendWarning: null,
   }))
   // The composer's schedule-send entry needs the scheduled service via
   // ServicesProvider; tests run without that wrapper, so stub the hook to a
@@ -466,7 +467,7 @@ describe("MessageInput", () => {
     })
 
     it("asks the audience endpoint only once the stream is known to be plaintext", () => {
-      const audience = vi.fn(() => ({ sendWarning: null, audienceByStreamId: new Map() }))
+      const audience = vi.fn(() => ({ sendWarning: null, audienceByStreamId: new Map(), awaitSendWarning: null }))
       spyOnExport(referenceAudienceModule, "useReferenceAudience").mockReturnValue(audience as never)
       const targetFor = (stream: object | undefined) => {
         vi.spyOn(hooksModule, "useStreamOrDraft").mockReturnValue({
@@ -1423,6 +1424,52 @@ describe("MessageInput", () => {
 
       await waitFor(() => expect(mockSendMessage).toHaveBeenCalledTimes(2))
       expect(mockSendMessage.mock.calls.map(([input]) => input.confirmedPrivacyWarning)).toEqual([undefined, true])
+    })
+
+    async function blockFirstSend() {
+      mockComposerState.canSend = true
+      mockComposerState.content = makeDoc("Look at this")
+      mockSendMessage.mockRejectedValue(new ApiError(409, ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED, "Confirm"))
+      const warning = vi.spyOn(toast, "warning").mockReturnValue("w1")
+      const dismiss = vi.spyOn(toast, "dismiss").mockReturnValue("w1")
+      const view = render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
+      await waitFor(() => expect(warning).toHaveBeenCalled())
+      return { warning, dismiss, ...view }
+    }
+
+    it("asks again on the next send after the share-anyway toast was swiped away", async () => {
+      const { warning } = await blockFirstSend()
+
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
+
+      await waitFor(() => expect(warning).toHaveBeenCalledTimes(2))
+    })
+
+    it("withdraws the share-anyway question once the draft changes", async () => {
+      const { dismiss, rerender } = await blockFirstSend()
+      expect(dismiss).not.toHaveBeenCalled()
+
+      mockComposerState.content = makeDoc("Look at this instead")
+      rerender(
+        <Wrapper>
+          <MessageInput workspaceId={workspaceId} streamId={streamId} />
+        </Wrapper>
+      )
+
+      await waitFor(() => expect(dismiss.mock.calls).toEqual([[`share-privacy-draft-${streamId}`]]))
+    })
+
+    it("withdraws the share-anyway question when the composer moves to another stream", async () => {
+      const { dismiss, rerender } = await blockFirstSend()
+
+      rerender(
+        <Wrapper>
+          <MessageInput workspaceId={workspaceId} streamId="stream_other" />
+        </Wrapper>
+      )
+
+      await waitFor(() => expect(dismiss.mock.calls).toEqual([[`share-privacy-draft-${streamId}`]]))
     })
 
     it("does not restore an aborted stale send into the next stream", async () => {

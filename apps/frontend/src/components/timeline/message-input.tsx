@@ -16,8 +16,6 @@ import {
   useComposerTarget,
   useMountedComposerCount,
   clearComposerTarget,
-  getDmDraftUserId,
-  isDraftId,
 } from "@/hooks"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { relocateLoadedDraft, stashLoadedDraft } from "@/hooks/use-draft-message"
@@ -25,7 +23,8 @@ import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useComposeTrace } from "@/lib/compose-trace"
 import { getDraftPromotionSource } from "@/lib/draft-promotions"
 import { GUEST_DM_CLOSED_REASON, isGuestDmPolicyError } from "@/lib/guest-dm-policy"
-import { isPrivacyConfirmationError, surfacePrivacyConfirmToast } from "@/lib/share-privacy-toast"
+import { isPrivacyConfirmationError } from "@/lib/share-privacy-toast"
+import { useSharePrivacyConfirm } from "@/hooks/use-share-privacy-confirm"
 import { usePreferences } from "@/contexts"
 import { useConnectionState } from "@/components/layout/connection-status"
 import {
@@ -36,12 +35,10 @@ import {
   MessageComposer,
   ScheduledMessagesPicker,
 } from "@/components/composer"
-import type { ComposerControlHandle } from "@/components/composer"
-import type { ComposerSubmitOptions } from "@/components/composer/message-composer"
+import type { ComposerControlHandle, ComposerSubmitOptions } from "@/components/composer"
 import { useScheduleMessage } from "@/hooks"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
-import { useReferenceAudience } from "@/hooks/use-reference-audience"
-import type { ReferenceAudienceTarget } from "@/lib/reference-audience"
+import { referenceAudienceTargetFor, useReferenceAudience } from "@/hooks/use-reference-audience"
 import { buildImageIndexByAttachment, isMaterializableAttachment } from "./attachment-image-index"
 import { useEditLastMessage } from "./edit-last-message-context"
 import { useQuoteReply, appendQuoteReplyNode, type QuoteReplyData } from "./quote-reply-context"
@@ -415,16 +412,11 @@ function MessageInputComponent({
     scopeId: composerScopeId,
     e2eStreamId: e2eRootStreamId,
   })
-  const dmDraftUserId = getDmDraftUserId(streamId)
-  // E2E streams never ask: listing their reference ids to the server would leak
-  // what the sealed body points at. An unresolved stream may still turn out E2E.
-  const streamResolved = stream !== undefined
-  const audienceTarget = useMemo<ReferenceAudienceTarget | null>(() => {
-    if (dmDraftUserId) return { dmUserId: dmDraftUserId }
-    if (isDraftId(streamId) || !streamResolved || e2eEnabled) return null
-    return { streamId }
-  }, [dmDraftUserId, streamId, streamResolved, e2eEnabled])
-  const { sendWarning, audienceByStreamId } = useReferenceAudience({
+  const audienceTarget = useMemo(
+    () => referenceAudienceTargetFor(streamId, stream),
+    [streamId, stream === undefined, stream?.e2eEnabled]
+  )
+  const { sendWarning, audienceByStreamId, awaitSendWarning } = useReferenceAudience({
     workspaceId,
     target: audienceTarget,
     content: composer.content,
@@ -643,7 +635,6 @@ function MessageInputComponent({
   }, [workspaceId, streamId])
 
   const [error, setError] = useState<string | null>(null)
-  const [privacyBlockedContent, setPrivacyBlockedContent] = useState<JSONContent | null>(null)
   // Expanded is the stream's compose pane being open: the composer renders there, and a bar holds its place here.
   // The draft can open as a pane of its own, except an aside's: the aside's pane is its surface.
   const composePane = useComposePane(streamId, { claim: !(disabled && disabledReason), offer: !isAsideComposer })
@@ -659,11 +650,19 @@ function MessageInputComponent({
   useEffect(() => {
     setError(null)
     setPreserveConversationStripSpace(false)
-    setPrivacyBlockedContent(null)
   }, [streamId])
+
+  // A refused draft promotion (the first send of a new DM) asks consent for the restored content.
+  const { block: blockOnPrivacy, clear: clearPrivacyBlock } = useSharePrivacyConfirm({
+    toastId: `share-privacy-draft-${streamId}`,
+    content: composer.content,
+    confirmLabel: "Share anyway",
+    onConfirm: (blocked) => void handleSubmit(blocked, { confirmedPrivacyWarning: true }),
+  })
 
   const handleSubmit = useStableCallback(async (editorContent?: JSONContent, options?: ComposerSubmitOptions) => {
     if (!composer.canSend) return
+    clearPrivacyBlock()
 
     const pendingAttachments = composer.getPendingAttachmentsSnapshot()
     const liveContent = editorContent ?? composer.content
@@ -758,7 +757,7 @@ function MessageInputComponent({
       // so this is a failed draft promotion.
       if (!(error instanceof Error && error.name === "AbortError")) {
         composer.setContent(liveContent)
-        if (isPrivacyConfirmationError(error)) setPrivacyBlockedContent(liveContent)
+        if (isPrivacyConfirmationError(error)) blockOnPrivacy(liveContent)
         else
           setError(isGuestDmPolicyError(error) ? GUEST_DM_CLOSED_REASON : "Failed to create stream. Please try again.")
       }
@@ -766,24 +765,6 @@ function MessageInputComponent({
       composer.setIsSending(false)
     }
   })
-
-  // A refused draft promotion (the first send of a new DM) asks consent for the
-  // restored content; editing it, or leaving the stream, withdraws the question.
-  useEffect(() => {
-    if (!privacyBlockedContent) return
-    if (privacyBlockedContent !== composer.content) {
-      setPrivacyBlockedContent(null)
-      return
-    }
-    return surfacePrivacyConfirmToast(`share-privacy-draft-${streamId}`, {
-      confirmLabel: "Share anyway",
-      onConfirm: () => {
-        setPrivacyBlockedContent(null)
-        void handleSubmit(privacyBlockedContent, { confirmedPrivacyWarning: true })
-      },
-      onCancel: () => setPrivacyBlockedContent(null),
-    })
-  }, [privacyBlockedContent, composer.content, streamId, handleSubmit])
 
   /**
    * Schedule the current composer content for a future send. Mirrors the
@@ -967,6 +948,7 @@ function MessageInputComponent({
     content: composer.content,
     sendWarning,
     audienceByStreamId,
+    awaitSendWarning,
     onContentChange: composer.handleContentChange,
     pendingAttachments: composer.pendingAttachments,
     onRemoveAttachment: composer.handleRemoveAttachment,

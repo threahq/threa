@@ -10,21 +10,18 @@ import {
   type SendWarning,
 } from "./reference-audience"
 
-const ORIGIN = "https://app.example.test"
+const ORIGIN = window.location.origin
 
 function audience(streamId: string, count: number): ReferenceAudience {
   return { streamId, count, sampleUserIds: [] }
 }
 
-function warning(overrides: Partial<SendWarning> & { count: number }): SendWarning {
-  const { count, ...rest } = overrides
+function warning(tone: SendWarning["tone"], count: number, convertible: boolean): SendWarning {
   return {
-    tone: "unreachable",
+    tone,
     lead: audience("stream_a", count),
-    exposedShareStreamIds: [],
-    exposedLinkStreamIds: ["stream_a"],
-    canShareInstead: false,
-    ...rest,
+    streamIds: ["stream_a"],
+    convertibleStreamIds: convertible ? ["stream_a"] : [],
   }
 }
 
@@ -61,7 +58,7 @@ describe("collectComposerReferences", () => {
       ],
     }
 
-    expect(collectComposerReferences(doc, "stream_target", ORIGIN)).toEqual([
+    expect(collectComposerReferences(doc, "stream_target")).toEqual([
       { kind: "share", streamId: "stream_s", messageId: "msg_1" },
       { kind: "share", streamId: "stream_q", messageId: "msg_3" },
       { kind: "link", streamId: "stream_l", messageId: null },
@@ -100,34 +97,31 @@ describe("resolveSendWarning", () => {
     ).toEqual({
       tone: "reveal",
       lead: audience("stream_s", 1),
-      exposedShareStreamIds: ["stream_s"],
-      exposedLinkStreamIds: ["stream_l1", "stream_l2"],
-      canShareInstead: true,
+      streamIds: ["stream_l1", "stream_l2", "stream_s"],
+      convertibleStreamIds: ["stream_s"],
     })
   })
 
-  it("unreachable leads with the max count; canShareInstead needs an exposed message link", () => {
+  it("unreachable leads with the max count; only exposed message links convert", () => {
     expect(resolveSendWarning(refs, exposingAudiences([audience("stream_l1", 5), audience("stream_l2", 2)]))).toEqual({
       tone: "unreachable",
       lead: audience("stream_l1", 5),
-      exposedShareStreamIds: [],
-      exposedLinkStreamIds: ["stream_l1", "stream_l2"],
-      canShareInstead: true,
+      streamIds: ["stream_l1", "stream_l2"],
+      convertibleStreamIds: ["stream_l2"],
     })
     expect(resolveSendWarning(refs, exposingAudiences([audience("stream_l1", 5)]))).toEqual({
       tone: "unreachable",
       lead: audience("stream_l1", 5),
-      exposedShareStreamIds: [],
-      exposedLinkStreamIds: ["stream_l1"],
-      canShareInstead: false,
+      streamIds: ["stream_l1"],
+      convertibleStreamIds: [],
     })
   })
 })
 
 describe("audienceQuestionCopy", () => {
-  const unreachable = (count: number, names: string[], canShareInstead = false) =>
-    audienceQuestionCopy(warning({ count, canShareInstead }), names)
-  const reveal = (count: number, names: string[]) => audienceQuestionCopy(warning({ count, tone: "reveal" }), names)
+  const unreachable = (count: number, names: string[], convertible = false) =>
+    audienceQuestionCopy(warning("unreachable", count, convertible), names)
+  const reveal = (count: number, names: string[]) => audienceQuestionCopy(warning("reveal", count, true), names)
 
   it("unreachable copy table", () => {
     expect({
@@ -139,38 +133,38 @@ describe("audienceQuestionCopy", () => {
       noNamesMany: unreachable(4, []),
     }).toEqual({
       one: {
-        desktop: "Martin can't open this link",
-        mobile: "Martin can't open it",
-        alternative: { desktop: "Share instead", mobile: "Share" },
+        full: "Martin can't open this link",
+        short: "Martin can't open it",
+        alternative: { full: "Share instead", short: "Share" },
         primary: "Send anyway",
       },
       two: {
-        desktop: "Martin and Anna can't open this link",
-        mobile: "2 people can't open it",
+        full: "Martin and Anna can't open this link",
+        short: "2 people can't open it",
         alternative: null,
         primary: "Send anyway",
       },
       three: {
-        desktop: "Martin, Anna and Kim can't open this link",
-        mobile: "3 people can't open it",
+        full: "Martin, Anna and Kim can't open this link",
+        short: "3 people can't open it",
         alternative: null,
         primary: "Send anyway",
       },
       more: {
-        desktop: "Martin, Anna +2 can't open this link",
-        mobile: "4 people can't open it",
+        full: "Martin, Anna +2 can't open this link",
+        short: "4 people can't open it",
         alternative: null,
         primary: "Send anyway",
       },
       noNamesOne: {
-        desktop: "1 person can't open this link",
-        mobile: "1 person can't open it",
+        full: "1 person can't open this link",
+        short: "1 person can't open it",
         alternative: null,
         primary: "Send anyway",
       },
       noNamesMany: {
-        desktop: "4 people can't open this link",
-        mobile: "4 people can't open it",
+        full: "4 people can't open this link",
+        short: "4 people can't open it",
         alternative: null,
         primary: "Send anyway",
       },
@@ -178,7 +172,7 @@ describe("audienceQuestionCopy", () => {
   })
 
   it("reveal copy table", () => {
-    const alt = { desktop: "Use link", mobile: "Link" }
+    const alt = { full: "Use link", short: "Link" }
     const primary = "Send"
     expect({
       one: reveal(1, ["Martin"]),
@@ -186,20 +180,20 @@ describe("audienceQuestionCopy", () => {
       more: reveal(4, ["Martin", "Anna"]),
       noNames: reveal(4, []),
     }).toEqual({
-      one: { desktop: "Martin will see this message", mobile: "Martin sees it", alternative: alt, primary },
+      one: { full: "Martin will see this message", short: "Martin sees it", alternative: alt, primary },
       oneNoName: {
-        desktop: "1 person will see this message",
-        mobile: "1 new person sees it",
+        full: "1 person will see this message",
+        short: "1 new person sees it",
         alternative: alt,
         primary,
       },
       more: {
-        desktop: "Martin, Anna +2 will see this message",
-        mobile: "4 new people see it",
+        full: "Martin, Anna +2 will see this message",
+        short: "4 new people see it",
         alternative: alt,
         primary,
       },
-      noNames: { desktop: "4 people will see this message", mobile: "4 new people see it", alternative: alt, primary },
+      noNames: { full: "4 people will see this message", short: "4 new people see it", alternative: alt, primary },
     })
   })
 })

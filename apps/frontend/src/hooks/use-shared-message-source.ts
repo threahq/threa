@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
 import { isRangeValid, serializeToMarkdown, sliceContent } from "@threahq/prosemirror"
 import { db } from "@/db"
@@ -128,16 +128,7 @@ export function useSharedMessageSource(reference: SharedMessageReference): Share
     [rangeFrom, rangeTo]
   )
   const hydrated = useSharedMessageSlot(messageId, version, range)
-  const { getUser, getPersona, getBot } = useActors(workspaceId ?? "")
-  const knownActorName = useCallback(
-    (actorId: string, actorType: string): string | undefined => {
-      if (actorType === "persona") return getPersona(actorId)?.name
-      if (actorType === "bot") return getBot(actorId)?.name
-      return getUser(actorId)?.name || undefined
-    },
-    [getUser, getPersona, getBot]
-  )
-
+  const { findActorName } = useActors(workspaceId ?? "")
   const cachedEvent = useLiveQuery(
     async () => {
       if (!workspaceId || !sourceStreamId || !messageId) return null
@@ -208,7 +199,7 @@ export function useSharedMessageSource(reference: SharedMessageReference): Share
         // A pointer that never passed through a timeline row (a link converted
         // to a share) carries no stamped author, so the cache names it — but only
         // with a real name, never a placeholder that would hide a stamped one.
-        const authorName = knownActorName(cachedEvent.actorId, cachedEvent.actorType)
+        const authorName = findActorName(cachedEvent.actorId, cachedEvent.actorType) ?? undefined
         if (range) {
           // A ranged pointer has no cached body of its own — the slice is cut
           // from the pinned document the cache already holds, which is exactly
@@ -245,7 +236,7 @@ export function useSharedMessageSource(reference: SharedMessageReference): Share
     }
 
     return null
-  }, [hydrated, cachedEvent, version, range, knownActorName])
+  }, [hydrated, cachedEvent, version, range, findActorName])
 
   const [showSkeleton, setShowSkeleton] = useState(false)
 
