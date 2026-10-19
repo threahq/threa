@@ -331,6 +331,29 @@ describe("PendingMessagesContext", () => {
       )
     })
 
+    it("should withdraw share-privacy consent only when the edit changes the content", async () => {
+      mockEventsGet.mockResolvedValue(undefined)
+      const { result } = renderPending("temp_consent")
+      const doc = (text: string) => ({
+        type: "doc" as const,
+        content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text }] }],
+      })
+
+      for (const text of ["old", "new"]) {
+        mockGet.mockResolvedValueOnce({
+          clientId: "temp_consent",
+          workspaceId: "ws_1",
+          content: "old",
+          confirmedPrivacyWarning: true,
+        })
+        await act(async () => {
+          await result.current.saveEditedMessage("temp_consent", doc(text), { enqueue: false })
+        })
+      }
+
+      expect(mockUpdate.mock.calls.map(([, changes]) => "confirmedPrivacyWarning" in changes)).toEqual([false, true])
+    })
+
     it("should remember a queued message's mode while it is edited and save the mode the edit leaves", async () => {
       mockGet.mockResolvedValue({ clientId: "temp_enqueue_edit", workspaceId: "ws_1", enqueue: true })
       mockEventsGet.mockResolvedValue({

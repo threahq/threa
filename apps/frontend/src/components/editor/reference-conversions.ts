@@ -1,5 +1,6 @@
 import type { Editor } from "@tiptap/core"
 import type { Node as PMNode } from "@tiptap/pm/model"
+import type { Transaction } from "@tiptap/pm/state"
 import { classifyDraftLink } from "@/lib/in-app-links"
 import { buildMessageLink } from "@/lib/stream-links"
 
@@ -39,21 +40,33 @@ function messageLinkRanges(doc: PMNode, streamIds: Set<string>): MessageRef[] {
   return ranges
 }
 
-function dispatchReplacements(editor: Editor, refs: MessageRef[], build: (ref: MessageRef) => PMNode): void {
+function dispatchReplacements(
+  editor: Editor,
+  refs: MessageRef[],
+  apply: (tr: Transaction, ref: MessageRef) => void
+): void {
   if (refs.length === 0) return
   const { tr } = editor.state
-  for (const ref of [...refs].sort((a, b) => b.from - a.from)) {
-    tr.replaceRangeWith(ref.from, ref.to, build(ref))
-  }
+  for (const ref of [...refs].sort((a, b) => b.from - a.from)) apply(tr, ref)
   editor.view.dispatch(tr)
 }
 
 /** Every message link (chip or link-marked text) into one of `streamIds` becomes a share block. */
 export function linksToShares(editor: Editor, streamIds: string[]): void {
   const { schema } = editor.state
-  dispatchReplacements(editor, messageLinkRanges(editor.state.doc, new Set(streamIds)), ({ streamId, messageId }) =>
-    schema.nodes.sharedMessage.create({ streamId, messageId })
-  )
+  dispatchReplacements(editor, messageLinkRanges(editor.state.doc, new Set(streamIds)), (tr, ref) => {
+    const share = schema.nodes.sharedMessage.create({ streamId: ref.streamId, messageId: ref.messageId })
+    const $from = tr.doc.resolve(ref.from)
+    if ($from.depth <= 1) {
+      tr.replaceRangeWith(ref.from, ref.to, share)
+      return
+    }
+    // Shares round-trip through markdown only as top-level blocks, so a link
+    // nested in a list or quote lands after the outermost block instead.
+    const afterOuter = $from.after(1)
+    tr.delete(ref.from, ref.to)
+    tr.insert(afterOuter - (ref.to - ref.from), share)
+  })
 }
 
 /** Every share or quote block from one of `streamIds` becomes a paragraph with a link chip to that message. */
@@ -69,10 +82,14 @@ export function sharesToLinks(editor: Editor, workspaceId: string, streamIds: st
     }
     return false
   })
-  dispatchReplacements(editor, refs, ({ streamId, messageId }) =>
-    schema.nodes.paragraph.create(
-      null,
-      schema.nodes.inAppLink.create({ url: buildMessageLink(workspaceId, streamId, messageId), streamId, messageId })
+  dispatchReplacements(editor, refs, (tr, { from, to, streamId, messageId }) =>
+    tr.replaceRangeWith(
+      from,
+      to,
+      schema.nodes.paragraph.create(
+        null,
+        schema.nodes.inAppLink.create({ url: buildMessageLink(workspaceId, streamId, messageId), streamId, messageId })
+      )
     )
   )
 }

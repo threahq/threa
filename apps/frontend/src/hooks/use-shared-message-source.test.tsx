@@ -222,7 +222,7 @@ describe("useSharedMessageSource", () => {
       contentMarkdown: "ws_2 body",
       authorId: "usr_2",
       actorType: "user",
-      authorName: "usr_2",
+      authorName: undefined,
       editedAt: null,
       attachments: undefined,
       version: null,

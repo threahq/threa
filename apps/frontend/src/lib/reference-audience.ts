@@ -24,6 +24,8 @@ export interface SendWarning {
 export interface ComposerSendWarning {
   warning: SendWarning
   names: string[]
+  /** The answer covers every ref in the draft, so the send may carry consent. */
+  settled: boolean
 }
 
 export interface AudienceQuestionCopy {

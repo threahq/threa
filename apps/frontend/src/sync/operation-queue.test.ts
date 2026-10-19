@@ -91,6 +91,25 @@ beforeEach(async () => {
   await db.composerLoaded.clear()
 })
 
+describe("processOperationQueue edit replay", () => {
+  it("should forward the share-privacy consent a queued edit was saved with", async () => {
+    const contentJson = { type: "doc", content: [] }
+    await enqueueOperation(workspaceId, "edit_message", {
+      messageId: "msg_1",
+      contentJson,
+      confirmedPrivacyWarning: true,
+    })
+    await enqueueOperation(workspaceId, "edit_message", { messageId: "msg_2", contentJson })
+
+    await process(scheduledServiceRejectingWith(new Error("unused")))
+
+    expect(messageService.update.mock.calls).toEqual([
+      [workspaceId, "msg_1", { contentJson, confirmedPrivacyWarning: true }],
+      [workspaceId, "msg_2", { contentJson }],
+    ])
+  })
+})
+
 describe("processOperationQueue permanent-4xx handling", () => {
   // The prod 2026-07-19 send-now loop: 11 IDB ops replaying a 409 on every
   // queue kick, forever. A permanent 4xx must kill the op AND the stale row

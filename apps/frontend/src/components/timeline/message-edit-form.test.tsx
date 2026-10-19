@@ -308,6 +308,49 @@ describe("MessageEditForm saving", () => {
     ])
   })
 
+  it("should withdraw the Save anyway question once the user changes the edit", async () => {
+    vi.spyOn(toast, "warning").mockReturnValue("w2")
+    const dismiss = vi.spyOn(toast, "dismiss").mockReturnValue("w2")
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      update: vi.fn().mockRejectedValue(new ApiError(409, ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED, "Confirm")),
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+
+    await submitEdit(vi.fn())
+    await waitFor(() => expect(toast.warning).toHaveBeenCalled())
+    expect(dismiss).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), {
+      target: {
+        value: JSON.stringify({
+          type: "doc",
+          content: [{ type: "paragraph", content: [{ type: "text", text: "More" }] }],
+        }),
+      },
+    })
+
+    await waitFor(() => expect(dismiss.mock.calls).toEqual([["share-privacy-edit-msg_1"]]))
+  })
+
+  it("should keep consent on an edit queued after Save anyway fails without a server verdict", async () => {
+    const warningToast = vi.spyOn(toast, "warning").mockReturnValue("w3")
+    vi.spyOn(toast, "info").mockReturnValue("i3")
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      update: vi
+        .fn()
+        .mockRejectedValueOnce(new ApiError(409, ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED, "Confirm"))
+        .mockRejectedValueOnce(new TypeError("Failed to fetch")),
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+    const onSave = vi.fn()
+
+    await submitEdit(onSave)
+    await waitFor(() => expect(warningToast).toHaveBeenCalled())
+    ;(warningToast.mock.calls[0][1] as ToastOptions).action?.onClick?.({} as never)
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce())
+    expect((await db.pendingOperations.toArray()).map(({ payload }) => payload)).toEqual([
+      { messageId: "msg_1", contentJson: editedContent, confirmedPrivacyWarning: true },
+    ])
+  })
+
   it("should keep what the user typed while the save was in flight when the server refuses it", async () => {
     vi.spyOn(toast, "error").mockReturnValue("e3")
     const typedLater: JSONContent = {

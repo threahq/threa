@@ -1471,7 +1471,7 @@ describe("MessageComposer", () => {
       content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }],
     }
 
-    function sendWarning(tone: SendWarning["tone"], exposed = ["stream_src"]): ComposerSendWarning {
+    function sendWarning(tone: SendWarning["tone"], exposed = ["stream_src"], settled = true): ComposerSendWarning {
       return {
         warning: {
           tone,
@@ -1481,19 +1481,14 @@ describe("MessageComposer", () => {
           canShareInstead: false,
         },
         names: ["Ada"],
+        settled,
       }
     }
 
-    async function renderAsking(tone: SendWarning["tone"]) {
+    async function renderAsking(tone: SendWarning["tone"], warning = sendWarning(tone)) {
       const onSubmit = vi.fn()
       const view = render(
-        <MessageComposer
-          {...defaultProps}
-          content={DRAFT}
-          canSubmit
-          onSubmit={onSubmit}
-          sendWarning={sendWarning(tone)}
-        />
+        <MessageComposer {...defaultProps} content={DRAFT} canSubmit onSubmit={onSubmit} sendWarning={warning} />
       )
       await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
       fireEvent.keyDown(screen.getByTestId("rich-editor"), { key: "Enter", metaKey: true })
@@ -1515,6 +1510,12 @@ describe("MessageComposer", () => {
       fireEvent.keyDown(primary, { key: "Enter" })
       expect(onSubmit.mock.calls).toEqual([[DRAFT, { confirmedPrivacyWarning: true }]])
       expect(screen.queryByTestId("send-ask")).not.toBeInTheDocument()
+    })
+
+    it("still asks but leaves consent to the server while the answer is stale", async () => {
+      const { onSubmit } = await renderAsking("reveal", sendWarning("reveal", ["stream_src"], false))
+      fireEvent.click(within(screen.getByTestId("send-ask")).getByRole("button", { name: /send/i }))
+      expect(onSubmit.mock.calls).toEqual([[DRAFT, undefined]])
     })
 
     it("dismisses the question when the editor is clicked", async () => {
@@ -1604,6 +1605,7 @@ describe("MessageComposer", () => {
           canShareInstead: true,
         },
         names: [],
+        settled: true,
       }
       const props = { ...defaultProps, workspaceId: "ws_1", canSubmit: true, onSubmit }
       const { rerender } = render(<MessageComposer {...props} content={editor.getJSON()} sendWarning={unreachable} />)

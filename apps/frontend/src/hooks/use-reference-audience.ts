@@ -32,10 +32,11 @@ export function useReferenceAudience({
   const { getUser } = useActors(workspaceId)
   const targetStreamId = target && "streamId" in target ? target.streamId : null
   const refs = useMemo(() => collectComposerReferences(content, targetStreamId), [content, targetStreamId])
-  const streamIds = useMemo(() => referenceStreamIds(refs).slice(0, MAX_STREAM_IDS), [refs])
+  const allStreamIds = useMemo(() => referenceStreamIds(refs), [refs])
+  const streamIds = useMemo(() => allStreamIds.slice(0, MAX_STREAM_IDS), [allStreamIds])
   const targetKey = target ? targetKeyOf(target) : ""
 
-  const { data } = useQuery({
+  const { data, isSuccess, isPlaceholderData } = useQuery({
     queryKey: ["referenceAudience", workspaceId, targetKey, streamIds],
     queryFn: () => messageService.referenceAudience(workspaceId, { ...target!, streamIds }),
     enabled: !!workspaceId && !!target && streamIds.length > 0,
@@ -50,11 +51,14 @@ export function useReferenceAudience({
   const warning = useMemo(() => resolveSendWarning(refs, audienceByStreamId), [refs, audienceByStreamId])
   const sendWarning = useMemo(() => {
     if (!warning) return null
+    // Consent may only be claimed for an answer about exactly these refs: a
+    // placeholder or truncated answer knows nothing about the newest share.
+    const settled = isSuccess && !isPlaceholderData && allStreamIds.length <= MAX_STREAM_IDS
     const names = warning.lead.sampleUserIds.flatMap((id) => {
       const name = getUser(id)?.name
       return name ? [name] : []
     })
-    return { warning, names }
-  }, [warning, getUser])
+    return { warning, names, settled }
+  }, [warning, getUser, isSuccess, isPlaceholderData, allStreamIds.length])
   return { sendWarning, audienceByStreamId }
 }

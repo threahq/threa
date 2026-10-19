@@ -9,6 +9,24 @@ export function isPrivacyConfirmationError(err: unknown): err is ApiError {
 }
 
 /**
+ * The 409 asked for consent to send content the composer still holds. The
+ * owner dismisses it (returned cleanup) once that content changes, so the
+ * confirmation can never cover anything the author did not see it for.
+ */
+export function surfacePrivacyConfirmToast(
+  id: string,
+  { confirmLabel, onConfirm, onCancel }: { confirmLabel: string; onConfirm: () => void; onCancel: () => void }
+): () => void {
+  toast.warning(SHARE_PRIVACY_WARNING_MESSAGE, {
+    id,
+    duration: Infinity,
+    action: { label: confirmLabel, onClick: onConfirm },
+    cancel: { label: "Cancel", onClick: onCancel },
+  })
+  return () => toast.dismiss(id)
+}
+
+/**
  * Surfaced when the message queue receives 409 +
  * `SHARE_PRIVACY_CONFIRMATION_REQUIRED` for a pending share — the user has
  * not acknowledged that the share exposes its source to people outside

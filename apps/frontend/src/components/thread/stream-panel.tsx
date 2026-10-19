@@ -188,7 +188,8 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
     scopeId: draftInfo?.anchorId ?? "",
     e2eStreamId: e2eRoot,
   })
-  const audienceParentId = draftInfo?.parentStreamId
+  // Same E2E rule as the stream composer: no target until the parent is known plaintext.
+  const audienceParentId = parentStream && !parentStream.e2eEnabled ? draftInfo?.parentStreamId : undefined
   const audienceTarget = useMemo(() => (audienceParentId ? { streamId: audienceParentId } : null), [audienceParentId])
   const { sendWarning, audienceByStreamId } = useReferenceAudience({
     workspaceId,

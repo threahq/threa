@@ -37,7 +37,7 @@ import { GUEST_DM_CLOSED_REASON } from "@/lib/guest-dm-policy"
 import { MessageInput, materializePendingAttachmentReferences } from "./message-input"
 // eslint-disable-next-line no-restricted-imports -- clears the durable composer-target rows the composer reads
 import { db } from "@/db"
-import { ENQUEUE_COMMAND, type JSONContent } from "@threahq/types"
+import { ENQUEUE_COMMAND, ShareErrorCodes, type JSONContent } from "@threahq/types"
 import { EMPTY_ENQUEUE_ERROR, SCHEDULED_ENQUEUE_ERROR } from "@/components/composer/use-composer-command-send"
 
 const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
@@ -463,6 +463,27 @@ describe("MessageInput", () => {
       expect(screen.getByTestId("message-composer")).toBeInTheDocument()
       expect(screen.getByTestId("rich-editor")).toBeInTheDocument()
       expect(screen.getByRole("button", { name: /send/i })).toBeInTheDocument()
+    })
+
+    it("asks the audience endpoint only once the stream is known to be plaintext", () => {
+      const audience = vi.fn(() => ({ sendWarning: null, audienceByStreamId: new Map() }))
+      spyOnExport(referenceAudienceModule, "useReferenceAudience").mockReturnValue(audience as never)
+      const targetFor = (stream: object | undefined) => {
+        vi.spyOn(hooksModule, "useStreamOrDraft").mockReturnValue({
+          stream,
+          sendMessage: mockSendMessage,
+        } as unknown as ReturnType<typeof hooksModule.useStreamOrDraft>)
+        audience.mockClear()
+        const { unmount } = render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+        unmount()
+        return (audience.mock.calls.at(-1) as unknown as [{ target: unknown }])[0].target
+      }
+
+      expect({
+        unresolved: targetFor(undefined),
+        e2e: targetFor({ id: streamId, e2eEnabled: true }),
+        plaintext: targetFor({ id: streamId, e2eEnabled: false }),
+      }).toEqual({ unresolved: null, e2e: null, plaintext: { streamId } })
     })
 
     it("keeps schedule, the stash pile and expand off an aside's composer, on for a channel's", () => {
@@ -1378,6 +1399,30 @@ describe("MessageInput", () => {
 
       expect(screen.getByText(GUEST_DM_CLOSED_REASON)).toBeInTheDocument()
       expect(screen.queryByText("Failed to create stream. Please try again.")).not.toBeInTheDocument()
+    })
+
+    it("asks to share anyway when the server refuses a new DM's first send for exposing a share", async () => {
+      mockComposerState.canSend = true
+      mockComposerState.content = makeDoc("Look at this")
+      mockSendMessage
+        .mockRejectedValueOnce(new ApiError(409, ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED, "Confirm"))
+        .mockResolvedValueOnce({})
+      const warning = vi.spyOn(toast, "warning").mockReturnValue("w1")
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
+
+      await waitFor(() => expect(warning).toHaveBeenCalled())
+      const options = warning.mock.calls[0][1] as { action: { label: string; onClick: () => void } }
+      expect({
+        action: options.action.label,
+        genericError: screen.queryByText("Failed to create stream. Please try again."),
+      }).toEqual({ action: "Share anyway", genericError: null })
+
+      act(() => options.action.onClick())
+
+      await waitFor(() => expect(mockSendMessage).toHaveBeenCalledTimes(2))
+      expect(mockSendMessage.mock.calls.map(([input]) => input.confirmedPrivacyWarning)).toEqual([undefined, true])
     })
 
     it("does not restore an aborted stale send into the next stream", async () => {

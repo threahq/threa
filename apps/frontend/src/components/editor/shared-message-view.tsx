@@ -1,3 +1,4 @@
+import { useEffect } from "react"
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react"
 import { X, Share2, Eye } from "lucide-react"
 import { useParams } from "react-router-dom"
@@ -19,7 +20,7 @@ import { AUDIENCE_TONE_TEXT, useReferenceExposed } from "./reference-audience-co
  * remove-button, and selection highlighting — not the per-state body
  * rendering.
  */
-export function SharedMessageView({ node, deleteNode, selected }: NodeViewProps) {
+export function SharedMessageView({ node, deleteNode, selected, updateAttributes }: NodeViewProps) {
   const attrs = node.attrs as SharedMessageAttrs
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const source = useSharedMessageSource({
@@ -29,6 +30,18 @@ export function SharedMessageView({ node, deleteNode, selected }: NodeViewProps)
     version: attrs.version ?? null,
     range: attrs.range ?? null,
   })
+  // A share converted from a link carries no author; stamp it once resolved so
+  // the sent node names the author like one shared from a timeline row.
+  const resolved = source.status === "resolved" ? source : null
+  const resolvedName = resolved?.authorName
+  const resolvedId = resolved?.authorId
+  const resolvedType = resolved?.actorType
+  useEffect(() => {
+    if (resolvedName && resolvedId && resolvedType && !attrs.authorName) {
+      updateAttributes({ authorName: resolvedName, authorId: resolvedId, actorType: resolvedType })
+    }
+  }, [resolvedName, resolvedId, resolvedType, attrs.authorName, updateAttributes])
+
   const exposed = useReferenceExposed(attrs.streamId)
   const Icon = exposed ? Eye : Share2
 

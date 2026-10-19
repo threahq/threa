@@ -68,6 +68,25 @@ describe("linksToShares", () => {
     ])
   })
 
+  it("moves shares for links nested in a list or quote after the outer block, in order", () => {
+    const list = (...items: JSONContent[]): JSONContent => ({
+      type: "bulletList",
+      content: items.map((item) => ({ type: "listItem", content: [item] })),
+    })
+    const editor = createEditor([
+      list(paragraph(text("x "), chip("stream_a", "msg_1")), paragraph(chip("stream_a", "msg_2"), text(" y"))),
+      { type: "blockquote", content: [paragraph(text("q "), chip("stream_a", "msg_3"))] },
+    ])
+    linksToShares(editor, ["stream_a"])
+    expect(docContent(editor)).toEqual([
+      list(paragraph(text("x ")), paragraph(text(" y"))),
+      sharedAttrs("stream_a", "msg_1"),
+      sharedAttrs("stream_a", "msg_2"),
+      { type: "blockquote", content: [paragraph(text("q "))] },
+      sharedAttrs("stream_a", "msg_3"),
+    ])
+  })
+
   it("converts link-marked message text and leaves other streams and stream-only links alone", () => {
     const href = buildMessageLink(WS, "stream_a", "msg_2")
     const editor = createEditor([

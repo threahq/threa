@@ -1038,7 +1038,7 @@ export function MessageComposer({
     micRef.current?.prepareSendAsIs()
     onSubmit(
       richEditorRef.current?.getEditor()?.getJSON() as JSONContent | undefined,
-      sendWarningValue?.tone === "reveal" ? { confirmedPrivacyWarning: true } : undefined
+      sendWarning?.settled && sendWarningValue?.tone === "reveal" ? { confirmedPrivacyWarning: true } : undefined
     )
     if (exposedStreamIds.length > 0) setConsentedStreamIds((prev) => new Set([...prev, ...exposedStreamIds]))
     if (showAsk) {
@@ -1052,6 +1052,7 @@ export function MessageComposer({
     showAsk,
     onSubmit,
     resetMobileComposerSize,
+    sendWarning,
     sendWarningValue,
     exposedStreamIds,
     isMobile,

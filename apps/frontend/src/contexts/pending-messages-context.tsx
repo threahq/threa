@@ -292,6 +292,8 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
           retryAfter: 0,
           terminalFailure: undefined,
           enqueue: enqueue || undefined,
+          // Consent covered the body it was given for; new content must ask again.
+          ...(contentMarkdown !== existing.content && { confirmedPrivacyWarning: undefined }),
         })
 
         // Update the optimistic event's payload so the timeline reflects the edit

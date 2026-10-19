@@ -197,6 +197,7 @@ async function executeOperation(
     case "edit_message":
       await messageService.update(workspaceId, payload.messageId as string, {
         contentJson: payload.contentJson as import("@threahq/types").JSONContent,
+        ...(payload.confirmedPrivacyWarning === true && { confirmedPrivacyWarning: true }),
       })
       break
 

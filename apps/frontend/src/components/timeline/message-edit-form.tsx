@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { enqueueOperation } from "@/sync/operation-queue"
 import { isPermanentApiError } from "@/api"
-import { isPrivacyConfirmationError, SHARE_PRIVACY_WARNING_MESSAGE } from "@/lib/share-privacy-toast"
+import { isPrivacyConfirmationError, surfacePrivacyConfirmToast } from "@/lib/share-privacy-toast"
 import { Expand } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -109,26 +109,18 @@ export function MessageEditForm({
         onSave()
       } catch (err) {
         if (isPrivacyConfirmationError(err)) {
-          const toastId = `share-privacy-edit-${messageId}`
-          toast.warning(SHARE_PRIVACY_WARNING_MESSAGE, {
-            id: toastId,
-            duration: Infinity,
-            action: {
-              label: "Save anyway",
-              onClick: () => {
-                toast.dismiss(toastId)
-                void saveEdit(json, true)
-              },
-            },
-            cancel: { label: "Cancel", onClick: () => toast.dismiss(toastId) },
-          })
+          setPrivacyBlockedJson(json)
           return
         }
         if (isPermanentApiError(err)) {
           toast.error("Couldn't save your edit.")
           return
         }
-        await enqueueOperation(workspaceId, "edit_message", { messageId, contentJson: json })
+        await enqueueOperation(workspaceId, "edit_message", {
+          messageId,
+          contentJson: json,
+          ...(confirmedPrivacyWarning && { confirmedPrivacyWarning }),
+        })
         onSave() // Close the edit form — the edit will be retried
         toast.info("Edit queued — will be saved when back online")
       } finally {
@@ -137,6 +129,25 @@ export function MessageEditForm({
     },
     [workspaceId, messageId, onSave, queryClient, messageService]
   )
+
+  // A 409 asks consent for the body that was saved; typing more, or leaving
+  // the edit, withdraws the question.
+  const [privacyBlockedJson, setPrivacyBlockedJson] = useState<JSONContent | null>(null)
+  useEffect(() => {
+    if (!privacyBlockedJson) return
+    if (privacyBlockedJson !== contentJson) {
+      setPrivacyBlockedJson(null)
+      return
+    }
+    return surfacePrivacyConfirmToast(`share-privacy-edit-${messageId}`, {
+      confirmLabel: "Save anyway",
+      onConfirm: () => {
+        setPrivacyBlockedJson(null)
+        void saveEdit(privacyBlockedJson, true)
+      },
+      onCancel: () => setPrivacyBlockedJson(null),
+    })
+  }, [privacyBlockedJson, contentJson, messageId, saveEdit])
 
   const handleSubmit = useCallback(async () => {
     const contentMarkdown = serializeToMarkdown(contentJson)
@@ -171,8 +182,9 @@ export function MessageEditForm({
       const json = parseMarkdown(trimmed)
       setDocEditorOpen(false)
       // A refused save keeps the form open, so it must hold what the full editor sent.
-      setContentJson(inAppLinkMarksToNodes(json))
-      await saveEdit(json)
+      const content = inAppLinkMarksToNodes(json)
+      setContentJson(content)
+      await saveEdit(content)
     },
     [saveEdit, initialMarkdown, onCancel, onDelete]
   )
@@ -238,6 +250,10 @@ export function MessageEditForm({
       >
         <DrawerContent
           ref={drawerContentRef}
+          onPointerDownOutside={(e) => {
+            // The "Save anyway" toast lives outside the drawer; pressing it must not close the edit.
+            if ((e.target as HTMLElement).closest("[data-sonner-toaster]")) e.preventDefault()
+          }}
           className={mobileExpanded ? "!h-[100dvh] rounded-t-none" : "max-h-[85dvh]"}
         >
           <DrawerTitle className="sr-only">Edit message</DrawerTitle>
