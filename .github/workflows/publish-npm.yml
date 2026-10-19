@@ -7,8 +7,8 @@
 # provenance. Run it from the Actions tab with the package name and the version
 # already committed in its package.json. Order for a new version set:
 # bot-runtime-client, then remote-session and harness-client, then threa-bot,
-# hermes-remote, claude-code-remote and pi-remote (each depends on the ones
-# before it by caret range). cli bundles what it uses and can go any time.
+# hermes-remote, claude-code-remote, pi-remote and t3code-remote (each depends on
+# the ones before it by caret range). cli bundles what it uses and can go any time.
 name: Publish npm package
 
 on:
@@ -26,6 +26,7 @@ on:
           - hermes-remote
           - claude-code-remote
           - pi-remote
+          - t3code-remote
           - cli
       dry_run:
         description: Build and pack, but do not publish
@@ -74,6 +75,7 @@ jobs:
           bun install --cwd extensions/hermes-remote
           bun install --cwd extensions/claude-code-remote
           bun install --cwd extensions/pi-remote
+          bun install --cwd extensions/t3code-remote
 
       - name: Test
         run: |

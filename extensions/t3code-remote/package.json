@@ -1,7 +1,6 @@
 {
   "name": "@threahq/t3code-remote",
   "version": "0.1.0",
-  "private": true,
   "description": "A T3 Code connector that bridges a local T3 Code server to a Threa scratchpad: each Threa turn becomes one T3 thread run, with its activity traced back as steps.",
   "keywords": [
     "threa",
@@ -31,7 +30,9 @@
     "start": "bun run ./src/index.ts",
     "install-service": "bun run ./src/install.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "bun ../scripts/build-package.ts",
+    "pack": "bun run build && cd dist && npm pack --pack-destination .."
   },
   "dependencies": {
     "@threahq/remote-session": "file:../remote-session"

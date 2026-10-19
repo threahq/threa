@@ -10,13 +10,13 @@ T3 server works the same as a local one.
 
 ## Running it
 
-From a checkout of the Threa repo:
-
 ```sh
-cd extensions/t3code-remote
-bun install
-bun run start
+npm install -g @threahq/t3code-remote
+threa-t3code
 ```
+
+From a checkout of the Threa repo, `bun install` then `bun run start` in `extensions/t3code-remote` runs it from
+source.
 
 Environment:
 
@@ -36,18 +36,21 @@ and `t3AutoLogin`. Environment variables win.
 
 ## Running it as a service
 
-On Linux, `bun run install-service --start` writes a systemd user unit that runs the connector from this checkout
-with the bun that ran the installer, then enables and starts it.
+On Linux, `threa-t3code-install --start` writes a systemd user unit, then enables and starts it. The unit runs the
+installed package with the node that installed it, so `npm update -g @threahq/t3code-remote` and a
+`systemctl --user restart threa-t3code-remote` upgrade it. The installer refuses to run from `npx`, whose cache npm
+clears under a running unit. From a checkout, `bun run install-service --start` writes a unit that runs the source
+with bun.
 
 It writes `~/.config/systemd/user/threa-t3code-remote.service` (refusing to overwrite an existing one without
 `--force`) and creates `~/.threa/t3code-remote/log/`, where the connector's output lands. `--dry-run` prints the
 plan and touches nothing. The unit reads its environment from `~/.config/threa/t3code-remote.env`, one `KEY=value`
 per line. With auto-login on, the connector runs `t3`, so put a `PATH` that reaches it in that file: a `PATH` there
-replaces the unit's own, so include bun's directory too.
+replaces the unit's own, so include the directory of the node or bun the unit runs too.
 
 The connector changes into `~/.threa/t3code-remote/work` wherever it is started, and downloads attachments there.
-Its scratchpad identity comes from the host name and that directory, so the service and a manual `bun run start`
-link to the same scratchpad.
+Its scratchpad identity comes from the host name and that directory, so the service and a manual run link to the
+same scratchpad.
 
 ## Logging in to T3 Code
 
