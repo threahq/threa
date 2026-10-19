@@ -58,6 +58,13 @@ export function collectShareReferences(content: JSONContent, targetStreamId: str
   }
 }
 
+export function privacyConfirmationRequired(): HttpError {
+  return new HttpError("Privacy confirmation required to share this message", {
+    status: 409,
+    code: ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED,
+  })
+}
+
 export interface ValidateAndRecordSharesParams {
   client: Querier
   workspaceId: string
@@ -232,10 +239,7 @@ export const ShareService = {
         !params.confirmedPrivacyWarning &&
         !recordedSourceMessageIds.has(ref.sourceMessageId)
       ) {
-        throw new HttpError("Privacy confirmation required to share this message", {
-          status: 409,
-          code: ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED,
-        })
+        throw privacyConfirmationRequired()
       }
 
       await SharedMessageRepository.insert(params.client, {
