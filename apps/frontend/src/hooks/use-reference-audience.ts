@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 import { keepPreviousData, useQuery } from "@tanstack/react-query"
-import type { JSONContent, ReferenceAudience } from "@threahq/types"
+import { REFERENCE_AUDIENCE_MAX_STREAM_IDS, type JSONContent, type ReferenceAudience } from "@threahq/types"
 import { useMessageService } from "@/contexts"
 import { useActors } from "./use-actors"
 import {
@@ -12,7 +12,6 @@ import {
   type ReferenceAudienceTarget,
 } from "@/lib/reference-audience"
 
-const MAX_STREAM_IDS = 50
 const EMPTY_AUDIENCES: ReferenceAudience[] = []
 
 function targetKeyOf(target: ReferenceAudienceTarget): string {
@@ -33,7 +32,7 @@ export function useReferenceAudience({
   const targetStreamId = target && "streamId" in target ? target.streamId : null
   const refs = useMemo(() => collectComposerReferences(content, targetStreamId), [content, targetStreamId])
   const allStreamIds = useMemo(() => referenceStreamIds(refs), [refs])
-  const streamIds = useMemo(() => allStreamIds.slice(0, MAX_STREAM_IDS), [allStreamIds])
+  const streamIds = useMemo(() => allStreamIds.slice(0, REFERENCE_AUDIENCE_MAX_STREAM_IDS), [allStreamIds])
   const targetKey = target ? targetKeyOf(target) : ""
 
   const { data, isSuccess, isPlaceholderData } = useQuery({
@@ -51,7 +50,7 @@ export function useReferenceAudience({
     if (!warning) return null
     // Consent may only be claimed for an answer about exactly these refs: a
     // placeholder or truncated answer knows nothing about the newest share.
-    const settled = isSuccess && !isPlaceholderData && allStreamIds.length <= MAX_STREAM_IDS
+    const settled = isSuccess && !isPlaceholderData && allStreamIds.length <= REFERENCE_AUDIENCE_MAX_STREAM_IDS
     const names = warning.lead.sampleUserIds.flatMap((id) => {
       const name = getUser(id)?.name
       return name ? [name] : []
