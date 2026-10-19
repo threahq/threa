@@ -1,0 +1,26 @@
+import { describe, expect, test } from "bun:test"
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { createFileThreadStore } from "./connector"
+
+describe("createFileThreadStore", () => {
+  test("starts empty without a file and keeps what it saved", () => {
+    const store = createFileThreadStore(join(mkdtempSync(join(tmpdir(), "t3threads-")), "threads.json"))
+    expect(store.load()).toEqual({ threads: {} })
+
+    store.save({ threads: { stream_root: "thread_a" }, model: { instanceId: "codex", model: "gpt-5.5" } })
+
+    expect(store.load()).toEqual({
+      threads: { stream_root: "thread_a" },
+      model: { instanceId: "codex", model: "gpt-5.5" },
+    })
+  })
+
+  test("a damaged file throws rather than reading as no links", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "t3threads-")), "threads.json")
+    writeFileSync(path, '{"threads": {"stream_root": "thr')
+
+    expect(() => createFileThreadStore(path).load()).toThrow(`Could not read ${path}`)
+  })
+})
