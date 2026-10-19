@@ -12,6 +12,11 @@ export function buildStreamLink(workspaceId: string, streamId: string): string {
   return `${window.location.origin}/w/${workspaceId}/s/${streamId}`
 }
 
+/** Absolute permalink to one message in its stream ("Copy link to message"). */
+export function buildMessageLink(workspaceId: string, streamId: string, messageId: string): string {
+  return `${buildStreamLink(workspaceId, streamId)}?m=${messageId}`
+}
+
 /** Absolute invite link for a shared channel. The token is shown once, at creation. */
 export function buildStreamConnectionInviteLink(token: string): string {
   return `${window.location.origin}/connections/${encodeURIComponent(token)}`

@@ -14,7 +14,6 @@ import { workspaceKeys } from "./use-workspaces"
 import {
   MessageErrorCodes,
   MessageReferenceErrorCodes,
-  ShareErrorCodes,
   StreamConnectionErrorCodes,
   StreamTypes,
   draftStreamScope,
@@ -30,7 +29,7 @@ import type {
 } from "@threahq/types"
 import { toast } from "sonner"
 import { ApiError } from "@/api/client"
-import { surfacePrivacyBlockToast } from "@/lib/share-privacy-toast"
+import { isPrivacyConfirmationError, surfacePrivacyBlockToast } from "@/lib/share-privacy-toast"
 import { recordConnectivityEvent } from "@/lib/connectivity-diagnostics/facade"
 
 const REFERENCE_FAILURE_CODES: ReadonlySet<string> = new Set(Object.values(MessageReferenceErrorCodes))
@@ -438,11 +437,7 @@ export function useMessageQueue(workspaceId: string): void {
           // auto-retry — surface a toast offering "Share anyway" / "Cancel"
           // so the user explicitly confirms or aborts. INV-32: the API
           // contract surfaces this as 409 + a stable error code.
-          if (
-            ApiError.isApiError(err) &&
-            err.status === 409 &&
-            err.code === ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED
-          ) {
+          if (isPrivacyConfirmationError(err)) {
             // Dexie's deep KeyPaths inference hits a circular type on JSONContent.
             type UpdateFn = (key: string, changes: Record<string, unknown>) => Promise<number>
             await Promise.all([

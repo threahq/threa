@@ -23,7 +23,7 @@ export function InAppLinkChip({
   className,
 }: {
   icon?: ComponentType<{ className?: string }>
-  prefix?: string
+  prefix?: ReactNode
   label: ReactNode
   className?: string
 }) {

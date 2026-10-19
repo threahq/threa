@@ -1,4 +1,12 @@
 import { toast } from "sonner"
+import { ShareErrorCodes } from "@threahq/types"
+import { ApiError } from "@/api/client"
+
+export const SHARE_PRIVACY_WARNING_MESSAGE = "This share would expose the source to people outside the source stream."
+
+export function isPrivacyConfirmationError(err: unknown): err is ApiError {
+  return ApiError.isApiError(err) && err.status === 409 && err.code === ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED
+}
 
 /**
  * Surfaced when the message queue receives 409 +
@@ -23,7 +31,7 @@ export interface SharePrivacyToastDeps {
 
 export function surfacePrivacyBlockToast(clientMessageId: string, deps: SharePrivacyToastDeps): void {
   const id = `share-privacy-${clientMessageId}`
-  toast.warning("This share would expose the source to people outside the source stream.", {
+  toast.warning(SHARE_PRIVACY_WARNING_MESSAGE, {
     id,
     duration: Infinity,
     action: {

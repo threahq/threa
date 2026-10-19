@@ -182,6 +182,7 @@ export interface SendMessageInput {
    * didn't compose live (scheduled sends, retries, slash-command dispatch).
    */
   composeTrace?: ComposeTraceInput
+  confirmedPrivacyWarning?: boolean
 }
 
 export interface UseStreamOrDraftReturn {
@@ -421,6 +422,7 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
         dmUserId: targetUserId,
         contentJson: input.contentJson,
         attachmentIds: input.attachmentIds,
+        confirmedPrivacyWarning: input.confirmedPrivacyWarning,
       })
 
       const now = Date.now()
@@ -755,6 +757,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
             conversation: input.conversation,
             composeTrace,
             enqueue: input.enqueue,
+            confirmedPrivacyWarning: input.confirmedPrivacyWarning,
             createdAt: Date.now(),
             retryCount: 0,
             ...(e2eFields ?? {}),

@@ -62,6 +62,7 @@ export interface MessageService {
   delete: typeof messagesApi.delete
   validateMoveToThread: typeof messagesApi.validateMoveToThread
   moveToThread: typeof messagesApi.moveToThread
+  referenceAudience: typeof messagesApi.referenceAudience
   addReaction: typeof messagesApi.addReaction
   removeReaction: typeof messagesApi.removeReaction
   getVersions: typeof messagesApi.getVersions

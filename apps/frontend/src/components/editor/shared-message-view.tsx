@@ -1,10 +1,11 @@
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react"
-import { X, Share2 } from "lucide-react"
+import { X, Share2, Eye } from "lucide-react"
 import { useParams } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { useSharedMessageSource } from "@/hooks/use-shared-message-source"
 import { SharedMessageCardBody } from "@/components/shared-messages/card-body"
 import type { SharedMessageAttrs } from "./shared-message-extension"
+import { AUDIENCE_TONE_TEXT, useReferenceExposed } from "./reference-audience-context"
 
 /**
  * Live pointer to a message in another stream. Resolves the preview content
@@ -28,17 +29,23 @@ export function SharedMessageView({ node, deleteNode, selected }: NodeViewProps)
     version: attrs.version ?? null,
     range: attrs.range ?? null,
   })
+  const exposed = useReferenceExposed(attrs.streamId)
+  const Icon = exposed ? Eye : Share2
 
   return (
     <NodeViewWrapper
       className={cn(
         "my-1 flex items-start gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm select-none",
         "group/shared-message reveal-host",
+        exposed && "border-sky-600/50 dark:border-sky-400/50",
         selected && "ring-2 ring-primary/30"
       )}
       data-type="shared-message"
     >
-      <Share2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <Icon
+        className={cn("mt-0.5 h-4 w-4 shrink-0", exposed ? AUDIENCE_TONE_TEXT.reveal : "text-muted-foreground")}
+        aria-hidden="true"
+      />
       <div className="min-w-0 flex-1">
         <SharedMessageCardBody
           source={source}

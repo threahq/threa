@@ -409,6 +409,24 @@ describe("useStreamOrDraft real stream send", () => {
     )
   })
 
+  it("stores the share-privacy consent on the durable message queue item", async () => {
+    const { result } = await mountRealStreamSend()
+
+    await act(async () => {
+      await result.current.sendMessage({
+        contentJson: {
+          type: "doc",
+          content: [{ type: "paragraph", content: [{ type: "text", text: "consented share" }] }],
+        },
+        confirmedPrivacyWarning: true,
+      })
+    })
+
+    expect((await db.pendingMessages.toArray()).find((message) => message.content === "consented share")).toMatchObject(
+      { confirmedPrivacyWarning: true }
+    )
+  })
+
   it("forwards a conversation directive to the pending row and tags the optimistic payload (reply in conversation)", async () => {
     const { result } = await mountRealStreamSend()
 
@@ -519,6 +537,46 @@ describe("useStreamOrDraft scratchpad draft send", () => {
       },
       "follow-up": { streamId: "stream_promoted", streamCreation: undefined },
     })
+  })
+
+  it("carries the share-privacy consent onto the queued draft send", async () => {
+    await db.workspaceUsers.put({
+      id: "member_consent",
+      workspaceId: "ws_consent",
+      workosUserId: "workos_1",
+      email: "kris@example.com",
+      role: "owner",
+      slug: "kris",
+      name: "Kris",
+      joinedAt: "2026-08-14T06:00:00Z",
+      _cachedAt: Date.now(),
+    } as never)
+    await db.draftScratchpads.put({
+      id: "draft_consent",
+      workspaceId: "ws_consent",
+      displayName: null,
+      companionMode: "on",
+      createdAt: Date.now(),
+    })
+
+    const { result } = renderHook(() => useStreamOrDraft("ws_consent", "draft_consent"), {
+      wrapper: createWrapper(new QueryClient()),
+    })
+    await waitFor(() => expect(result.current.currentUserId).toBe("member_consent"))
+
+    await act(async () => {
+      await result.current.sendMessage({
+        contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "shared" }] }] },
+        confirmedPrivacyWarning: true,
+      })
+    })
+
+    expect(
+      (await db.pendingMessages.toArray()).map(({ draftId, confirmedPrivacyWarning }) => ({
+        draftId,
+        confirmedPrivacyWarning,
+      }))
+    ).toEqual([{ draftId: "draft_consent", confirmedPrivacyWarning: true }])
   })
 })
 
@@ -787,6 +845,7 @@ describe("useStreamOrDraft draft DM send", () => {
           type: "doc",
           content: [{ type: "paragraph", content: [{ type: "text", text: "hello" }] }],
         },
+        confirmedPrivacyWarning: true,
       })
 
       expect(sendResult).toEqual({
@@ -794,6 +853,19 @@ describe("useStreamOrDraft draft DM send", () => {
         replace: true,
       })
     })
+
+    expect(createDm.mock.calls).toEqual([
+      [
+        "ws_1",
+        "member_2",
+        {
+          dmUserId: "member_2",
+          contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hello" }] }] },
+          attachmentIds: undefined,
+          confirmedPrivacyWarning: true,
+        },
+      ],
+    ])
 
     expect(await db.streams.get(["ws_1", "stream_dm_1"])).toMatchObject({
       id: "stream_dm_1",

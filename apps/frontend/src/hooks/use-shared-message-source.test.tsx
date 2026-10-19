@@ -4,9 +4,11 @@ import { sharedMessageSlotKey, type AttachmentSummary } from "@threahq/types"
 import { SlotsProvider } from "@/components/slots/context"
 import { useSharedMessageSource } from "./use-shared-message-source"
 import { db } from "@/db"
+import { clearWorkspaceActorTables, seedWorkspaceUser } from "@/test/workspace-rows"
 
 async function clearEvents() {
   await db.events.clear()
+  await clearWorkspaceActorTables()
 }
 
 /** A legacy pointer: no revision, no span. */
@@ -159,7 +161,8 @@ describe("useSharedMessageSource", () => {
     })
   })
 
-  it("falls back to the local IDB event cache when hydration is absent", async () => {
+  it("falls back to the local IDB event cache when hydration is absent, naming the author from the workspace", async () => {
+    await seedWorkspaceUser("ws_1", "usr_42", "Grace")
     await db.events.put({
       id: "evt_cached",
       workspaceId: "ws_1",
@@ -177,13 +180,13 @@ describe("useSharedMessageSource", () => {
     const { result } = renderHook(() => unpinned("msg_cached"))
 
     await waitFor(() => {
-      expect(result.current.status).toBe("resolved")
-    })
-    expect(result.current).toMatchObject({
-      status: "resolved",
-      contentMarkdown: "local snippet",
-      authorId: "usr_42",
-      actorType: "user",
+      expect(result.current).toMatchObject({
+        status: "resolved",
+        contentMarkdown: "local snippet",
+        authorId: "usr_42",
+        actorType: "user",
+        authorName: "Grace",
+      })
     })
   })
 
@@ -219,6 +222,7 @@ describe("useSharedMessageSource", () => {
       contentMarkdown: "ws_2 body",
       authorId: "usr_2",
       actorType: "user",
+      authorName: "usr_2",
       editedAt: null,
       attachments: undefined,
       version: null,

@@ -10,6 +10,7 @@ import { buildImageIndexByAttachment } from "@/components/timeline/attachment-im
 import { findUploadJob } from "@/lib/uploads/upload-manager"
 import { createEditorExtensions } from "./editor-extensions"
 import { applyExternalEditorContent } from "./apply-external-content"
+import { ReferenceAudienceContext, NO_REFERENCE_AUDIENCE } from "./reference-audience-context"
 import { ComposerPillCopyButton } from "./composer-pill-copy-button"
 import { getDictationChunkPositions } from "./dictation-chunk-extension"
 import { EditorBehaviors, isSuggestionActive } from "./editor-behaviors"
@@ -55,7 +56,7 @@ import {
   snippetMimeForFilename,
   SNIPPET_FALLBACK_FILENAME,
 } from "./snippet-paste"
-import type { GiphyGif } from "@threahq/types"
+import type { GiphyGif, ReferenceAudience } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { PaneFocusContext } from "@/components/panes/pane-focus"
 import { usePreferences } from "@/contexts"
@@ -185,6 +186,8 @@ interface RichEditorProps {
    * current stream (thread or root); the backend resolves the thread root.
    */
   memoAnchorStreamId?: string
+  /** Source streams the destination's readers can't all open; tints the references to them. */
+  audienceByStreamId?: ReadonlyMap<string, ReferenceAudience>
   /**
    * Scopes the `/` command palette to a stream the route can't name (the
    * conversation panel is a `?panel=conv:` overlay). Supplying it at all — even
@@ -331,6 +334,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     onFocus: onFocusProp,
     streamContext,
     memoAnchorStreamId,
+    audienceByStreamId = NO_REFERENCE_AUDIENCE,
     commandStreamId,
     includeStreamCommands,
     enableMentions = true,
@@ -1466,7 +1470,9 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         {/* Desktop message composer: its editor slot makes this container a
             flex column so the .tiptap scroll cap can shrink with the card; this
             wrapper is the link between them. Inert for block-flow consumers. */}
-        <EditorContent editor={editor} className="flex min-h-0 flex-1 flex-col" />
+        <ReferenceAudienceContext.Provider value={audienceByStreamId}>
+          <EditorContent editor={editor} className="flex min-h-0 flex-1 flex-col" />
+        </ReferenceAudienceContext.Provider>
         <ComposerPillCopyButton editor={editor} />
         {enableMentions ? renderMentionList() : null}
         {enableChannels ? renderChannelList() : null}

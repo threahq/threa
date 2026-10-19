@@ -304,7 +304,7 @@ describe("useQueueDraftMessage", () => {
     let clientId = ""
     await act(async () => {
       ;({ clientId } = await result.current.queueDraftMessage(
-        { contentJson: CONTENT },
+        { contentJson: CONTENT, confirmedPrivacyWarning: true },
         {
           workspaceId: WORKSPACE_ID,
           streamId: PANEL_ID,
@@ -329,6 +329,7 @@ describe("useQueueDraftMessage", () => {
           attachmentIds: undefined,
           composeTrace: undefined,
           enqueue: undefined,
+          confirmedPrivacyWarning: true,
           createdAt: expect.any(Number),
           retryCount: 0,
           streamCreation: threadCreation,

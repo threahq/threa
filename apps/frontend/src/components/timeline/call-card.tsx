@@ -9,7 +9,7 @@ import { useActiveCall } from "@/stores/active-calls-store"
 import { useCallLaunch } from "@/components/call/call-launch-context"
 import { useCallPhase, useCallStreamId } from "@/components/call/call-store-hooks"
 import { useCallOnAnotherDevice } from "@/components/call/use-call-on-another-device"
-import { buildStreamLink } from "@/lib/stream-links"
+import { buildMessageLink } from "@/lib/stream-links"
 import { cn } from "@/lib/utils"
 import { ThreadSlot } from "./thread-slot"
 import { useHostArchived } from "./host-archived-context"
@@ -160,7 +160,7 @@ export function CallCard({ event, workspaceId, streamId, endedPatch, isThreadPar
 
   async function handleCopyLink() {
     try {
-      await navigator.clipboard.writeText(`${buildStreamLink(workspaceId, streamId)}?m=${event.id}`)
+      await navigator.clipboard.writeText(buildMessageLink(workspaceId, streamId, event.id))
       toast.success("Call link copied") // INV-63-allow: closing menu/drawer leaves no inline trigger
     } catch {
       toast.error("Couldn't copy the call link")

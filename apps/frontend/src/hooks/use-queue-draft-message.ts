@@ -37,6 +37,7 @@ export interface QueueDraftMessageInput {
   composeTrace?: ComposeTraceInput
   /** Queue for the linked session's next turn instead of delivering now (`/enqueue`). */
   enqueue?: true
+  confirmedPrivacyWarning?: boolean
 }
 
 export interface QueueDraftMessageParams {
@@ -224,6 +225,7 @@ export function useQueueDraftMessage(workspaceId: string) {
             attachmentIds: input.attachmentIds,
             composeTrace,
             enqueue: input.enqueue,
+            confirmedPrivacyWarning: input.confirmedPrivacyWarning,
             createdAt: Date.now(),
             retryCount: 0,
             streamCreation: params.streamCreation,

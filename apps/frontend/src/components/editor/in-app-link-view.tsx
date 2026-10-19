@@ -7,7 +7,9 @@ import { useInAppLinkChip } from "@/hooks/use-in-app-link-chip"
 import { useResolvedInAppLink } from "@/components/timeline/in-app-link-preview-card"
 import { useConversationTitleDetails } from "@/hooks/use-conversation-title"
 import type { InAppLinkAttrs } from "./in-app-link-extension"
+import { cn } from "@/lib/utils"
 import { conversationChipLabel } from "./conversation-chip-label"
+import { AUDIENCE_TONE_TEXT, useReferenceExposed } from "./reference-audience-context"
 
 /**
  * In-composer chip for an in-app link (TipTap NodeView). A conversation link has
@@ -61,14 +63,22 @@ function StreamMessageChipView({
     }
   }, [resolvedName, attrs.name, updateAttributes])
 
+  const exposed = useReferenceExposed(attrs.streamId)
   const pendingIcon = attrs.messageId ? MessageSquare : undefined
   const icon = state.status === "pending" ? pendingIcon : state.icon
   const label = state.status === "pending" ? attrs.name || "Link" : state.label
   const prefix = state.status === "resolved" ? state.prefix : undefined
+  // The lock takes the place of the chip's own glyph (icon or `#`), so the chip keeps its size.
+  const exposedPrefix = prefix && <Lock aria-hidden="true" className="inline h-3 w-3 align-[-0.1em]" />
 
   return (
     <NodeViewWrapper as="span" data-type="in-app-link">
-      <InAppLinkChip icon={icon} prefix={prefix} label={label} />
+      <InAppLinkChip
+        icon={exposed ? Lock : icon}
+        prefix={exposed ? exposedPrefix : prefix}
+        label={label}
+        className={exposed ? cn("bg-amber-500/10", AUDIENCE_TONE_TEXT.unreachable) : undefined}
+      />
     </NodeViewWrapper>
   )
 }

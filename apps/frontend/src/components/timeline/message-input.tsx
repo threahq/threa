@@ -16,6 +16,8 @@ import {
   useComposerTarget,
   useMountedComposerCount,
   clearComposerTarget,
+  getDmDraftUserId,
+  isDraftId,
 } from "@/hooks"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { relocateLoadedDraft, stashLoadedDraft } from "@/hooks/use-draft-message"
@@ -34,8 +36,11 @@ import {
   ScheduledMessagesPicker,
 } from "@/components/composer"
 import type { ComposerControlHandle } from "@/components/composer"
+import type { ComposerSubmitOptions } from "@/components/composer/message-composer"
 import { useScheduleMessage } from "@/hooks"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
+import { useReferenceAudience } from "@/hooks/use-reference-audience"
+import type { ReferenceAudienceTarget } from "@/lib/reference-audience"
 import { buildImageIndexByAttachment, isMaterializableAttachment } from "./attachment-image-index"
 import { useEditLastMessage } from "./edit-last-message-context"
 import { useQuoteReply, appendQuoteReplyNode, type QuoteReplyData } from "./quote-reply-context"
@@ -409,6 +414,16 @@ function MessageInputComponent({
     scopeId: composerScopeId,
     e2eStreamId: e2eRootStreamId,
   })
+  const dmDraftUserId = getDmDraftUserId(streamId)
+  const audienceTarget = useMemo<ReferenceAudienceTarget | null>(() => {
+    if (dmDraftUserId) return { dmUserId: dmDraftUserId }
+    return isDraftId(streamId) ? null : { streamId }
+  }, [dmDraftUserId, streamId])
+  const { sendWarning, audienceByStreamId } = useReferenceAudience({
+    workspaceId,
+    target: audienceTarget,
+    content: composer.content,
+  })
   const quoteReplyCtx = useQuoteReply()
   // An aside's composer is a private thinking surface: nothing to schedule,
   // no stash pile (its drafts live in the aside's own dock), no fullscreen
@@ -640,7 +655,7 @@ function MessageInputComponent({
     setPreserveConversationStripSpace(false)
   }, [streamId])
 
-  const handleSubmit = useStableCallback(async (editorContent?: JSONContent) => {
+  const handleSubmit = useStableCallback(async (editorContent?: JSONContent, options?: ComposerSubmitOptions) => {
     if (!composer.canSend) return
 
     const pendingAttachments = composer.getPendingAttachmentsSnapshot()
@@ -716,6 +731,7 @@ function MessageInputComponent({
         attachments: attachments.length > 0 ? attachments : undefined,
         ...(enqueuePlan && { enqueue: true as const }),
         composeTrace,
+        confirmedPrivacyWarning: options?.confirmedPrivacyWarning,
         // Armed by "Reply in conversation": file this send into the
         // conversation synchronously (Mechanism C). Cleared only on success —
         // a failed send keeps the filing armed alongside the restored content.
@@ -922,6 +938,8 @@ function MessageInputComponent({
   // Shared composer props used by both inline and expanded layouts
   const composerProps = {
     content: composer.content,
+    sendWarning,
+    audienceByStreamId,
     onContentChange: composer.handleContentChange,
     pendingAttachments: composer.pendingAttachments,
     onRemoveAttachment: composer.handleRemoveAttachment,

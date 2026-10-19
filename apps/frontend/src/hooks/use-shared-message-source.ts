@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
 import { isRangeValid, serializeToMarkdown, sliceContent } from "@threahq/prosemirror"
 import { db } from "@/db"
+import { useActors } from "@/hooks/use-actors"
 import { useSharedMessageSlot } from "@/components/slots/context"
 import type { AttachmentSummary, ContentRange, JSONContent, StreamType, Visibility } from "@threahq/types"
 
@@ -127,6 +128,7 @@ export function useSharedMessageSource(reference: SharedMessageReference): Share
     [rangeFrom, rangeTo]
   )
   const hydrated = useSharedMessageSlot(messageId, version, range)
+  const { getActorName } = useActors(workspaceId ?? "")
 
   const cachedEvent = useLiveQuery(
     async () => {
@@ -195,6 +197,9 @@ export function useSharedMessageSource(reference: SharedMessageReference): Share
       // `missing` so the UI falls through to the server-provided attr fallback.
       if (payload?.contentMarkdown && cachedEvent.actorId && cachedEvent.actorType) {
         const currentRevision = payload.revision ?? null
+        // A pointer that never passed through a timeline row (a link converted
+        // to a share) carries no stamped author, so the cache names it.
+        const authorName = getActorName(cachedEvent.actorId, cachedEvent.actorType)
         if (range) {
           // A ranged pointer has no cached body of its own — the slice is cut
           // from the pinned document the cache already holds, which is exactly
@@ -206,6 +211,7 @@ export function useSharedMessageSource(reference: SharedMessageReference): Share
             contentMarkdown: serializeToMarkdown(sliceContent(payload.contentJson, range.from, range.to)),
             authorId: cachedEvent.actorId,
             actorType: cachedEvent.actorType,
+            authorName,
             editedAt: null,
             attachments: [],
             version,
@@ -218,6 +224,7 @@ export function useSharedMessageSource(reference: SharedMessageReference): Share
           contentMarkdown: payload.contentMarkdown,
           authorId: cachedEvent.actorId,
           actorType: cachedEvent.actorType,
+          authorName,
           editedAt: null,
           attachments: payload.attachments,
           version,
@@ -229,7 +236,7 @@ export function useSharedMessageSource(reference: SharedMessageReference): Share
     }
 
     return null
-  }, [hydrated, cachedEvent, version, range])
+  }, [hydrated, cachedEvent, version, range, getActorName])
 
   const [showSkeleton, setShowSkeleton] = useState(false)
 

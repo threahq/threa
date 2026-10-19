@@ -17,7 +17,13 @@ import { db } from "@/db"
 import type { MentionStreamContext } from "@/hooks/use-mentionables"
 import { clearStreams, seedStream } from "@/test/workspace-rows"
 import { MessageEditForm } from "./message-edit-form"
-import { StreamConnectionErrorCodes, type JSONContent } from "@threahq/types"
+import { ShareErrorCodes, StreamConnectionErrorCodes, type JSONContent } from "@threahq/types"
+import { SHARE_PRIVACY_WARNING_MESSAGE } from "@/lib/share-privacy-toast"
+
+type ToastOptions = {
+  action?: { label: string; onClick?: (event: never) => void }
+  cancel?: { label: string; onClick?: (event: never) => void }
+}
 
 let inputModeMockValue: inputModeModule.InputMode = "mouse"
 let editorStreamContext: MentionStreamContext | undefined
@@ -272,6 +278,34 @@ describe("MessageEditForm saving", () => {
       saved: onSave.mock.calls,
       queued: await db.pendingOperations.toArray(),
     }).toEqual({ errors: [["Couldn't save your edit."]], infos: [], saved: [], queued: [] })
+  })
+
+  it("should warn before an edit exposes a share and save it with consent on Save anyway", async () => {
+    const warningToast = vi.spyOn(toast, "warning").mockReturnValue("w1")
+    const update = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError(409, ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED, "Confirm"))
+      .mockResolvedValueOnce({})
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      update,
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+    const onSave = vi.fn()
+
+    await submitEdit(onSave)
+
+    await waitFor(() => expect(warningToast).toHaveBeenCalled())
+    const [message, options] = warningToast.mock.calls[0] as [string, ToastOptions]
+    expect({ message, action: options.action?.label, cancel: options.cancel?.label, saved: onSave.mock.calls }).toEqual(
+      { message: SHARE_PRIVACY_WARNING_MESSAGE, action: "Save anyway", cancel: "Cancel", saved: [] }
+    )
+
+    options.action?.onClick?.({} as never)
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    expect(update.mock.calls).toEqual([
+      ["ws_1", "msg_1", { contentJson: editedContent }],
+      ["ws_1", "msg_1", { contentJson: editedContent, confirmedPrivacyWarning: true }],
+    ])
   })
 
   it("should keep what the user typed while the save was in flight when the server refuses it", async () => {

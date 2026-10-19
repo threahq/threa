@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { enqueueOperation } from "@/sync/operation-queue"
 import { isPermanentApiError } from "@/api"
+import { isPrivacyConfirmationError, SHARE_PRIVACY_WARNING_MESSAGE } from "@/lib/share-privacy-toast"
 import { Expand } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -97,13 +98,32 @@ export function MessageEditForm({
   }, [])
 
   const saveEdit = useCallback(
-    async (json: JSONContent) => {
+    async (json: JSONContent, confirmedPrivacyWarning?: boolean): Promise<void> => {
       setIsSaving(true)
       try {
-        await messageService.update(workspaceId, messageId, { contentJson: json })
+        await messageService.update(workspaceId, messageId, {
+          contentJson: json,
+          ...(confirmedPrivacyWarning && { confirmedPrivacyWarning }),
+        })
         queryClient.invalidateQueries({ queryKey: messageKeys.versions(workspaceId, messageId) })
         onSave()
       } catch (err) {
+        if (isPrivacyConfirmationError(err)) {
+          const toastId = `share-privacy-edit-${messageId}`
+          toast.warning(SHARE_PRIVACY_WARNING_MESSAGE, {
+            id: toastId,
+            duration: Infinity,
+            action: {
+              label: "Save anyway",
+              onClick: () => {
+                toast.dismiss(toastId)
+                void saveEdit(json, true)
+              },
+            },
+            cancel: { label: "Cancel", onClick: () => toast.dismiss(toastId) },
+          })
+          return
+        }
         if (isPermanentApiError(err)) {
           toast.error("Couldn't save your edit.")
           return

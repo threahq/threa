@@ -10,6 +10,7 @@ import { useState } from "react"
 import * as contextsModule from "@/contexts"
 import { PendingMessagesProvider } from "@/contexts"
 import * as hooksModule from "@/hooks"
+import * as referenceAudienceModule from "@/hooks/use-reference-audience"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as authModule from "@/auth"
 import * as quoteReplyModule from "./quote-reply-context"
@@ -283,6 +284,11 @@ beforeEach(async () => {
   // stream service. Stub the opener; the aside entry points are covered by
   // `use-composer-command-send` and the desktop browser spec.
   spyOnExport(openAsideModule, "useOpenAside").mockReturnValue((async () => {}) as never)
+  // Same wrapper gap: the send-warning lookup calls the message service.
+  spyOnExport(referenceAudienceModule, "useReferenceAudience").mockReturnValue(() => ({
+    sendWarning: null,
+    audienceByStreamId: new Map(),
+  }))
   // The composer's schedule-send entry needs the scheduled service via
   // ServicesProvider; tests run without that wrapper, so stub the hook to a
   // no-op mutation. The schedule path itself is exercised by the page tests.
