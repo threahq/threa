@@ -311,6 +311,30 @@ test.describe("Composer asks before a reference reaches readers who can't open i
     }
   })
 
+  test("when the audience lookup fails, the server still stops the share until Share anyway", async ({
+    browser,
+    page,
+  }) => {
+    const setup = await setupPrivateToPublic(browser, page, "ask-lookup-down")
+    try {
+      await page.route("**/messages/reference-audience", (route) => route.fulfill({ status: 500, body: "{}" }))
+      const pane = await shareIntoPublic(page, setup)
+      await pane.locator("[contenteditable='true']").focus()
+      await page.keyboard.press("Enter")
+      await expect(pane.getByTestId("send-ask")).toHaveCount(0)
+
+      const shareAnyway = page.getByRole("button", { name: "Share anyway" })
+      await expect(shareAnyway).toBeVisible({ timeout: 10000 })
+      const reader = await openAsOtherReader(setup)
+      await expect(reader.pointers).toHaveCount(0)
+
+      await shareAnyway.click()
+      await expect(reader.pointers).toBeVisible({ timeout: 10000 })
+    } finally {
+      await setup.other.context.close()
+    }
+  })
+
   test("Escape drops the question and the share stays in the draft, unsent", async ({ browser, page }) => {
     const setup = await setupPrivateToPublic(browser, page, "ask-escape")
     try {
@@ -349,7 +373,7 @@ test.describe("Composer asks before a reference reaches readers who can't open i
       await expect(editor.locator("[data-type='in-app-link-chip'] .lucide-lock")).toBeVisible({ timeout: 5000 })
       await expect(pane.getByTestId("send-warning-badge").first()).toHaveAttribute("data-tone", "unreachable")
 
-      await editor.focus()
+      await expect(editor).toBeFocused()
       await page.keyboard.press("Enter")
       await expect(pane.getByTestId("send-ask")).toHaveCount(0)
 

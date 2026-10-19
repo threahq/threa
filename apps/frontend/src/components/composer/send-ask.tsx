@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent } from "react"
+import { useEffect, useId, useRef, type KeyboardEvent } from "react"
 import { Eye, Lock } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AUDIENCE_TONE_TEXT } from "@/components/editor/reference-audience-context"
@@ -32,6 +32,7 @@ export function SendAskRow({
   className,
 }: SendAskRowProps) {
   const primaryRef = useRef<HTMLButtonElement>(null)
+  const questionId = useId()
   useEffect(() => {
     if (!compact) primaryRef.current?.focus()
   }, [compact])
@@ -49,8 +50,8 @@ export function SendAskRow({
 
   return (
     <div
-      role="status"
-      aria-live="polite"
+      role="group"
+      aria-labelledby={questionId}
       data-testid="send-ask"
       data-tone={tone}
       className={cn(
@@ -62,7 +63,7 @@ export function SendAskRow({
     >
       <div className={cn("flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium", AUDIENCE_TONE_TEXT[tone])}>
         <Icon aria-hidden className="h-4 w-4 shrink-0" />
-        <span className="truncate">
+        <span id={questionId} role="status" className="truncate">
           <FitCopy compact={compact} wide={copy.desktop} narrow={copy.mobile} />
         </span>
       </div>
@@ -76,6 +77,7 @@ export function SendAskRow({
         type="button"
         size="sm"
         className="h-[30px] shrink-0 gap-1.5 px-3"
+        aria-describedby={questionId}
         onClick={onPrimary}
         onKeyDown={handlePrimaryKeyDown}
       >

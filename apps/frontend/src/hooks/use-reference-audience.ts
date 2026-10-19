@@ -40,8 +40,6 @@ export function useReferenceAudience({
     queryKey: ["referenceAudience", workspaceId, targetKey, streamIds],
     queryFn: () => messageService.referenceAudience(workspaceId, { ...target!, streamIds }),
     enabled: !!workspaceId && !!target && streamIds.length > 0,
-    staleTime: 30_000,
-    retry: false,
     placeholderData: (previous, previousQuery) =>
       previousQuery?.queryKey[2] === targetKey ? keepPreviousData(previous) : undefined,
   })

@@ -1067,7 +1067,8 @@ export function MessageComposer({
     // other tone's warning for the same sources, which must not ask again.
     setConsentedStreamIds((prev) => new Set([...prev, ...exposedStreamIds]))
     setAsking(false)
-  }, [workspaceId, sendWarningValue, exposedStreamIds])
+    if (!isMobile) richEditorRef.current?.focus()
+  }, [workspaceId, sendWarningValue, exposedStreamIds, isMobile])
 
   const handleEditorFocus = useCallback(() => {
     setAsking(false)
