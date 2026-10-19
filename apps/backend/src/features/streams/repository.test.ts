@@ -58,26 +58,6 @@ describe("StreamRepository.insertThreadOrFind", () => {
   })
 })
 
-describe("StreamRepository.isAncestor", () => {
-  test("short-circuits without a query when the IDs are equal", async () => {
-    const db = makeDb([])
-    expect(await StreamRepository.isAncestor(db, "ws_1", "stream_a", "stream_a")).toBe(true)
-    expect(db._query).not.toHaveBeenCalled()
-  })
-
-  test("returns true when the recursive CTE finds any matching row", async () => {
-    const db = makeDb([{ matched: true }])
-    expect(await StreamRepository.isAncestor(db, "ws_1", "stream_parent", "stream_thread")).toBe(true)
-    expect(db._query).toHaveBeenCalledTimes(1)
-  })
-
-  test("returns false when the CTE returns no rows", async () => {
-    const db = makeDb([])
-    expect(await StreamRepository.isAncestor(db, "ws_1", "stream_other", "stream_thread")).toBe(false)
-    expect(db._query).toHaveBeenCalledTimes(1)
-  })
-})
-
 describe("purpose marker (sidebar exclusion)", () => {
   test("listWithPreviews excludes system-purpose streams in every branch", async () => {
     // Default (all streams) branch.

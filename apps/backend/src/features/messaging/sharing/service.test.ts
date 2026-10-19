@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:te
 import type { JSONContent } from "@threahq/types"
 import { collectShareReferences, ShareService } from "./service"
 import { SharedMessageRepository } from "./repository"
-import * as accessCheck from "./access-check"
 import { MessageRepository } from "../repository"
 import { E2eStreamsRepository } from "../../e2e-streams"
+import * as streams from "../../streams"
 
 describe("collectShareReferences", () => {
   it("returns an empty list when no share nodes are present", () => {
@@ -92,20 +92,13 @@ describe("ShareService.validateAndRecordShares", () => {
   const sourceStream = {
     id: "stream_source",
     workspaceId: "ws_1",
-    visibility: "private" as const,
-    rootStreamId: null,
   }
 
   function findStreamStub(overrides: Partial<typeof sourceStream> = {}) {
     return async () => ({ ...sourceStream, ...overrides }) as any
   }
 
-  const isAncestorStub = async () => false
-  const countExposedMembersStub = async () => 0
   const canReadStreamStub = async () => true
-  // Default resolver — no-op: returns the source as-is. Tests covering
-  // thread → root resolution semantics live in `access-check.test.ts`.
-  const resolveEffectiveStreamStub = async (_db: unknown, source: any) => source
 
   function baseParams(extras: Partial<Parameters<typeof ShareService.validateAndRecordShares>[0]> = {}) {
     return {
@@ -115,9 +108,6 @@ describe("ShareService.validateAndRecordShares", () => {
       shareMessageId: "msg_share",
       sharerId: "usr_1",
       findStream: findStreamStub(),
-      resolveEffectiveStream: resolveEffectiveStreamStub,
-      isAncestor: isAncestorStub,
-      countExposedMembers: countExposedMembersStub,
       canReadStream: canReadStreamStub,
       contentJson: {
         type: "doc",
@@ -130,7 +120,8 @@ describe("ShareService.validateAndRecordShares", () => {
   beforeEach(() => {
     spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map([[sourceMessage.id, sourceMessage]]))
     spyOn(SharedMessageRepository, "insert").mockResolvedValue({} as any)
-    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(new Set())
+    spyOn(streams, "countReadersWithoutAccess").mockResolvedValue(new Map())
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
   })
 
@@ -146,8 +137,6 @@ describe("ShareService.validateAndRecordShares", () => {
   })
 
   it("writes a shared_messages row for each cross-stream share node", async () => {
-    spyOn(accessCheck, "crossesPrivacyBoundary").mockResolvedValue({ triggered: false, exposedUserCount: 0 })
-
     await ShareService.validateAndRecordShares(baseParams())
 
     expect(SharedMessageRepository.insert).toHaveBeenCalledTimes(1)
@@ -172,7 +161,7 @@ describe("ShareService.validateAndRecordShares", () => {
   })
 
   it("rejects shares that cross a privacy boundary without confirmation", async () => {
-    spyOn(accessCheck, "crossesPrivacyBoundary").mockResolvedValue({ triggered: true, exposedUserCount: 2 })
+    spyOn(streams, "countReadersWithoutAccess").mockResolvedValue(new Map([["stream_source", 2]]))
 
     await expect(ShareService.validateAndRecordShares(baseParams())).rejects.toMatchObject({
       status: 409,
@@ -183,7 +172,7 @@ describe("ShareService.validateAndRecordShares", () => {
   })
 
   it("accepts privacy-crossing shares when the sharer confirmed", async () => {
-    spyOn(accessCheck, "crossesPrivacyBoundary").mockResolvedValue({ triggered: true, exposedUserCount: 2 })
+    spyOn(streams, "countReadersWithoutAccess").mockResolvedValue(new Map([["stream_source", 2]]))
     await ShareService.validateAndRecordShares(baseParams({ confirmedPrivacyWarning: true }))
     expect(SharedMessageRepository.insert).toHaveBeenCalledTimes(1)
   })
@@ -214,18 +203,13 @@ describe("ShareService.validateAndRecordShares", () => {
 
   it("dedupes per-stream callbacks across duplicate references (INV-56 batching)", async () => {
     const findStream = mock(async () => ({ ...sourceStream }) as any)
-    const isAncestor = mock(async () => false)
-    const countExposedMembers = mock(async () => 0)
     const canReadStream = mock(async () => true)
-    spyOn(accessCheck, "crossesPrivacyBoundary").mockResolvedValue({ triggered: false, exposedUserCount: 0 })
 
     // Two share-nodes pointing at the same source — per-stream callbacks
     // should fire once each, not twice.
     await ShareService.validateAndRecordShares(
       baseParams({
         findStream,
-        isAncestor,
-        countExposedMembers,
         canReadStream,
         contentJson: {
           type: "doc",
@@ -239,6 +223,10 @@ describe("ShareService.validateAndRecordShares", () => {
 
     expect(findStream).toHaveBeenCalledTimes(1)
     expect(canReadStream).toHaveBeenCalledTimes(1)
+    expect(streams.countReadersWithoutAccess).toHaveBeenCalledTimes(1)
+    expect(streams.countReadersWithoutAccess).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_target", [
+      "stream_source",
+    ])
     expect(MessageRepository.findByIds).toHaveBeenCalledTimes(1)
     expect(MessageRepository.findByIds).toHaveBeenCalledWith(expect.anything(), "ws_1", [sourceMessage.id])
     expect(SharedMessageRepository.insert).toHaveBeenCalledTimes(2)
@@ -264,7 +252,6 @@ describe("ShareService.validateAndRecordShares", () => {
   })
 
   it("deletes previously recorded shares before re-inserting (idempotent for edits)", async () => {
-    spyOn(accessCheck, "crossesPrivacyBoundary").mockResolvedValue({ triggered: false, exposedUserCount: 0 })
     await ShareService.validateAndRecordShares(baseParams())
     expect(SharedMessageRepository.deleteByShareMessageId).toHaveBeenCalledTimes(1)
     expect(SharedMessageRepository.deleteByShareMessageId).toHaveBeenCalledWith({}, "ws_1", "msg_share")

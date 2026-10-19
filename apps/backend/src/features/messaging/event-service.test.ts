@@ -226,7 +226,7 @@ describe("EventService attachment safety checks", () => {
     })) as any)
     spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
-    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(new Set())
     spyOn(AttachmentReferenceRepository, "insertMany").mockResolvedValue(0)
     spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false } as any)
     // One fresh row to attach → the bind call reports one row updated.
@@ -311,7 +311,7 @@ describe("EventService attachment safety checks", () => {
     })) as any)
     spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
-    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(new Set())
     spyOn(AttachmentReferenceRepository, "insertMany").mockResolvedValue(0)
     spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false } as any)
     spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(1)
@@ -447,7 +447,7 @@ describe("EventService attachment safety checks", () => {
     })) as any)
     spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
-    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(new Set())
     const insertManySpy = spyOn(AttachmentReferenceRepository, "insertMany").mockResolvedValue(0)
 
     const service = new EventService({} as any)
@@ -544,7 +544,7 @@ describe("EventService attachment safety checks", () => {
     spyOn(MessageRepository, "insert").mockResolvedValue({ id: "msg_new" } as any)
     spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
-    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(new Set())
     spyOn(AttachmentReferenceRepository, "insertMany").mockResolvedValue(0)
 
     const service = new EventService({} as any)
@@ -667,7 +667,7 @@ describe("EventService.editMessage version capture", () => {
       editedAt: new Date(),
     } as any)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
-    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(new Set())
     spyOn(SharedMessageRepository, "insert").mockResolvedValue({} as any)
     // Edit path also refreshes the attachment_references projection in the same
     // transaction; default mocks let the version-capture tests run without
@@ -867,7 +867,7 @@ describe("EventService.editMessage attachment_references refresh", () => {
       editedAt: new Date(),
     } as any)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
-    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(new Set())
     deleteByMessageIdSpy = spyOn(AttachmentReferenceRepository, "deleteByMessageId").mockResolvedValue(0)
     insertManySpy = spyOn(AttachmentReferenceRepository, "insertMany").mockResolvedValue(0)
   })
@@ -1015,7 +1015,7 @@ describe("EventService.createMessage metadata propagation", () => {
     spyOn(MessageRepository, "findById").mockResolvedValue(null)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
     spyOn(messagesTotal, "inc").mockImplementation(() => undefined)
-    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(new Set())
     spyOn(SharedMessageRepository, "insert").mockResolvedValue({} as any)
   })
 
@@ -1129,7 +1129,7 @@ describe("EventService.createMessage author born-read", () => {
     spyOn(MessageRepository, "findById").mockResolvedValue(null)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
     spyOn(messagesTotal, "inc").mockImplementation(() => undefined)
-    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(new Set())
     spyOn(SharedMessageRepository, "insert").mockResolvedValue({} as any)
     spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false } as any)
   })
@@ -1260,7 +1260,7 @@ describe("EventService.createMessage conversation declaration (Mechanism C)", ()
     spyOn(MessageRepository, "findById").mockResolvedValue(null)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
     spyOn(messagesTotal, "inc").mockImplementation(() => undefined)
-    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(new Set())
     spyOn(SharedMessageRepository, "insert").mockResolvedValue({} as any)
   })
 
@@ -1561,7 +1561,7 @@ describe("EventService.createMessage parent thread update (reply in thread)", ()
     } as any)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
     spyOn(messagesTotal, "inc").mockImplementation(() => undefined)
-    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(new Set())
     spyOn(SharedMessageRepository, "insert").mockResolvedValue({} as any)
   })
 
@@ -1690,7 +1690,7 @@ describe("EventService sharedMessages wire enrichment", () => {
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
     // Share validation runs over mocked repos (house style — the service
     // itself is not stubbed).
-    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(new Set())
     spyOn(SharedMessageRepository, "insert").mockResolvedValue({} as any)
     spyOn(MessageRepository, "findByIds").mockResolvedValue(
       new Map([
@@ -1708,7 +1708,7 @@ describe("EventService sharedMessages wire enrichment", () => {
       ]) as any
     )
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
-    spyOn(StreamRepository, "isAncestor").mockResolvedValue(false)
+    spyOn(streamsModule, "countReadersWithoutAccess").mockResolvedValue(new Map())
     // Hydration itself is covered in sharing/hydration.test.ts — stub the
     // wire entry and assert what rides the outbox payload.
     spyOn(sharing, "hydrateSharedMessageRefsForRoom").mockResolvedValue({
@@ -2091,7 +2091,7 @@ describe("EventService stream-context projection", () => {
     spyOn(MessageRepository, "findById").mockResolvedValue(null)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
     spyOn(messagesTotal, "inc").mockImplementation(() => undefined)
-    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(new Set())
   }
 
   afterEach(() => {
@@ -2184,7 +2184,7 @@ describe("EventService stream-context projection", () => {
     } as any)
     spyOn(MessageRepository, "updateContent").mockResolvedValue({ ...existingMessage } as any)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
-    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(new Set())
     spyOn(AttachmentReferenceRepository, "deleteByMessageId").mockResolvedValue(0)
 
     const service = new EventService({} as any)
@@ -2295,7 +2295,7 @@ describe("EventService.createMessage outbox pairing (the sidebar's single previe
     spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
     spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false } as any)
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
-    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(new Set())
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
   })
 

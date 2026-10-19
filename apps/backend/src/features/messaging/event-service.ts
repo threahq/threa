@@ -25,13 +25,7 @@ import {
   type StreamWritePrincipal,
 } from "../streams"
 import { MessageRepository, type Message, type MoveMessageSequenceUpdate } from "./repository"
-import {
-  collectSharedMessageRefs,
-  hydrateSharedMessageRefsForRoom,
-  toDualSlotMaps,
-  ShareService,
-  type ResolveEffectiveStream,
-} from "./sharing"
+import { collectSharedMessageRefs, hydrateSharedMessageRefsForRoom, toDualSlotMaps, ShareService } from "./sharing"
 import { resolveMessageReferences } from "./references"
 import {
   AttachmentRepository,
@@ -97,24 +91,6 @@ import {
   type MessagesMovedEventPayload,
   type MovedMessagePreview,
 } from "@threahq/types"
-
-/**
- * Adapter that lets `ShareService.validateAndRecordShares` consume the
- * canonical `resolveEffectiveAccessStream` (which returns either the input
- * shape or a full `Stream`) without leaking the streams-feature row shape
- * into the sharing sub-feature (INV-52). Hoisted to module scope so the
- * create + edit call paths share one allocation rather than re-declaring
- * the closure per request (INV-13, INV-35).
- */
-const resolveEffectiveStreamAdapter: ResolveEffectiveStream = async (db, source) => {
-  const resolved = await resolveEffectiveAccessStream(db, source)
-  return {
-    id: resolved.id,
-    workspaceId: resolved.workspaceId,
-    visibility: resolved.visibility,
-    rootStreamId: resolved.rootStreamId,
-  }
-}
 
 type MessageMutationAuthority =
   | { kind: "internal" }
@@ -1105,11 +1081,6 @@ export class EventService {
       accessibleStreamIds: params.accessibleStreamIds,
       contentJson: params.contentJson,
       findStream: (db, id) => StreamRepository.findById(db, params.workspaceId, id),
-      resolveEffectiveStream: resolveEffectiveStreamAdapter,
-      isAncestor: (db, ancestorId, streamId) =>
-        StreamRepository.isAncestor(db, params.workspaceId, ancestorId, streamId),
-      countExposedMembers: (db, targetStreamId, sourceStreamId) =>
-        StreamMemberRepository.countMembersNotIn(db, params.workspaceId, targetStreamId, sourceStreamId),
       canReadStream: async (db, workspaceId, streamId, userId) =>
         (await checkStreamAccess(db, streamId, workspaceId, userId)) !== null,
       confirmedPrivacyWarning: params.confirmedPrivacyWarning,
@@ -1459,11 +1430,6 @@ export class EventService {
               accessibleStreamIds: params.accessibleStreamIds,
               contentJson: params.contentJson,
               findStream: (db, id) => StreamRepository.findById(db, params.workspaceId, id),
-              resolveEffectiveStream: resolveEffectiveStreamAdapter,
-              isAncestor: (db, ancestorId, streamId) =>
-                StreamRepository.isAncestor(db, params.workspaceId, ancestorId, streamId),
-              countExposedMembers: (db, targetStreamId, sourceStreamId) =>
-                StreamMemberRepository.countMembersNotIn(db, params.workspaceId, targetStreamId, sourceStreamId),
               canReadStream: async (db, workspaceId, streamId, userId) =>
                 (await checkStreamAccess(db, streamId, workspaceId, userId)) !== null,
               confirmedPrivacyWarning: params.confirmedPrivacyWarning,
@@ -1591,7 +1557,7 @@ export class EventService {
         if (reach.has(streamId)) return true
         const source = await StreamRepository.findById(client, workspaceId, streamId)
         if (!source) return false
-        const effective = await resolveEffectiveStreamAdapter(client, source)
+        const effective = await resolveEffectiveAccessStream(client, source)
         return reach.has(effective.id)
       }
     }

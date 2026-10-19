@@ -274,28 +274,6 @@ export const StreamMemberRepository = {
     return new Set(result.rows.map((row) => `${row.stream_id}:${row.member_id}`))
   },
 
-  /**
-   * Count members of `streamId` who are NOT members of `otherStreamId`.
-   * Used by the sharing privacy boundary check: given a source and target
-   * stream, how many of the target's members would gain implicit read via
-   * the share. Set-based (single query, no N+1).
-   */
-  async countMembersNotIn(db: Querier, workspaceId: string, streamId: string, otherStreamId: string): Promise<number> {
-    const result = await db.query<{ count: string }>(sql`
-      SELECT COUNT(*)::text AS count
-      FROM stream_members tgt
-      WHERE tgt.workspace_id = ${workspaceId}
-        AND tgt.stream_id = ${streamId}
-        AND NOT EXISTS (
-          SELECT 1 FROM stream_members src
-          WHERE src.workspace_id = ${workspaceId}
-            AND src.stream_id = ${otherStreamId}
-            AND src.member_id = tgt.member_id
-        )
-    `)
-    return Number(result.rows[0]?.count ?? "0")
-  },
-
   async filterMemberIds(db: Querier, workspaceId: string, streamId: string, memberIds: string[]): Promise<Set<string>> {
     if (memberIds.length === 0) return new Set()
     const result = await db.query<{ member_id: string }>(sql`
