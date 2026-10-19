@@ -1,3 +1,4 @@
+import { serializeToMarkdown } from "@threahq/prosemirror"
 import type { JSONContent } from "@threahq/types"
 
 /**
@@ -30,6 +31,7 @@ export function contentSignature(content: JSONContent): string {
   })
 }
 
-export function withoutDisplayStamps(content: JSONContent): JSONContent {
-  return JSON.parse(contentSignature(content)) as JSONContent
+/** Markdown for deciding whether an edit changed a message: stamps and trailing blank lines don't count. */
+export function unstampedMarkdown(content: JSONContent): string {
+  return serializeToMarkdown(JSON.parse(contentSignature(content)) as JSONContent).trim()
 }

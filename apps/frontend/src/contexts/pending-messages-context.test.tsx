@@ -339,11 +339,14 @@ describe("PendingMessagesContext", () => {
         content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text }] }],
       })
 
+      // Stored as composed: a trailing empty paragraph serializes to trailing blank lines.
+      const stored = { type: "doc" as const, content: [...doc("old").content, { type: "paragraph" as const }] }
       for (const text of ["old", "new"]) {
         mockGet.mockResolvedValueOnce({
           clientId: "temp_consent",
           workspaceId: "ws_1",
-          content: "old",
+          content: "old\n\n",
+          contentJson: stored,
           confirmedPrivacyWarning: true,
         })
         await act(async () => {
@@ -355,7 +358,7 @@ describe("PendingMessagesContext", () => {
     })
 
     it("should remember a queued message's mode while it is edited and save the mode the edit leaves", async () => {
-      mockGet.mockResolvedValue({ clientId: "temp_enqueue_edit", workspaceId: "ws_1", enqueue: true })
+      mockGet.mockResolvedValue({ clientId: "temp_enqueue_edit", workspaceId: "ws_1", content: "old", enqueue: true })
       mockEventsGet.mockResolvedValue({
         id: "temp_enqueue_edit",
         payload: { contentMarkdown: "old" },

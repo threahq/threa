@@ -21,14 +21,10 @@ import { serializeToMarkdown, parseMarkdown } from "@threahq/prosemirror"
 import type { JSONContent } from "@threahq/types"
 import type { Editor } from "@tiptap/react"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
-import { withoutDisplayStamps } from "@/lib/display-stamps"
+import { unstampedMarkdown } from "@/lib/display-stamps"
 import { useStreamFromStore } from "@/stores/stream-store"
 
 const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Command" : "Control"
-
-function unstampedMarkdown(content: JSONContent): string {
-  return serializeToMarkdown(withoutDisplayStamps(content)).trim()
-}
 
 interface MessageEditFormProps {
   messageId: string
