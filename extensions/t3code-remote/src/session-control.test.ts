@@ -53,6 +53,20 @@ describe("T3 session control", () => {
     ])
   })
 
+  test("/status lists the thread, its model and the T3 server as markdown bullets", async () => {
+    const { control } = setup({ threads: { stream_root: "thread_a" } })
+
+    expect(await control.runCommand("status", "", CONTEXT)).toEqual({
+      ok: true,
+      message: [
+        "- Thread: Fake thread (`thread_a`, idle)",
+        "- Model: `codex::gpt-5.5`",
+        "- No run is open.",
+        "- T3 Code: http://t3.test",
+      ].join("\n"),
+    })
+  })
+
   test("/model moves the scratchpad's thread and the next launch to the model", async () => {
     const { t3, saved, control } = setup({ threads: { stream_root: "thread_a", stream_thread: "thread_b" } })
 

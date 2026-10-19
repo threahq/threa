@@ -40,11 +40,14 @@ export function fakeT3() {
   const holds: Partial<Record<T3ToolName, Promise<void>[]>> = {}
   const wakers = new Map<string, () => void>()
   const continuations = new Map<string, string>()
+  const uploads: Array<{ relativeUrl: string; bytes: string }> = []
   let threads = 0
   let runs = 0
+  let prepared = 0
   let steerDelivery: "steered" | "started" | "queued" = "steered"
 
   const startRun = () => `run_${++runs}`
+  const steerRun = () => (steerDelivery === "steered" ? `run_${runs}` : startRun())
 
   function apply(threadId: string, step: ScriptStep): void {
     const current = items.get(threadId) ?? []
@@ -74,8 +77,12 @@ export function fakeT3() {
     },
     t3_thread_send: (args) => {
       if (args.mode === "queue") return { runId: startRun(), status: "running", delivery: "started" }
-      const runId = steerDelivery === "steered" ? `run_${runs}` : startRun()
-      return { runId, status: "running", delivery: steerDelivery }
+      return { runId: steerRun(), status: "running", delivery: steerDelivery }
+    },
+    t3_thread_send_attachments: () => ({ runId: steerRun(), status: "running" }),
+    t3_attachment_prepare_upload: () => {
+      prepared += 1
+      return { attachmentId: `t3att_${prepared}`, relativeUrl: `/api/attachments/upload/tok_${prepared}` }
     },
     t3_thread_wait: async (args) => {
       const step = await nextStep(args.runId)
@@ -140,11 +147,15 @@ export function fakeT3() {
       if (failure) throw failure
       return handlers[name](args)
     },
+    upload: async (relativeUrl: string, bytes: Uint8Array) => {
+      uploads.push({ relativeUrl, bytes: new TextDecoder().decode(bytes) })
+    },
   } as unknown as T3Client
 
   return {
     client,
     calls,
+    uploads,
     callsOf: (name: T3ToolName) => calls.filter((call) => call.name === name).map((call) => call.args),
     script: (runId: string, steps: ScriptStep[]) => {
       scripts.set(runId, [...(scripts.get(runId) ?? []), ...steps])
@@ -209,6 +220,7 @@ export function turn(overrides: Partial<DeliveredTurn> = {}): DeliveredTurn {
     rootStreamId: "stream_root",
     sourceMessageId: "msg_1",
     content: "Fix the flaky test",
+    attachments: [],
     sealed: false,
     ...overrides,
   }

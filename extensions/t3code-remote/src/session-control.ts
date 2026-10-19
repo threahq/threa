@@ -68,7 +68,7 @@ export function createT3SessionControl(
     lines.push(open.length === 0 ? "No run is open." : `Open runs: ${open.map((run) => `\`${run.runId}\``).join(", ")}`)
     if (runner.model) lines.push(`New threads launch on \`${label(runner.model)}\``)
     lines.push(`T3 Code: ${client.baseUrl}`)
-    return lines.join("\n")
+    return lines.map((line) => `- ${line}`).join("\n")
   }
 
   // The SDK hands a command only its root stream, so /model moves the scratchpad's thread and every later launch.
@@ -115,7 +115,7 @@ export function createT3SessionControl(
       return suggestions
     },
     interrupt: (streamId) => runner.interrupt(streamId),
-    steer: (text, streamId) => runner.steer(text, streamId),
+    steer: (text, streamId, attachments) => runner.steer(text, streamId, attachments),
     refresh: async () => {
       try {
         suggestions = suggestionsFrom((await client.call("orchestrator_capabilities", {})).providers)

@@ -140,6 +140,29 @@ describe("T3Client", () => {
     ])
   })
 
+  test("uploads bytes to the signed URL on the server's origin, without a token", async () => {
+    const posted: Array<{ url: string; headers: unknown; body: string }> = []
+    const answers = [new Response(null, { status: 204 }), new Response("expired", { status: 404 })]
+    const fetch = async (url: string, init: RequestInit) => {
+      posted.push({ url, headers: init.headers, body: new TextDecoder().decode(init.body as Uint8Array) })
+      return answers.shift()!
+    }
+    const client = new T3Client("http://t3.test", tokens(), fetch)
+
+    await client.upload("/api/attachments/upload/tok_1", new TextEncoder().encode("png-bytes"))
+    const rejected = await client
+      .upload("/api/attachments/upload/tok_2", new Uint8Array())
+      .catch((e: Error) => e.message)
+
+    expect({ posted, rejected }).toEqual({
+      posted: [
+        { url: "http://t3.test/api/attachments/upload/tok_1", headers: undefined, body: "png-bytes" },
+        { url: "http://t3.test/api/attachments/upload/tok_2", headers: undefined, body: "" },
+      ],
+      rejected: "T3 Code upload answered 404: expired",
+    })
+  })
+
   test("a session dropped again right after re-opening fails the call", async () => {
     const server = fakeServer((method) => (method === "tools/call" ? new Response("", { status: 404 }) : undefined))
     const client = new T3Client("http://t3.test", tokens(), server.fetch)
