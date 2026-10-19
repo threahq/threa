@@ -669,6 +669,16 @@ describe("MessageComposer", () => {
   })
 
   describe("mobile state handling", () => {
+    it("sends from the collapsed preview's Send", async () => {
+      isMobileMockValue = true
+      const onSubmit = vi.fn()
+      render(<MessageComposer {...defaultProps} onSubmit={onSubmit} canSubmit={true} />)
+
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
+
+      expect(onSubmit).toHaveBeenCalled()
+    })
+
     it("shows a slash command in the collapsed preview", () => {
       isMobileMockValue = true
 

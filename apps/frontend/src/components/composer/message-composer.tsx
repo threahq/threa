@@ -1785,7 +1785,11 @@ export function MessageComposer({
                         <span className="flex-1 min-w-0 truncate text-muted-foreground">
                           {previewText || placeholder}
                         </span>
-                        <div className="pointer-events-auto">{sendButton}</div>
+                        {/* Focusing Send would open the chrome and unmount this row's
+                            button before mouseup, so the tap's click never fires. */}
+                        <div className="pointer-events-auto" onMouseDown={(e) => e.preventDefault()}>
+                          {sendButton}
+                        </div>
                       </>
                     )}
                   </div>
