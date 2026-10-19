@@ -39,6 +39,7 @@ import {
   downloadSealedInboundAttachments,
   formatInboundAttachmentManifest,
   selectSealedInboundRefs,
+  type DownloadedAttachment,
   uploadReplyAttachments,
   uploadSealedReplyAttachments,
 } from "./attachments"
@@ -118,6 +119,8 @@ export interface DeliveredTurn {
   rootStreamId: string
   sourceMessageId: string
   content: string
+  /** The files `content`'s attachment manifest lists, for a runtime that takes some of them natively. */
+  attachments: DownloadedAttachment[]
   /**
    * The turn arrived sealed (E2EE): everything the connector records for it is
    * ciphertext to the server, so a transcript tracer may run in full-detail
@@ -168,7 +171,7 @@ export interface SessionControlActuator {
    * but a runtime declaring `maxConcurrentTurns > 1` must steer only that
    * stream's turn.
    */
-  steer?(text: string, streamId: string): Promise<boolean> | boolean
+  steer?(text: string, streamId: string, attachments: DownloadedAttachment[]): Promise<boolean> | boolean
   /**
    * A provider quota hold is on and the turn in flight will resume by itself.
    * While true, nothing is steered into a running turn and no `/enqueue`d
@@ -342,8 +345,15 @@ export function formatInvocationContent(invocation: ClaimedInvocation): string {
   return [prompt, "", "Earlier in this scratchpad (oldest first, for context):", ...history].join("\n")
 }
 
-export function withInboundAttachments(content: string, manifest: string): string {
-  return manifest ? `${content}\n\n${manifest}` : content
+/** What one or more messages hand the runtime: text with the attachment manifest appended, and the files it lists. */
+interface TurnInput {
+  content: string
+  attachments: DownloadedAttachment[]
+}
+
+function turnInput(content: string, attachments: DownloadedAttachment[]): TurnInput {
+  const manifest = formatInboundAttachmentManifest(attachments)
+  return { content: manifest ? `${content}\n\n${manifest}` : content, attachments }
 }
 
 /** One prompt for several messages answered by one turn (most recent last). */
@@ -1324,7 +1334,7 @@ export class RemoteSession {
     this.installInputUpdate(context, update)
     try {
       if (signal.aborted) throw signal.reason
-      const content = context.steered
+      const input = context.steered
         ? await this.steerContent(context.invocation, { strictAttachments: true, signal })
         : await this.buildTurnContent(context.invocation, { strictAttachments: true, signal })
       if (signal.aborted || this.isClaimCancelled(context.invocation)) throw signal.reason
@@ -1333,7 +1343,12 @@ export class RemoteSession {
       let steered: boolean
       try {
         if (signal.aborted) throw signal.reason
-        steered = await steer.call(this.delegate.sessionControl, content, context.invocation.responseStreamId)
+        steered = await steer.call(
+          this.delegate.sessionControl,
+          input.content,
+          context.invocation.responseStreamId,
+          input.attachments
+        )
       } finally {
         signal.removeEventListener("abort", interruptOnAbort)
       }
@@ -1343,7 +1358,7 @@ export class RemoteSession {
       }
       context.updateInProgress = false
       route.touchIdleTimeout()
-      if (context.steered) void this.recordSteps(route.invocation.id, [{ stepType: "steer", content }])
+      if (context.steered) void this.recordSteps(route.invocation.id, [{ stepType: "steer", content: input.content }])
       return "applied"
     } catch {
       this.abortForInputRestart(context)
@@ -1476,9 +1491,16 @@ export class RemoteSession {
       }
       if (this.isClaimCancelled(invocation)) return control
       const liveFolded = foldedParts.map(({ invocation: item }) => item)
-      const content = buildSteerContent([primary, ...foldedParts.map((part) => part.content)])
+      const inputs = [primary, ...foldedParts.map((part) => part.input)]
       this.bindRunningOwner(invocation.id, liveFolded)
-      await this.deliverTurn(invocation, content, liveFolded)
+      await this.deliverTurn(
+        invocation,
+        {
+          content: buildSteerContent(inputs.map((input) => input.content)),
+          attachments: inputs.flatMap((input) => input.attachments),
+        },
+        liveFolded
+      )
     } catch (error) {
       // Never throw past here. Control claimed by the sweep has to run even when
       // delivery failed — otherwise a swept /stop is claimed, never handled, and
@@ -1504,11 +1526,11 @@ export class RemoteSession {
    */
   private async foldedTurnParts(
     folded: ClaimedInvocation[]
-  ): Promise<Array<{ invocation: ClaimedInvocation; content: string }>> {
-    const parts: Array<{ invocation: ClaimedInvocation; content: string }> = []
+  ): Promise<Array<{ invocation: ClaimedInvocation; input: TurnInput }>> {
+    const parts: Array<{ invocation: ClaimedInvocation; input: TurnInput }> = []
     for (const item of folded) {
       if (this.isClaimCancelled(item)) continue
-      parts.push({ invocation: item, content: await this.buildTurnContent(item) })
+      parts.push({ invocation: item, input: await this.buildTurnContent(item) })
     }
     return parts.filter((part) => !this.isClaimCancelled(part.invocation))
   }
@@ -1548,7 +1570,7 @@ export class RemoteSession {
   /** Register an invocation as the in-flight turn and push its content to the runtime. */
   private async deliverTurn(
     invocation: ClaimedInvocation,
-    content: string,
+    input: TurnInput,
     inputDependencies: ClaimedInvocation[] = []
   ): Promise<void> {
     if (this.isClaimCancelled(invocation)) throw new Error("invocation request is closed")
@@ -1575,7 +1597,8 @@ export class RemoteSession {
       streamId: invocation.responseStreamId,
       rootStreamId: invocation.rootStreamId,
       sourceMessageId: invocation.sourceMessageId,
-      content,
+      content: input.content,
+      attachments: input.attachments,
       sealed: invocation.sealing !== undefined,
     })
     const dependencyChanged = inputDependencies.some((item) => this.isClaimCancelled(item))
@@ -1826,13 +1849,14 @@ export class RemoteSession {
    * again would run it twice, so it closes like the turn it joined.
    */
   private async steerRunningTurn(invocation: ClaimedInvocation): Promise<void> {
-    const content = await this.steerContent(invocation)
+    const { content, attachments } = await this.steerContent(invocation)
     if (this.isClaimCancelled(invocation)) return
     const route = this.openRouteForStream(invocation.responseStreamId)
     if (!route) return this.deferToNextTurn(invocation)
     let steered: boolean
     try {
-      steered = (await this.delegate.sessionControl?.steer?.(content, invocation.responseStreamId)) === true
+      steered =
+        (await this.delegate.sessionControl?.steer?.(content, invocation.responseStreamId, attachments)) === true
     } catch (error) {
       await this.failInvocation(invocation, `Steer failed: ${this.summarize(error)}`)
       return
@@ -2067,11 +2091,8 @@ export class RemoteSession {
   private async buildTurnContent(
     invocation: ClaimedInvocation,
     options: { strictAttachments?: boolean; signal?: AbortSignal } = {}
-  ): Promise<string> {
-    return withInboundAttachments(
-      formatInvocationContent(invocation),
-      await this.inboundAttachmentManifest(invocation, options)
-    )
+  ): Promise<TurnInput> {
+    return turnInput(formatInvocationContent(invocation), await this.inboundAttachments(invocation, options))
   }
 
   /**
@@ -2082,23 +2103,19 @@ export class RemoteSession {
   private async steerContent(
     invocation: ClaimedInvocation,
     options: { strictAttachments?: boolean; signal?: AbortSignal } = {}
-  ): Promise<string> {
+  ): Promise<TurnInput> {
     const prompt = invocation.promptMarkdown.trim() || "(empty message)"
-    return withInboundAttachments(
-      prompt,
-      await this.inboundAttachmentManifest(invocation, { ...options, sourceOnly: true })
-    )
+    return turnInput(prompt, await this.inboundAttachments(invocation, { ...options, sourceOnly: true }))
   }
 
   /**
-   * Download the turn's inbound attachments and return the manifest listing
-   * where they landed ("" when none). `sourceOnly` skips the history messages'
-   * attachments and takes the source message's alone.
+   * Download the turn's inbound attachments. `sourceOnly` skips the history
+   * messages' attachments and takes the source message's alone.
    */
-  private async inboundAttachmentManifest(
+  private async inboundAttachments(
     invocation: ClaimedInvocation,
     options: { strictAttachments?: boolean; signal?: AbortSignal; sourceOnly?: boolean } = {}
-  ): Promise<string> {
+  ): Promise<DownloadedAttachment[]> {
     if (options.signal?.aborted) throw options.signal.reason
     // A sealed turn's attachments come from the refs hydration opened out of the
     // sealed payloads — the plaintext message list only holds ciphertext
@@ -2106,7 +2123,7 @@ export class RemoteSession {
     // ciphertext; the ref's key decrypts it locally.
     if (invocation.sealing) {
       const refs = invocation.sealedAttachments
-      if (!refs) return ""
+      if (!refs) return []
       try {
         const downloaded = await downloadSealedInboundAttachments(this.client, {
           refs: selectSealedInboundRefs(refs.prompt, options.sourceOnly ? [] : refs.history),
@@ -2117,11 +2134,11 @@ export class RemoteSession {
           signal: options.signal,
         })
         if (options.signal?.aborted) throw options.signal.reason
-        return formatInboundAttachmentManifest(downloaded)
+        return downloaded
       } catch (error) {
         if (options.strictAttachments || options.signal?.aborted) throw error
         this.log(`sealed inbound attachment fetch failed: ${this.summarize(error)}`)
-        return ""
+        return []
       }
     }
     // Best-effort: a discovery/download failure (e.g. a key without
@@ -2141,11 +2158,11 @@ export class RemoteSession {
         signal: options.signal,
       })
       if (options.signal?.aborted) throw options.signal.reason
-      return formatInboundAttachmentManifest(downloaded)
+      return downloaded
     } catch (error) {
       if (options.strictAttachments || options.signal?.aborted) throw error
       this.log(`inbound attachment scan failed: ${this.summarize(error)}`)
-      return ""
+      return []
     }
   }
 

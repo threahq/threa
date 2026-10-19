@@ -126,6 +126,7 @@ const TURN: DeliveredTurn = {
   rootStreamId: "stream_root",
   sourceMessageId: "msg_1",
   content: "Do the thing",
+  attachments: [],
   sealed: false,
 }
 

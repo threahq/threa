@@ -139,9 +139,9 @@ describe("createClaudeSessionControl", () => {
     try {
       let refused = true
       const actuator = steeringControl(undefined, () => refused)
-      const whileRefused = await actuator.steer!("go left", "stream_1")
+      const whileRefused = await actuator.steer!("go left", "stream_1", [])
       refused = false
-      const afterRefusal = await actuator.steer!("go right", "stream_1")
+      const afterRefusal = await actuator.steer!("go right", "stream_1", [])
 
       expect({ whileRefused, afterRefusal, pastes: pasted.mock.calls.map(([text]) => text) }).toEqual({
         whileRefused: false,
@@ -172,9 +172,9 @@ describe("createClaudeSessionControl", () => {
       const actuator = steeringControl(() => carryOn)
       carryOn.onTurnStarted("binv_1", "stream_1")
       carryOn.onApiError("binv_1", "API Error: Overloaded")
-      const whileHeld = await actuator.steer!("edited text", "stream_1")
+      const whileHeld = await actuator.steer!("edited text", "stream_1", [])
       carryOn.onInterrupt()
-      const afterRelease = await actuator.steer!("edited text", "stream_1")
+      const afterRelease = await actuator.steer!("edited text", "stream_1", [])
 
       expect({ whileHeld, afterRelease, pastes: pasted.mock.calls.length }).toEqual({
         whileHeld: false,

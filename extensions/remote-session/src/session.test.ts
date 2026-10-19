@@ -26,6 +26,7 @@ import {
   type RuntimePresenceReport,
   type SessionControlActuator,
 } from "./session"
+import type { DownloadedAttachment } from "./attachments"
 import type { RemoteSessionConfig } from "./identity"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -1347,10 +1348,12 @@ describe("RemoteSession terminal route writes", () => {
     const turns: DeliveredTurn[] = []
     const session = makeSession(client, transport, { deliverTurn: async (turn) => void turns.push(turn) })
     await (
-      session as unknown as { deliverTurn: (invocation: ClaimedInvocation, content: string) => Promise<void> }
+      session as unknown as {
+        deliverTurn: (invocation: ClaimedInvocation, input: { content: string; attachments: [] }) => Promise<void>
+      }
     ).deliverTurn(
       makeInvocation({ id: "binv_mention", rootStreamId: "stream_channel", responseStreamId: "stream_channel_thread" }),
-      "Hello"
+      { content: "Hello", attachments: [] }
     )
 
     expect(turns).toEqual([
@@ -1360,6 +1363,7 @@ describe("RemoteSession terminal route writes", () => {
         rootStreamId: "stream_channel",
         sourceMessageId: expect.any(String),
         content: "Hello",
+        attachments: [],
         sealed: false,
       },
     ])
@@ -1373,8 +1377,13 @@ describe("RemoteSession terminal route writes", () => {
     seedInflight(session, makeInvocation({ id: "binv_old_owner", responseStreamId: "stream_turn" }))
     await session.reply("binv_old_owner", "Done.")
     await (
-      session as unknown as { deliverTurn: (invocation: ClaimedInvocation, content: string) => Promise<void> }
-    ).deliverTurn(makeInvocation({ id: "binv_new_owner", responseStreamId: "stream_turn" }), "New turn")
+      session as unknown as {
+        deliverTurn: (invocation: ClaimedInvocation, input: { content: string; attachments: [] }) => Promise<void>
+      }
+    ).deliverTurn(makeInvocation({ id: "binv_new_owner", responseStreamId: "stream_turn" }), {
+      content: "New turn",
+      attachments: [],
+    })
     ;(
       client as unknown as { sendInvocationMessage: (id: string, body: Record<string, unknown>) => Promise<void> }
     ).sendInvocationMessage = async (id, body) => {
@@ -2977,7 +2986,7 @@ function makeQueuedSession(
   options: {
     maxConcurrentTurns?: number
     serverIgnoresExclusion?: boolean
-    steer?: (text: string, streamId: string) => boolean | Promise<boolean>
+    steer?: SessionControlActuator["steer"]
   } = {}
 ) {
   const delivered: string[] = []
@@ -2985,6 +2994,7 @@ function makeQueuedSession(
   const claims: Array<Record<string, unknown>> = []
   const interrupts: Array<string | undefined> = []
   const steers: Array<{ text: string; streamId: string }> = []
+  const steeredAttachments: DownloadedAttachment[][] = []
   const held = { value: false }
   const { client, calls } = makeFakeClient()
   Object.assign(client as unknown as Record<string, unknown>, {
@@ -3020,9 +3030,10 @@ function makeQueuedSession(
         },
         ...(steer
           ? {
-              steer: (text: string, streamId: string) => {
+              steer: (text: string, streamId: string, attachments: DownloadedAttachment[]) => {
                 steers.push({ text, streamId })
-                return steer(text, streamId)
+                steeredAttachments.push(attachments)
+                return steer(text, streamId, attachments)
               },
             }
           : {}),
@@ -3037,7 +3048,21 @@ function makeQueuedSession(
     claims
       .filter((body) => body.responseStreamId === undefined)
       .map((body) => ({ caps: body.supportedCapabilities, exclude: body.excludeResponseStreamIds }))
-  return { session, client, queue, delivered, contents, claims, drainClaims, interrupts, steers, calls, fake, held }
+  return {
+    session,
+    client,
+    queue,
+    delivered,
+    contents,
+    claims,
+    drainClaims,
+    interrupts,
+    steers,
+    steeredAttachments,
+    calls,
+    fake,
+    held,
+  }
 }
 
 describe("messages to a running turn (steer by default, /enqueue waits)", () => {
@@ -3127,8 +3152,17 @@ describe("messages to a running turn (steer by default, /enqueue waits)", () => 
       "Attachments saved into this session's working directory — read them from these paths:",
       `- shot.png (image/png, 4 bytes) → ${join(dir, ".threa-attachments", "binv_b", "att_img", "shot.png")} [attached to the message you just received]`,
     ].join("\n")
-    expect({ steers: h.steers, steps: steerSteps(h) }).toMatchObject({
+    expect({ steers: h.steers, attachments: h.steeredAttachments, steps: steerSteps(h) }).toMatchObject({
       steers: [{ text, streamId: "stream_a" }],
+      attachments: [
+        [
+          {
+            attachment: { id: "att_img", mimeType: "image/png" },
+            isSource: true,
+            localPath: join(dir, ".threa-attachments", "binv_b", "att_img", "shot.png"),
+          },
+        ],
+      ],
       steps: [{ invocationId: "binv_a", frames: [{ stepType: "steer", content: text }] }],
     })
   })
@@ -3857,7 +3891,7 @@ describe("folding queued messages into one turn", () => {
   const asInternal = (session: RemoteSession) => session as unknown as { claimDrain: () => Promise<boolean> }
 
   function makeFoldSession(queue: ClaimedInvocation[], overrides: { deliverTurn?: () => Promise<void> } = {}) {
-    const delivered: Array<{ invocationId: string; content: string }> = []
+    const delivered: DeliveredTurn[] = []
     const completed: Array<{ id: string; body: Record<string, unknown> }> = []
     const failed: Array<{ id: string; body: Record<string, unknown> }> = []
     const claims: Array<Record<string, unknown>> = []
@@ -3887,8 +3921,8 @@ describe("folding queued messages into one turn", () => {
     const session = makeSession(client, fake.transport, {
       deliverTurn:
         overrides.deliverTurn ??
-        (async (turn: { invocationId: string; content: string }) => {
-          delivered.push({ invocationId: turn.invocationId, content: turn.content })
+        (async (turn: DeliveredTurn) => {
+          delivered.push(turn)
         }),
       sessionControl: {
         commands: ["stop"],
@@ -3926,6 +3960,9 @@ describe("folding queued messages into one turn", () => {
       expect(content).toContain("and this screenshot")
       expect(content).toContain("[attached to the message you just received]")
       expect(content).toContain(join(".threa-attachments", "binv_2", "att_img", "shot.png"))
+      expect(delivered[0]!.attachments.map((entry) => entry.localPath)).toEqual([
+        join(dir, ".threa-attachments", "binv_2", "att_img", "shot.png"),
+      ])
     } finally {
       await session.shutdown()
       cwdSpy.mockRestore()
