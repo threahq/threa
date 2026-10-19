@@ -7,6 +7,8 @@ import {
   type RuntimeDescriptor,
   type SendResult,
   type StepFrame,
+  StepBatcher,
+  isNoResponse,
   toolTraceContent,
 } from "@threahq/remote-session"
 import {
@@ -47,13 +49,11 @@ export const HERMES_RUNTIME: RuntimeDescriptor = {
   maxConcurrentTurns: 4,
 }
 
-const FLUSH_DELAY_MS = 500
 const TERMINAL_EVENTS = new Set(["run.completed", "run.failed", "run.cancelled"])
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "interrupted"])
 const STATUS_POLL_MS = 2000
 // A gateway restart takes a few seconds; five misses in a row (10 s) is a dead gateway, not a blip.
 const MAX_CONSECUTIVE_POLL_FAILURES = 5
-const NO_RESPONSE_SENTINEL = "THREA_NO_RESPONSE"
 const STEER_REJECTED_CODE = "run_not_accepting_steer"
 // Hermes's default `approvals.timeout`: past it the gateway denies the command itself, so the card must not outlive it.
 const APPROVAL_CARD_EXPIRES_MS = 300_000
@@ -96,50 +96,13 @@ interface OpenRun {
   abort: AbortController
 }
 
-/** Buffers trace frames so a chatty run does not post one steps call per tool event. */
-class StepBatcher {
-  private frames: StepFrame[] = []
-  private timer?: ReturnType<typeof setTimeout>
-  private tail: Promise<void> = Promise.resolve()
-
-  constructor(
-    private readonly invocationId: string,
-    private readonly session: BridgeSession
-  ) {}
-
-  add(frame: StepFrame): void {
-    this.frames.push(frame)
-    this.timer ??= setTimeout(() => void this.flush(), FLUSH_DELAY_MS)
-  }
-
-  addNow(frame: StepFrame): Promise<void> {
-    this.frames.push(frame)
-    return this.flush()
-  }
-
-  flush(): Promise<void> {
-    if (this.timer) {
-      clearTimeout(this.timer)
-      this.timer = undefined
-    }
-    if (this.frames.length === 0) return this.tail
-    const batch = this.frames
-    this.frames = []
-    // recordSteps chunks to the wire limit and logs its own failures.
-    this.tail = this.tail.then(async () => {
-      await this.session.recordSteps(this.invocationId, batch)
-    })
-    return this.tail
-  }
-}
-
 /** Rewrite Hermes' `MEDIA:` output lines into the directive the SDK uploads attachments from. */
 export function rewriteMediaDirectives(output: string): string {
   return output.replace(MEDIA_LINE_RE, (_line, path: string) => `THREA_ATTACH: ${path}`)
 }
 
 export function replyTextFor(output: string): string {
-  return output.trim() === NO_RESPONSE_SENTINEL ? "" : rewriteMediaDirectives(output)
+  return isNoResponse(output) ? "" : rewriteMediaDirectives(output)
 }
 
 /**

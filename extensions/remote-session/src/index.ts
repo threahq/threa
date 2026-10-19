@@ -58,12 +58,15 @@ export {
   formatInboundAttachmentManifest,
   uploadReplyAttachments,
   extractAttachmentDirectives,
+  redactAttachDirectives,
   guessMimeType,
   ATTACH_DIRECTIVE_RE,
   ATTACHMENT_DIR,
   type DownloadedAttachment,
   type SelectedAttachment,
 } from "./attachments"
+export { StepBatcher, type StepRecorder } from "./step-batcher"
+export { NO_RESPONSE_SENTINEL, isNoResponse } from "./no-response"
 export { wireLifecycle, type LifecycleOptions, type LifecycleProcess } from "./lifecycle"
 export {
   DelegationClient,

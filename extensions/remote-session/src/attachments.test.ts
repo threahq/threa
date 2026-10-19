@@ -8,6 +8,7 @@ import {
   downloadInboundAttachments,
   downloadSealedInboundAttachments,
   extractAttachmentDirectives,
+  redactAttachDirectives,
   formatInboundAttachmentManifest,
   guessMimeType,
   selectInboundAttachments,
@@ -30,6 +31,14 @@ function tempDir(): string {
 }
 afterEach(() => {
   while (tempDirs.length) rmSync(tempDirs.pop()!, { recursive: true, force: true })
+})
+
+describe("redactAttachDirectives", () => {
+  test("hides the path on every directive line and leaves prose alone", () => {
+    expect(redactAttachDirectives("Made it\nTHREA_ATTACH: /home/a/out.png\nsee THREA_ATTACH: inline")).toBe(
+      "Made it\nTHREA_ATTACH: [local path omitted]\nsee THREA_ATTACH: inline"
+    )
+  })
 })
 
 describe("extractAttachmentDirectives", () => {

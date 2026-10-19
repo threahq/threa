@@ -5,6 +5,10 @@ import {
   type SendResult,
   type StepFrame,
   type TraceMode,
+  NO_RESPONSE_SENTINEL,
+  StepBatcher,
+  isNoResponse,
+  redactAttachDirectives,
   toolTraceContent,
 } from "@threahq/remote-session"
 import { T3AuthError } from "./auth"
@@ -40,14 +44,12 @@ export const T3CODE_RUNTIME: RuntimeDescriptor = {
 
 export type RunTraceMode = TraceMode | "full"
 
-const FLUSH_DELAY_MS = 500
 // `t3_thread_wait` returns as soon as the run settles, so its timeout is the trace poll cadence.
 const WAIT_TIMEOUT_MS = 2000
 const MAX_CONSECUTIVE_POLL_FAILURES = 5
 const READ_PAGE_LIMIT = 100
 // Under the step content limit with room for the trace envelope.
 const MAX_CHARS_PER_ITEM = 8000
-const NO_RESPONSE_SENTINEL = "THREA_NO_RESPONSE"
 const TERMINAL_RUN_STATUSES = new Set<string>(["completed", "failed", "cancelled", "interrupted", "rolled_back"])
 const OPEN_ITEM_STATUSES = new Set<string>(["idle", "pending", "running", "waiting"])
 const TOOL_LABELS: Record<string, string> = {
@@ -75,53 +77,13 @@ const PREAMBLE = [
   `To stay silent, reply exactly ${NO_RESPONSE_SENTINEL}.`,
 ].join(" ")
 
-/** Buffers trace frames so a chatty run does not post one steps call per item. */
-class StepBatcher {
-  private frames: StepFrame[] = []
-  private timer?: ReturnType<typeof setTimeout>
-  private tail: Promise<void> = Promise.resolve()
-
-  constructor(
-    private readonly invocationId: string,
-    private readonly session: BridgeSession
-  ) {}
-
-  add(frame: StepFrame): void {
-    this.frames.push(frame)
-    this.timer ??= setTimeout(() => void this.flush(), FLUSH_DELAY_MS)
-  }
-
-  addNow(frame: StepFrame): Promise<void> {
-    this.frames.push(frame)
-    return this.flush()
-  }
-
-  flush(): Promise<void> {
-    if (this.timer) {
-      clearTimeout(this.timer)
-      this.timer = undefined
-    }
-    if (this.frames.length === 0) return this.tail
-    const batch = this.frames
-    this.frames = []
-    this.tail = this.tail.then(async () => {
-      await this.session.recordSteps(this.invocationId, batch)
-    })
-    return this.tail
-  }
-}
-
 function replyTextFor(output: string): string {
-  return output.trim() === NO_RESPONSE_SENTINEL ? "" : output
+  return isNoResponse(output) ? "" : output
 }
 
 /** T3 item ids run long; the step id only has to be stable per item. */
 function stepIdFor(itemId: string): string {
   return `t3_${createHash("sha256").update(itemId).digest("hex").slice(0, 32)}`
-}
-
-function sanitizeNarration(text: string): string {
-  return text.replace(/^THREA_ATTACH:\s*.+$/gm, "THREA_ATTACH: [local path omitted]")
 }
 
 function firstLine(text: string): string {
@@ -198,7 +160,7 @@ export class RunTrace {
     if (this.emitted.get(item.itemId) === "final") return []
     const frames: StepFrame[] = []
     if (this.held && item.position > this.held.position) {
-      frames.push({ stepType: "thinking", content: sanitizeNarration(this.held.text ?? "") })
+      frames.push({ stepType: "thinking", content: redactAttachDirectives(this.held.text ?? "") })
       this.emitted.set(this.held.itemId, "final")
       this.held = undefined
     }
