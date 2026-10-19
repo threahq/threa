@@ -1,6 +1,6 @@
 {
   "name": "@threahq/cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Command-line client and MCP server for Threa: read and search streams, send messages, manage attachments, and serve the Threa tools to any MCP-capable agent.",
   "keywords": [
     "threa",
