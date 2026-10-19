@@ -1749,7 +1749,8 @@ export interface ValidateMoveMessagesToThreadResponse {
 
 export const REFERENCE_AUDIENCE_MAX_STREAM_IDS = 50
 
-export type ReferenceAudienceInput = ({ streamId: string } | { dmUserId: string }) & { streamIds: string[] }
+export type ReferenceAudienceTarget = { streamId: string } | { dmUserId: string }
+export type ReferenceAudienceInput = ReferenceAudienceTarget & { streamIds: string[] }
 
 export interface ReferenceAudience {
   streamId: string

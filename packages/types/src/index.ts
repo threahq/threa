@@ -670,6 +670,7 @@ export type {
   ValidateMoveMessagesToThreadInput,
   ValidateMoveMessagesToThreadResponse,
   ReferenceAudienceInput,
+  ReferenceAudienceTarget,
   ReferenceAudience,
   ReferenceAudienceResponse,
   MovedMessagePreview,
