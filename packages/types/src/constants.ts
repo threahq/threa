@@ -1507,7 +1507,7 @@ export const BotTraits = {
   ACTIVE_SCRATCHPAD: "active-scratchpad",
 } as const satisfies Record<string, BotTrait>
 
-export const BOT_RUNTIME_KINDS = ["pi-local", "hermes", "openclaw", "claude-code-channel", "custom"] as const
+export const BOT_RUNTIME_KINDS = ["pi-local", "hermes", "openclaw", "claude-code-channel", "t3code", "custom"] as const
 export type BotRuntimeKind = (typeof BOT_RUNTIME_KINDS)[number]
 
 export const BotRuntimeKinds = {
@@ -1515,6 +1515,7 @@ export const BotRuntimeKinds = {
   HERMES: "hermes",
   OPENCLAW: "openclaw",
   CLAUDE_CODE_CHANNEL: "claude-code-channel",
+  T3CODE: "t3code",
   CUSTOM: "custom",
 } as const satisfies Record<string, BotRuntimeKind>
 

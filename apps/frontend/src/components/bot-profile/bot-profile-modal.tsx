@@ -30,6 +30,7 @@ const RUNTIME_KIND_LABELS: Record<BotRuntimeKind, string> = {
   hermes: "Hermes",
   openclaw: "OpenClaw",
   "claude-code-channel": "Claude Code",
+  t3code: "T3 Code",
   custom: "Custom runtime",
 }
 
