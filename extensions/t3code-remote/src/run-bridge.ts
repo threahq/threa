@@ -22,6 +22,7 @@ import {
   type RunStatus,
   type T3Client,
   type ThreadItem,
+  type ThreadSummary,
 } from "./t3-client"
 
 /** The slice of `RemoteSession` the bridge drives, so tests can stand in a fake. */
@@ -265,6 +266,12 @@ export class T3TurnRunner {
 
   setModel(model: ModelSelection): void {
     this.saveState({ ...this.state, model })
+  }
+
+  /** New threads launch on the model the last run used, including one picked in T3 itself. */
+  private rememberModel({ providerInstanceId: instanceId, model }: ThreadSummary): void {
+    if (this.state.model?.instanceId === instanceId && this.state.model.model === model) return
+    this.saveState({ ...this.state, model: { instanceId, model } })
   }
 
   /** The stream's next turn launches a fresh thread. */
@@ -554,6 +561,7 @@ export class T3TurnRunner {
         maxCharsPerItem: MAX_CHARS_PER_ITEM,
         ...(after === undefined ? {} : { afterPosition: after }),
       })
+      this.rememberModel(page.thread)
       for (const item of page.items) {
         for (const frame of trace.observe(item)) {
           if (frame.phase === "started") void batcher.addNow(frame)

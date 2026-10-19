@@ -107,8 +107,8 @@ describe("T3TurnRunner", () => {
     expect(t3.callsOf("t3_thread_launch")).toEqual([])
   })
 
-  test("launches into the configured project on its default model", async () => {
-    const { t3, session, runner } = setup({ projectId: "project_1", state: { threads: {} } })
+  test("launches into the configured project on its default model, which later launches keep", async () => {
+    const { t3, session, saved, runner } = setup({ projectId: "project_1", state: { threads: {} } })
     t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Hi" })] }])
 
     await runner.deliverTurn(turn())
@@ -122,6 +122,25 @@ describe("T3TurnRunner", () => {
         projectId: "project_1",
       },
     ])
+    expect(saved.at(-1)).toEqual({ threads: { stream_root: "thread_1" }, model: MODEL })
+  })
+
+  test("a model picked in T3 itself becomes the one new threads launch on", async () => {
+    const { t3, session, saved, runner } = setup({
+      state: {
+        threads: { stream_root: "thread_root" },
+        model: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+      },
+    })
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Hi" })] }])
+
+    await runner.deliverTurn(turn())
+    await session.settled()
+
+    expect({ model: runner.model, saved: saved.at(-1) }).toEqual({
+      model: MODEL,
+      saved: { threads: { stream_root: "thread_root" }, model: MODEL },
+    })
   })
 
   test("uploads the images T3 takes natively and launches with them", async () => {
@@ -279,7 +298,7 @@ describe("T3TurnRunner", () => {
       { threadId: "thread_root", sourcePoint: { type: "latest_stable" }, title: "Branch off here" },
     ])
     expect(t3.callsOf("t3_thread_send")).toEqual([expect.objectContaining({ threadId: "thread_1" })])
-    expect(saved.at(-1)).toEqual({ threads: { stream_root: "thread_root", stream_thread: "thread_1" } })
+    expect(saved.at(-1)).toEqual({ threads: { stream_root: "thread_root", stream_thread: "thread_1" }, model: MODEL })
   })
 
   test("a mention outside the scratchpad launches its own thread", async () => {

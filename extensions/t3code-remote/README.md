@@ -98,7 +98,8 @@ A damaged `threads.json` or `token.json` stops the connector at start instead of
 - `/status` shows the scratchpad's thread, its model, the open runs and the T3 URL.
 - `/model` picks a model from the T3 server's providers, as `instance::model`, a model id, or a substring matching
   one of them. It moves the scratchpad's thread and every thread launched after it. Threads that already exist under
-  the scratchpad or elsewhere keep theirs.
+  the scratchpad or elsewhere keep theirs. A scratch thread can't launch until one is picked. After that, new threads
+  launch on the model the last run used, so a model changed in T3 carries over too.
 - `/clear` starts a new T3 thread for the scratchpad. It is refused while a turn is open.
 
 ## Traces and replies
