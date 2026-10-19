@@ -1,6 +1,13 @@
 import type { DeliveredTurn, StepFrame } from "@threahq/remote-session"
 import type { BridgeSession } from "./run-bridge"
-import { T3ToolError, type T3Client, type T3ToolName, type T3Tools, type ThreadItem } from "./t3-client"
+import {
+  T3ToolError,
+  type ModelSelection,
+  type T3Client,
+  type T3ToolName,
+  type T3Tools,
+  type ThreadItem,
+} from "./t3-client"
 
 interface ScriptStep {
   status: string
@@ -8,6 +15,8 @@ interface ScriptStep {
   items?: ThreadItem[]
   /** The run the wait answers for, when T3 continued the waited one as a new run. */
   runId?: string
+  /** The thread's model as of this poll, as when the user switches it in T3. */
+  model?: ModelSelection
 }
 
 export function item(
@@ -45,11 +54,14 @@ export function fakeT3() {
   let runs = 0
   let prepared = 0
   let steerDelivery: "steered" | "started" | "queued" = "steered"
+  let envMode: "local" | "worktree" | undefined
+  const models = new Map<string, ModelSelection>()
 
   const startRun = () => `run_${++runs}`
   const steerRun = () => (steerDelivery === "steered" ? `run_${runs}` : startRun())
 
   function apply(threadId: string, step: ScriptStep): void {
+    if (step.model) models.set(threadId, step.model)
     const current = items.get(threadId) ?? []
     for (const next of step.items ?? []) {
       const index = current.findIndex((existing) => existing.position === next.position)
@@ -71,8 +83,9 @@ export function fakeT3() {
   const handlers: {
     [K in T3ToolName]: (args: T3Tools[K]["args"]) => T3Tools[K]["result"] | Promise<T3Tools[K]["result"]>
   } = {
-    t3_thread_launch: () => {
+    t3_thread_launch: (args) => {
       const threadId = `thread_${++threads}`
+      if (args.modelSelection) models.set(threadId, args.modelSelection)
       return { threadId, runId: startRun() }
     },
     t3_thread_send: (args) => {
@@ -99,8 +112,8 @@ export function fakeT3() {
         title: "Fake thread",
         status: "idle" as const,
         activeRunId: null,
-        providerInstanceId: "codex",
-        model: "gpt-5.5",
+        providerInstanceId: models.get(args.threadId)?.instanceId ?? "codex",
+        model: models.get(args.threadId)?.model ?? "gpt-5.5",
       }
       if (args.itemId !== undefined) {
         const text = continuations.get(args.itemId) ?? ""
@@ -124,8 +137,16 @@ export function fakeT3() {
       }
     },
     t3_thread_interrupt: () => ({ status: "interrupt_requested" }),
-    t3_thread_configure: () => ({ sequence: 1 }),
-    t3_thread_fork: () => ({ targetThreadId: `thread_${++threads}` }),
+    t3_thread_configure: (args) => {
+      models.set(args.threadId, args.modelSelection)
+      return { sequence: 1 }
+    },
+    t3_thread_fork: (args) => {
+      const targetThreadId = `thread_${++threads}`
+      const model = models.get(args.threadId)
+      if (model) models.set(targetThreadId, model)
+      return { targetThreadId }
+    },
     orchestrator_capabilities: () => ({
       providers: [
         {
@@ -135,6 +156,12 @@ export function fakeT3() {
         },
         { providerInstanceId: "claudeAgent", displayName: "Claude", models: [{ id: "claude-opus-5-5" }] },
       ],
+    }),
+    t3_environment_read: () => ({
+      preferences: {
+        ...(envMode ? { defaultThreadEnvMode: envMode } : {}),
+        newWorktreesStartFromOrigin: true,
+      },
     }),
   }
 
@@ -173,6 +200,8 @@ export function fakeT3() {
     continueText: (itemId: string, fullText: string) => continuations.set(itemId, fullText),
     /** How T3 answers the next steers: folded into the run, or started or queued as their own run. */
     steerAs: (delivery: typeof steerDelivery) => (steerDelivery = delivery),
+    /** The environment's default for new threads, unset unless a test sets it. */
+    defaultEnvMode: (mode: typeof envMode) => (envMode = mode),
   }
 }
 

@@ -140,6 +140,27 @@ describe("T3Client", () => {
     ])
   })
 
+  test("calls that see the same dropped session re-open it once", async () => {
+    let restarted = false
+    const server = fakeServer((method, seen) =>
+      restarted && method === "tools/call" && seen.session === "sess_1" ? new Response("", { status: 404 }) : undefined
+    )
+    let dropped = 0
+    // The second 404 lands after the first call has already re-opened the session.
+    const fetch = async (url: string, init: RequestInit) => {
+      const res = await server.fetch(url, init)
+      if (res.status === 404 && ++dropped === 2) await new Promise((resolve) => setTimeout(resolve, 20))
+      return res
+    }
+    const client = new T3Client("http://t3.test", tokens(), fetch)
+    await client.call("t3_thread_wait", WAIT)
+    restarted = true
+
+    await Promise.all([client.call("t3_thread_wait", WAIT), client.call("t3_thread_wait", WAIT)])
+
+    expect(server.seen.filter(({ method }) => method === "initialize")).toHaveLength(2)
+  })
+
   test("uploads bytes to the signed URL on the server's origin, without a token", async () => {
     const posted: Array<{ url: string; headers: unknown; body: string }> = []
     const answers = [new Response(null, { status: 204 }), new Response("expired", { status: 404 })]

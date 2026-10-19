@@ -79,6 +79,11 @@ turn, so it starts with the scratchpad's context and then diverges. A mention ou
 a DM, launches its own thread and never sees the scratchpad's context. The stream-to-thread links live in
 `~/.threa/t3code-remote/work/threads.json`, so a restart picks the same threads back up.
 
+A thread launched in a project follows the environment's default for new threads in T3's settings. When that is a new
+worktree, T3 makes the worktree and names its branch. It starts from the checkout's `HEAD`, or from origin's default
+branch when T3 is set to start new worktrees from origin. T3's MCP doesn't report a project's own override or its
+`t3.json`, so those don't apply here.
+
 Every thread is a normal T3 thread, so you can open it in the T3 app and keep going there.
 
 Stopping the connector leaves T3's runs alone: they finish in T3, and their Threa turns end with "T3 Code connector
@@ -98,7 +103,9 @@ A damaged `threads.json` or `token.json` stops the connector at start instead of
 - `/status` shows the scratchpad's thread, its model, the open runs and the T3 URL.
 - `/model` picks a model from the T3 server's providers, as `instance::model`, a model id, or a substring matching
   one of them. It moves the scratchpad's thread and every thread launched after it. Threads that already exist under
-  the scratchpad or elsewhere keep theirs.
+  the scratchpad or elsewhere keep theirs. A scratch thread can't launch until one is picked. A project thread launched
+  with none runs on the project's default, which later threads keep. Switching a thread's model in T3 itself also
+  moves the one new threads launch on.
 - `/clear` starts a new T3 thread for the scratchpad. It is refused while a turn is open.
 
 ## Traces and replies

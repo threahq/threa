@@ -2,6 +2,8 @@ import { T3AuthError, type FetchLike } from "./auth"
 import type { T3Access } from "./config"
 
 const PROTOCOL_VERSION = "2025-06-18"
+// A hung connection fails the call instead of stalling its turn forever; T3's slowest answers (a launch) take seconds.
+const REQUEST_TIMEOUT_MS = 60_000
 
 export type RunStatus =
   | "preparing"
@@ -65,6 +67,7 @@ export interface T3Tools {
       scratch?: boolean
       modelSelection?: ModelSelection
       attachments?: ImageAttachment[]
+      workspaceStrategy?: { type: "worktree"; baseRef: string; startFromOrigin: boolean }
     }
     result: { threadId: string; runId: string | null }
   }
@@ -115,6 +118,10 @@ export interface T3Tools {
     args: Record<string, never>
     result: { providers: ProviderInfo[] }
   }
+  t3_environment_read: {
+    args: Record<string, never>
+    result: { preferences: { defaultThreadEnvMode?: "local" | "worktree"; newWorktreesStartFromOrigin: boolean } }
+  }
 }
 
 export type T3ToolName = keyof T3Tools
@@ -163,7 +170,8 @@ export class T3Client {
       message = await this.rpc("tools/call", { name, arguments: args })
     } catch (error) {
       if (!(error instanceof SessionLostError)) throw error
-      this.sessionId = undefined
+      // A concurrent call may have re-opened the session already.
+      if (this.sessionId === error.sessionId) this.sessionId = undefined
       await this.open()
       message = await this.rpc("tools/call", { name, arguments: args })
     }
@@ -174,7 +182,11 @@ export class T3Client {
   }
 
   async upload(relativeUrl: string, bytes: Uint8Array): Promise<void> {
-    const res = await this.fetchImpl(new URL(relativeUrl, this.baseUrl).href, { method: "POST", body: bytes })
+    const res = await this.fetchImpl(new URL(relativeUrl, this.baseUrl).href, {
+      method: "POST",
+      body: bytes,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
     if (res.status !== 204)
       throw new Error(`T3 Code upload answered ${res.status}: ${(await res.text()).slice(0, 300)}`)
   }
@@ -195,11 +207,11 @@ export class T3Client {
   private async rpc(method: string, params: unknown, notify = false): Promise<JsonRpcMessage | undefined> {
     const body = JSON.stringify({ jsonrpc: "2.0", method, params, ...(notify ? {} : { id: this.nextId++ }) })
     const token = await this.auth.token()
-    let res = await this.post(body, token)
-    if (res.status === 401) res = await this.post(body, await this.auth.renew(token))
+    const sessionId = method === "initialize" ? undefined : this.sessionId
+    let res = await this.post(body, token, sessionId)
+    if (res.status === 401) res = await this.post(body, await this.auth.renew(token), sessionId)
     if (res.status === 401) throw new T3AuthError("T3 Code rejected a freshly minted token.")
-    const sentSession = method !== "initialize" && this.sessionId !== undefined
-    if (res.status === 404 && sentSession) throw new SessionLostError()
+    if (res.status === 404 && sessionId !== undefined) throw new SessionLostError(sessionId)
     this.sessionId = res.headers.get("mcp-session-id") ?? this.sessionId
     const text = await res.text()
     if (!res.ok) throw new Error(`T3 Code MCP ${method} answered ${res.status}: ${text.slice(0, 300)}`)
@@ -215,7 +227,7 @@ export class T3Client {
     return message
   }
 
-  private post(body: string, token: string): Promise<Response> {
+  private post(body: string, token: string, sessionId: string | undefined): Promise<Response> {
     return this.fetchImpl(`${this.baseUrl}/mcp`, {
       method: "POST",
       headers: {
@@ -223,15 +235,16 @@ export class T3Client {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         "mcp-protocol-version": PROTOCOL_VERSION,
-        ...(this.sessionId ? { "mcp-session-id": this.sessionId } : {}),
+        ...(sessionId ? { "mcp-session-id": sessionId } : {}),
       },
       body,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
   }
 }
 
 class SessionLostError extends Error {
-  constructor() {
+  constructor(readonly sessionId: string) {
     super("T3 Code dropped the MCP session again right after it was re-opened.")
   }
 }

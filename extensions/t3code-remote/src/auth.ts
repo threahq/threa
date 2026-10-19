@@ -125,6 +125,7 @@ export interface T3AuthOptions {
   autoLogin: boolean
   fetch?: FetchLike
   mintCode?: () => Promise<string>
+  log?: (message: string) => void
 }
 
 /** The MCP bearer token: the saved one, or with `autoLogin` a freshly minted one whenever it is missing or rejected. */
@@ -135,24 +136,42 @@ export class T3Auth {
   constructor(private readonly options: T3AuthOptions) {}
 
   async token(): Promise<string> {
-    if (this.cached) return this.cached
-    const saved = readToken(this.options.tokenPath)
-    if (saved && saved.url === this.options.url && saved.access === this.options.access)
-      return (this.cached = saved.accessToken)
-    if (!this.options.autoLogin) throw new T3AuthError(`Not logged in to T3 Code at ${this.options.url}. ${LOGIN_HINT}`)
-    return this.renew(undefined)
+    return this.cached ?? this.renew(undefined)
   }
 
-  /** Called after T3 rejects `rejected`; a caller whose token was already replaced gets the replacement, not another login. */
-  renew(rejected: string | undefined): Promise<string> {
+  /**
+   * Called after T3 rejects `rejected`; a caller whose token was already replaced, here or by a
+   * `threa-t3code login` while the connector runs, gets the replacement, not another login.
+   */
+  async renew(rejected: string | undefined): Promise<string> {
     if (this.renewing) return this.renewing
-    if (this.cached && this.cached !== rejected) return Promise.resolve(this.cached)
+    if (this.cached && this.cached !== rejected) return this.cached
+    const saved = this.saved()
+    if (saved && saved !== rejected) return (this.cached = saved)
     if (!this.options.autoLogin) {
       this.cached = undefined
-      return Promise.reject(new T3AuthError(`T3 Code rejected the saved token (it lasts 30 days). ${LOGIN_HINT}`))
+      throw new T3AuthError(
+        rejected === undefined
+          ? `Not logged in to T3 Code at ${this.options.url}. ${LOGIN_HINT}`
+          : `T3 Code rejected the saved token (it lasts 30 days). ${LOGIN_HINT}`
+      )
     }
     this.renewing = this.login().finally(() => (this.renewing = undefined))
     return this.renewing
+  }
+
+  /** The saved token for this server and access; with `autoLogin` a damaged file is one the next login replaces. */
+  private saved(): string | undefined {
+    const { url, access, tokenPath, autoLogin } = this.options
+    let saved: T3Token | undefined
+    try {
+      saved = readToken(tokenPath)
+    } catch (error) {
+      if (!autoLogin) throw error
+      this.options.log?.(`${error instanceof Error ? error.message : String(error)}; logging in again.`)
+      return undefined
+    }
+    return saved && saved.url === url && saved.access === access ? saved.accessToken : undefined
   }
 
   /** Exchange a pairing code (minted locally when none is given) and save the token. */

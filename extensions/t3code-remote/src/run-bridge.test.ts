@@ -5,7 +5,10 @@ import { join } from "node:path"
 import type { DownloadedAttachment } from "@threahq/remote-session"
 import { T3AuthError } from "./auth"
 import { RunTrace, T3TurnRunner, type RunTraceMode, type ThreadState } from "./run-bridge"
+import { T3ToolError } from "./t3-client"
 import { fakeSession, fakeT3, item, turn } from "./t3.test-support"
+
+const MODEL = { instanceId: "codex", model: "gpt-5.5" }
 
 function setup(options: { state?: ThreadState; sealedFullTrace?: boolean; projectId?: string } = {}) {
   const t3 = fakeT3()
@@ -19,7 +22,7 @@ function setup(options: { state?: ThreadState; sealedFullTrace?: boolean; projec
     traceMode: "commands",
     sealedFullTrace: options.sealedFullTrace ?? false,
     ...(options.projectId === undefined ? {} : { projectId: options.projectId }),
-    threadStore: { load: () => options.state ?? { threads: {} }, save: (state) => saved.push(state) },
+    threadStore: { load: () => options.state ?? { threads: {}, model: MODEL }, save: (state) => saved.push(state) },
     sleep: async () => {},
     log: (message) => logs.push(message),
   })
@@ -55,7 +58,7 @@ function traceOf(content: string): { headline: string; sections: unknown[] } {
 }
 
 describe("T3TurnRunner", () => {
-  test("launches a scratch thread with the preamble, traces its tools and replies with the last message", async () => {
+  test("launches a scratch thread on the /model selection with the preamble, traces its tools and replies with the last message", async () => {
     const { t3, session, saved, runner } = setup()
     t3.script("run_1", [
       { status: "running", items: [item(1, "command_execution", { status: "running", text: "$ bun test" })] },
@@ -77,9 +80,10 @@ describe("T3TurnRunner", () => {
         message: expect.stringMatching(/^You are answering through Threa.*\n\nFix the flaky test$/s),
         runtimeMode: "full-access",
         scratch: true,
+        modelSelection: MODEL,
       },
     ])
-    expect(saved).toEqual([{ threads: { stream_root: "thread_1" } }])
+    expect(saved).toEqual([{ threads: { stream_root: "thread_1" }, model: MODEL }])
     const [started, final] = session.frames()
     const content = { headline: "bun test", sections: [{ label: "Details", body: "bun test", lang: "bash" }] }
     expect({ ...started!, content: traceOf(started!.content) }).toEqual({
@@ -96,11 +100,15 @@ describe("T3TurnRunner", () => {
     expect(session.replies).toEqual([{ invocationId: "binv_1", text: "All green." }])
   })
 
-  test("launches into the configured project on the /model selection", async () => {
-    const { t3, session, runner } = setup({
-      projectId: "project_1",
-      state: { threads: {}, model: { instanceId: "claudeAgent", model: "claude-opus-5-5" } },
-    })
+  test("a scratch launch with no /model refuses before T3 sees it", async () => {
+    const { t3, runner } = setup({ state: { threads: {} } })
+
+    await expect(runner.deliverTurn(turn())).rejects.toThrow("pick one with /model")
+    expect(t3.callsOf("t3_thread_launch")).toEqual([])
+  })
+
+  test("launches into the configured project on its default model, which later launches keep", async () => {
+    const { t3, session, saved, runner } = setup({ projectId: "project_1", state: { threads: {} } })
     t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Hi" })] }])
 
     await runner.deliverTurn(turn())
@@ -112,9 +120,68 @@ describe("T3TurnRunner", () => {
         message: expect.stringContaining("Fix the flaky test"),
         runtimeMode: "full-access",
         projectId: "project_1",
-        modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
       },
     ])
+    expect(saved.at(-1)).toEqual({ threads: { stream_root: "thread_1" }, model: MODEL })
+  })
+
+  test.each([
+    { mode: "worktree", worktree: true },
+    { mode: "local", worktree: false },
+    { mode: undefined, worktree: false },
+  ] as const)(
+    "a project thread gets a T3 worktree when the environment's default is one: $mode",
+    async ({ mode, worktree }) => {
+      const { t3, session, runner } = setup({ projectId: "project_1" })
+      t3.defaultEnvMode(mode)
+      t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Hi" })] }])
+
+      await runner.deliverTurn(turn())
+      await session.settled()
+
+      expect(t3.callsOf("t3_thread_launch")[0]?.workspaceStrategy).toEqual(
+        worktree ? { type: "worktree", baseRef: "HEAD", startFromOrigin: true } : undefined
+      )
+    }
+  )
+
+  test("a project thread whose T3 defaults can't be read fails its turn instead of launching", async () => {
+    const { t3, runner } = setup({ projectId: "project_1" })
+    t3.failNext("t3_environment_read", new Error("T3 is down"))
+
+    await expect(runner.deliverTurn(turn())).rejects.toThrow("T3 is down")
+    expect(t3.callsOf("t3_thread_launch")).toEqual([])
+  })
+
+  test("a model the thread is switched to in T3 itself becomes the one new threads launch on", async () => {
+    const opus = { instanceId: "claudeAgent", model: "claude-opus-5-5" }
+    const { t3, session, saved, runner } = setup({ state: { threads: { stream_root: "thread_root" }, model: opus } })
+    t3.script("run_1", [
+      { status: "running", model: opus },
+      { status: "completed", model: MODEL, items: [item(1, "assistant_message", { text: "Hi" })] },
+    ])
+
+    await runner.deliverTurn(turn())
+    await session.settled()
+
+    expect({ model: runner.model, saved: saved.at(-1) }).toEqual({
+      model: MODEL,
+      saved: { threads: { stream_root: "thread_root" }, model: MODEL },
+    })
+  })
+
+  test("a thread that keeps its old model doesn't undo a /model T3 couldn't apply to it", async () => {
+    const opus = { instanceId: "claudeAgent", model: "claude-opus-5-5" }
+    const { t3, session, runner } = setup({ state: { threads: { stream_root: "thread_root" }, model: MODEL } })
+    t3.script("run_1", [{ status: "running", model: MODEL }])
+
+    await runner.deliverTurn(turn())
+    while (t3.callsOf("t3_thread_read").length === 0) await idle()
+    runner.setModel(opus)
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Hi" })] }])
+    await session.settled()
+
+    expect(runner.model).toEqual(opus)
   })
 
   test("uploads the images T3 takes natively and launches with them", async () => {
@@ -272,11 +339,11 @@ describe("T3TurnRunner", () => {
       { threadId: "thread_root", sourcePoint: { type: "latest_stable" }, title: "Branch off here" },
     ])
     expect(t3.callsOf("t3_thread_send")).toEqual([expect.objectContaining({ threadId: "thread_1" })])
-    expect(saved.at(-1)).toEqual({ threads: { stream_root: "thread_root", stream_thread: "thread_1" } })
+    expect(saved.at(-1)).toEqual({ threads: { stream_root: "thread_root", stream_thread: "thread_1" }, model: MODEL })
   })
 
   test("a mention outside the scratchpad launches its own thread", async () => {
-    const { t3, session, runner } = setup({ state: { threads: { stream_root: "thread_root" } } })
+    const { t3, session, runner } = setup({ state: { threads: { stream_root: "thread_root" }, model: MODEL } })
     t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Hi" })] }])
 
     await runner.deliverTurn(turn({ streamId: "stream_channel", rootStreamId: "stream_channel" }))
@@ -333,6 +400,56 @@ describe("T3TurnRunner", () => {
     await session.settled()
 
     expect(session.replies).toEqual([{ invocationId: "binv_1", text: "Done" }])
+  })
+
+  test("rides out T3 being down for a restart", async () => {
+    const { t3, session, runner } = setup()
+    for (let i = 0; i < 20; i++) t3.failNext("t3_thread_wait", new Error("connect ECONNREFUSED"))
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Done" })] }])
+
+    await runner.deliverTurn(turn())
+    await session.settled()
+
+    expect(session.replies).toEqual([{ invocationId: "binv_1", text: "Done" }])
+  })
+
+  test("a refusal mid-run fails the turn at once and stops the run", async () => {
+    const { t3, session, runner } = setup()
+    t3.failNext(
+      "t3_thread_wait",
+      new T3ToolError("t3_thread_wait", "operation_failed", "T3 Code t3_thread_wait failed: no")
+    )
+
+    await runner.deliverTurn(turn())
+    await session.settled()
+
+    expect({ fails: session.fails, interrupts: t3.callsOf("t3_thread_interrupt") }).toEqual({
+      fails: [{ invocationId: "binv_1", errorMessage: "T3 Code t3_thread_wait failed: no" }],
+      interrupts: [{ threadId: "thread_1", runId: "run_1", reason: "Stopped from Threa" }],
+    })
+  })
+
+  test("a thread deleted in T3 is forgotten so the next message launches a new one", async () => {
+    const { t3, saved, runner } = setup({ state: { threads: { stream_root: "thread_gone" }, model: MODEL } })
+    t3.failNext("t3_thread_send", new T3ToolError("t3_thread_send", "thread_not_found", "not found"))
+
+    await expect(runner.deliverTurn(turn())).rejects.toThrow(
+      "`thread_gone` is gone; the next message starts a new one."
+    )
+    expect(saved.at(-1)).toEqual({ threads: {}, model: MODEL })
+  })
+
+  test("a thread deleted mid-run fails the turn and is forgotten", async () => {
+    const { t3, session, saved, runner } = setup()
+    t3.failNext("t3_thread_wait", new T3ToolError("t3_thread_wait", "thread_not_found", "not found"))
+
+    await runner.deliverTurn(turn())
+    await session.settled()
+
+    expect({ fails: session.fails, state: saved.at(-1) }).toEqual({
+      fails: [{ invocationId: "binv_1", errorMessage: expect.stringContaining("`thread_1` is gone") }],
+      state: { threads: {}, model: MODEL },
+    })
   })
 
   test("fails the turn at once when T3 rejects the token", async () => {
@@ -408,6 +525,61 @@ describe("T3TurnRunner", () => {
       })
     }
   )
+
+  test("an image steer still uploading when the run ends answers in the open turn", async () => {
+    const { t3, session, runner } = setup()
+    t3.script("run_1", [{ status: "running" }])
+    await runner.deliverTurn(turn())
+    await idle()
+    const release = t3.holdNext("t3_attachment_prepare_upload")
+    t3.steerAs("started")
+
+    const steering = runner.steer("this one", "stream_root", [downloaded("cat.png", "image/png", "png-bytes")])
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Fixed." })] }])
+    await idle()
+    release()
+    expect(await steering).toBe(true)
+    t3.script("run_2", [
+      { status: "completed", items: [item(2, "assistant_message", { runId: "run_2", text: "A cat." })] },
+    ])
+    await session.settled()
+
+    expect(session.replies).toEqual([{ invocationId: "binv_1", text: "A cat." }])
+  })
+
+  test("/stop while an image steer uploads sends nothing", async () => {
+    const { t3, runner } = setup()
+    t3.script("run_1", [{ status: "running" }])
+    await runner.deliverTurn(turn())
+    await idle()
+    const release = t3.holdNext("t3_attachment_prepare_upload")
+
+    const steering = runner.steer("this one", "stream_root", [downloaded("cat.png", "image/png", "png-bytes")])
+    await idle()
+    runner.interrupt("stream_root")
+    release()
+
+    expect(await steering).toBe(false)
+    expect(t3.callsOf("t3_thread_send_attachments")).toEqual([])
+  })
+
+  test("/stop while an image steer sends stops the run it started", async () => {
+    const { t3, runner } = setup()
+    t3.script("run_1", [{ status: "running" }])
+    await runner.deliverTurn(turn())
+    await idle()
+    t3.steerAs("started")
+    const release = t3.holdNext("t3_thread_send_attachments")
+
+    const steering = runner.steer("this one", "stream_root", [downloaded("cat.png", "image/png", "png-bytes")])
+    await idle()
+    runner.interrupt("stream_root")
+    release()
+    await steering
+    await idle()
+
+    expect(t3.callsOf("t3_thread_interrupt").map((call) => call.runId)).toEqual(["run_1", "run_2"])
+  })
 
   test("follows the run T3 continues a restarted run with", async () => {
     const { t3, session, runner } = setup()

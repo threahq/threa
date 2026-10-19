@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { readToken, T3Auth, T3AuthError, writeToken } from "./auth"
@@ -81,6 +81,38 @@ describe("T3Auth", () => {
     expect({ minted, saved: readToken(path) }).toEqual({
       minted: 2,
       saved: { accessToken: "tok_2", access: "auto", url: URL_ },
+    })
+  })
+
+  test("a token saved by another login while running replaces the rejected one without logging in", async () => {
+    const path = tokenPath()
+    writeToken(path, { accessToken: "tok_old", access: "full-access", url: URL_ })
+    const auth = new T3Auth({ url: URL_, access: "full-access", tokenPath: path, autoLogin: false })
+    expect(await auth.token()).toBe("tok_old")
+
+    writeToken(path, { accessToken: "tok_new", access: "full-access", url: URL_ })
+
+    expect(await auth.renew("tok_old")).toBe("tok_new")
+  })
+
+  test("with auto-login a damaged token file is replaced by a fresh login", async () => {
+    const path = tokenPath()
+    writeFileSync(path, "{not json")
+    const logged: string[] = []
+    const auth = new T3Auth({
+      url: URL_,
+      access: "full-access",
+      tokenPath: path,
+      autoLogin: true,
+      fetch: fakeOAuth().fetch,
+      mintCode: async () => "PAIR-1234",
+      log: (message) => logged.push(message),
+    })
+
+    expect({ token: await auth.token(), saved: readToken(path), logged: logged.length }).toEqual({
+      token: "tok_1",
+      saved: { accessToken: "tok_1", access: "full-access", url: URL_ },
+      logged: 1,
     })
   })
 

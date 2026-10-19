@@ -19,7 +19,7 @@ export class StepBatcher {
 
   add(frame: StepFrame): void {
     this.frames.push(frame)
-    this.timer ??= setTimeout(() => void this.flush(), FLUSH_DELAY_MS)
+    this.timer ??= setTimeout(() => void this.flush().catch(() => {}), FLUSH_DELAY_MS)
   }
 
   addNow(frame: StepFrame): Promise<void> {
@@ -35,10 +35,11 @@ export class StepBatcher {
     if (this.frames.length === 0) return this.tail
     const batch = this.frames
     this.frames = []
-    // recordSteps chunks to the wire limit and logs its own failures.
-    this.tail = this.tail.then(async () => {
+    // recordSteps chunks to the wire limit and logs its own failures; a recorder that rejects fails only its own batch.
+    const posted = this.tail.then(async () => {
       await this.recorder.recordSteps(this.invocationId, batch)
     })
-    return this.tail
+    this.tail = posted.catch(() => {})
+    return posted
   }
 }

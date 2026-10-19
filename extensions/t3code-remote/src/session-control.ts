@@ -1,5 +1,4 @@
 import type { ModelSuggestionInfo, SessionControlActuator } from "@threahq/remote-session"
-import { T3AuthError } from "./auth"
 import { errorText, type T3TurnRunner } from "./run-bridge"
 import type { ModelSelection, ProviderInfo, T3Client } from "./t3-client"
 
@@ -8,7 +7,7 @@ const MAX_AMBIGUOUS_CANDIDATES = 8
 type CommandResult = { ok: boolean; summary?: string; message?: string }
 
 export interface T3SessionControl extends SessionControlActuator {
-  /** Load the model picker's options; awaited once before the session starts. */
+  /** Load the model picker's options; awaited once before the session starts, and never throws. */
   refresh(): Promise<void>
 }
 
@@ -120,7 +119,7 @@ export function createT3SessionControl(
       try {
         suggestions = suggestionsFrom((await client.call("orchestrator_capabilities", {})).providers)
       } catch (error) {
-        if (error instanceof T3AuthError) throw error
+        // An expired token must not crash-loop the service; each turn reports it instead.
         log(`T3 Code models unavailable, /model will suggest nothing: ${errorText(error)}`)
         suggestions = []
       }

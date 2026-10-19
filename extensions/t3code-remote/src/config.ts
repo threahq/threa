@@ -72,9 +72,13 @@ export interface T3RawConfig extends RawConfig {
 
 export type LoadT3ConfigResult = { config: T3RemoteConfig } | { error: string }
 
-function bool(value: unknown): boolean {
-  if (typeof value === "boolean") return value
-  return ["1", "true", "yes", "on"].includes(str(value)?.toLowerCase() ?? "")
+/** Unset is false; anything but a recognized yes or no is undefined, so a typo can't silently turn a setting off. */
+function bool(value: unknown): boolean | undefined {
+  if (value === undefined || typeof value === "boolean") return value ?? false
+  const lowered = str(value)?.toLowerCase() ?? ""
+  if (["1", "true", "yes", "on"].includes(lowered)) return true
+  if (["0", "false", "no", "off"].includes(lowered)) return false
+  return undefined
 }
 
 export function str(value: unknown): string | undefined {
@@ -109,12 +113,14 @@ export function loadT3Settings(
   const access = rawAccess === undefined ? "full-access" : parseAccess(rawAccess)
   if (!access) return { error: `Invalid t3Access: expected one of ${T3_ACCESS_MODES.join(", ")}.` }
   const projectId = str(env.T3CODE_PROJECT_ID) ?? str(file.t3ProjectId)
+  const autoLogin = bool(str(env.T3CODE_AUTO_LOGIN) ?? file.t3AutoLogin)
+  if (autoLogin === undefined) return { error: "Invalid t3AutoLogin: expected true or false." }
   return {
     settings: {
       url: (str(env.T3CODE_URL) ?? str(file.t3Url) ?? DEFAULT_T3_URL).replace(/\/$/, ""),
       ...(projectId === undefined ? {} : { projectId }),
       access,
-      autoLogin: bool(str(env.T3CODE_AUTO_LOGIN) ?? file.t3AutoLogin),
+      autoLogin,
     },
   }
 }
