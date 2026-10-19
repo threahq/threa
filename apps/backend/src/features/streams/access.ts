@@ -8,8 +8,7 @@ import { StreamRepository, type Stream } from "./repository"
 /**
  * Minimal structural shape this helper needs: the stream's id and a
  * (possibly null) `rootStreamId`. Generic so callers with subset types
- * (e.g. the sharing feature's `SharingStream`) can route through without
- * forcing a full `Stream` instantiation.
+ * can route through without forcing a full `Stream` instantiation.
  */
 export interface AccessResolvable {
   id: string
@@ -355,4 +354,34 @@ export async function usersReadingWithoutMembership(
     default:
       return new Set()
   }
+}
+
+/**
+ * Per source stream, how many workspace users can read `targetStreamId` but not that source — the
+ * readers a share into the target would newly expose it to. Both sides run
+ * {@link streamAccessPredicateSql}, so thread → root and open-channel readers without a
+ * `stream_members` row count. Sources nobody is exposed to are absent; empty input → empty Map.
+ * A missing or cross-workspace source is readable by no one, so it counts every target reader;
+ * pass distinct ids.
+ */
+export async function countReadersWithoutAccess(
+  db: Querier,
+  workspaceId: string,
+  targetStreamId: string,
+  sourceStreamIds: readonly string[]
+): Promise<Map<string, number>> {
+  if (sourceStreamIds.length === 0) return new Map()
+  const reader = sql`reader.id`
+  const result = await db.query<{ stream_id: string; count: number }>(composeSql`
+    SELECT src.id AS stream_id, COUNT(*)::int AS count
+    FROM streams tgt
+    CROSS JOIN unnest(${sourceStreamIds as string[]}::text[]) AS src(id)
+    JOIN users reader ON reader.workspace_id = tgt.workspace_id
+    WHERE tgt.workspace_id = ${workspaceId}
+      AND tgt.id = ${targetStreamId}
+      AND ${streamAccessPredicateSql(workspaceId, reader, "tgt.id")}
+      AND NOT ${streamAccessPredicateSql(workspaceId, reader, "src.id")}
+    GROUP BY src.id
+  `)
+  return new Map(result.rows.map((row) => [row.stream_id, row.count]))
 }

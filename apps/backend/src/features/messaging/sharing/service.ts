@@ -3,16 +3,10 @@ import { HttpError } from "../../../lib/errors"
 import { sharedMessageId } from "../../../lib/id"
 import { type JSONContent, ShareFlavors, type ShareFlavor, ShareErrorCodes } from "@threahq/types"
 import { MessageRepository } from "../repository"
-import {
-  crossesPrivacyBoundary,
-  type CanReadStream,
-  type CountExposedMembers,
-  type FindStreamForSharing,
-  type IsAncestorStream,
-  type ResolveEffectiveStream,
-} from "./access-check"
+import type { CanReadStream, FindStreamForSharing } from "./access-check"
 import { SharedMessageRepository } from "./repository"
 import { E2eStreamsRepository } from "../../e2e-streams"
+import { countReadersWithoutAccess } from "../../streams"
 
 /**
  * A share-node extracted from a message's contentJson during scanning.
@@ -89,30 +83,7 @@ export interface ValidateAndRecordSharesParams {
    */
   accessibleStreamIds?: string[]
   contentJson: JSONContent
-  /**
-   * Stream loader injected by the caller. Avoids importing StreamRepository
-   * directly from inside this sub-feature which would create a barrel cycle
-   * between messaging and streams.
-   */
   findStream: FindStreamForSharing
-  /**
-   * Resolves a source stream to its effective access stream (root for
-   * threads). Wraps the canonical helper in `streams/access.ts` so the
-   * thread→root rule lives in one place. See `ResolveEffectiveStream`.
-   */
-  resolveEffectiveStream: ResolveEffectiveStream
-  /**
-   * Ancestor check injected by the caller (same barrel-cycle reason as
-   * {@link findStream}). Expected to resolve the chain in the DB layer via
-   * a recursive CTE — the sharing service must not walk it app-side.
-   */
-  isAncestor: IsAncestorStream
-  /**
-   * Exposed-member count injected by the caller (same barrel-cycle reason).
-   * Runs the set-based NOT-EXISTS count in the repository so this service
-   * never issues its own SQL (INV-5).
-   */
-  countExposedMembers: CountExposedMembers
   /**
    * Source-stream read-access check for the sharer. Required to prevent a
    * user from guessing a message id in a private stream they cannot read
@@ -120,10 +91,9 @@ export interface ValidateAndRecordSharesParams {
    */
   canReadStream: CanReadStream
   /**
-   * Set when the sharer has acknowledged the privacy warning in the modal.
-   * Backend re-runs the check to prevent spoofed confirmations — the flag is
-   * only consulted AFTER the cross-boundary condition is independently
-   * established server-side.
+   * Set when the sharer has acknowledged the privacy warning. Backend re-runs
+   * the check to prevent spoofed confirmations — the flag is only consulted
+   * AFTER the exposure is independently established server-side.
    */
   confirmedPrivacyWarning?: boolean
 }
@@ -140,15 +110,13 @@ export interface ValidateAndRecordSharesParams {
  * body. This keeps the create and edit paths on one code path — edits that
  * add, remove, or swap share nodes produce the correct final row set.
  *
- * Batched (INV-56): the source-message read is one SQL query for every
- * referenced id (not findById-per-ref). Per-stream callbacks
- * (`findStream`, `canReadStream`, `crossesPrivacyBoundary`) are memoized
- * per unique `sourceStreamId` so duplicate references targeting the same
- * source stream pay each cost once instead of once-per-ref. Calls remain
+ * Batched (INV-56): the source-message read and the reader-exposure count are
+ * one SQL query each across every referenced message / source stream (not
+ * once per ref). Per-stream callbacks (`findStream`, `canReadStream`) are
+ * memoized per unique `sourceStreamId` so duplicate references targeting the
+ * same source stream pay each cost once instead of once-per-ref. Calls remain
  * sequentially `await`ed on the caller's transaction client because pg
- * connections can't multiplex; the win is dedup, not concurrency. Slice 1
- * messages carry one share node so the win is structural — Slice 2's
- * multi-node composer benefits without further changes.
+ * connections can't multiplex; the win is dedup, not concurrency.
  */
 export const ShareService = {
   async validateAndRecordShares(params: ValidateAndRecordSharesParams): Promise<void> {
@@ -156,18 +124,14 @@ export const ShareService = {
 
     // Reset the share rows for this message before recording. Covers edits
     // that removed or swapped share nodes, and is a no-op on create.
-    await SharedMessageRepository.deleteByShareMessageId(params.client, params.workspaceId, params.shareMessageId)
+    const recordedSourceMessageIds = await SharedMessageRepository.deleteByShareMessageId(
+      params.client,
+      params.workspaceId,
+      params.shareMessageId
+    )
 
     if (references.length === 0) return
 
-    // INV-56 — batch the source-message read into one SQL query rather than
-    // one findById per reference, and memoize per-source-stream callbacks so
-    // duplicate references that target the same source stream don't repeat
-    // the findStream / canReadStream / crossesPrivacyBoundary work. Calls
-    // remain sequential because they share the caller's transaction client
-    // (pg connections can't multiplex), but each unique stream pays the
-    // cost once instead of once-per-reference.
-    //
     // Workspace-scoped lookup (INV-8): a stranger's message id elsewhere in
     // the platform must look identical to "doesn't exist" — otherwise
     // probing distinct error codes (`MESSAGE_NOT_FOUND` vs the cross-
@@ -175,15 +139,21 @@ export const ShareService = {
     // across workspaces. `findByIds` collapses every cross-
     // workspace ref into the not-found bucket up-front.
     const uniqueSourceMessageIds = [...new Set(references.map((r) => r.sourceMessageId))]
+    const uniqueSourceStreamIds = [...new Set(references.map((r) => r.sourceStreamId))]
     const sourceMessagesById = await MessageRepository.findByIds(
       params.client,
       params.workspaceId,
       uniqueSourceMessageIds
     )
+    const exposedReaders = await countReadersWithoutAccess(
+      params.client,
+      params.workspaceId,
+      params.targetStreamId,
+      uniqueSourceStreamIds
+    )
 
     const sourceStreamCache = new Map<string, Awaited<ReturnType<FindStreamForSharing>>>()
     const canReadCache = new Map<string, boolean>()
-    const boundaryCache = new Map<string, Awaited<ReturnType<typeof crossesPrivacyBoundary>>>()
 
     for (const ref of references) {
       const sourceMessage = sourceMessagesById.get(ref.sourceMessageId)
@@ -253,29 +223,15 @@ export const ShareService = {
         })
       }
 
-      let boundary = boundaryCache.get(ref.sourceStreamId)
-      if (boundary === undefined) {
-        boundary = await crossesPrivacyBoundary(
-          params.client,
-          params.findStream,
-          params.resolveEffectiveStream,
-          params.isAncestor,
-          params.countExposedMembers,
-          ref.sourceStreamId,
-          params.targetStreamId
-        )
-        boundaryCache.set(ref.sourceStreamId, boundary)
-      }
-      // SLICE-1 ASSUMPTION: `confirmedPrivacyWarning` is a single boolean
-      // covering every reference in the message. That's safe today because
-      // (a) share-to-parent short-circuits via the ancestor check so
-      // `triggered` is always false, and (b) Slice 2's modal pre-fills
-      // exactly one share node. When arbitrary multi-reference composing
-      // lands, swap to per-source confirmation (e.g. a
-      // `confirmedPrivacyFor: Set<sourceStreamId>`) so a user can't see
-      // the warning for one private source and have it transitively
-      // confirm a different private source they never saw.
-      if (boundary.triggered && !params.confirmedPrivacyWarning) {
+      // `confirmedPrivacyWarning` is a single boolean covering every reference
+      // in the message, so one confirmation consents for all of them. A
+      // reference this message already recorded was accepted when it was
+      // added, so an edit that keeps it doesn't ask again.
+      if (
+        (exposedReaders.get(ref.sourceStreamId) ?? 0) > 0 &&
+        !params.confirmedPrivacyWarning &&
+        !recordedSourceMessageIds.has(ref.sourceMessageId)
+      ) {
         throw new HttpError("Privacy confirmation required to share this message", {
           status: 409,
           code: ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED,

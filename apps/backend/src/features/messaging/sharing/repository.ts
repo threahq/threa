@@ -96,14 +96,17 @@ export const SharedMessageRepository = {
    * Remove every share-row created by a given share-message. Used on edit
    * to make share-recording idempotent: the service deletes existing rows
    * for a `share_message_id` and re-inserts from the new content, so the
-   * row set always reflects the current message body.
+   * row set always reflects the current message body. Returns the source
+   * message ids the deleted rows pointed at.
    */
-  async deleteByShareMessageId(db: Querier, workspaceId: string, shareMessageId: string): Promise<void> {
-    await db.query(sql`
+  async deleteByShareMessageId(db: Querier, workspaceId: string, shareMessageId: string): Promise<Set<string>> {
+    const result = await db.query<{ source_message_id: string }>(sql`
       DELETE FROM shared_messages
       WHERE workspace_id = ${workspaceId}
         AND share_message_id = ${shareMessageId}
+      RETURNING source_message_id
     `)
+    return new Set(result.rows.map((row) => row.source_message_id))
   },
 
   /**

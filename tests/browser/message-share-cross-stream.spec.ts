@@ -14,8 +14,8 @@ import { createChannel, expectApiOk, generateTestId, loginAndCreateWorkspace, lo
  *    Plan D5 says this is allowed; the hand-off lands in the current
  *    composer and the user can send a duplicate pointer back.
  * 3. **Private → public, blocked then confirmed.** Two-user scenario where
- *    sharing from a private channel into a public one User B has joined
- *    triggers `crossesPrivacyBoundary`. The first send must fail with the
+ *    sharing from a private channel into a public one User B can read
+ *    exposes the source to a new reader. The first send must fail with the
  *    `blocked-privacy` status, surface the toast, and only after the user
  *    explicitly clicks "Share anyway" should the pointer reach the public
  *    timeline. **The whole point of this test is to prove a share never
@@ -65,9 +65,7 @@ async function createChannelViaApi(
 
 /**
  * Resolve the workspace user id for a given email by reading the workspace
- * bootstrap. Used to admin-add User B to the public channel so the
- * `stream_members` row exists — `crossesPrivacyBoundary`'s exposure count is
- * over `stream_members`, not "every workspace member with read access".
+ * bootstrap. Used to admin-add User B to the public channel.
  */
 async function getWorkspaceUserIdByEmail(page: Page, workspaceId: string, email: string): Promise<string> {
   const response = await page.request.get(`/api/workspaces/${workspaceId}/bootstrap`)
@@ -215,10 +213,9 @@ test.describe("Message share — cross-stream picker modal (Slice 2)", () => {
   test("blocks a private→public share until the user explicitly confirms 'Share anyway'", async ({ browser, page }) => {
     // ---- Setup: two users, one workspace, two channels --------------------
     // User A owns the workspace and is the only member of the private source.
-    // User B joins the workspace and is added to the public target so the
-    // backend's exposure count is > 0 (User B is in `pub`'s stream_members
-    // but NOT in `priv`'s — exactly the case the privacy boundary is meant
-    // to catch).
+    // User B joins the workspace and the public target, so the backend's
+    // exposure count is > 0 (User B reads `pub` but NOT `priv` — exactly the
+    // case the privacy check is meant to catch).
     const { testId, workspaceId } = await loginAndCreateWorkspace(page, "share-priv-confirm").then((r) => ({
       testId: r.testId,
       workspaceId: page.url().match(/\/w\/([^/]+)/)?.[1] ?? "",
@@ -238,10 +235,9 @@ test.describe("Message share — cross-stream picker modal (Slice 2)", () => {
         "User B join workspace"
       )
       const memberId = await getWorkspaceUserIdByEmail(page, workspaceId, memberEmail)
-      // Admin-add User B to the public channel so the stream_members row
-      // exists. A drive-by `joinChannel` from User B's session would also
-      // work for public channels, but going through the owner keeps the test
-      // independent of User B's UI state.
+      // Admin-add User B to the public channel. A drive-by `joinChannel` from
+      // User B's session would also work, but going through the owner keeps
+      // the test independent of User B's UI state.
       await expectApiOk(
         await page.request.post(`/api/workspaces/${workspaceId}/streams/${pubStreamId}/members`, {
           data: { memberId },
