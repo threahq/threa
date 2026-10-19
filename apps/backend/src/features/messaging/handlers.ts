@@ -29,7 +29,7 @@ import type { JSONContent, ReferenceAudienceInput, ReferenceAudienceResponse } f
 import { messageMetadataSchema } from "./metadata-schema"
 import { e2eEnvelopeSchema, MAX_E2E_CIPHERTEXT_BASE64_BYTES } from "./e2e-schema"
 import type { EnqueuedMessageService } from "./enqueued-message-service"
-import { collectShareReferences, privacyConfirmationRequired } from "./sharing"
+import { ShareService } from "./sharing"
 
 // Fields shared by every create/update variant. Defining once keeps the
 // six schemas from drifting when a per-message option is added.
@@ -322,23 +322,17 @@ export function createMessageHandlers({
     return { stream, forward: requireForwardService() }
   }
 
-  // A first DM message creates the DM, so its shares are checked against the peer before that write:
-  // a 409 must not leave behind a DM the author never sent anything to.
   async function assertDmSharesConfirmed(
     workspaceId: string,
     userId: string,
     data: z.infer<typeof createMessageJsonToDmSchema> | z.infer<typeof createMessageMarkdownToDmSchema>
   ) {
-    if (data.confirmedPrivacyWarning) return
-    const references = collectShareReferences(normalizeContent(data).contentJson, "")
-    if (references.length === 0) return
-    const audiences = await streamService.listReferenceAudiences({
-      workspaceId,
-      userId,
-      target: { dmUserId: data.dmUserId },
-      streamIds: references.map((ref) => ref.sourceStreamId),
+    await ShareService.assertNewDmSharesConfirmed({
+      contentJson: normalizeContent(data).contentJson,
+      confirmedPrivacyWarning: data.confirmedPrivacyWarning,
+      listAudiences: (streamIds) =>
+        streamService.listReferenceAudiences({ workspaceId, userId, target: { dmUserId: data.dmUserId }, streamIds }),
     })
-    if (audiences.some((audience) => audience.count > 0)) throw privacyConfirmationRequired()
   }
 
   return {

@@ -126,6 +126,22 @@ export interface ValidateAndRecordSharesParams {
  * connections can't multiplex; the win is dedup, not concurrency.
  */
 export const ShareService = {
+  /**
+   * A first DM message creates the DM, so its shares are checked against the peer before that write:
+   * a 409 must not leave behind a DM the author never sent anything to.
+   */
+  async assertNewDmSharesConfirmed(params: {
+    contentJson: JSONContent
+    confirmedPrivacyWarning?: boolean
+    listAudiences: (streamIds: string[]) => Promise<{ count: number }[]>
+  }): Promise<void> {
+    if (params.confirmedPrivacyWarning) return
+    const references = collectShareReferences(params.contentJson, "")
+    if (references.length === 0) return
+    const audiences = await params.listAudiences(references.map((ref) => ref.sourceStreamId))
+    if (audiences.some((audience) => audience.count > 0)) throw privacyConfirmationRequired()
+  },
+
   async validateAndRecordShares(params: ValidateAndRecordSharesParams): Promise<void> {
     const references = collectShareReferences(params.contentJson, params.targetStreamId)
 
