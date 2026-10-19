@@ -84,6 +84,11 @@ Every thread is a normal T3 thread, so you can open it in the T3 app and keep go
 Stopping the connector leaves T3's runs alone: they finish in T3, and their Threa turns end with "T3 Code connector
 shut down".
 
+Attachments on a message are downloaded and listed by path in the text T3 receives. PNG, JPEG, GIF and WebP images up
+to 10 MiB, at most 8 per message, are also uploaded to T3 and sent as images, so the model sees them without reading
+a file. T3 sends a message with images in its own "auto" mode: it is steered into the thread's open run when there is
+one, and otherwise starts a run straight away instead of queueing. A failed upload fails the turn.
+
 A damaged `threads.json` or `token.json` stops the connector at start instead of being read as empty.
 
 ## Commands

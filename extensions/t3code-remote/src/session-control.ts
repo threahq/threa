@@ -115,7 +115,7 @@ export function createT3SessionControl(
       return suggestions
     },
     interrupt: (streamId) => runner.interrupt(streamId),
-    steer: (text, streamId) => runner.steer(text, streamId),
+    steer: (text, streamId, attachments) => runner.steer(text, streamId, attachments),
     refresh: async () => {
       try {
         suggestions = suggestionsFrom((await client.call("orchestrator_capabilities", {})).providers)

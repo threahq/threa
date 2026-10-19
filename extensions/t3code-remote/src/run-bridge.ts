@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto"
+import { readFile, stat } from "node:fs/promises"
 import {
   type DeliveredTurn,
+  type DownloadedAttachment,
   type RuntimeDescriptor,
   type SendResult,
   type StepFrame,
@@ -13,7 +15,14 @@ import {
 } from "@threahq/remote-session"
 import { T3AuthError } from "./auth"
 import type { T3Access } from "./config"
-import { T3ToolError, type ModelSelection, type RunStatus, type T3Client, type ThreadItem } from "./t3-client"
+import {
+  T3ToolError,
+  type ImageAttachment,
+  type ModelSelection,
+  type RunStatus,
+  type T3Client,
+  type ThreadItem,
+} from "./t3-client"
 
 /** The slice of `RemoteSession` the bridge drives, so tests can stand in a fake. */
 export interface BridgeSession {
@@ -50,6 +59,10 @@ const MAX_CONSECUTIVE_POLL_FAILURES = 5
 const READ_PAGE_LIMIT = 100
 // Under the step content limit with room for the trace envelope.
 const MAX_CHARS_PER_ITEM = 8000
+// What T3 takes as an image attachment; anything else reaches the model only through the manifest's paths.
+const IMAGE_MIME_TYPES = new Set(["image/gif", "image/jpeg", "image/png", "image/webp"])
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+const MAX_IMAGES_PER_MESSAGE = 8
 const TERMINAL_RUN_STATUSES = new Set<string>(["completed", "failed", "cancelled", "interrupted", "rolled_back"])
 const OPEN_ITEM_STATUSES = new Set<string>(["idle", "pending", "running", "waiting"])
 const TOOL_LABELS: Record<string, string> = {
@@ -273,11 +286,18 @@ export class T3TurnRunner {
    * Once T3 takes the text it belongs to the open turn: when the run already
    * ended, T3 starts it as the next run and the turn follows that one instead.
    */
-  async steer(text: string, streamId: string): Promise<boolean> {
+  async steer(text: string, streamId: string, attachments: DownloadedAttachment[]): Promise<boolean> {
     const run = this.openRuns().find((open) => open.streamId === streamId)
     if (!run) return false
+    const images = await this.uploadImages(attachments)
     try {
-      const sent = await this.client.call("t3_thread_send", { threadId: run.threadId, message: text, mode: "steer" })
+      const sent = images.length
+        ? await this.client.call("t3_thread_send_attachments", {
+            threadId: run.threadId,
+            message: text,
+            attachments: images,
+          })
+        : await this.client.call("t3_thread_send", { threadId: run.threadId, message: text, mode: "steer" })
       if (sent.runId !== run.runId) adopt(run, sent.runId)
       return true
     } catch (error) {
@@ -353,19 +373,31 @@ export class T3TurnRunner {
       return this.send(fork.targetThreadId, turn)
     }
     const { projectId } = this.options
+    const images = await this.uploadImages(turn.attachments)
     const launched = await this.client.call("t3_thread_launch", {
       title: titleFor(turn.content),
       message: `${PREAMBLE}\n\n${turn.content}`,
       runtimeMode: this.options.access,
       ...(projectId === undefined ? { scratch: true } : { projectId }),
       ...(this.state.model ? { modelSelection: this.state.model } : {}),
+      ...(images.length ? { attachments: images } : {}),
     })
     this.saveState({ ...this.state, threads: { ...this.state.threads, [turn.streamId]: launched.threadId } })
     if (!launched.runId) throw new Error("T3 Code created the thread but started no run.")
     return { threadId: launched.threadId, runId: launched.runId }
   }
 
+  /** Images go through T3's attachment send, which has no queue mode or retry key: it steers a steerable run, else starts one. */
   private async send(threadId: string, turn: DeliveredTurn): Promise<{ threadId: string; runId: string }> {
+    const images = await this.uploadImages(turn.attachments)
+    if (images.length) {
+      const sent = await this.client.call("t3_thread_send_attachments", {
+        threadId,
+        message: turn.content,
+        attachments: images,
+      })
+      return { threadId, runId: sent.runId }
+    }
     const sent = await this.client.call("t3_thread_send", {
       threadId,
       message: turn.content,
@@ -373,6 +405,27 @@ export class T3TurnRunner {
       clientRequestId: turn.invocationId,
     })
     return { threadId, runId: sent.runId }
+  }
+
+  /** Uploads the images T3 can take natively; the manifest in the message still lists every file by path. */
+  private async uploadImages(attachments: DownloadedAttachment[]): Promise<ImageAttachment[]> {
+    const uploaded: ImageAttachment[] = []
+    for (const { attachment, localPath } of attachments) {
+      if (uploaded.length === MAX_IMAGES_PER_MESSAGE) break
+      if (!IMAGE_MIME_TYPES.has(attachment.mimeType)) continue
+      if ((await stat(localPath)).size > MAX_IMAGE_BYTES) continue
+      const bytes = await readFile(localPath)
+      const upload = {
+        type: "image" as const,
+        name: attachment.filename,
+        mimeType: attachment.mimeType,
+        sizeBytes: bytes.byteLength,
+      }
+      const prepared = await this.client.call("t3_attachment_prepare_upload", { upload })
+      await this.client.upload(prepared.relativeUrl, bytes)
+      uploaded.push({ ...upload, id: prepared.attachmentId })
+    }
+    return uploaded
   }
 
   private stopRun(threadId: string, runId: string): void {

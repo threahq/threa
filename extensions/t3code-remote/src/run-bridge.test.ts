@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import { mkdtempSync, truncateSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import type { DownloadedAttachment } from "@threahq/remote-session"
 import { T3AuthError } from "./auth"
 import { RunTrace, T3TurnRunner, type RunTraceMode, type ThreadState } from "./run-bridge"
 import { fakeSession, fakeT3, item, turn } from "./t3.test-support"
@@ -18,6 +22,22 @@ function setup(options: { state?: ThreadState; sealedFullTrace?: boolean; projec
     sleep: async () => {},
   })
   return { t3, session, saved, runner }
+}
+
+function downloaded(filename: string, mimeType: string, content: string | { sizeBytes: number }): DownloadedAttachment {
+  const localPath = join(mkdtempSync(join(tmpdir(), "t3-attachment-")), filename)
+  if (typeof content === "string") writeFileSync(localPath, content)
+  else {
+    writeFileSync(localPath, "")
+    truncateSync(localPath, content.sizeBytes)
+  }
+  const sizeBytes = typeof content === "string" ? content.length : content.sizeBytes
+  return {
+    attachment: { id: `att_${filename}`, filename, mimeType, sizeBytes },
+    messageId: "msg_1",
+    isSource: true,
+    localPath,
+  }
 }
 
 const idle = () => new Promise((resolve) => setTimeout(resolve, 0))
@@ -88,6 +108,32 @@ describe("T3TurnRunner", () => {
         modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
       },
     ])
+  })
+
+  test("uploads the images T3 takes natively and launches with them", async () => {
+    const { t3, session, runner } = setup()
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "A cat." })] }])
+
+    await runner.deliverTurn(
+      turn({
+        attachments: [
+          downloaded("cat.png", "image/png", "png-bytes"),
+          downloaded("notes.pdf", "application/pdf", "pdf-bytes"),
+          downloaded("huge.webp", "image/webp", { sizeBytes: 10 * 1024 * 1024 + 1 }),
+        ],
+      })
+    )
+    await session.settled()
+
+    expect({
+      prepared: t3.callsOf("t3_attachment_prepare_upload"),
+      uploads: t3.uploads,
+      launched: t3.callsOf("t3_thread_launch").map((call) => call.attachments),
+    }).toEqual({
+      prepared: [{ upload: { type: "image", name: "cat.png", mimeType: "image/png", sizeBytes: 9 } }],
+      uploads: [{ relativeUrl: "/api/attachments/upload/tok_1", bytes: "png-bytes" }],
+      launched: [[{ type: "image", id: "t3att_1", name: "cat.png", mimeType: "image/png", sizeBytes: 9 }]],
+    })
   })
 
   test("posts earlier assistant messages as narration with attachment paths hidden", async () => {
@@ -181,6 +227,27 @@ describe("T3TurnRunner", () => {
     expect(session.replies.at(-1)).toEqual({ invocationId: "binv_2", text: "Docs updated." })
   })
 
+  test("a follow-up with an image goes through T3's attachment send", async () => {
+    const { t3, session, runner } = setup({ state: { threads: { stream_root: "thread_1" } } })
+    t3.steerAs("started")
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "A cat." })] }])
+
+    await runner.deliverTurn(turn({ attachments: [downloaded("cat.png", "image/png", "png-bytes")] }))
+    await session.settled()
+
+    expect({ sends: t3.callsOf("t3_thread_send"), attachmentSends: t3.callsOf("t3_thread_send_attachments") }).toEqual({
+      sends: [],
+      attachmentSends: [
+        {
+          threadId: "thread_1",
+          message: "Fix the flaky test",
+          attachments: [{ type: "image", id: "t3att_1", name: "cat.png", mimeType: "image/png", sizeBytes: 9 }],
+        },
+      ],
+    })
+    expect(session.replies).toEqual([{ invocationId: "binv_1", text: "A cat." }])
+  })
+
   test("forks the scratchpad's thread for a thread under the scratchpad", async () => {
     const { t3, session, saved, runner } = setup({ state: { threads: { stream_root: "thread_root" } } })
     t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "On it" })] }])
@@ -271,14 +338,33 @@ describe("T3TurnRunner", () => {
     t3.script("run_1", [{ status: "running" }])
     await runner.deliverTurn(turn())
 
-    expect(await runner.steer("also the docs", "stream_other")).toBe(false)
-    expect(await runner.steer("also the docs", "stream_root")).toBe(true)
+    expect(await runner.steer("also the docs", "stream_other", [])).toBe(false)
+    expect(await runner.steer("also the docs", "stream_root", [])).toBe(true)
     t3.failNext("t3_thread_send", t3.notSendable())
-    expect(await runner.steer("and the readme", "stream_root")).toBe(false)
+    expect(await runner.steer("and the readme", "stream_root", [])).toBe(false)
     expect(t3.callsOf("t3_thread_send")).toEqual([
       { threadId: "thread_1", message: "also the docs", mode: "steer" },
       { threadId: "thread_1", message: "and the readme", mode: "steer" },
     ])
+    runner.shutdown()
+  })
+
+  test("a steer with an image goes through T3's attachment send", async () => {
+    const { t3, runner } = setup()
+    t3.script("run_1", [{ status: "running" }])
+    await runner.deliverTurn(turn())
+
+    expect(await runner.steer("this one", "stream_root", [downloaded("cat.png", "image/png", "png-bytes")])).toBe(true)
+    expect({ sends: t3.callsOf("t3_thread_send"), attachmentSends: t3.callsOf("t3_thread_send_attachments") }).toEqual({
+      sends: [],
+      attachmentSends: [
+        {
+          threadId: "thread_1",
+          message: "this one",
+          attachments: [{ type: "image", id: "t3att_1", name: "cat.png", mimeType: "image/png", sizeBytes: 9 }],
+        },
+      ],
+    })
     runner.shutdown()
   })
 
@@ -291,7 +377,7 @@ describe("T3TurnRunner", () => {
       await idle()
 
       t3.steerAs(delivery)
-      expect(await runner.steer("also the docs", "stream_root")).toBe(true)
+      expect(await runner.steer("also the docs", "stream_root", [])).toBe(true)
       t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Fixed." })] }])
       t3.script("run_2", [
         { status: "completed", items: [item(2, "assistant_message", { runId: "run_2", text: "Docs too." })] },

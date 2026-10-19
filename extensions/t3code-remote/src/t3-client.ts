@@ -40,6 +40,14 @@ export interface ThreadSummary {
   model: string
 }
 
+export interface ImageAttachment {
+  type: "image"
+  id: string
+  name: string
+  mimeType: string
+  sizeBytes: number
+}
+
 export interface ProviderInfo {
   providerInstanceId: string
   displayName?: string
@@ -56,12 +64,23 @@ export interface T3Tools {
       projectId?: string
       scratch?: boolean
       modelSelection?: ModelSelection
+      attachments?: ImageAttachment[]
     }
     result: { threadId: string; runId: string | null }
   }
   t3_thread_send: {
     args: { threadId: string; message: string; mode: "queue" | "steer"; clientRequestId?: string }
     result: { runId: string; status: RunStatus; delivery: "started" | "queued" | "steered" | "restarted" }
+  }
+  /** Sends in T3's "auto" mode: steers the thread's steerable run, else starts one. */
+  t3_thread_send_attachments: {
+    args: { threadId: string; message: string; attachments: ImageAttachment[] }
+    result: { runId: string; status: RunStatus }
+  }
+  t3_attachment_prepare_upload: {
+    args: { upload: { type: "image"; name: string; mimeType: string; sizeBytes: number } }
+    /** `relativeUrl` is signed: POSTing the bytes there needs no bearer token. */
+    result: { attachmentId: string; relativeUrl: string }
   }
   t3_thread_wait: {
     args: { threadId: string; runId: string; timeoutMs: number }
@@ -152,6 +171,12 @@ export class T3Client {
     if (!result) throw new Error(`T3 Code ${name} returned no result`)
     if (result.isError) throw toolError(name, result.content?.[0]?.text)
     return result.structuredContent as T3Tools[K]["result"]
+  }
+
+  async upload(relativeUrl: string, bytes: Uint8Array): Promise<void> {
+    const res = await this.fetchImpl(new URL(relativeUrl, this.baseUrl).href, { method: "POST", body: bytes })
+    if (res.status !== 204)
+      throw new Error(`T3 Code upload answered ${res.status}: ${(await res.text()).slice(0, 300)}`)
   }
 
   private open(): Promise<void> {
