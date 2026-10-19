@@ -55,7 +55,8 @@ export type RunTraceMode = TraceMode | "full"
 
 // `t3_thread_wait` returns as soon as the run settles, so its timeout is the trace poll cadence.
 const WAIT_TIMEOUT_MS = 2000
-const MAX_CONSECUTIVE_POLL_FAILURES = 5
+// About five minutes of T3 being unreachable at the WAIT_TIMEOUT_MS retry cadence, enough to ride out a restart.
+const MAX_CONSECUTIVE_POLL_FAILURES = 150
 const READ_PAGE_LIMIT = 100
 // Under the step content limit with room for the trace envelope.
 const MAX_CHARS_PER_ITEM = 8000
@@ -221,6 +222,8 @@ interface OpenRun {
   streamId: string
   trace: RunTrace
   abort: AbortController
+  /** Steers still uploading or sending: the run is not over until they land, since one may start its next run. */
+  steers: Set<Promise<boolean>>
   /** The last read position this run no longer needs to re-read. */
   cursor?: number
 }
@@ -289,7 +292,18 @@ export class T3TurnRunner {
   async steer(text: string, streamId: string, attachments: DownloadedAttachment[]): Promise<boolean> {
     const run = this.openRuns().find((open) => open.streamId === streamId)
     if (!run) return false
+    const steering = this.steerInto(run, text, attachments)
+    run.steers.add(steering)
+    try {
+      return await steering
+    } finally {
+      run.steers.delete(steering)
+    }
+  }
+
+  private async steerInto(run: OpenRun, text: string, attachments: DownloadedAttachment[]): Promise<boolean> {
     const images = await this.uploadImages(attachments)
+    if (run.abort.signal.aborted) return false
     try {
       const sent = images.length
         ? await this.client.call("t3_thread_send_attachments", {
@@ -298,7 +312,9 @@ export class T3TurnRunner {
             attachments: images,
           })
         : await this.client.call("t3_thread_send", { threadId: run.threadId, message: text, mode: "steer" })
-      if (sent.runId !== run.runId) adopt(run, sent.runId)
+      // A /stop that landed during the send has already stopped the chain it knew about.
+      if (run.abort.signal.aborted) this.stopRun(run.threadId, sent.runId)
+      else if (sent.runId !== run.runId) adopt(run, sent.runId)
       return true
     } catch (error) {
       if (error instanceof T3ToolError && error.code === "thread_not_sendable") return false
@@ -344,11 +360,13 @@ export class T3TurnRunner {
       streamId: turn.streamId,
       trace: new RunTrace(started.runId, mode),
       abort: new AbortController(),
+      steers: new Set(),
       ...(this.cursors.has(started.threadId) ? { cursor: this.cursors.get(started.threadId)! } : {}),
     }
     this.runs.set(turn.invocationId, run)
     void this.follow(turn.invocationId, run).catch((error) => {
       this.log(`run ${run.runId} follow failed: ${errorText(error)}`)
+      this.stopChain(run)
       void this.session.failTurn(turn.invocationId, errorText(error)).catch(() => undefined)
     })
   }
@@ -359,20 +377,26 @@ export class T3TurnRunner {
    */
   private async admit(turn: DeliveredTurn): Promise<{ threadId: string; runId: string }> {
     const existing = this.threadFor(turn.streamId)
-    if (existing) return this.send(existing, turn)
+    if (existing) return this.send(existing, turn).catch((error) => this.unlessGone(error, turn.streamId, existing))
     const root = this.session.rootStreamId
     const rootThread = root ? this.threadFor(root) : undefined
     // Only a thread under the scratchpad inherits; a mention elsewhere starts its own, so scratchpad context never leaks into a channel.
     if (rootThread && turn.streamId !== root && turn.rootStreamId === root) {
-      const fork = await this.client.call("t3_thread_fork", {
-        threadId: rootThread,
-        sourcePoint: { type: "latest_stable" },
-        title: titleFor(turn.content),
-      })
+      const fork = await this.client
+        .call("t3_thread_fork", {
+          threadId: rootThread,
+          sourcePoint: { type: "latest_stable" },
+          title: titleFor(turn.content),
+        })
+        .catch((error) => this.unlessGone(error, turn.rootStreamId, rootThread))
       this.saveState({ ...this.state, threads: { ...this.state.threads, [turn.streamId]: fork.targetThreadId } })
       return this.send(fork.targetThreadId, turn)
     }
     const { projectId } = this.options
+    // A scratch thread's project is new, so it has no default model to fall back on.
+    if (projectId === undefined && !this.state.model) {
+      throw new Error("T3 Code needs a model for new threads: pick one with /model.")
+    }
     const images = await this.uploadImages(turn.attachments)
     const launched = await this.client.call("t3_thread_launch", {
       title: titleFor(turn.content),
@@ -439,6 +463,13 @@ export class T3TurnRunner {
     return uploaded
   }
 
+  /** A thread deleted in T3 is forgotten, so the stream's next message launches a new one instead of failing forever. */
+  private unlessGone(error: unknown, streamId: string, threadId: string): never {
+    if (!(error instanceof T3ToolError) || error.code !== "thread_not_found") throw error
+    if (this.threadFor(streamId) === threadId) this.forgetThread(streamId)
+    throw new Error(`T3 Code thread \`${threadId}\` is gone; the next message starts a new one.`)
+  }
+
   private stopRun(threadId: string, runId: string): void {
     void this.client.call("t3_thread_interrupt", { threadId, runId, reason: "Stopped from Threa" }).catch((error) => {
       this.log(`run ${runId} stop failed: ${errorText(error)}`)
@@ -474,22 +505,29 @@ export class T3TurnRunner {
           await this.drain(run, batcher)
           failures = 0
           status = waited.status
-          if (TERMINAL_RUN_STATUSES.has(status) && run.runId === waitedOn) break
+          if (TERMINAL_RUN_STATUSES.has(status) && run.runId === waitedOn) {
+            if (run.steers.size === 0) break
+            await Promise.allSettled(run.steers)
+          }
         } catch (error) {
           if (signal.aborted) break
           failures += 1
-          if (error instanceof T3AuthError || failures >= MAX_CONSECUTIVE_POLL_FAILURES) throw error
+          // T3 answered and refused, so asking again gets the same answer.
+          if (error instanceof T3ToolError) this.unlessGone(error, run.streamId, run.threadId)
+          if (error instanceof T3AuthError) throw error
+          if (failures >= MAX_CONSECUTIVE_POLL_FAILURES) throw error
           this.log(`run ${run.runId} poll failed (${failures}): ${errorText(error)}`)
           await this.sleep(WAIT_TIMEOUT_MS)
         }
       }
     } finally {
+      // Released before any await, so a steer can't join a run already judged over, and before the
+      // turn closes, so a command right after the reply sees no open run.
+      if (this.runs.get(invocationId) === run) this.runs.delete(invocationId)
       await batcher.flush()
       if (run.cursor !== undefined && run.cursor > (this.cursors.get(run.threadId) ?? -1)) {
         this.cursors.set(run.threadId, run.cursor)
       }
-      // Released before the turn closes, so a command right after the reply sees no open run.
-      if (this.runs.get(invocationId) === run) this.runs.delete(invocationId)
     }
     if (signal.aborted) return
     if (trace.blockedOn) {

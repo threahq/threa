@@ -41,6 +41,13 @@ describe("loadT3Settings", () => {
     })
   })
 
+  test("rejects an auto-login value that is neither yes nor no", () => {
+    expect([loadT3Settings({ T3CODE_AUTO_LOGIN: "ture" }), loadT3Settings({}, { t3AutoLogin: 1 })]).toEqual([
+      { error: "Invalid t3AutoLogin: expected true or false." },
+      { error: "Invalid t3AutoLogin: expected true or false." },
+    ])
+  })
+
   test("rejects an unknown access mode", () => {
     expect(loadT3Settings({}, { t3Access: "yolo" })).toEqual({
       error: "Invalid t3Access: expected one of approval-required, auto-accept-edits, auto, full-access.",

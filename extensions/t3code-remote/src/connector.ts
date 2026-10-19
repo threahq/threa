@@ -44,6 +44,7 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
     tokenPath: config.install.tokenPath,
     autoLogin: config.t3.autoLogin,
     ...(options.fetch ? { fetch: options.fetch } : {}),
+    log,
   })
   const t3 = new T3Client(config.t3.url, auth, options.fetch)
 

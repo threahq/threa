@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { T3AuthError } from "./auth"
 import { T3TurnRunner, type ThreadState } from "./run-bridge"
 import { createT3SessionControl, matchModel } from "./session-control"
 import { fakeSession, fakeT3, item, turn } from "./t3.test-support"
@@ -51,6 +52,15 @@ describe("T3 session control", () => {
       "codex::gpt-5.5-mini",
       "claudeAgent::claude-opus-5-5",
     ])
+  })
+
+  test("a rejected token leaves the picker empty instead of failing the start", async () => {
+    const { t3, control } = setup()
+    t3.failNext("orchestrator_capabilities", new T3AuthError("T3 Code rejected the saved token"))
+
+    await control.refresh()
+
+    expect(control.modelSuggestions).toEqual([])
   })
 
   test("/status lists the thread, its model and the T3 server as markdown bullets", async () => {
@@ -122,7 +132,7 @@ describe("T3 session control", () => {
   })
 
   test("/clear right after the reply is not refused", async () => {
-    const { t3, fake, runner, control } = setup()
+    const { t3, fake, runner, control } = setup({ threads: {}, model: { instanceId: "codex", model: "gpt-5.5" } })
     const reply = fake.session.reply
     let cleared: unknown
     fake.session.reply = async (invocationId, text) => {

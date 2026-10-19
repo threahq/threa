@@ -105,7 +105,7 @@ history, and downloaded attachments listed in the content.
 For the turn's trace, `StepBatcher` buffers frames into ordered
 `recordSteps` calls, and `redactAttachDirectives` hides the local path in
 `THREA_ATTACH:` lines before narration lands there. Tell your agent to reply
-exactly `NO_RESPONSE_SENTINEL` to stay silent, and close a turn whose output
+exactly `THREA_NO_RESPONSE` (exported as `NO_RESPONSE_SENTINEL`) to stay silent, and close a turn whose output
 `isNoResponse` with an empty reply.
 
 ## Asking the user a question

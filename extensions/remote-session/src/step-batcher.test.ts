@@ -40,4 +40,22 @@ describe("StepBatcher", () => {
 
     expect(steps.batches).toEqual([{ invocationId: "binv_1", contents: ["a"] }])
   })
+
+  test("a batch the recorder rejects fails only that flush", async () => {
+    const steps = recorder()
+    const record = steps.recordSteps
+    let calls = 0
+    const batcher = new StepBatcher("binv_1", {
+      recordSteps: (invocationId, frames) =>
+        ++calls === 1 ? Promise.reject(new Error("offline")) : record(invocationId, frames),
+    })
+
+    const failed = await batcher.addNow(frame("a")).catch((error: Error) => error.message)
+    await batcher.addNow(frame("b"))
+
+    expect({ failed, batches: steps.batches }).toEqual({
+      failed: "offline",
+      batches: [{ invocationId: "binv_1", contents: ["b"] }],
+    })
+  })
 })
