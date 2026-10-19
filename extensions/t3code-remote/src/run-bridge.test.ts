@@ -126,15 +126,14 @@ describe("T3TurnRunner", () => {
   })
 
   test.each([
-    { project: "worktree", environment: undefined, worktree: true },
-    { project: null, environment: "worktree", worktree: true },
-    { project: "local", environment: "worktree", worktree: false },
-    { project: null, environment: undefined, worktree: false },
+    { mode: "worktree", worktree: true },
+    { mode: "local", worktree: false },
+    { mode: undefined, worktree: false },
   ] as const)(
-    "a project thread gets a T3 worktree when T3's default says so: project $project, environment $environment",
-    async ({ project, environment, worktree }) => {
+    "a project thread gets a T3 worktree when the environment's default is one: $mode",
+    async ({ mode, worktree }) => {
       const { t3, session, runner } = setup({ projectId: "project_1" })
-      t3.envModes({ project, environment })
+      t3.defaultEnvMode(mode)
       t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Hi" })] }])
 
       await runner.deliverTurn(turn())

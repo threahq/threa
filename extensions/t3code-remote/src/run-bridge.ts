@@ -410,7 +410,7 @@ export class T3TurnRunner {
       title: titleFor(turn.content),
       message: `${PREAMBLE}\n\n${turn.content}`,
       runtimeMode: this.options.access,
-      ...(projectId === undefined ? { scratch: true } : { projectId, ...(await this.workspaceFor(projectId)) }),
+      ...(projectId === undefined ? { scratch: true } : { projectId, ...(await this.workspaceFor()) }),
       ...(this.state.model ? { modelSelection: this.state.model } : {}),
       ...(images.length ? { attachments: images } : {}),
     })
@@ -419,17 +419,17 @@ export class T3TurnRunner {
     return { threadId: launched.threadId, runId: launched.runId }
   }
 
-  /** A project thread gets a T3-made worktree when T3's own default says so: the project's mode, else the environment's. */
-  private async workspaceFor(
-    projectId: string
-  ): Promise<Pick<T3Tools["t3_thread_launch"]["args"], "workspaceStrategy">> {
-    const [project, environment] = await Promise.all([
-      this.client.call("t3_project_read", { projectId }),
-      this.client.call("t3_environment_read", {}),
-    ])
-    const { defaultThreadEnvMode, newWorktreesStartFromOrigin } = environment.preferences
-    if ((project.defaultThreadEnvMode ?? defaultThreadEnvMode) !== "worktree") return {}
-    return { workspaceStrategy: { type: "worktree", baseRef: "HEAD", startFromOrigin: newWorktreesStartFromOrigin } }
+  /** A project thread gets a T3-made worktree when the environment's default for new threads says so. */
+  private async workspaceFor(): Promise<Pick<T3Tools["t3_thread_launch"]["args"], "workspaceStrategy">> {
+    const { preferences } = await this.client.call("t3_environment_read", {})
+    if (preferences.defaultThreadEnvMode !== "worktree") return {}
+    return {
+      workspaceStrategy: {
+        type: "worktree",
+        baseRef: "HEAD",
+        startFromOrigin: preferences.newWorktreesStartFromOrigin,
+      },
+    }
   }
 
   /** Images go through T3's attachment send, which has no queue mode or retry key: it steers a steerable run, else starts one. */

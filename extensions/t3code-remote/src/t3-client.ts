@@ -17,8 +17,6 @@ export type RunStatus =
   | "cancelled"
   | "rolled_back"
 
-export type ThreadEnvMode = "local" | "worktree"
-
 export interface ModelSelection {
   instanceId: string
   model: string
@@ -120,13 +118,9 @@ export interface T3Tools {
     args: Record<string, never>
     result: { providers: ProviderInfo[] }
   }
-  t3_project_read: {
-    args: { projectId: string }
-    result: { defaultThreadEnvMode: ThreadEnvMode | null }
-  }
   t3_environment_read: {
     args: Record<string, never>
-    result: { preferences: { defaultThreadEnvMode?: ThreadEnvMode; newWorktreesStartFromOrigin: boolean } }
+    result: { preferences: { defaultThreadEnvMode?: "local" | "worktree"; newWorktreesStartFromOrigin: boolean } }
   }
 }
 
