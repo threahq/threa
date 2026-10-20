@@ -46,7 +46,7 @@ describe("matchModel", () => {
 describe("T3 session control", () => {
   test("loads model suggestions from the orchestrator", async () => {
     const { control } = setup()
-    await control.refresh()
+    expect(await control.refresh()).toBe(true)
     expect(control.modelSuggestions?.map((suggestion) => suggestion.value)).toEqual([
       "codex::gpt-5.5",
       "codex::gpt-5.5-mini",
@@ -54,12 +54,11 @@ describe("T3 session control", () => {
     ])
   })
 
-  test("a rejected token leaves the picker empty instead of failing the start", async () => {
+  test("a rejected token leaves the picker empty and reports it unloaded instead of failing the start", async () => {
     const { t3, control } = setup()
     t3.failNext("orchestrator_capabilities", new T3AuthError("T3 Code rejected the saved token"))
 
-    await control.refresh()
-
+    expect(await control.refresh()).toBe(false)
     expect(control.modelSuggestions).toEqual([])
   })
 

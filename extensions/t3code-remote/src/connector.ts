@@ -82,7 +82,6 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
     start: async () => {
       // Fails before linking when there is no token and auto-login is off.
       await auth.token()
-      await sessionControl.refresh()
       await session.start()
     },
     shutdown: async (shutdownOptions?: ShutdownOptions) => {

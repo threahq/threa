@@ -100,7 +100,7 @@ describe("createHermesSessionControl", () => {
   test("refresh loads the model suggestions from the options payload", async () => {
     const { runner } = makeRunner()
     const control = createHermesSessionControl(runner, makeClient().client)
-    await control.refresh()
+    expect(await control.refresh()).toBe(true)
     expect(control.modelSuggestions).toEqual([
       { value: "openrouter::hermes-4", label: "hermes-4", description: "OpenRouter" },
       { value: "openrouter::glm-4.6", label: "glm-4.6", description: "OpenRouter" },
@@ -117,10 +117,10 @@ describe("createHermesSessionControl", () => {
       },
     })
     const control = createHermesSessionControl(runner, client, (message) => logs.push(message))
-    await control.refresh()
-    expect({ suggestions: control.modelSuggestions, logs }).toEqual({
+    expect({ loaded: await control.refresh(), suggestions: control.modelSuggestions, logs }).toEqual({
+      loaded: false,
       suggestions: [],
-      logs: ["model options unavailable, /model will suggest nothing: connect ECONNREFUSED"],
+      logs: ["model options unavailable, /model suggests nothing until the gateway answers: connect ECONNREFUSED"],
     })
   })
 

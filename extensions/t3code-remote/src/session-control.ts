@@ -7,8 +7,8 @@ const MAX_AMBIGUOUS_CANDIDATES = 8
 type CommandResult = { ok: boolean; summary?: string; message?: string }
 
 export interface T3SessionControl extends SessionControlActuator {
-  /** Load the model picker's options; awaited once before the session starts, and never throws. */
-  refresh(): Promise<void>
+  /** Load the model picker's options; false when T3 did not answer. Never throws. */
+  refresh(): Promise<boolean>
 }
 
 /** Exact `instance::model`, then an unambiguous model id, then a case-insensitive substring. */
@@ -118,10 +118,12 @@ export function createT3SessionControl(
     refresh: async () => {
       try {
         suggestions = suggestionsFrom((await client.call("orchestrator_capabilities", {})).providers)
+        return true
       } catch (error) {
         // An expired token must not crash-loop the service; each turn reports it instead.
-        log(`T3 Code models unavailable, /model will suggest nothing: ${errorText(error)}`)
+        log(`T3 Code models unavailable, /model suggests nothing until it answers: ${errorText(error)}`)
         suggestions = []
+        return false
       }
     },
     runCommand: async (name, args, context) => {

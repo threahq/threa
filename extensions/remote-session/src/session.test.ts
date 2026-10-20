@@ -5672,3 +5672,47 @@ describe("presence reporting", () => {
     await session.shutdown()
   })
 })
+
+describe("session-control refresh", () => {
+  async function flush() {
+    for (let i = 0; i < 100; i++) await Promise.resolve()
+  }
+
+  test("retries a runtime that was not up yet and republishes presence once its options load", async () => {
+    jest.useFakeTimers()
+    const { client } = makeFakeClient()
+    const { transport, presence } = makeFakeTransport()
+    const answers = [false, true]
+    let suggestions: { value: string; label: string }[] = []
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["model"],
+        get modelSuggestions() {
+          return suggestions
+        },
+        refresh: async () => {
+          const loaded = answers.shift() ?? true
+          if (loaded) suggestions = [{ value: "opus", label: "Opus" }]
+          return loaded
+        },
+        interrupt: () => true,
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(session as any).link = { rootStreamId: "stream_root" }
+    try {
+      await (session as unknown as { refreshSessionControl(): Promise<void> }).refreshSessionControl()
+      const afterFailure = presence.length
+      jest.advanceTimersByTime(2_000)
+      await flush()
+      expect({
+        afterFailure,
+        republished: presence.map((body) => (body.capabilities as { modelSuggestions?: unknown }).modelSuggestions),
+      }).toEqual({ afterFailure: 0, republished: [[{ value: "opus", label: "Opus" }]] })
+    } finally {
+      await session.shutdown()
+      jest.useRealTimers()
+    }
+  })
+})

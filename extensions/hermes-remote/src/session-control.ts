@@ -8,8 +8,8 @@ export const HERMES_SESSION_CONTROL_COMMANDS = ["stop", "status", "model", "clea
 const MAX_AMBIGUOUS_CANDIDATES = 8
 
 export interface HermesSessionControl extends SessionControlActuator {
-  /** Load the model picker's options; awaited once before the session starts. */
-  refresh(): Promise<void>
+  /** Load the model picker's options; false when the gateway did not answer. Never throws. */
+  refresh(): Promise<boolean>
   /** Give a freshly forked thread conversation the model its source was locked to. */
   inheritModel(sourceId: string, forkId: string): Promise<void>
 }
@@ -161,9 +161,11 @@ export function createHermesSessionControl(
     refresh: async () => {
       try {
         suggestions = suggestionsFrom(await client.listModelOptions())
+        return true
       } catch (error) {
-        log(`model options unavailable, /model will suggest nothing: ${errorText(error)}`)
+        log(`model options unavailable, /model suggests nothing until the gateway answers: ${errorText(error)}`)
         suggestions = []
+        return false
       }
     },
     runCommand: async (name, args, context) => {
