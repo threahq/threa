@@ -4,7 +4,12 @@ import { T3Auth, type FetchLike } from "./auth"
 import { readJsonFile, type T3RemoteConfig } from "./config"
 import { T3CODE_RUNTIME, T3TurnRunner, type ThreadStore } from "./run-bridge"
 import { createT3SessionControl } from "./session-control"
-import { T3Client } from "./t3-client"
+import { T3Client, type ModelOption } from "./t3-client"
+
+function isModelOption(option: unknown): option is ModelOption {
+  const { id, value } = (option ?? {}) as { id?: unknown; value?: unknown }
+  return typeof id === "string" && (typeof value === "string" || typeof value === "boolean")
+}
 
 /** Stream → thread links and the `/model` default, swapped in whole so a crash cannot truncate it. */
 export function createFileThreadStore(path: string): ThreadStore {
@@ -16,10 +21,14 @@ export function createFileThreadStore(path: string): ThreadStore {
           typeof threadId === "string" && threadId.length > 0 ? [[streamId, threadId] as const] : []
         )
       )
-      const { instanceId, model } = (parsed.model ?? {}) as { instanceId?: unknown; model?: unknown }
-      return typeof instanceId === "string" && typeof model === "string"
-        ? { threads, model: { instanceId, model } }
-        : { threads }
+      const { instanceId, model, options } = (parsed.model ?? {}) as {
+        instanceId?: unknown
+        model?: unknown
+        options?: unknown
+      }
+      if (typeof instanceId !== "string" || typeof model !== "string") return { threads }
+      const kept = Array.isArray(options) ? options.filter(isModelOption) : []
+      return { threads, model: { instanceId, model, ...(kept.length > 0 ? { options: kept } : {}) } }
     },
     save: (state) => writeFileAtomic(path, `${JSON.stringify(state, null, 2)}\n`),
   }

@@ -216,7 +216,7 @@ describe("T3TurnRunner", () => {
     })
   })
 
-  test("posts earlier assistant messages as narration with attachment paths hidden", async () => {
+  test("posts earlier assistant messages as narration with attachment paths hidden and reasoning dropped", async () => {
     const { t3, session, runner } = setup()
     t3.script("run_1", [
       {
@@ -234,7 +234,6 @@ describe("T3TurnRunner", () => {
 
     expect(session.frames()).toEqual([
       { stepType: "thinking", content: "Looking.\nTHREA_ATTACH: [local path omitted]" },
-      { stepType: "thinking", content: "Thinking content omitted for safety." },
     ])
     expect(session.replies).toEqual([{ invocationId: "binv_1", text: "Fixed." }])
   })

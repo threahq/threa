@@ -17,9 +17,22 @@ export type RunStatus =
   | "cancelled"
   | "rolled_back"
 
+export interface ModelOption {
+  id: string
+  value: string | boolean
+}
+
 export interface ModelSelection {
   instanceId: string
   model: string
+  options?: ModelOption[]
+}
+
+/** A setting a model offers, like its reasoning effort; `options` lists a select's values. */
+export interface ModelOptionDescriptor {
+  id: string
+  type: "select" | "boolean"
+  options?: Array<{ id: string }>
 }
 
 export interface ThreadItem {
@@ -53,7 +66,7 @@ export interface ImageAttachment {
 export interface ProviderInfo {
   providerInstanceId: string
   displayName?: string
-  models: Array<{ id: string; label?: string }>
+  models: Array<{ id: string; label?: string; options?: ModelOptionDescriptor[] }>
 }
 
 /** The orchestrator tools the connector calls, with the slice of each argument and result it uses. */
@@ -105,6 +118,10 @@ export interface T3Tools {
   t3_thread_interrupt: {
     args: { threadId: string; runId?: string; reason?: string }
     result: { status: string }
+  }
+  t3_thread_configuration: {
+    args: { threadId: string }
+    result: { modelSelection: ModelSelection }
   }
   t3_thread_configure: {
     args: { threadId: string; modelSelection: ModelSelection }
