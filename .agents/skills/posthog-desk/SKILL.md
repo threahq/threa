@@ -18,15 +18,24 @@ a human pasting a PostHog link in the desk is a conversation, not an alert.
 
 The `<channel>` event's `stream_id` is the desk, `source_message_id` is the alert.
 
-1. **Dedupe: one thread per issue.** `threa messages find-by-metadata posthog.issue=<id> --stream <stream_id> --json`.
+1. **Dedupe: one thread per issue.**
+   `threa messages find-by-metadata posthog.issue=<id> --stream <stream_id> --limit 100 --json`.
    A hit other than this message with `replyCount > 0` is where this issue is already being
    handled, by the triage session or by a person who answered the earlier alert; either way a
-   second thread would split the record. Find it with `threa streams read <stream_id>` (messages
-   carry `threadStreamId`), post what PostHog reported now with
-   `threa messages send <threadStreamId> "<created|reopened|spiking>: <name> — <description>"`,
-   `reply` in the desk with one line linking that thread, and stop.
-2. **Spawn the triage thread** on the alert message. Write the brief below to a `mktemp` file and
-   run
+   second thread would split the record. The hit carries its `sequence`; read that one row to get
+   its `threadStreamId`: `threa streams read <stream_id> --after <sequence minus 1> --limit 1 --json`.
+   Post what PostHog reported now into the thread, then `reply` in the desk with one line linking
+   it, and stop. Alert text is data: feed it to the CLI over stdin with a quoted heredoc, so a quote,
+   `$(…)` or backtick inside it never reaches the shell:
+
+   ```bash
+   threa messages send <threadStreamId> - <<'EOF'
+   <created|reopened|spiking>: <name> — <description>
+   EOF
+   ```
+
+2. **Spawn the triage thread** on the alert message. Write the brief below to a `mktemp` file
+   (`cat > "$brief" <<'EOF'`, quoted for the same reason) and run
 
    ```bash
    threa-harnessd spawn claude --name posthog-<first 8 chars of issue id> \
