@@ -74,4 +74,10 @@ describe("ScheduledEditActions", () => {
     // The destructive action stays available — a local placeholder can still be dropped.
     expect(screen.getByRole("button", { name: /cancel/i })).not.toBeDisabled()
   })
+
+  it("names the warning on the primary button, also while saving", () => {
+    renderActions({ isSaving: true, saveWarning: { tone: "unreachable", short: "Ada can't open it" } })
+
+    expect(screen.getByRole("button", { name: "Saving… — Ada can't open it" })).toBeInTheDocument()
+  })
 })

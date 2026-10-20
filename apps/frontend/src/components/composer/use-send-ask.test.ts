@@ -152,6 +152,31 @@ describe("useSendAsk", () => {
     expect({ sent: send.mock.calls, asked: result.current.question }).toEqual({ sent: [], asked: null })
   })
 
+  it("cancels only the action whose meaning changed, and lets the next Send start at once", async () => {
+    const settles: Array<(value: ComposerSendWarning | null) => void> = []
+    const awaitSendWarning = () => new Promise<ComposerSendWarning | null>((resolve) => settles.push(resolve))
+    const { result } = renderAsk({ sendWarning: null, content: DRAFT, awaitSendWarning })
+    const save = vi.fn()
+    const sendNow = vi.fn()
+
+    let cancelledSave: Promise<void> = Promise.resolve()
+    act(() => {
+      cancelledSave = result.current.submit(save, "Save")
+    })
+    act(() => result.current.cancel("Save"))
+    let keptSendNow: Promise<void> = Promise.resolve()
+    act(() => {
+      keptSendNow = result.current.submit(sendNow, "Send")
+    })
+    act(() => result.current.cancel("Save"))
+    await act(async () => {
+      settles.forEach((settle) => settle(null))
+      await Promise.all([cancelledSave, keptSendNow])
+    })
+
+    expect({ saved: save.mock.calls.length, sentNow: sendNow.mock.calls.length }).toEqual({ saved: 0, sentNow: 1 })
+  })
+
   it("still asks or sends when a display stamp lands while the answer is awaited", async () => {
     async function pressSendThenStamp(answer: ComposerSendWarning | null) {
       let settle: (value: ComposerSendWarning | null) => void = () => {}

@@ -13,6 +13,7 @@ import { getDmDraftUserId, isDraftId } from "./use-stream-or-draft"
 import {
   collectComposerReferences,
   exposingAudiences,
+  referenceKeyOf,
   referenceStreamIds,
   resolveSendWarning,
   type ComposerReference,
@@ -20,6 +21,7 @@ import {
 } from "@/lib/reference-audience"
 
 const EMPTY_AUDIENCES: ReferenceAudience[] = []
+const NO_SENT_REFERENCES: ReadonlySet<string> = new Set()
 const SETTLE_TIMEOUT_MS = 1500
 
 /**
@@ -78,22 +80,38 @@ export interface ReferenceAudienceResult {
    * to the settled warning, or null when the lookup fails or outlasts the wait.
    */
   awaitSendWarning: (() => Promise<ComposerSendWarning | null>) | null
+  /** `referenceKeyOf` for every ref `previousContent` already sent; the alternative leaves them as they are. */
+  sentReferenceKeys: ReadonlySet<string>
 }
 
 export function useReferenceAudience({
   workspaceId,
   target,
   content,
+  previousContent,
 }: {
   workspaceId: string
   target: ReferenceAudienceTarget | null
   content: JSONContent
+  /** What an edit started from: its refs were already sent here, so they tint but never ask again. */
+  previousContent?: JSONContent
 }): ReferenceAudienceResult {
   const messageService = useMessageService()
   const queryClient = useQueryClient()
   const { getUser } = useActors(workspaceId)
   const targetStreamId = target && "streamId" in target ? target.streamId : null
   const refs = useMemo(() => collectComposerReferences(content, targetStreamId), [content, targetStreamId])
+  const sentReferenceKeys = useMemo(
+    () =>
+      previousContent
+        ? new Set(collectComposerReferences(previousContent, targetStreamId).map(referenceKeyOf))
+        : NO_SENT_REFERENCES,
+    [previousContent, targetStreamId]
+  )
+  const askableRefs = useMemo(
+    () => refs.filter((ref) => !sentReferenceKeys.has(referenceKeyOf(ref))),
+    [refs, sentReferenceKeys]
+  )
   const allStreamIds = useMemo(() => referenceStreamIds(refs), [refs])
   const streamIds = useMemo(() => allStreamIds.slice(0, REFERENCE_AUDIENCE_MAX_STREAM_IDS), [allStreamIds])
   const truncated = allStreamIds.length > REFERENCE_AUDIENCE_MAX_STREAM_IDS
@@ -118,8 +136,8 @@ export function useReferenceAudience({
   const answered = isSuccess && !isPlaceholderData
   const settled = answered && !truncated
   const sendWarning = useMemo(
-    () => composeSendWarning({ refs, audienceByStreamId, getUser, settled, targetKey }),
-    [refs, audienceByStreamId, getUser, settled, targetKey]
+    () => composeSendWarning({ refs: askableRefs, audienceByStreamId, getUser, settled, targetKey }),
+    [askableRefs, audienceByStreamId, getUser, settled, targetKey]
   )
 
   const pending = enabled && !truncated && !answered && !isError
@@ -129,7 +147,7 @@ export function useReferenceAudience({
           const response = await withTimeout(queryClient.fetchQuery({ queryKey, queryFn }), SETTLE_TIMEOUT_MS)
           if (!response) return null
           return composeSendWarning({
-            refs,
+            refs: askableRefs,
             audienceByStreamId: exposingAudiences(response.audiences),
             getUser,
             settled: true,
@@ -141,5 +159,5 @@ export function useReferenceAudience({
       }
     : null
 
-  return { sendWarning, audienceByStreamId, awaitSendWarning }
+  return { sendWarning, audienceByStreamId, awaitSendWarning, sentReferenceKeys }
 }

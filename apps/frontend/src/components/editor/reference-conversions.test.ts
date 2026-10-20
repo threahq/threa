@@ -4,6 +4,7 @@ import type { JSONContent } from "@tiptap/react"
 import { createEditorExtensions } from "./editor-extensions"
 import { linksToShares, sharesToLinks } from "./reference-conversions"
 import { buildMessageLink, buildStreamLink } from "@/lib/stream-links"
+import { referenceKeyOf } from "@/lib/reference-audience"
 
 const WS = "ws_1"
 
@@ -178,5 +179,16 @@ describe("sharesToLinks", () => {
         },
       ],
     })
+  })
+
+  it("leaves shares an edit already sent alone", () => {
+    const editor = createEditor([share("stream_a", "msg_1"), share("stream_a", "msg_2")])
+    sharesToLinks(
+      editor,
+      WS,
+      ["stream_a"],
+      new Set([referenceKeyOf({ kind: "share", streamId: "stream_a", messageId: "msg_1" })])
+    )
+    expect(docContent(editor).map((node) => node.type)).toEqual(["sharedMessage", "paragraph"])
   })
 })

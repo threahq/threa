@@ -35,16 +35,15 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/comp
 import { PendingAttachments } from "@/components/timeline/pending-attachments"
 import { countAttachmentReferences } from "@/components/editor/attachment-reference-counts"
 import { ComposerPillDndHost } from "@/components/editor/composer-pill-dnd"
-import { linksToShares, sharesToLinks } from "@/components/editor/reference-conversions"
 import { MicButton, type MicButtonHandle } from "./mic-button"
 import { StashedDraftsComposerBridgeContext, type StashedDraftsComposerBridge } from "./stashed-drafts-open-context"
 import { ComposerActionBar } from "./composer-action-bar"
 import { ComposerLinkPreviews } from "./composer-link-previews"
 import { StashedDraftsPicker, type StashedDraftsPickerProps } from "./stashed-drafts-picker"
 import { ContextRefStrip } from "./context-ref-strip"
-import { SendAskRow, SendWarningBadge } from "./send-ask"
+import { AskOverlay, SendAskRow, SendWarningBadge } from "./send-ask"
 import type { ComposerSendWarning } from "@/lib/reference-audience"
-import { useSendAsk } from "./use-send-ask"
+import { useEditorSendAsk } from "./use-editor-send-ask"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { cn } from "@/lib/utils"
 import { COLLAPSED_COMPOSER_ROW, COLLAPSED_COMPOSER_SHADOW } from "@/components/composer/collapsed-composer-bar"
@@ -121,17 +120,6 @@ const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Comman
  * well inside this on both Chrome and Firefox Android.
  */
 const KEYBOARD_RESIZE_WAIT_MS = 300
-
-function AskOverlay({ askRow, children }: { askRow: ReactNode; children: ReactNode }) {
-  return (
-    <>
-      <div className={cn(askRow && "invisible")} aria-hidden={askRow ? true : undefined}>
-        {children}
-      </div>
-      {askRow && <div className="absolute inset-0 flex items-center">{askRow}</div>}
-    </>
-  )
-}
 
 export interface ComposerControlHandle {
   focus(): void
@@ -1012,23 +1000,21 @@ export function MessageComposer({
   const insertSlash = useCallback(() => richEditorRef.current?.insertSlash(), [])
 
   const {
-    copy: askCopy,
     question,
     submit: submitAsking,
-    answer: answerQuestion,
     dismiss: dismissQuestion,
-    recordAlternative,
-  } = useSendAsk({ sendWarning, awaitSendWarning, content })
-
-  // Desktop moved focus to the question's button, which unmounts once it is answered.
-  const refocusEditor = useCallback(() => {
-    if (!isMobile) richEditorRef.current?.focus()
-  }, [isMobile])
-
-  const closeQuestion = useCallback(() => {
-    dismissQuestion()
-    refocusEditor()
-  }, [dismissQuestion, refocusEditor])
+    answerQuestion,
+    escapeQuestion,
+    takeAlternative,
+    labelWithWarning,
+  } = useEditorSendAsk({
+    sendWarning,
+    awaitSendWarning,
+    content,
+    editorRef: richEditorRef,
+    workspaceId,
+    compact: isMobile,
+  })
 
   // Stable, so an answer given after a rerender still sends through the current `onSubmit`.
   const send = useStableCallback((options?: ComposerSubmitOptions) => {
@@ -1046,20 +1032,10 @@ export function MessageComposer({
     if (!canSubmit) return
     if (question) {
       answerQuestion()
-      refocusEditor()
       return
     }
     void submitAsking(send)
-  }, [canSubmit, question, answerQuestion, submitAsking, send, refocusEditor])
-
-  const handleAlternative = useCallback(() => {
-    const editor = richEditorRef.current?.getEditor()
-    if (!editor || !workspaceId || !question) return
-    if (question.tone === "reveal") sharesToLinks(editor, workspaceId, question.convertibleStreamIds)
-    else linksToShares(editor, question.convertibleStreamIds)
-    recordAlternative()
-    refocusEditor()
-  }, [workspaceId, question, recordAlternative, refocusEditor])
+  }, [canSubmit, question, answerQuestion, submitAsking, send])
 
   const handleEditorFocus = useCallback(() => {
     dismissQuestion()
@@ -1155,10 +1131,8 @@ export function MessageComposer({
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       // Capture phase, ahead of the editor's own Escape (blur) and the expanded
       // shell's (collapse): the first Escape only takes the question away.
-      if (question && event.key === "Escape") {
-        event.preventDefault()
+      if (event.key === "Escape" && escapeQuestion(event)) {
         event.stopPropagation()
-        closeQuestion()
         return
       }
       if (!stashBinding) return
@@ -1172,7 +1146,7 @@ export function MessageComposer({
       }
       onStashDraft?.()
     },
-    [onStashDraft, stashBinding, composerEmpty, question, closeQuestion]
+    [onStashDraft, stashBinding, composerEmpty, escapeQuestion]
   )
 
   // Chip state is a view of the document: how many references each attachment
@@ -1236,7 +1210,7 @@ export function MessageComposer({
     />
   )
 
-  const sendAriaLabel = `${isSubmitting ? submittingLabel : submitLabel}${askCopy ? ` — ${askCopy.short}` : ""}`
+  const sendAriaLabel = labelWithWarning(isSubmitting ? submittingLabel : submitLabel)
   const sendBadge = sendWarning ? <SendWarningBadge tone={sendWarning.warning.tone} /> : null
   const askRow = question ? (
     <SendAskRow
@@ -1244,7 +1218,7 @@ export function MessageComposer({
       copy={question.copy}
       compact={isMobile}
       onPrimary={handleSubmit}
-      onAlternative={workspaceId ? handleAlternative : undefined}
+      onAlternative={workspaceId ? takeAlternative : undefined}
       mirrored={mirrored}
       className="w-full"
     />

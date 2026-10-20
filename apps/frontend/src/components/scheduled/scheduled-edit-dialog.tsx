@@ -32,6 +32,12 @@ import { useSharePrivacyConfirm } from "@/hooks/use-share-privacy-confirm"
 import { isPrivacyConfirmationError } from "@/lib/share-privacy-toast"
 import { collectAttachmentReferenceIds } from "@threahq/prosemirror"
 import { EMPTY_DOC, ensureTrailingParagraph } from "@/lib/prosemirror-utils"
+import { AskOverlay, SendAskRow, SendWarningBadge } from "@/components/composer/send-ask"
+import { useEditorSendAsk, type SendButtonWarning } from "@/components/composer/use-editor-send-ask"
+import type { ComposerSubmitOptions } from "@/components/composer"
+import type { SendVerb } from "@/lib/reference-audience"
+import { referenceAudienceTargetFor, useReferenceAudience } from "@/hooks/use-reference-audience"
+import { useStableCallback } from "@/hooks/use-stable-callback"
 
 interface ScheduledEditDialogProps {
   workspaceId: string
@@ -84,6 +90,30 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
     [idbStreams, scheduled?.streamId]
   )
   const streamContext = useMentionStreamContext(workspaceId, destinationStream)
+  const { sendWarning, audienceByStreamId, awaitSendWarning, sentReferenceKeys } = useReferenceAudience({
+    workspaceId,
+    target: scheduled ? referenceAudienceTargetFor(scheduled.streamId, destinationStream) : null,
+    content: contentJson,
+    previousContent: scheduled?.contentJson,
+  })
+  const {
+    question,
+    submit: submitAsking,
+    dismiss: dismissQuestion,
+    cancel: cancelQuestion,
+    answerQuestion,
+    escapeQuestion,
+    takeAlternative,
+    warning,
+  } = useEditorSendAsk({
+    sendWarning,
+    awaitSendWarning,
+    content: contentJson,
+    editorRef,
+    workspaceId,
+    compact: isMobile,
+    sentReferenceKeys,
+  })
   const attachmentsHook = useAttachments(workspaceId)
 
   const open = scheduled !== null
@@ -219,6 +249,8 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
     return { contentJson: materialized, attachmentIds: collectAttachmentReferenceIds(materialized) }
   }, [contentJson, attachmentsHook])
 
+  const busy = updateMutation.isPending || sendNowMutation.isPending || cancelMutation.isPending
+
   // The toast reruns the action the 409 refused, with the dialog's current send time.
   const [blockedSendNow, setBlockedSendNow] = useState(false)
   const { block: blockOnPrivacy, clear: clearPrivacyBlock } = useSharePrivacyConfirm({
@@ -236,7 +268,7 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
    */
   const persist = useCallback(
     async (sendNow: boolean, confirmedPrivacyWarning?: boolean) => {
-      if (!scheduled || !sendAtDate || expectedVersion === null) return
+      if (!scheduled || !sendAtDate || expectedVersion === null || busy) return
       if (isLocalRow) {
         // Local-only rows haven't been confirmed by the server yet, so the
         // update API would 404. The schedule_message op will land shortly;
@@ -282,6 +314,7 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
       scheduled,
       sendAtDate,
       expectedVersion,
+      busy,
       isLocalRow,
       updateMutation,
       sendNowMutation,
@@ -292,8 +325,26 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
       blockOnPrivacy,
     ]
   )
-  const handleSave = useCallback(() => void persist(false), [persist])
-  const handleSendNow = useCallback(() => void persist(true), [persist])
+  // Stable, so an answer given after a rerender persists the current send time and version.
+  const save = useStableCallback((options?: ComposerSubmitOptions) => {
+    void persist(false, options?.confirmedPrivacyWarning)
+  })
+  const sendNow = useStableCallback((options?: ComposerSubmitOptions) => {
+    void persist(true, options?.confirmedPrivacyWarning)
+  })
+  const saveVerb: SendVerb = isPast ? "Send" : "Save"
+  const handleSave = useCallback(() => {
+    if (!busy) void submitAsking(save, saveVerb)
+  }, [busy, submitAsking, save, saveVerb])
+  const handleSendNow = useCallback(() => {
+    if (!busy) void submitAsking(sendNow, "Send")
+  }, [busy, submitAsking, sendNow])
+
+  // Save's verb flips with the due state ("Save" sends once the time passes): drop a question or a Save
+  // still being decided under the old verb. Send now isn't offered once past, so a past "Send" is always Save's.
+  useEffect(() => {
+    cancelQuestion(isPast ? "Save" : "Send")
+  }, [isPast, cancelQuestion])
 
   const handleDelete = useCallback(async () => {
     if (!scheduled) return
@@ -309,7 +360,6 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
   }, [scheduled, cancelMutation, handleClose])
 
   const isSaving = updateMutation.isPending
-  const busy = updateMutation.isPending || sendNowMutation.isPending || cancelMutation.isPending
 
   const description = (() => {
     if (isLocalRow) return "Saving to the server… you can edit once the schedule lands."
@@ -321,7 +371,6 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
   // useCancelScheduled mutation reads identically here and in the popover /
   // drawer / /scheduled cluster.
   const deleteLabel = isFailed ? "Remove" : "Cancel"
-  const saveLabel = isPast ? "Send" : "Save"
   const title = isPast ? "Send scheduled message" : "Edit scheduled message"
 
   const attachmentReferenceCounts = useMemo(() => countAttachmentReferences(contentJson), [contentJson])
@@ -339,6 +388,8 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
       value={contentJson}
       onChange={setContentJson}
       onSubmit={handleSave}
+      onFocus={dismissQuestion}
+      audienceByStreamId={audienceByStreamId}
       onFileUpload={attachmentsHook.uploadFile}
       imageCount={attachmentsHook.imageCount}
       placeholder="Edit message…"
@@ -390,13 +441,24 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
       canSubmit={canSubmit}
       busy={busy}
       isSaving={isSaving}
-      saveLabel={saveLabel}
+      saveLabel={saveVerb}
       deleteLabel={deleteLabel}
       onDelete={handleDelete}
       onSendNow={handleSendNow}
       onSave={handleSave}
+      saveWarning={warning}
     />
   )
+  const askRow = question ? (
+    <SendAskRow
+      tone={question.tone}
+      copy={question.copy}
+      compact={isMobile}
+      onPrimary={answerQuestion}
+      onAlternative={takeAlternative}
+      className="w-full"
+    />
+  ) : null
 
   if (isMobile) {
     return (
@@ -406,7 +468,10 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
           if (!next) handleClose()
         }}
       >
-        <DrawerContent className={mobileExpanded ? "!h-[100dvh] rounded-t-none" : "min-h-[75dvh] max-h-[85dvh]"}>
+        <DrawerContent
+          onEscapeKeyDown={escapeQuestion}
+          className={mobileExpanded ? "!h-[100dvh] rounded-t-none" : "min-h-[75dvh] max-h-[85dvh]"}
+        >
           <DrawerTitle className="sr-only">{title}</DrawerTitle>
 
           <div className="flex flex-col flex-1 min-h-0 px-4 pt-5 gap-4">
@@ -443,18 +508,20 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
             tabIndex={-1}
             onMouseDown={(e) => e.preventDefault()}
           >
-            <EditorActionBar
-              editorHandle={editorRef.current}
-              disabled={isSaving}
-              formatOpen={formatOpen}
-              onFormatOpenChange={setFormatOpen}
-              mobileExpanded={mobileExpanded}
-              onMobileExpandedChange={setMobileExpanded}
-              showAttach
-              onAttachClick={() => attachmentsHook.fileInputRef.current?.click()}
-              showExpand={false}
-              trailingContent={trailingActions}
-            />
+            <AskOverlay askRow={askRow}>
+              <EditorActionBar
+                editorHandle={editorRef.current}
+                disabled={isSaving}
+                formatOpen={formatOpen}
+                onFormatOpenChange={setFormatOpen}
+                mobileExpanded={mobileExpanded}
+                onMobileExpandedChange={setMobileExpanded}
+                showAttach
+                onAttachClick={() => attachmentsHook.fileInputRef.current?.click()}
+                showExpand={false}
+                trailingContent={trailingActions}
+              />
+            </AskOverlay>
             {formatOpen && (
               <EditorToolbar
                 editor={toolbarEditor}
@@ -486,6 +553,7 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
         // lets TipTap own initial focus uncontested; subsequent clicks then
         // route normally.
         onOpenAutoFocus={(e) => e.preventDefault()}
+        onEscapeKeyDown={escapeQuestion}
       >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
@@ -509,16 +577,18 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
             {error ? <div className="p-3 text-sm text-destructive">{error}</div> : editorElement}
             {fileInput}
             <div className="border-t border-border/50 px-3 py-2">
-              <EditorActionBar
-                editorHandle={editorRef.current}
-                disabled={isSaving}
-                formatOpen={formatOpen}
-                onFormatOpenChange={setFormatOpen}
-                showAttach
-                onAttachClick={() => attachmentsHook.fileInputRef.current?.click()}
-                showExpand={false}
-                trailingContent={trailingActions}
-              />
+              <AskOverlay askRow={askRow}>
+                <EditorActionBar
+                  editorHandle={editorRef.current}
+                  disabled={isSaving}
+                  formatOpen={formatOpen}
+                  onFormatOpenChange={setFormatOpen}
+                  showAttach
+                  onAttachClick={() => attachmentsHook.fileInputRef.current?.click()}
+                  showExpand={false}
+                  trailingContent={trailingActions}
+                />
+              </AskOverlay>
             </div>
           </div>
         </div>
@@ -544,6 +614,8 @@ interface ScheduledEditActionsProps {
   onDelete: () => void
   onSendNow: () => void
   onSave: () => void
+  /** Marks the primary when the draft's refs reach readers who can't open them or would see them. */
+  saveWarning?: SendButtonWarning | null
 }
 
 /**
@@ -567,8 +639,10 @@ export function ScheduledEditActions({
   onDelete,
   onSendNow,
   onSave,
+  saveWarning,
 }: ScheduledEditActionsProps) {
   const showSendNow = isPending && !isPast
+  const primaryLabel = isSaving ? "Saving…" : saveLabel
   return (
     <>
       <Button
@@ -617,13 +691,15 @@ export function ScheduledEditActions({
         <Button
           type="button"
           size="sm"
-          className="h-8 px-3 text-xs shrink-0"
+          className="relative h-8 px-3 text-xs shrink-0"
+          aria-label={saveWarning ? `${primaryLabel} — ${saveWarning.short}` : undefined}
           onPointerDown={(e) => e.preventDefault()}
           onClick={onSave}
           disabled={busy || !canSubmit}
         >
           {isSaving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
-          {isSaving ? "Saving…" : saveLabel}
+          {primaryLabel}
+          {saveWarning ? <SendWarningBadge tone={saveWarning.tone} /> : null}
         </Button>
       )}
     </>

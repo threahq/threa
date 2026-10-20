@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { spyOnExport } from "@/test/spy"
-import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { cleanup, render, screen, fireEvent, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -10,6 +10,8 @@ import * as editorModule from "@/components/editor"
 import * as prosemirrorModule from "@threahq/prosemirror"
 import * as contextsModule from "@/contexts"
 import * as authModule from "@/auth"
+import * as referenceAudienceModule from "@/hooks/use-reference-audience"
+import type { ComposerSendWarning } from "@/lib/reference-audience"
 import { toast } from "sonner"
 import { ApiError } from "@/api"
 // eslint-disable-next-line no-restricted-imports -- test reads the real outbox the form writes to
@@ -568,5 +570,72 @@ describe("MessageEditForm mention rules", () => {
     renderForm()
 
     await waitFor(() => expect(editorStreamContext).toMatchObject({ streamType: "channel", sharedCopy: true }))
+  })
+})
+
+describe("MessageEditForm audience question", () => {
+  const revealWarning: ComposerSendWarning = {
+    warning: {
+      tone: "reveal",
+      lead: { streamId: "stream_src", count: 2, sampleUserIds: [] },
+      exposed: { reveal: ["stream_src"], unreachable: [] },
+      convertibleStreamIds: ["stream_src"],
+    },
+    names: [],
+    settled: true,
+    targetKey: "stream:stream_1",
+  }
+
+  function renderAsking(props: Partial<React.ComponentProps<typeof MessageEditForm>> = {}) {
+    spyOnExport(referenceAudienceModule, "useReferenceAudience").mockReturnValue(() => ({
+      sendWarning: revealWarning,
+      audienceByStreamId: new Map(),
+      awaitSendWarning: null,
+      sentReferenceKeys: new Set<string>(),
+    }))
+    const update = vi.fn().mockResolvedValue({})
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      update,
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+    renderForm(props)
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), {
+      target: {
+        value: JSON.stringify({
+          type: "doc",
+          content: [{ type: "paragraph", content: [{ type: "text", text: "Edited" }] }],
+        }),
+      },
+    })
+    return update
+  }
+
+  it("should ask before saving an edit that reveals a share and save it with consent from the question", async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    const update = renderAsking({ onSave })
+
+    await user.click(screen.getByRole("button", { name: /^Save/ }))
+    const asked = { question: !!screen.queryByTestId("send-ask"), updates: update.mock.calls.length }
+    await user.click(within(screen.getByTestId("send-ask")).getByRole("button", { name: "Save" }))
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    expect({ asked, update: update.mock.calls }).toEqual({
+      asked: { question: true, updates: 0 },
+      update: [["ws_1", "msg_1", { contentJson: expect.anything(), confirmedPrivacyWarning: true }]],
+    })
+  })
+
+  it("should close the question on Escape and keep the edit open", async () => {
+    const user = userEvent.setup()
+    const onCancel = vi.fn()
+    renderAsking({ onCancel })
+
+    await user.click(screen.getByRole("button", { name: /^Save/ }))
+    fireEvent.keyDown(document, { key: "Escape" })
+
+    expect({ question: screen.queryByTestId("send-ask"), cancelled: onCancel.mock.calls.length }).toEqual({
+      question: null,
+      cancelled: 0,
+    })
   })
 })

@@ -8,7 +8,7 @@ import {
   type SendVerb,
   type SendWarning,
 } from "@/lib/reference-audience"
-import { contentSignature } from "@/lib/display-stamps"
+import { unstampedMarkdown } from "@/lib/display-stamps"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import type { ComposerSubmitOptions } from "./message-composer"
 
@@ -75,7 +75,7 @@ export function useSendAsk({
   const askKey = askKeyOf(sendWarning)
   const [asked, setAsked] = useState<{ key: string; signature: string; send: Send; verb: SendVerb } | null>(null)
   const consented = useRef(new Set<string>())
-  const waiting = useRef(false)
+  const waiting = useRef<{ verb: SendVerb } | null>(null)
   const latest = useRef({ content, sendWarning, awaitSendWarning })
   latest.current = { content, sendWarning, awaitSendWarning }
 
@@ -84,9 +84,11 @@ export function useSendAsk({
     if (contentIsEmpty) consented.current = new Set()
   }, [contentIsEmpty])
 
+  // Markdown, not JSON: an editor round-trip fills in default attrs without the author changing anything.
+  const signature = useMemo(() => unstampedMarkdown(content), [content])
   const open = useMemo(
-    () => (sendWarning && asked?.key === askKey && asked.signature === contentSignature(content) ? asked : null),
-    [sendWarning, asked, askKey, content]
+    () => (sendWarning && asked?.key === askKey && asked.signature === signature ? asked : null),
+    [sendWarning, asked, askKey, signature]
   )
   const question: SendAskQuestion | null = useMemo(
     () =>
@@ -119,24 +121,24 @@ export function useSendAsk({
       const unanswered =
         decided && consentKeys(decided.targetKey, decided.warning.exposed).some((key) => !consented.current.has(key))
       if (unanswered)
-        setAsked({ key: askKeyOf(decided), signature: contentSignature(latest.current.content), send, verb })
+        setAsked({ key: askKeyOf(decided), signature: unstampedMarkdown(latest.current.content), send, verb })
       else sendAndRecord(decided, send)
     },
     [sendAndRecord]
   )
 
   const settleThenDecide = useCallback(
-    async (send: Send, verb: SendVerb): Promise<void> => {
+    async (send: Send, verb: SendVerb, mine: { verb: SendVerb }): Promise<void> => {
       const { sendWarning: current, awaitSendWarning: awaitSettled } = latest.current
       if (!awaitSettled) {
         decide(current, send, verb)
         return
       }
       // A link pasted a moment ago has no answer yet; asking from the old one would skip it.
-      const before = contentSignature(latest.current.content)
+      const before = unstampedMarkdown(latest.current.content)
       const settled = await awaitSettled()
-      // The answer is about the content Send was pressed on; a draft typed into since waits for the next Send.
-      if (contentSignature(latest.current.content) === before) decide(settled, send, verb)
+      // The answer is about the content Send was pressed on; a draft typed into since, or a cancel, waits for the next Send.
+      if (unstampedMarkdown(latest.current.content) === before && waiting.current === mine) decide(settled, send, verb)
     },
     [decide]
   )
@@ -150,11 +152,12 @@ export function useSendAsk({
         else setAsked({ ...open, send, verb })
         return
       }
-      waiting.current = true
+      const mine = { verb }
+      waiting.current = mine
       try {
-        await settleThenDecide(send, verb)
+        await settleThenDecide(send, verb, mine)
       } finally {
-        waiting.current = false
+        if (waiting.current === mine) waiting.current = null
       }
     },
     [open, sendWarning, sendAndRecord, settleThenDecide]
@@ -165,10 +168,15 @@ export function useSendAsk({
   }, [open, sendWarning, sendAndRecord])
 
   const dismiss = useCallback(() => setAsked(null), [])
+  /** Drops the question or waiting Send for `verb` only, once that action changed meaning; another Send may start at once. */
+  const cancel = useCallback((verb: SendVerb) => {
+    if (waiting.current?.verb === verb) waiting.current = null
+    setAsked((current) => (current?.verb === verb ? null : current))
+  }, [])
   /** The question's alternative converted refs; it answers for what the draft now holds. */
   const recordAlternative = useCallback(() => {
     if (sendWarning) record(sendWarning.targetKey, exposedAfterAlternative(sendWarning.warning))
   }, [record, sendWarning])
 
-  return { copy, question, submit, answer, dismiss, recordAlternative }
+  return { copy, question, submit, answer, dismiss, cancel, recordAlternative }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type KeyboardEvent } from "react"
+import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { AUDIENCE_TONE } from "@/components/editor/reference-audience-tone"
 import type { AudienceQuestionCopy, SendWarning } from "@/lib/reference-audience"
@@ -109,5 +109,25 @@ export function SendWarningBadge({ tone }: { tone: SendWarning["tone"] }) {
     >
       <Icon className="!size-[9px]" strokeWidth={3} />
     </span>
+  )
+}
+
+/** The question takes the footer's place without moving it: the footer stays laid out, hidden, under the row. */
+export function AskOverlay({
+  askRow,
+  className,
+  children,
+}: {
+  askRow: ReactNode
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <div className={cn("relative", className)}>
+      <div className={cn(askRow && "invisible")} aria-hidden={askRow ? true : undefined}>
+        {children}
+      </div>
+      {askRow && <div className="absolute inset-0 flex items-center">{askRow}</div>}
+    </div>
   )
 }

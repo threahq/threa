@@ -79,6 +79,10 @@ export function collectComposerReferences(content: JSONContent, targetStreamId: 
   return refs
 }
 
+export function referenceKeyOf({ kind, streamId, messageId }: ComposerReference): string {
+  return `${kind}:${streamId}:${messageId ?? ""}`
+}
+
 export function referenceStreamIds(refs: ComposerReference[]): string[] {
   return [...new Set(refs.map((ref) => ref.streamId))].sort()
 }
@@ -127,7 +131,7 @@ function shortAudience(tone: SendTone, count: number, names: string[]): string {
   return tone === "reveal" ? `${count} new ${noun}` : `${count} ${noun}`
 }
 
-export type SendVerb = "Send" | "Schedule"
+export type SendVerb = "Send" | "Schedule" | "Save"
 
 export function audienceQuestionCopy(
   warning: SendWarning,
