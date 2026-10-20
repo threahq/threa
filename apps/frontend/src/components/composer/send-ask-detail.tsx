@@ -1,9 +1,9 @@
-import { useState, type ReactNode } from "react"
+import { useId, useState, type ReactNode } from "react"
 import type { ReferenceAudience } from "@threahq/types"
 import { ActorAvatar } from "@/components/actor-avatar"
 import { AUDIENCE_TONE } from "@/components/editor/reference-audience-tone"
 import { Button } from "@/components/ui/button"
-import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
+import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger, useInsideDrawer } from "@/components/ui/drawer"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useActors } from "@/hooks"
 import { useStreamName } from "@/hooks/use-stream-name"
@@ -34,6 +34,8 @@ export function SendAskDetail({
   children,
 }: SendAskDetailProps) {
   const [open, setOpen] = useState(false)
+  const nested = useInsideDrawer()
+  const titleId = useId()
   const answer = (action: () => void) => () => {
     setOpen(false)
     action()
@@ -54,6 +56,7 @@ export function SendAskDetail({
   const closeOnlyDetail = (event: KeyboardEvent) => event.stopPropagation()
   const body = (
     <DetailBody
+      titleId={titleId}
       workspaceId={workspaceId}
       tone={tone}
       lead={lead}
@@ -66,7 +69,7 @@ export function SendAskDetail({
 
   if (compact) {
     return (
-      <Drawer open={open} onOpenChange={setOpen} shouldScaleBackground={false}>
+      <Drawer open={open} onOpenChange={setOpen} shouldScaleBackground={false} nested={nested}>
         <DrawerTrigger asChild>{trigger}</DrawerTrigger>
         <DrawerContent className="pb-[env(safe-area-inset-bottom)]" onEscapeKeyDown={closeOnlyDetail}>
           {body}
@@ -81,6 +84,7 @@ export function SendAskDetail({
         align="start"
         side="top"
         className="w-[340px] max-w-[calc(100vw-1rem)] p-0"
+        aria-labelledby={titleId}
         onEscapeKeyDown={closeOnlyDetail}
       >
         {body}
@@ -90,6 +94,7 @@ export function SendAskDetail({
 }
 
 function DetailBody({
+  titleId,
   workspaceId,
   tone,
   lead,
@@ -97,7 +102,7 @@ function DetailBody({
   compact,
   onPrimary,
   onAlternative,
-}: Omit<SendAskDetailProps, "children">) {
+}: Omit<SendAskDetailProps, "children"> & { titleId: string }) {
   const { getUser } = useActors(workspaceId)
   const source = useStreamName(workspaceId, lead.streamId, "activity") ?? "the conversation"
   const people = lead.sampleUserIds.flatMap((id) => {
@@ -115,9 +120,14 @@ function DetailBody({
     tone === "reveal" ? `They see the shared message, nothing else from ${source}.` : unreachableExplanation
 
   const Title = compact ? DrawerTitle : "h4"
+  // DrawerTitle labels the sheet with its own id; even `id={undefined}` would override it.
+  const titleProps = compact ? {} : { id: titleId }
   return (
     <div data-testid="send-ask-detail" className={cn("flex flex-col gap-3", compact ? "p-4 pt-3" : "p-3")}>
-      <Title className={cn("flex items-start gap-2 text-sm font-semibold leading-5", AUDIENCE_TONE[tone].text)}>
+      <Title
+        {...titleProps}
+        className={cn("flex items-start gap-2 text-sm font-semibold leading-5", AUDIENCE_TONE[tone].text)}
+      >
         <Icon aria-hidden className="mt-0.5 h-4 w-4 shrink-0" />
         {copy.full}
       </Title>

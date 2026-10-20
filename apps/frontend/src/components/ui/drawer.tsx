@@ -7,6 +7,14 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
 import { HistoryBackClose, type HistoryEntryProp } from "./history-back-close"
 
+const InsideDrawerContext = React.createContext(false)
+
+/**
+ * True inside another drawer's content. A drawer opened there passes `nested`, or
+ * closing it restores the body styles the parent drawer still needs on Safari.
+ */
+const useInsideDrawer = () => React.useContext(InsideDrawerContext)
+
 const Drawer = ({
   shouldScaleBackground = true,
   repositionInputs = false,
@@ -78,7 +86,7 @@ const DrawerContent = React.forwardRef<
       {...props}
     >
       <div className="mx-auto mt-4 h-2 w-[100px] rounded-full bg-muted" />
-      {children}
+      <InsideDrawerContext.Provider value={true}>{children}</InsideDrawerContext.Provider>
     </DrawerPrimitive.Content>
   </DrawerPortal>
 ))
@@ -125,4 +133,5 @@ export {
   DrawerFooter,
   DrawerTitle,
   DrawerDescription,
+  useInsideDrawer,
 }

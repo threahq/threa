@@ -1703,6 +1703,7 @@ describe("MessageComposer", () => {
       const { onSubmit } = renderAskingWithDetail(revealToMany)
       await userEvent.click(screen.getByTestId("send-ask-detail-trigger"))
       const detail = screen.getByTestId("send-ask-detail")
+      expect(screen.getByRole("dialog", { name: /will see this message/ })).toContainElement(detail)
       expect({
         people: within(detail)
           .getAllByRole("listitem")
