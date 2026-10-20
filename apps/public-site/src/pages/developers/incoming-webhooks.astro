@@ -66,6 +66,22 @@ import StreamPreview from "../../components/StreamPreview.astro"
     </Message>
   </StreamPreview>
   <p>
+    An optional <code>metadata</code> object of string pairs rides along on the
+    message, the same way it does on the messages API. It is invisible in the
+    timeline; use it for the sender's own identifiers (an alert id, a run id) so
+    later deliveries and agents can find the message with
+    <code>find-by-metadata</code> instead of parsing its text. Keys under
+    <code>threa.</code> are reserved.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="Post with external references"
+    code={`curl -X POST \\
+  https://app.threa.io/api/v1/workspaces/WORKSPACE_ID/hooks/hook_ID/SECRET \\
+  -H "Content-Type: application/json" \\
+  -d '{"content": "New issue: **TypeError** in composer", "metadata": {"posthog.issue": "0199f1c2", "posthog.event": "issue_created"}}'`}
+  />
+  <p>
     Errors come back in the API's usual JSON error shape (see
     <a class="link" href="/developers/operations">Operations</a>). An empty or
     missing <code>content</code> is a <code>400</code>. An unknown hook, a wrong

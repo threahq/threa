@@ -3,6 +3,7 @@ import type { ErrorRequestHandler, NextFunction, Request, RequestHandler, Respon
 import { HttpError } from "@threahq/backend-common"
 import { logger } from "../../lib/logger"
 import { validateRequest } from "../../lib/validation"
+import { messageMetadataSchema } from "../messaging"
 import type { IncomingWebhookRow } from "./repository"
 import { MAX_WEBHOOK_MARKDOWN_LENGTH, type IncomingWebhookService } from "./service"
 import { slackPayloadToMarkdown } from "./slack-translator"
@@ -41,6 +42,7 @@ class SlackReplyError extends Error {
 
 const nativeBodySchema = z.object({
   content: z.string().min(1, "content is required").max(MAX_WEBHOOK_MARKDOWN_LENGTH),
+  metadata: messageMetadataSchema.optional(),
 })
 
 /**
@@ -115,8 +117,8 @@ export function createInboundWebhookHandlers({
     async native(req: Request, res: Response) {
       const hook = req.incomingWebhook!
 
-      const { content } = validateRequest(nativeBodySchema, req.body)
-      await incomingWebhookService.post(hook, content)
+      const { content, metadata } = validateRequest(nativeBodySchema, req.body)
+      await incomingWebhookService.post(hook, content, metadata)
       res.status(201).json({ ok: true })
     },
 

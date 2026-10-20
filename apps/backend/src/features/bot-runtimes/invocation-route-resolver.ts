@@ -14,6 +14,7 @@ import { resolveSealingContext } from "../e2e-streams"
 import {
   MESSAGE_METADATA_COMMAND_KEY,
   MESSAGE_METADATA_REPLY_IN_THREAD_KEY,
+  MESSAGE_METADATA_RESERVED_PREFIX,
   MessageVersionRepository,
   type InvocationSourceState,
 } from "../messaging"
@@ -41,13 +42,18 @@ export interface CanonicalInvocationRoute {
 }
 
 export function buildCanonicalInvocationPrompt(source: InvocationSourceState): string {
-  if (source.authorType === AuthorTypes.USER) return source.contentMarkdown
-  return [
-    "A non-user message was posted in your active Threa scratchpad.",
-    "Use the stream context to decide whether a reply is useful. If no reply is needed, respond exactly: THREA_NO_RESPONSE",
-    "",
-    source.contentMarkdown,
-  ].join("\n")
+  const body =
+    source.authorType === AuthorTypes.USER
+      ? source.contentMarkdown
+      : [
+          "A non-user message was posted in your active Threa scratchpad.",
+          "Use the stream context to decide whether a reply is useful. If no reply is needed, respond exactly: THREA_NO_RESPONSE",
+          "",
+          source.contentMarkdown,
+        ].join("\n")
+  const external = Object.entries(source.metadata).filter(([key]) => !key.startsWith(MESSAGE_METADATA_RESERVED_PREFIX))
+  if (external.length === 0) return body
+  return [body, "", "Message metadata:", ...external.map(([key, value]) => `- ${key}: ${value}`)].join("\n")
 }
 
 export interface EditedSourceContext {
