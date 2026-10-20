@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from "vitest"
-import { AuthErrorCodes } from "@threahq/types"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { AuthErrorCodes, ShareErrorCodes } from "@threahq/types"
 import { db, getActiveDb, ThreaDatabase, accountDbName, type CachedScheduledMessage } from "@/db"
 import { setActiveDb } from "@/db/database"
 import * as apiModule from "@/api"
 import { ApiError } from "@/api"
+import * as privacyToastModule from "@/lib/share-privacy-toast"
 import * as streamSyncModule from "./stream-sync"
 import { retireAccountWork } from "./account-fence"
 import { enqueueOperation, processOperationQueue } from "./operation-queue"
@@ -80,7 +81,14 @@ function scheduledServiceRejectingWith(error: unknown) {
 }
 
 async function process(scheduledService: ReturnType<typeof scheduledServiceRejectingWith>) {
-  await processOperationQueue(messageService, reactionService, scheduledService, undefined, () => true)
+  await processOperationQueue(
+    messageService,
+    reactionService,
+    scheduledService,
+    undefined,
+    () => true,
+    () => {}
+  )
 }
 
 beforeEach(async () => {
@@ -149,7 +157,8 @@ describe("processOperationQueue permanent-4xx handling", () => {
       reactionService,
       scheduledServiceRejectingWith(new TypeError("Failed to fetch")),
       undefined,
-      () => true
+      () => true,
+      () => {}
     )
 
     const [op] = await db.pendingOperations.toArray()
@@ -167,6 +176,64 @@ describe("processOperationQueue permanent-4xx handling", () => {
 
     const [op] = await db.pendingOperations.toArray()
     expect(op).toMatchObject({ type: "send_scheduled_now", retryCount: 1 })
+  })
+})
+
+describe("processOperationQueue scheduled share consent", () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  const placeholderId = "sched_local_1"
+  const input = {
+    streamId: "stream_1",
+    contentJson: { type: "doc", content: [] },
+    scheduledFor: "2026-07-19T12:00:00.000Z",
+  }
+
+  it("should hold a refused schedule and its row until the author schedules anyway", async () => {
+    const asks = vi.spyOn(privacyToastModule, "surfacePrivacyConfirmToast").mockReturnValue(() => {})
+    await db.scheduledMessages.put(cachedScheduledRow({ id: placeholderId, _localOnly: true }))
+    await enqueueOperation(workspaceId, "schedule_message", { placeholderId, input })
+    const refusing = scheduledServiceRejectingWith(
+      new ApiError(409, ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED, "Confirm the share")
+    )
+    const kick = vi.fn()
+
+    const retryAt = await processOperationQueue(messageService, reactionService, refusing, undefined, () => true, kick)
+    const held = { retryAt, rowKept: (await db.scheduledMessages.get(placeholderId)) !== undefined }
+    // A later drain asks again rather than replaying the refused payload.
+    await processOperationQueue(messageService, reactionService, refusing, undefined, () => true, kick)
+    await asks.mock.calls[1]![1].onConfirm()
+    const [confirmed] = await db.pendingOperations.toArray()
+
+    expect({
+      held,
+      refusals: refusing.create.mock.calls.length,
+      asks: asks.mock.calls.map(([, ask]) => ask.confirmLabel),
+      kicked: kick.mock.calls.length,
+      confirmed: { input: confirmed?.payload.input, blockedOnPrivacy: confirmed?.blockedOnPrivacy },
+    }).toEqual({
+      held: { retryAt: null, rowKept: true },
+      refusals: 1,
+      asks: ["Schedule anyway", "Schedule anyway"],
+      kicked: 1,
+      confirmed: { input: { ...input, confirmedPrivacyWarning: true }, blockedOnPrivacy: undefined },
+    })
+  })
+
+  it("should drop a refused schedule and its row when the author cancels", async () => {
+    const asks = vi.spyOn(privacyToastModule, "surfacePrivacyConfirmToast").mockReturnValue(() => {})
+    await db.scheduledMessages.put(cachedScheduledRow({ id: placeholderId, _localOnly: true }))
+    await enqueueOperation(workspaceId, "schedule_message", { placeholderId, input })
+
+    await process(
+      scheduledServiceRejectingWith(new ApiError(409, ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED, "Confirm"))
+    )
+    await asks.mock.calls[0]![1].onCancel()
+
+    expect({
+      operations: await db.pendingOperations.toArray(),
+      row: await db.scheduledMessages.get(placeholderId),
+    }).toEqual({ operations: [], row: undefined })
   })
 })
 
@@ -208,7 +275,8 @@ describe("processOperationQueue account ownership", () => {
       reactionService,
       scheduledService as unknown as Parameters<typeof processOperationQueue>[2],
       undefined,
-      () => true
+      () => true,
+      () => {}
     )
     await vi.waitFor(() => expect(scheduledService.sendNow).toHaveBeenCalledTimes(1))
 
@@ -273,7 +341,14 @@ describe("processOperationQueue database capture", () => {
     })
 
     try {
-      await processOperationQueue(messageService, reactionService, undefined, undefined, () => true)
+      await processOperationQueue(
+        messageService,
+        reactionService,
+        undefined,
+        undefined,
+        () => true,
+        () => {}
+      )
     } finally {
       setActiveDb(claimedDb)
     }
@@ -304,7 +379,8 @@ describe("processOperationQueue database capture", () => {
         reactionService,
         scheduledService as unknown as Parameters<typeof processOperationQueue>[2],
         undefined,
-        () => true
+        () => true,
+        () => {}
       )
     } finally {
       setActiveDb(claimedDb)
@@ -356,7 +432,8 @@ describe("processOperationQueue database capture", () => {
         reactionService,
         undefined,
         draftsService as unknown as Parameters<typeof processOperationQueue>[3],
-        () => true
+        () => true,
+        () => {}
       )
     } finally {
       setActiveDb(claimedDb)

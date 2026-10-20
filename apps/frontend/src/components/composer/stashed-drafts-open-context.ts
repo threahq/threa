@@ -1,4 +1,6 @@
 import { createContext, useContext, useEffect, type MutableRefObject } from "react"
+import type { SendVerb } from "@/lib/reference-audience"
+import type { ComposerSubmitOptions } from "./message-composer"
 
 /**
  * Two-way bridge between MessageComposer and the stashed-drafts picker it
@@ -28,6 +30,8 @@ export interface StashedDraftsComposerBridge {
    */
   reportScheduledCount: (count: number) => void
   focusComposer: () => void
+  /** Runs `send` through the composer's audience question, worded for `verb`. */
+  askBeforeSend: (send: (options?: ComposerSubmitOptions) => void, verb: SendVerb) => void
 }
 
 export const StashedDraftsComposerBridgeContext = createContext<StashedDraftsComposerBridge | null>(null)

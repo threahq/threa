@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { ArrowLeft, CalendarClock, ChevronDown, ChevronRight } from "lucide-react"
 import type { ScheduledMessageView } from "@threahq/types"
@@ -25,7 +25,12 @@ import { ScheduledActionDrawer } from "@/components/scheduled/scheduled-action-d
 import { ScheduledActions } from "@/components/scheduled/scheduled-actions"
 import { CustomDurationPicker } from "@/components/scheduling/custom-duration-picker"
 import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
-import { useRegisterScheduledMessagesOpen, useReportScheduledCount } from "./stashed-drafts-open-context"
+import {
+  useRegisterScheduledMessagesOpen,
+  useReportScheduledCount,
+  useStashedDraftsBridge,
+} from "./stashed-drafts-open-context"
+import type { ComposerSubmitOptions } from "./message-composer"
 import { useComposerAnchor } from "./use-composer-anchor"
 
 interface ScheduledMessagesPickerProps {
@@ -35,7 +40,7 @@ interface ScheduledMessagesPickerProps {
   /** True when the composer has something worth scheduling — controls the "Schedule send" button. */
   canSchedule: boolean
   /** Called when the user picks a time. Composer-side handler runs the schedule mutation. */
-  onSchedule: (when: Date) => void
+  onSchedule: (when: Date, options?: ComposerSubmitOptions) => void
   /** When `controlsDisabled`, the trigger button is disabled (e.g. composer is sending). */
   controlsDisabled?: boolean
   /**
@@ -135,6 +140,18 @@ export function ScheduledMessagesPicker({
     if (!controlsDisabled) setOpen(true)
   }, [controlsDisabled])
   useRegisterScheduledMessagesOpen(openFromFoot)
+  const bridge = useStashedDraftsBridge()
+  // A handed-off schedule may open the composer's question; Enter there answers it,
+  // so focus returns to the composer instead of this trigger.
+  const handedOffRef = useRef(false)
+  const focusProps = keepEditorFocusProps(isTouchInput)
+  const handleCloseAutoFocus = (event: Event) => {
+    focusProps.onCloseAutoFocus?.(event)
+    if (!handedOffRef.current || !bridge) return
+    handedOffRef.current = false
+    event.preventDefault()
+    bridge.focusComposer()
+  }
 
   const handleOpenChange = (next: boolean) => {
     // Block opens while controls are disabled (sending in flight), but
@@ -155,7 +172,13 @@ export function ScheduledMessagesPicker({
   // popover close. The "Schedule send" mode switch and the picking UI itself
   // never close: the flow stays open until a time is actually chosen.
   const finishSchedule = (when: Date) => {
-    onSchedule(when)
+    const schedule = (options?: ComposerSubmitOptions) => onSchedule(when, options)
+    if (bridge) {
+      handedOffRef.current = true
+      bridge.askBeforeSend(schedule, "Schedule")
+    } else {
+      schedule()
+    }
     setOpen(false)
     resetToList()
   }
@@ -242,7 +265,8 @@ export function ScheduledMessagesPicker({
           side="top"
           sideOffset={8}
           className="w-80 p-0"
-          {...keepEditorFocusProps(isTouchInput)}
+          {...focusProps}
+          onCloseAutoFocus={handleCloseAutoFocus}
         >
           {mode === "list" ? (
             <ListMode

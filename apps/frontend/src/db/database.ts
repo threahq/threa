@@ -502,6 +502,11 @@ export interface PendingOperation {
    * `enqueueDraftUpsert`); an op that never started can be reused in place.
    */
   startedAt?: number
+  /**
+   * A `schedule_message` the server refused for an unconfirmed share. The queue
+   * holds it, and the row it placed, until the author answers the toast.
+   */
+  blockedOnPrivacy?: true
 }
 
 export interface SyncCursor {

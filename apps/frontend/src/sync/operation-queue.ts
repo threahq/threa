@@ -6,6 +6,7 @@ import { ApiError, commandsApi, isPermanentApiError } from "@/api"
 import { persistScheduledRows, removeScheduledRow, replaceLocalScheduledRow } from "@/hooks/use-scheduled"
 import { executeDraftDelete, executeDraftResolve, executeDraftUpsert, type DraftsServiceLike } from "./draft-sync"
 import { bumpLaterOptimisticAnchors } from "./stream-sync"
+import { isPrivacyConfirmationError, surfacePrivacyConfirmToast } from "@/lib/share-privacy-toast"
 
 function getRetryDelay(retryCount: number): number {
   if (retryCount <= 3) return 0
@@ -52,6 +53,27 @@ async function reconcileRejectedOperation(op: PendingOperation, database: ThreaD
       await removeScheduledRow(op.payload.id as string, database)
       break
   }
+}
+
+/** Asks again on every drain, so a reload or a swiped-away toast doesn't strand the row. */
+function askBlockedSchedule(op: PendingOperation, database: ThreaDatabase, kick: () => void): void {
+  const dismiss = surfacePrivacyConfirmToast(`schedule-privacy-${op.id}`, {
+    confirmLabel: "Schedule anyway",
+    onConfirm: async () => {
+      const input = { ...(op.payload.input as ScheduleMessageInput), confirmedPrivacyWarning: true }
+      await database.pendingOperations.update(op.id, {
+        payload: { ...op.payload, input },
+        blockedOnPrivacy: undefined,
+      })
+      dismiss()
+      kick()
+    },
+    onCancel: async () => {
+      await database.pendingOperations.delete(op.id)
+      await reconcileRejectedOperation(op, database)
+      dismiss()
+    },
+  })
 }
 
 async function markCommandDispatchFailed(
@@ -116,7 +138,8 @@ export async function processOperationQueue(
   reactionService: ReactionServiceLike,
   scheduledService: ScheduledServiceLike | undefined,
   draftsService: DraftsServiceLike | undefined,
-  isOnline: () => boolean
+  isOnline: () => boolean,
+  kick: () => void
 ): Promise<number | null> {
   // The queue belongs to the account that enqueued it: captured with the fence
   // so a reply landing after a switch is still bookkept in that account's
@@ -125,13 +148,18 @@ export async function processOperationQueue(
   const processor = async (fence: AccountWorkFence) => {
     const now = Date.now()
     const skipped = new Set<string>()
+    for (const blocked of await database.pendingOperations.filter((op) => op.blockedOnPrivacy === true).toArray()) {
+      askBlockedSchedule(blocked, database, kick)
+    }
 
     while (true) {
       if (!isOnline()) break
       if (fence.isRetired()) break
 
       const candidates = await database.pendingOperations.orderBy("createdAt").toArray()
-      const next = candidates.find((op) => !skipped.has(op.id) && (op.retryAfter ?? 0) <= now)
+      const next = candidates.find(
+        (op) => !skipped.has(op.id) && op.blockedOnPrivacy !== true && (op.retryAfter ?? 0) <= now
+      )
       if (!next) break
 
       try {
@@ -147,7 +175,11 @@ export async function processOperationQueue(
       } catch (error) {
         // Retired mid-flight: leave the op untouched for its own account.
         if (fence.isRetired()) return
-        if (isPermanentApiError(error)) {
+        if (next.type === "schedule_message" && isPrivacyConfirmationError(error)) {
+          await database.pendingOperations.update(next.id, { blockedOnPrivacy: true })
+          askBlockedSchedule(next, database, kick)
+          skipped.add(next.id)
+        } else if (isPermanentApiError(error)) {
           // A 4xx (minus 408/429) is the server's final answer for this
           // payload — replaying it can never succeed, so the op must die
           // here or it refires on every queue kick forever (the prod
@@ -178,7 +210,7 @@ export async function processOperationQueue(
   })
 
   if (!isOnline()) return null
-  const remaining = await database.pendingOperations.toArray()
+  const remaining = await database.pendingOperations.filter((op) => op.blockedOnPrivacy !== true).toArray()
   if (remaining.length === 0) return null
   return remaining.reduce((next, operation) => Math.min(next, operation.retryAfter ?? Date.now()), Infinity)
 }

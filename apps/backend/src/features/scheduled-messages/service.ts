@@ -16,10 +16,11 @@ import { OutboxRepository } from "../../lib/outbox"
 import {
   assertStreamWritable,
   createStreamReadOnlyError,
+  findReadersWithoutAccess,
   resolveLockedStreamAuthorities,
   StreamRepository,
 } from "../streams"
-import { MessageRepository } from "../messaging"
+import { MessageRepository, ShareService } from "../messaging"
 import { EventService } from "../messaging"
 import { scheduledMessageId, scheduledMessageQueueId } from "../../lib/id"
 import { JobQueues, QueueRepository, enqueueQueuedJob, type ScheduledMessageSendJobData } from "../../lib/queue"
@@ -44,6 +45,7 @@ export interface ScheduleParams {
   conversationDirective: ConversationDirective | null
   scheduledFor: Date
   clientMessageId: string | null
+  confirmedPrivacyWarning?: boolean
 }
 
 export interface UpdateScheduledParams {
@@ -56,6 +58,7 @@ export interface UpdateScheduledParams {
   attachmentIds?: string[]
   metadata?: Record<string, string> | null
   scheduledFor?: Date
+  confirmedPrivacyWarning?: boolean
 }
 
 export interface ListScheduledParams {
@@ -144,6 +147,13 @@ export class ScheduledMessagesService {
             })
           }
         }
+
+        await assertScheduledSharesConfirmed(client, {
+          workspaceId: params.workspaceId,
+          streamId: params.streamId,
+          contentJson: params.contentJson,
+          confirmedPrivacyWarning: params.confirmedPrivacyWarning,
+        })
 
         const id = scheduledMessageId()
         const row: ScheduledMessage = await ScheduledMessagesRepository.insert(client, {
@@ -288,6 +298,15 @@ export class ScheduledMessagesService {
       })
       await this.assertSchedulingTransportSupported(client, authority.target)
       this.assertRowPending(existing)
+      if (params.contentJson) {
+        await assertScheduledSharesConfirmed(client, {
+          workspaceId: params.workspaceId,
+          streamId: existing.streamId,
+          contentJson: params.contentJson,
+          previousContentJson: existing.contentJson,
+          confirmedPrivacyWarning: params.confirmedPrivacyWarning,
+        })
+      }
 
       const updated = await ScheduledMessagesRepository.update(client, {
         workspaceId: params.workspaceId,
@@ -569,6 +588,9 @@ export class ScheduledMessagesService {
         // restart between createMessage and markSent), the second attempt
         // returns the existing message instead of duplicating.
         clientMessageId: `scheduled:${row.id}`,
+        // Every write of this row's content passed `assertScheduledSharesConfirmed`, so the
+        // author consented to (or didn't need to consent to) its shares when scheduling.
+        confirmedPrivacyWarning: true,
       }
     )
 
@@ -694,4 +716,27 @@ export class ScheduledMessagesService {
 function clampToFuture(date: Date): Date {
   const minMs = Date.now() + MIN_FUTURE_OFFSET_SECONDS * 1000
   return date.getTime() < minMs ? new Date(minMs) : date
+}
+
+async function assertScheduledSharesConfirmed(
+  client: PoolClient,
+  params: {
+    workspaceId: string
+    streamId: string
+    contentJson: JSONContent
+    previousContentJson?: JSONContent
+    confirmedPrivacyWarning?: boolean
+  }
+): Promise<void> {
+  await ShareService.assertSharesConfirmed({
+    contentJson: params.contentJson,
+    targetStreamId: params.streamId,
+    previousContentJson: params.previousContentJson,
+    confirmedPrivacyWarning: params.confirmedPrivacyWarning,
+    listAudiences: async (streamIds) => [
+      ...(
+        await findReadersWithoutAccess(client, params.workspaceId, { streamId: params.streamId }, streamIds)
+      ).values(),
+    ],
+  })
 }

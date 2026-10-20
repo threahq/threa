@@ -49,6 +49,7 @@ function renderPicker(overrides: Partial<Parameters<typeof StashedDraftsPicker>[
             openScheduledRef: { current: null },
             reportScheduledCount: () => {},
             focusComposer,
+            askBeforeSend: vi.fn(),
           }}
         >
           <StashedDraftsPicker {...pickerProps} />

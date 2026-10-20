@@ -18,6 +18,7 @@ const scheduleSchema = z.object({
   scheduledFor: z.string().datetime(),
   clientMessageId: z.string().min(1).optional(),
   conversation: conversationDirectiveSchema.optional(),
+  confirmedPrivacyWarning: z.boolean().optional(),
 })
 
 // PATCH allows any subset of editable fields plus a required
@@ -30,6 +31,7 @@ const updateSchema = z
     metadata: z.record(z.string(), z.string()).nullable().optional(),
     scheduledFor: z.string().datetime().optional(),
     expectedVersion: z.number().int().min(1),
+    confirmedPrivacyWarning: z.boolean().optional(),
   })
   .refine(
     (d) =>
@@ -75,6 +77,7 @@ export function createScheduledMessagesHandlers({ scheduledMessagesService }: De
         scheduledFor: new Date(data.scheduledFor),
         clientMessageId: data.clientMessageId ?? null,
         conversationDirective: data.conversation ?? null,
+        confirmedPrivacyWarning: data.confirmedPrivacyWarning,
       })
 
       res.status(201).json({ scheduled })
@@ -140,6 +143,7 @@ export function createScheduledMessagesHandlers({ scheduledMessagesService }: De
         attachmentIds: parsed.data.attachmentIds,
         metadata: parsed.data.metadata,
         scheduledFor: parsed.data.scheduledFor ? new Date(parsed.data.scheduledFor) : undefined,
+        confirmedPrivacyWarning: parsed.data.confirmedPrivacyWarning,
       })
 
       res.json({ scheduled })

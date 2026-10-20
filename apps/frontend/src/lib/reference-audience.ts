@@ -127,7 +127,13 @@ function shortAudience(tone: SendTone, count: number, names: string[]): string {
   return tone === "reveal" ? `${count} new ${noun}` : `${count} ${noun}`
 }
 
-export function audienceQuestionCopy(warning: SendWarning, names: string[]): AudienceQuestionCopy {
+export type SendVerb = "Send" | "Schedule"
+
+export function audienceQuestionCopy(
+  warning: SendWarning,
+  names: string[],
+  verb: SendVerb = "Send"
+): AudienceQuestionCopy {
   const { count } = warning.lead
   const who = fullAudience(count, names)
   const short = shortAudience(warning.tone, count, names)
@@ -136,13 +142,13 @@ export function audienceQuestionCopy(warning: SendWarning, names: string[]): Aud
       full: `${who} will see this message`,
       short: `${short} ${count === 1 ? "sees" : "see"} it`,
       alternative: { full: "Use link", short: "Link" },
-      primary: "Send",
+      primary: verb,
     }
   }
   return {
     full: `${who} can't open this link`,
     short: `${short} can't open it`,
     alternative: warning.convertibleStreamIds.length > 0 ? { full: "Share instead", short: "Share" } : null,
-    primary: "Send anyway",
+    primary: `${verb} anyway`,
   }
 }

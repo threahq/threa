@@ -15,7 +15,7 @@ import * as editorModule from "@/components/editor"
 import * as micButtonModule from "./mic-button"
 import * as pendingAttachmentsModule from "@/components/timeline/pending-attachments"
 import * as analyticsModule from "@/lib/analytics/posthog"
-import { useReportScheduledCount } from "./stashed-drafts-open-context"
+import { useReportScheduledCount, useStashedDraftsBridge } from "./stashed-drafts-open-context"
 import type { ComposerSendWarning, SendWarning } from "@/lib/reference-audience"
 import { Editor } from "@tiptap/core"
 import { createEditorExtensions } from "@/components/editor/editor-extensions"
@@ -1526,6 +1526,36 @@ describe("MessageComposer", () => {
       const { onSubmit } = await renderAsking("reveal", sendWarning("reveal", ["stream_src"], false))
       fireEvent.click(within(screen.getByTestId("send-ask")).getByRole("button", { name: /send/i }))
       expect(onSubmit.mock.calls).toEqual([[DRAFT, undefined]])
+    })
+
+    it("a schedule asks in its own words, and Enter schedules rather than sends", async () => {
+      const onSubmit = vi.fn()
+      const onSchedule = vi.fn()
+      const ScheduleStub = () => {
+        const bridge = useStashedDraftsBridge()
+        return <button onClick={() => bridge?.askBeforeSend(onSchedule, "Schedule")}>Schedule stub</button>
+      }
+      render(
+        <MessageComposer
+          {...defaultProps}
+          content={DRAFT}
+          canSubmit
+          onSubmit={onSubmit}
+          sendWarning={sendWarning("unreachable")}
+          scheduledMessagesTrigger={<ScheduleStub />}
+        />
+      )
+      await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
+      fireEvent.click(screen.getByRole("button", { name: "Schedule stub" }))
+      await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
+      const primary = within(screen.getByTestId("send-ask")).getByRole("button", { name: /schedule anyway/i })
+      fireEvent.keyDown(screen.getByTestId("rich-editor"), { key: "Enter", metaKey: true })
+
+      expect({ primary: primary.textContent, scheduled: onSchedule.mock.calls, sent: onSubmit.mock.calls }).toEqual({
+        primary: expect.stringContaining("Schedule anyway"),
+        scheduled: [[undefined]],
+        sent: [],
+      })
     })
 
     it("dismisses the question when the editor is clicked", async () => {
