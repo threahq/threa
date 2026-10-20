@@ -2272,6 +2272,40 @@ describe("session control via the actuator", () => {
     })
   })
 
+  test("republishes presence after a command so the thinking levels follow the new model", async () => {
+    const { client } = makeFakeClient()
+    const { transport, presence } = makeFakeTransport()
+    let levels = ["low", "high"]
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["model", "thinking"],
+        get thinkingLevels() {
+          return levels
+        },
+        interrupt: () => true,
+        runCommand: async () => {
+          levels = ["low", "medium", "high", "max"]
+          return { ok: true, summary: "Set the model to `opus`." }
+        },
+      },
+    })
+
+    await (session as any).handleSessionControl(
+      makeInvocation({
+        id: "binv_model_levels",
+        trigger: "session-control",
+        metadata: { command: { executionKind: "bot-runtime", id: "cmd_levels", name: "model", args: "opus" } },
+      })
+    )
+
+    expect((presence.at(-1)?.capabilities as Record<string, unknown>)?.thinkingLevels).toEqual([
+      "low",
+      "medium",
+      "high",
+      "max",
+    ])
+  })
+
   test("posts a command's answer as a message when the answer is the content the user asked for", async () => {
     const { client, calls } = makeFakeClient()
     const { transport } = makeFakeTransport()

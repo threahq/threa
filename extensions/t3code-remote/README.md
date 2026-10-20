@@ -105,7 +105,9 @@ A damaged `threads.json` or `token.json` stops the connector at start instead of
   one of them. It moves the scratchpad's thread and every thread launched after it. Threads that already exist under
   the scratchpad or elsewhere keep theirs. A scratch thread can't launch until one is picked. A project thread launched
   with none runs on the project's default, which later threads keep. Switching a thread's model in T3 itself also
-  moves the one new threads launch on.
+  moves the one new threads launch on. The thinking level carries over when the new model offers it.
+- `/thinking` sets the reasoning effort the picked model offers, on the scratchpad's thread and every thread launched
+  after it. The composer suggests the model's levels.
 - `/clear` starts a new T3 thread for the scratchpad. It is refused while a turn is open.
 
 ## Traces and replies

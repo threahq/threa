@@ -1781,6 +1781,8 @@ export class RemoteSession {
           }
           if (!outcome.afterAck) {
             await ackOutcome()
+            // A command can change what presence advertises, like the /thinking levels a new model offers.
+            await this.syncPresence()
             return
           }
           this.reconnectHandoff = true

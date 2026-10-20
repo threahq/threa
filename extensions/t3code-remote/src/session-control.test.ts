@@ -99,7 +99,7 @@ describe("T3 session control", () => {
       result: {
         ok: true,
         message:
-          "New threads launch on claudeAgent::claude-opus-5-5, but `thread_a` keeps its model: thread is running",
+          "Set the model to claudeAgent::claude-opus-5-5 for new threads, but `thread_a` keeps its own: thread is running",
       },
     })
   })
@@ -111,6 +111,60 @@ describe("T3 session control", () => {
 
     expect(result).toEqual({ ok: false, message: '"gpt" matches several models: codex::gpt-5.5, codex::gpt-5.5-mini' })
     expect({ configured: t3.callsOf("t3_thread_configure"), saved }).toEqual({ configured: [], saved: [] })
+  })
+
+  test("/thinking sets the level on the scratchpad's thread and the next launch", async () => {
+    const { t3, saved, control } = setup({
+      threads: { stream_root: "thread_a" },
+      model: { instanceId: "codex", model: "gpt-5.5" },
+    })
+    await control.loadOptions()
+
+    const levels = control.thinkingLevels
+    const result = await control.runCommand("thinking", "HIGH", CONTEXT)
+
+    const selection = { instanceId: "codex", model: "gpt-5.5", options: [{ id: "reasoningEffort", value: "high" }] }
+    expect({ levels, configured: t3.callsOf("t3_thread_configure"), model: saved.at(-1)?.model, result }).toEqual({
+      levels: ["low", "medium", "high", "xhigh"],
+      configured: [{ threadId: "thread_a", modelSelection: selection }],
+      model: selection,
+      result: { ok: true, summary: "Set thinking to high" },
+    })
+  })
+
+  test.each([
+    [undefined, "nope", "Pick a model with /model first."],
+    [{ instanceId: "codex", model: "gpt-5.5-mini" }, "high", "codex::gpt-5.5-mini has no thinking levels."],
+    [{ instanceId: "codex", model: "gpt-5.5" }, "max", "codex::gpt-5.5 thinks at one of: low, medium, high, xhigh."],
+  ])("/thinking on %p with %p changes nothing", async (model, arg, message) => {
+    const { t3, saved, control } = setup({ threads: { stream_root: "thread_a" }, ...(model ? { model } : {}) })
+
+    const result = await control.runCommand("thinking", arg, CONTEXT)
+
+    expect({ result, configured: t3.callsOf("t3_thread_configure"), saved }).toEqual({
+      result: { ok: false, message },
+      configured: [],
+      saved: [],
+    })
+  })
+
+  test.each([
+    ["high", [{ id: "effort", value: "high" }]],
+    ["xhigh", undefined],
+  ])("/model keeps thinking %p only where the new model offers it", async (level, options) => {
+    const { saved, control } = setup({
+      threads: {},
+      model: { instanceId: "codex", model: "gpt-5.5", options: [{ id: "reasoningEffort", value: level }] },
+    })
+
+    await control.runCommand("model", "opus", CONTEXT)
+
+    expect(saved.at(-1)?.model).toEqual({
+      instanceId: "claudeAgent",
+      model: "claude-opus-5-5",
+      ...(options ? { options } : {}),
+    })
+    expect(control.thinkingLevels).toEqual(["low", "medium", "high", "max"])
   })
 
   test("/clear forgets the scratchpad's thread, but not while a turn runs", async () => {

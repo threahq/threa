@@ -20,6 +20,14 @@ export type RunStatus =
 export interface ModelSelection {
   instanceId: string
   model: string
+  options?: Array<{ id: string; value: string | boolean }>
+}
+
+/** A setting a model offers, like its reasoning effort; `options` lists a select's values. */
+export interface ModelOptionDescriptor {
+  id: string
+  type: "select" | "boolean"
+  options?: Array<{ id: string }>
 }
 
 export interface ThreadItem {
@@ -53,7 +61,7 @@ export interface ImageAttachment {
 export interface ProviderInfo {
   providerInstanceId: string
   displayName?: string
-  models: Array<{ id: string; label?: string }>
+  models: Array<{ id: string; label?: string; options?: ModelOptionDescriptor[] }>
 }
 
 /** The orchestrator tools the connector calls, with the slice of each argument and result it uses. */

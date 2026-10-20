@@ -2,6 +2,7 @@ import type { DeliveredTurn, StepFrame } from "@threahq/remote-session"
 import type { BridgeSession } from "./run-bridge"
 import {
   T3ToolError,
+  type ModelOptionDescriptor,
   type ModelSelection,
   type T3Client,
   type T3ToolName,
@@ -17,6 +18,10 @@ interface ScriptStep {
   runId?: string
   /** The thread's model as of this poll, as when the user switches it in T3. */
   model?: ModelSelection
+}
+
+function effortOption(id: string, levels: string[]): ModelOptionDescriptor {
+  return { id, type: "select", options: levels.map((level) => ({ id: level })) }
 }
 
 export function item(
@@ -152,9 +157,25 @@ export function fakeT3() {
         {
           providerInstanceId: "codex",
           displayName: "Codex",
-          models: [{ id: "gpt-5.5", label: "GPT-5.5" }, { id: "gpt-5.5-mini" }],
+          models: [
+            {
+              id: "gpt-5.5",
+              label: "GPT-5.5",
+              options: [effortOption("reasoningEffort", ["low", "medium", "high", "xhigh"])],
+            },
+            { id: "gpt-5.5-mini" },
+          ],
         },
-        { providerInstanceId: "claudeAgent", displayName: "Claude", models: [{ id: "claude-opus-5-5" }] },
+        {
+          providerInstanceId: "claudeAgent",
+          displayName: "Claude",
+          models: [
+            {
+              id: "claude-opus-5-5",
+              options: [effortOption("effort", ["low", "medium", "high", "max"]), { id: "fastMode", type: "boolean" }],
+            },
+          ],
+        },
       ],
     }),
     t3_environment_read: () => ({
