@@ -214,7 +214,7 @@ export class WorkosAuthService implements AuthService {
       } catch (error) {
         // WorkOS unreachable (timeout / network / 5xx): says nothing about the
         // session's validity — never terminal, the client retries.
-        logger.error({ err: error, reason: authRes.reason }, "Session refresh error")
+        logger.warn({ err: error, reason: authRes.reason }, "Session refresh error")
         return { success: false, refreshed: false, reason: authRes.reason, terminal: false }
       }
     }
