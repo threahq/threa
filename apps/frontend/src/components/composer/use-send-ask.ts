@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import type { JSONContent } from "@threahq/types"
+import type { JSONContent, ReferenceAudience } from "@threahq/types"
 import {
   audienceQuestionCopy,
   type AudienceQuestionCopy,
@@ -17,6 +17,7 @@ type Send = (options?: ComposerSubmitOptions) => void
 export interface SendAskQuestion {
   tone: SendTone
   copy: AudienceQuestionCopy
+  lead: ReferenceAudience
   convertibleStreamIds: string[]
 }
 
@@ -96,6 +97,7 @@ export function useSendAsk({
         ? {
             tone: sendWarning.warning.tone,
             copy: audienceQuestionCopy(sendWarning.warning, sendWarning.names, open.verb),
+            lead: sendWarning.warning.lead,
             convertibleStreamIds: sendWarning.warning.convertibleStreamIds,
           }
         : null,

@@ -257,6 +257,7 @@ export function MessageEditForm({
       compact={isTouch}
       onPrimary={answerQuestion}
       onAlternative={takeAlternative}
+      detail={{ workspaceId, lead: question.lead }}
       className="w-full"
     />
   ) : null

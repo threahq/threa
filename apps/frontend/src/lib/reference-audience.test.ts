@@ -136,44 +136,44 @@ describe("audienceQuestionCopy", () => {
         full: "Martin can't open this link",
         short: "Martin can't open it",
         alternative: { full: "Share instead", short: "Share" },
-        primary: "Send anyway",
+        primary: { full: "Send anyway", short: "Send" },
       },
       two: {
         full: "Martin and Anna can't open this link",
         short: "2 people can't open it",
         alternative: null,
-        primary: "Send anyway",
+        primary: { full: "Send anyway", short: "Send" },
       },
       three: {
         full: "Martin, Anna and Kim can't open this link",
         short: "3 people can't open it",
         alternative: null,
-        primary: "Send anyway",
+        primary: { full: "Send anyway", short: "Send" },
       },
       more: {
         full: "Martin, Anna +2 can't open this link",
         short: "4 people can't open it",
         alternative: null,
-        primary: "Send anyway",
+        primary: { full: "Send anyway", short: "Send" },
       },
       noNamesOne: {
         full: "1 person can't open this link",
         short: "1 person can't open it",
         alternative: null,
-        primary: "Send anyway",
+        primary: { full: "Send anyway", short: "Send" },
       },
       noNamesMany: {
         full: "4 people can't open this link",
         short: "4 people can't open it",
         alternative: null,
-        primary: "Send anyway",
+        primary: { full: "Send anyway", short: "Send" },
       },
     })
   })
 
   it("reveal copy table", () => {
     const alt = { full: "Use link", short: "Link" }
-    const primary = "Send"
+    const primary = { full: "Send", short: "Send" }
     expect({
       one: reveal(1, ["Martin"]),
       oneNoName: reveal(1, []),

@@ -1,8 +1,10 @@
 import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { AUDIENCE_TONE } from "@/components/editor/reference-audience-tone"
+import type { ReferenceAudience } from "@threahq/types"
 import type { AudienceQuestionCopy, SendWarning } from "@/lib/reference-audience"
 import { cn } from "@/lib/utils"
+import { SendAskDetail } from "./send-ask-detail"
 
 interface SendAskRowProps {
   tone: SendWarning["tone"]
@@ -10,6 +12,8 @@ interface SendAskRowProps {
   compact: boolean
   onPrimary: () => void
   onAlternative?: () => void
+  /** Without it the question is plain text; with it, tapping the question opens who and what it is about. */
+  detail?: { workspaceId: string; lead: ReferenceAudience }
   mirrored?: boolean
   className?: string
 }
@@ -20,6 +24,7 @@ export function SendAskRow({
   compact,
   onPrimary,
   onAlternative,
+  detail,
   mirrored = false,
   className,
 }: SendAskRowProps) {
@@ -39,6 +44,14 @@ export function SendAskRow({
 
   const Icon = AUDIENCE_TONE[tone].icon
   const alternative = onAlternative ? copy.alternative : undefined
+  const question = (
+    <>
+      <Icon aria-hidden className="h-4 w-4 shrink-0" />
+      <span id={questionId} className={cn("truncate", detail && "underline decoration-dotted underline-offset-4")}>
+        <FitCopy compact={compact} copy={copy} />
+      </span>
+    </>
+  )
 
   return (
     <div
@@ -53,11 +66,25 @@ export function SendAskRow({
       )}
       onMouseDown={(event) => event.preventDefault()}
     >
-      <div className={cn("flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium", AUDIENCE_TONE[tone].text)}>
-        <Icon aria-hidden className="h-4 w-4 shrink-0" />
-        <span id={questionId} role="status" className="truncate">
-          <FitCopy compact={compact} copy={copy} />
-        </span>
+      <div
+        role="status"
+        className={cn("flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium", AUDIENCE_TONE[tone].text)}
+      >
+        {detail ? (
+          <SendAskDetail
+            workspaceId={detail.workspaceId}
+            tone={tone}
+            lead={detail.lead}
+            copy={copy}
+            compact={compact}
+            onPrimary={onPrimary}
+            onAlternative={onAlternative}
+          >
+            {question}
+          </SendAskDetail>
+        ) : (
+          question
+        )}
       </div>
       {alternative && (
         <Button type="button" variant="ghost" size="sm" className="h-[30px] shrink-0 px-2.5" onClick={onAlternative}>
@@ -73,7 +100,7 @@ export function SendAskRow({
         onClick={onPrimary}
         onKeyDown={handlePrimaryKeyDown}
       >
-        {copy.primary}
+        <FitCopy compact={compact} copy={copy.primary} />
         {!compact && (
           <kbd aria-hidden className="font-sans text-[11px] leading-none opacity-70">
             ↵
@@ -87,6 +114,7 @@ export function SendAskRow({
 /** A split pane is desktop too narrow for the full sentence; there the row falls back to the short copy. */
 function FitCopy({ compact, copy }: { compact: boolean; copy: { full: string; short: string } }) {
   if (compact) return copy.short
+  if (copy.full === copy.short) return copy.full
   return (
     <>
       <span className="hidden [@container(min-width:32rem)]:inline">{copy.full}</span>

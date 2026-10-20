@@ -13,6 +13,7 @@ import { getDmDraftUserId, isDraftId } from "./use-stream-or-draft"
 import {
   collectComposerReferences,
   exposingAudiences,
+  namedReaders,
   referenceKeyOf,
   referenceStreamIds,
   resolveSendWarning,
@@ -57,10 +58,7 @@ function composeSendWarning({
 }): ComposerSendWarning | null {
   const warning = resolveSendWarning(refs, audienceByStreamId)
   if (!warning) return null
-  const names = warning.lead.sampleUserIds.flatMap((id) => {
-    const name = getUser(id)?.name
-    return name ? [name] : []
-  })
+  const names = namedReaders(warning.lead, getUser).map(({ name }) => name)
   return { warning, names, settled, targetKey }
 }
 
