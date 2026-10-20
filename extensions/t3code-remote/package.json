@@ -1,6 +1,6 @@
 {
   "name": "@threahq/t3code-remote",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A T3 Code connector that bridges a local T3 Code server to a Threa scratchpad: each Threa turn becomes one T3 thread run, with its activity traced back as steps.",
   "keywords": [
     "threa",

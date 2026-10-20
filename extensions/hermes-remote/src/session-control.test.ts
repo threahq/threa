@@ -97,10 +97,10 @@ describe("createHermesSessionControl", () => {
     ])
   })
 
-  test("refresh loads the model suggestions from the options payload", async () => {
+  test("loadOptions loads the model suggestions from the options payload", async () => {
     const { runner } = makeRunner()
     const control = createHermesSessionControl(runner, makeClient().client)
-    await control.refresh()
+    await control.loadOptions()
     expect(control.modelSuggestions).toEqual([
       { value: "openrouter::hermes-4", label: "hermes-4", description: "OpenRouter" },
       { value: "openrouter::glm-4.6", label: "glm-4.6", description: "OpenRouter" },
@@ -108,20 +108,29 @@ describe("createHermesSessionControl", () => {
     ])
   })
 
-  test("an options fetch failure leaves the suggestions empty and logs", async () => {
+  test("an options fetch failure rejects the load and leaves the suggestions empty", async () => {
     const { runner } = makeRunner()
-    const logs: string[] = []
     const { client } = makeClient({
       listModelOptions: async () => {
         throw new Error("connect ECONNREFUSED")
       },
     })
-    const control = createHermesSessionControl(runner, client, (message) => logs.push(message))
-    await control.refresh()
-    expect({ suggestions: control.modelSuggestions, logs }).toEqual({
-      suggestions: [],
-      logs: ["model options unavailable, /model will suggest nothing: connect ECONNREFUSED"],
+    const control = createHermesSessionControl(runner, client)
+    await expect(control.loadOptions()).rejects.toThrow("connect ECONNREFUSED")
+    expect(control.modelSuggestions).toEqual([])
+  })
+
+  test("loadOptions bounds the options fetch with an abort signal", async () => {
+    const { runner } = makeRunner()
+    const signals: (AbortSignal | undefined)[] = []
+    const { client } = makeClient({
+      listModelOptions: async (signal?: AbortSignal) => {
+        signals.push(signal)
+        return OPTIONS
+      },
     })
+    await createHermesSessionControl(runner, client).loadOptions()
+    expect(signals.map((signal) => signal instanceof AbortSignal)).toEqual([true])
   })
 
   test("status names the conversation, each open run with its status, and the gateway", async () => {

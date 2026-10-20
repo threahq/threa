@@ -95,10 +95,7 @@ export function createHermesConnector(
 
   return {
     session,
-    start: async () => {
-      await sessionControl.refresh()
-      await session.start()
-    },
+    start: () => session.start(),
     shutdown: async (shutdownOptions?: ShutdownOptions) => {
       runner.shutdown()
       await session.shutdown(shutdownOptions)

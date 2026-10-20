@@ -7,8 +7,8 @@ const MAX_AMBIGUOUS_CANDIDATES = 8
 type CommandResult = { ok: boolean; summary?: string; message?: string }
 
 export interface T3SessionControl extends SessionControlActuator {
-  /** Load the model picker's options; awaited once before the session starts, and never throws. */
-  refresh(): Promise<void>
+  /** Load the model picker's options; rejects when they could not be loaded. */
+  loadOptions(): Promise<void>
 }
 
 /** Exact `instance::model`, then an unambiguous model id, then a case-insensitive substring. */
@@ -43,11 +43,7 @@ function suggestionsFrom(providers: readonly ProviderInfo[]): ModelSuggestionInf
   )
 }
 
-export function createT3SessionControl(
-  runner: T3TurnRunner,
-  client: T3Client,
-  log: (message: string) => void = () => {}
-): T3SessionControl {
+export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): T3SessionControl {
   let suggestions: ModelSuggestionInfo[] = []
 
   async function status(rootStreamId: string): Promise<string> {
@@ -115,14 +111,8 @@ export function createT3SessionControl(
     },
     interrupt: (streamId) => runner.interrupt(streamId),
     steer: (text, streamId, attachments) => runner.steer(text, streamId, attachments),
-    refresh: async () => {
-      try {
-        suggestions = suggestionsFrom((await client.call("orchestrator_capabilities", {})).providers)
-      } catch (error) {
-        // An expired token must not crash-loop the service; each turn reports it instead.
-        log(`T3 Code models unavailable, /model will suggest nothing: ${errorText(error)}`)
-        suggestions = []
-      }
+    loadOptions: async () => {
+      suggestions = suggestionsFrom((await client.call("orchestrator_capabilities", {})).providers)
     },
     runCommand: async (name, args, context) => {
       switch (name) {

@@ -14,3 +14,8 @@ export function gate() {
   })
   return { promise, open: () => open() }
 }
+
+/** Settle the promise chains a fake-timer tick started. */
+export async function flush(): Promise<void> {
+  for (let i = 0; i < 100; i++) await Promise.resolve()
+}

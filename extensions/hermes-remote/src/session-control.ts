@@ -6,10 +6,11 @@ import type { HermesTurnRunner } from "./run-bridge"
 export const HERMES_SESSION_CONTROL_COMMANDS = ["stop", "status", "model", "clear"] as const
 
 const MAX_AMBIGUOUS_CANDIDATES = 8
+const MODEL_OPTIONS_TIMEOUT_MS = 60_000
 
 export interface HermesSessionControl extends SessionControlActuator {
-  /** Load the model picker's options; awaited once before the session starts. */
-  refresh(): Promise<void>
+  /** Load the model picker's options; rejects when they could not be loaded. */
+  loadOptions(): Promise<void>
   /** Give a freshly forked thread conversation the model its source was locked to. */
   inheritModel(sourceId: string, forkId: string): Promise<void>
 }
@@ -158,13 +159,9 @@ export function createHermesSessionControl(
       const failure = await lockModel(forkId, lockedModel)
       if (failure) log(`thread conversation ${forkId} runs on the gateway default model: ${failure}`)
     },
-    refresh: async () => {
-      try {
-        suggestions = suggestionsFrom(await client.listModelOptions())
-      } catch (error) {
-        log(`model options unavailable, /model will suggest nothing: ${errorText(error)}`)
-        suggestions = []
-      }
+    loadOptions: async () => {
+      // Bounded so a gateway that accepts and never answers still fails into the SDK's retry.
+      suggestions = suggestionsFrom(await client.listModelOptions(AbortSignal.timeout(MODEL_OPTIONS_TIMEOUT_MS)))
     },
     runCommand: async (name, args, context) => {
       switch (name) {
