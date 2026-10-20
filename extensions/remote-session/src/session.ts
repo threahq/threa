@@ -865,6 +865,7 @@ export class RemoteSession {
     if (this.claimRetryTimer) clearTimeout(this.claimRetryTimer)
     this.claimRetryTimer = undefined
     if (this.controlRefreshTimer) clearTimeout(this.controlRefreshTimer)
+    this.controlRefreshTimer = undefined
     this.archive.stop()
     const withdrawals = this.abandonPendingDecisions()
     this.resetReconnectHandoff()

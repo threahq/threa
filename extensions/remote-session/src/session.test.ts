@@ -5715,4 +5715,41 @@ describe("session-control refresh", () => {
       jest.useRealTimers()
     }
   })
+
+  test("a refresh that resolves after shutdown neither retries nor writes presence", async () => {
+    jest.useFakeTimers()
+    const { client } = makeFakeClient()
+    const { transport, presence } = makeFakeTransport()
+    const answer = gate()
+    let refreshes = 0
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["model"],
+        refresh: async () => {
+          refreshes += 1
+          await answer.promise
+          return false
+        },
+        interrupt: () => true,
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(session as any).link = { rootStreamId: "stream_root" }
+    try {
+      const refreshing = (session as unknown as { refreshSessionControl(): Promise<void> }).refreshSessionControl()
+      await session.shutdown()
+      const presenceAtShutdown = presence.length
+      answer.open()
+      await refreshing
+      jest.advanceTimersByTime(10 * 60 * 1000)
+      await flush()
+      expect({ refreshes, extraPresence: presence.length - presenceAtShutdown }).toEqual({
+        refreshes: 1,
+        extraPresence: 0,
+      })
+    } finally {
+      jest.useRealTimers()
+    }
+  })
 })
