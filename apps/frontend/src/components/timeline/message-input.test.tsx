@@ -289,6 +289,7 @@ beforeEach(async () => {
     sendWarning: null,
     audienceByStreamId: new Map(),
     awaitSendWarning: null,
+    sentReferenceKeys: new Set<string>(),
   }))
   // The composer's schedule-send entry needs the scheduled service via
   // ServicesProvider; tests run without that wrapper, so stub the hook to a

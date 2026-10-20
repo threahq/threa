@@ -8,7 +8,7 @@ import {
   type SendVerb,
   type SendWarning,
 } from "@/lib/reference-audience"
-import { contentSignature } from "@/lib/display-stamps"
+import { unstampedMarkdown } from "@/lib/display-stamps"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import type { ComposerSubmitOptions } from "./message-composer"
 
@@ -84,9 +84,11 @@ export function useSendAsk({
     if (contentIsEmpty) consented.current = new Set()
   }, [contentIsEmpty])
 
+  // Markdown, not JSON: an editor round-trip fills in default attrs without the author changing anything.
+  const signature = useMemo(() => unstampedMarkdown(content), [content])
   const open = useMemo(
-    () => (sendWarning && asked?.key === askKey && asked.signature === contentSignature(content) ? asked : null),
-    [sendWarning, asked, askKey, content]
+    () => (sendWarning && asked?.key === askKey && asked.signature === signature ? asked : null),
+    [sendWarning, asked, askKey, signature]
   )
   const question: SendAskQuestion | null = useMemo(
     () =>
@@ -119,7 +121,7 @@ export function useSendAsk({
       const unanswered =
         decided && consentKeys(decided.targetKey, decided.warning.exposed).some((key) => !consented.current.has(key))
       if (unanswered)
-        setAsked({ key: askKeyOf(decided), signature: contentSignature(latest.current.content), send, verb })
+        setAsked({ key: askKeyOf(decided), signature: unstampedMarkdown(latest.current.content), send, verb })
       else sendAndRecord(decided, send)
     },
     [sendAndRecord]
@@ -133,10 +135,10 @@ export function useSendAsk({
         return
       }
       // A link pasted a moment ago has no answer yet; asking from the old one would skip it.
-      const before = contentSignature(latest.current.content)
+      const before = unstampedMarkdown(latest.current.content)
       const settled = await awaitSettled()
       // The answer is about the content Send was pressed on; a draft typed into since waits for the next Send.
-      if (contentSignature(latest.current.content) === before) decide(settled, send, verb)
+      if (unstampedMarkdown(latest.current.content) === before) decide(settled, send, verb)
     },
     [decide]
   )

@@ -1,5 +1,5 @@
 import { forwardRef, type ReactNode } from "react"
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { ShareErrorCodes, type ScheduledMessageView } from "@threahq/types"
 import { toast } from "sonner"
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -11,6 +11,8 @@ import * as useAttachmentsModule from "@/hooks/use-attachments"
 import * as useInputModeModule from "@/hooks/use-input-mode"
 import * as useMentionablesModule from "@/hooks/use-mentionables"
 import * as useMobileModule from "@/hooks/use-mobile"
+import * as referenceAudienceModule from "@/hooks/use-reference-audience"
+import type { ComposerSendWarning } from "@/lib/reference-audience"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as editorModule from "@/components/editor"
 import { ScheduledEditDialog } from "./scheduled-edit-dialog"
@@ -44,9 +46,13 @@ const SCHEDULED_MESSAGE: ScheduledMessageView = {
 function mockDialogDeps({
   attachments = {},
   update = vi.fn(),
+  sendNow = vi.fn(),
+  sendWarning = null,
 }: {
   attachments?: Partial<ReturnType<typeof useAttachmentsModule.useAttachments>>
   update?: ReturnType<typeof vi.fn>
+  sendNow?: ReturnType<typeof vi.fn>
+  sendWarning?: ComposerSendWarning | null
 } = {}) {
   const attachmentsHook = {
     pendingAttachments: [],
@@ -83,8 +89,14 @@ function mockDialogDeps({
     mutateAsync: vi.fn(() => new Promise(() => {})),
   } as never)
   vi.spyOn(hooksModule, "useReleaseScheduledEditLock").mockReturnValue(mutation as never)
-  vi.spyOn(hooksModule, "useSendScheduledNow").mockReturnValue(mutation as never)
+  vi.spyOn(hooksModule, "useSendScheduledNow").mockReturnValue({ ...mutation, mutateAsync: sendNow } as never)
   vi.spyOn(hooksModule, "useCancelScheduled").mockReturnValue(mutation as never)
+  spyOnExport(referenceAudienceModule, "useReferenceAudience").mockReturnValue(() => ({
+    sendWarning,
+    audienceByStreamId: new Map(),
+    awaitSendWarning: null,
+    sentReferenceKeys: new Set<string>(),
+  }))
   spyOnExport(editorModule, "RichEditor").mockReturnValue(MockRichEditor as unknown as typeof editorModule.RichEditor)
   spyOnExport(editorModule, "EditorActionBar").mockReturnValue(
     (({ trailingContent }: { trailingContent?: ReactNode }) => trailingContent) as never
@@ -149,4 +161,74 @@ describe("ScheduledEditDialog share privacy", () => {
       }).toEqual({ action: confirmLabel, closedBeforeConsent: 0, consent: [undefined, true] })
     }
   )
+})
+
+describe("ScheduledEditDialog audience question", () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  const revealWarning: ComposerSendWarning = {
+    warning: {
+      tone: "reveal",
+      lead: { streamId: "stream_src", count: 2, sampleUserIds: [] },
+      exposed: { reveal: ["stream_src"], unreachable: [] },
+      convertibleStreamIds: ["stream_src"],
+    },
+    names: [],
+    settled: true,
+    targetKey: "stream:stream-1",
+  }
+
+  function renderAsking() {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    const update = vi.fn().mockResolvedValue({ ...SCHEDULED_MESSAGE, id: "sched_server_test", version: 2 })
+    const sendNow = vi.fn().mockResolvedValue({})
+    mockDialogDeps({ update, sendNow, sendWarning: revealWarning })
+    const onClose = vi.fn()
+    render(
+      <ScheduledEditDialog
+        workspaceId="workspace-1"
+        scheduled={{ ...SCHEDULED_MESSAGE, id: "sched_server_test" }}
+        onClose={onClose}
+      />
+    )
+    return { update, sendNow, onClose }
+  }
+
+  it("asks before Send now reveals a share and sends it with consent from the question", async () => {
+    const { update, sendNow, onClose } = renderAsking()
+
+    fireEvent.click(screen.getByRole("button", { name: /^Send now/ }))
+    const ask = await screen.findByTestId("send-ask")
+    const updatesBeforeAnswer = update.mock.calls.length
+    fireEvent.click(within(ask).getByRole("button", { name: /^Send/ }))
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
+    expect({
+      updatesBeforeAnswer,
+      consent: update.mock.calls.map(([call]) => call.input.confirmedPrivacyWarning),
+      sentNow: sendNow.mock.calls.map(([id]) => id),
+    }).toEqual({ updatesBeforeAnswer: 0, consent: [true], sentNow: ["sched_server_test"] })
+  })
+
+  it("closes the question on Escape and keeps the dialog open", async () => {
+    const { update, onClose } = renderAsking()
+
+    fireEvent.click(screen.getByRole("button", { name: /^Save/ }))
+    await screen.findByTestId("send-ask")
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" })
+
+    await waitFor(() => expect(screen.queryByTestId("send-ask")).toBeNull())
+    expect({ updates: update.mock.calls.length, closed: onClose.mock.calls.length }).toEqual({ updates: 0, closed: 0 })
+  })
+
+  it("takes a question asked as Save away once the send time passes", async () => {
+    renderAsking()
+
+    fireEvent.click(screen.getByRole("button", { name: /^Save/ }))
+    await screen.findByTestId("send-ask")
+    const later = Date.now() + 5 * 60_000
+    vi.spyOn(Date, "now").mockReturnValue(later)
+
+    await waitFor(() => expect(screen.queryByTestId("send-ask")).toBeNull(), { timeout: 3000 })
+  })
 })

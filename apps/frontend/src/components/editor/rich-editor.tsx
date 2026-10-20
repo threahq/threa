@@ -1007,7 +1007,8 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
           return true
         }
 
-        if (event.key === "Escape" && blurOnEscape) {
+        // A surface that already spent this Escape (closing a question) keeps the editor focused.
+        if (event.key === "Escape" && blurOnEscape && !event.defaultPrevented) {
           if (currentEditor && isSuggestionActive(currentEditor)) {
             return false
           }

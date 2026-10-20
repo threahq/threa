@@ -17,16 +17,21 @@ const audience = (streamId: string) => ({ streamId, count: 1, sampleUserIds: ["u
 
 afterEach(() => vi.restoreAllMocks())
 
-function renderAudience(referenceAudience: () => Promise<ReferenceAudienceResponse>, content = shares("stream_a")) {
+function renderAudience(
+  referenceAudience: () => Promise<ReferenceAudienceResponse>,
+  content = shares("stream_a"),
+  previousContent?: JSONContent
+) {
   spyOnExport(contextsModule, "useMessageService").mockReturnValue((() => ({ referenceAudience })) as never)
   spyOnExport(actorsModule, "useActors").mockReturnValue((() => ({ getUser: () => ({ name: "Bea" }) })) as never)
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   )
-  return renderHook(() => useReferenceAudience({ workspaceId: "ws_1", target: { streamId: "stream_dest" }, content }), {
-    wrapper,
-  })
+  return renderHook(
+    () => useReferenceAudience({ workspaceId: "ws_1", target: { streamId: "stream_dest" }, content, previousContent }),
+    { wrapper }
+  )
 }
 
 describe("referenceAudienceTargetFor", () => {
@@ -115,5 +120,26 @@ describe("useReferenceAudience", () => {
     await waitFor(() => expect(result.current.awaitSendWarning).not.toBeNull())
 
     expect(await result.current.awaitSendWarning!()).toBeNull()
+  })
+
+  it("tints every ref in an edit but asks only about the ones the edit adds", async () => {
+    const added = renderAudience(
+      async () => ({ audiences: [audience("stream_a"), audience("stream_b")] }),
+      shares("stream_a", "stream_b"),
+      shares("stream_a")
+    )
+    await waitFor(() => expect(added.result.current.sendWarning?.settled).toBe(true))
+    const kept = renderAudience(
+      async () => ({ audiences: [audience("stream_a")] }),
+      shares("stream_a"),
+      shares("stream_a")
+    )
+    await waitFor(() => expect(kept.result.current.audienceByStreamId.size).toBe(1))
+
+    expect({
+      addedTinted: [...added.result.current.audienceByStreamId.keys()],
+      addedAsks: added.result.current.sendWarning?.warning.exposed.reveal,
+      keptAsks: kept.result.current.sendWarning,
+    }).toEqual({ addedTinted: ["stream_a", "stream_b"], addedAsks: ["stream_b"], keptAsks: null })
   })
 })

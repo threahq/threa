@@ -157,6 +157,7 @@ beforeEach(async () => {
     sendWarning: null,
     audienceByStreamId: new Map(),
     awaitSendWarning: null,
+    sentReferenceKeys: new Set<string>(),
   }))
   vi.spyOn(hooksModule, "useScheduleMessage").mockReturnValue({
     mutateAsync: vi.fn(),

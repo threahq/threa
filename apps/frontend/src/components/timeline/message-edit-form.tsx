@@ -12,6 +12,10 @@ import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { RichEditor, EditorToolbar, EditorActionBar, DocumentEditorModal } from "@/components/editor"
 import type { RichEditorHandle } from "@/components/editor"
 import { inAppLinkMarksToNodes } from "@/components/editor/in-app-link-marks"
+import { AskOverlay, SendAskRow, SendWarningBadge } from "@/components/composer/send-ask"
+import { useEditorSendAsk } from "@/components/composer/use-editor-send-ask"
+import type { ComposerSubmitOptions } from "@/components/composer"
+import { referenceAudienceTargetFor, useReferenceAudience } from "@/hooks/use-reference-audience"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { usePaneCovered } from "@/components/panes/pane-host"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
@@ -23,6 +27,7 @@ import type { Editor } from "@tiptap/react"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { unstampedMarkdown } from "@/lib/display-stamps"
 import { useStreamFromStore } from "@/stores/stream-store"
+import { useStableCallback } from "@/hooks/use-stable-callback"
 
 const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Command" : "Control"
 
@@ -52,7 +57,8 @@ export function MessageEditForm({
 }: MessageEditFormProps) {
   const queryClient = useQueryClient()
   const messageService = useMessageService()
-  const streamContext = useMentionStreamContext(workspaceId, useStreamFromStore(workspaceId, streamId))
+  const stream = useStreamFromStore(workspaceId, streamId)
+  const streamContext = useMentionStreamContext(workspaceId, stream)
   // Latch the surface at mount: input mode is live, so reading it directly would
   // flip drawer<->inline mid-edit and remount the editor, dropping unsaved text.
   const [isTouch] = useState(useInputMode() === "touch")
@@ -68,9 +74,15 @@ export function MessageEditForm({
   contentRef.current = contentJson
   const [isSaving, setIsSaving] = useState(false)
   const [docEditorOpen, setDocEditorOpen] = useState(false)
+  const [initialContent] = useState(contentJson)
   // Chips stamp their resolved labels in on mount; an untouched edit must still read as unchanged.
   const [initialMarkdown] = useState(() => unstampedMarkdown(contentJson))
-
+  const { sendWarning, audienceByStreamId, awaitSendWarning, sentReferenceKeys } = useReferenceAudience({
+    workspaceId,
+    target: referenceAudienceTargetFor(streamId, stream),
+    content: contentJson,
+    previousContent: initialContent,
+  })
   const [formatOpen, setFormatOpen] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
   const [mobileLinkPopoverOpen, setMobileLinkPopoverOpen] = useState(false)
@@ -80,20 +92,40 @@ export function MessageEditForm({
   const [mobileToolbarEditor, setMobileToolbarEditor] = useState<Editor | null>(null)
   const instructionsId = useId()
   const covered = usePaneCovered()
+  const {
+    question,
+    submit: submitAsking,
+    dismiss: dismissQuestion,
+    answerQuestion,
+    escapeQuestion,
+    takeAlternative,
+    labelWithWarning,
+    warning,
+  } = useEditorSendAsk({
+    sendWarning,
+    awaitSendWarning,
+    content: contentJson,
+    editorRef: richEditorRef,
+    workspaceId,
+    compact: isTouch,
+    sentReferenceKeys,
+  })
 
   useEffect(() => {
     if (isTouch) return // vaul handles Escape via onOpenChange
     // A background tab keeps its edit open; Escape belongs to the tab on show.
     if (covered) return
+    // The full editor owns Escape while it is open.
+    if (docEditorOpen) return
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault()
-        onCancel()
-      }
+      if (e.key !== "Escape") return
+      if (escapeQuestion(e)) return
+      e.preventDefault()
+      onCancel()
     }
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [isTouch, covered, onCancel])
+  }, [isTouch, covered, docEditorOpen, escapeQuestion, onCancel])
 
   const setRichEditorHandle = useCallback((handle: RichEditorHandle | null) => {
     richEditorRef.current = handle
@@ -143,7 +175,16 @@ export function MessageEditForm({
     [workspaceId, messageId, onSave, queryClient, messageService, clearPrivacyBlock, blockOnPrivacy]
   )
 
-  const handleSubmit = useCallback(async () => {
+  // Stable, so an answer given after a rerender saves through the current `saveEdit`.
+  const save = useStableCallback((options?: ComposerSubmitOptions) => {
+    setFormatOpen(false)
+    setMobileExpanded(false)
+    setMobileLinkPopoverOpen(false)
+    void saveEdit(contentRef.current, options?.confirmedPrivacyWarning)
+  })
+
+  const handleSubmit = useCallback(() => {
+    if (isSaving) return
     if (!serializeToMarkdown(contentJson).trim()) {
       onDelete?.()
       return
@@ -152,14 +193,19 @@ export function MessageEditForm({
       onCancel()
       return
     }
-    setFormatOpen(false)
-    setMobileExpanded(false)
-    setMobileLinkPopoverOpen(false)
-    await saveEdit(contentJson)
-  }, [contentJson, saveEdit, initialMarkdown, onCancel, onDelete])
+    void submitAsking(save, "Save")
+  }, [isSaving, contentJson, initialMarkdown, onCancel, onDelete, submitAsking, save])
+
+  // The full editor's content has to render before the ask can see its refs.
+  const submitDocEditorOnRender = useRef(false)
+  useEffect(() => {
+    if (!submitDocEditorOnRender.current) return
+    submitDocEditorOnRender.current = false
+    void submitAsking(save, "Save")
+  }, [contentJson, submitAsking, save])
 
   const handleDocEditorSend = useCallback(
-    async (markdown: string) => {
+    (markdown: string) => {
       const trimmed = markdown.trim()
       if (!trimmed) {
         setDocEditorOpen(false)
@@ -172,11 +218,11 @@ export function MessageEditForm({
         onCancel()
         return
       }
-      // A refused save keeps the form open, so it must hold what the full editor sent.
+      // A refused or questioned save keeps the form open, so it must hold what the full editor sent.
       setContentJson(content)
-      await saveEdit(content)
+      submitDocEditorOnRender.current = true
     },
-    [saveEdit, initialMarkdown, onCancel, onDelete]
+    [initialMarkdown, onCancel, onDelete]
   )
 
   const handleDocEditorDismiss = useCallback((markdown: string) => {
@@ -202,6 +248,19 @@ export function MessageEditForm({
     mobileActionBarRef.current?.focus()
   }, [])
 
+  const saveLabel = isSaving ? "Saving..." : "Save"
+  const saveBadge = warning ? <SendWarningBadge tone={warning.tone} /> : null
+  const askRow = question ? (
+    <SendAskRow
+      tone={question.tone}
+      copy={question.copy}
+      compact={isTouch}
+      onPrimary={answerQuestion}
+      onAlternative={takeAlternative}
+      className="w-full"
+    />
+  ) : null
+
   if (isTouch) {
     const trailingContent = (
       <>
@@ -220,13 +279,14 @@ export function MessageEditForm({
         <Button
           type="button"
           size="sm"
-          aria-label={isSaving ? "Saving..." : "Save edit"}
-          className="h-8 px-3 text-xs shrink-0"
+          aria-label={labelWithWarning(isSaving ? "Saving..." : "Save edit")}
+          className="relative h-8 px-3 text-xs shrink-0"
           onPointerDown={(e) => e.preventDefault()}
           onClick={handleSubmit}
           disabled={isSaving}
         >
-          {isSaving ? "Saving..." : "Save"}
+          {saveLabel}
+          {saveBadge}
         </Button>
       </>
     )
@@ -240,6 +300,7 @@ export function MessageEditForm({
       >
         <DrawerContent
           ref={drawerContentRef}
+          onEscapeKeyDown={escapeQuestion}
           onPointerDownOutside={(e) => {
             // The "Save anyway" toast lives outside the drawer; pressing it must not close the edit.
             if ((e.target as HTMLElement).closest("[data-sonner-toaster]")) e.preventDefault()
@@ -263,6 +324,8 @@ export function MessageEditForm({
                 value={contentJson}
                 onChange={setContentJson}
                 onSubmit={handleSubmit}
+                onFocus={dismissQuestion}
+                audienceByStreamId={audienceByStreamId}
                 placeholder="Edit message..."
                 ariaLabel="Edit message"
                 ariaDescribedBy={instructionsId}
@@ -283,16 +346,18 @@ export function MessageEditForm({
             tabIndex={-1}
             onMouseDown={(e) => e.preventDefault()}
           >
-            <EditorActionBar
-              editorHandle={richEditorRef.current}
-              disabled={isSaving}
-              formatOpen={formatOpen}
-              onFormatOpenChange={setFormatOpen}
-              mobileExpanded={mobileExpanded}
-              onMobileExpandedChange={setMobileExpanded}
-              showAttach={false}
-              trailingContent={trailingContent}
-            />
+            <AskOverlay askRow={askRow}>
+              <EditorActionBar
+                editorHandle={richEditorRef.current}
+                disabled={isSaving}
+                formatOpen={formatOpen}
+                onFormatOpenChange={setFormatOpen}
+                mobileExpanded={mobileExpanded}
+                onMobileExpandedChange={setMobileExpanded}
+                showAttach={false}
+                trailingContent={trailingContent}
+              />
+            </AskOverlay>
             {formatOpen && (
               <EditorToolbar
                 editor={mobileToolbarEditor}
@@ -317,9 +382,12 @@ export function MessageEditForm({
       </p>
       <div data-inline-edit className="[&_.tiptap]:!pt-0 [&_.tiptap_p]:!leading-relaxed">
         <RichEditor
+          ref={richEditorRef}
           value={contentJson}
           onChange={setContentJson}
           onSubmit={handleSubmit}
+          onFocus={dismissQuestion}
+          audienceByStreamId={audienceByStreamId}
           placeholder="Edit message..."
           ariaLabel="Edit message"
           ariaDescribedBy={instructionsId}
@@ -328,33 +396,42 @@ export function MessageEditForm({
           streamContext={streamContext}
         />
       </div>
-      <div className="flex items-center gap-1.5 mt-1">
-        <span className="text-[11px] text-muted-foreground/70 hidden sm:flex items-center gap-1.5 mr-auto">
-          <kbd className="kbd-hint">Esc</kbd> cancel
-          <span className="text-muted-foreground/30">·</span>
-          <kbd className="kbd-hint">↵</kbd> {isEmpty ? "delete" : "save"}
-        </span>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
-              onClick={() => setDocEditorOpen(true)}
-              disabled={isSaving}
-            >
-              <Expand className="h-3 w-3" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="top">Expand editor</TooltipContent>
-        </Tooltip>
-        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={onCancel} disabled={isSaving}>
-          Cancel
-        </Button>
-        <Button size="sm" className="h-6 px-2.5 text-xs" onClick={handleSubmit} disabled={isSaving}>
-          {isSaving ? "Saving..." : "Save"}
-        </Button>
-      </div>
+      <AskOverlay askRow={askRow} className="mt-1">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-muted-foreground/70 hidden sm:flex items-center gap-1.5 mr-auto">
+            <kbd className="kbd-hint">Esc</kbd> cancel
+            <span className="text-muted-foreground/30">·</span>
+            <kbd className="kbd-hint">↵</kbd> {isEmpty ? "delete" : "save"}
+          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
+                onClick={() => setDocEditorOpen(true)}
+                disabled={isSaving}
+              >
+                <Expand className="h-3 w-3" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Expand editor</TooltipContent>
+          </Tooltip>
+          <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={onCancel} disabled={isSaving}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            className="relative h-6 px-2.5 text-xs"
+            aria-label={labelWithWarning(saveLabel)}
+            onClick={handleSubmit}
+            disabled={isSaving}
+          >
+            {saveLabel}
+            {saveBadge}
+          </Button>
+        </div>
+      </AskOverlay>
       <DocumentEditorModal
         open={docEditorOpen}
         onOpenChange={setDocEditorOpen}
