@@ -21,7 +21,8 @@ const MockRichEditor = forwardRef(function MockRichEditor() {
   return <div data-testid="scheduled-rich-editor" />
 })
 
-const SCHEDULED_MESSAGE: ScheduledMessageView = {
+/** Built per render: a send time fixed at import is in the past once the shard has run for a minute. */
+const scheduledMessage = (): ScheduledMessageView => ({
   id: "sched_local_test",
   workspaceId: "workspace-1",
   userId: "user-1",
@@ -41,7 +42,7 @@ const SCHEDULED_MESSAGE: ScheduledMessageView = {
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
   statusChangedAt: new Date().toISOString(),
-}
+})
 
 function mockDialogDeps({
   attachments = {},
@@ -113,7 +114,7 @@ describe("ScheduledEditDialog attachments", () => {
     vi.spyOn(useInputModeModule, "useInputMode").mockReturnValue("touch")
     mockDialogDeps({ attachments: { handleFileSelect } })
 
-    render(<ScheduledEditDialog workspaceId="workspace-1" scheduled={SCHEDULED_MESSAGE} onClose={vi.fn()} />)
+    render(<ScheduledEditDialog workspaceId="workspace-1" scheduled={scheduledMessage()} onClose={vi.fn()} />)
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     const file = new File(["notes"], "notes.txt", { type: "text/plain" })
 
@@ -136,14 +137,14 @@ describe("ScheduledEditDialog share privacy", () => {
       const update = vi
         .fn()
         .mockRejectedValueOnce(new ApiError(409, ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED, "Confirm"))
-        .mockResolvedValueOnce({ ...SCHEDULED_MESSAGE, id: "sched_server_test", version: 2 })
+        .mockResolvedValueOnce({ ...scheduledMessage(), id: "sched_server_test", version: 2 })
       mockDialogDeps({ update })
       const onClose = vi.fn()
 
       render(
         <ScheduledEditDialog
           workspaceId="workspace-1"
-          scheduled={{ ...SCHEDULED_MESSAGE, id: "sched_server_test" }}
+          scheduled={{ ...scheduledMessage(), id: "sched_server_test" }}
           onClose={onClose}
         />
       )
@@ -180,14 +181,14 @@ describe("ScheduledEditDialog audience question", () => {
 
   function renderAsking() {
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
-    const update = vi.fn().mockResolvedValue({ ...SCHEDULED_MESSAGE, id: "sched_server_test", version: 2 })
+    const update = vi.fn().mockResolvedValue({ ...scheduledMessage(), id: "sched_server_test", version: 2 })
     const sendNow = vi.fn().mockResolvedValue({})
     mockDialogDeps({ update, sendNow, sendWarning: revealWarning })
     const onClose = vi.fn()
     render(
       <ScheduledEditDialog
         workspaceId="workspace-1"
-        scheduled={{ ...SCHEDULED_MESSAGE, id: "sched_server_test" }}
+        scheduled={{ ...scheduledMessage(), id: "sched_server_test" }}
         onClose={onClose}
       />
     )
@@ -237,7 +238,7 @@ describe("ScheduledEditDialog audience question", () => {
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
     let settle: (value: ComposerSendWarning | null) => void = () => {}
     let settled: ComposerSendWarning | null = null
-    const update = vi.fn().mockResolvedValue({ ...SCHEDULED_MESSAGE, id: "sched_server_test", version: 2 })
+    const update = vi.fn().mockResolvedValue({ ...scheduledMessage(), id: "sched_server_test", version: 2 })
     const sendNow = vi.fn().mockResolvedValue({})
     mockDialogDeps({ update, sendNow })
     spyOnExport(referenceAudienceModule, "useReferenceAudience").mockReturnValue(() => ({
@@ -249,7 +250,7 @@ describe("ScheduledEditDialog audience question", () => {
     render(
       <ScheduledEditDialog
         workspaceId="workspace-1"
-        scheduled={{ ...SCHEDULED_MESSAGE, id: "sched_server_test" }}
+        scheduled={{ ...scheduledMessage(), id: "sched_server_test" }}
         onClose={vi.fn()}
       />
     )
