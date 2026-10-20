@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react"
+import { useId, useState, type MouseEvent, type ReactNode } from "react"
 import type { ReferenceAudience } from "@threahq/types"
 import { ActorAvatar } from "@/components/actor-avatar"
 import { AUDIENCE_TONE } from "@/components/editor/reference-audience-tone"
@@ -7,7 +7,7 @@ import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger, useInsideDrawer } fr
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useActors } from "@/hooks"
 import { useStreamName } from "@/hooks/use-stream-name"
-import type { AudienceQuestionCopy, SendTone } from "@/lib/reference-audience"
+import { namedReaders, type AudienceQuestionCopy, type SendTone } from "@/lib/reference-audience"
 import { cn } from "@/lib/utils"
 
 interface SendAskDetailProps {
@@ -44,7 +44,6 @@ export function SendAskDetail({
   const trigger = (
     <button
       type="button"
-      aria-haspopup="dialog"
       data-testid="send-ask-detail-trigger"
       className="flex h-[30px] min-w-0 items-center gap-1.5 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
@@ -54,6 +53,9 @@ export function SendAskDetail({
   // Radix sees Escape on the document before React does; stopping it there keeps the
   // composer's Escape (drop the question) for the next press.
   const closeOnlyDetail = (event: KeyboardEvent) => event.stopPropagation()
+  // The portal bubbles through React to the composer, whose mousedown guard keeps the editor focused;
+  // presses in here need their own focus and text selection.
+  const keepPress = (event: MouseEvent) => event.stopPropagation()
   const body = (
     <DetailBody
       titleId={titleId}
@@ -71,7 +73,11 @@ export function SendAskDetail({
     return (
       <Drawer open={open} onOpenChange={setOpen} shouldScaleBackground={false} nested={nested}>
         <DrawerTrigger asChild>{trigger}</DrawerTrigger>
-        <DrawerContent className="pb-[env(safe-area-inset-bottom)]" onEscapeKeyDown={closeOnlyDetail}>
+        <DrawerContent
+          className="pb-[env(safe-area-inset-bottom)]"
+          onEscapeKeyDown={closeOnlyDetail}
+          onMouseDown={keepPress}
+        >
           {body}
         </DrawerContent>
       </Drawer>
@@ -86,6 +92,7 @@ export function SendAskDetail({
         className="w-[340px] max-w-[calc(100vw-1rem)] p-0"
         aria-labelledby={titleId}
         onEscapeKeyDown={closeOnlyDetail}
+        onMouseDown={keepPress}
       >
         {body}
       </PopoverContent>
@@ -105,10 +112,7 @@ function DetailBody({
 }: Omit<SendAskDetailProps, "children"> & { titleId: string }) {
   const { getUser } = useActors(workspaceId)
   const source = useStreamName(workspaceId, lead.streamId, "activity") ?? "the conversation"
-  const people = lead.sampleUserIds.flatMap((id) => {
-    const name = getUser(id)?.name
-    return name ? [{ id, name }] : []
-  })
+  const people = namedReaders(lead, getUser)
   const more = lead.count - people.length
   const Icon = AUDIENCE_TONE[tone].icon
   const alternative = onAlternative ? copy.alternative : null
@@ -131,7 +135,7 @@ function DetailBody({
         <Icon aria-hidden className="mt-0.5 h-4 w-4 shrink-0" />
         {copy.full}
       </Title>
-      {(people.length > 0 || more > 0) && (
+      {people.length > 0 && (
         <ul className="flex flex-col gap-1.5">
           {people.map(({ id, name }) => (
             <li key={id} className="flex min-w-0 items-center gap-2 text-sm">

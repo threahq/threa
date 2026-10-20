@@ -34,6 +34,14 @@ export interface AudienceQuestionCopy {
   primary: { full: string; short: string }
 }
 
+/** The sampled readers the workspace cache can name, in the server's order. */
+export function namedReaders(audience: ReferenceAudience, getUser: (id: string) => { name: string } | undefined) {
+  return audience.sampleUserIds.flatMap((id) => {
+    const name = getUser(id)?.name
+    return name ? [{ id, name }] : []
+  })
+}
+
 function linkMarkReference(node: JSONContent): ComposerReference | null {
   const href = node.marks?.find((mark) => mark.type === "link")?.attrs?.href
   if (typeof href !== "string") return null

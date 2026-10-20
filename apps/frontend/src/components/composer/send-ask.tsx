@@ -64,10 +64,7 @@ export function SendAskRow({
         mirrored && "flex-row-reverse",
         className
       )}
-      // The detail's portal bubbles here through React; only the row itself keeps the editor's focus.
-      onMouseDown={(event) => {
-        if (event.currentTarget.contains(event.target as Node)) event.preventDefault()
-      }}
+      onMouseDown={(event) => event.preventDefault()}
     >
       <div
         role="status"
