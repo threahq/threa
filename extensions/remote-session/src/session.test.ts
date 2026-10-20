@@ -32,7 +32,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ThreaApiError, type ClaimedInvocation, type ThreaClient } from "./client"
-import { fireIdleTimeout, gate } from "./session.test-support"
+import { fireIdleTimeout, flush, gate } from "./session.test-support"
 
 function makeConfig(overrides?: Partial<RemoteSessionConfig>): RemoteSessionConfig {
   return {
@@ -3507,10 +3507,6 @@ describe("messages to a running turn (steer by default, /enqueue waits)", () => 
 })
 
 describe("claim wakeups and retries", () => {
-  async function flush() {
-    for (let i = 0; i < 100; i++) await Promise.resolve()
-  }
-
   test("should claim a queued message when the running turn finishes", async () => {
     jest.useFakeTimers()
     const { client } = makeFakeClient()
@@ -5673,83 +5669,181 @@ describe("presence reporting", () => {
   })
 })
 
-describe("session-control refresh", () => {
-  async function flush() {
-    for (let i = 0; i < 100; i++) await Promise.resolve()
+describe("session-control options", () => {
+  /** A session `start()` can drive end to end: file keys, a bot principal and a link the server grants. */
+  function makeStartableSession(sessionControl: SessionControlActuator, linkGate?: Promise<void>) {
+    const keyDir = mkdtempSync(join(tmpdir(), "session-control-options-"))
+    const client = {
+      ...makeFakeClient().client,
+      getMe: async () => ({ kind: "bot" }),
+      createSession: async () => {
+        await linkGate
+        return {
+          linkId: "brsl_1",
+          rootStreamId: "stream_root",
+          activeStreamId: "stream_root",
+          runtimeSessionId: "rts-test",
+          streamUrlPath: "/w/ws_1/s/stream_root",
+        }
+      },
+    } as unknown as ThreaClient
+    const { transport, presence } = makeFakeTransport()
+    let connects = 0
+    transport.connect = async () => {
+      connects += 1
+    }
+    const logs: string[] = []
+    const session = new RemoteSession({
+      config: makeConfig({ keyStore: "file", keyDir }),
+      client,
+      delegate: { deliverTurn: async () => {}, sessionControl },
+      runtime: RUNTIME,
+      transport,
+      log: (message) => logs.push(message),
+    })
+    return {
+      session,
+      connects: () => connects,
+      controlLogs: () => logs.filter((message) => message.startsWith("session-control")),
+      pickerOptions: () =>
+        presence.map((body) => (body.capabilities as { modelSuggestions?: unknown }).modelSuggestions),
+      cleanup: () => rmSync(keyDir, { recursive: true, force: true }),
+    }
+  }
+
+  function modelControl(
+    loadOptions: () => Promise<void>,
+    suggestions: () => unknown[] = () => []
+  ): SessionControlActuator {
+    return {
+      commands: ["model"],
+      get modelSuggestions() {
+        return suggestions() as SessionControlActuator["modelSuggestions"]
+      },
+      loadOptions,
+      interrupt: () => true,
+      runCommand: async () => ({ ok: true, message: "ok" }),
+    }
   }
 
   test("retries a runtime that was not up yet and republishes presence once its options load", async () => {
     jest.useFakeTimers()
-    const { client } = makeFakeClient()
-    const { transport, presence } = makeFakeTransport()
-    const answers = [false, true]
     let suggestions: { value: string; label: string }[] = []
-    const session = makeSession(client, transport, {
-      sessionControl: {
-        commands: ["model"],
-        get modelSuggestions() {
-          return suggestions
+    let loads = 0
+    const h = makeStartableSession(
+      modelControl(
+        async () => {
+          loads += 1
+          if (loads === 1) throw new Error("connect ECONNREFUSED")
+          suggestions = [{ value: "opus", label: "Opus" }]
         },
-        refresh: async () => {
-          const loaded = answers.shift() ?? true
-          if (loaded) suggestions = [{ value: "opus", label: "Opus" }]
-          return loaded
-        },
-        interrupt: () => true,
-        runCommand: async () => ({ ok: true, message: "ok" }),
-      },
-    })
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(session as any).link = { rootStreamId: "stream_root" }
+        () => suggestions
+      )
+    )
     try {
-      await (session as unknown as { refreshSessionControl(): Promise<void> }).refreshSessionControl()
-      const afterFailure = presence.length
+      await h.session.start()
+      const atStart = h.pickerOptions()
+
       jest.advanceTimersByTime(2_000)
       await flush()
-      expect({
-        afterFailure,
-        republished: presence.map((body) => (body.capabilities as { modelSuggestions?: unknown }).modelSuggestions),
-      }).toEqual({ afterFailure: 0, republished: [[{ value: "opus", label: "Opus" }]] })
+
+      expect({ atStart, afterRetry: h.pickerOptions(), logs: h.controlLogs() }).toEqual({
+        atStart: [[]],
+        afterRetry: [[], [{ value: "opus", label: "Opus" }]],
+        logs: [
+          "session-control options unavailable, retrying in 2000ms: connect ECONNREFUSED",
+          "session-control options loaded on attempt 2",
+        ],
+      })
     } finally {
-      await session.shutdown()
+      await h.session.shutdown()
       jest.useRealTimers()
+      h.cleanup()
     }
   })
 
-  test("a refresh that resolves after shutdown neither retries nor writes presence", async () => {
+  test("backs off by doubling from 2s up to a 5-minute cap", async () => {
     jest.useFakeTimers()
-    const { client } = makeFakeClient()
-    const { transport, presence } = makeFakeTransport()
-    const answer = gate()
-    let refreshes = 0
-    const session = makeSession(client, transport, {
-      sessionControl: {
-        commands: ["model"],
-        refresh: async () => {
-          refreshes += 1
-          await answer.promise
-          return false
-        },
-        interrupt: () => true,
-        runCommand: async () => ({ ok: true, message: "ok" }),
-      },
-    })
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(session as any).link = { rootStreamId: "stream_root" }
+    const h = makeStartableSession(
+      modelControl(async () => {
+        throw new Error("connect ECONNREFUSED")
+      })
+    )
+    const delays = () => h.controlLogs().map((message) => Number(/retrying in (\d+)ms/.exec(message)?.[1]))
     try {
-      const refreshing = (session as unknown as { refreshSessionControl(): Promise<void> }).refreshSessionControl()
-      await session.shutdown()
-      const presenceAtShutdown = presence.length
+      await h.session.start()
+      await flush()
+      while (delays().length < 10) {
+        jest.advanceTimersByTime(delays().at(-1)!)
+        await flush()
+      }
+
+      expect(delays()).toEqual([2_000, 4_000, 8_000, 16_000, 32_000, 64_000, 128_000, 256_000, 300_000, 300_000])
+    } finally {
+      await h.session.shutdown()
+      jest.useRealTimers()
+      h.cleanup()
+    }
+  })
+
+  test("start links and connects without waiting for the runtime's options", async () => {
+    const answer = gate()
+    const h = makeStartableSession(modelControl(() => answer.promise))
+    try {
+      await h.session.start()
+
+      expect({ connects: h.connects(), pickerOptions: h.pickerOptions() }).toEqual({ connects: 1, pickerOptions: [[]] })
+    } finally {
+      await h.session.shutdown()
       answer.open()
-      await refreshing
+      h.cleanup()
+    }
+  })
+
+  test("an options load that fails after shutdown schedules no retry", async () => {
+    jest.useFakeTimers()
+    const answer = gate()
+    let loads = 0
+    const h = makeStartableSession(
+      modelControl(async () => {
+        loads += 1
+        await answer.promise
+        throw new Error("connect ECONNREFUSED")
+      })
+    )
+    try {
+      await h.session.start()
+      await h.session.shutdown()
+
+      answer.open()
+      await flush()
       jest.advanceTimersByTime(10 * 60 * 1000)
       await flush()
-      expect({ refreshes, extraPresence: presence.length - presenceAtShutdown }).toEqual({
-        refreshes: 1,
-        extraPresence: 0,
-      })
+
+      expect({ loads, logs: h.controlLogs() }).toEqual({ loads: 1, logs: [] })
     } finally {
       jest.useRealTimers()
+      h.cleanup()
+    }
+  })
+
+  test("a shutdown while start is linking never opens the socket", async () => {
+    const linking = gate()
+    const h = makeStartableSession(
+      modelControl(async () => {}),
+      linking.promise
+    )
+    try {
+      const starting = h.session.start()
+      await flush()
+      await h.session.shutdown()
+
+      linking.open()
+      await starting
+
+      expect(h.connects()).toBe(0)
+    } finally {
+      h.cleanup()
     }
   })
 })

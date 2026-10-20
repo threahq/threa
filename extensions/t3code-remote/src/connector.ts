@@ -67,7 +67,7 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
     threadStore: createFileThreadStore(join(config.install.workDir, "threads.json")),
     log,
   })
-  const sessionControl = createT3SessionControl(runner, t3, log)
+  const sessionControl = createT3SessionControl(runner, t3)
 
   session = new RemoteSession({
     config,

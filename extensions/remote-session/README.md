@@ -161,6 +161,10 @@ with `E2E_STREAM_PLAINTEXT_UNSUPPORTED`.
   is never delivered as a command.
 - Every other advertised command goes to `actuator.runCommand`, and its
   returned `message` is posted as the acknowledgement.
+- `start()` calls `actuator.loadOptions()` without waiting for it. A rejection
+  is logged and retried, doubling from 2s up to a 5-minute cap, for as long as
+  it keeps rejecting. The first success republishes presence so the arg
+  pickers fill in; `loadOptions` is not called again after that.
 - Claims are renewed every 40s on a 120s lease; a claim the server no longer
   knows is dropped and presence is resynced.
 - A turn that stays silent for `idleTimeoutMs` (default one hour, reset by

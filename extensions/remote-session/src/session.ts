@@ -74,8 +74,8 @@ const NO_SOCKET_POLL_CAP_MS = 2 * 60 * 1000
 const CLAIM_RETRY_CAP_MS = 2 * 60 * 1000
 // A runtime booting beside the connector usually answers within seconds; the
 // cap keeps a long outage from logging a failed load every few seconds.
-const CONTROL_REFRESH_BASE_MS = 2_000
-const CONTROL_REFRESH_CAP_MS = 5 * 60 * 1000
+const CONTROL_OPTIONS_RETRY_BASE_MS = 2_000
+const CONTROL_OPTIONS_RETRY_CAP_MS = 5 * 60 * 1000
 // Harness preflight can take 10s and replacement verification up to 15s.
 export const RECONNECT_HANDOFF_FALLBACK_MS = 30_000
 const MAX_CLAIMS_PER_DRAIN = 20
@@ -185,11 +185,13 @@ export interface SessionControlActuator {
    */
   isHeld?(): boolean
   /**
-   * Load the arg pickers' options from the runtime, before the first hello.
-   * False when the runtime did not answer: the SDK retries with backoff and
-   * republishes presence once it does, so the pickers fill in without a restart.
+   * Load the arg pickers' options from the runtime; reject when they could not
+   * be loaded. `start()` calls it without waiting for it, and a rejection is
+   * logged and retried with capped backoff. After the first success it is not
+   * called again, and presence is republished so the pickers fill in without
+   * a restart.
    */
-  refresh?(): Promise<boolean>
+  loadOptions?(): Promise<void>
   runCommand(
     name: string,
     args: string,
@@ -560,8 +562,7 @@ export class RemoteSession {
   /** Claim HTTP mutates server presence outside presenceTail, so teardown waits for its drain. */
   private claimDrainTask: Promise<boolean> | undefined
   private claimRetryTimer: ReturnType<typeof setTimeout> | undefined
-  private controlRefreshTimer: ReturnType<typeof setTimeout> | undefined
-  private controlRefreshAttempts = 0
+  private controlOptionsTimer: ReturnType<typeof setTimeout> | undefined
   private claimFailures = 0
   private reconnectHandoff = false
   private onHandoffReset: (() => unknown | Promise<unknown>) | undefined
@@ -771,31 +772,29 @@ export class RemoteSession {
     this.advertisedKeyIds = this.bik.identities.map((identity) => identity.publicKeyId).join(",")
     Object.assign(this.hello, this.bik.presenceFields())
     await this.verifyPrincipal()
-    await this.refreshSessionControl()
+    void this.loadSessionControlOptions()
     await this.ensureLink()
-    // A shutdown during the awaits above (a slow runtime refresh) must not reopen the socket.
+    // A shutdown during the awaits above must not reopen the socket.
     if (this.stopped) return
     await this.transport.connect()
     this.startPoll()
     await this.claimDrain()
   }
 
-  private async refreshSessionControl(): Promise<void> {
+  private async loadSessionControlOptions(failures = 0): Promise<void> {
     const control = this.delegate.sessionControl
-    if (!control?.refresh || this.stopped) return
-    const loaded = await control.refresh().catch((error: unknown) => {
-      this.log(`session-control refresh failed: ${this.summarize(error)}`)
-      return false
-    })
-    if (this.stopped) return
-    if (!loaded) {
-      const delay = Math.min(CONTROL_REFRESH_CAP_MS, CONTROL_REFRESH_BASE_MS * 2 ** this.controlRefreshAttempts)
-      this.controlRefreshAttempts += 1
-      this.controlRefreshTimer = setTimeout(() => void this.refreshSessionControl(), delay)
+    if (!control?.loadOptions || this.stopped) return
+    try {
+      await control.loadOptions()
+    } catch (error) {
+      if (this.stopped) return
+      const delay = Math.min(CONTROL_OPTIONS_RETRY_CAP_MS, CONTROL_OPTIONS_RETRY_BASE_MS * 2 ** failures)
+      this.log(`session-control options unavailable, retrying in ${delay}ms: ${this.summarize(error)}`)
+      this.controlOptionsTimer = setTimeout(() => void this.loadSessionControlOptions(failures + 1), delay)
       return
     }
-    this.controlRefreshAttempts = 0
-    // Unlinked, the first hello and the link's presence write carry the options.
+    if (failures > 0) this.log(`session-control options loaded on attempt ${failures + 1}`)
+    // Unlinked, the link's presence write and the first hello carry the options.
     if (this.link) await this.syncPresence()
   }
 
@@ -866,8 +865,8 @@ export class RemoteSession {
     if (this.pollTimer) clearTimeout(this.pollTimer)
     if (this.claimRetryTimer) clearTimeout(this.claimRetryTimer)
     this.claimRetryTimer = undefined
-    if (this.controlRefreshTimer) clearTimeout(this.controlRefreshTimer)
-    this.controlRefreshTimer = undefined
+    if (this.controlOptionsTimer) clearTimeout(this.controlOptionsTimer)
+    this.controlOptionsTimer = undefined
     this.archive.stop()
     const withdrawals = this.abandonPendingDecisions()
     this.resetReconnectHandoff()
