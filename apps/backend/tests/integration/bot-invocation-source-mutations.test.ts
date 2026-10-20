@@ -222,7 +222,7 @@ describe("bot invocation canonical source mutations", () => {
         prompt_markdown:
           "A non-user message was posted in your active Threa scratchpad.\n" +
           "Use the stream context to decide whether a reply is useful. If no reply is needed, respond exactly: THREA_NO_RESPONSE\n\n" +
-          "New issue\n\nMessage metadata:\n- posthog.issue: 0199f1c2-aaaa",
+          'New issue\n\nMessage metadata:\n- posthog.issue: "0199f1c2-aaaa"',
       },
     ])
   })

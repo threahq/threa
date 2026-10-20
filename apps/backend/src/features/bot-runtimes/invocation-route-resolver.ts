@@ -53,7 +53,9 @@ export function buildCanonicalInvocationPrompt(source: InvocationSourceState): s
         ].join("\n")
   const external = Object.entries(source.metadata).filter(([key]) => !key.startsWith(MESSAGE_METADATA_RESERVED_PREFIX))
   if (external.length === 0) return body
-  return [body, "", "Message metadata:", ...external.map(([key, value]) => `- ${key}: ${value}`)].join("\n")
+  return [body, "", "Message metadata:", ...external.map(([key, value]) => `- ${key}: ${JSON.stringify(value)}`)].join(
+    "\n"
+  )
 }
 
 export interface EditedSourceContext {
