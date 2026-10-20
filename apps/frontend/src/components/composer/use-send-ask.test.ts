@@ -152,23 +152,29 @@ describe("useSendAsk", () => {
     expect({ sent: send.mock.calls, asked: result.current.question }).toEqual({ sent: [], asked: null })
   })
 
-  it("drops a waiting send once cancelled, so a changed action asks afresh", async () => {
-    let settle: (value: ComposerSendWarning | null) => void = () => {}
-    const awaitSendWarning = () => new Promise<ComposerSendWarning | null>((resolve) => (settle = resolve))
+  it("cancels only the action whose meaning changed, and lets the next Send start at once", async () => {
+    const settles: Array<(value: ComposerSendWarning | null) => void> = []
+    const awaitSendWarning = () => new Promise<ComposerSendWarning | null>((resolve) => settles.push(resolve))
     const { result } = renderAsk({ sendWarning: null, content: DRAFT, awaitSendWarning })
-    const send = vi.fn()
+    const save = vi.fn()
+    const sendNow = vi.fn()
 
-    let pending: Promise<void> = Promise.resolve()
+    let cancelledSave: Promise<void> = Promise.resolve()
     act(() => {
-      pending = result.current.submit(send, "Save")
+      cancelledSave = result.current.submit(save, "Save")
     })
-    act(() => result.current.cancel())
+    act(() => result.current.cancel("Save"))
+    let keptSendNow: Promise<void> = Promise.resolve()
+    act(() => {
+      keptSendNow = result.current.submit(sendNow, "Send")
+    })
+    act(() => result.current.cancel("Save"))
     await act(async () => {
-      settle(warning())
-      await pending
+      settles.forEach((settle) => settle(null))
+      await Promise.all([cancelledSave, keptSendNow])
     })
 
-    expect({ sent: send.mock.calls, asked: result.current.question }).toEqual({ sent: [], asked: null })
+    expect({ saved: save.mock.calls.length, sentNow: sendNow.mock.calls.length }).toEqual({ saved: 0, sentNow: 1 })
   })
 
   it("still asks or sends when a display stamp lands while the answer is awaited", async () => {

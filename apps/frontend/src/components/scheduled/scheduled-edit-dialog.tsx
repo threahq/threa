@@ -340,9 +340,10 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
     if (!busy) void submitAsking(sendNow, "Send")
   }, [busy, submitAsking, sendNow])
 
-  // A question asked, or still being decided, as "Save" would send once the time passes: ask again under the new verb.
+  // Save's verb flips with the due state ("Save" sends once the time passes): drop a question or a Save
+  // still being decided under the old verb. Send now isn't offered once past, so a past "Send" is always Save's.
   useEffect(() => {
-    cancelQuestion()
+    cancelQuestion(isPast ? "Save" : "Send")
   }, [isPast, cancelQuestion])
 
   const handleDelete = useCallback(async () => {

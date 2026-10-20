@@ -75,8 +75,7 @@ export function useSendAsk({
   const askKey = askKeyOf(sendWarning)
   const [asked, setAsked] = useState<{ key: string; signature: string; send: Send; verb: SendVerb } | null>(null)
   const consented = useRef(new Set<string>())
-  const waiting = useRef(false)
-  const cancellations = useRef(0)
+  const waiting = useRef<{ verb: SendVerb } | null>(null)
   const latest = useRef({ content, sendWarning, awaitSendWarning })
   latest.current = { content, sendWarning, awaitSendWarning }
 
@@ -129,7 +128,7 @@ export function useSendAsk({
   )
 
   const settleThenDecide = useCallback(
-    async (send: Send, verb: SendVerb): Promise<void> => {
+    async (send: Send, verb: SendVerb, mine: { verb: SendVerb }): Promise<void> => {
       const { sendWarning: current, awaitSendWarning: awaitSettled } = latest.current
       if (!awaitSettled) {
         decide(current, send, verb)
@@ -137,11 +136,9 @@ export function useSendAsk({
       }
       // A link pasted a moment ago has no answer yet; asking from the old one would skip it.
       const before = unstampedMarkdown(latest.current.content)
-      const cancelledBefore = cancellations.current
       const settled = await awaitSettled()
       // The answer is about the content Send was pressed on; a draft typed into since, or a cancel, waits for the next Send.
-      if (unstampedMarkdown(latest.current.content) === before && cancellations.current === cancelledBefore)
-        decide(settled, send, verb)
+      if (unstampedMarkdown(latest.current.content) === before && waiting.current === mine) decide(settled, send, verb)
     },
     [decide]
   )
@@ -155,11 +152,12 @@ export function useSendAsk({
         else setAsked({ ...open, send, verb })
         return
       }
-      waiting.current = true
+      const mine = { verb }
+      waiting.current = mine
       try {
-        await settleThenDecide(send, verb)
+        await settleThenDecide(send, verb, mine)
       } finally {
-        waiting.current = false
+        if (waiting.current === mine) waiting.current = null
       }
     },
     [open, sendWarning, sendAndRecord, settleThenDecide]
@@ -170,10 +168,10 @@ export function useSendAsk({
   }, [open, sendWarning, sendAndRecord])
 
   const dismiss = useCallback(() => setAsked(null), [])
-  /** Dismiss, and drop a Send still waiting on its answer: the action it was pressed for changed. */
-  const cancel = useCallback(() => {
-    cancellations.current += 1
-    setAsked(null)
+  /** Drops the question or waiting Send for `verb` only, once that action changed meaning; another Send may start at once. */
+  const cancel = useCallback((verb: SendVerb) => {
+    if (waiting.current?.verb === verb) waiting.current = null
+    setAsked((current) => (current?.verb === verb ? null : current))
   }, [])
   /** The question's alternative converted refs; it answers for what the draft now holds. */
   const recordAlternative = useCallback(() => {
