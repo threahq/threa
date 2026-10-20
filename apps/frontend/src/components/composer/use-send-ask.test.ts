@@ -152,6 +152,25 @@ describe("useSendAsk", () => {
     expect({ sent: send.mock.calls, asked: result.current.question }).toEqual({ sent: [], asked: null })
   })
 
+  it("drops a waiting send once cancelled, so a changed action asks afresh", async () => {
+    let settle: (value: ComposerSendWarning | null) => void = () => {}
+    const awaitSendWarning = () => new Promise<ComposerSendWarning | null>((resolve) => (settle = resolve))
+    const { result } = renderAsk({ sendWarning: null, content: DRAFT, awaitSendWarning })
+    const send = vi.fn()
+
+    let pending: Promise<void> = Promise.resolve()
+    act(() => {
+      pending = result.current.submit(send, "Save")
+    })
+    act(() => result.current.cancel())
+    await act(async () => {
+      settle(warning())
+      await pending
+    })
+
+    expect({ sent: send.mock.calls, asked: result.current.question }).toEqual({ sent: [], asked: null })
+  })
+
   it("still asks or sends when a display stamp lands while the answer is awaited", async () => {
     async function pressSendThenStamp(answer: ComposerSendWarning | null) {
       let settle: (value: ComposerSendWarning | null) => void = () => {}

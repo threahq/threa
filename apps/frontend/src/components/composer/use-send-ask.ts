@@ -76,6 +76,7 @@ export function useSendAsk({
   const [asked, setAsked] = useState<{ key: string; signature: string; send: Send; verb: SendVerb } | null>(null)
   const consented = useRef(new Set<string>())
   const waiting = useRef(false)
+  const cancellations = useRef(0)
   const latest = useRef({ content, sendWarning, awaitSendWarning })
   latest.current = { content, sendWarning, awaitSendWarning }
 
@@ -136,9 +137,11 @@ export function useSendAsk({
       }
       // A link pasted a moment ago has no answer yet; asking from the old one would skip it.
       const before = unstampedMarkdown(latest.current.content)
+      const cancelledBefore = cancellations.current
       const settled = await awaitSettled()
-      // The answer is about the content Send was pressed on; a draft typed into since waits for the next Send.
-      if (unstampedMarkdown(latest.current.content) === before) decide(settled, send, verb)
+      // The answer is about the content Send was pressed on; a draft typed into since, or a cancel, waits for the next Send.
+      if (unstampedMarkdown(latest.current.content) === before && cancellations.current === cancelledBefore)
+        decide(settled, send, verb)
     },
     [decide]
   )
@@ -167,10 +170,15 @@ export function useSendAsk({
   }, [open, sendWarning, sendAndRecord])
 
   const dismiss = useCallback(() => setAsked(null), [])
+  /** Dismiss, and drop a Send still waiting on its answer: the action it was pressed for changed. */
+  const cancel = useCallback(() => {
+    cancellations.current += 1
+    setAsked(null)
+  }, [])
   /** The question's alternative converted refs; it answers for what the draft now holds. */
   const recordAlternative = useCallback(() => {
     if (sendWarning) record(sendWarning.targetKey, exposedAfterAlternative(sendWarning.warning))
   }, [record, sendWarning])
 
-  return { copy, question, submit, answer, dismiss, recordAlternative }
+  return { copy, question, submit, answer, dismiss, cancel, recordAlternative }
 }

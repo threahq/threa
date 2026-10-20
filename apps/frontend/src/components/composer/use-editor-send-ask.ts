@@ -34,7 +34,7 @@ export function useEditorSendAsk({
   compact: boolean
   sentReferenceKeys?: ReadonlySet<string>
 }) {
-  const { copy, question, submit, answer, dismiss, recordAlternative } = useSendAsk({
+  const { copy, question, submit, answer, dismiss, cancel, recordAlternative } = useSendAsk({
     sendWarning,
     awaitSendWarning,
     content,
@@ -83,6 +83,7 @@ export function useEditorSendAsk({
     question,
     submit,
     dismiss,
+    cancel,
     answerQuestion,
     closeQuestion,
     escapeQuestion,

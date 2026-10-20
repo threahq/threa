@@ -231,4 +231,40 @@ describe("ScheduledEditDialog audience question", () => {
 
     await waitFor(() => expect(screen.queryByTestId("send-ask")).toBeNull(), { timeout: 3000 })
   })
+
+  it("drops a Save still awaiting its audience once the send time passes", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    let settle: (value: ComposerSendWarning | null) => void = () => {}
+    let settled: ComposerSendWarning | null = null
+    const update = vi.fn().mockResolvedValue({ ...SCHEDULED_MESSAGE, id: "sched_server_test", version: 2 })
+    mockDialogDeps({
+      update,
+    })
+    spyOnExport(referenceAudienceModule, "useReferenceAudience").mockReturnValue(() => ({
+      sendWarning: settled,
+      audienceByStreamId: new Map(),
+      awaitSendWarning: () => new Promise((resolve) => (settle = resolve)),
+      sentReferenceKeys: new Set<string>(),
+    }))
+    render(
+      <ScheduledEditDialog
+        workspaceId="workspace-1"
+        scheduled={{ ...SCHEDULED_MESSAGE, id: "sched_server_test" }}
+        onClose={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: /^Save/ }))
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 5 * 60_000)
+    await screen.findByRole("button", { name: /^Send$/ }, { timeout: 3000 })
+    await act(async () => {
+      settled = revealWarning
+      settle(revealWarning)
+    })
+
+    expect({ asked: screen.queryByTestId("send-ask"), updates: update.mock.calls.length }).toEqual({
+      asked: null,
+      updates: 0,
+    })
+  })
 })

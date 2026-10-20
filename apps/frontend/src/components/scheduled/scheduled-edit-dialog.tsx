@@ -100,6 +100,7 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
     question,
     submit: submitAsking,
     dismiss: dismissQuestion,
+    cancel: cancelQuestion,
     answerQuestion,
     escapeQuestion,
     takeAlternative,
@@ -339,10 +340,10 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
     if (!busy) void submitAsking(sendNow, "Send")
   }, [busy, submitAsking, sendNow])
 
-  // A question asked as "Save" would send once the time passes: ask again under the new verb.
+  // A question asked, or still being decided, as "Save" would send once the time passes: ask again under the new verb.
   useEffect(() => {
-    dismissQuestion()
-  }, [isPast, dismissQuestion])
+    cancelQuestion()
+  }, [isPast, cancelQuestion])
 
   const handleDelete = useCallback(async () => {
     if (!scheduled) return
