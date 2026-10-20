@@ -773,6 +773,8 @@ export class RemoteSession {
     await this.verifyPrincipal()
     await this.refreshSessionControl()
     await this.ensureLink()
+    // A shutdown during the awaits above (a slow runtime refresh) must not reopen the socket.
+    if (this.stopped) return
     await this.transport.connect()
     this.startPoll()
     await this.claimDrain()
