@@ -207,6 +207,51 @@ describe("T3 session control", () => {
     })
   })
 
+  test("/thinking with no thread yet sets only the next launch", async () => {
+    const { t3, saved, control } = setup({ threads: {}, model: { instanceId: "codex", model: "gpt-5.5" } })
+
+    const result = await control.runCommand("thinking", "low", CONTEXT)
+
+    expect({ result, configured: t3.callsOf("t3_thread_configure"), model: saved.at(-1)?.model }).toEqual({
+      result: { ok: true, summary: "Set thinking to low" },
+      configured: [],
+      model: { instanceId: "codex", model: "gpt-5.5", options: [{ id: "reasoningEffort", value: "low" }] },
+    })
+  })
+
+  test("/thinking a running thread refuses still sets the next launch", async () => {
+    const codex = { instanceId: "codex", model: "gpt-5.5" }
+    const { t3, saved, control } = setup({ threads: { stream_root: "thread_a" }, model: codex })
+    t3.threadModel("thread_a", codex)
+    t3.failNext("t3_thread_configure", new Error("thread is running"))
+
+    const result = await control.runCommand("thinking", "high", CONTEXT)
+
+    expect({ result, model: saved.at(-1)?.model }).toEqual({
+      result: {
+        ok: true,
+        message: "Set thinking to high for new threads, but `thread_a` keeps its own: thread is running",
+      },
+      model: { ...codex, options: [{ id: "reasoningEffort", value: "high" }] },
+    })
+  })
+
+  test.each(["model", "thinking"])("/%s changes nothing when the T3 models can't be read", async (command) => {
+    const { t3, saved, control } = setup({
+      threads: { stream_root: "thread_a" },
+      model: { instanceId: "codex", model: "gpt-5.5" },
+    })
+    t3.failNext("orchestrator_capabilities", new Error("connection refused"))
+
+    const result = await control.runCommand(command, "high", CONTEXT)
+
+    expect({ result, configured: t3.callsOf("t3_thread_configure"), saved }).toEqual({
+      result: { ok: false, message: "Could not read the T3 Code models: connection refused" },
+      configured: [],
+      saved: [],
+    })
+  })
+
   test("/thinking changes nothing when the thread's model can't be read", async () => {
     const { t3, saved, control } = setup({
       threads: { stream_root: "thread_a" },

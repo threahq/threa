@@ -46,9 +46,7 @@ function effortOptionOf(
 }
 
 function effortOf(selection: ModelSelection | undefined): string | undefined {
-  const value = selection?.options?.find(
-    (option) => EFFORT_OPTION_IDS.has(option.id) && typeof option.value === "string"
-  )?.value
+  const value = selection?.options?.find((option) => EFFORT_OPTION_IDS.has(option.id))?.value
   return typeof value === "string" ? value : undefined
 }
 
@@ -156,7 +154,8 @@ export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): 
     const levels = levelsOf(effortOptionOf(providers, model))
     if (levels.length === 0) return { ok: false, message: `${label(model)} has no thinking levels.` }
     const level = levels.find((candidate) => candidate.toLowerCase() === arg.trim().toLowerCase())
-    if (!level) return { ok: false, message: `${label(model)} thinks at one of: ${levels.join(", ")}.` }
+    const launch = level === undefined ? undefined : withEffort(providers, model, level)
+    if (!level || !launch) return { ok: false, message: `${label(model)} thinks at one of: ${levels.join(", ")}.` }
     // A configure replaces the whole selection, and the thread may run another model than new threads launch on, like
     // one switched in T3, so the level goes onto the thread's own selection.
     const threadId = runner.threadFor(rootStreamId)
@@ -168,7 +167,7 @@ export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): 
         return { ok: false, message: `Could not read \`${threadId}\`'s model: ${errorText(error)}` }
       }
     }
-    runner.setModel(withEffort(providers, model, level)!)
+    runner.setModel(launch)
     const summary = `Set thinking to ${level}`
     if (!threadId || !thread) return { ok: true, summary }
     const next = withEffort(providers, thread, level)
