@@ -5786,6 +5786,52 @@ describe("session-control options", () => {
     }
   })
 
+  test("a shutdown with a retry pending cancels it", async () => {
+    jest.useFakeTimers()
+    let loads = 0
+    const h = makeStartableSession(
+      modelControl(async () => {
+        loads += 1
+        throw new Error("connect ECONNREFUSED")
+      })
+    )
+    try {
+      await h.session.start()
+      await flush()
+      await h.session.shutdown()
+
+      jest.advanceTimersByTime(10 * 60 * 1000)
+      await flush()
+
+      expect(loads).toBe(1)
+    } finally {
+      jest.useRealTimers()
+      h.cleanup()
+    }
+  })
+
+  test("options loaded before the link ride the link's presence write", async () => {
+    const linking = gate()
+    const h = makeStartableSession(
+      modelControl(
+        async () => {},
+        () => [{ value: "opus", label: "Opus" }]
+      ),
+      linking.promise
+    )
+    try {
+      const starting = h.session.start()
+      await flush()
+      linking.open()
+      await starting
+
+      expect(h.pickerOptions()).toEqual([[{ value: "opus", label: "Opus" }]])
+    } finally {
+      await h.session.shutdown()
+      h.cleanup()
+    }
+  })
+
   test("start links and connects without waiting for the runtime's options", async () => {
     const answer = gate()
     const h = makeStartableSession(modelControl(() => answer.promise))

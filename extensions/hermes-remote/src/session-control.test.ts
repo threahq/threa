@@ -120,6 +120,19 @@ describe("createHermesSessionControl", () => {
     expect(control.modelSuggestions).toEqual([])
   })
 
+  test("loadOptions bounds the options fetch with an abort signal", async () => {
+    const { runner } = makeRunner()
+    const signals: (AbortSignal | undefined)[] = []
+    const { client } = makeClient({
+      listModelOptions: async (signal?: AbortSignal) => {
+        signals.push(signal)
+        return OPTIONS
+      },
+    })
+    await createHermesSessionControl(runner, client).loadOptions()
+    expect(signals.map((signal) => signal instanceof AbortSignal)).toEqual([true])
+  })
+
   test("status names the conversation, each open run with its status, and the gateway", async () => {
     const { runner } = makeRunner([{ runId: "run_1", streamId: "stream_root" }])
     const control = createHermesSessionControl(runner, makeClient().client)
