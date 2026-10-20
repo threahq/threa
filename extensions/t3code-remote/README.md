@@ -114,7 +114,8 @@ A damaged `threads.json` or `token.json` stops the connector at start instead of
 
 Tool calls (commands, file changes, searches, subagents) show as steps. `headline` mode shows only what kind of tool
 ran; `commands` mode adds the command's first line, since T3 sends a command and its output as one text. On an encrypted scratchpad with `sealedFullTrace` on (the default), steps
-also carry command output, file change details and reasoning.
+also carry command output and file change details, and the model's reasoning shows as thinking steps. Other
+scratchpads get no reasoning steps.
 
 An assistant message followed by more work is posted as a narration step, and the last one is the reply. A
 `THREA_ATTACH: /absolute/path` line in the reply uploads that file, and a reply of exactly `THREA_NO_RESPONSE` closes the

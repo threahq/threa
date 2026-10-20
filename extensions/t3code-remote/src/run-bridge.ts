@@ -136,7 +136,8 @@ function noteFrame(item: ThreadItem, mode: RunTraceMode): StepFrame {
   const text = item.text ?? ""
   switch (item.type) {
     case "reasoning":
-      return { stepType: "thinking", content: mode === "full" ? text : "Thinking content omitted for safety." }
+      // Reasoning can quote what the agent read, so only a full trace carries it; otherwise the step is dropped.
+      return { stepType: "thinking", content: mode === "full" ? text : "" }
     case "error":
       return {
         stepType: "tool_error",
