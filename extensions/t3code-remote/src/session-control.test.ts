@@ -114,16 +114,15 @@ describe("T3 session control", () => {
   })
 
   test("/thinking sets the level on the scratchpad's thread and the next launch", async () => {
-    const { t3, saved, control } = setup({
-      threads: { stream_root: "thread_a" },
-      model: { instanceId: "codex", model: "gpt-5.5" },
-    })
+    const codex = { instanceId: "codex", model: "gpt-5.5" }
+    const { t3, saved, control } = setup({ threads: { stream_root: "thread_a" }, model: codex })
+    t3.threadModel("thread_a", codex)
     await control.loadOptions()
 
     const levels = control.thinkingLevels
     const result = await control.runCommand("thinking", "HIGH", CONTEXT)
 
-    const selection = { instanceId: "codex", model: "gpt-5.5", options: [{ id: "reasoningEffort", value: "high" }] }
+    const selection = { ...codex, options: [{ id: "reasoningEffort", value: "high" }] }
     expect({ levels, configured: t3.callsOf("t3_thread_configure"), model: saved.at(-1)?.model, result }).toEqual({
       levels: ["low", "medium", "high", "xhigh"],
       configured: [{ threadId: "thread_a", modelSelection: selection }],
@@ -145,16 +144,66 @@ describe("T3 session control", () => {
 
     await control.runCommand("thinking", "max", CONTEXT)
 
-    const selection = {
-      ...opus,
-      options: [
-        { id: "contextWindow", value: "1m" },
-        { id: "effort", value: "max" },
-      ],
-    }
     expect({ configured: t3.callsOf("t3_thread_configure"), model: saved.at(-1)?.model }).toEqual({
-      configured: [{ threadId: "thread_a", modelSelection: selection }],
-      model: selection,
+      configured: [
+        {
+          threadId: "thread_a",
+          modelSelection: {
+            ...opus,
+            options: [
+              { id: "contextWindow", value: "1m" },
+              { id: "effort", value: "max" },
+            ],
+          },
+        },
+      ],
+      model: { ...opus, options: [{ id: "effort", value: "max" }] },
+    })
+  })
+
+  test("/thinking keeps a thread switched to another model on that model", async () => {
+    const { t3, saved, control } = setup({
+      threads: { stream_root: "thread_a" },
+      model: { instanceId: "codex", model: "gpt-5.5" },
+    })
+    const opus = {
+      instanceId: "claudeAgent",
+      model: "claude-opus-5-5",
+      options: [{ id: "contextWindow", value: "1m" }],
+    }
+    t3.threadModel("thread_a", opus)
+
+    const result = await control.runCommand("thinking", "high", CONTEXT)
+
+    expect({ result, configured: t3.callsOf("t3_thread_configure"), model: saved.at(-1)?.model }).toEqual({
+      result: { ok: true, summary: "Set thinking to high" },
+      configured: [
+        {
+          threadId: "thread_a",
+          modelSelection: { ...opus, options: [...opus.options, { id: "effort", value: "high" }] },
+        },
+      ],
+      model: { instanceId: "codex", model: "gpt-5.5", options: [{ id: "reasoningEffort", value: "high" }] },
+    })
+  })
+
+  test("/thinking leaves a thread whose model lacks the level alone", async () => {
+    const { t3, saved, control } = setup({
+      threads: { stream_root: "thread_a" },
+      model: { instanceId: "codex", model: "gpt-5.5" },
+    })
+    t3.threadModel("thread_a", { instanceId: "codex", model: "gpt-5.5-mini" })
+
+    const result = await control.runCommand("thinking", "high", CONTEXT)
+
+    expect({ result, configured: t3.callsOf("t3_thread_configure"), model: saved.at(-1)?.model }).toEqual({
+      result: {
+        ok: true,
+        message:
+          "Set thinking to high for new threads, but `thread_a` runs codex::gpt-5.5-mini, which doesn't offer it.",
+      },
+      configured: [],
+      model: { instanceId: "codex", model: "gpt-5.5", options: [{ id: "reasoningEffort", value: "high" }] },
     })
   })
 
@@ -175,10 +224,20 @@ describe("T3 session control", () => {
   })
 
   test.each([
-    [undefined, "nope", "Pick a model with /model first."],
-    [{ instanceId: "codex", model: "gpt-5.5-mini" }, "high", "codex::gpt-5.5-mini has no thinking levels."],
-    [{ instanceId: "codex", model: "gpt-5.5" }, "max", "codex::gpt-5.5 thinks at one of: low, medium, high, xhigh."],
-  ])("/thinking on %p with %p changes nothing", async (model, arg, message) => {
+    { $case: "no model", model: undefined, arg: "nope", message: "Pick a model with /model first." },
+    {
+      $case: "a model without levels",
+      model: { instanceId: "codex", model: "gpt-5.5-mini" },
+      arg: "high",
+      message: "codex::gpt-5.5-mini has no thinking levels.",
+    },
+    {
+      $case: "a level the model lacks",
+      model: { instanceId: "codex", model: "gpt-5.5" },
+      arg: "max",
+      message: "codex::gpt-5.5 thinks at one of: low, medium, high, xhigh.",
+    },
+  ])("/thinking with $case changes nothing", async ({ model, arg, message }) => {
     const { t3, saved, control } = setup({ threads: { stream_root: "thread_a" }, ...(model ? { model } : {}) })
 
     const result = await control.runCommand("thinking", arg, CONTEXT)
@@ -191,9 +250,9 @@ describe("T3 session control", () => {
   })
 
   test.each([
-    ["high", [{ id: "effort", value: "high" }]],
-    ["xhigh", undefined],
-  ])("/model keeps thinking %p only where the new model offers it", async (level, options) => {
+    ["high", { instanceId: "claudeAgent", model: "claude-opus-5-5", options: [{ id: "effort", value: "high" }] }],
+    ["xhigh", { instanceId: "claudeAgent", model: "claude-opus-5-5" }],
+  ])("/model keeps thinking %p only where the new model offers it", async (level, expected) => {
     const { saved, control } = setup({
       threads: {},
       model: { instanceId: "codex", model: "gpt-5.5", options: [{ id: "reasoningEffort", value: level }] },
@@ -202,7 +261,7 @@ describe("T3 session control", () => {
     await control.runCommand("model", "opus", CONTEXT)
 
     expect({ model: saved.at(-1)?.model, levels: control.thinkingLevels }).toEqual({
-      model: { instanceId: "claudeAgent", model: "claude-opus-5-5", ...(options ? { options } : {}) },
+      model: expected,
       levels: ["low", "medium", "high", "max"],
     })
   })

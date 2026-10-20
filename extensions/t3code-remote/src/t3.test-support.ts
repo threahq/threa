@@ -142,9 +142,11 @@ export function fakeT3() {
       }
     },
     t3_thread_interrupt: () => ({ status: "interrupt_requested" }),
-    t3_thread_configuration: (args) => ({
-      modelSelection: models.get(args.threadId) ?? { instanceId: "codex", model: "gpt-5.5" },
-    }),
+    t3_thread_configuration: (args) => {
+      const modelSelection = models.get(args.threadId)
+      if (!modelSelection) throw new Error(`Thread ${args.threadId} not found`)
+      return { modelSelection }
+    },
     t3_thread_configure: (args) => {
       models.set(args.threadId, args.modelSelection)
       return { sequence: 1 }

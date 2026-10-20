@@ -17,10 +17,15 @@ export type RunStatus =
   | "cancelled"
   | "rolled_back"
 
+export interface ModelOption {
+  id: string
+  value: string | boolean
+}
+
 export interface ModelSelection {
   instanceId: string
   model: string
-  options?: Array<{ id: string; value: string | boolean }>
+  options?: ModelOption[]
 }
 
 /** A setting a model offers, like its reasoning effort; `options` lists a select's values. */

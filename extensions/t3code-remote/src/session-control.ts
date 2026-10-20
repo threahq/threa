@@ -46,12 +46,26 @@ function effortOptionOf(
 }
 
 function effortOf(selection: ModelSelection | undefined): string | undefined {
-  const value = selection?.options?.find((option) => EFFORT_OPTION_IDS.has(option.id))?.value
+  const value = selection?.options?.find(
+    (option) => EFFORT_OPTION_IDS.has(option.id) && typeof option.value === "string"
+  )?.value
   return typeof value === "string" ? value : undefined
 }
 
 function levelsOf(option: ModelOptionDescriptor | undefined): string[] {
   return option?.options?.map((level) => level.id) ?? []
+}
+
+/** The selection thinking at `level`, keeping its other options, or undefined when its model doesn't offer the level. */
+function withEffort(
+  providers: readonly ProviderInfo[],
+  selection: ModelSelection,
+  level: string
+): ModelSelection | undefined {
+  const option = effortOptionOf(providers, selection)
+  if (!option || !levelsOf(option).includes(level)) return undefined
+  const others = (selection.options ?? []).filter((candidate) => candidate.id !== option.id)
+  return { ...selection, options: [...others, { id: option.id, value: level }] }
 }
 
 function suggestionsFrom(providers: readonly ProviderInfo[]): ModelSuggestionInfo[] {
@@ -66,11 +80,15 @@ function suggestionsFrom(providers: readonly ProviderInfo[]): ModelSuggestionInf
 
 export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): T3SessionControl {
   let providers: ProviderInfo[] = []
-  let suggestions: ModelSuggestionInfo[] = []
 
-  async function loadProviders(): Promise<ProviderInfo[]> {
-    providers = (await client.call("orchestrator_capabilities", {})).providers
-    return providers
+  /** Re-reads the models T3 offers; returns the failure to report when it can't. */
+  async function refreshProviders(): Promise<CommandResult | undefined> {
+    try {
+      providers = (await client.call("orchestrator_capabilities", {})).providers
+    } catch (error) {
+      return { ok: false, message: `Could not read the T3 Code models: ${errorText(error)}` }
+    }
+    return undefined
   }
 
   async function status(rootStreamId: string): Promise<string> {
@@ -97,29 +115,24 @@ export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): 
   }
 
   // The SDK hands a command only its root stream, so /model and /thinking move the scratchpad's thread and every
-  // later launch.
-  async function apply(selection: ModelSelection, rootStreamId: string, summary: string): Promise<CommandResult> {
-    runner.setModel(selection)
-    const threadId = runner.threadFor(rootStreamId)
-    if (threadId) {
-      try {
-        await client.call("t3_thread_configure", { threadId, modelSelection: selection })
-      } catch (error) {
-        return {
-          ok: true,
-          message: `${summary} for new threads, but \`${threadId}\` keeps its own: ${errorText(error)}`,
-        }
-      }
+  // later launch. The launch model is saved before this runs.
+  async function configureThread(
+    threadId: string | undefined,
+    selection: ModelSelection,
+    summary: string
+  ): Promise<CommandResult> {
+    if (!threadId) return { ok: true, summary }
+    try {
+      await client.call("t3_thread_configure", { threadId, modelSelection: selection })
+    } catch (error) {
+      return { ok: true, message: `${summary} for new threads, but \`${threadId}\` keeps its own: ${errorText(error)}` }
     }
     return { ok: true, summary }
   }
 
   async function setModel(arg: string, rootStreamId: string): Promise<CommandResult> {
-    try {
-      await loadProviders()
-    } catch (error) {
-      return { ok: false, message: `Could not read the T3 Code models: ${errorText(error)}` }
-    }
+    const failure = await refreshProviders()
+    if (failure) return failure
     const matches = matchModel(choicesOf(providers), arg)
     if (matches.length === 0) return { ok: false, message: `No model matches "${arg.trim()}".` }
     if (matches.length > 1) {
@@ -130,49 +143,42 @@ export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): 
     const choice = matches[0]!
     // The thinking level carries over when the new model offers it; otherwise the model's default applies.
     const effort = effortOf(runner.model)
-    const option = effortOptionOf(providers, choice)
-    const kept = effort !== undefined && option && levelsOf(option).includes(effort)
-    return await apply(
-      kept ? { ...choice, options: [{ id: option.id, value: effort }] } : choice,
-      rootStreamId,
-      `Set the model to ${label(choice)}`
-    )
+    const selection = (effort !== undefined && withEffort(providers, choice, effort)) || choice
+    runner.setModel(selection)
+    return await configureThread(runner.threadFor(rootStreamId), selection, `Set the model to ${label(choice)}`)
   }
 
   async function setThinking(arg: string, rootStreamId: string): Promise<CommandResult> {
     const model = runner.model
     if (!model) return { ok: false, message: "Pick a model with /model first." }
-    try {
-      await loadProviders()
-    } catch (error) {
-      return { ok: false, message: `Could not read the T3 Code models: ${errorText(error)}` }
-    }
-    const option = effortOptionOf(providers, model)
-    if (!option) return { ok: false, message: `${label(model)} has no thinking levels.` }
-    const levels = levelsOf(option)
+    const failure = await refreshProviders()
+    if (failure) return failure
+    const levels = levelsOf(effortOptionOf(providers, model))
+    if (levels.length === 0) return { ok: false, message: `${label(model)} has no thinking levels.` }
     const level = levels.find((candidate) => candidate.toLowerCase() === arg.trim().toLowerCase())
-    if (!level) {
-      return { ok: false, message: `${label(model)} thinks at one of: ${levels.join(", ")}.` }
-    }
-    // A configure replaces the whole selection, so keep the thread's other options, like Claude's context window.
+    if (!level) return { ok: false, message: `${label(model)} thinks at one of: ${levels.join(", ")}.` }
+    // A configure replaces the whole selection, and the thread may run another model than new threads launch on, like
+    // one switched in T3, so the level goes onto the thread's own selection.
     const threadId = runner.threadFor(rootStreamId)
-    let current = model
+    let thread: ModelSelection | undefined
     if (threadId) {
       try {
-        const { modelSelection } = await client.call("t3_thread_configuration", { threadId })
-        if (modelSelection.instanceId === model.instanceId && modelSelection.model === model.model) {
-          current = modelSelection
-        }
+        thread = (await client.call("t3_thread_configuration", { threadId })).modelSelection
       } catch (error) {
         return { ok: false, message: `Could not read \`${threadId}\`'s model: ${errorText(error)}` }
       }
     }
-    const kept = (current.options ?? []).filter((candidate) => candidate.id !== option.id)
-    return await apply(
-      { ...model, options: [...kept, { id: option.id, value: level }] },
-      rootStreamId,
-      `Set thinking to ${level}`
-    )
+    runner.setModel(withEffort(providers, model, level)!)
+    const summary = `Set thinking to ${level}`
+    if (!threadId || !thread) return { ok: true, summary }
+    const next = withEffort(providers, thread, level)
+    if (!next) {
+      return {
+        ok: true,
+        message: `${summary} for new threads, but \`${threadId}\` runs ${label(thread)}, which doesn't offer it.`,
+      }
+    }
+    return await configureThread(threadId, next, summary)
   }
 
   // The SDK hands a command only its root stream, so a /clear typed in a thread clears the scratchpad's thread.
@@ -185,7 +191,7 @@ export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): 
   return {
     commands: ["stop", "status", "model", "thinking", "clear"],
     get modelSuggestions() {
-      return suggestions
+      return suggestionsFrom(providers)
     },
     get thinkingLevels() {
       return runner.model ? levelsOf(effortOptionOf(providers, runner.model)) : []
@@ -193,7 +199,7 @@ export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): 
     interrupt: (streamId) => runner.interrupt(streamId),
     steer: (text, streamId, attachments) => runner.steer(text, streamId, attachments),
     loadOptions: async () => {
-      suggestions = suggestionsFrom(await loadProviders())
+      providers = (await client.call("orchestrator_capabilities", {})).providers
     },
     runCommand: async (name, args, context) => {
       switch (name) {
