@@ -60,11 +60,13 @@ describe("questionCard", () => {
     expect({
       title: card.input.title,
       bodyLength: card.input.body?.length,
+      bodyEnd: card.input.body?.endsWith("**\n\nFor Other, write your answer in the note."),
       labelLength: card.input.options[0]!.label?.length,
       cancelled: card.answerFor({ status: "cancelled", decision: DECISION }),
     }).toEqual({
       title: "T3 Code has a question",
       bodyLength: 8000,
+      bodyEnd: true,
       labelLength: 80,
       cancelled: { kind: "unanswered" },
     })

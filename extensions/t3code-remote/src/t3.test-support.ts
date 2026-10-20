@@ -1,4 +1,10 @@
-import type { DecisionOutcome, DecisionRequestInput, DeliveredTurn, StepFrame } from "@threahq/remote-session"
+import {
+  DecisionAbandonedError,
+  type DecisionOutcome,
+  type DecisionRequestInput,
+  type DeliveredTurn,
+  type StepFrame,
+} from "@threahq/remote-session"
 import { TERMINAL_RUN_STATUSES, type BridgeSession } from "./run-bridge"
 import {
   T3ToolError,
@@ -282,7 +288,7 @@ export function fakeSession(rootStreamId = "stream_root") {
   const replies: Array<{ invocationId: string; text: string }> = []
   const fails: Array<{ invocationId: string; errorMessage: string }> = []
   const decisions: Array<{ input: DecisionRequestInput; signal?: AbortSignal }> = []
-  const outcomes: DecisionOutcome[] = []
+  const outcomes: Array<DecisionOutcome | DecisionAbandonedError> = []
   let answer: (() => void) | undefined
   let settle: () => void = () => {}
   let settled = new Promise<void>((resolve) => (settle = resolve))
@@ -312,6 +318,7 @@ export function fakeSession(rootStreamId = "stream_root") {
       aborted.catch(() => {})
       for (;;) {
         const outcome = outcomes.shift()
+        if (outcome instanceof DecisionAbandonedError) throw outcome
         if (outcome) return outcome
         await Promise.race([new Promise<void>((resolve) => (answer = resolve)), aborted])
       }
@@ -326,6 +333,11 @@ export function fakeSession(rootStreamId = "stream_root") {
     /** Answer the open card, or the next one asked. */
     answer: (outcome: DecisionOutcome) => {
       outcomes.push(outcome)
+      answer?.()
+    },
+    /** Abandon the open card, as the SDK does when the session shuts down on its own. */
+    abandon: () => {
+      outcomes.push(new DecisionAbandonedError("dec_1"))
       answer?.()
     },
     frames: () => steps.flatMap((batch) => batch.frames),

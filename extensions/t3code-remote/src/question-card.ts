@@ -47,10 +47,13 @@ export function questionCard(question: PendingQuestion, { skippable }: { skippab
     : other
       ? "For Other, write your answer in the note."
       : undefined
+  // The list carries the options past the buttons, so a long question gives way before it does.
+  const tail = [listed.join("\n"), hint].filter(Boolean).join("\n\n")
+  const asked = clip(question.question, Math.max(1, MAX_BODY_CHARS - tail.length - 2))
   return {
     input: {
       title: clip(question.header.trim() || "T3 Code has a question", MAX_TITLE_CHARS),
-      body: clip([question.question, listed.join("\n"), hint].filter(Boolean).join("\n\n"), MAX_BODY_CHARS),
+      body: clip([asked, tail].filter(Boolean).join("\n\n"), MAX_BODY_CHARS),
       options: [
         ...shown.map((option, index) => ({ id: `option_${index}`, label: clip(option.label, MAX_LABEL_CHARS) })),
         ...(other ? [{ id: OTHER_OPTION_ID, label: "Other" }] : []),

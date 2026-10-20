@@ -528,6 +528,29 @@ describe("T3TurnRunner", () => {
     })
   })
 
+  test("a card the session abandons, as archiving the scratchpad does, stops the run", async () => {
+    const { t3, session, runner } = setup()
+    t3.ask("thread_1", "req_1", [question("runner")])
+    t3.script("run_1", [{ status: "waiting", items: [asking()] }])
+    await runner.deliverTurn(turn())
+    await idle()
+
+    session.abandon()
+    await idle()
+    t3.script("run_1", [{ status: "waiting" }])
+    await session.settled()
+
+    expect({
+      decisions: session.decisions.length,
+      interrupts: t3.callsOf("t3_thread_interrupt"),
+      fails: session.fails,
+    }).toEqual({
+      decisions: 1,
+      interrupts: [{ threadId: "thread_1", runId: "run_1", reason: "Stopped from Threa" }],
+      fails: [{ invocationId: "binv_1", errorMessage: "T3 Code asked a question that went unanswered." }],
+    })
+  })
+
   test("a question T3 won't read fails the turn with why", async () => {
     const { t3, session, runner } = setup()
     t3.failNext("t3_pending_request_read", new Error("request not found"))

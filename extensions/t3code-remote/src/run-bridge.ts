@@ -72,6 +72,7 @@ const IMAGE_MIME_TYPES = new Set(["image/gif", "image/jpeg", "image/png", "image
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024
 const MAX_IMAGES_PER_MESSAGE = 8
 export const TERMINAL_RUN_STATUSES = new Set<string>(["completed", "failed", "cancelled", "interrupted", "rolled_back"])
+const UNANSWERED_MESSAGE = "T3 Code asked a question that went unanswered."
 const OPEN_ITEM_STATUSES = new Set<string>(["idle", "pending", "running", "waiting"])
 const TOOL_LABELS: Record<string, string> = {
   command_execution: "Shell command",
@@ -666,7 +667,7 @@ export class T3TurnRunner {
               const answer = card.answerFor(outcome)
               if (answer.kind === "blank") continue
               if (answer.kind === "unanswered") {
-                run.unanswered = "T3 Code asked a question that went unanswered."
+                run.unanswered = UNANSWERED_MESSAGE
                 return
               }
               if (answer.kind === "answered") answers[question.id] = answer.text
@@ -683,8 +684,12 @@ export class T3TurnRunner {
           run.asked.add(requestId)
         }
       } catch (error) {
-        if (signal.aborted || error instanceof DecisionAbandonedError) return
-        run.unanswered = `T3 Code's question couldn't be answered from Threa: ${errorText(error)}`
+        if (signal.aborted) return
+        // An archived scratchpad abandons the card without stopping the run.
+        run.unanswered =
+          error instanceof DecisionAbandonedError
+            ? UNANSWERED_MESSAGE
+            : `T3 Code's question couldn't be answered from Threa: ${errorText(error)}`
       } finally {
         if (run.asking === asking) run.asking = undefined
       }
