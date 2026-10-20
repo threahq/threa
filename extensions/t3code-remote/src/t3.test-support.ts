@@ -1,9 +1,10 @@
-import type { DeliveredTurn, StepFrame } from "@threahq/remote-session"
+import type { DecisionOutcome, DecisionRequestInput, DeliveredTurn, StepFrame } from "@threahq/remote-session"
 import type { BridgeSession } from "./run-bridge"
 import {
   T3ToolError,
   type ModelOptionDescriptor,
   type ModelSelection,
+  type PendingQuestion,
   type T3Client,
   type T3ToolName,
   type T3Tools,
@@ -61,6 +62,7 @@ export function fakeT3() {
   let steerDelivery: "steered" | "started" | "queued" = "steered"
   let envMode: "local" | "worktree" | undefined
   const models = new Map<string, ModelSelection>()
+  const pending = new Map<string, { threadId: string; questions: PendingQuestion[] }>()
 
   const startRun = () => `run_${++runs}`
   const steerRun = () => (steerDelivery === "steered" ? `run_${runs}` : startRun())
@@ -183,6 +185,17 @@ export function fakeT3() {
         },
       ],
     }),
+    t3_pending_request_list: (args) => ({
+      requestIds: [...pending].filter(([, request]) => request.threadId === args.threadId).map(([id]) => id),
+    }),
+    t3_pending_request_read: (args) => ({
+      requestId: args.requestId,
+      questions: pending.get(args.requestId)!.questions,
+    }),
+    t3_pending_request_respond: (args) => {
+      pending.delete(args.requestId)
+      return {}
+    },
     t3_environment_read: () => ({
       preferences: {
         ...(envMode ? { defaultThreadEnvMode: envMode } : {}),
@@ -228,6 +241,9 @@ export function fakeT3() {
     steerAs: (delivery: typeof steerDelivery) => (steerDelivery = delivery),
     /** Put a thread on a model, as when the user configures it in T3. */
     threadModel: (threadId: string, selection: ModelSelection) => models.set(threadId, selection),
+    /** Put questions to the user on a thread, as a provider's ask-user tool does. */
+    ask: (threadId: string, requestId: string, questions: PendingQuestion[]) =>
+      pending.set(requestId, { threadId, questions }),
     /** The environment's default for new threads, unset unless a test sets it. */
     defaultEnvMode: (mode: typeof envMode) => (envMode = mode),
   }
@@ -237,6 +253,9 @@ export function fakeSession(rootStreamId = "stream_root") {
   const steps: Array<{ invocationId: string; frames: StepFrame[] }> = []
   const replies: Array<{ invocationId: string; text: string }> = []
   const fails: Array<{ invocationId: string; errorMessage: string }> = []
+  const decisions: Array<{ input: DecisionRequestInput; signal?: AbortSignal }> = []
+  const outcomes: DecisionOutcome[] = []
+  let answer: (() => void) | undefined
   let settle: () => void = () => {}
   let settled = new Promise<void>((resolve) => (settle = resolve))
   const session: BridgeSession = {
@@ -255,12 +274,30 @@ export function fakeSession(rootStreamId = "stream_root") {
       settle()
       return true
     },
+    requestDecision: async (input, opts) => {
+      decisions.push({ input, ...(opts?.signal ? { signal: opts.signal } : {}) })
+      const aborted = new Promise<never>((_, reject) =>
+        opts?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true })
+      )
+      aborted.catch(() => {})
+      for (;;) {
+        const outcome = outcomes.shift()
+        if (outcome) return outcome
+        await Promise.race([new Promise<void>((resolve) => (answer = resolve)), aborted])
+      }
+    },
   }
   return {
     session,
     steps,
     replies,
     fails,
+    decisions,
+    /** Answer the open card, or the next one asked. */
+    answer: (outcome: DecisionOutcome) => {
+      outcomes.push(outcome)
+      answer?.()
+    },
     frames: () => steps.flatMap((batch) => batch.frames),
     /** Resolves when the next turn closes. */
     settled: async () => {

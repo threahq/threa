@@ -63,6 +63,15 @@ export interface ImageAttachment {
   sizeBytes: number
 }
 
+export interface PendingQuestion {
+  id: string
+  header: string
+  question: string
+  options: Array<{ label: string; description: string; value?: string }>
+  multiSelect?: boolean
+  allowCustomAnswer?: boolean
+}
+
 export interface ProviderInfo {
   providerInstanceId: string
   displayName?: string
@@ -118,6 +127,20 @@ export interface T3Tools {
   t3_thread_interrupt: {
     args: { threadId: string; runId?: string; reason?: string }
     result: { status: string }
+  }
+  t3_pending_request_list: {
+    args: { threadId: string }
+    /** Pending user questions only; approvals are not listed. */
+    result: { requestIds: string[] }
+  }
+  t3_pending_request_read: {
+    args: { threadId: string; requestId: string }
+    result: { requestId: string; questions: PendingQuestion[] }
+  }
+  t3_pending_request_respond: {
+    /** Keyed by question id; every provider takes a string answer. */
+    args: { threadId: string; requestId: string; answers: Record<string, string> }
+    result: unknown
   }
   t3_thread_configuration: {
     args: { threadId: string }

@@ -68,8 +68,16 @@ Without auto-login the connector refuses to start with no token, and a rejected 
 hint.
 
 `t3Access` is the permission ceiling the token asks for and every launched thread runs at. Keep it at
-`full-access`: Threa can't answer T3's approval or question prompts yet, so a run that stops on one is interrupted
-and its turn fails with a message saying why.
+`full-access`: Threa can't answer T3's approval prompts yet, so a run that stops on one is interrupted and its turn
+fails with a message saying why.
+
+## Questions
+
+When the agent asks you something, each question shows in the stream as a decision card, one at a time. Its options
+are the buttons. Pick Other and write your answer in the note when the question takes your own answer, has no
+options, has more than eight, or takes several (list them in the note). Once every question in the request has an
+answer, the connector sends them back to T3 and the run goes on. Answering in the T3 app instead withdraws the card. A
+card closed without an answer stops the run and fails the turn.
 
 ## Threads
 

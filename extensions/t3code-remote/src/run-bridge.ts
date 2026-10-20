@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto"
 import { readFile, stat } from "node:fs/promises"
 import {
+  type DecisionOutcome,
+  type DecisionRequestInput,
   type DeliveredTurn,
   type DownloadedAttachment,
   type RuntimeDescriptor,
   type SendResult,
   type StepFrame,
   type TraceMode,
+  DecisionAbandonedError,
   NO_RESPONSE_SENTINEL,
   StepBatcher,
   isNoResponse,
@@ -15,6 +18,7 @@ import {
 } from "@threahq/remote-session"
 import { T3AuthError } from "./auth"
 import type { T3Access } from "./config"
+import { questionCard } from "./question-card"
 import {
   T3ToolError,
   type ImageAttachment,
@@ -32,6 +36,7 @@ export interface BridgeSession {
   recordSteps(invocationId: string, frames: StepFrame[], statusText?: string): Promise<boolean>
   reply(invocationId: string, text: string): Promise<SendResult>
   failTurn(invocationId: string, errorMessage: string): Promise<boolean>
+  requestDecision(input: DecisionRequestInput, opts?: { signal?: AbortSignal }): Promise<DecisionOutcome>
 }
 
 /** What survives a restart: the T3 thread each Threa stream talks to, and the `/model` new threads launch on. */
@@ -84,7 +89,6 @@ const TOOL_LABELS: Record<string, string> = {
 const NOTE_TYPES = new Set(["reasoning", "system_notice", "compaction", "error"])
 const BLOCKING_LABELS: Record<string, string> = {
   approval_request: "an approval",
-  user_input_request: "a question",
   secret_request: "a secret",
 }
 const PREAMBLE = [
@@ -159,6 +163,8 @@ export class RunTrace {
   readonly runIds: Set<string>
   held?: ThreadItem
   blockedOn?: string
+  /** The item ids of questions still waiting on an answer. */
+  readonly questions = new Set<string>()
   lastError?: string
 
   constructor(
@@ -186,6 +192,9 @@ export class RunTrace {
       this.held = item
     } else if (item.type in BLOCKING_LABELS) {
       if (open) this.blockedOn = item.type
+    } else if (item.type === "user_input_request") {
+      if (open) this.questions.add(item.itemId)
+      else this.questions.delete(item.itemId)
     } else if (item.type in TOOL_LABELS) {
       const clientStepId = stepIdFor(item.itemId)
       const content = toolStepContent(item, this.mode)
@@ -229,6 +238,12 @@ interface OpenRun {
   steers: Set<Promise<boolean>>
   /** The last read position this run no longer needs to re-read. */
   cursor?: number
+  /** Set while the run's questions are on cards; aborting it withdraws them. */
+  asking?: AbortController
+  /** Question requests already put to the user, so a re-listed one isn't asked twice. */
+  asked: Set<string>
+  /** Why the turn fails instead of settling, once a question goes unanswered. */
+  unanswered?: string
 }
 
 /**
@@ -379,6 +394,7 @@ export class T3TurnRunner {
       trace: new RunTrace(started.runId, mode),
       abort: new AbortController(),
       steers: new Set(),
+      asked: new Set(),
       ...(this.cursors.has(started.threadId) ? { cursor: this.cursors.get(started.threadId)! } : {}),
     }
     this.runs.set(turn.invocationId, run)
@@ -520,7 +536,7 @@ export class T3TurnRunner {
     let status: RunStatus | "idle" | undefined
     let failures = 0
     try {
-      while (!signal.aborted && !trace.blockedOn) {
+      while (!signal.aborted && !trace.blockedOn && !run.unanswered) {
         try {
           const waitedOn = run.runId
           const waited = await this.client.call("t3_thread_wait", {
@@ -535,6 +551,9 @@ export class T3TurnRunner {
             else run.trace.runIds.add(waited.runId)
           }
           await this.drain(run, batcher)
+          // A question answered in T3 itself closes, which withdraws its card.
+          if (trace.questions.size === 0) run.asking?.abort()
+          else if (!run.asking) void this.askQuestions(run)
           failures = 0
           status = waited.status
           if (TERMINAL_RUN_STATUSES.has(status) && run.runId === waitedOn) {
@@ -553,6 +572,7 @@ export class T3TurnRunner {
         }
       }
     } finally {
+      run.asking?.abort()
       // Released before any await, so a steer can't join a run already judged over, and before the
       // turn closes, so a command right after the reply sees no open run.
       if (this.runs.get(invocationId) === run) this.runs.delete(invocationId)
@@ -562,6 +582,11 @@ export class T3TurnRunner {
       }
     }
     if (signal.aborted) return
+    if (run.unanswered) {
+      this.stopChain(run)
+      await this.session.failTurn(invocationId, run.unanswered)
+      return
+    }
     if (trace.blockedOn) {
       this.stopChain(run)
       await this.session.failTurn(
@@ -571,6 +596,44 @@ export class T3TurnRunner {
       return
     }
     await this.settle(invocationId, run, status!)
+  }
+
+  /**
+   * Put each question T3 is waiting on to the user as a card, one at a time, and send the
+   * answers back. Any question left without an answer ends the turn.
+   */
+  private async askQuestions(run: OpenRun): Promise<void> {
+    const asking = new AbortController()
+    run.asking = asking
+    const signal = AbortSignal.any([asking.signal, run.abort.signal])
+    try {
+      const { requestIds } = await this.client.call("t3_pending_request_list", { threadId: run.threadId })
+      for (const requestId of requestIds) {
+        if (run.asked.has(requestId)) continue
+        run.asked.add(requestId)
+        const { questions } = await this.client.call("t3_pending_request_read", { threadId: run.threadId, requestId })
+        const answers: Record<string, string> = {}
+        for (const question of questions) {
+          const card = questionCard(question)
+          const outcome = await this.session.requestDecision(
+            { ...card.input, streamId: run.streamId, externalRef: requestId },
+            { signal }
+          )
+          const answer = card.answerFor(outcome)
+          if (answer === undefined) {
+            run.unanswered = "T3 Code asked a question that went unanswered."
+            return
+          }
+          answers[question.id] = answer
+        }
+        await this.client.call("t3_pending_request_respond", { threadId: run.threadId, requestId, answers })
+      }
+    } catch (error) {
+      if (signal.aborted || error instanceof DecisionAbandonedError) return
+      run.unanswered = `T3 Code asked a question Threa couldn't put to you: ${errorText(error)}`
+    } finally {
+      if (run.asking === asking) run.asking = undefined
+    }
   }
 
   /** Read the thread's activity past the run's cursor; the cursor stops at the run's first unsettled item. */

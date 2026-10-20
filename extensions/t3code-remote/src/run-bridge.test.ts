@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, truncateSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { DownloadedAttachment } from "@threahq/remote-session"
+import type { DecisionOutcome, DownloadedAttachment } from "@threahq/remote-session"
 import { T3AuthError } from "./auth"
 import { RunTrace, T3TurnRunner, type RunTraceMode, type ThreadState } from "./run-bridge"
-import { T3ToolError } from "./t3-client"
+import { T3ToolError, type PendingQuestion } from "./t3-client"
 import { fakeSession, fakeT3, item, turn } from "./t3.test-support"
 
 const MODEL = { instanceId: "codex", model: "gpt-5.5" }
@@ -51,6 +51,30 @@ function downloaded(
 }
 
 const idle = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+const DECISION = { id: "dec_1" } as DecisionOutcome["decision"]
+const picked = (optionId: string, note: string | null = null): DecisionOutcome => ({
+  status: "resolved",
+  optionId,
+  note,
+  decision: DECISION,
+})
+
+function question(id: string, fields: Partial<PendingQuestion> = {}): PendingQuestion {
+  return {
+    id,
+    header: "Test runner",
+    question: "Which runner should the suite use?",
+    options: [
+      { label: "Bun", description: "Fast startup" },
+      { label: "Vitest", description: "Watch mode", value: "vitest" },
+    ],
+    ...fields,
+  }
+}
+
+const asking = (position = 1) => item(position, "user_input_request", { status: "pending" })
+const answered = (position = 1) => item(position, "user_input_request", { status: "completed" })
 
 function traceOf(content: string): { headline: string; sections: unknown[] } {
   const { headline, sections } = JSON.parse(content) as { headline: string; sections: unknown[] }
@@ -388,6 +412,130 @@ describe("T3TurnRunner", () => {
     expect(session.fails).toEqual([
       { invocationId: "binv_1", errorMessage: expect.stringContaining("to ask for an approval") },
     ])
+  })
+
+  test("puts each question of a request on a card and sends the answers back to T3", async () => {
+    const { t3, session, runner } = setup()
+    t3.ask("thread_1", "req_1", [question("runner"), question("watch", { header: "Watch", options: [] })])
+    t3.script("run_1", [{ status: "waiting", items: [asking()] }])
+
+    await runner.deliverTurn(turn())
+    await idle()
+    session.answer(picked("option_1"))
+    await idle()
+    session.answer(picked("other", " only on CI "))
+    await idle()
+
+    expect(session.decisions.map(({ input }) => input)).toEqual([
+      {
+        title: "Test runner",
+        body: "Which runner should the suite use?\n\n- **Bun**: Fast startup\n- **Vitest**: Watch mode",
+        options: [
+          { id: "option_0", label: "Bun" },
+          { id: "option_1", label: "Vitest" },
+        ],
+        allowNote: false,
+        streamId: "stream_root",
+        externalRef: "req_1",
+      },
+      {
+        title: "Watch",
+        body: "Which runner should the suite use?\n\nFor Other, write your answer in the note.",
+        options: [{ id: "other", label: "Other" }],
+        allowNote: true,
+        streamId: "stream_root",
+        externalRef: "req_1",
+      },
+    ])
+    expect(t3.callsOf("t3_pending_request_respond")).toEqual([
+      { threadId: "thread_1", requestId: "req_1", answers: { runner: "vitest", watch: "only on CI" } },
+    ])
+
+    t3.script("run_1", [
+      { status: "completed", items: [answered(), item(2, "assistant_message", { text: "Switched to Vitest" })] },
+    ])
+    await session.settled()
+    expect({ replies: session.replies, fails: session.fails }).toEqual({
+      replies: [{ invocationId: "binv_1", text: "Switched to Vitest" }],
+      fails: [],
+    })
+  })
+
+  test("a question answered in T3 itself withdraws its card", async () => {
+    const { t3, session, runner } = setup()
+    t3.ask("thread_1", "req_1", [question("runner")])
+    t3.script("run_1", [{ status: "waiting", items: [asking()] }])
+    await runner.deliverTurn(turn())
+    await idle()
+
+    t3.script("run_1", [{ status: "running", items: [answered()] }])
+    await idle()
+
+    expect(session.decisions.map(({ signal }) => signal?.aborted)).toEqual([true])
+    t3.script("run_1", [{ status: "completed", items: [item(2, "assistant_message", { text: "Done" })] }])
+    await session.settled()
+    expect({ replies: session.replies, responds: t3.callsOf("t3_pending_request_respond") }).toEqual({
+      replies: [{ invocationId: "binv_1", text: "Done" }],
+      responds: [],
+    })
+  })
+
+  test("a card closed without an answer stops the run and fails the turn", async () => {
+    const { t3, session, runner } = setup()
+    t3.ask("thread_1", "req_1", [question("runner")])
+    t3.script("run_1", [{ status: "waiting", items: [asking()] }])
+    await runner.deliverTurn(turn())
+    await idle()
+
+    session.answer({ status: "expired", decision: DECISION })
+    await idle()
+    t3.script("run_1", [{ status: "waiting" }])
+    await session.settled()
+
+    expect({
+      interrupts: t3.callsOf("t3_thread_interrupt"),
+      responds: t3.callsOf("t3_pending_request_respond"),
+      fails: session.fails,
+    }).toEqual({
+      interrupts: [{ threadId: "thread_1", runId: "run_1", reason: "Stopped from Threa" }],
+      responds: [],
+      fails: [{ invocationId: "binv_1", errorMessage: "T3 Code asked a question that went unanswered." }],
+    })
+  })
+
+  test("a question T3 won't read fails the turn with why", async () => {
+    const { t3, session, runner } = setup()
+    t3.failNext("t3_pending_request_read", new Error("request not found"))
+    t3.ask("thread_1", "req_1", [question("runner")])
+    t3.script("run_1", [{ status: "waiting", items: [asking()] }])
+    await runner.deliverTurn(turn())
+    await idle()
+    t3.script("run_1", [{ status: "waiting" }])
+    await session.settled()
+
+    expect(session.fails).toEqual([
+      {
+        invocationId: "binv_1",
+        errorMessage: "T3 Code asked a question Threa couldn't put to you: request not found",
+      },
+    ])
+  })
+
+  test("/stop withdraws an open question card", async () => {
+    const { t3, session, runner } = setup()
+    t3.ask("thread_1", "req_1", [question("runner")])
+    t3.script("run_1", [{ status: "waiting", items: [asking()] }])
+    await runner.deliverTurn(turn())
+    await idle()
+
+    runner.interrupt("stream_root")
+    await idle()
+
+    expect({
+      aborted: session.decisions.map(({ signal }) => signal?.aborted),
+      responds: t3.callsOf("t3_pending_request_respond"),
+      fails: session.fails,
+    }).toEqual({ aborted: [true], responds: [], fails: [] })
   })
 
   test("rides out a transient poll failure", async () => {
