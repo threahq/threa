@@ -11,6 +11,9 @@ import { fakeSession, fakeT3, item, turn } from "./t3.test-support"
 const MODEL = { instanceId: "codex", model: "gpt-5.5" }
 
 const idle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+const until = async (done: () => boolean) => {
+  while (!done()) await idle()
+}
 
 function setup(options: { state?: ThreadState; sealedFullTrace?: boolean; projectId?: string } = {}) {
   const t3 = fakeT3()
@@ -573,6 +576,77 @@ describe("T3TurnRunner", () => {
     })
   })
 
+  test("a question asked as a message and answered in T3 itself follows the run the answer starts", async () => {
+    const { t3, session, runner } = setup()
+    t3.ask("thread_1", "req_1", [question("runner")], true)
+    t3.script("run_1", [{ status: "completed", items: [asking()] }])
+    await runner.deliverTurn(turn())
+    await idle()
+
+    t3.answerInT3("req_1")
+    t3.script("run_1", [{ status: "completed", items: [answered()] }])
+    t3.script("run_2", [
+      { status: "completed", items: [item(2, "assistant_message", { runId: "run_2", text: "Bun it is" })] },
+    ])
+    await session.settled()
+
+    expect({
+      withdrawn: session.decisions.map(({ signal }) => signal?.aborted),
+      replies: session.replies,
+    }).toEqual({ withdrawn: [true], replies: [{ invocationId: "binv_1", text: "Bun it is" }] })
+  })
+
+  test("an answer T3 queues behind the run is followed once the run ends", async () => {
+    const { t3, session, runner } = setup()
+    t3.ask("thread_1", "req_1", [question("runner")], true)
+    t3.script("run_1", [{ status: "running", items: [asking()] }])
+    await runner.deliverTurn(turn())
+    await idle()
+
+    session.answer(picked("option_0"))
+    await idle()
+    t3.script("run_1", [{ status: "completed", items: [answered()] }])
+    t3.script("run_2", [
+      { status: "completed", items: [item(2, "assistant_message", { runId: "run_2", text: "Bun it is" })] },
+    ])
+    await session.settled()
+
+    expect(session.replies).toEqual([{ invocationId: "binv_1", text: "Bun it is" }])
+  })
+
+  test("a question answered in T3 and Threa at once carries on", async () => {
+    const { t3, session, runner } = setup()
+    t3.ask("thread_1", "req_1", [question("runner")])
+    t3.script("run_1", [{ status: "waiting", items: [asking()] }])
+    await runner.deliverTurn(turn())
+    await idle()
+
+    t3.answerInT3("req_1")
+    session.answer(picked("option_0"))
+    await idle()
+    t3.script("run_1", [
+      { status: "completed", items: [answered(), item(2, "assistant_message", { text: "Bun it is" })] },
+    ])
+    await session.settled()
+
+    expect({ replies: session.replies, fails: session.fails }).toEqual({
+      replies: [{ invocationId: "binv_1", text: "Bun it is" }],
+      fails: [],
+    })
+  })
+
+  test("a request whose only question is optional can't be skipped, since T3 refuses an empty reply", async () => {
+    const { t3, session, runner } = setup()
+    t3.ask("thread_1", "req_1", [question("coverage", { required: false })])
+    t3.script("run_1", [{ status: "waiting", items: [asking()] }])
+    await runner.deliverTurn(turn())
+    await idle()
+
+    expect(session.decisions.map(({ input }) => input.options.map((option) => option.id))).toEqual([
+      ["option_0", "option_1", "other"],
+    ])
+  })
+
   test("a request T3 swaps for another moves the card to the new one", async () => {
     const { t3, session, runner } = setup()
     t3.ask("thread_1", "req_1", [question("runner")])
@@ -810,7 +884,8 @@ describe("T3TurnRunner", () => {
     const release = t3.holdNext("t3_thread_send_attachments")
 
     const steering = runner.steer("this one", "stream_root", [downloaded("cat.png", "image/png", "png-bytes")])
-    await idle()
+    // The image is read from disk first, which can take more than one tick.
+    await until(() => t3.callsOf("t3_thread_send_attachments").length > 0)
     runner.interrupt("stream_root")
     release()
     await steering

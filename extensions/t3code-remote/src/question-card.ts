@@ -29,10 +29,10 @@ function clip(text: string, max: number): string {
  * One T3 question as a single-choice card. Each option is a button; "Other" takes the
  * answer from the note unless the question forbids its own answer, and also when it
  * allows several, has no options, or has more than fit, so a listed option past the
- * cap can still be typed. An optional question gets a Skip button.
+ * cap can still be typed. An optional question gets a Skip button when `skippable`.
  */
-export function questionCard(question: PendingQuestion): QuestionCard {
-  const skip = question.required === false
+export function questionCard(question: PendingQuestion, { skippable }: { skippable: boolean }): QuestionCard {
+  const skip = skippable && question.required === false
   const other =
     question.allowCustomAnswer !== false ||
     question.multiSelect === true ||

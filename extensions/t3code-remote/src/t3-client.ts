@@ -50,7 +50,8 @@ export interface ThreadSummary {
   threadId: string
   title: string
   status: RunStatus | "idle"
-  activeRunId: string | null
+  /** The thread's newest run, queued ones included. */
+  latestRunId: string | null
   providerInstanceId: string
   model: string
 }

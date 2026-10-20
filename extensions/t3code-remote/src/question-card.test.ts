@@ -20,7 +20,7 @@ const options = (count: number) =>
 
 describe("questionCard", () => {
   test("a multi-select question adds Other, answered from the note", () => {
-    const card = questionCard(question({ options: options(2), multiSelect: true }))
+    const card = questionCard(question({ options: options(2), multiSelect: true }), { skippable: true })
 
     expect({
       options: card.input.options.map((option) => option.id),
@@ -40,7 +40,7 @@ describe("questionCard", () => {
   })
 
   test("more options than a card holds keep seven buttons and list the rest for the note", () => {
-    const card = questionCard(question({ options: options(10) }))
+    const card = questionCard(question({ options: options(10) }), { skippable: true })
 
     expect({
       options: card.input.options.map((option) => option.id),
@@ -53,7 +53,8 @@ describe("questionCard", () => {
 
   test("fits the card's limits and has no answer when the card closes unanswered", () => {
     const card = questionCard(
-      question({ header: "  ", question: "x".repeat(9000), options: [{ label: "y".repeat(100), description: "" }] })
+      question({ header: "  ", question: "x".repeat(9000), options: [{ label: "y".repeat(100), description: "" }] }),
+      { skippable: true }
     )
 
     expect({
@@ -70,12 +71,19 @@ describe("questionCard", () => {
   })
 
   test("a question that forbids its own answer has no Other, and an optional one can be skipped", async () => {
-    const card = questionCard(question({ options: options(2), allowCustomAnswer: false, required: false }))
+    const optional = question({ options: options(2), allowCustomAnswer: false, required: false })
+    const card = questionCard(optional, { skippable: true })
 
     expect({
       options: card.input.options.map((option) => option.id),
       allowNote: card.input.allowNote,
       skipped: card.answerFor(picked("skip")),
-    }).toEqual({ options: ["option_0", "option_1", "skip"], allowNote: false, skipped: { kind: "skipped" } })
+      unskippable: questionCard(optional, { skippable: false }).input.options.map((option) => option.id),
+    }).toEqual({
+      options: ["option_0", "option_1", "skip"],
+      allowNote: false,
+      skipped: { kind: "skipped" },
+      unskippable: ["option_0", "option_1"],
+    })
   })
 })

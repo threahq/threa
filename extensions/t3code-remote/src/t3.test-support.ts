@@ -63,12 +63,16 @@ export function fakeT3() {
   let envMode: "local" | "worktree" | undefined
   const models = new Map<string, ModelSelection>()
   const pending = new Map<string, { threadId: string; questions: PendingQuestion[]; startsRun: boolean }>()
-  const activeRuns = new Map<string, string>()
+  const latestRuns = new Map<string, string>()
   // Like T3, a wait on a run that already ended returns at once with how it ended.
   const ended = new Map<string, string>()
 
-  const startRun = () => `run_${++runs}`
-  const steerRun = () => (steerDelivery === "steered" ? `run_${runs}` : startRun())
+  const startRun = (threadId: string) => {
+    const runId = `run_${++runs}`
+    latestRuns.set(threadId, runId)
+    return runId
+  }
+  const steerRun = (threadId: string) => (steerDelivery === "steered" ? `run_${runs}` : startRun(threadId))
 
   function apply(threadId: string, step: ScriptStep): void {
     if (step.model) models.set(threadId, step.model)
@@ -98,13 +102,13 @@ export function fakeT3() {
     t3_thread_launch: (args) => {
       const threadId = `thread_${++threads}`
       if (args.modelSelection) models.set(threadId, args.modelSelection)
-      return { threadId, runId: startRun() }
+      return { threadId, runId: startRun(threadId) }
     },
     t3_thread_send: (args) => {
-      if (args.mode === "queue") return { runId: startRun(), status: "running", delivery: "started" }
-      return { runId: steerRun(), status: "running", delivery: steerDelivery }
+      if (args.mode === "queue") return { runId: startRun(args.threadId), status: "running", delivery: "started" }
+      return { runId: steerRun(args.threadId), status: "running", delivery: steerDelivery }
     },
-    t3_thread_send_attachments: () => ({ runId: steerRun(), status: "running" }),
+    t3_thread_send_attachments: (args) => ({ runId: steerRun(args.threadId), status: "running" }),
     t3_attachment_prepare_upload: () => {
       prepared += 1
       return { attachmentId: `t3att_${prepared}`, relativeUrl: `/api/attachments/upload/tok_${prepared}` }
@@ -124,7 +128,7 @@ export function fakeT3() {
         threadId: args.threadId,
         title: "Fake thread",
         status: "idle" as const,
-        activeRunId: activeRuns.get(args.threadId) ?? null,
+        latestRunId: latestRuns.get(args.threadId) ?? null,
         providerInstanceId: models.get(args.threadId)?.instanceId ?? "codex",
         model: models.get(args.threadId)?.model ?? "gpt-5.5",
       }
@@ -199,13 +203,16 @@ export function fakeT3() {
       questions: pending.get(args.requestId)!.questions,
     }),
     t3_pending_request_respond: (args) => {
-      const request = pending.get(args.requestId)!
+      const request = pending.get(args.requestId)
+      if (!request) throw new Error("The pending user-input request was not found.")
       for (const question of request.questions) {
         if (question.required !== false && !args.answers[question.id]?.trim()) throw new Error("Answer each question")
       }
+      if (request.startsRun && Object.keys(args.answers).length === 0)
+        throw new Error("Enter an answer before sending.")
       pending.delete(args.requestId)
       // A question asked as a message is answered by a message, which starts the next run.
-      if (request.startsRun) activeRuns.set(args.threadId, startRun())
+      if (request.startsRun) startRun(args.threadId)
       return {}
     },
     t3_environment_read: () => ({
@@ -259,8 +266,12 @@ export function fakeT3() {
      */
     ask: (threadId: string, requestId: string, questions: PendingQuestion[], startsRun = false) =>
       pending.set(requestId, { threadId, questions, startsRun }),
-    /** Answer a request in T3 itself. */
-    answerInT3: (requestId: string) => pending.delete(requestId),
+    /** Answer a request in T3 itself, which for a question asked as a message starts the next run. */
+    answerInT3: (requestId: string) => {
+      const request = pending.get(requestId)!
+      pending.delete(requestId)
+      if (request.startsRun) startRun(request.threadId)
+    },
     /** The environment's default for new threads, unset unless a test sets it. */
     defaultEnvMode: (mode: typeof envMode) => (envMode = mode),
   }
