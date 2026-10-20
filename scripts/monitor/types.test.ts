@@ -18,6 +18,12 @@ describe("makeWindow", () => {
     expect(w.priorStart).toBe("2026-08-21T14:00:00.000Z")
     expect(w.label).toBe("since backend deploy 16:00Z (120m window)")
   })
+  test("a window of a day or more names the date and counts days, else hours", () => {
+    expect([
+      makeWindow(new Date("2026-08-14T18:00:00Z"), now, 0, "since --since").label,
+      makeWindow(new Date("2026-08-20T06:00:00Z"), now, 0, "since --since").label,
+    ]).toEqual(["since --since 08-14 18:00Z (7d window)", "since --since 08-20 06:00Z (36h window)"])
+  })
 })
 
 test("worst ranks fail > warn > pending > ok and maps to exit codes", () => {

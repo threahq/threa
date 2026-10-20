@@ -11,6 +11,8 @@ export const PROD = {
   logServices: ["backend", "control-plane", "enclave", "db-read-proxy"] as const,
   /** GitHub workflows that gate a frontend rollout, in order. */
   frontendWorkflows: { ci: "CI", deploy: "Deploy Cloudflare" },
+  /** Only these ship OTLP logs to PostHog. */
+  posthogLogServices: ["backend", "control-plane"] as const,
 } as const
 
 export const THRESHOLDS = {
@@ -79,6 +81,14 @@ export const KNOWN_LOG_NOISE: ReadonlyArray<{ pattern: RegExp; why: string }> = 
     why: "pg@8 deprecation printed once per boot",
   },
   { pattern: /Use `bun --trace-warnings/, why: "second line of the same node warning" },
+  {
+    pattern: /^[A-Z]+ (?!\/api\/|\/bot-runtime\/|\/socket\.io\/)\S* 429$/,
+    why: "scanner probes outside our served prefixes trip the rate limiter; a 429 on any /api, /bot-runtime or /socket.io path is one of our clients and stays visible",
+  },
+  {
+    pattern: /^Socket\.io close timed out, continuing\.\.\.$/,
+    why: "deploy rollover: the old process stops waiting for open sockets and exits anyway",
+  },
 ]
 
 /**
@@ -96,6 +106,8 @@ export const CREDENTIAL_KEYS = [
   "THREA_PROD_BASE_URL",
   "THREA_PROD_READ_ONLY_API_KEY",
   "THREA_PROD_DEFAULT_WORKSPACE",
+  "POSTHOG_READ_ONLY_API_KEY",
+  "POSTHOG_PROJECT_ID_EU",
 ] as const
 export type CredentialKey = (typeof CREDENTIAL_KEYS)[number]
 export const AGENT_ENV_FILE = "~/.threa.env.agents"

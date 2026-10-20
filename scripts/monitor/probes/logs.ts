@@ -115,6 +115,10 @@ export async function probeLogs(railway: RailwayClient, window: Window): Promise
   return summarizeLogs(window, { errSince, errPrior, warnSince, warnPrior })
 }
 
+export function exceedsPriorRate(since: number, prior: number): boolean {
+  return since > Math.max(prior, THRESHOLDS.logRateAbsoluteFloor) * THRESHOLDS.logRateWarnMultiplier
+}
+
 export function summarizeLogs(
   window: Window,
   lines: {
@@ -122,8 +126,10 @@ export function summarizeLogs(
     errPrior: RailwayLogLine[]
     warnSince: RailwayLogLine[]
     warnPrior: RailwayLogLine[]
-  }
+  },
+  opts: { idPrefix?: string; services?: readonly string[] } = {}
 ): LogReport {
+  const idPrefix = opts.idPrefix ?? "logs"
   const prepare = (arr: RailwayLogLine[]) =>
     collapseContinuations(arr).map((line) => ({ service: line.service, isNoise: noiseReason(line.message) !== null }))
   const events = {
@@ -134,7 +140,7 @@ export function summarizeLogs(
   }
   const count = (arr: Array<{ service: string | null; isNoise: boolean }>, service: string, noise: boolean) =>
     arr.filter((event) => event.service === service && event.isNoise === noise).length
-  const services: LogServiceSummary[] = PROD.logServices.map((service) => ({
+  const services: LogServiceSummary[] = (opts.services ?? PROD.logServices).map((service) => ({
     service,
     errorSince: count(events.errSince, service, false),
     errorPrior: count(events.errPrior, service, false),
@@ -148,26 +154,23 @@ export function summarizeLogs(
   )
   const findings: Finding[] = []
   for (const s of services) {
-    const floor = THRESHOLDS.logRateAbsoluteFloor
-    const errBase = Math.max(s.errorPrior, floor)
-    if (s.errorSince > errBase * THRESHOLDS.logRateWarnMultiplier) {
+    if (exceedsPriorRate(s.errorSince, s.errorPrior)) {
       findings.push({
         level: "warn",
-        id: `logs.error.${s.service}`,
+        id: `${idPrefix}.error.${s.service}`,
         message: `${s.service}: ${s.errorSince} error lines since baseline vs ${s.errorPrior} in the prior window`,
       })
     } else if (s.errorSince > 0 && s.errorPrior === 0) {
       findings.push({
         level: "warn",
-        id: `logs.error.new.${s.service}`,
+        id: `${idPrefix}.error.new.${s.service}`,
         message: `${s.service}: ${s.errorSince} error lines since baseline, none in the prior window`,
       })
     }
-    const warnBase = Math.max(s.warnPrior, floor)
-    if (s.warnSince > warnBase * THRESHOLDS.logRateWarnMultiplier) {
+    if (exceedsPriorRate(s.warnSince, s.warnPrior)) {
       findings.push({
         level: "warn",
-        id: `logs.warn.${s.service}`,
+        id: `${idPrefix}.warn.${s.service}`,
         message: `${s.service}: ${s.warnSince} warn lines since baseline vs ${s.warnPrior} in the prior window`,
       })
     }
@@ -177,14 +180,14 @@ export function summarizeLogs(
     if (t.noise || priorTemplates.has(t.template) || t.count < 3) continue
     findings.push({
       level: "warn",
-      id: `logs.template.${t.template.slice(0, 60)}`,
+      id: `${idPrefix}.template.${t.template.slice(0, 60)}`,
       message: `new log template ×${t.count} [${t.services.join(",")}]: ${t.sample.slice(0, 140)}`,
     })
   }
   if (truncated)
     findings.push({
       level: "warn",
-      id: "logs.truncated",
+      id: `${idPrefix}.truncated`,
       message: `log fetch hit the ${THRESHOLDS.logFetchLimit}-line cap; counts are lower bounds`,
     })
   return { window, services, templates, truncated, findings }
