@@ -456,6 +456,7 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
       compact={isMobile}
       onPrimary={answerQuestion}
       onAlternative={takeAlternative}
+      detail={{ workspaceId, lead: question.lead }}
       className="w-full"
     />
   ) : null

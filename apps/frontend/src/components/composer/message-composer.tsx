@@ -1219,6 +1219,7 @@ export function MessageComposer({
       compact={isMobile}
       onPrimary={handleSubmit}
       onAlternative={workspaceId ? takeAlternative : undefined}
+      detail={workspaceId ? { workspaceId, lead: question.lead } : undefined}
       mirrored={mirrored}
       className="w-full"
     />

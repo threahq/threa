@@ -31,7 +31,7 @@ export interface AudienceQuestionCopy {
   full: string
   short: string
   alternative: { full: string; short: string } | null
-  primary: string
+  primary: { full: string; short: string }
 }
 
 function linkMarkReference(node: JSONContent): ComposerReference | null {
@@ -146,13 +146,13 @@ export function audienceQuestionCopy(
       full: `${who} will see this message`,
       short: `${short} ${count === 1 ? "sees" : "see"} it`,
       alternative: { full: "Use link", short: "Link" },
-      primary: verb,
+      primary: { full: verb, short: verb },
     }
   }
   return {
     full: `${who} can't open this link`,
     short: `${short} can't open it`,
     alternative: warning.convertibleStreamIds.length > 0 ? { full: "Share instead", short: "Share" } : null,
-    primary: `${verb} anyway`,
+    primary: { full: `${verb} anyway`, short: verb },
   }
 }

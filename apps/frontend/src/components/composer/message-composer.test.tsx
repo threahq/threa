@@ -15,6 +15,7 @@ import * as editorModule from "@/components/editor"
 import * as micButtonModule from "./mic-button"
 import * as pendingAttachmentsModule from "@/components/timeline/pending-attachments"
 import * as analyticsModule from "@/lib/analytics/posthog"
+import * as workspaceStoreModule from "@/stores/workspace-store"
 import { useReportScheduledCount, useStashedDraftsBridge } from "./stashed-drafts-open-context"
 import type { ComposerSendWarning, SendWarning } from "@/lib/reference-audience"
 import { Editor } from "@tiptap/core"
@@ -1661,6 +1662,74 @@ describe("MessageComposer", () => {
         calls: [[editor.getJSON(), { confirmedPrivacyWarning: true }]],
         asking: null,
       })
+    })
+
+    function renderAskingWithDetail(warning: ComposerSendWarning) {
+      spyOnExport(micButtonModule, "MicButton").mockReturnValue(
+        (() => null) as unknown as typeof micButtonModule.MicButton
+      )
+      vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([
+        { id: "usr_a", name: "Ada Lovelace" },
+        { id: "usr_b", name: "Grace Hopper" },
+      ] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceUsers>)
+      vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([
+        { id: "stream_src", type: "channel", slug: "leadership", displayName: "leadership" },
+      ] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceStreams>)
+      const onSubmit = vi.fn()
+      render(
+        <MessageComposer
+          {...defaultProps}
+          workspaceId="ws_1"
+          content={DRAFT}
+          canSubmit
+          onSubmit={onSubmit}
+          sendWarning={warning}
+        />
+      )
+      fireEvent.keyDown(screen.getByTestId("rich-editor"), { key: "Enter", metaKey: true })
+      return { onSubmit }
+    }
+
+    const revealToMany: ComposerSendWarning = {
+      ...sendWarning("reveal"),
+      warning: {
+        ...sendWarning("reveal").warning,
+        lead: { streamId: "stream_src", count: 4, sampleUserIds: ["usr_a", "usr_b"] },
+      },
+      names: ["Ada Lovelace", "Grace Hopper"],
+    }
+
+    it("tapping the question opens who it is about, and answering there sends", async () => {
+      const { onSubmit } = renderAskingWithDetail(revealToMany)
+      await userEvent.click(screen.getByTestId("send-ask-detail-trigger"))
+      const detail = screen.getByTestId("send-ask-detail")
+      expect({
+        people: within(detail)
+          .getAllByRole("listitem")
+          .map((item) => item.textContent),
+        explanation: within(detail).getByText(/nothing else from/).textContent,
+      }).toEqual({
+        people: [expect.stringContaining("Ada Lovelace"), expect.stringContaining("Grace Hopper"), "+2 more"],
+        explanation: "They see the shared message, nothing else from #leadership.",
+      })
+
+      await userEvent.click(within(detail).getByRole("button", { name: "Send" }))
+      expect({
+        calls: onSubmit.mock.calls,
+        detail: screen.queryByTestId("send-ask-detail"),
+        asking: screen.queryByTestId("send-ask"),
+      }).toEqual({ calls: [[DRAFT, { confirmedPrivacyWarning: true }]], detail: null, asking: null })
+    })
+
+    it("on a phone the primary drops 'anyway' and the detail opens as a sheet", async () => {
+      isMobileMockValue = true
+      renderAskingWithDetail(sendWarning("unreachable"))
+      const primary = within(screen.getByTestId("send-ask")).getByRole("button", { name: /^Send/ })
+      await userEvent.click(screen.getByTestId("send-ask-detail-trigger"))
+      expect({
+        primary: primary.textContent,
+        sheet: screen.getByTestId("send-ask-detail").closest("[data-vaul-drawer]") !== null,
+      }).toEqual({ primary: "Send", sheet: true })
     })
 
     it("sends an unreachable warning without the flag after the second Enter", async () => {
