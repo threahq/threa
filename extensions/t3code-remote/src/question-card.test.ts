@@ -33,9 +33,9 @@ describe("questionCard", () => {
       options: ["option_0", "option_1", "other"],
       allowNote: true,
       body: "Where to?\n\n- **Region 0**\n- **Region 1**\n\nPick one, or choose Other and list several in the note.",
-      other: "Region 0, Region 1",
-      blankNote: undefined,
-      listed: "Region 1",
+      other: { kind: "answered", text: "Region 0, Region 1" },
+      blankNote: { kind: "blank" },
+      listed: { kind: "answered", text: "Region 1" },
     })
   })
 
@@ -61,6 +61,21 @@ describe("questionCard", () => {
       bodyLength: card.input.body?.length,
       labelLength: card.input.options[0]!.label?.length,
       cancelled: card.answerFor({ status: "cancelled", decision: DECISION }),
-    }).toEqual({ title: "T3 Code has a question", bodyLength: 8000, labelLength: 80, cancelled: undefined })
+    }).toEqual({
+      title: "T3 Code has a question",
+      bodyLength: 8000,
+      labelLength: 80,
+      cancelled: { kind: "unanswered" },
+    })
+  })
+
+  test("a question that forbids its own answer has no Other, and an optional one can be skipped", async () => {
+    const card = questionCard(question({ options: options(2), allowCustomAnswer: false, required: false }))
+
+    expect({
+      options: card.input.options.map((option) => option.id),
+      allowNote: card.input.allowNote,
+      skipped: card.answerFor(picked("skip")),
+    }).toEqual({ options: ["option_0", "option_1", "skip"], allowNote: false, skipped: { kind: "skipped" } })
   })
 })

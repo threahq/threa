@@ -10,6 +10,8 @@ import { fakeSession, fakeT3, item, turn } from "./t3.test-support"
 
 const MODEL = { instanceId: "codex", model: "gpt-5.5" }
 
+const idle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
 function setup(options: { state?: ThreadState; sealedFullTrace?: boolean; projectId?: string } = {}) {
   const t3 = fakeT3()
   const session = fakeSession()
@@ -23,7 +25,7 @@ function setup(options: { state?: ThreadState; sealedFullTrace?: boolean; projec
     sealedFullTrace: options.sealedFullTrace ?? false,
     ...(options.projectId === undefined ? {} : { projectId: options.projectId }),
     threadStore: { load: () => options.state ?? { threads: {}, model: MODEL }, save: (state) => saved.push(state) },
-    sleep: async () => {},
+    sleep: () => idle(),
     log: (message) => logs.push(message),
   })
   return { t3, session, saved, logs, runner }
@@ -49,8 +51,6 @@ function downloaded(
     localPath,
   }
 }
-
-const idle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 const DECISION = { id: "dec_1" } as DecisionOutcome["decision"]
 const picked = (optionId: string, note: string | null = null): DecisionOutcome => ({
@@ -416,16 +416,32 @@ describe("T3TurnRunner", () => {
 
   test("puts each question of a request on a card and sends the answers back to T3", async () => {
     const { t3, session, runner } = setup()
-    t3.ask("thread_1", "req_1", [question("runner"), question("watch", { header: "Watch", options: [] })])
+    t3.ask("thread_1", "req_1", [
+      question("runner", { allowCustomAnswer: false }),
+      question("watch", { header: "Watch", options: [] }),
+      question("coverage", { header: "Coverage", required: false }),
+    ])
     t3.script("run_1", [{ status: "waiting", items: [asking()] }])
 
     await runner.deliverTurn(turn())
     await idle()
     session.answer(picked("option_1"))
     await idle()
+    session.answer(picked("other", "  "))
+    await idle()
     session.answer(picked("other", " only on CI "))
     await idle()
+    session.answer(picked("skip"))
+    await idle()
 
+    const ref = { streamId: "stream_root", invocationId: "binv_1", externalRef: "req_1" }
+    const watch = {
+      title: "Watch",
+      body: "Which runner should the suite use?\n\nFor Other, write your answer in the note.",
+      options: [{ id: "other", label: "Other" }],
+      allowNote: true,
+      ...ref,
+    }
     expect(session.decisions.map(({ input }) => input)).toEqual([
       {
         title: "Test runner",
@@ -435,16 +451,21 @@ describe("T3TurnRunner", () => {
           { id: "option_1", label: "Vitest" },
         ],
         allowNote: false,
-        streamId: "stream_root",
-        externalRef: "req_1",
+        ...ref,
       },
+      watch,
+      watch,
       {
-        title: "Watch",
-        body: "Which runner should the suite use?\n\nFor Other, write your answer in the note.",
-        options: [{ id: "other", label: "Other" }],
+        title: "Coverage",
+        body: "Which runner should the suite use?\n\n- **Bun**: Fast startup\n- **Vitest**: Watch mode\n\nFor Other, write your answer in the note.",
+        options: [
+          { id: "option_0", label: "Bun" },
+          { id: "option_1", label: "Vitest" },
+          { id: "other", label: "Other" },
+          { id: "skip", label: "Skip" },
+        ],
         allowNote: true,
-        streamId: "stream_root",
-        externalRef: "req_1",
+        ...ref,
       },
     ])
     expect(t3.callsOf("t3_pending_request_respond")).toEqual([
@@ -468,6 +489,7 @@ describe("T3TurnRunner", () => {
     await runner.deliverTurn(turn())
     await idle()
 
+    t3.answerInT3("req_1")
     t3.script("run_1", [{ status: "running", items: [answered()] }])
     await idle()
 
@@ -516,9 +538,78 @@ describe("T3TurnRunner", () => {
     expect(session.fails).toEqual([
       {
         invocationId: "binv_1",
-        errorMessage: "T3 Code asked a question Threa couldn't put to you: request not found",
+        errorMessage: "T3 Code's question couldn't be answered from Threa: request not found",
       },
     ])
+  })
+
+  test("a run that ends on an open question follows the run its answer starts", async () => {
+    const { t3, session, runner } = setup()
+    t3.ask("thread_1", "req_1", [question("runner")], true)
+    t3.script("run_1", [
+      { status: "completed", items: [item(1, "assistant_message", { text: "One question first." }), asking(2)] },
+    ])
+    await runner.deliverTurn(turn())
+    await idle()
+
+    session.answer(picked("option_0"))
+    await idle()
+    t3.script("run_2", [
+      {
+        status: "completed",
+        items: [answered(2), item(3, "assistant_message", { runId: "run_2", text: "Bun it is" })],
+      },
+    ])
+    await session.settled()
+
+    expect({
+      responds: t3.callsOf("t3_pending_request_respond"),
+      replies: session.replies,
+      fails: session.fails,
+    }).toEqual({
+      responds: [{ threadId: "thread_1", requestId: "req_1", answers: { runner: "Bun" } }],
+      replies: [{ invocationId: "binv_1", text: "Bun it is" }],
+      fails: [],
+    })
+  })
+
+  test("a request T3 swaps for another moves the card to the new one", async () => {
+    const { t3, session, runner } = setup()
+    t3.ask("thread_1", "req_1", [question("runner")])
+    t3.script("run_1", [{ status: "waiting", items: [asking()] }])
+    await runner.deliverTurn(turn())
+    await idle()
+
+    t3.answerInT3("req_1")
+    t3.ask("thread_1", "req_2", [question("watch", { header: "Watch" })])
+    t3.script("run_1", [{ status: "waiting", items: [answered(), asking(2)] }])
+    await idle()
+    session.answer(picked("option_0"))
+    await idle()
+
+    expect({
+      cards: session.decisions.map(({ input, signal }) => ({ ref: input.externalRef, withdrawn: signal?.aborted })),
+      responds: t3.callsOf("t3_pending_request_respond"),
+    }).toEqual({
+      cards: [
+        { ref: "req_1", withdrawn: true },
+        { ref: "req_2", withdrawn: false },
+      ],
+      responds: [{ threadId: "thread_1", requestId: "req_2", answers: { watch: "Bun" } }],
+    })
+  })
+
+  test("a question an earlier turn left open isn't asked again", async () => {
+    const { t3, session, runner } = setup({ state: { threads: { stream_root: "thread_1" }, model: MODEL } })
+    t3.ask("thread_1", "req_old", [question("old")])
+    t3.script("run_1", [{ status: "running", items: [] }])
+    await runner.deliverTurn(turn())
+    await idle()
+    t3.ask("thread_1", "req_1", [question("runner")])
+    t3.script("run_1", [{ status: "waiting", items: [asking()] }])
+    await idle()
+
+    expect(session.decisions.map(({ input }) => input.externalRef)).toEqual(["req_1"])
   })
 
   test("/stop withdraws an open question card", async () => {

@@ -71,7 +71,7 @@ const MAX_CHARS_PER_ITEM = 8000
 const IMAGE_MIME_TYPES = new Set(["image/gif", "image/jpeg", "image/png", "image/webp"])
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024
 const MAX_IMAGES_PER_MESSAGE = 8
-const TERMINAL_RUN_STATUSES = new Set<string>(["completed", "failed", "cancelled", "interrupted", "rolled_back"])
+export const TERMINAL_RUN_STATUSES = new Set<string>(["completed", "failed", "cancelled", "interrupted", "rolled_back"])
 const OPEN_ITEM_STATUSES = new Set<string>(["idle", "pending", "running", "waiting"])
 const TOOL_LABELS: Record<string, string> = {
   command_execution: "Shell command",
@@ -238,9 +238,9 @@ interface OpenRun {
   steers: Set<Promise<boolean>>
   /** The last read position this run no longer needs to re-read. */
   cursor?: number
-  /** Set while the run's questions are on cards; aborting it withdraws them. */
-  asking?: AbortController
-  /** Question requests already put to the user, so a re-listed one isn't asked twice. */
+  /** Set while the run's questions are being put to the user; aborting it withdraws the card. */
+  asking?: { done: Promise<void>; abort: AbortController; requestId?: string }
+  /** Requests never to put to the user: answered from Threa, or pending before the turn began. */
   asked: Set<string>
   /** Why the turn fails instead of settling, once a question goes unanswered. */
   unanswered?: string
@@ -378,7 +378,16 @@ export class T3TurnRunner {
     const admission = new AbortController()
     this.admitting.set(turn.invocationId, { abort: admission, streamId: turn.streamId })
     let started: { threadId: string; runId: string }
+    let stale: string[] = []
     try {
+      // A question an earlier turn left open belongs to that turn, not this one.
+      const existing = this.threadFor(turn.streamId)
+      if (existing) {
+        const pending = await this.client
+          .call("t3_pending_request_list", { threadId: existing })
+          .catch((error) => this.unlessGone(error, turn.streamId, existing))
+        stale = pending.requestIds
+      }
       started = await this.admit(turn)
     } finally {
       this.admitting.delete(turn.invocationId)
@@ -394,7 +403,7 @@ export class T3TurnRunner {
       trace: new RunTrace(started.runId, mode),
       abort: new AbortController(),
       steers: new Set(),
-      asked: new Set(),
+      asked: new Set(stale),
       ...(this.cursors.has(started.threadId) ? { cursor: this.cursors.get(started.threadId)! } : {}),
     }
     this.runs.set(turn.invocationId, run)
@@ -551,14 +560,23 @@ export class T3TurnRunner {
             else run.trace.runIds.add(waited.runId)
           }
           await this.drain(run, batcher)
-          // A question answered in T3 itself closes, which withdraws its card.
-          if (trace.questions.size === 0) run.asking?.abort()
-          else if (!run.asking) void this.askQuestions(run)
+          await this.withdrawAnsweredCard(run)
+          if (trace.questions.size > 0 && !run.asking) this.askQuestions(invocationId, run)
           failures = 0
           status = waited.status
           if (TERMINAL_RUN_STATUSES.has(status) && run.runId === waitedOn) {
-            if (run.steers.size === 0) break
-            await Promise.allSettled(run.steers)
+            if (run.steers.size > 0) {
+              await Promise.allSettled(run.steers)
+              continue
+            }
+            if (!run.asking) break
+            // A run can end with its question still open, as Codex's async questions do. The answer starts the
+            // run that carries on, so the turn follows that one instead of settling.
+            await Promise.race([run.asking.done, this.sleep(WAIT_TIMEOUT_MS)])
+            if (run.asking || run.unanswered || signal.aborted) continue
+            const { thread } = await this.client.call("t3_thread_read", { threadId: run.threadId, limit: 1 })
+            if (!thread.activeRunId) break
+            adopt(run, thread.activeRunId)
           }
         } catch (error) {
           if (signal.aborted) break
@@ -572,7 +590,7 @@ export class T3TurnRunner {
         }
       }
     } finally {
-      run.asking?.abort()
+      run.asking?.abort.abort()
       // Released before any await, so a steer can't join a run already judged over, and before the
       // turn closes, so a command right after the reply sees no open run.
       if (this.runs.get(invocationId) === run) this.runs.delete(invocationId)
@@ -598,42 +616,63 @@ export class T3TurnRunner {
     await this.settle(invocationId, run, status!)
   }
 
+  /** A card whose request left T3's pending list was answered in T3 itself, so it comes down. */
+  private async withdrawAnsweredCard(run: OpenRun): Promise<void> {
+    const requestId = run.asking?.requestId
+    if (!requestId) return
+    const { requestIds } = await this.client.call("t3_pending_request_list", { threadId: run.threadId })
+    const asking = run.asking
+    if (requestIds.includes(requestId) || asking?.requestId !== requestId) return
+    asking.abort.abort()
+    await asking.done
+  }
+
   /**
    * Put each question T3 is waiting on to the user as a card, one at a time, and send the
    * answers back. Any question left without an answer ends the turn.
    */
-  private async askQuestions(run: OpenRun): Promise<void> {
-    const asking = new AbortController()
+  private askQuestions(invocationId: string, run: OpenRun): void {
+    const abort = new AbortController()
+    const signal = AbortSignal.any([abort.signal, run.abort.signal])
+    const asking: NonNullable<OpenRun["asking"]> = { abort, done: Promise.resolve() }
     run.asking = asking
-    const signal = AbortSignal.any([asking.signal, run.abort.signal])
-    try {
-      const { requestIds } = await this.client.call("t3_pending_request_list", { threadId: run.threadId })
-      for (const requestId of requestIds) {
-        if (run.asked.has(requestId)) continue
-        run.asked.add(requestId)
-        const { questions } = await this.client.call("t3_pending_request_read", { threadId: run.threadId, requestId })
-        const answers: Record<string, string> = {}
-        for (const question of questions) {
-          const card = questionCard(question)
-          const outcome = await this.session.requestDecision(
-            { ...card.input, streamId: run.streamId, externalRef: requestId },
-            { signal }
-          )
-          const answer = card.answerFor(outcome)
-          if (answer === undefined) {
-            run.unanswered = "T3 Code asked a question that went unanswered."
-            return
+    asking.done = (async () => {
+      try {
+        const { requestIds } = await this.client.call("t3_pending_request_list", { threadId: run.threadId })
+        for (const requestId of requestIds) {
+          if (run.asked.has(requestId)) continue
+          asking.requestId = requestId
+          const { questions } = await this.client.call("t3_pending_request_read", { threadId: run.threadId, requestId })
+          const answers: Record<string, string> = {}
+          for (const question of questions) {
+            const card = questionCard(question)
+            for (;;) {
+              // The card posts before the SDK checks the signal.
+              if (signal.aborted) return
+              const outcome = await this.session.requestDecision(
+                { ...card.input, streamId: run.streamId, invocationId, externalRef: requestId },
+                { signal }
+              )
+              const answer = card.answerFor(outcome)
+              if (answer.kind === "blank") continue
+              if (answer.kind === "unanswered") {
+                run.unanswered = "T3 Code asked a question that went unanswered."
+                return
+              }
+              if (answer.kind === "answered") answers[question.id] = answer.text
+              break
+            }
           }
-          answers[question.id] = answer
+          await this.client.call("t3_pending_request_respond", { threadId: run.threadId, requestId, answers })
+          run.asked.add(requestId)
         }
-        await this.client.call("t3_pending_request_respond", { threadId: run.threadId, requestId, answers })
+      } catch (error) {
+        if (signal.aborted || error instanceof DecisionAbandonedError) return
+        run.unanswered = `T3 Code's question couldn't be answered from Threa: ${errorText(error)}`
+      } finally {
+        if (run.asking === asking) run.asking = undefined
       }
-    } catch (error) {
-      if (signal.aborted || error instanceof DecisionAbandonedError) return
-      run.unanswered = `T3 Code asked a question Threa couldn't put to you: ${errorText(error)}`
-    } finally {
-      if (run.asking === asking) run.asking = undefined
-    }
+    })()
   }
 
   /** Read the thread's activity past the run's cursor; the cursor stops at the run's first unsettled item. */

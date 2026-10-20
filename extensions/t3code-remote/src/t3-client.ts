@@ -69,7 +69,10 @@ export interface PendingQuestion {
   question: string
   options: Array<{ label: string; description: string; value?: string }>
   multiSelect?: boolean
+  /** Unset allows one. */
   allowCustomAnswer?: boolean
+  /** Unset is required. */
+  required?: boolean
 }
 
 export interface ProviderInfo {

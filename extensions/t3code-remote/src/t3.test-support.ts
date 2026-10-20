@@ -1,5 +1,5 @@
 import type { DecisionOutcome, DecisionRequestInput, DeliveredTurn, StepFrame } from "@threahq/remote-session"
-import type { BridgeSession } from "./run-bridge"
+import { TERMINAL_RUN_STATUSES, type BridgeSession } from "./run-bridge"
 import {
   T3ToolError,
   type ModelOptionDescriptor,
@@ -62,7 +62,10 @@ export function fakeT3() {
   let steerDelivery: "steered" | "started" | "queued" = "steered"
   let envMode: "local" | "worktree" | undefined
   const models = new Map<string, ModelSelection>()
-  const pending = new Map<string, { threadId: string; questions: PendingQuestion[] }>()
+  const pending = new Map<string, { threadId: string; questions: PendingQuestion[]; startsRun: boolean }>()
+  const activeRuns = new Map<string, string>()
+  // Like T3, a wait on a run that already ended returns at once with how it ended.
+  const ended = new Map<string, string>()
 
   const startRun = () => `run_${++runs}`
   const steerRun = () => (steerDelivery === "steered" ? `run_${runs}` : startRun())
@@ -83,6 +86,8 @@ export function fakeT3() {
     for (;;) {
       const step = scripts.get(runId)?.shift()
       if (step) return step
+      const status = ended.get(runId)
+      if (status) return { status }
       await new Promise<void>((resolve) => wakers.set(runId, resolve))
     }
   }
@@ -107,6 +112,7 @@ export function fakeT3() {
     t3_thread_wait: async (args) => {
       const step = await nextStep(args.runId)
       apply(args.threadId, step)
+      if (TERMINAL_RUN_STATUSES.has(step.status)) ended.set(step.runId ?? args.runId, step.status)
       return {
         runId: step.runId ?? args.runId,
         status: step.status as T3Tools["t3_thread_wait"]["result"]["status"],
@@ -118,7 +124,7 @@ export function fakeT3() {
         threadId: args.threadId,
         title: "Fake thread",
         status: "idle" as const,
-        activeRunId: null,
+        activeRunId: activeRuns.get(args.threadId) ?? null,
         providerInstanceId: models.get(args.threadId)?.instanceId ?? "codex",
         model: models.get(args.threadId)?.model ?? "gpt-5.5",
       }
@@ -193,7 +199,13 @@ export function fakeT3() {
       questions: pending.get(args.requestId)!.questions,
     }),
     t3_pending_request_respond: (args) => {
+      const request = pending.get(args.requestId)!
+      for (const question of request.questions) {
+        if (question.required !== false && !args.answers[question.id]?.trim()) throw new Error("Answer each question")
+      }
       pending.delete(args.requestId)
+      // A question asked as a message is answered by a message, which starts the next run.
+      if (request.startsRun) activeRuns.set(args.threadId, startRun())
       return {}
     },
     t3_environment_read: () => ({
@@ -241,9 +253,14 @@ export function fakeT3() {
     steerAs: (delivery: typeof steerDelivery) => (steerDelivery = delivery),
     /** Put a thread on a model, as when the user configures it in T3. */
     threadModel: (threadId: string, selection: ModelSelection) => models.set(threadId, selection),
-    /** Put questions to the user on a thread, as a provider's ask-user tool does. */
-    ask: (threadId: string, requestId: string, questions: PendingQuestion[]) =>
-      pending.set(requestId, { threadId, questions }),
+    /**
+     * Put questions to the user on a thread, as a provider's ask-user tool does. `startsRun` asks
+     * them as Codex's async questions do, where the answer arrives as a message that starts a run.
+     */
+    ask: (threadId: string, requestId: string, questions: PendingQuestion[], startsRun = false) =>
+      pending.set(requestId, { threadId, questions, startsRun }),
+    /** Answer a request in T3 itself. */
+    answerInT3: (requestId: string) => pending.delete(requestId),
     /** The environment's default for new threads, unset unless a test sets it. */
     defaultEnvMode: (mode: typeof envMode) => (envMode = mode),
   }
@@ -277,7 +294,9 @@ export function fakeSession(rootStreamId = "stream_root") {
     requestDecision: async (input, opts) => {
       decisions.push({ input, ...(opts?.signal ? { signal: opts.signal } : {}) })
       const aborted = new Promise<never>((_, reject) =>
-        opts?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true })
+        opts?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), {
+          once: true,
+        })
       )
       aborted.catch(() => {})
       for (;;) {
