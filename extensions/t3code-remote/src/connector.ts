@@ -16,10 +16,17 @@ export function createFileThreadStore(path: string): ThreadStore {
           typeof threadId === "string" && threadId.length > 0 ? [[streamId, threadId] as const] : []
         )
       )
-      const { instanceId, model } = (parsed.model ?? {}) as { instanceId?: unknown; model?: unknown }
-      return typeof instanceId === "string" && typeof model === "string"
-        ? { threads, model: { instanceId, model } }
-        : { threads }
+      const { instanceId, model, options } = (parsed.model ?? {}) as {
+        instanceId?: unknown
+        model?: unknown
+        options?: unknown
+      }
+      if (typeof instanceId !== "string" || typeof model !== "string") return { threads }
+      const kept = (Array.isArray(options) ? options : []).filter(
+        (option): option is { id: string; value: string | boolean } =>
+          typeof option?.id === "string" && (typeof option.value === "string" || typeof option.value === "boolean")
+      )
+      return { threads, model: { instanceId, model, ...(kept.length > 0 ? { options: kept } : {}) } }
     },
     save: (state) => writeFileAtomic(path, `${JSON.stringify(state, null, 2)}\n`),
   }

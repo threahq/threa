@@ -9,12 +9,10 @@ describe("createFileThreadStore", () => {
     const store = createFileThreadStore(join(mkdtempSync(join(tmpdir(), "t3threads-")), "threads.json"))
     expect(store.load()).toEqual({ threads: {} })
 
-    store.save({ threads: { stream_root: "thread_a" }, model: { instanceId: "codex", model: "gpt-5.5" } })
+    const model = { instanceId: "codex", model: "gpt-5.5", options: [{ id: "reasoningEffort", value: "high" }] }
+    store.save({ threads: { stream_root: "thread_a" }, model })
 
-    expect(store.load()).toEqual({
-      threads: { stream_root: "thread_a" },
-      model: { instanceId: "codex", model: "gpt-5.5" },
-    })
+    expect(store.load()).toEqual({ threads: { stream_root: "thread_a" }, model })
   })
 
   test.each(['{"threads": {"stream_root": "thr', "[]", "null"])(

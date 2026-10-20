@@ -142,6 +142,9 @@ export function fakeT3() {
       }
     },
     t3_thread_interrupt: () => ({ status: "interrupt_requested" }),
+    t3_thread_configuration: (args) => ({
+      modelSelection: models.get(args.threadId) ?? { instanceId: "codex", model: "gpt-5.5" },
+    }),
     t3_thread_configure: (args) => {
       models.set(args.threadId, args.modelSelection)
       return { sequence: 1 }
@@ -221,6 +224,8 @@ export function fakeT3() {
     continueText: (itemId: string, fullText: string) => continuations.set(itemId, fullText),
     /** How T3 answers the next steers: folded into the run, or started or queued as their own run. */
     steerAs: (delivery: typeof steerDelivery) => (steerDelivery = delivery),
+    /** Put a thread on a model, as when the user configures it in T3. */
+    threadModel: (threadId: string, selection: ModelSelection) => models.set(threadId, selection),
     /** The environment's default for new threads, unset unless a test sets it. */
     defaultEnvMode: (mode: typeof envMode) => (envMode = mode),
   }

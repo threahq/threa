@@ -3,8 +3,8 @@ import { errorText, type T3TurnRunner } from "./run-bridge"
 import type { ModelOptionDescriptor, ModelSelection, ProviderInfo, T3Client } from "./t3-client"
 
 const MAX_AMBIGUOUS_CANDIDATES = 8
-/** Codex calls its effort setting `reasoningEffort`, Claude `effort`. */
-const EFFORT_OPTION_IDS: ReadonlySet<string> = new Set(["reasoningEffort", "effort"])
+/** Codex calls its effort setting `reasoningEffort`, Claude `effort`, Pi `thinking`. */
+const EFFORT_OPTION_IDS: ReadonlySet<string> = new Set(["reasoningEffort", "effort", "thinking"])
 
 type CommandResult = { ok: boolean; summary?: string; message?: string }
 
@@ -154,8 +154,22 @@ export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): 
     if (!level) {
       return { ok: false, message: `${label(model)} thinks at one of: ${levels.join(", ")}.` }
     }
+    // A configure replaces the whole selection, so keep the thread's other options, like Claude's context window.
+    const threadId = runner.threadFor(rootStreamId)
+    let current = model
+    if (threadId) {
+      try {
+        const { modelSelection } = await client.call("t3_thread_configuration", { threadId })
+        if (modelSelection.instanceId === model.instanceId && modelSelection.model === model.model) {
+          current = modelSelection
+        }
+      } catch (error) {
+        return { ok: false, message: `Could not read \`${threadId}\`'s model: ${errorText(error)}` }
+      }
+    }
+    const kept = (current.options ?? []).filter((candidate) => candidate.id !== option.id)
     return await apply(
-      { ...model, options: [{ id: option.id, value: level }] },
+      { ...model, options: [...kept, { id: option.id, value: level }] },
       rootStreamId,
       `Set thinking to ${level}`
     )

@@ -114,6 +114,10 @@ export interface T3Tools {
     args: { threadId: string; runId?: string; reason?: string }
     result: { status: string }
   }
+  t3_thread_configuration: {
+    args: { threadId: string }
+    result: { modelSelection: ModelSelection }
+  }
   t3_thread_configure: {
     args: { threadId: string; modelSelection: ModelSelection }
     result: { sequence: number }

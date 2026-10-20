@@ -132,6 +132,48 @@ describe("T3 session control", () => {
     })
   })
 
+  test("/thinking keeps the thread's other options, like Claude's context window", async () => {
+    const opus = { instanceId: "claudeAgent", model: "claude-opus-5-5" }
+    const { t3, saved, control } = setup({ threads: { stream_root: "thread_a" }, model: opus })
+    t3.threadModel("thread_a", {
+      ...opus,
+      options: [
+        { id: "contextWindow", value: "1m" },
+        { id: "effort", value: "low" },
+      ],
+    })
+
+    await control.runCommand("thinking", "max", CONTEXT)
+
+    const selection = {
+      ...opus,
+      options: [
+        { id: "contextWindow", value: "1m" },
+        { id: "effort", value: "max" },
+      ],
+    }
+    expect({ configured: t3.callsOf("t3_thread_configure"), model: saved.at(-1)?.model }).toEqual({
+      configured: [{ threadId: "thread_a", modelSelection: selection }],
+      model: selection,
+    })
+  })
+
+  test("/thinking changes nothing when the thread's model can't be read", async () => {
+    const { t3, saved, control } = setup({
+      threads: { stream_root: "thread_a" },
+      model: { instanceId: "codex", model: "gpt-5.5" },
+    })
+    t3.failNext("t3_thread_configuration", new Error("thread not found"))
+
+    const result = await control.runCommand("thinking", "high", CONTEXT)
+
+    expect({ result, configured: t3.callsOf("t3_thread_configure"), saved }).toEqual({
+      result: { ok: false, message: "Could not read `thread_a`'s model: thread not found" },
+      configured: [],
+      saved: [],
+    })
+  })
+
   test.each([
     [undefined, "nope", "Pick a model with /model first."],
     [{ instanceId: "codex", model: "gpt-5.5-mini" }, "high", "codex::gpt-5.5-mini has no thinking levels."],
@@ -159,12 +201,10 @@ describe("T3 session control", () => {
 
     await control.runCommand("model", "opus", CONTEXT)
 
-    expect(saved.at(-1)?.model).toEqual({
-      instanceId: "claudeAgent",
-      model: "claude-opus-5-5",
-      ...(options ? { options } : {}),
+    expect({ model: saved.at(-1)?.model, levels: control.thinkingLevels }).toEqual({
+      model: { instanceId: "claudeAgent", model: "claude-opus-5-5", ...(options ? { options } : {}) },
+      levels: ["low", "medium", "high", "max"],
     })
-    expect(control.thinkingLevels).toEqual(["low", "medium", "high", "max"])
   })
 
   test("/clear forgets the scratchpad's thread, but not while a turn runs", async () => {
