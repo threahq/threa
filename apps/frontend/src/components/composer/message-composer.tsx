@@ -21,6 +21,7 @@ import {
   VIEWPORT_RECONCILE_TOLERANCE_PX,
 } from "@/hooks/use-visual-viewport"
 import { useInputMode } from "@/hooks/use-input-mode"
+import { useStableCallback } from "@/hooks/use-stable-callback"
 import { useComposerActionSide } from "@/hooks/use-composer-action-side"
 import { usePreferencesOptional } from "@/contexts"
 import { getEffectiveKeyBinding, matchesKeyBinding } from "@/lib/keyboard-shortcuts"
@@ -1014,6 +1015,7 @@ export function MessageComposer({
     copy: askCopy,
     question,
     submit: submitAsking,
+    answer: answerQuestion,
     dismiss: dismissQuestion,
     recordAlternative,
   } = useSendAsk({ sendWarning, awaitSendWarning, content })
@@ -1028,21 +1030,27 @@ export function MessageComposer({
     refocusEditor()
   }, [dismissQuestion, refocusEditor])
 
+  // Stable, so an answer given after a rerender still sends through the current `onSubmit`.
+  const send = useStableCallback((options?: ComposerSubmitOptions) => {
+    setFormatOpen(false)
+    resetMobileComposerSize()
+    setMobileLinkPopoverOpen(false)
+    // End any in-flight take first: this flushes the live hypothesis into the
+    // editor (so the tail lands in the message) and drops the polish toggle +
+    // warnings before we snapshot the content below.
+    micRef.current?.prepareSendAsIs()
+    onSubmit(richEditorRef.current?.getEditor()?.getJSON() as JSONContent | undefined, options)
+  })
+
   const handleSubmit = useCallback(() => {
     if (!canSubmit) return
-    const wasAsking = question !== null
-    void submitAsking((options) => {
-      setFormatOpen(false)
-      resetMobileComposerSize()
-      setMobileLinkPopoverOpen(false)
-      // End any in-flight take first: this flushes the live hypothesis into the
-      // editor (so the tail lands in the message) and drops the polish toggle +
-      // warnings before we snapshot the content below.
-      micRef.current?.prepareSendAsIs()
-      onSubmit(richEditorRef.current?.getEditor()?.getJSON() as JSONContent | undefined, options)
-      if (wasAsking) refocusEditor()
-    })
-  }, [canSubmit, question, submitAsking, onSubmit, resetMobileComposerSize, refocusEditor])
+    if (question) {
+      answerQuestion()
+      refocusEditor()
+      return
+    }
+    void submitAsking(send)
+  }, [canSubmit, question, answerQuestion, submitAsking, send, refocusEditor])
 
   const handleAlternative = useCallback(() => {
     const editor = richEditorRef.current?.getEditor()
@@ -1130,14 +1138,16 @@ export function MessageComposer({
   // The picker owns the pending list; the phone foot hides its trigger, so it
   // publishes the count here for the "+" to wear.
   const [scheduledCount, setScheduledCount] = useState(0)
+  const askBeforeSend = useStableCallback(submitAsking)
   const stashedDraftsBridge = useMemo<StashedDraftsComposerBridge>(
     () => ({
       openRef: stashedDraftsOpenRef,
       openScheduledRef: scheduledMessagesOpenRef,
       reportScheduledCount: setScheduledCount,
       focusComposer: () => richEditorRef.current?.focus(),
+      askBeforeSend: (schedule, verb) => void askBeforeSend(schedule, verb),
     }),
-    []
+    [askBeforeSend]
   )
   const composerEmpty = isEmptyContent(content) && pendingAttachments.length === 0
 

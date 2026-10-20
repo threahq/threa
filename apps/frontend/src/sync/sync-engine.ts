@@ -815,7 +815,8 @@ export class SyncEngine {
       this.deps.reactionService ?? { add: async () => {}, remove: async () => {} },
       this.deps.scheduledService,
       this.deps.draftsService,
-      () => this.socket !== null && !this.isDestroyed
+      () => this.socket !== null && !this.isDestroyed,
+      () => this.kickOperationQueue()
     ).then((retryAt) => {
       if (retryAt === null || this.isDestroyed || !this.socket) return
       if (this.operationQueueRetryTimer) clearTimeout(this.operationQueueRetryTimer)

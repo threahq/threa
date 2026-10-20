@@ -770,7 +770,7 @@ function MessageInputComponent({
    * of the live send pipeline. The schedule row appears immediately in the
    * Scheduled page via the upserted socket event.
    */
-  const handleSchedule = useStableCallback(async (when: Date) => {
+  const handleSchedule = useStableCallback(async (when: Date, options?: ComposerSubmitOptions) => {
     if (!composer.canSend) return
     // A scheduled row carries no enqueue intent; firing it would steer, the opposite of what /enqueue asked for.
     const plan = planSend(composer.content)
@@ -812,6 +812,7 @@ function MessageInputComponent({
         // message posts into this stream and the assigner attaches it to the
         // conversation by id (cross-stream within one root is allowed).
         conversation: armedConversationId ? { intent: "existing", conversationId: armedConversationId } : undefined,
+        confirmedPrivacyWarning: options?.confirmedPrivacyWarning,
       })
       disarm()
       composer.resolveDraft()

@@ -99,7 +99,8 @@ describe("cancelCommandDispatch", () => {
       { add: vi.fn(), remove: vi.fn() },
       undefined,
       undefined,
-      () => true
+      () => true,
+      () => {}
     )
 
     expect((await db.events.get([workspaceId, `${commandId}:failed`]))?._anchorSequenceNum).toBe(4)
@@ -124,7 +125,8 @@ describe("cancelCommandDispatch", () => {
       { add: vi.fn(), remove: vi.fn() },
       undefined,
       undefined,
-      () => true
+      () => true,
+      () => {}
     )
 
     expect(dispatch.mock.calls[0][1]).toEqual({
@@ -154,7 +156,8 @@ describe("cancelCommandDispatch", () => {
       { add: vi.fn(), remove: vi.fn() },
       undefined,
       undefined,
-      () => true
+      () => true,
+      () => {}
     )
 
     expect((await db.pendingOperations.get("op_retry"))?.startedAt).toBeDefined()
@@ -183,7 +186,8 @@ describe("cancelCommandDispatch", () => {
       { add: vi.fn(), remove: vi.fn() },
       undefined,
       undefined,
-      () => true
+      () => true,
+      () => {}
     )
     await vi.waitFor(() => expect(commandsApi.dispatch).toHaveBeenCalledOnce())
     expect(commandsApi.dispatch).toHaveBeenCalledWith("ws_1", {

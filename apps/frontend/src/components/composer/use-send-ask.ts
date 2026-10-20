@@ -5,6 +5,7 @@ import {
   type AudienceQuestionCopy,
   type ComposerSendWarning,
   type SendTone,
+  type SendVerb,
   type SendWarning,
 } from "@/lib/reference-audience"
 import { contentSignature } from "@/lib/display-stamps"
@@ -72,7 +73,7 @@ export function useSendAsk({
     [sendWarning]
   )
   const askKey = askKeyOf(sendWarning)
-  const [asked, setAsked] = useState<{ key: string; signature: string } | null>(null)
+  const [asked, setAsked] = useState<{ key: string; signature: string; send: Send; verb: SendVerb } | null>(null)
   const consented = useRef(new Set<string>())
   const waiting = useRef(false)
   const latest = useRef({ content, sendWarning, awaitSendWarning })
@@ -83,14 +84,21 @@ export function useSendAsk({
     if (contentIsEmpty) consented.current = new Set()
   }, [contentIsEmpty])
 
-  const askedStillHolds = useMemo(
-    () => asked !== null && asked.key === askKey && asked.signature === contentSignature(content),
-    [asked, askKey, content]
+  const open = useMemo(
+    () => (sendWarning && asked?.key === askKey && asked.signature === contentSignature(content) ? asked : null),
+    [sendWarning, asked, askKey, content]
   )
-  const question: SendAskQuestion | null =
-    sendWarning && copy && askedStillHolds
-      ? { tone: sendWarning.warning.tone, copy, convertibleStreamIds: sendWarning.warning.convertibleStreamIds }
-      : null
+  const question: SendAskQuestion | null = useMemo(
+    () =>
+      sendWarning && open
+        ? {
+            tone: sendWarning.warning.tone,
+            copy: audienceQuestionCopy(sendWarning.warning, sendWarning.names, open.verb),
+            convertibleStreamIds: sendWarning.warning.convertibleStreamIds,
+          }
+        : null,
+    [sendWarning, open]
+  )
 
   const record = useCallback((targetKey: string, exposed: SendWarning["exposed"]) => {
     consented.current = new Set([...consented.current, ...consentKeys(targetKey, exposed)])
@@ -107,47 +115,54 @@ export function useSendAsk({
   )
 
   const decide = useCallback(
-    (decided: ComposerSendWarning | null, send: Send) => {
+    (decided: ComposerSendWarning | null, send: Send, verb: SendVerb) => {
       const unanswered =
         decided && consentKeys(decided.targetKey, decided.warning.exposed).some((key) => !consented.current.has(key))
-      if (unanswered) setAsked({ key: askKeyOf(decided), signature: contentSignature(latest.current.content) })
+      if (unanswered)
+        setAsked({ key: askKeyOf(decided), signature: contentSignature(latest.current.content), send, verb })
       else sendAndRecord(decided, send)
     },
     [sendAndRecord]
   )
 
   const settleThenDecide = useCallback(
-    async (send: Send): Promise<void> => {
+    async (send: Send, verb: SendVerb): Promise<void> => {
       const { sendWarning: current, awaitSendWarning: awaitSettled } = latest.current
       if (!awaitSettled) {
-        decide(current, send)
+        decide(current, send, verb)
         return
       }
       // A link pasted a moment ago has no answer yet; asking from the old one would skip it.
       const before = contentSignature(latest.current.content)
       const settled = await awaitSettled()
       // The answer is about the content Send was pressed on; a draft typed into since waits for the next Send.
-      if (contentSignature(latest.current.content) === before) decide(settled, send)
+      if (contentSignature(latest.current.content) === before) decide(settled, send, verb)
     },
     [decide]
   )
 
+  /** Asking again for the action the open question names answers it; another action takes the question over. */
   const submit = useCallback(
-    async (send: Send) => {
+    async (send: Send, verb: SendVerb = "Send") => {
       if (waiting.current) return
-      if (question) {
-        sendAndRecord(sendWarning, send)
+      if (open) {
+        if (verb === open.verb) sendAndRecord(sendWarning, send)
+        else setAsked({ ...open, send, verb })
         return
       }
       waiting.current = true
       try {
-        await settleThenDecide(send)
+        await settleThenDecide(send, verb)
       } finally {
         waiting.current = false
       }
     },
-    [question, sendWarning, sendAndRecord, settleThenDecide]
+    [open, sendWarning, sendAndRecord, settleThenDecide]
   )
+
+  const answer = useCallback(() => {
+    if (open) sendAndRecord(sendWarning, open.send)
+  }, [open, sendWarning, sendAndRecord])
 
   const dismiss = useCallback(() => setAsked(null), [])
   /** The question's alternative converted refs; it answers for what the draft now holds. */
@@ -155,5 +170,5 @@ export function useSendAsk({
     if (sendWarning) record(sendWarning.targetKey, exposedAfterAlternative(sendWarning.warning))
   }, [record, sendWarning])
 
-  return { copy, question, submit, dismiss, recordAlternative }
+  return { copy, question, submit, answer, dismiss, recordAlternative }
 }

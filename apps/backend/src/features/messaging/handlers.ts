@@ -327,8 +327,9 @@ export function createMessageHandlers({
     userId: string,
     data: z.infer<typeof createMessageJsonToDmSchema> | z.infer<typeof createMessageMarkdownToDmSchema>
   ) {
-    await ShareService.assertNewDmSharesConfirmed({
+    await ShareService.assertSharesConfirmed({
       contentJson: normalizeContent(data).contentJson,
+      targetStreamId: null,
       confirmedPrivacyWarning: data.confirmedPrivacyWarning,
       listAudiences: (streamIds) =>
         streamService.listReferenceAudiences({ workspaceId, userId, target: { dmUserId: data.dmUserId }, streamIds }),

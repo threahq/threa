@@ -127,18 +127,33 @@ export interface ValidateAndRecordSharesParams {
  */
 export const ShareService = {
   /**
-   * A first DM message creates the DM, so its shares are checked against the peer before that write:
-   * a 409 must not leave behind a DM the author never sent anything to.
+   * Checks shares before a write that `validateAndRecordShares` can't gate: a first DM message
+   * creates the DM, so a 409 must not leave behind a DM the author never sent anything to, and a
+   * scheduled send is consented when it is written, not when it fires. `targetStreamId` is null
+   * for a DM that doesn't exist yet. References already in `previousContentJson` were accepted
+   * when they were added, so an edit that keeps them doesn't ask again.
    */
-  async assertNewDmSharesConfirmed(params: {
+  async assertSharesConfirmed(params: {
     contentJson: JSONContent
+    targetStreamId: string | null
+    previousContentJson?: JSONContent
     confirmedPrivacyWarning?: boolean
     listAudiences: (streamIds: string[]) => Promise<{ count: number }[]>
   }): Promise<void> {
     if (params.confirmedPrivacyWarning) return
-    const references = collectShareReferences(params.contentJson, "")
-    if (references.length === 0) return
-    const audiences = await params.listAudiences(references.map((ref) => ref.sourceStreamId))
+    const targetStreamId = params.targetStreamId ?? ""
+    const accepted = new Set(
+      params.previousContentJson
+        ? collectShareReferences(params.previousContentJson, targetStreamId).map((ref) => ref.sourceMessageId)
+        : []
+    )
+    const streamIds = new Set(
+      collectShareReferences(params.contentJson, targetStreamId)
+        .filter((ref) => !accepted.has(ref.sourceMessageId))
+        .map((ref) => ref.sourceStreamId)
+    )
+    if (streamIds.size === 0) return
+    const audiences = await params.listAudiences([...streamIds])
     if (audiences.some((audience) => audience.count > 0)) throw privacyConfirmationRequired()
   },
 

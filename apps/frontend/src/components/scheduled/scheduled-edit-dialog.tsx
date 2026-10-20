@@ -28,6 +28,8 @@ import { usePreferences } from "@/contexts"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { materializePendingAttachmentReferences } from "@/components/timeline/message-input"
 import { toast } from "sonner"
+import { useSharePrivacyConfirm } from "@/hooks/use-share-privacy-confirm"
+import { isPrivacyConfirmationError } from "@/lib/share-privacy-toast"
 import { collectAttachmentReferenceIds } from "@threahq/prosemirror"
 import { EMPTY_DOC, ensureTrailingParagraph } from "@/lib/prosemirror-utils"
 
@@ -217,84 +219,81 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
     return { contentJson: materialized, attachmentIds: collectAttachmentReferenceIds(materialized) }
   }, [contentJson, attachmentsHook])
 
-  const handleSave = useCallback(async () => {
-    if (!scheduled || !sendAtDate || expectedVersion === null) return
-    if (isLocalRow) {
-      // Local-only rows haven't been confirmed by the server yet, so the
-      // update API would 404. The schedule_message op will land shortly;
-      // until then, surface a benign hint and bail.
-      toast.info("Scheduling… try again in a moment")
-      return
-    }
-    try {
-      const { contentJson: materialized, attachmentIds } = collectEditorContent()
-      await updateMutation.mutateAsync({
-        id: scheduled.id,
-        input: {
-          contentJson: materialized,
-          scheduledFor: sendAtDate.toISOString(),
-          attachmentIds,
-          expectedVersion,
-        },
-      })
-      handleClose()
-    } catch (err: unknown) {
-      const isStaleVersion =
-        err && typeof err === "object" && "code" in err && err.code === "SCHEDULED_MESSAGE_STALE_VERSION"
-      if (isStaleVersion) {
-        toast.error("This message was edited elsewhere — refreshing…")
-        handleClose()
-        return
-      }
-      const message = err instanceof Error ? err.message : "Could not save"
-      setError(message)
-    }
-  }, [scheduled, sendAtDate, expectedVersion, isLocalRow, updateMutation, handleClose, collectEditorContent])
+  // The toast reruns the action the 409 refused, with the dialog's current send time.
+  const [blockedSendNow, setBlockedSendNow] = useState(false)
+  const { block: blockOnPrivacy, clear: clearPrivacyBlock } = useSharePrivacyConfirm({
+    toastId: `share-privacy-scheduled-${scheduled?.id ?? ""}`,
+    content: contentJson,
+    confirmLabel: isPast || blockedSendNow ? "Send anyway" : "Save anyway",
+    onConfirm: () => void persist(blockedSendNow, true),
+  })
 
   /**
-   * Send now. Persists the current editor content first (so unsaved edits
-   * ship), then force-sends via `sendNow` — which claims the row regardless
-   * of its scheduled time. Saving with a past `scheduled_for` already sends
-   * atomically, so skip the second call when the update itself transitioned
-   * the row to `sent`.
+   * Persists the current editor content (so unsaved edits ship). With
+   * `sendNow`, then force-sends via `sendNow` — which claims the row regardless
+   * of its scheduled time — unless saving a past `scheduled_for` already sent
+   * it atomically.
    */
-  const handleSendNow = useCallback(async () => {
-    if (!scheduled || !sendAtDate || expectedVersion === null) return
-    if (isLocalRow) {
-      toast.info("Scheduling… try again in a moment")
-      return
-    }
-    try {
-      const { contentJson: materialized, attachmentIds } = collectEditorContent()
-      const saved = await updateMutation.mutateAsync({
-        id: scheduled.id,
-        input: { contentJson: materialized, scheduledFor: sendAtDate.toISOString(), attachmentIds, expectedVersion },
-      })
-      if (saved.status !== "sent") {
-        await sendNowMutation.mutateAsync(scheduled.id)
-      }
-      handleClose()
-    } catch (err: unknown) {
-      const isStaleVersion =
-        err && typeof err === "object" && "code" in err && err.code === "SCHEDULED_MESSAGE_STALE_VERSION"
-      if (isStaleVersion) {
-        toast.error("This message was edited elsewhere — refreshing…")
-        handleClose()
+  const persist = useCallback(
+    async (sendNow: boolean, confirmedPrivacyWarning?: boolean) => {
+      if (!scheduled || !sendAtDate || expectedVersion === null) return
+      if (isLocalRow) {
+        // Local-only rows haven't been confirmed by the server yet, so the
+        // update API would 404. The schedule_message op will land shortly;
+        // until then, surface a benign hint and bail.
+        toast.info("Scheduling… try again in a moment")
         return
       }
-      const message = err instanceof Error ? err.message : "Could not send"
-      setError(message)
-    }
-  }, [
-    scheduled,
-    sendAtDate,
-    expectedVersion,
-    isLocalRow,
-    updateMutation,
-    sendNowMutation,
-    handleClose,
-    collectEditorContent,
-  ])
+      clearPrivacyBlock()
+      try {
+        const { contentJson: materialized, attachmentIds } = collectEditorContent()
+        const saved = await updateMutation.mutateAsync({
+          id: scheduled.id,
+          input: {
+            contentJson: materialized,
+            scheduledFor: sendAtDate.toISOString(),
+            attachmentIds,
+            expectedVersion,
+            confirmedPrivacyWarning,
+          },
+        })
+        if (sendNow && saved.status !== "sent") {
+          await sendNowMutation.mutateAsync(scheduled.id)
+        }
+        handleClose()
+      } catch (err: unknown) {
+        if (isPrivacyConfirmationError(err)) {
+          setBlockedSendNow(sendNow)
+          blockOnPrivacy((editorRef.current?.getEditor()?.getJSON() as JSONContent | undefined) ?? contentJson)
+          return
+        }
+        const isStaleVersion =
+          err && typeof err === "object" && "code" in err && err.code === "SCHEDULED_MESSAGE_STALE_VERSION"
+        if (isStaleVersion) {
+          toast.error("This message was edited elsewhere — refreshing…")
+          handleClose()
+          return
+        }
+        const fallback = sendNow ? "Could not send" : "Could not save"
+        setError(err instanceof Error ? err.message : fallback)
+      }
+    },
+    [
+      scheduled,
+      sendAtDate,
+      expectedVersion,
+      isLocalRow,
+      updateMutation,
+      sendNowMutation,
+      handleClose,
+      collectEditorContent,
+      contentJson,
+      clearPrivacyBlock,
+      blockOnPrivacy,
+    ]
+  )
+  const handleSave = useCallback(() => void persist(false), [persist])
+  const handleSendNow = useCallback(() => void persist(true), [persist])
 
   const handleDelete = useCallback(async () => {
     if (!scheduled) return

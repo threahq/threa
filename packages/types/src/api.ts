@@ -2806,6 +2806,8 @@ export interface ScheduleMessageInput {
    * "Reply in conversation" arm; omit to let the extractor infer at fire time.
    */
   conversation?: ConversationDirective
+  /** See `CreateMessageInputJson.confirmedPrivacyWarning`; consent is given when scheduling, not at fire time. */
+  confirmedPrivacyWarning?: boolean
 }
 
 /**
@@ -2821,6 +2823,8 @@ export interface UpdateScheduledMessageInput {
   scheduledFor?: string
   /** Row's `version` integer at the time the editor opened. */
   expectedVersion: number
+  /** See `CreateMessageInputJson.confirmedPrivacyWarning`; shares the row already held don't ask again. */
+  confirmedPrivacyWarning?: boolean
 }
 
 /**

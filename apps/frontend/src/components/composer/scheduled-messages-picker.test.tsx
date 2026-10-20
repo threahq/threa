@@ -54,6 +54,7 @@ describe("ScheduledMessagesPicker", () => {
             openScheduledRef: { current: null },
             reportScheduledCount,
             focusComposer: vi.fn(),
+            askBeforeSend: vi.fn(),
           }}
         >
           <ScheduledMessagesPicker workspaceId="ws_1" streamId="stream_1" canSchedule onSchedule={vi.fn()} />
