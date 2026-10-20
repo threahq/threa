@@ -1721,6 +1721,30 @@ describe("MessageComposer", () => {
       }).toEqual({ calls: [[DRAFT, { confirmedPrivacyWarning: true }]], detail: null, asking: null })
     })
 
+    it("Escape in the detail closes only the detail; the next Escape takes the question away", async () => {
+      renderAskingWithDetail(revealToMany)
+      await userEvent.click(screen.getByTestId("send-ask-detail-trigger"))
+      await userEvent.keyboard("{Escape}")
+      expect({
+        detail: screen.queryByTestId("send-ask-detail"),
+        asking: screen.queryByTestId("send-ask") !== null,
+        focused: document.activeElement === screen.getByTestId("send-ask-detail-trigger"),
+      }).toEqual({ detail: null, asking: true, focused: true })
+
+      await userEvent.keyboard("{Escape}")
+      expect(screen.queryByTestId("send-ask")).not.toBeInTheDocument()
+    })
+
+    it("the row keeps focus off its own presses but not off the detail's", async () => {
+      renderAskingWithDetail(revealToMany)
+      await userEvent.click(screen.getByTestId("send-ask-detail-trigger"))
+      expect({
+        row: fireEvent.mouseDown(screen.getByTestId("send-ask")),
+        detail: fireEvent.mouseDown(within(screen.getByTestId("send-ask-detail")).getAllByRole("listitem")[0]),
+        status: within(screen.getByTestId("send-ask")).getByRole("status").textContent,
+      }).toEqual({ row: false, detail: true, status: expect.stringContaining("will see this message") })
+    })
+
     it("on a phone the primary drops 'anyway' and the detail opens as a sheet", async () => {
       isMobileMockValue = true
       renderAskingWithDetail(sendWarning("unreachable"))

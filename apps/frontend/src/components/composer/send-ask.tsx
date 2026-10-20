@@ -47,11 +47,7 @@ export function SendAskRow({
   const question = (
     <>
       <Icon aria-hidden className="h-4 w-4 shrink-0" />
-      <span
-        id={questionId}
-        role="status"
-        className={cn("truncate", detail && "underline decoration-dotted underline-offset-4")}
-      >
+      <span id={questionId} className={cn("truncate", detail && "underline decoration-dotted underline-offset-4")}>
         <FitCopy compact={compact} copy={copy} />
       </span>
     </>
@@ -68,9 +64,15 @@ export function SendAskRow({
         mirrored && "flex-row-reverse",
         className
       )}
-      onMouseDown={(event) => event.preventDefault()}
+      // The detail's portal bubbles here through React; only the row itself keeps the editor's focus.
+      onMouseDown={(event) => {
+        if (event.currentTarget.contains(event.target as Node)) event.preventDefault()
+      }}
     >
-      <div className={cn("flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium", AUDIENCE_TONE[tone].text)}>
+      <div
+        role="status"
+        className={cn("flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium", AUDIENCE_TONE[tone].text)}
+      >
         {detail ? (
           <SendAskDetail
             workspaceId={detail.workspaceId}

@@ -49,6 +49,9 @@ export function SendAskDetail({
       {children}
     </button>
   )
+  // Radix sees Escape on the document before React does; stopping it there keeps the
+  // composer's Escape (drop the question) for the next press.
+  const closeOnlyDetail = (event: KeyboardEvent) => event.stopPropagation()
   const body = (
     <DetailBody
       workspaceId={workspaceId}
@@ -65,14 +68,21 @@ export function SendAskDetail({
     return (
       <Drawer open={open} onOpenChange={setOpen} shouldScaleBackground={false}>
         <DrawerTrigger asChild>{trigger}</DrawerTrigger>
-        <DrawerContent className="pb-[env(safe-area-inset-bottom)]">{body}</DrawerContent>
+        <DrawerContent className="pb-[env(safe-area-inset-bottom)]" onEscapeKeyDown={closeOnlyDetail}>
+          {body}
+        </DrawerContent>
       </Drawer>
     )
   }
   return (
     <Popover open={open} onOpenChange={setOpen} modal={false}>
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-      <PopoverContent align="start" side="top" className="w-[340px] max-w-[calc(100vw-1rem)] p-0">
+      <PopoverContent
+        align="start"
+        side="top"
+        className="w-[340px] max-w-[calc(100vw-1rem)] p-0"
+        onEscapeKeyDown={closeOnlyDetail}
+      >
         {body}
       </PopoverContent>
     </Popover>
