@@ -70,7 +70,7 @@ export interface PendingQuestion {
   question: string
   options: Array<{ label: string; description: string; value?: string }>
   multiSelect?: boolean
-  /** Unset allows one. */
+  /** Unset allows a custom answer. */
   allowCustomAnswer?: boolean
   /** Unset is required. */
   required?: boolean

@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, truncateSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { DecisionOutcome, DownloadedAttachment } from "@threahq/remote-session"
+import type { DownloadedAttachment } from "@threahq/remote-session"
 import { T3AuthError } from "./auth"
 import { RunTrace, T3TurnRunner, type RunTraceMode, type ThreadState } from "./run-bridge"
 import { T3ToolError, type PendingQuestion } from "./t3-client"
-import { fakeSession, fakeT3, item, turn } from "./t3.test-support"
+import { DECISION, fakeSession, fakeT3, item, picked, turn } from "./t3.test-support"
 
 const MODEL = { instanceId: "codex", model: "gpt-5.5" }
 
@@ -54,14 +54,6 @@ function downloaded(
     localPath,
   }
 }
-
-const DECISION = { id: "dec_1" } as DecisionOutcome["decision"]
-const picked = (optionId: string, note: string | null = null): DecisionOutcome => ({
-  status: "resolved",
-  optionId,
-  note,
-  decision: DECISION,
-})
 
 function question(id: string, fields: Partial<PendingQuestion> = {}): PendingQuestion {
   return {

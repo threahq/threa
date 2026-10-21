@@ -31,6 +31,16 @@ function effortOption(id: string, levels: string[]): ModelOptionDescriptor {
   return { id, type: "select", options: levels.map((level) => ({ id: level })) }
 }
 
+export const DECISION = { id: "dec_1" } as DecisionOutcome["decision"]
+
+/** A card answered with `optionId`, and with `note` when the option takes one. */
+export const picked = (optionId: string, note: string | null = null): DecisionOutcome => ({
+  status: "resolved",
+  optionId,
+  note,
+  decision: DECISION,
+})
+
 export function item(
   position: number,
   type: string,

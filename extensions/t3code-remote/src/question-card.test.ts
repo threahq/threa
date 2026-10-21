@@ -1,15 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import type { DecisionOutcome } from "@threahq/remote-session"
+
 import { questionCard } from "./question-card"
 import type { PendingQuestion } from "./t3-client"
-
-const DECISION = { id: "dec_1" } as DecisionOutcome["decision"]
-const picked = (optionId: string, note: string | null = null): DecisionOutcome => ({
-  status: "resolved",
-  optionId,
-  note,
-  decision: DECISION,
-})
+import { DECISION, picked } from "./t3.test-support"
 
 function question(fields: Partial<PendingQuestion> = {}): PendingQuestion {
   return { id: "q", header: "Deploy", question: "Where to?", options: [], ...fields }
