@@ -72,6 +72,18 @@ describe("questionCard", () => {
     })
   })
 
+  test("options too long for the card give way before the question and its hint", () => {
+    const card = questionCard(question({ options: [{ label: "Region", description: "z".repeat(9000) }] }), {
+      skippable: true,
+    })
+
+    expect({
+      start: card.input.body?.startsWith("Where to?\n\n- **Region**"),
+      end: card.input.body?.endsWith("…\n\nFor Other, write your answer in the note."),
+      withinLimit: card.input.body!.length <= 8000,
+    }).toEqual({ start: true, end: true, withinLimit: true })
+  })
+
   test("a question that forbids its own answer has no Other, and an optional one can be skipped", async () => {
     const optional = question({ options: options(2), allowCustomAnswer: false, required: false })
     const card = questionCard(optional, { skippable: true })

@@ -637,6 +637,53 @@ describe("T3TurnRunner", () => {
     expect(session.replies).toEqual([{ invocationId: "binv_1", text: "Bun it is" }])
   })
 
+  test("a request answered in T3 before its card goes up is passed over", async () => {
+    const { t3, session, runner } = setup()
+    t3.ask("thread_1", "req_1", [question("runner")])
+    t3.ask("thread_1", "req_2", [question("watch", { header: "Watch" })])
+    t3.script("run_1", [{ status: "waiting", items: [asking(), asking(2)] }])
+    await runner.deliverTurn(turn())
+    await idle()
+
+    t3.answerInT3("req_2")
+    session.answer(picked("option_0"))
+    await idle()
+    t3.script("run_1", [
+      { status: "completed", items: [answered(), answered(2), item(3, "assistant_message", { text: "Bun it is" })] },
+    ])
+    await session.settled()
+
+    expect({
+      cards: session.decisions.map(({ input }) => input.externalRef),
+      interrupts: t3.callsOf("t3_thread_interrupt"),
+      replies: session.replies,
+      fails: session.fails,
+    }).toEqual({
+      cards: ["req_1"],
+      interrupts: [],
+      replies: [{ invocationId: "binv_1", text: "Bun it is" }],
+      fails: [],
+    })
+  })
+
+  test("a run that asked carries on alone when its answer starts no run, past one the user queued in T3", async () => {
+    const { t3, session, runner } = setup()
+    t3.ask("thread_1", "req_1", [question("runner")])
+    t3.script("run_1", [{ status: "waiting", items: [asking()] }])
+    await runner.deliverTurn(turn())
+    await idle()
+
+    session.answer(picked("option_0"))
+    await until(() => t3.callsOf("t3_pending_request_respond").length === 1)
+    await t3.client.call("t3_thread_send", { threadId: "thread_1", message: "Unrelated", mode: "queue" })
+    t3.script("run_1", [
+      { status: "completed", items: [answered(), item(2, "assistant_message", { text: "Bun it is" })] },
+    ])
+    await session.settled()
+
+    expect(session.replies).toEqual([{ invocationId: "binv_1", text: "Bun it is" }])
+  })
+
   test("a question answered in T3 and Threa at once carries on", async () => {
     const { t3, session, runner } = setup()
     t3.ask("thread_1", "req_1", [question("runner")])

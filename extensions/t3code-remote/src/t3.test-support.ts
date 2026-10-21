@@ -73,6 +73,11 @@ export function fakeT3() {
   // Like T3, a wait on a run that already ended returns at once with how it ended.
   const ended = new Map<string, string>()
 
+  const pendingRequest = (tool: T3ToolName, requestId: string) => {
+    const request = pending.get(requestId)
+    if (!request) throw new T3ToolError(tool, "invalid_request", "The pending user-input request was not found.")
+    return request
+  }
   const startRun = (threadId: string) => {
     const runId = `run_${++runs}`
     latestRuns.set(threadId, runId)
@@ -206,16 +211,17 @@ export function fakeT3() {
     }),
     t3_pending_request_read: (args) => ({
       requestId: args.requestId,
-      questions: pending.get(args.requestId)!.questions,
+      questions: pendingRequest("t3_pending_request_read", args.requestId).questions,
     }),
     t3_pending_request_respond: (args) => {
-      const request = pending.get(args.requestId)
-      if (!request) throw new Error("The pending user-input request was not found.")
-      for (const question of request.questions) {
-        if (question.required !== false && !args.answers[question.id]?.trim()) throw new Error("Answer each question")
+      const request = pendingRequest("t3_pending_request_respond", args.requestId)
+      // Like T3, only an answer sent as a message is checked.
+      if (request.startsRun) {
+        for (const question of request.questions) {
+          if (question.required !== false && !args.answers[question.id]?.trim()) throw new Error("Answer each question")
+        }
+        if (Object.keys(args.answers).length === 0) throw new Error("Enter an answer before sending.")
       }
-      if (request.startsRun && Object.keys(args.answers).length === 0)
-        throw new Error("Enter an answer before sending.")
       pending.delete(args.requestId)
       // A question asked as a message is answered by a message, which starts the next run.
       if (request.startsRun) startRun(args.threadId)

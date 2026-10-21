@@ -243,8 +243,10 @@ interface OpenRun {
   asking?: { done: Promise<void>; abort: AbortController; requestId?: string }
   /** Requests never to put to the user: answered from Threa, or pending before the turn began. */
   asked: Set<string>
-  /** Set once the run asks a question, whose answer can start the run that carries on. */
-  questioned?: boolean
+  /** Set once the run ends with a question open, whose answer, given anywhere, starts the run that carries on. */
+  endedAsking?: boolean
+  /** The run T3 started for an answer sent from Threa, which carries on once this one ends. */
+  answerRunId?: string
   /** Why the turn fails instead of settling, once a question goes unanswered. */
   unanswered?: string
 }
@@ -564,10 +566,7 @@ export class T3TurnRunner {
           }
           await this.drain(run, batcher)
           await this.withdrawAnsweredCard(run)
-          if (trace.questions.size > 0) {
-            run.questioned = true
-            if (!run.asking) this.askQuestions(invocationId, run)
-          }
+          if (trace.questions.size > 0 && !run.asking) this.askQuestions(invocationId, run)
           failures = 0
           status = waited.status
           if (TERMINAL_RUN_STATUSES.has(status) && run.runId === waitedOn) {
@@ -575,16 +574,18 @@ export class T3TurnRunner {
               await Promise.allSettled(run.steers)
               continue
             }
-            if (!run.questioned) break
             // A run can end with its question still open, as Codex's async questions do, or with the answer
             // queued behind it. The answer starts the run that carries on, so the turn follows that one.
             if (run.asking) {
+              run.endedAsking = true
               await Promise.race([run.asking.done, this.sleep(WAIT_TIMEOUT_MS)])
               if (run.asking || run.unanswered || signal.aborted) continue
             }
-            const { thread } = await this.client.call("t3_thread_read", { threadId: run.threadId, limit: 1 })
-            if (!thread.latestRunId || thread.latestRunId === run.runId) break
-            adopt(run, thread.latestRunId)
+            const next = run.answerRunId ?? (run.endedAsking ? await this.latestRunId(run.threadId) : undefined)
+            if (!next || next === run.runId) break
+            run.endedAsking = false
+            run.answerRunId = undefined
+            adopt(run, next)
           }
         } catch (error) {
           if (signal.aborted) break
@@ -650,7 +651,11 @@ export class T3TurnRunner {
         for (const requestId of requestIds) {
           if (run.asked.has(requestId)) continue
           asking.requestId = requestId
-          const { questions } = await this.client.call("t3_pending_request_read", { threadId: run.threadId, requestId })
+          const read = await this.whilePending(run, requestId, () =>
+            this.client.call("t3_pending_request_read", { threadId: run.threadId, requestId })
+          )
+          if (!read) continue
+          const { questions } = read.result
           const answers: Record<string, string> = {}
           for (const [index, question] of questions.entries()) {
             // T3 refuses a reply with no answers, so the last optional question can't be skipped too.
@@ -674,14 +679,15 @@ export class T3TurnRunner {
               break
             }
           }
-          await this.client
-            .call("t3_pending_request_respond", { threadId: run.threadId, requestId, answers })
-            .catch(async (error) => {
-              // Answered in T3 at the same time, so there's nothing left to answer.
-              const { requestIds } = await this.client.call("t3_pending_request_list", { threadId: run.threadId })
-              if (requestIds.includes(requestId)) throw error
-            })
+          // An answer to a question asked as a message starts a run; one the user queued in T3 meanwhile isn't it.
+          const before = await this.latestRunId(run.threadId)
+          const sent = await this.whilePending(run, requestId, () =>
+            this.client.call("t3_pending_request_respond", { threadId: run.threadId, requestId, answers })
+          )
           run.asked.add(requestId)
+          if (!sent) continue
+          const after = await this.latestRunId(run.threadId)
+          if (after && after !== before) run.answerRunId = after
         }
       } catch (error) {
         if (signal.aborted) return
@@ -694,6 +700,26 @@ export class T3TurnRunner {
         if (run.asking === asking) run.asking = undefined
       }
     })()
+  }
+
+  /** A call on a request that fails because the request was answered or dismissed in T3 meanwhile gives undefined. */
+  private async whilePending<T>(
+    run: OpenRun,
+    requestId: string,
+    call: () => Promise<T>
+  ): Promise<{ result: T } | undefined> {
+    try {
+      return { result: await call() }
+    } catch (error) {
+      const { requestIds } = await this.client.call("t3_pending_request_list", { threadId: run.threadId })
+      if (requestIds.includes(requestId)) throw error
+      return undefined
+    }
+  }
+
+  private async latestRunId(threadId: string): Promise<string | undefined> {
+    const { thread } = await this.client.call("t3_thread_read", { threadId, limit: 1 })
+    return thread.latestRunId ?? undefined
   }
 
   /** Read the thread's activity past the run's cursor; the cursor stops at the run's first unsettled item. */
