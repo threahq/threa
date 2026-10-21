@@ -114,12 +114,13 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
       session = createSession({ coldStartIfArchived: "wait", expectedRootStreamId: rootStreamId })
       try {
         await session.start()
+        if (!session.rootStreamId) throw new Error("the session did not link")
       } catch (error) {
         await session.shutdown()
         throw error
       }
     },
-    isBusy: () => runner.busy,
+    isBusy: () => runner.busy || session.busy,
     // Without the presence the session last published there is nothing honest to hold, so it stays up (INV-11).
     windDownTarget: () => (presence ? session.rootStreamId : undefined),
     windDown: async () => {

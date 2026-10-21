@@ -156,6 +156,8 @@ describe("DormantLink", () => {
     const beforeWindow = [...state.events]
     state.now = 90 * MINUTE
     await link.tick()
+    const beforeSubscribed = [...state.events]
+    await nudge()
     state.now = 91 * MINUTE
     await link.tick()
     await nudge()
@@ -165,8 +167,9 @@ describe("DormantLink", () => {
     state.now = 180 * MINUTE
     await link.tick()
 
-    expect({ beforeWindow, beforeMessage, events: state.events, open: state.open }).toEqual({
+    expect({ beforeWindow, beforeSubscribed, beforeMessage, events: state.events, open: state.open }).toEqual({
       beforeWindow: [],
+      beforeSubscribed: [],
       beforeMessage: { events: ["wound down", "held", "held"], open: 1 },
       events: ["wound down", "held", "held", "revived"],
       open: 0,
@@ -174,7 +177,7 @@ describe("DormantLink", () => {
   })
 
   test("the idle window counts from the last tick a turn was running or a message was delivered", async () => {
-    const { link, state } = harness({ target: "stream_root" })
+    const { link, state, nudge } = harness({ target: "stream_root" })
     state.busy = true
     state.now = 120 * MINUTE
     await link.tick()
@@ -186,6 +189,7 @@ describe("DormantLink", () => {
     const beforeWindow = [...state.events]
     state.now = 240 * MINUTE
     await link.tick()
+    await nudge()
 
     expect({ beforeWindow, events: state.events }).toEqual({ beforeWindow: [], events: ["wound down", "held"] })
   })
@@ -204,16 +208,62 @@ describe("DormantLink", () => {
     state.archived = false
     state.now = 90 * MINUTE
 
-    const ticking = link.tick()
+    await link.tick()
+    await nudge()
     await nudge("rts_ours")
     const whileShuttingDown = [...state.events]
     shutdown.resolve()
-    await ticking
     await tick()
 
     expect({ whileShuttingDown, events: state.events }).toEqual({
       whileShuttingDown: [],
       events: ["wound down", "held", "revived"],
+    })
+  })
+
+  test("work that arrives before the watcher is subscribed keeps the session up", async () => {
+    const { link, state, nudge } = harness({ target: "stream_root" })
+    state.now = 90 * MINUTE
+    await link.tick()
+    link.touch()
+    await nudge()
+    const afterDelivered = { events: [...state.events], open: state.open }
+    state.now = 180 * MINUTE
+    await link.tick()
+    state.busy = true
+    await nudge()
+
+    expect({ afterDelivered, events: state.events, open: state.open, watchers: state.watchers }).toEqual({
+      afterDelivered: { events: [], open: 0 },
+      events: [],
+      open: 0,
+      watchers: 2,
+    })
+  })
+
+  test("a wound-down session that failed to link again retries on the next tick", async () => {
+    let attempts = 0
+    const { link, state, nudge } = harness({
+      target: "stream_root",
+      revive: async () => {
+        attempts += 1
+        if (attempts === 1) throw new Error("socket closed")
+      },
+    })
+    state.archived = false
+    state.now = 90 * MINUTE
+    await link.tick()
+    await nudge()
+    await nudge("rts_ours")
+    const afterFailure = [...state.events]
+    state.now = 91 * MINUTE
+    await link.tick()
+    await tick()
+
+    expect({ afterFailure, events: state.events, open: state.open }).toEqual({
+      afterFailure: ["wound down", "held"],
+      events: ["wound down", "held", "revived"],
+      open: 0,
     })
   })
 })
