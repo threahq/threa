@@ -48,6 +48,7 @@ interface RecallOutput {
   latencyMs: number
   retrievedMessages: number
   retrievedMemos: number
+  memoIds: string[]
 }
 
 async function findGold(ctx: EvalContext, answer: string, streamIds: string[]) {
@@ -122,6 +123,7 @@ async function runRecall({ question }: RecallInput, ctx: EvalContext): Promise<R
     latencyMs,
     retrievedMessages: result.messages.length,
     retrievedMemos: result.memos.length,
+    memoIds: result.memos.map((m) => m.memo.id),
   }
 }
 
