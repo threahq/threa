@@ -1,11 +1,6 @@
 import { describe, expect, it } from "bun:test"
-import type { SessionPresenceSnapshot } from "@threahq/harness-client"
-import {
-  createHeldPresence,
-  heldPresenceBody,
-  SUPERVISOR_HELD_CAPABILITY,
-  type HeldPresenceDeps,
-} from "./held-presence"
+import { heldPresenceBody, SUPERVISOR_HELD_CAPABILITY, type SessionPresenceSnapshot } from "@threahq/harness-client"
+import { createHeldPresence, type HeldPresenceDeps } from "./held-presence"
 import type { ManagedAgent } from "./types"
 
 const snapshot: SessionPresenceSnapshot = {

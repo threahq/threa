@@ -319,6 +319,11 @@ export class ThreaClient {
     return body.data
   }
 
+  /** Presence over HTTP, for a supervisor holding it while no session runs. */
+  async updatePresence(body: Record<string, unknown>): Promise<void> {
+    await this.request(this.workspacePath("/bot-runtime/presence"), { method: "POST", body: JSON.stringify(body) })
+  }
+
   /** `archivedAt` for a stream, or null while it is live. Requires `streams:read`. */
   async getStreamArchivedAt(streamId: string): Promise<string | null> {
     const body = await this.request<{ data: { archivedAt?: string | null } }>(

@@ -1,6 +1,12 @@
 import { join } from "node:path"
-import { BotSupervisorTransport } from "@threahq/harness-client"
-import { RemoteSession, ThreaClient, writeFileAtomic, type ShutdownOptions } from "@threahq/remote-session"
+import { BotSupervisorTransport, heldPresenceBody } from "@threahq/harness-client"
+import {
+  RemoteSession,
+  ThreaClient,
+  writeFileAtomic,
+  type RuntimePresenceReport,
+  type ShutdownOptions,
+} from "@threahq/remote-session"
 import { T3Auth, type FetchLike } from "./auth"
 import { readJsonFile, type T3RemoteConfig } from "./config"
 import { DormantLink } from "./dormant-link"
@@ -41,6 +47,9 @@ export interface T3ConnectorOptions {
   log?: (message: string) => void
 }
 
+const IDLE_WIND_DOWN_AFTER_MS = 90 * 60_000
+const IDLE_TICK_MS = 60_000
+
 export interface T3Connector {
   start(): Promise<void>
   shutdown(options?: ShutdownOptions): Promise<void>
@@ -80,8 +89,10 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
   })
   const sessionControl = createT3SessionControl(runner, t3)
   const client = new ThreaClient(config)
+  let presence: RuntimePresenceReport | undefined
 
-  // An archived scratchpad ends the session; the process stays up and links it again once the scratchpad is restored.
+  // An archived scratchpad, or 90 minutes without a turn, ends the session. The process stays up and links it again
+  // once the scratchpad is restored or a message arrives, holding the session's presence meanwhile when it went idle.
   const dormant = new DormantLink({
     runtimeSessionId: config.runtimeSessionId,
     watch: (nudge) => {
@@ -108,15 +119,30 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
         throw error
       }
     },
+    isBusy: () => runner.busy,
+    // Without the presence the session last published there is nothing honest to hold, so it stays up (INV-11).
+    windDownTarget: () => (presence ? session.rootStreamId : undefined),
+    windDown: async () => {
+      runner.shutdown()
+      await session.shutdown()
+    },
+    holdPresence: async () => {
+      if (presence) await client.updatePresence(heldPresenceBody(presence))
+    },
+    idleAfterMs: IDLE_WIND_DOWN_AFTER_MS,
     log,
   })
+  const idleTimer = setInterval(() => void dormant.tick(), IDLE_TICK_MS)
 
   const createSession = (link: Partial<T3RemoteConfig> = {}) =>
     new RemoteSession({
       config: { ...config, ...link },
       client,
       delegate: {
-        deliverTurn: (turn) => runner.deliverTurn(turn),
+        deliverTurn: (turn) => {
+          dormant.touch()
+          return runner.deliverTurn(turn)
+        },
         sessionControl,
         onArchived: ({ rootStreamId }) => {
           runner.shutdown()
@@ -125,6 +151,9 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
         },
       },
       runtime: T3CODE_RUNTIME,
+      onPresence: (report) => {
+        if (report.status !== "offline") presence = report
+      },
       log,
     })
   session = createSession()
@@ -136,6 +165,7 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
       await session.start()
     },
     shutdown: async (shutdownOptions?: ShutdownOptions) => {
+      clearInterval(idleTimer)
       await dormant.stop()
       runner.shutdown()
       await session.shutdown(shutdownOptions)

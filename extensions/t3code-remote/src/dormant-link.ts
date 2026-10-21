@@ -12,6 +12,16 @@ export interface DormantLinkOptions {
   isArchived: (rootStreamId: string) => Promise<boolean>
   /** Links the session to the restored scratchpad again; throws when it cannot. */
   revive: (rootStreamId: string) => Promise<void>
+  /** True while a turn runs or is being admitted. */
+  isBusy: () => boolean
+  /** The scratchpad a wind-down would leave, or undefined when the session can't wind down now. */
+  windDownTarget: () => string | undefined
+  /** Ends the linked session. */
+  windDown: () => Promise<void>
+  /** Posts the wound-down session's last presence on its behalf, so messages and commands still reach it. */
+  holdPresence: () => Promise<void>
+  idleAfterMs: number
+  now?: () => number
   log: (message: string) => void
 }
 
@@ -20,25 +30,56 @@ function messageOf(error: unknown): string {
 }
 
 /**
- * Waits out an archived scratchpad without a session, and links it again once the scratchpad is back. Each nudge
- * checks the scratchpad itself, so a missed restore push is caught by the next reconnect or message.
+ * Waits without a session, and links it again when it is wanted: after an archive once the scratchpad is restored,
+ * after an idle wind-down once a message or command arrives for it. Each nudge checks the scratchpad itself, so a
+ * missed restore push is caught by the next reconnect or message.
  */
 export class DormantLink {
   private watcher: RestoreWatcher | undefined
   private rootStreamId: string | undefined
+  private idle = false
+  /** The wind-down and held presence in flight; a revive waits for them, or their writes would land on the new link. */
+  private settling: Promise<void> = Promise.resolve()
+  private holdFailing = false
   private waking: Promise<void> | undefined
   private nudged = false
   private stopped = false
+  private readonly now: () => number
+  private lastActive: number
 
-  constructor(private readonly options: DormantLinkOptions) {}
+  constructor(private readonly options: DormantLinkOptions) {
+    this.now = options.now ?? Date.now
+    this.lastActive = this.now()
+  }
 
   sleep(rootStreamId: string): void {
+    this.enter(rootStreamId, false)
+  }
+
+  touch(): void {
+    this.lastActive = this.now()
+  }
+
+  /** Runs once a minute: winds an idle session down, and keeps a wound-down session's presence fresh. */
+  async tick(): Promise<void> {
     if (this.stopped) return
-    this.rootStreamId = rootStreamId
-    this.watcher?.disconnect()
-    this.watcher = this.options.watch((runtimeSessionId) => {
-      if (runtimeSessionId === undefined || runtimeSessionId === this.options.runtimeSessionId) void this.wake()
-    })
+    if (this.rootStreamId) {
+      if (this.idle && !this.waking) await this.hold()
+      return
+    }
+    if (this.options.isBusy()) return this.touch()
+    if (this.now() - this.lastActive < this.options.idleAfterMs) return
+    const rootStreamId = this.options.windDownTarget()
+    if (!rootStreamId) return
+    // Watch before the session ends, so a message that lands while it shuts down still wakes it.
+    this.enter(rootStreamId, true)
+    this.options.log(
+      `idle for ${Math.round(this.options.idleAfterMs / 60_000)} min; winding down until scratchpad ${rootStreamId} is used`
+    )
+    this.settling = this.options
+      .windDown()
+      .catch((error) => this.options.log(`winding down failed: ${messageOf(error)}`))
+    await this.hold()
   }
 
   async stop(): Promise<void> {
@@ -46,6 +87,33 @@ export class DormantLink {
     this.watcher?.disconnect()
     this.watcher = undefined
     await this.waking
+    await this.settling
+  }
+
+  private enter(rootStreamId: string, idle: boolean): void {
+    if (this.stopped) return
+    this.rootStreamId = rootStreamId
+    this.idle = idle
+    this.watcher?.disconnect()
+    this.watcher = this.options.watch((runtimeSessionId) => {
+      // Connecting says nothing about an idle session; only work addressed to it wakes it.
+      if (runtimeSessionId === this.options.runtimeSessionId || (runtimeSessionId === undefined && !this.idle)) {
+        void this.wake()
+      }
+    })
+  }
+
+  private hold(): Promise<void> {
+    this.settling = this.settling.then(async () => {
+      try {
+        await this.options.holdPresence()
+        this.holdFailing = false
+      } catch (error) {
+        if (!this.holdFailing) this.options.log(`holding presence failed: ${messageOf(error)}`)
+        this.holdFailing = true
+      }
+    })
+    return this.settling
   }
 
   private wake(): Promise<void> {
@@ -71,7 +139,8 @@ export class DormantLink {
       return
     }
     if (archived || this.stopped) return
-    this.options.log(`scratchpad ${rootStreamId} restored; linking again`)
+    this.options.log(`scratchpad ${rootStreamId} wanted again; linking`)
+    await this.settling
     try {
       await this.options.revive(rootStreamId)
     } catch (error) {
@@ -82,5 +151,7 @@ export class DormantLink {
     this.watcher?.disconnect()
     this.watcher = undefined
     this.rootStreamId = undefined
+    this.idle = false
+    this.touch()
   }
 }

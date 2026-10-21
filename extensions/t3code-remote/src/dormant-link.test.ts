@@ -10,8 +10,25 @@ function deferred<T>() {
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
 
-function harness(options: { revive?: (rootStreamId: string) => Promise<void> } = {}) {
-  const state = { archived: true, revived: [] as string[], watchers: 0, open: 0, logs: [] as string[] }
+const MINUTE = 60_000
+
+function harness(
+  options: {
+    revive?: (rootStreamId: string) => Promise<void>
+    windDown?: () => Promise<void>
+    target?: string
+  } = {}
+) {
+  const state = {
+    archived: true,
+    revived: [] as string[],
+    watchers: 0,
+    open: 0,
+    logs: [] as string[],
+    busy: false,
+    now: 0,
+    events: [] as string[],
+  }
   let nudge: (runtimeSessionId?: string) => void = () => {}
   let check: Promise<boolean> | undefined
   const link = new DormantLink({
@@ -26,7 +43,17 @@ function harness(options: { revive?: (rootStreamId: string) => Promise<void> } =
     revive: async (rootStreamId) => {
       await options.revive?.(rootStreamId)
       state.revived.push(rootStreamId)
+      state.events.push("revived")
     },
+    isBusy: () => state.busy,
+    windDownTarget: () => options.target,
+    windDown: async () => {
+      await options.windDown?.()
+      state.events.push("wound down")
+    },
+    holdPresence: async () => void state.events.push("held"),
+    idleAfterMs: 90 * MINUTE,
+    now: () => state.now,
     log: (message) => state.logs.push(message),
   })
   return {
@@ -117,6 +144,76 @@ describe("DormantLink", () => {
       revived: [],
       open: 0,
       watchers: 1,
+    })
+  })
+
+  test("an idle session winds down holding its presence, and only work addressed to it links it again", async () => {
+    const { link, state, nudge } = harness({ target: "stream_root" })
+    state.archived = false
+
+    state.now = 89 * MINUTE
+    await link.tick()
+    const beforeWindow = [...state.events]
+    state.now = 90 * MINUTE
+    await link.tick()
+    state.now = 91 * MINUTE
+    await link.tick()
+    await nudge()
+    await nudge("rts_other")
+    const beforeMessage = { events: [...state.events], open: state.open }
+    await nudge("rts_ours")
+    state.now = 180 * MINUTE
+    await link.tick()
+
+    expect({ beforeWindow, beforeMessage, events: state.events, open: state.open }).toEqual({
+      beforeWindow: [],
+      beforeMessage: { events: ["wound down", "held", "held"], open: 1 },
+      events: ["wound down", "held", "held", "revived"],
+      open: 0,
+    })
+  })
+
+  test("the idle window counts from the last tick a turn was running or a message was delivered", async () => {
+    const { link, state } = harness({ target: "stream_root" })
+    state.busy = true
+    state.now = 120 * MINUTE
+    await link.tick()
+    state.busy = false
+    state.now = 150 * MINUTE
+    link.touch()
+    state.now = 239 * MINUTE
+    await link.tick()
+    const beforeWindow = [...state.events]
+    state.now = 240 * MINUTE
+    await link.tick()
+
+    expect({ beforeWindow, events: state.events }).toEqual({ beforeWindow: [], events: ["wound down", "held"] })
+  })
+
+  test("a session with nothing to wind down to stays up", async () => {
+    const { link, state } = harness()
+    state.now = 500 * MINUTE
+    await link.tick()
+
+    expect({ events: state.events, watchers: state.watchers }).toEqual({ events: [], watchers: 0 })
+  })
+
+  test("a message during the wind-down waits for it before linking again", async () => {
+    const shutdown = deferred<void>()
+    const { link, state, nudge } = harness({ target: "stream_root", windDown: () => shutdown.promise })
+    state.archived = false
+    state.now = 90 * MINUTE
+
+    const ticking = link.tick()
+    await nudge("rts_ours")
+    const whileShuttingDown = [...state.events]
+    shutdown.resolve()
+    await ticking
+    await tick()
+
+    expect({ whileShuttingDown, events: state.events }).toEqual({
+      whileShuttingDown: [],
+      events: ["wound down", "held", "revived"],
     })
   })
 })

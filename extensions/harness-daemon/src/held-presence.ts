@@ -1,18 +1,7 @@
-import type { SessionPresenceSnapshot } from "@threahq/harness-client"
+import { heldPresenceBody } from "@threahq/harness-client"
 import { runtimeThreaTarget, type RuntimeTargetResolver } from "./spawners"
 import { failureExcerpt, postThrea } from "./threa-http"
 import type { ManagedAgent } from "./types"
-
-/**
- * The capability that marks presence harnessd published on a session's behalf.
- *
- * The server gates this presence on freshness — harnessd re-posts it every
- * watch pass, so a supervisor that stopped takes the commands with it. Nothing
- * else re-posts on a timer, which is why the marker exists at all: the same
- * check over ordinary presence would hide a live session that has simply been
- * quiet for an hour.
- */
-export const SUPERVISOR_HELD_CAPABILITY = "supervisorHeld"
 
 export interface HeldPresenceDeps {
   target: RuntimeTargetResolver
@@ -31,28 +20,6 @@ export interface HeldPresenceOutcome {
   runtimeSessionId?: string
   status: HeldPresenceStatus
   detail: string
-}
-
-/**
- * Presence for a session that is not running: available, taking invocations,
- * and advertising exactly what the session itself last advertised.
- *
- * No status text: a user should not have to know their agent is asleep. No
- * BIK either — private key material has no business in a supervisor — and the
- * `supervisorHeld` marker is what tells the server to keep the key the session
- * registered instead of clearing it on a keyless write.
- */
-export function heldPresenceBody(snapshot: SessionPresenceSnapshot): Record<string, unknown> {
-  return {
-    runtimeKind: snapshot.runtimeKind,
-    instanceId: snapshot.instanceId,
-    runtimeSessionId: snapshot.runtimeSessionId,
-    ...(snapshot.displayName ? { displayName: snapshot.displayName } : {}),
-    status: "available",
-    acceptingInvocations: true,
-    capabilities: { ...snapshot.capabilities, [SUPERVISOR_HELD_CAPABILITY]: true },
-    ...(snapshot.manifest ? { manifest: snapshot.manifest } : {}),
-  }
 }
 
 /**
