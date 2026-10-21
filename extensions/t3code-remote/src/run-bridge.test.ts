@@ -748,6 +748,54 @@ describe("T3TurnRunner", () => {
     expect(session.decisions.map(({ input }) => input.externalRef)).toEqual(["req_1"])
   })
 
+  test("a message typed while a card is up answers it, and the turn follows the run the answer starts", async () => {
+    const { t3, session, runner } = setup()
+    t3.ask("thread_1", "req_1", [question("runner")], true)
+    t3.script("run_1", [{ status: "completed", items: [asking()] }])
+    await runner.deliverTurn(turn())
+    await idle()
+
+    expect(await runner.steer(" Use Bun ", "stream_root", [])).toBe(true)
+    await idle()
+    t3.script("run_2", [
+      {
+        status: "completed",
+        items: [answered(), item(2, "assistant_message", { runId: "run_2", text: "Using Bun" })],
+      },
+    ])
+    await session.settled()
+
+    expect({
+      withdrawn: session.decisions.map(({ signal }) => signal?.aborted),
+      sends: t3.callsOf("t3_thread_send"),
+      responds: t3.callsOf("t3_pending_request_respond"),
+      replies: session.replies,
+    }).toEqual({
+      withdrawn: [true],
+      sends: [],
+      responds: [{ threadId: "thread_1", requestId: "req_1", answers: { runner: "Use Bun" } }],
+      replies: [{ invocationId: "binv_1", text: "Using Bun" }],
+    })
+  })
+
+  test("a message typed while a card that takes no written answer is up steers the run and leaves the card", async () => {
+    const { t3, session, runner } = setup()
+    t3.ask("thread_1", "req_1", [question("runner", { allowCustomAnswer: false })])
+    t3.script("run_1", [{ status: "waiting", items: [asking()] }])
+    await runner.deliverTurn(turn())
+    await idle()
+
+    expect(await runner.steer("Use Bun", "stream_root", [])).toBe(true)
+    await idle()
+
+    expect({
+      open: session.decisions.map(({ signal }) => signal?.aborted),
+      sends: t3.callsOf("t3_thread_send").map(({ message }) => message),
+      responds: t3.callsOf("t3_pending_request_respond"),
+    }).toEqual({ open: [false], sends: ["Use Bun"], responds: [] })
+    runner.shutdown()
+  })
+
   test("/stop withdraws an open question card", async () => {
     const { t3, session, runner } = setup()
     t3.ask("thread_1", "req_1", [question("runner")])

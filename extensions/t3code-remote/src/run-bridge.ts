@@ -18,7 +18,7 @@ import {
 } from "@threahq/remote-session"
 import { T3AuthError } from "./auth"
 import type { T3Access } from "./config"
-import { questionCard } from "./question-card"
+import { type CardAnswer, questionCard } from "./question-card"
 import {
   T3ToolError,
   type ImageAttachment,
@@ -62,6 +62,7 @@ export type RunTraceMode = TraceMode | "full"
 
 // `t3_thread_wait` returns as soon as the run settles, so its timeout is the trace poll cadence.
 const WAIT_TIMEOUT_MS = 2000
+const MAX_CARD_WAIT_MS = 30_000
 // About five minutes of T3 being unreachable at the WAIT_TIMEOUT_MS retry cadence, enough to ride out a restart.
 const MAX_CONSECUTIVE_POLL_FAILURES = 150
 const READ_PAGE_LIMIT = 100
@@ -240,7 +241,13 @@ interface OpenRun {
   /** The last read position this run no longer needs to re-read. */
   cursor?: number
   /** Set while the run's questions are being put to the user; aborting it withdraws the card. */
-  asking?: { done: Promise<void>; abort: AbortController; requestId?: string }
+  asking?: {
+    done: Promise<void>
+    abort: AbortController
+    requestId?: string
+    /** Set while a card that takes a written answer is up: a message typed meanwhile answers it, as T3's composer does. */
+    answerTyped?: (text: string) => boolean
+  }
   /** Requests never to put to the user: answered from Threa, or pending before the turn began. */
   asked: Set<string>
   /** Set once the run ends with a question open, whose answer, given anywhere, starts the run that carries on. */
@@ -330,6 +337,7 @@ export class T3TurnRunner {
   async steer(text: string, streamId: string, attachments: DownloadedAttachment[]): Promise<boolean> {
     const run = this.openRuns().find((open) => open.streamId === streamId)
     if (!run) return false
+    if (attachments.length === 0 && run.asking?.answerTyped?.(text)) return true
     const steering = this.steerInto(run, text, attachments)
     run.steers.add(steering)
     try {
@@ -549,6 +557,7 @@ export class T3TurnRunner {
     const { signal } = run.abort
     let status: RunStatus | "idle" | undefined
     let failures = 0
+    let cardWaits = 0
     try {
       while (!signal.aborted && !trace.blockedOn && !run.unanswered) {
         try {
@@ -578,13 +587,16 @@ export class T3TurnRunner {
             // queued behind it. The answer starts the run that carries on, so the turn follows that one.
             if (run.asking) {
               run.endedAsking = true
-              await Promise.race([run.asking.done, this.sleep(WAIT_TIMEOUT_MS)])
+              // Only the card is left; T3 is checked less often the longer it goes unanswered.
+              const wait = Math.min(WAIT_TIMEOUT_MS * 2 ** cardWaits++, MAX_CARD_WAIT_MS)
+              await Promise.race([run.asking.done, this.sleep(wait)])
               if (run.asking || run.unanswered || signal.aborted) continue
             }
             const next = run.answerRunId ?? (run.endedAsking ? await this.latestRunId(run.threadId) : undefined)
             if (!next || next === run.runId) break
             run.endedAsking = false
             run.answerRunId = undefined
+            cardWaits = 0
             adopt(run, next)
           }
         } catch (error) {
@@ -665,11 +677,26 @@ export class T3TurnRunner {
             for (;;) {
               // The card posts before the SDK checks the signal.
               if (signal.aborted) return
-              const outcome = await this.session.requestDecision(
-                { ...card.input, streamId: run.streamId, invocationId, externalRef: requestId },
-                { signal }
-              )
-              const answer = card.answerFor(outcome)
+              const typed = Promise.withResolvers<CardAnswer>()
+              const withdraw = new AbortController()
+              if (card.input.allowNote) {
+                asking.answerTyped = (text) => {
+                  if (!text.trim()) return false
+                  asking.answerTyped = undefined
+                  typed.resolve({ kind: "answered", text: text.trim() })
+                  withdraw.abort()
+                  return true
+                }
+              }
+              const decided = this.session
+                .requestDecision(
+                  { ...card.input, streamId: run.streamId, invocationId, externalRef: requestId },
+                  { signal: AbortSignal.any([signal, withdraw.signal]) }
+                )
+                .then((outcome) => card.answerFor(outcome))
+              const answer = await Promise.race([decided, typed.promise]).finally(() => {
+                asking.answerTyped = undefined
+              })
               if (answer.kind === "blank") continue
               if (answer.kind === "unanswered") {
                 run.unanswered = UNANSWERED_MESSAGE
