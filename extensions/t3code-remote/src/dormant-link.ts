@@ -32,7 +32,8 @@ function messageOf(error: unknown): string {
 /**
  * Waits without a session, and links it again when it is wanted: after an archive once the scratchpad is restored,
  * after an idle wind-down once a message or command arrives for it. Each nudge checks the scratchpad itself, so a
- * missed restore push is caught by the next reconnect or message, and a wake that failed is retried every tick.
+ * missed restore push is caught by the next reconnect or message, a wake that failed is retried every tick, and a
+ * presence hold that failed links the session again.
  */
 export class DormantLink {
   private watcher: RestoreWatcher | undefined
@@ -43,7 +44,6 @@ export class DormantLink {
   private wanted = false
   /** The wind-down and held presence in flight; a revive waits for them, or their writes would land on the new link. */
   private settling: Promise<void> = Promise.resolve()
-  private holdFailing = false
   private waking: Promise<void> | undefined
   private nudged = false
   private stopped = false
@@ -133,10 +133,10 @@ export class DormantLink {
     this.settling = this.settling.then(async () => {
       try {
         await this.options.holdPresence()
-        this.holdFailing = false
       } catch (error) {
-        if (!this.holdFailing) this.options.log(`holding presence failed: ${messageOf(error)}`)
-        this.holdFailing = true
+        // The ended session's presence is offline until a hold lands, which hides its commands; linking again is honest.
+        this.options.log(`holding presence failed: ${messageOf(error)}; linking again`)
+        void this.wake()
       }
     })
     return this.settling

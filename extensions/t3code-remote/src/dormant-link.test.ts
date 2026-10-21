@@ -16,6 +16,7 @@ function harness(
   options: {
     revive?: (rootStreamId: string) => Promise<void>
     windDown?: () => Promise<void>
+    holdPresence?: () => Promise<void>
     target?: string
   } = {}
 ) {
@@ -51,7 +52,10 @@ function harness(
       await options.windDown?.()
       state.events.push("wound down")
     },
-    holdPresence: async () => void state.events.push("held"),
+    holdPresence: async () => {
+      await options.holdPresence?.()
+      state.events.push("held")
+    },
     idleAfterMs: 90 * MINUTE,
     now: () => state.now,
     log: (message) => state.logs.push(message),
@@ -264,6 +268,30 @@ describe("DormantLink", () => {
       afterFailure: ["wound down", "held"],
       events: ["wound down", "held", "revived"],
       open: 0,
+    })
+  })
+
+  test("a wound-down session whose presence can't be held links again", async () => {
+    const { link, state, nudge } = harness({
+      target: "stream_root",
+      holdPresence: async () => {
+        throw new Error("503")
+      },
+    })
+    state.archived = false
+    state.now = 90 * MINUTE
+    await link.tick()
+    await nudge()
+    await tick()
+
+    expect({ events: state.events, open: state.open, logs: state.logs }).toEqual({
+      events: ["wound down", "revived"],
+      open: 0,
+      logs: [
+        "idle for 90 min; winding down until scratchpad stream_root is used",
+        "holding presence failed: 503; linking again",
+        "scratchpad stream_root wanted again; linking",
+      ],
     })
   })
 })

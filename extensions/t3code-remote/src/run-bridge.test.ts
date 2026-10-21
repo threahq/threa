@@ -569,6 +569,7 @@ describe("T3TurnRunner", () => {
     ])
     await runner.deliverTurn(turn())
     await idle()
+    const busyWhileAsking = runner.busy
 
     session.answer(picked("option_0"))
     await idle()
@@ -581,10 +582,14 @@ describe("T3TurnRunner", () => {
     await session.settled()
 
     expect({
+      busyWhileAsking,
+      busy: runner.busy,
       responds: t3.callsOf("t3_pending_request_respond"),
       replies: session.replies,
       fails: session.fails,
     }).toEqual({
+      busyWhileAsking: true,
+      busy: false,
       responds: [{ threadId: "thread_1", requestId: "req_1", answers: { runner: "Bun" } }],
       replies: [{ invocationId: "binv_1", text: "Bun it is" }],
       fails: [],
