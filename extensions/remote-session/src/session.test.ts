@@ -3027,7 +3027,7 @@ function makeQueuedSession(
   const contents: string[] = []
   const claims: Array<Record<string, unknown>> = []
   const interrupts: Array<string | undefined> = []
-  const steers: Array<{ text: string; streamId: string }> = []
+  const steers: Array<{ text: string; streamId: string; edit?: boolean }> = []
   const steeredAttachments: DownloadedAttachment[][] = []
   const held = { value: false }
   const { client, calls } = makeFakeClient()
@@ -3064,8 +3064,13 @@ function makeQueuedSession(
         },
         ...(steer
           ? {
-              steer: (text: string, streamId: string, attachments: DownloadedAttachment[]) => {
-                steers.push({ text, streamId })
+              steer: (
+                text: string,
+                streamId: string,
+                attachments: DownloadedAttachment[],
+                steerOptions?: { edit?: boolean }
+              ) => {
+                steers.push({ text, streamId, ...steerOptions })
                 steeredAttachments.push(attachments)
                 return steer(text, streamId, attachments)
               },
@@ -5544,7 +5549,7 @@ describe("parallel turns across streams", () => {
     ).rejects.toThrow("pass streamId")
   })
 
-  test("an input update on a running turn steers only that turn's stream", async () => {
+  test("an input update on a running turn steers only that turn's stream, flagged as an edit", async () => {
     const h = makeParallelSession([plainMessage("binv_a", "stream_a"), plainMessage("binv_b", "stream_b")], {
       steer: steerOk,
     })
@@ -5556,7 +5561,7 @@ describe("parallel turns across streams", () => {
       "applied"
     )
 
-    expect(h.steers).toEqual([{ text: "a edited", streamId: "stream_a" }])
+    expect(h.steers).toEqual([{ text: "a edited", streamId: "stream_a", edit: true }])
   })
 
   test("a plain message for an idle stream at capacity stays queued rather than steering another stream", async () => {
