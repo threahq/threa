@@ -35,6 +35,7 @@
     "pack": "bun run build && cd dist && npm pack --pack-destination .."
   },
   "dependencies": {
+    "@threahq/harness-client": "file:../harness-client",
     "@threahq/remote-session": "file:../remote-session"
   },
   "devDependencies": {
