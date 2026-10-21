@@ -611,8 +611,29 @@ describe("T3TurnRunner", () => {
     }).toEqual({ withdrawn: [true], replies: [{ invocationId: "binv_1", text: "Bun it is" }] })
   })
 
+  test("an answer T3 steers into the running run is followed in that run", async () => {
+    const { t3, session, runner } = setup()
+    t3.ask("thread_1", "req_1", [question("runner")], true)
+    t3.script("run_1", [{ status: "running", items: [asking()] }])
+    await runner.deliverTurn(turn())
+    await idle()
+
+    session.answer(picked("option_0"))
+    await idle()
+    t3.script("run_1", [
+      { status: "completed", items: [answered(), item(2, "assistant_message", { text: "Bun it is" })] },
+    ])
+    await session.settled()
+
+    expect({
+      replies: session.replies,
+      followed: [...new Set(t3.callsOf("t3_thread_wait").map(({ runId }) => runId))],
+    }).toEqual({ replies: [{ invocationId: "binv_1", text: "Bun it is" }], followed: ["run_1"] })
+  })
+
   test("an answer T3 queues behind the run is followed once the run ends", async () => {
     const { t3, session, runner } = setup()
+    t3.steerAs("queued")
     t3.ask("thread_1", "req_1", [question("runner")], true)
     t3.script("run_1", [{ status: "running", items: [asking()] }])
     await runner.deliverTurn(turn())
@@ -627,6 +648,38 @@ describe("T3TurnRunner", () => {
     await session.settled()
 
     expect(session.replies).toEqual([{ invocationId: "binv_1", text: "Bun it is" }])
+  })
+
+  test("each answer that starts a run keeps that run in the turn", async () => {
+    const { t3, session, runner } = setup()
+    t3.steerAs("queued")
+    t3.ask("thread_1", "req_1", [question("runner")], true)
+    t3.ask("thread_1", "req_2", [question("watch", { header: "Watch" })], true)
+    t3.script("run_1", [{ status: "completed", items: [asking(), asking(2)] }])
+    await runner.deliverTurn(turn())
+    await idle()
+
+    session.answer(picked("option_0"))
+    await until(() => session.decisions.length === 2)
+    session.answer(picked("option_0"))
+    await until(() => t3.callsOf("t3_pending_request_respond").length === 2)
+    t3.script("run_3", [
+      {
+        status: "completed",
+        items: [
+          answered(),
+          answered(2),
+          item(3, "assistant_message", { runId: "run_2", text: "Runner noted" }),
+          item(4, "assistant_message", { runId: "run_3", text: "Watching too" }),
+        ],
+      },
+    ])
+    await session.settled()
+
+    expect({ frames: session.frames(), replies: session.replies }).toEqual({
+      frames: [{ stepType: "thinking", content: "Runner noted" }],
+      replies: [{ invocationId: "binv_1", text: "Watching too" }],
+    })
   })
 
   test("a request answered in T3 before its card goes up is passed over", async () => {
@@ -793,6 +846,24 @@ describe("T3TurnRunner", () => {
       sends: t3.callsOf("t3_thread_send").map(({ message }) => message),
       responds: t3.callsOf("t3_pending_request_respond"),
     }).toEqual({ open: [false], sends: ["Use Bun"], responds: [] })
+    runner.shutdown()
+  })
+
+  test("an edited message steers the run and leaves the card", async () => {
+    const { t3, session, runner } = setup()
+    t3.ask("thread_1", "req_1", [question("runner")])
+    t3.script("run_1", [{ status: "waiting", items: [asking()] }])
+    await runner.deliverTurn(turn())
+    await idle()
+
+    expect(await runner.steer("Deploy it, using Bun", "stream_root", [], { edit: true })).toBe(true)
+    await idle()
+
+    expect({
+      open: session.decisions.map(({ signal }) => signal?.aborted),
+      sends: t3.callsOf("t3_thread_send").map(({ message }) => message),
+      responds: t3.callsOf("t3_pending_request_respond"),
+    }).toEqual({ open: [false], sends: ["Deploy it, using Bun"], responds: [] })
     runner.shutdown()
   })
 

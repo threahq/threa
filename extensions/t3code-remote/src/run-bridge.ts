@@ -334,10 +334,15 @@ export class T3TurnRunner {
    * Once T3 takes the text it belongs to the open turn: when the run already
    * ended, T3 starts it as the next run and the turn follows that one instead.
    */
-  async steer(text: string, streamId: string, attachments: DownloadedAttachment[]): Promise<boolean> {
+  async steer(
+    text: string,
+    streamId: string,
+    attachments: DownloadedAttachment[],
+    options?: { edit?: boolean }
+  ): Promise<boolean> {
     const run = this.openRuns().find((open) => open.streamId === streamId)
     if (!run) return false
-    if (attachments.length === 0 && run.asking?.answerTyped?.(text)) return true
+    if (!options?.edit && attachments.length === 0 && run.asking?.answerTyped?.(text)) return true
     const steering = this.steerInto(run, text, attachments)
     run.steers.add(steering)
     try {
@@ -714,7 +719,11 @@ export class T3TurnRunner {
           run.asked.add(requestId)
           if (!sent) continue
           const after = await this.latestRunId(run.threadId)
-          if (after && after !== before) run.answerRunId = after
+          // The turn follows the last answer's run; earlier ones still belong to it.
+          if (after && after !== before) {
+            run.answerRunId = after
+            run.trace.runIds.add(after)
+          }
         }
       } catch (error) {
         if (signal.aborted) return

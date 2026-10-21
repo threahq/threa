@@ -93,7 +93,22 @@ export function fakeT3() {
     latestRuns.set(threadId, runId)
     return runId
   }
-  const steerRun = (threadId: string) => (steerDelivery === "steered" ? `run_${runs}` : startRun(threadId))
+  const notSendable = () => new T3ToolError("t3_thread_send", "thread_not_sendable", "not sendable")
+  const activeRun = (threadId: string) => {
+    const runId = latestRuns.get(threadId)
+    return runId !== undefined && !ended.has(runId) ? runId : undefined
+  }
+  // Like T3, only a running run takes a steer; with none, the send is refused.
+  const steerRun = (threadId: string) => {
+    if (steerDelivery !== "steered") return startRun(threadId)
+    const runId = activeRun(threadId)
+    if (!runId) throw notSendable()
+    return runId
+  }
+  // An answer sent as a message joins the running run when the provider steers, else starts the next run.
+  const answerAsMessage = (threadId: string) => {
+    if (steerDelivery !== "steered" || !activeRun(threadId)) startRun(threadId)
+  }
 
   function apply(threadId: string, step: ScriptStep): void {
     if (step.model) models.set(threadId, step.model)
@@ -233,8 +248,7 @@ export function fakeT3() {
         if (Object.keys(args.answers).length === 0) throw new Error("Enter an answer before sending.")
       }
       pending.delete(args.requestId)
-      // A question asked as a message is answered by a message, which starts the next run.
-      if (request.startsRun) startRun(args.threadId)
+      if (request.startsRun) answerAsMessage(args.threadId)
       return {}
     },
     t3_environment_read: () => ({
@@ -276,7 +290,7 @@ export function fakeT3() {
       ;(holds[name] ??= []).push(new Promise<void>((resolve) => (release = resolve)))
       return release
     },
-    notSendable: () => new T3ToolError("t3_thread_send", "thread_not_sendable", "not sendable"),
+    notSendable,
     continueText: (itemId: string, fullText: string) => continuations.set(itemId, fullText),
     /** How T3 answers the next steers: folded into the run, or started or queued as their own run. */
     steerAs: (delivery: typeof steerDelivery) => (steerDelivery = delivery),
@@ -288,11 +302,11 @@ export function fakeT3() {
      */
     ask: (threadId: string, requestId: string, questions: PendingQuestion[], startsRun = false) =>
       pending.set(requestId, { threadId, questions, startsRun }),
-    /** Answer a request in T3 itself, which for a question asked as a message starts the next run. */
+    /** Answer a request in T3 itself; for a question asked as a message the answer is a message. */
     answerInT3: (requestId: string) => {
       const request = pending.get(requestId)!
       pending.delete(requestId)
-      if (request.startsRun) startRun(request.threadId)
+      if (request.startsRun) answerAsMessage(request.threadId)
     },
     /** The environment's default for new threads, unset unless a test sets it. */
     defaultEnvMode: (mode: typeof envMode) => (envMode = mode),
