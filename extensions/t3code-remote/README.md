@@ -76,7 +76,8 @@ fails with a message saying why.
 When the agent asks you something, each question shows in the stream as a decision card, one at a time. Its options
 are the buttons. Pick Other and write your answer in the note when the question takes your own answer, has no
 options, has more than eight, or takes several (list them in the note). Once every question in the request has an
-answer, the connector sends them back to T3 and the run goes on. A message you send while a card that takes your own
+answer, the connector sends them back to T3 and the run goes on. An optional question also gets a Skip button, except
+when skipping it would leave the request with no answer at all, since T3 refuses an empty reply. A message you send while a card that takes your own
 answer is up answers it, the same as the note. Under a card with only fixed options, a message steers the run while
 the agent is still working, or else waits for the next turn, and the card stays up. An edited message is always a
 correction, never an answer: it steers the run, or runs after it when the run is only waiting on the card. Answering in
