@@ -343,7 +343,7 @@ export class T3TurnRunner {
     const run = this.openRuns().find((open) => open.streamId === streamId)
     if (!run) return false
     if (!options?.edit && attachments.length === 0 && run.asking?.answerTyped?.(text)) return true
-    const steering = this.steerInto(run, text, attachments)
+    const steering = this.steerInto(run, text, attachments, options?.edit === true)
     run.steers.add(steering)
     try {
       return await steering
@@ -352,7 +352,12 @@ export class T3TurnRunner {
     }
   }
 
-  private async steerInto(run: OpenRun, text: string, attachments: DownloadedAttachment[]): Promise<boolean> {
+  private async steerInto(
+    run: OpenRun,
+    text: string,
+    attachments: DownloadedAttachment[],
+    edit: boolean
+  ): Promise<boolean> {
     const images = await this.uploadImages(attachments)
     if (run.abort.signal.aborted) return false
     try {
@@ -362,7 +367,7 @@ export class T3TurnRunner {
             message: text,
             attachments: images,
           })
-        : await this.client.call("t3_thread_send", { threadId: run.threadId, message: text, mode: "steer" })
+        : await this.sendText(run.threadId, text, edit)
       // A /stop that landed during the send has already stopped the chain it knew about.
       if (run.abort.signal.aborted) this.stopRun(run.threadId, sent.runId)
       else if (sent.runId !== run.runId) adopt(run, sent.runId)
@@ -370,6 +375,20 @@ export class T3TurnRunner {
     } catch (error) {
       if (error instanceof T3ToolError && error.code === "thread_not_sendable") return false
       throw error
+    }
+  }
+
+  /**
+   * A run that can't take a steer leaves a message for the next turn. An edit can't wait: the SDK
+   * restarts what it can't apply, and that restart comes back as a plain message, which a card
+   * would take as its answer. So it runs after the active run instead.
+   */
+  private async sendText(threadId: string, message: string, edit: boolean) {
+    try {
+      return await this.client.call("t3_thread_send", { threadId, message, mode: "steer" })
+    } catch (error) {
+      if (!edit || !(error instanceof T3ToolError && error.code === "thread_not_sendable")) throw error
+      return this.client.call("t3_thread_send", { threadId, message, mode: "queue" })
     }
   }
 

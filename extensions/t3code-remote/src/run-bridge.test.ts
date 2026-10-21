@@ -834,7 +834,7 @@ describe("T3TurnRunner", () => {
   test("a message typed while a card that takes no written answer is up steers the run and leaves the card", async () => {
     const { t3, session, runner } = setup()
     t3.ask("thread_1", "req_1", [question("runner", { allowCustomAnswer: false })])
-    t3.script("run_1", [{ status: "waiting", items: [asking()] }])
+    t3.script("run_1", [{ status: "running", items: [asking()] }])
     await runner.deliverTurn(turn())
     await idle()
 
@@ -852,7 +852,7 @@ describe("T3TurnRunner", () => {
   test("an edited message steers the run and leaves the card", async () => {
     const { t3, session, runner } = setup()
     t3.ask("thread_1", "req_1", [question("runner")])
-    t3.script("run_1", [{ status: "waiting", items: [asking()] }])
+    t3.script("run_1", [{ status: "running", items: [asking()] }])
     await runner.deliverTurn(turn())
     await idle()
 
@@ -861,9 +861,37 @@ describe("T3TurnRunner", () => {
 
     expect({
       open: session.decisions.map(({ signal }) => signal?.aborted),
-      sends: t3.callsOf("t3_thread_send").map(({ message }) => message),
+      sends: t3.callsOf("t3_thread_send").map(({ message, mode }) => ({ message, mode })),
       responds: t3.callsOf("t3_pending_request_respond"),
-    }).toEqual({ open: [false], sends: ["Deploy it, using Bun"], responds: [] })
+    }).toEqual({ open: [false], sends: [{ message: "Deploy it, using Bun", mode: "steer" }], responds: [] })
+    runner.shutdown()
+  })
+
+  test("an edit a waiting run can't take runs next, and the turn follows it with the card still up", async () => {
+    const { t3, session, runner } = setup()
+    t3.ask("thread_1", "req_1", [question("runner")], true)
+    t3.script("run_1", [{ status: "waiting", items: [asking()] }])
+    await runner.deliverTurn(turn())
+    await idle()
+
+    expect(await runner.steer("Deploy it, using Bun", "stream_root", [], { edit: true })).toBe(true)
+    t3.script("run_1", [{ status: "waiting" }])
+    await idle()
+
+    expect({
+      open: session.decisions.map(({ signal }) => signal?.aborted),
+      sends: t3.callsOf("t3_thread_send").map(({ message, mode }) => ({ message, mode })),
+      responds: t3.callsOf("t3_pending_request_respond"),
+      followed: t3.callsOf("t3_thread_wait").at(-1)?.runId,
+    }).toEqual({
+      open: [false],
+      sends: [
+        { message: "Deploy it, using Bun", mode: "steer" },
+        { message: "Deploy it, using Bun", mode: "queue" },
+      ],
+      responds: [],
+      followed: "run_2",
+    })
     runner.shutdown()
   })
 

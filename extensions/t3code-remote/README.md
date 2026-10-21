@@ -77,8 +77,9 @@ When the agent asks you something, each question shows in the stream as a decisi
 are the buttons. Pick Other and write your answer in the note when the question takes your own answer, has no
 options, has more than eight, or takes several (list them in the note). Once every question in the request has an
 answer, the connector sends them back to T3 and the run goes on. A message you send while a card that takes your own
-answer is up answers it, the same as the note. Under a card with only fixed options, a message goes to the run as
-usual and the card stays up, and an edited message is always a correction for the run, never an answer. Answering in
+answer is up answers it, the same as the note. Under a card with only fixed options, a message steers the run while
+the agent is still working, or else waits for the next turn, and the card stays up. An edited message is always a
+correction, never an answer: it steers the run, or runs after it when the run is only waiting on the card. Answering in
 the T3 app instead withdraws the card. A card closed without an answer stops the run and fails the turn.
 
 ## Threads

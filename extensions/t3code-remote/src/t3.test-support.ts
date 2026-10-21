@@ -82,6 +82,8 @@ export function fakeT3() {
   const latestRuns = new Map<string, string>()
   // Like T3, a wait on a run that already ended returns at once with how it ended.
   const ended = new Map<string, string>()
+  // A run waiting on the user has finished its provider turn, so it takes no steer.
+  const waiting = new Set<string>()
 
   const pendingRequest = (tool: T3ToolName, requestId: string) => {
     const request = pending.get(requestId)
@@ -96,7 +98,7 @@ export function fakeT3() {
   const notSendable = () => new T3ToolError("t3_thread_send", "thread_not_sendable", "not sendable")
   const activeRun = (threadId: string) => {
     const runId = latestRuns.get(threadId)
-    return runId !== undefined && !ended.has(runId) ? runId : undefined
+    return runId !== undefined && !ended.has(runId) && !waiting.has(runId) ? runId : undefined
   }
   // Like T3, only a running run takes a steer; with none, the send is refused.
   const steerRun = (threadId: string) => {
@@ -152,9 +154,12 @@ export function fakeT3() {
     t3_thread_wait: async (args) => {
       const step = await nextStep(args.runId)
       apply(args.threadId, step)
-      if (TERMINAL_RUN_STATUSES.has(step.status)) ended.set(step.runId ?? args.runId, step.status)
+      const runId = step.runId ?? args.runId
+      if (TERMINAL_RUN_STATUSES.has(step.status)) ended.set(runId, step.status)
+      if (step.status === "waiting") waiting.add(runId)
+      else waiting.delete(runId)
       return {
-        runId: step.runId ?? args.runId,
+        runId,
         status: step.status as T3Tools["t3_thread_wait"]["result"]["status"],
         timedOut: false,
       }
