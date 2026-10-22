@@ -1,4 +1,5 @@
-import { useId, type Ref } from "react"
+import { useId, useRef, useState, type Ref } from "react"
+import { useMutation } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
@@ -6,10 +7,11 @@ import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import {
   API_KEY_ELIGIBLE_PICKER_SCOPES,
-  API_KEY_ELIGIBLE_SCOPES,
   API_KEY_NAME_MAX_LENGTH,
   CURRENT_API_VERSION,
   WORKSPACE_PERMISSIONS,
+  isApiKeyEligibleScope,
+  type CreateApiKeyInput,
   type UserApiKey,
   type WorkspacePermissionSlug,
 } from "@threahq/types"
@@ -21,7 +23,6 @@ export const SCOPE_LABELS: Record<string, string> = Object.fromEntries(
   WORKSPACE_PERMISSIONS.map((p) => [p.slug, p.name])
 )
 
-const ELIGIBLE_SCOPES: ReadonlySet<WorkspacePermissionSlug> = new Set(API_KEY_ELIGIBLE_SCOPES)
 const COPY_SUFFIX = " (copy)"
 
 export interface ApiKeyDraft {
@@ -33,20 +34,14 @@ export interface ApiKeyDraft {
   droppedScopes: readonly WorkspacePermissionSlug[]
 }
 
-export interface ApiKeyCreateInput {
-  name: string
-  scopes: WorkspacePermissionSlug[]
-  apiVersion?: string | null
-}
-
 export const NEW_API_KEY_DRAFT: ApiKeyDraft = { name: "", scopes: new Set(), droppedScopes: [] }
 
 export function draftFromKey(key: Pick<UserApiKey, "name" | "scopes" | "apiVersion">): ApiKeyDraft {
   return {
     name: key.name.slice(0, API_KEY_NAME_MAX_LENGTH - COPY_SUFFIX.length) + COPY_SUFFIX,
-    scopes: new Set(key.scopes.filter((scope) => ELIGIBLE_SCOPES.has(scope))),
+    scopes: new Set(key.scopes.filter(isApiKeyEligibleScope)),
     apiVersion: key.apiVersion,
-    droppedScopes: key.scopes.filter((scope) => !ELIGIBLE_SCOPES.has(scope)),
+    droppedScopes: key.scopes.filter((scope) => !isApiKeyEligibleScope(scope)),
   }
 }
 
@@ -57,10 +52,51 @@ function toggleDraftScope(draft: ApiKeyDraft, scope: WorkspacePermissionSlug): A
   return { ...draft, scopes }
 }
 
-function createInputFromDraft(draft: ApiKeyDraft): ApiKeyCreateInput | null {
+function createInputFromDraft(draft: ApiKeyDraft): CreateApiKeyInput | null {
   const name = draft.name.trim()
   if (!name || draft.scopes.size === 0) return null
   return { name, scopes: [...draft.scopes], apiVersion: draft.apiVersion }
+}
+
+/**
+ * Open/close/create lifecycle for {@link ApiKeyCreateForm}. A create can't be
+ * aborted server-side, so the form stays open and locked until it settles.
+ */
+export function useApiKeyCreateForm<TCreated extends { key: { name: string }; value: string }>({
+  create,
+  onCreated,
+}: {
+  create: (input: CreateApiKeyInput) => Promise<TCreated>
+  onCreated: (created: TCreated) => void
+}) {
+  const [draft, setDraft] = useState<ApiKeyDraft | null>(null)
+  const nameInputRef = useRef<HTMLInputElement>(null)
+  const mutation = useMutation({
+    mutationFn: create,
+    onSuccess: (created) => {
+      setDraft(null)
+      onCreated(created)
+    },
+  })
+
+  const open = (next: ApiKeyDraft) => {
+    mutation.reset()
+    setDraft(next)
+    // An already-open form keeps its mounted input, so autoFocus won't bring it back into view.
+    nameInputRef.current?.focus()
+  }
+
+  const formProps: Omit<ApiKeyCreateFormProps, "nameLabel" | "namePlaceholder"> | null = draft && {
+    draft,
+    onDraftChange: setDraft,
+    nameInputRef,
+    isPending: mutation.isPending,
+    error: mutation.error,
+    onCancel: () => setDraft(null),
+    onCreate: (input) => mutation.mutate(input),
+  }
+
+  return { isOpen: draft !== null, isPending: mutation.isPending, open, formProps }
 }
 
 interface ApiKeyCreateFormProps {
@@ -72,7 +108,7 @@ interface ApiKeyCreateFormProps {
   isPending: boolean
   error: Error | null
   onCancel: () => void
-  onCreate: (input: ApiKeyCreateInput) => void
+  onCreate: (input: CreateApiKeyInput) => void
 }
 
 export function ApiKeyCreateForm({
@@ -143,7 +179,7 @@ export function ApiKeyCreateForm({
       <Separator />
 
       <div className="flex items-center justify-between">
-        <Button variant="ghost" size="sm" onClick={onCancel}>
+        <Button variant="ghost" size="sm" onClick={onCancel} disabled={isPending}>
           Cancel
         </Button>
         <Button size="sm" onClick={() => input && onCreate(input)} disabled={!input || isPending}>

@@ -8,6 +8,8 @@ import * as useFormattedDateModule from "@/hooks/use-formatted-date"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { UserApiKeysSection } from "./user-api-keys-section"
 
+const OLDER_API_VERSION = API_VERSIONS[0]
+
 function makeKey(overrides: Partial<UserApiKey> = {}): UserApiKey {
   return {
     id: "uak_1",
@@ -80,8 +82,6 @@ describe("UserApiKeysSection — API version pin", () => {
     await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", "uak_1", null))
   })
 })
-
-const OLDER_API_VERSION = API_VERSIONS[0]
 
 describe("UserApiKeysSection — create and duplicate", () => {
   it("leaves a new key's pin to the server", async () => {
@@ -186,5 +186,60 @@ describe("UserApiKeysSection — create and duplicate", () => {
       name: (screen.getByLabelText("Name") as HTMLInputElement).value,
       readMessages: screen.getByRole("checkbox", { name: /Read messages/ }).getAttribute("aria-checked"),
     }).toEqual({ name: "", readMessages: "false" })
+  })
+
+  it("clears a failed create's error when the form is closed and reopened", async () => {
+    vi.spyOn(workspacesApi, "listUserApiKeys").mockResolvedValue([makeKey()])
+    vi.spyOn(workspacesApi, "createUserApiKey").mockRejectedValue(new Error("Key limit reached"))
+    const user = userEvent.setup()
+
+    renderSection()
+
+    await user.click(await screen.findByRole("button", { name: "Duplicate CI pipeline" }))
+    await user.click(screen.getByRole("button", { name: "Create key" }))
+    expect(await screen.findByText("Key limit reached")).toBeTruthy()
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }))
+    await user.click(screen.getByRole("button", { name: "New key" }))
+
+    expect(screen.queryByText("Key limit reached")).toBeNull()
+  })
+
+  it("locks the form and Duplicate until an in-flight create settles", async () => {
+    vi.spyOn(workspacesApi, "listUserApiKeys").mockResolvedValue([
+      makeKey(),
+      makeKey({ id: "uak_3", name: "Laptop", scopes: ["messages:read"] }),
+    ])
+    let resolveCreate!: (value: { key: UserApiKey; value: string }) => void
+    vi.spyOn(workspacesApi, "createUserApiKey").mockReturnValue(
+      new Promise((resolve) => {
+        resolveCreate = resolve
+      })
+    )
+    const user = userEvent.setup()
+
+    renderSection()
+
+    await user.click(await screen.findByRole("button", { name: "Duplicate CI pipeline" }))
+    await user.click(screen.getByRole("button", { name: "Create key" }))
+
+    const isDisabled = (name: string) => (screen.getByRole("button", { name }) as HTMLButtonElement).disabled
+    await waitFor(() =>
+      expect({ cancel: isDisabled("Cancel"), duplicate: isDisabled("Duplicate Laptop") }).toEqual({
+        cancel: true,
+        duplicate: true,
+      })
+    )
+
+    resolveCreate({ key: makeKey({ id: "uak_2", name: "CI pipeline (copy)" }), value: "threa_uk_new" })
+
+    expect(await screen.findByText("Your new API key: CI pipeline (copy)")).toBeTruthy()
+    expect({
+      form: screen.queryByRole("button", { name: "Cancel" }),
+      duplicate: isDisabled("Duplicate Laptop"),
+    }).toEqual({
+      form: null,
+      duplicate: false,
+    })
   })
 })

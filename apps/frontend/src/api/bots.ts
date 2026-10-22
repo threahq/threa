@@ -4,6 +4,7 @@ import type {
   BotApiKey,
   BotProfile,
   BotTrait,
+  CreateApiKeyInput,
   CreateBotApiKeyResponse,
   CreateIncomingWebhookResponse,
   IncomingWebhook,
@@ -27,13 +28,6 @@ export interface UpdateBotInput {
   avatarEmoji?: string | null
   traits?: BotTrait[]
   readsAsOwner?: boolean
-}
-
-export interface CreateBotKeyInput {
-  name: string
-  scopes: string[]
-  expiresAt?: string | null
-  apiVersion?: string | null
 }
 
 export interface CreateIncomingWebhookInput {
@@ -87,7 +81,7 @@ export const botsApi = {
     return res.data
   },
 
-  async createKey(workspaceId: string, botId: string, data: CreateBotKeyInput): Promise<CreateBotApiKeyResponse> {
+  async createKey(workspaceId: string, botId: string, data: CreateApiKeyInput): Promise<CreateBotApiKeyResponse> {
     return api.post<CreateBotApiKeyResponse>(`/api/workspaces/${workspaceId}/bots/${botId}/keys`, data)
   },
 

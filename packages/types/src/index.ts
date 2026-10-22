@@ -1313,6 +1313,8 @@ export {
   API_KEY_ELIGIBLE_SCOPES,
   API_KEY_ELIGIBLE_PICKER_SCOPES,
   API_KEY_NAME_MAX_LENGTH,
+  isApiKeyEligibleScope,
+  type CreateApiKeyInput,
   type UserApiKey,
   type CreateUserApiKeyResponse,
   BOT_KEY_PREFIX,

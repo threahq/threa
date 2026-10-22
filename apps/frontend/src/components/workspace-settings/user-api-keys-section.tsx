@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { workspacesApi } from "@/api/workspaces"
 import { Button } from "@/components/ui/button"
@@ -23,11 +23,10 @@ import { Check, ChevronDown, Copy, CopyPlus, Key, Plus, Trash2, Eye, EyeOff } fr
 import { ApiKeyVersionControl } from "./api-key-version-control"
 import {
   ApiKeyCreateForm,
+  useApiKeyCreateForm,
   NEW_API_KEY_DRAFT,
   SCOPE_LABELS,
   draftFromKey,
-  type ApiKeyCreateInput,
-  type ApiKeyDraft,
 } from "./api-key-create-form"
 
 interface UserApiKeysSectionProps {
@@ -44,8 +43,6 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
     queryFn: () => workspacesApi.listUserApiKeys(workspaceId),
   })
 
-  const [draft, setDraft] = useState<ApiKeyDraft | null>(null)
-  const nameInputRef = useRef<HTMLInputElement>(null)
   const [createdKey, setCreatedKey] = useState<{ name: string; value: string } | null>(null)
   const [showKeyValue, setShowKeyValue] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -54,13 +51,12 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
   const [editScopes, setEditScopes] = useState<Set<WorkspacePermissionSlug>>(new Set())
   const [revokedOpen, setRevokedOpen] = useState(false)
 
-  const createMutation = useMutation({
-    mutationFn: (input: ApiKeyCreateInput) => workspacesApi.createUserApiKey(workspaceId, input),
-    onSuccess: (data) => {
-      setCreatedKey({ name: data.key.name, value: data.value })
+  const createForm = useApiKeyCreateForm({
+    create: (input) => workspacesApi.createUserApiKey(workspaceId, input),
+    onCreated: (created) => {
+      setCreatedKey({ name: created.key.name, value: created.value })
       setShowKeyValue(true)
       setCopied(false)
-      setDraft(null)
       queryClient.invalidateQueries({ queryKey })
     },
   })
@@ -93,18 +89,6 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
       setRevokeTarget(null)
     },
   })
-
-  const openCreateForm = (next: ApiKeyDraft) => {
-    createMutation.reset()
-    setDraft(next)
-    // An already-open form keeps its mounted input, so autoFocus won't bring it back into view.
-    nameInputRef.current?.focus()
-  }
-
-  const closeCreateForm = () => {
-    createMutation.reset()
-    setDraft(null)
-  }
 
   const startEditingScopes = (key: { id: string; name: string; scopes: WorkspacePermissionSlug[] }) => {
     setEditTarget({ id: key.id, name: key.name })
@@ -204,12 +188,12 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
         <p className="text-sm text-muted-foreground">
           Personal keys act on your behalf with the same stream access as your account.
         </p>
-        {!draft && (
+        {!createForm.isOpen && (
           <Button
             variant="outline"
             size="sm"
             className="shrink-0 ml-4"
-            onClick={() => openCreateForm(NEW_API_KEY_DRAFT)}
+            onClick={() => createForm.open(NEW_API_KEY_DRAFT)}
           >
             <Plus className="h-3.5 w-3.5 mr-1.5" />
             New key
@@ -217,17 +201,11 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
         )}
       </div>
 
-      {draft && (
+      {createForm.formProps && (
         <ApiKeyCreateForm
-          draft={draft}
-          onDraftChange={setDraft}
-          nameInputRef={nameInputRef}
+          {...createForm.formProps}
           nameLabel="Name"
           namePlaceholder="e.g. CI pipeline, local dev script"
-          isPending={createMutation.isPending}
-          error={createMutation.error}
-          onCancel={closeCreateForm}
-          onCreate={(input) => createMutation.mutate(input)}
         />
       )}
 
@@ -273,8 +251,8 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
                     size="icon"
                     aria-label={`Duplicate ${key.name}`}
                     className="reveal-actions shrink-0 h-8 w-8"
-                    disabled={createMutation.isPending}
-                    onClick={() => openCreateForm(draftFromKey(key))}
+                    disabled={createForm.isPending}
+                    onClick={() => createForm.open(draftFromKey(key))}
                   >
                     <CopyPlus className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground transition-colors" />
                   </Button>
@@ -314,7 +292,7 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
         </div>
       )}
 
-      {activeKeys.length === 0 && !draft && (
+      {activeKeys.length === 0 && !createForm.isOpen && (
         <div className="rounded-lg border border-dashed py-8 flex flex-col items-center gap-2">
           <Key className="h-5 w-5 text-muted-foreground/50" />
           <p className="text-sm text-muted-foreground">No API keys yet</p>

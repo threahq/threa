@@ -42,6 +42,10 @@ export const API_KEY_NAME_MAX_LENGTH = 100
 
 const ELIGIBLE_SCOPE_SET: ReadonlySet<WorkspacePermissionSlug> = new Set(API_KEY_ELIGIBLE_SCOPES)
 
+export function isApiKeyEligibleScope(scope: WorkspacePermissionSlug): boolean {
+  return ELIGIBLE_SCOPE_SET.has(scope)
+}
+
 /**
  * `WorkspacePermission` records (slug + name + description) for the eligible
  * subset, in catalog order. Frontend pickers render from this so the picker UI
@@ -81,6 +85,15 @@ export interface UserApiKey {
   expiresAt: string | null
   revokedAt: string | null
   createdAt: string
+}
+
+/** Request body for creating a user or bot API key */
+export interface CreateApiKeyInput {
+  name: string
+  scopes: WorkspacePermissionSlug[]
+  expiresAt?: string | null
+  /** Omit to pin the server's current version; null leaves the key unpinned. */
+  apiVersion?: string | null
 }
 
 /** Response when creating a user API key (includes the full key value once) */

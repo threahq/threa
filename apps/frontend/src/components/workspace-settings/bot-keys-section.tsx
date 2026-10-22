@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { botsApi } from "@/api/bots"
 import { Button } from "@/components/ui/button"
@@ -28,11 +28,10 @@ import { Check, ChevronDown, Copy, CopyPlus, Eye, EyeOff, Key, Plus, Trash2 } fr
 import { ApiKeyVersionControl } from "./api-key-version-control"
 import {
   ApiKeyCreateForm,
+  useApiKeyCreateForm,
   NEW_API_KEY_DRAFT,
   SCOPE_LABELS,
   draftFromKey,
-  type ApiKeyCreateInput,
-  type ApiKeyDraft,
 } from "./api-key-create-form"
 
 interface BotKeysSectionProps {
@@ -51,8 +50,6 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
     queryFn: () => botsApi.listKeys(workspaceId, botId),
   })
 
-  const [draft, setDraft] = useState<ApiKeyDraft | null>(null)
-  const nameInputRef = useRef<HTMLInputElement>(null)
   const [createdKey, setCreatedKey] = useState<{ name: string; value: string } | null>(null)
   const [showKeyValue, setShowKeyValue] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -61,13 +58,12 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
   const [editScopes, setEditScopes] = useState<Set<WorkspacePermissionSlug>>(new Set())
   const [revokedOpen, setRevokedOpen] = useState(false)
 
-  const createKeyMutation = useMutation({
-    mutationFn: (input: ApiKeyCreateInput) => botsApi.createKey(workspaceId, botId, input),
-    onSuccess: (data) => {
-      setCreatedKey({ name: data.key.name, value: data.value })
+  const createForm = useApiKeyCreateForm({
+    create: (input) => botsApi.createKey(workspaceId, botId, input),
+    onCreated: (created) => {
+      setCreatedKey({ name: created.key.name, value: created.value })
       setShowKeyValue(true)
       setCopied(false)
-      setDraft(null)
       queryClient.invalidateQueries({ queryKey: keysQueryKey })
     },
   })
@@ -98,18 +94,6 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
     },
     onError: () => setRevokeTarget(null),
   })
-
-  const openCreateForm = (next: ApiKeyDraft) => {
-    createKeyMutation.reset()
-    setDraft(next)
-    // An already-open form keeps its mounted input, so autoFocus won't bring it back into view.
-    nameInputRef.current?.focus()
-  }
-
-  const closeCreateForm = () => {
-    createKeyMutation.reset()
-    setDraft(null)
-  }
 
   const startEditingScopes = (key: BotApiKey) => {
     setEditTarget({ id: key.id, name: key.name })
@@ -147,8 +131,13 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
     <section className="space-y-3">
       <div className="flex items-center justify-between">
         <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">API Keys</h4>
-        {!isArchived && !draft && (
-          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => openCreateForm(NEW_API_KEY_DRAFT)}>
+        {!isArchived && !createForm.isOpen && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => createForm.open(NEW_API_KEY_DRAFT)}
+          >
             <Plus className="h-3 w-3 mr-1" />
             New key
           </Button>
@@ -205,18 +194,8 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
         </div>
       )}
 
-      {draft && (
-        <ApiKeyCreateForm
-          draft={draft}
-          onDraftChange={setDraft}
-          nameInputRef={nameInputRef}
-          nameLabel="Key name"
-          namePlaceholder="e.g. production, staging"
-          isPending={createKeyMutation.isPending}
-          error={createKeyMutation.error}
-          onCancel={closeCreateForm}
-          onCreate={(input) => createKeyMutation.mutate(input)}
-        />
+      {createForm.formProps && (
+        <ApiKeyCreateForm {...createForm.formProps} nameLabel="Key name" namePlaceholder="e.g. production, staging" />
       )}
 
       {isLoading && <Skeleton className="h-16 w-full" />}
@@ -265,8 +244,8 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
                       size="icon"
                       aria-label={`Duplicate ${key.name}`}
                       className="reveal-actions shrink-0 h-8 w-8"
-                      disabled={createKeyMutation.isPending}
-                      onClick={() => openCreateForm(draftFromKey(key))}
+                      disabled={createForm.isPending}
+                      onClick={() => createForm.open(draftFromKey(key))}
                     >
                       <CopyPlus className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground transition-colors" />
                     </Button>
@@ -307,7 +286,7 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
         </div>
       )}
 
-      {!isLoading && activeKeys.length === 0 && !draft && (
+      {!isLoading && activeKeys.length === 0 && !createForm.isOpen && (
         <div className="rounded-lg border border-dashed py-6 flex flex-col items-center gap-2">
           <Key className="h-4 w-4 text-muted-foreground/50" />
           <p className="text-xs text-muted-foreground">No API keys yet. Create one to start sending messages.</p>

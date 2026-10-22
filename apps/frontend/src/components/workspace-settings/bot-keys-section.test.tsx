@@ -93,13 +93,11 @@ describe("BotKeysSection — duplicate", () => {
 
     await user.click(await screen.findByRole("button", { name: "Duplicate production" }))
 
-    expect({
-      name: (screen.getByLabelText("Key name") as HTMLInputElement).value,
-      dropped: screen.getByText(/Not copied, no longer available for keys/).textContent,
-    }).toEqual({
-      name: "production (copy)",
-      dropped: "Not copied, no longer available for keys: Manage bots",
-    })
+    const nameInput = screen.getByRole("textbox", {
+      name: "Key name",
+      description: "Not copied, no longer available for keys: Manage bots",
+    }) as HTMLInputElement
+    expect(nameInput.value).toBe("production (copy)")
 
     await user.click(screen.getByRole("button", { name: "Create key" }))
 
