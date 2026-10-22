@@ -38,6 +38,8 @@ export const API_KEY_ELIGIBLE_SCOPES: readonly [WorkspacePermissionSlug, ...Work
   WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE,
 ]
 
+export const API_KEY_NAME_MAX_LENGTH = 100
+
 const ELIGIBLE_SCOPE_SET: ReadonlySet<WorkspacePermissionSlug> = new Set(API_KEY_ELIGIBLE_SCOPES)
 
 /**

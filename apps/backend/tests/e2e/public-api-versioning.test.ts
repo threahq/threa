@@ -20,6 +20,7 @@ const baseUrl = () => process.env.TEST_BASE_URL || "http://localhost:3001"
 interface Ctx {
   client: TestClient
   workspaceId: string
+  botId: string
   botKey: string
   botKeyId: string
   userKey: string
@@ -73,6 +74,7 @@ async function setup(): Promise<Ctx> {
   return {
     client,
     workspaceId: workspace.id,
+    botId,
     botKey,
     botKeyId: rows[0].id,
     userKey: userKeyBody.value,
@@ -194,13 +196,8 @@ describe("Public API header versioning", () => {
   })
 
   test("bot keys detach and re-pin through the bot key PATCH", async () => {
-    const { rows: bots } = await pool.query<{ bot_id: string }>(`SELECT bot_id FROM bot_api_keys WHERE id = $1`, [
-      ctx.botKeyId,
-    ])
-    const botId = bots[0].bot_id
-
     const detach = await ctx.client.patch<{ data: { apiVersion: string | null } }>(
-      `/api/workspaces/${ctx.workspaceId}/bots/${botId}/keys/${ctx.botKeyId}`,
+      `/api/workspaces/${ctx.workspaceId}/bots/${ctx.botId}/keys/${ctx.botKeyId}`,
       { apiVersion: null }
     )
     expect((detach.data as { data: { apiVersion: string | null } }).data.apiVersion).toBeNull()
@@ -210,7 +207,7 @@ describe("Public API header versioning", () => {
     expect(info.resolved).toBe(CURRENT_API_VERSION)
 
     const repin = await ctx.client.patch<{ data: { apiVersion: string | null } }>(
-      `/api/workspaces/${ctx.workspaceId}/bots/${botId}/keys/${ctx.botKeyId}`,
+      `/api/workspaces/${ctx.workspaceId}/bots/${ctx.botId}/keys/${ctx.botKeyId}`,
       { apiVersion: CURRENT_API_VERSION }
     )
     expect((repin.data as { data: { apiVersion: string | null } }).data.apiVersion).toBe(CURRENT_API_VERSION)
@@ -218,24 +215,19 @@ describe("Public API header versioning", () => {
 
   test("keys minted with an explicit apiVersion keep that pin, including unpinned", async () => {
     const olderVersion = API_VERSIONS[API_VERSIONS.length - 2]
-    const { rows: bots } = await pool.query<{ bot_id: string }>(`SELECT bot_id FROM bot_api_keys WHERE id = $1`, [
-      ctx.botKeyId,
-    ])
     const mint = async (path: string, apiVersion: string | null) => {
-      const res = await ctx.client.post<{ key: { apiVersion: string | null }; value: string }>(path, {
+      const { status, data } = await ctx.client.post<{ key: { apiVersion: string | null }; value: string }>(path, {
         name: `ver-mint-${testRunId}`,
         scopes: ["messages:read"],
         apiVersion,
       })
-      const body = res.data as { key: { apiVersion: string | null }; value: string }
-      return {
-        status: res.status,
-        apiVersion: body.key.apiVersion,
-        pinned: (await fetchMeApiVersion(ctx.workspaceId, body.value)).pinned,
-      }
+      if (status !== 201) return { status }
+      const { pinned } = await fetchMeApiVersion(ctx.workspaceId, data.value)
+
+      return { status, apiVersion: data.key.apiVersion, pinned }
     }
     const userKeysPath = `/api/workspaces/${ctx.workspaceId}/user-api-keys`
-    const botKeysPath = `/api/workspaces/${ctx.workspaceId}/bots/${bots[0].bot_id}/keys`
+    const botKeysPath = `/api/workspaces/${ctx.workspaceId}/bots/${ctx.botId}/keys`
 
     expect({
       userOlder: await mint(userKeysPath, olderVersion),
@@ -250,13 +242,23 @@ describe("Public API header versioning", () => {
     })
   })
 
-  test("minting a key with an unsupported apiVersion is rejected", async () => {
-    const res = await ctx.client.post(`/api/workspaces/${ctx.workspaceId}/user-api-keys`, {
-      name: `ver-bad-${testRunId}`,
-      scopes: ["messages:read"],
-      apiVersion: "2099-01-01",
+  test("minting a key with an unsupported apiVersion is rejected on both key routes", async () => {
+    const mint = async (path: string) => {
+      const { status, data } = await ctx.client.post<{ code?: string }>(path, {
+        name: `ver-bad-${testRunId}`,
+        scopes: ["messages:read"],
+        apiVersion: "2099-01-01",
+      })
+      return { status, code: data.code }
+    }
+
+    expect({
+      user: await mint(`/api/workspaces/${ctx.workspaceId}/user-api-keys`),
+      bot: await mint(`/api/workspaces/${ctx.workspaceId}/bots/${ctx.botId}/keys`),
+    }).toEqual({
+      user: { status: 400, code: "VALIDATION_ERROR" },
+      bot: { status: 400, code: "VALIDATION_ERROR" },
     })
-    expect(res.status).toBe(400)
   })
 
   test("a stream created as guest_public reads as public to an older pin on every stream operation and as guest_public at the current version", async () => {

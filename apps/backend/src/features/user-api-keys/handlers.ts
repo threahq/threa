@@ -3,11 +3,16 @@ import type { Request, Response } from "express"
 import { validateRequest } from "../../lib/validation"
 import type { UserApiKeyService } from "./service"
 import type { UserApiKeyRow } from "./repository"
-import { API_KEY_ELIGIBLE_SCOPES, type WorkspacePermissionSlug, type UserApiKey } from "@threahq/types"
-import { API_VERSIONS, type ApiVersion } from "../public-api/versions"
+import {
+  API_KEY_ELIGIBLE_SCOPES,
+  API_KEY_NAME_MAX_LENGTH,
+  type WorkspacePermissionSlug,
+  type UserApiKey,
+} from "@threahq/types"
+import { CURRENT_API_VERSION, apiKeyVersionPinSchema, type ApiVersion } from "../public-api/versions"
 
 const createKeySchema = z.object({
-  name: z.string().min(1, "name is required").max(100),
+  name: z.string().min(1, "name is required").max(API_KEY_NAME_MAX_LENGTH),
   scopes: z.array(z.enum(API_KEY_ELIGIBLE_SCOPES)).min(1, "at least one scope is required"),
   expiresAt: z
     .string()
@@ -17,14 +22,14 @@ const createKeySchema = z.object({
     .refine((val) => val == null || new Date(val) > new Date(), {
       message: "expiresAt must be a future date",
     }),
-  apiVersion: z.enum(API_VERSIONS).nullable().optional(),
+  apiVersion: apiKeyVersionPinSchema.default(CURRENT_API_VERSION),
 })
 
 const updateKeySchema = z
   .object({
     scopes: z.array(z.enum(API_KEY_ELIGIBLE_SCOPES)).min(1, "at least one scope is required").optional(),
     // A supported version pins the key; null unpins it (the key then tracks the current version).
-    apiVersion: z.enum(API_VERSIONS).nullable().optional(),
+    apiVersion: apiKeyVersionPinSchema.optional(),
   })
   .refine((data) => data.scopes !== undefined || data.apiVersion !== undefined, {
     message: "provide scopes and/or apiVersion",

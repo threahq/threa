@@ -18,10 +18,11 @@ import { OutboxRepository } from "../../lib/outbox"
 import { HttpError } from "@threahq/backend-common"
 import { isUniqueViolation } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
-import { API_VERSIONS, type ApiVersion } from "./versions"
+import { CURRENT_API_VERSION, apiKeyVersionPinSchema, type ApiVersion } from "./versions"
 import {
   API_KEY_ELIGIBLE_SCOPES,
   BOT_TRAITS,
+  API_KEY_NAME_MAX_LENGTH,
   BOT_TYPES,
   BotTypes,
   permissionsForRole,
@@ -59,7 +60,7 @@ const updateBotSchema = z.object({
 })
 
 const createBotKeySchema = z.object({
-  name: z.string().min(1, "name is required").max(100),
+  name: z.string().min(1, "name is required").max(API_KEY_NAME_MAX_LENGTH),
   scopes: z.array(z.enum(API_KEY_ELIGIBLE_SCOPES)).min(1, "at least one scope is required"),
   expiresAt: z
     .string()
@@ -69,14 +70,14 @@ const createBotKeySchema = z.object({
     .refine((val) => val == null || new Date(val) > new Date(), {
       message: "expiresAt must be a future date",
     }),
-  apiVersion: z.enum(API_VERSIONS).nullable().optional(),
+  apiVersion: apiKeyVersionPinSchema.default(CURRENT_API_VERSION),
 })
 
 const updateBotKeySchema = z
   .object({
     scopes: z.array(z.enum(API_KEY_ELIGIBLE_SCOPES)).min(1, "at least one scope is required").optional(),
     // A supported version pins the key; null unpins it (the key then tracks the current version).
-    apiVersion: z.enum(API_VERSIONS).nullable().optional(),
+    apiVersion: apiKeyVersionPinSchema.optional(),
   })
   .refine((data) => data.scopes !== undefined || data.apiVersion !== undefined, {
     message: "provide scopes and/or apiVersion",

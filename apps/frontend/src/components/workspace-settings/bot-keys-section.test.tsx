@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { CURRENT_API_VERSION, type BotApiKey } from "@threahq/types"
+import { API_VERSIONS, CURRENT_API_VERSION, type BotApiKey } from "@threahq/types"
 import { botsApi } from "@/api/bots"
 import * as useFormattedDateModule from "@/hooks/use-formatted-date"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -34,17 +34,17 @@ function renderSection(queryClient = new QueryClient()) {
   )
 }
 
-describe("BotKeysSection — API version pin", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks()
-    vi.spyOn(useFormattedDateModule, "useFormattedDate").mockReturnValue({
-      formatDate: (date: Date) => date.toISOString().slice(0, 10),
-      formatTime: (date: Date) => date.toISOString(),
-      formatRelative: (date: Date) => date.toISOString(),
-      formatFull: (date: Date) => date.toISOString(),
-    })
+beforeEach(() => {
+  vi.restoreAllMocks()
+  vi.spyOn(useFormattedDateModule, "useFormattedDate").mockReturnValue({
+    formatDate: (date: Date) => date.toISOString().slice(0, 10),
+    formatTime: (date: Date) => date.toISOString(),
+    formatRelative: (date: Date) => date.toISOString(),
+    formatFull: (date: Date) => date.toISOString(),
   })
+})
 
+describe("BotKeysSection — API version pin", () => {
   it("pins an unpinned bot key to a dated version", async () => {
     vi.spyOn(botsApi, "listKeys").mockResolvedValue([makeKey({ apiVersion: null })])
     const update = vi.spyOn(botsApi, "updateKeyVersion").mockResolvedValue(makeKey({ apiVersion: CURRENT_API_VERSION }))
@@ -79,29 +79,28 @@ describe("BotKeysSection — API version pin", () => {
 })
 
 describe("BotKeysSection — duplicate", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks()
-    vi.spyOn(useFormattedDateModule, "useFormattedDate").mockReturnValue({
-      formatDate: (date: Date) => date.toISOString().slice(0, 10),
-      formatTime: (date: Date) => date.toISOString(),
-      formatRelative: (date: Date) => date.toISOString(),
-      formatFull: (date: Date) => date.toISOString(),
-    })
-  })
-
-  it("mints a new bot key from an existing key's name, scopes, and pin", async () => {
-    const olderVersion = "2026-10-01"
+  it("mints a new bot key from an existing key's name, scopes, and pin, dropping scopes keys can no longer hold", async () => {
+    const olderVersion = API_VERSIONS[0]
     vi.spyOn(botsApi, "listKeys").mockResolvedValue([
-      makeKey({ scopes: ["messages:write", "bot-runtime:write"], apiVersion: olderVersion }),
+      makeKey({ scopes: ["messages:write", "bot-runtime:write", "bots:manage"], apiVersion: olderVersion }),
     ])
     const create = vi
       .spyOn(botsApi, "createKey")
-      .mockResolvedValue({ key: makeKey({ id: "bak_2" }), value: "threa_bk_new" })
+      .mockResolvedValue({ key: makeKey({ id: "bak_2", name: "production (copy)" }), value: "threa_bk_new" })
     const user = userEvent.setup()
 
     renderSection()
 
     await user.click(await screen.findByRole("button", { name: "Duplicate production" }))
+
+    expect({
+      name: (screen.getByLabelText("Key name") as HTMLInputElement).value,
+      dropped: screen.getByText(/Not copied, no longer available for keys/).textContent,
+    }).toEqual({
+      name: "production (copy)",
+      dropped: "Not copied, no longer available for keys: Manage bots",
+    })
+
     await user.click(screen.getByRole("button", { name: "Create key" }))
 
     await waitFor(() =>
@@ -111,5 +110,6 @@ describe("BotKeysSection — duplicate", () => {
         apiVersion: olderVersion,
       })
     )
+    expect(await screen.findByText("Your new bot key: production (copy)")).toBeTruthy()
   })
 })

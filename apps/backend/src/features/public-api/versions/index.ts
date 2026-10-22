@@ -1,4 +1,5 @@
 import { HttpError } from "@threahq/backend-common"
+import { z } from "zod"
 import { Visibilities } from "@threahq/types"
 import type { OperationId } from "../routes"
 import { API_VERSIONS, CURRENT_API_VERSION, type ApiVersion, type OpenApiSpec, type VersionChange } from "./types"
@@ -388,4 +389,7 @@ export function deriveVersionSpec(
 }
 
 export { API_VERSIONS, CURRENT_API_VERSION }
+
+/** A key's version pin: a supported version, or null to track the current version. */
+export const apiKeyVersionPinSchema = z.enum(API_VERSIONS).nullable()
 export type { ApiVersion, OpenApiSpec, VersionChange, VersionChangeContext } from "./types"

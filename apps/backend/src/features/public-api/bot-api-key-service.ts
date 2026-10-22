@@ -6,7 +6,7 @@ import { botApiKeyId } from "../../lib/id"
 import { HttpError } from "@threahq/backend-common"
 import type { WorkspacePermissionSlug } from "@threahq/types"
 import { API_KEY_ELIGIBLE_SCOPES, BOT_KEY_PREFIX } from "@threahq/types"
-import { CURRENT_API_VERSION, type ApiVersion } from "./versions"
+import type { ApiVersion } from "./versions"
 
 const KEY_BYTE_LENGTH = 32
 const STORED_PREFIX_LENGTH = 8
@@ -57,8 +57,7 @@ export class BotApiKeyService {
     name: string
     scopes: WorkspacePermissionSlug[]
     expiresAt: Date | null
-    /** Omitted pins the key to the current version; null leaves it unpinned. */
-    apiVersion?: ApiVersion | null
+    apiVersion: ApiVersion | null
   }): Promise<{ row: BotApiKeyRow; value: string }> {
     validateScopes(params.scopes)
 
@@ -103,7 +102,7 @@ export class BotApiKeyService {
         keyHash,
         keyPrefix,
         scopes: params.scopes,
-        apiVersion: params.apiVersion === undefined ? CURRENT_API_VERSION : params.apiVersion,
+        apiVersion: params.apiVersion,
         expiresAt: params.expiresAt,
       })
     })
