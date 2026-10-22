@@ -405,6 +405,10 @@ export class T3TurnRunner {
     return true
   }
 
+  get busy(): boolean {
+    return this.runs.size > 0 || this.admitting.size > 0
+  }
+
   shutdown(): void {
     for (const pending of this.admitting.values()) pending.abort.abort()
     for (const run of this.runs.values()) run.abort.abort()

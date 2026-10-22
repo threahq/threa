@@ -39,7 +39,9 @@ export {
 } from "./spawn-runtimes"
 export {
   clearSessionPresence,
+  heldPresenceBody,
   readSessionPresence,
+  SUPERVISOR_HELD_CAPABILITY,
   sessionPresenceDir,
   writeSessionPresence,
   type SessionPresenceSnapshot,

@@ -725,6 +725,11 @@ export class RemoteSession {
     return this.link?.rootStreamId
   }
 
+  /** Claiming an invocation (its input is prepared before the delegate sees it) or holding one open. */
+  get busy(): boolean {
+    return this.claiming || this.inflight.size > 0
+  }
+
   get statusSnapshot(): RemoteSessionStatusSnapshot {
     const linkState = this.archive.detached ? "detached" : this.link ? "linked" : "unlinked"
     return {

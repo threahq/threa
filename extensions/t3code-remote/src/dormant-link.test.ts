@@ -10,8 +10,26 @@ function deferred<T>() {
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
 
-function harness(options: { revive?: (rootStreamId: string) => Promise<void> } = {}) {
-  const state = { archived: true, revived: [] as string[], watchers: 0, open: 0, logs: [] as string[] }
+const MINUTE = 60_000
+
+function harness(
+  options: {
+    revive?: (rootStreamId: string) => Promise<void>
+    windDown?: () => Promise<void>
+    holdPresence?: () => Promise<void>
+    target?: string
+  } = {}
+) {
+  const state = {
+    archived: true,
+    revived: [] as string[],
+    watchers: 0,
+    open: 0,
+    logs: [] as string[],
+    busy: false,
+    now: 0,
+    events: [] as string[],
+  }
   let nudge: (runtimeSessionId?: string) => void = () => {}
   let check: Promise<boolean> | undefined
   const link = new DormantLink({
@@ -26,7 +44,20 @@ function harness(options: { revive?: (rootStreamId: string) => Promise<void> } =
     revive: async (rootStreamId) => {
       await options.revive?.(rootStreamId)
       state.revived.push(rootStreamId)
+      state.events.push("revived")
     },
+    isBusy: () => state.busy,
+    windDownTarget: () => options.target,
+    windDown: async () => {
+      await options.windDown?.()
+      state.events.push("wound down")
+    },
+    holdPresence: async () => {
+      await options.holdPresence?.()
+      state.events.push("held")
+    },
+    idleAfterMs: 90 * MINUTE,
+    now: () => state.now,
     log: (message) => state.logs.push(message),
   })
   return {
@@ -117,6 +148,150 @@ describe("DormantLink", () => {
       revived: [],
       open: 0,
       watchers: 1,
+    })
+  })
+
+  test("an idle session winds down holding its presence, and only work addressed to it links it again", async () => {
+    const { link, state, nudge } = harness({ target: "stream_root" })
+    state.archived = false
+
+    state.now = 89 * MINUTE
+    await link.tick()
+    const beforeWindow = [...state.events]
+    state.now = 90 * MINUTE
+    await link.tick()
+    const beforeSubscribed = [...state.events]
+    await nudge()
+    state.now = 91 * MINUTE
+    await link.tick()
+    await nudge()
+    await nudge("rts_other")
+    const beforeMessage = { events: [...state.events], open: state.open }
+    await nudge("rts_ours")
+    state.now = 180 * MINUTE
+    await link.tick()
+
+    expect({ beforeWindow, beforeSubscribed, beforeMessage, events: state.events, open: state.open }).toEqual({
+      beforeWindow: [],
+      beforeSubscribed: [],
+      beforeMessage: { events: ["wound down", "held", "held"], open: 1 },
+      events: ["wound down", "held", "held", "revived"],
+      open: 0,
+    })
+  })
+
+  test("the idle window counts from the last tick a turn was running or a message was delivered", async () => {
+    const { link, state, nudge } = harness({ target: "stream_root" })
+    state.busy = true
+    state.now = 120 * MINUTE
+    await link.tick()
+    state.busy = false
+    state.now = 150 * MINUTE
+    link.touch()
+    state.now = 239 * MINUTE
+    await link.tick()
+    const beforeWindow = [...state.events]
+    state.now = 240 * MINUTE
+    await link.tick()
+    await nudge()
+
+    expect({ beforeWindow, events: state.events }).toEqual({ beforeWindow: [], events: ["wound down", "held"] })
+  })
+
+  test("a session with nothing to wind down to stays up", async () => {
+    const { link, state } = harness()
+    state.now = 500 * MINUTE
+    await link.tick()
+
+    expect({ events: state.events, watchers: state.watchers }).toEqual({ events: [], watchers: 0 })
+  })
+
+  test("a message during the wind-down waits for it before linking again", async () => {
+    const shutdown = deferred<void>()
+    const { link, state, nudge } = harness({ target: "stream_root", windDown: () => shutdown.promise })
+    state.archived = false
+    state.now = 90 * MINUTE
+
+    await link.tick()
+    await nudge()
+    await nudge("rts_ours")
+    const whileShuttingDown = [...state.events]
+    shutdown.resolve()
+    await tick()
+
+    expect({ whileShuttingDown, events: state.events }).toEqual({
+      whileShuttingDown: [],
+      events: ["wound down", "held", "revived"],
+    })
+  })
+
+  test("work that arrives before the watcher is subscribed keeps the session up", async () => {
+    const { link, state, nudge } = harness({ target: "stream_root" })
+    state.now = 90 * MINUTE
+    await link.tick()
+    link.touch()
+    await nudge()
+    const afterDelivered = { events: [...state.events], open: state.open }
+    state.now = 180 * MINUTE
+    await link.tick()
+    state.busy = true
+    await nudge()
+
+    expect({ afterDelivered, events: state.events, open: state.open, watchers: state.watchers }).toEqual({
+      afterDelivered: { events: [], open: 0 },
+      events: [],
+      open: 0,
+      watchers: 2,
+    })
+  })
+
+  test("a wound-down session that failed to link again retries on the next tick", async () => {
+    let attempts = 0
+    const { link, state, nudge } = harness({
+      target: "stream_root",
+      revive: async () => {
+        attempts += 1
+        if (attempts === 1) throw new Error("socket closed")
+      },
+    })
+    state.archived = false
+    state.now = 90 * MINUTE
+    await link.tick()
+    await nudge()
+    await nudge("rts_ours")
+    const afterFailure = [...state.events]
+    state.now = 91 * MINUTE
+    await link.tick()
+    await tick()
+
+    expect({ afterFailure, events: state.events, open: state.open }).toEqual({
+      afterFailure: ["wound down", "held"],
+      events: ["wound down", "held", "revived"],
+      open: 0,
+    })
+  })
+
+  test("a wound-down session whose presence can't be held links again", async () => {
+    const { link, state, nudge } = harness({
+      target: "stream_root",
+      holdPresence: async () => {
+        throw new Error("503")
+      },
+    })
+    state.archived = false
+    state.now = 90 * MINUTE
+    await link.tick()
+    await nudge()
+    await tick()
+
+    expect({ events: state.events, open: state.open, logs: state.logs }).toEqual({
+      events: ["wound down", "revived"],
+      open: 0,
+      logs: [
+        "idle for 90 min; winding down until scratchpad stream_root is used",
+        "holding presence failed: 503; linking again",
+        "scratchpad stream_root wanted again; linking",
+      ],
     })
   })
 })

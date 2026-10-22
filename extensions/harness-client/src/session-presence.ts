@@ -32,6 +32,40 @@ export interface SessionPresenceSnapshot {
   updatedAt: string
 }
 
+/**
+ * The capability that marks presence a supervisor (harnessd, or a connector
+ * whose session wound down) published on a session's behalf.
+ *
+ * The server gates this presence on freshness — the supervisor re-posts it
+ * every minute, so a supervisor that stopped takes the commands with it. Nothing
+ * else re-posts on a timer, which is why the marker exists at all: the same
+ * check over ordinary presence would hide a live session that has simply been
+ * quiet for an hour.
+ */
+export const SUPERVISOR_HELD_CAPABILITY = "supervisorHeld"
+
+/**
+ * Presence for a session that is not running: available, taking invocations,
+ * and advertising exactly what the session itself last advertised.
+ *
+ * No status text: a user should not have to know their agent is asleep. No
+ * BIK either — private key material has no business in a supervisor — and the
+ * `supervisorHeld` marker is what tells the server to keep the key the session
+ * registered instead of clearing it on a keyless write.
+ */
+export function heldPresenceBody(snapshot: Omit<SessionPresenceSnapshot, "updatedAt">): Record<string, unknown> {
+  return {
+    runtimeKind: snapshot.runtimeKind,
+    instanceId: snapshot.instanceId,
+    runtimeSessionId: snapshot.runtimeSessionId,
+    ...(snapshot.displayName ? { displayName: snapshot.displayName } : {}),
+    status: "available",
+    acceptingInvocations: true,
+    capabilities: { ...snapshot.capabilities, [SUPERVISOR_HELD_CAPABILITY]: true },
+    ...(snapshot.manifest ? { manifest: snapshot.manifest } : {}),
+  }
+}
+
 export function sessionPresenceDir(): string {
   return process.env.THREA_HARNESS_PRESENCE_DIR || join(homedir(), ".threa", "harnessd", "presence")
 }

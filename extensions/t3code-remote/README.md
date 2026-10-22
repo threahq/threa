@@ -101,6 +101,11 @@ Every thread is a normal T3 thread, so you can open it in the T3 app and keep go
 Stopping the connector leaves T3's runs alone: they finish in T3, and their Threa turns end with "T3 Code connector
 shut down".
 
+Archiving the scratchpad ends the connector's Threa session, and the connector links it again once the scratchpad is
+restored. After 90 minutes with no turn running it ends the session too, and keeps posting the bot's last presence so
+the scratchpad still shows it available with its commands. The next message or command for it links the session again
+and runs. T3 keeps running either way.
+
 Attachments on a message are downloaded and listed by path in the text T3 receives. PNG, JPEG, GIF and WebP images up
 to 10 MiB, at most 8 per message, are also uploaded to T3 and sent as images, so the model sees them without reading
 a file. T3 sends a message with images in its own "auto" mode: it is steered into the thread's open run when there is
