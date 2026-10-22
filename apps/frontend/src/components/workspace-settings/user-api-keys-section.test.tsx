@@ -241,10 +241,12 @@ describe("UserApiKeysSection — create and duplicate", () => {
 
     const isDisabled = (name: string) => (screen.getByRole("button", { name }) as HTMLButtonElement).disabled
     await waitFor(() =>
-      expect({ cancel: isDisabled("Cancel"), duplicate: isDisabled("Duplicate Laptop") }).toEqual({
-        cancel: true,
-        duplicate: true,
-      })
+      expect({
+        name: (screen.getByLabelText("Name") as HTMLInputElement).disabled,
+        scope: (screen.getByRole("checkbox", { name: /Write messages/ }) as HTMLButtonElement).disabled,
+        cancel: isDisabled("Cancel"),
+        duplicate: isDisabled("Duplicate Laptop"),
+      }).toEqual({ name: true, scope: true, cancel: true, duplicate: true })
     )
 
     resolveCreate({ key: makeKey({ id: "uak_2", name: "CI pipeline (copy)" }), value: "threa_uk_new" })

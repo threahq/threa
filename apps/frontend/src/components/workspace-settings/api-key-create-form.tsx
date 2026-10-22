@@ -142,6 +142,7 @@ export function ApiKeyCreateForm({
           placeholder={namePlaceholder}
           value={draft.name}
           onChange={(e) => onDraftChange({ ...draft, name: e.target.value })}
+          disabled={isPending}
           aria-describedby={hasDroppedScopes ? droppedNoteId : undefined}
           autoFocus
         />
@@ -158,6 +159,7 @@ export function ApiKeyCreateForm({
               <span className="flex items-center gap-3">
                 <Checkbox
                   checked={draft.scopes.has(perm.slug)}
+                  disabled={isPending}
                   onCheckedChange={() => onDraftChange(toggleDraftScope(draft, perm.slug))}
                 />
                 <span className="text-sm font-medium">{perm.name}</span>
@@ -177,6 +179,7 @@ export function ApiKeyCreateForm({
       <ApiKeyVersionControl
         apiVersion={draft.apiVersion === undefined ? CURRENT_API_VERSION : draft.apiVersion}
         onChange={(apiVersion) => onDraftChange({ ...draft, apiVersion })}
+        disabled={isPending}
       />
 
       <Separator />
