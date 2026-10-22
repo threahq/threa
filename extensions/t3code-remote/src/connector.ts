@@ -1,7 +1,9 @@
 import { join } from "node:path"
+import { BotSupervisorTransport } from "@threahq/harness-client"
 import { RemoteSession, ThreaClient, writeFileAtomic, type ShutdownOptions } from "@threahq/remote-session"
 import { T3Auth, type FetchLike } from "./auth"
 import { readJsonFile, type T3RemoteConfig } from "./config"
+import { DormantLink } from "./dormant-link"
 import { T3CODE_RUNTIME, T3TurnRunner, type ThreadStore } from "./run-bridge"
 import { createT3SessionControl } from "./session-control"
 import { T3Client, type ModelOption } from "./t3-client"
@@ -40,7 +42,6 @@ export interface T3ConnectorOptions {
 }
 
 export interface T3Connector {
-  session: RemoteSession
   start(): Promise<void>
   shutdown(options?: ShutdownOptions): Promise<void>
 }
@@ -78,23 +79,64 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
     log,
   })
   const sessionControl = createT3SessionControl(runner, t3)
+  const client = new ThreaClient(config)
 
-  session = new RemoteSession({
-    config,
-    client: new ThreaClient(config),
-    delegate: { deliverTurn: (turn) => runner.deliverTurn(turn), sessionControl },
-    runtime: T3CODE_RUNTIME,
+  // An archived scratchpad ends the session; the process stays up and links it again once the scratchpad is restored.
+  const dormant = new DormantLink({
+    runtimeSessionId: config.runtimeSessionId,
+    watch: (nudge) => {
+      const watcher = new BotSupervisorTransport({
+        baseUrl: config.baseUrl,
+        workspaceId: config.workspaceId,
+        apiKey: config.apiKey,
+        onReady: () => nudge(),
+        onSessionRestored: (payload) => nudge(payload.runtimeSessionId),
+        onInvocationAvailable: (payload) => nudge(payload.runtimeSessionId),
+        log,
+      })
+      void watcher.connect()
+      return watcher
+    },
+    isArchived: async (rootStreamId) => Boolean(await client.getStreamArchivedAt(rootStreamId)),
+    revive: async (rootStreamId) => {
+      // Wait rather than replace: an archive landing between the check and the link must not mint a new scratchpad.
+      session = createSession({ coldStartIfArchived: "wait", expectedRootStreamId: rootStreamId })
+      try {
+        await session.start()
+      } catch (error) {
+        await session.shutdown()
+        throw error
+      }
+    },
     log,
   })
 
+  const createSession = (link: Partial<T3RemoteConfig> = {}) =>
+    new RemoteSession({
+      config: { ...config, ...link },
+      client,
+      delegate: {
+        deliverTurn: (turn) => runner.deliverTurn(turn),
+        sessionControl,
+        onArchived: ({ rootStreamId }) => {
+          runner.shutdown()
+          log(`scratchpad ${rootStreamId} archived; waiting for it to be restored`)
+          dormant.sleep(rootStreamId)
+        },
+      },
+      runtime: T3CODE_RUNTIME,
+      log,
+    })
+  session = createSession()
+
   return {
-    session,
     start: async () => {
       // Fails before linking when there is no token and auto-login is off.
       await auth.token()
       await session.start()
     },
     shutdown: async (shutdownOptions?: ShutdownOptions) => {
+      await dormant.stop()
       runner.shutdown()
       await session.shutdown(shutdownOptions)
     },
