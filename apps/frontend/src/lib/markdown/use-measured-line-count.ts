@@ -12,9 +12,11 @@ export interface MeasuredLines {
   lineHeightPx: number | null
   /** Rendered content height in CSS px. */
   heightPx?: number | null
+  /** Rendered content width in CSS px. */
+  widthPx?: number | null
 }
 
-const UNMEASURED: MeasuredLines = { lineCount: null, lineHeightPx: null, heightPx: null }
+const UNMEASURED: MeasuredLines = { lineCount: null, lineHeightPx: null, heightPx: null, widthPx: null }
 
 function resolveLineHeightPx(el: HTMLElement): number {
   const cs = getComputedStyle(el)
@@ -56,6 +58,7 @@ export function useMeasuredLineCount(ref: RefObject<HTMLElement | null>, deps: R
       if (!node) return
       const lineHeightPx = resolveLineHeightPx(node)
       const height = node.scrollHeight
+      const width = node.clientWidth
       if (lineHeightPx <= 0 || height <= 0) {
         // No layout engine (JSDOM) or not yet attached — stay unmeasured so
         // consumers fall back to "expanded, no chrome".
@@ -66,9 +69,10 @@ export function useMeasuredLineCount(ref: RefObject<HTMLElement | null>, deps: R
         prev.lineCount !== null &&
         Math.abs(prev.lineCount - lineCount) < 0.01 &&
         prev.lineHeightPx === lineHeightPx &&
-        prev.heightPx === height
+        prev.heightPx === height &&
+        prev.widthPx === width
           ? prev
-          : { lineCount, lineHeightPx, heightPx: height }
+          : { lineCount, lineHeightPx, heightPx: height, widthPx: width }
       )
     }
 

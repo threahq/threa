@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { __resetCollapseCacheForTests } from "./collapse-cache"
 import { CollapsibleBody } from "./collapsible-body"
@@ -128,5 +128,47 @@ describe("CollapsibleBody trailing content", () => {
     )
 
     expect(screen.getByText("nested:true")).toBeInTheDocument()
+  })
+
+  it("keeps nested folds taken over when dropping their chrome shrinks the body under the threshold", () => {
+    const resizeCallbacks: Array<() => void> = []
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          resizeCallbacks.push(callback)
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+    // A nested quote's fold header and padding are what tip the body past the
+    // fold height; without them it fits.
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(() =>
+      document.querySelector("[data-nested-chrome]") ? 440 : 400
+    )
+    function NestedChrome() {
+      return useIsInsideCollapsibleBlock() ? <span>plain</span> : <span data-nested-chrome>chrome</span>
+    }
+
+    render(
+      <MarkdownBlockProvider messageId="msg_1">
+        <CollapsibleBody
+          kind="message"
+          content="body"
+          collapseAtHeight={420}
+          collapseToHeight={240}
+          defaultCollapsed={false}
+        >
+          <NestedChrome />
+        </CollapsibleBody>
+      </MarkdownBlockProvider>
+    )
+
+    for (let tick = 0; tick < 3; tick++) {
+      act(() => resizeCallbacks.forEach((callback) => callback()))
+      expect(screen.getByText("plain")).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: "Collapse" })).toBeInTheDocument()
+    }
   })
 })

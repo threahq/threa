@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type MouseEvent, type ReactNode } from "react"
+import { useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react"
 import { ChevronDown, ChevronUp } from "lucide-react"
 import {
   DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT,
@@ -81,11 +81,16 @@ export function CollapsibleBody({
   onHeight,
 }: CollapsibleBodyProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null)
-  const { lineCount, lineHeightPx, heightPx } = useMeasuredLineCount(bodyRef, [content])
+  const { lineCount, lineHeightPx, heightPx, widthPx } = useMeasuredLineCount(bodyRef, [content])
   const lineCollapsible = threshold !== undefined && lineCount !== null && lineCount > threshold + 0.5
   const heightCollapsible =
     collapseAtHeight !== undefined && heightPx !== null && heightPx !== undefined && heightPx > collapseAtHeight
-  const collapsible = heightCollapsible || lineCollapsible
+  // Taking over nested folds strips their chrome, which can shrink the body
+  // back under the threshold and hand the folds back — a loop on every resize.
+  // Once taken over, hold it until the content or column width changes.
+  const [takeoverHeldFor, setTakeoverHeldFor] = useState<{ content: string; widthPx: number | null } | null>(null)
+  const takeoverHeld = takeoverHeldFor?.content === content && takeoverHeldFor.widthPx === (widthPx ?? null)
+  const collapsible = heightCollapsible || lineCollapsible || takeoverHeld
   const own = useBlockCollapse({ kind, content, collapsible: collapsible && !group, defaultCollapsed })
 
   useLayoutEffect(() => {
@@ -96,6 +101,11 @@ export function CollapsibleBody({
     ? group.collapsed && collapseToHeight !== undefined && heightPx != null && heightPx > collapseToHeight
     : own.collapsed
   const expanded = group ? !group.collapsed : !own.collapsed
+  const takesOverNested = group ? collapsible || collapsed : own.canToggle
+
+  useLayoutEffect(() => {
+    if (takesOverNested && !takeoverHeld) setTakeoverHeldFor({ content, widthPx: widthPx ?? null })
+  }, [takesOverNested, takeoverHeld, content, widthPx])
   let toggleLabel: string | null = null
   if (group) toggleLabel = group.toggleLabel
   else if (own.canToggle) toggleLabel = own.collapsed ? "Show more" : "Collapse"
@@ -142,7 +152,7 @@ export function CollapsibleBody({
 
   return (
     <div>
-      <InsideCollapsibleBlockProvider active={group ? collapsible || collapsed : own.canToggle}>
+      <InsideCollapsibleBlockProvider active={takesOverNested}>
         {/* Expansion lives only on the explicit Show more/less button below — the
             body itself is NOT click-to-toggle. A message body carries clickable
             mentions/links (their onClick would double-fire with the fold) and, on
