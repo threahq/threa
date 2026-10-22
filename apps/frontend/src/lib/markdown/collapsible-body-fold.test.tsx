@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { useCallback, useState } from "react"
 import { __resetCollapseCacheForTests } from "./collapse-cache"
-import { CollapsibleBody } from "./collapsible-body"
+import { CollapsibleBody, type CollapsibleBodyGroup } from "./collapsible-body"
 import { MarkdownBlockProvider, useIsInsideCollapsibleBlock, useMarkdownBlockContext } from "./markdown-block-context"
 
 function ScopeProbe({ label }: { label: string }) {
@@ -12,6 +13,53 @@ function ScopeProbe({ label }: { label: string }) {
 
 function NestedProbe() {
   return <span>{`nested:${useIsInsideCollapsibleBlock()}`}</span>
+}
+
+function NestedChrome() {
+  return useIsInsideCollapsibleBlock() ? <span>plain</span> : <span data-nested-chrome>chrome</span>
+}
+
+/** A nested quote's fold header and padding add to the body's height only while it keeps them. */
+function mockBodyHeight(heights: { chrome: number; plain: number }) {
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(() =>
+    document.querySelector("[data-nested-chrome]") ? heights.chrome : heights.plain
+  )
+}
+
+function captureResizeObservers() {
+  const callbacks: Array<() => void> = []
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(callback: () => void) {
+        callbacks.push(callback)
+      }
+      observe() {}
+      disconnect() {}
+    }
+  )
+  return () => act(() => callbacks.forEach((callback) => callback()))
+}
+
+/** A same-author run with a short sibling, open only while the pair measures tall. */
+function OpenRunWithShortSibling() {
+  const [tall, setTall] = useState(false)
+  const onHeight = useCallback((heightPx: number) => setTall(heightPx + 23 > 420), [])
+  return (
+    <MarkdownBlockProvider messageId="msg_1">
+      <CollapsibleBody
+        kind="message"
+        content="body"
+        collapseAtHeight={420}
+        collapseToHeight={240}
+        defaultCollapsed={false}
+        group={tall ? { collapsed: false, toggleLabel: null, onToggle: () => {} } : undefined}
+        onHeight={onHeight}
+      >
+        <NestedChrome />
+      </CollapsibleBody>
+    </MarkdownBlockProvider>
+  )
 }
 
 describe("CollapsibleBody trailing content", () => {
@@ -33,6 +81,7 @@ describe("CollapsibleBody trailing content", () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it("folds attachments and previews inside the clamp, outside the message's block scope", async () => {
@@ -130,32 +179,14 @@ describe("CollapsibleBody trailing content", () => {
     expect(screen.getByText("nested:true")).toBeInTheDocument()
   })
 
-  it("keeps nested folds taken over when dropping their chrome shrinks the body under the threshold", () => {
-    const resizeCallbacks: Array<() => void> = []
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        constructor(callback: () => void) {
-          resizeCallbacks.push(callback)
-        }
-        observe() {}
-        disconnect() {}
-      }
-    )
-    // A nested quote's fold header and padding are what tip the body past the
-    // fold height; without them it fits.
-    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(() =>
-      document.querySelector("[data-nested-chrome]") ? 440 : 400
-    )
-    function NestedChrome() {
-      return useIsInsideCollapsibleBlock() ? <span>plain</span> : <span data-nested-chrome>chrome</span>
-    }
-
-    render(
+  it("holds the nested takeover when dropping the chrome shrinks the body, until the content changes", () => {
+    const resize = captureResizeObservers()
+    mockBodyHeight({ chrome: 440, plain: 400 })
+    const body = (content: string) => (
       <MarkdownBlockProvider messageId="msg_1">
         <CollapsibleBody
           kind="message"
-          content="body"
+          content={content}
           collapseAtHeight={420}
           collapseToHeight={240}
           defaultCollapsed={false}
@@ -165,10 +196,50 @@ describe("CollapsibleBody trailing content", () => {
       </MarkdownBlockProvider>
     )
 
-    for (let tick = 0; tick < 3; tick++) {
-      act(() => resizeCallbacks.forEach((callback) => callback()))
-      expect(screen.getByText("plain")).toBeInTheDocument()
-      expect(screen.getByRole("button", { name: "Collapse" })).toBeInTheDocument()
-    }
+    const { rerender } = render(body("body"))
+    resize()
+
+    expect(screen.getByText("plain")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Collapse" })).toBeInTheDocument()
+
+    mockBodyHeight({ chrome: 410, plain: 400 })
+    rerender(body("edited body"))
+
+    expect(screen.getByText("chrome")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Collapse" })).not.toBeInTheDocument()
+  })
+
+  it("holds the nested takeover when dropping the chrome makes an open run stop measuring tall", () => {
+    const resize = captureResizeObservers()
+    mockBodyHeight({ chrome: 430, plain: 395 })
+    render(<OpenRunWithShortSibling />)
+
+    const nestedPerTick = Array.from({ length: 4 }, () => {
+      resize()
+      return screen.getByText(/plain|chrome/).textContent
+    })
+
+    expect(nestedPerTick).toEqual(["plain", "plain", "plain", "plain"])
+  })
+
+  it("hands nested folds back when a folded run opens or stops folding", () => {
+    mockBodyHeight({ chrome: 300, plain: 260 })
+    const body = (group: CollapsibleBodyGroup | undefined) => (
+      <MarkdownBlockProvider messageId="msg_1">
+        <CollapsibleBody kind="message" content="body" collapseAtHeight={420} collapseToHeight={240} group={group}>
+          <NestedChrome />
+        </CollapsibleBody>
+      </MarkdownBlockProvider>
+    )
+
+    const { rerender } = render(body({ collapsed: true, toggleLabel: null, onToggle: () => {} }))
+    expect(screen.getByText("plain")).toBeInTheDocument()
+
+    rerender(body({ collapsed: false, toggleLabel: null, onToggle: () => {} }))
+    expect(screen.getByText("chrome")).toBeInTheDocument()
+
+    rerender(body(undefined))
+    expect(screen.getByText("chrome")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Collapse|Show more/ })).not.toBeInTheDocument()
   })
 })

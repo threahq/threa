@@ -87,9 +87,13 @@ export function CollapsibleBody({
     collapseAtHeight !== undefined && heightPx !== null && heightPx !== undefined && heightPx > collapseAtHeight
   // Taking over nested folds strips their chrome, which can shrink the body
   // back under the threshold and hand the folds back — a loop on every resize.
-  // Once taken over, hold it until the content or column width changes.
-  const [takeoverHeldFor, setTakeoverHeldFor] = useState<{ content: string; widthPx: number | null } | null>(null)
-  const takeoverHeld = takeoverHeldFor?.content === content && takeoverHeldFor.widthPx === (widthPx ?? null)
+  // Once taken over, hold it until the content, layout, thresholds or run fold
+  // changes. An open run shares the own fold's rule, so a run that stops being
+  // tall once the chrome goes doesn't release the hold either.
+  const runFold = group?.collapsed ? "folded" : "unfolded"
+  const takeoverKey = `${runFold}:${widthPx}:${lineHeightPx}:${collapseAtHeight}:${threshold}`
+  const [takeoverHeldFor, setTakeoverHeldFor] = useState<{ content: string; key: string } | null>(null)
+  const takeoverHeld = takeoverHeldFor?.content === content && takeoverHeldFor.key === takeoverKey
   const collapsible = heightCollapsible || lineCollapsible || takeoverHeld
   const own = useBlockCollapse({ kind, content, collapsible: collapsible && !group, defaultCollapsed })
 
@@ -104,8 +108,9 @@ export function CollapsibleBody({
   const takesOverNested = group ? collapsible || collapsed : own.canToggle
 
   useLayoutEffect(() => {
-    if (takesOverNested && !takeoverHeld) setTakeoverHeldFor({ content, widthPx: widthPx ?? null })
-  }, [takesOverNested, takeoverHeld, content, widthPx])
+    if (takesOverNested && !takeoverHeld) setTakeoverHeldFor({ content, key: takeoverKey })
+  }, [takesOverNested, takeoverHeld, content, takeoverKey])
+
   let toggleLabel: string | null = null
   if (group) toggleLabel = group.toggleLabel
   else if (own.canToggle) toggleLabel = own.collapsed ? "Show more" : "Collapse"

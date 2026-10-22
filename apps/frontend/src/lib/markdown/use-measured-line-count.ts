@@ -12,7 +12,11 @@ export interface MeasuredLines {
   lineHeightPx: number | null
   /** Rendered content height in CSS px. */
   heightPx?: number | null
-  /** Rendered content width in CSS px. */
+  /**
+   * Content width in CSS px from the last measurement whose line count, line
+   * height or height changed. Width-only resizes are not reported: they would
+   * re-render every measured block on each step of a pane resize.
+   */
   widthPx?: number | null
 }
 
@@ -69,8 +73,7 @@ export function useMeasuredLineCount(ref: RefObject<HTMLElement | null>, deps: R
         prev.lineCount !== null &&
         Math.abs(prev.lineCount - lineCount) < 0.01 &&
         prev.lineHeightPx === lineHeightPx &&
-        prev.heightPx === height &&
-        prev.widthPx === width
+        prev.heightPx === height
           ? prev
           : { lineCount, lineHeightPx, heightPx: height, widthPx: width }
       )
