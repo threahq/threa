@@ -1,9 +1,16 @@
-import type { DeliveredTurn, StepFrame } from "@threahq/remote-session"
-import type { BridgeSession } from "./run-bridge"
+import {
+  DecisionAbandonedError,
+  type DecisionOutcome,
+  type DecisionRequestInput,
+  type DeliveredTurn,
+  type StepFrame,
+} from "@threahq/remote-session"
+import { TERMINAL_RUN_STATUSES, type BridgeSession } from "./run-bridge"
 import {
   T3ToolError,
   type ModelOptionDescriptor,
   type ModelSelection,
+  type PendingQuestion,
   type T3Client,
   type T3ToolName,
   type T3Tools,
@@ -23,6 +30,16 @@ interface ScriptStep {
 function effortOption(id: string, levels: string[]): ModelOptionDescriptor {
   return { id, type: "select", options: levels.map((level) => ({ id: level })) }
 }
+
+export const DECISION = { id: "dec_1" } as DecisionOutcome["decision"]
+
+/** A card answered with `optionId`, and with `note` when the option takes one. */
+export const picked = (optionId: string, note: string | null = null): DecisionOutcome => ({
+  status: "resolved",
+  optionId,
+  note,
+  decision: DECISION,
+})
 
 export function item(
   position: number,
@@ -61,9 +78,39 @@ export function fakeT3() {
   let steerDelivery: "steered" | "started" | "queued" = "steered"
   let envMode: "local" | "worktree" | undefined
   const models = new Map<string, ModelSelection>()
+  const pending = new Map<string, { threadId: string; questions: PendingQuestion[]; startsRun: boolean }>()
+  const latestRuns = new Map<string, string>()
+  // Like T3, a wait on a run that already ended returns at once with how it ended.
+  const ended = new Map<string, string>()
+  // A run waiting on the user has finished its provider turn, so it takes no steer.
+  const waiting = new Set<string>()
 
-  const startRun = () => `run_${++runs}`
-  const steerRun = () => (steerDelivery === "steered" ? `run_${runs}` : startRun())
+  const pendingRequest = (tool: T3ToolName, requestId: string) => {
+    const request = pending.get(requestId)
+    if (!request) throw new T3ToolError(tool, "invalid_request", "The pending user-input request was not found.")
+    return request
+  }
+  const startRun = (threadId: string) => {
+    const runId = `run_${++runs}`
+    latestRuns.set(threadId, runId)
+    return runId
+  }
+  const notSendable = () => new T3ToolError("t3_thread_send", "thread_not_sendable", "not sendable")
+  const activeRun = (threadId: string) => {
+    const runId = latestRuns.get(threadId)
+    return runId !== undefined && !ended.has(runId) && !waiting.has(runId) ? runId : undefined
+  }
+  // Like T3, only a running run takes a steer; with none, the send is refused.
+  const steerRun = (threadId: string) => {
+    if (steerDelivery !== "steered") return startRun(threadId)
+    const runId = activeRun(threadId)
+    if (!runId) throw notSendable()
+    return runId
+  }
+  // An answer sent as a message joins the running run when the provider steers, else starts the next run.
+  const answerAsMessage = (threadId: string) => {
+    if (steerDelivery !== "steered" || !activeRun(threadId)) startRun(threadId)
+  }
 
   function apply(threadId: string, step: ScriptStep): void {
     if (step.model) models.set(threadId, step.model)
@@ -81,6 +128,8 @@ export function fakeT3() {
     for (;;) {
       const step = scripts.get(runId)?.shift()
       if (step) return step
+      const status = ended.get(runId)
+      if (status) return { status }
       await new Promise<void>((resolve) => wakers.set(runId, resolve))
     }
   }
@@ -91,13 +140,13 @@ export function fakeT3() {
     t3_thread_launch: (args) => {
       const threadId = `thread_${++threads}`
       if (args.modelSelection) models.set(threadId, args.modelSelection)
-      return { threadId, runId: startRun() }
+      return { threadId, runId: startRun(threadId) }
     },
     t3_thread_send: (args) => {
-      if (args.mode === "queue") return { runId: startRun(), status: "running", delivery: "started" }
-      return { runId: steerRun(), status: "running", delivery: steerDelivery }
+      if (args.mode === "queue") return { runId: startRun(args.threadId), status: "running", delivery: "started" }
+      return { runId: steerRun(args.threadId), status: "running", delivery: steerDelivery }
     },
-    t3_thread_send_attachments: () => ({ runId: steerRun(), status: "running" }),
+    t3_thread_send_attachments: (args) => ({ runId: steerRun(args.threadId), status: "running" }),
     t3_attachment_prepare_upload: () => {
       prepared += 1
       return { attachmentId: `t3att_${prepared}`, relativeUrl: `/api/attachments/upload/tok_${prepared}` }
@@ -105,8 +154,12 @@ export function fakeT3() {
     t3_thread_wait: async (args) => {
       const step = await nextStep(args.runId)
       apply(args.threadId, step)
+      const runId = step.runId ?? args.runId
+      if (TERMINAL_RUN_STATUSES.has(step.status)) ended.set(runId, step.status)
+      if (step.status === "waiting") waiting.add(runId)
+      else waiting.delete(runId)
       return {
-        runId: step.runId ?? args.runId,
+        runId,
         status: step.status as T3Tools["t3_thread_wait"]["result"]["status"],
         timedOut: false,
       }
@@ -116,7 +169,7 @@ export function fakeT3() {
         threadId: args.threadId,
         title: "Fake thread",
         status: "idle" as const,
-        activeRunId: null,
+        latestRunId: latestRuns.get(args.threadId) ?? null,
         providerInstanceId: models.get(args.threadId)?.instanceId ?? "codex",
         model: models.get(args.threadId)?.model ?? "gpt-5.5",
       }
@@ -183,6 +236,26 @@ export function fakeT3() {
         },
       ],
     }),
+    t3_pending_request_list: (args) => ({
+      requestIds: [...pending].filter(([, request]) => request.threadId === args.threadId).map(([id]) => id),
+    }),
+    t3_pending_request_read: (args) => ({
+      requestId: args.requestId,
+      questions: pendingRequest("t3_pending_request_read", args.requestId).questions,
+    }),
+    t3_pending_request_respond: (args) => {
+      const request = pendingRequest("t3_pending_request_respond", args.requestId)
+      // Like T3, only an answer sent as a message is checked.
+      if (request.startsRun) {
+        for (const question of request.questions) {
+          if (question.required !== false && !args.answers[question.id]?.trim()) throw new Error("Answer each question")
+        }
+        if (Object.keys(args.answers).length === 0) throw new Error("Enter an answer before sending.")
+      }
+      pending.delete(args.requestId)
+      if (request.startsRun) answerAsMessage(args.threadId)
+      return {}
+    },
     t3_environment_read: () => ({
       preferences: {
         ...(envMode ? { defaultThreadEnvMode: envMode } : {}),
@@ -222,12 +295,24 @@ export function fakeT3() {
       ;(holds[name] ??= []).push(new Promise<void>((resolve) => (release = resolve)))
       return release
     },
-    notSendable: () => new T3ToolError("t3_thread_send", "thread_not_sendable", "not sendable"),
+    notSendable,
     continueText: (itemId: string, fullText: string) => continuations.set(itemId, fullText),
     /** How T3 answers the next steers: folded into the run, or started or queued as their own run. */
     steerAs: (delivery: typeof steerDelivery) => (steerDelivery = delivery),
     /** Put a thread on a model, as when the user configures it in T3. */
     threadModel: (threadId: string, selection: ModelSelection) => models.set(threadId, selection),
+    /**
+     * Put questions to the user on a thread, as a provider's ask-user tool does. `startsRun` asks
+     * them as Codex's async questions do, where the answer arrives as a message that starts a run.
+     */
+    ask: (threadId: string, requestId: string, questions: PendingQuestion[], startsRun = false) =>
+      pending.set(requestId, { threadId, questions, startsRun }),
+    /** Answer a request in T3 itself; for a question asked as a message the answer is a message. */
+    answerInT3: (requestId: string) => {
+      const request = pending.get(requestId)!
+      pending.delete(requestId)
+      if (request.startsRun) answerAsMessage(request.threadId)
+    },
     /** The environment's default for new threads, unset unless a test sets it. */
     defaultEnvMode: (mode: typeof envMode) => (envMode = mode),
   }
@@ -237,6 +322,9 @@ export function fakeSession(rootStreamId = "stream_root") {
   const steps: Array<{ invocationId: string; frames: StepFrame[] }> = []
   const replies: Array<{ invocationId: string; text: string }> = []
   const fails: Array<{ invocationId: string; errorMessage: string }> = []
+  const decisions: Array<{ input: DecisionRequestInput; signal?: AbortSignal }> = []
+  const outcomes: Array<DecisionOutcome | DecisionAbandonedError> = []
+  let answer: (() => void) | undefined
   let settle: () => void = () => {}
   let settled = new Promise<void>((resolve) => (settle = resolve))
   const session: BridgeSession = {
@@ -255,12 +343,38 @@ export function fakeSession(rootStreamId = "stream_root") {
       settle()
       return true
     },
+    requestDecision: async (input, opts) => {
+      decisions.push({ input, ...(opts?.signal ? { signal: opts.signal } : {}) })
+      const aborted = new Promise<never>((_, reject) =>
+        opts?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), {
+          once: true,
+        })
+      )
+      aborted.catch(() => {})
+      for (;;) {
+        const outcome = outcomes.shift()
+        if (outcome instanceof DecisionAbandonedError) throw outcome
+        if (outcome) return outcome
+        await Promise.race([new Promise<void>((resolve) => (answer = resolve)), aborted])
+      }
+    },
   }
   return {
     session,
     steps,
     replies,
     fails,
+    decisions,
+    /** Answer the open card, or the next one asked. */
+    answer: (outcome: DecisionOutcome) => {
+      outcomes.push(outcome)
+      answer?.()
+    },
+    /** Abandon the open card, as the SDK does when the session shuts down on its own. */
+    abandon: () => {
+      outcomes.push(new DecisionAbandonedError("dec_1"))
+      answer?.()
+    },
     frames: () => steps.flatMap((batch) => batch.frames),
     /** Resolves when the next turn closes. */
     settled: async () => {

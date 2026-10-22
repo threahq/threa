@@ -155,6 +155,10 @@ with `E2E_STREAM_PLAINTEXT_UNSUPPORTED`.
   first, the message waits and starts the stream's next turn once the current
   one has closed. A throw fails the message. Without `steer`, every message
   waits for the next turn.
+- An edit to a message already in the running turn is offered to `steer` with
+  `{ edit: true }`. When `steer` returns false, or the actuator has no `steer`,
+  the SDK restarts: the edited message comes back as a plain message, without
+  the flag.
 - `/enqueue <text>` is claimed only when no turn is in flight for its stream
   and the actuator is not `isHeld()` (a quota hold), then runs as a normal
   turn. The SDK advertises `enqueue` for every connector with an actuator; it

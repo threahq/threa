@@ -173,9 +173,16 @@ export interface SessionControlActuator {
    * the next turn in its stream. A throw fails the message. Absent, every
    * message waits for the next turn. A serial runtime may ignore `streamId`,
    * but a runtime declaring `maxConcurrentTurns > 1` must steer only that
-   * stream's turn.
+   * stream's turn. `edit` is set when the text corrects a message the turn
+   * already took (an edited source message), so a runtime can tell a correction
+   * from a new message.
    */
-  steer?(text: string, streamId: string, attachments: DownloadedAttachment[]): Promise<boolean> | boolean
+  steer?(
+    text: string,
+    streamId: string,
+    attachments: DownloadedAttachment[],
+    options?: { edit?: boolean }
+  ): Promise<boolean> | boolean
   /**
    * A provider quota hold is on and the turn in flight will resume by itself.
    * While true, nothing is steered into a running turn and no `/enqueue`d
@@ -1382,7 +1389,8 @@ export class RemoteSession {
           this.delegate.sessionControl,
           input.content,
           context.invocation.responseStreamId,
-          input.attachments
+          input.attachments,
+          { edit: true }
         )
       } finally {
         signal.removeEventListener("abort", interruptOnAbort)

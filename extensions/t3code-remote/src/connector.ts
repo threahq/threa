@@ -68,6 +68,7 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
       recordSteps: (id, frames, statusText) => session.recordSteps(id, frames, statusText),
       reply: (id, text) => session.reply(id, text),
       failTurn: (id, message) => session.failTurn(id, message),
+      requestDecision: (input, opts) => session.requestDecision(input, opts),
     },
     access: config.t3.access,
     ...(config.t3.projectId === undefined ? {} : { projectId: config.t3.projectId }),

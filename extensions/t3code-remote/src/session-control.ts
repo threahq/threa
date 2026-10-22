@@ -196,7 +196,7 @@ export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): 
       return runner.model ? levelsOf(effortOptionOf(providers, runner.model)) : []
     },
     interrupt: (streamId) => runner.interrupt(streamId),
-    steer: (text, streamId, attachments) => runner.steer(text, streamId, attachments),
+    steer: (text, streamId, attachments, options) => runner.steer(text, streamId, attachments, options),
     loadOptions: async () => {
       providers = (await client.call("orchestrator_capabilities", {})).providers
     },
