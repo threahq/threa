@@ -242,6 +242,81 @@ describe("CollapsibleBody trailing content", () => {
     expect(screen.queryByRole("button", { name: /Collapse|Show more/ })).not.toBeInTheDocument()
   })
 
+  it("reports the restored chrome when it hands nested folds back", () => {
+    const resize = captureResizeObservers()
+    mockBodyHeight({ chrome: 440, plain: 400 })
+    const heights: number[] = []
+    render(
+      <MarkdownBlockProvider messageId="msg_1">
+        <CollapsibleBody
+          kind="message"
+          content="body"
+          collapseAtHeight={420}
+          collapseToHeight={240}
+          defaultCollapsed={false}
+          onHeight={(heightPx) => heights.push(heightPx)}
+        >
+          <NestedChrome />
+        </CollapsibleBody>
+      </MarkdownBlockProvider>
+    )
+
+    mockBodyHeight({ chrome: 300, plain: 260 })
+    resize()
+    resize()
+
+    expect({ nested: screen.getByText(/plain|chrome/).textContent, heights }).toEqual({
+      nested: "chrome",
+      heights: [440, 300],
+    })
+  })
+
+  it("measures the chrome afresh when a run folds in the same render as an edit", () => {
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(() => {
+      const chrome = document.querySelector("[data-nested-chrome]") ? 40 : 0
+      return (document.body.textContent?.includes("edited") ? 110 : 370) + chrome
+    })
+    const body = (content: string, collapsed: boolean) => (
+      <MarkdownBlockProvider messageId="msg_1">
+        <CollapsibleBody
+          kind="message"
+          content={content}
+          collapseAtHeight={420}
+          collapseToHeight={240}
+          group={{ collapsed, toggleLabel: null, onToggle: () => {} }}
+        >
+          <NestedChrome />
+          <span>{content}</span>
+        </CollapsibleBody>
+      </MarkdownBlockProvider>
+    )
+
+    const { rerender } = render(body("body", false))
+    rerender(body("edited body", true))
+
+    expect(screen.getByText("chrome")).toBeInTheDocument()
+  })
+
+  it("leaves a folded run's head unclamped when it fits once its nested chrome is stripped", () => {
+    mockBodyHeight({ chrome: 260, plain: 225 })
+    render(
+      <MarkdownBlockProvider messageId="msg_1">
+        <CollapsibleBody
+          kind="message"
+          content="body"
+          collapseAtHeight={420}
+          collapseToHeight={240}
+          group={{ collapsed: true, toggleLabel: null, onToggle: () => {} }}
+        >
+          <NestedChrome />
+        </CollapsibleBody>
+      </MarkdownBlockProvider>
+    )
+
+    const clamp = screen.getByText(/plain|chrome/).parentElement!
+    expect({ nested: clamp.textContent, maxHeight: clamp.style.maxHeight }).toEqual({ nested: "plain", maxHeight: "" })
+  })
+
   it("hands nested folds back when a folded run opens or stops folding", () => {
     mockBodyHeight({ chrome: 300, plain: 260 })
     const body = (group: CollapsibleBodyGroup | undefined) => (

@@ -98,24 +98,30 @@ export function CollapsibleBody({
     if (fullHeightPx !== null) onHeight?.(fullHeightPx)
   }, [fullHeightPx, onHeight])
 
-  const collapsed = group
-    ? group.collapsed && collapseToHeight !== undefined && fullHeightPx !== null && fullHeightPx > collapseToHeight
-    : own.collapsed
+  const exceedsClamp = (height: number | null | undefined) =>
+    collapseToHeight !== undefined && height !== null && height !== undefined && height > collapseToHeight
+  // A folded run takes over on the full height but clamps only what renders,
+  // so a head that fits once stripped shows without the fade.
+  const collapsed = group ? group.collapsed && exceedsClamp(heightPx) : own.collapsed
   const expanded = group ? !group.collapsed : !own.collapsed
-  const takesOverNested = group ? collapsible || collapsed : own.canToggle
+  const takesOverNested = group ? collapsible || (group.collapsed && exceedsClamp(fullHeightPx)) : own.canToggle
 
   // Runs in the commit that stripped the chrome, while `heightPx` still holds
-  // the height measured with it.
+  // the height measured with it — unless the content changed in that commit too.
   const wasTakingOverRef = useRef(false)
+  const measuredContentRef = useRef(content)
   useLayoutEffect(() => {
     const wasTakingOver = wasTakingOverRef.current
+    const contentChanged = measuredContentRef.current !== content
     wasTakingOverRef.current = takesOverNested
+    measuredContentRef.current = content
     if (!takesOverNested) {
       setStrippedChrome(null)
+      if (wasTakingOver) remeasure()
       return
     }
     const node = bodyRef.current
-    if (wasTakingOver || !node || heightPx === null || heightPx === undefined) return
+    if (wasTakingOver || contentChanged || !node || heightPx === null || heightPx === undefined) return
     const px = heightPx - node.scrollHeight
     if (px <= 0) return
     setStrippedChrome({ content, px })
