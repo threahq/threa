@@ -50,7 +50,7 @@ export const UserApiKeyRepository = {
       keyHash: string
       keyPrefix: string
       scopes: string[]
-      apiVersion: ApiVersion
+      apiVersion: ApiVersion | null
       expiresAt: Date | null
     }
   ): Promise<UserApiKeyRow> {

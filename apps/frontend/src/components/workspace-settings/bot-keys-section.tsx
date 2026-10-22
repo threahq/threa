@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react"
+import { useCallback, useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { botsApi, type CreateBotKeyInput } from "@/api/bots"
 import { Button } from "@/components/ui/button"
@@ -28,8 +28,9 @@ import {
   type WorkspacePermissionSlug,
   type BotApiKey,
 } from "@threahq/types"
-import { Check, ChevronDown, Copy, Eye, EyeOff, Key, Plus, Trash2 } from "lucide-react"
+import { Check, ChevronDown, Copy, CopyPlus, Eye, EyeOff, Key, Plus, Trash2 } from "lucide-react"
 import { ApiKeyVersionControl } from "./api-key-version-control"
+import { EMPTY_API_KEY_DRAFT, draftFromKey } from "./api-key-draft"
 
 const SCOPE_LABELS: Record<string, string> = Object.fromEntries(WORKSPACE_PERMISSIONS.map((p) => [p.slug, p.name]))
 
@@ -50,8 +51,8 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
   })
 
   const [showKeyForm, setShowKeyForm] = useState(false)
-  const [keyName, setKeyName] = useState("")
-  const [keyScopes, setKeyScopes] = useState<Set<WorkspacePermissionSlug>>(new Set())
+  const [draft, setDraft] = useState(EMPTY_API_KEY_DRAFT)
+  const nameInputRef = useRef<HTMLInputElement>(null)
   const [createdKeyValue, setCreatedKeyValue] = useState<string | null>(null)
   const [showKeyValue, setShowKeyValue] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -66,8 +67,7 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
       setCreatedKeyValue(data.value)
       setShowKeyValue(true)
       setCopied(false)
-      setKeyName("")
-      setKeyScopes(new Set())
+      setDraft(EMPTY_API_KEY_DRAFT)
       setShowKeyForm(false)
       queryClient.invalidateQueries({ queryKey: keysQueryKey })
     },
@@ -101,17 +101,24 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
   })
 
   const toggleScope = (scope: WorkspacePermissionSlug) => {
-    setKeyScopes((prev) => {
-      const next = new Set(prev)
-      if (next.has(scope)) next.delete(scope)
-      else next.add(scope)
-      return next
+    setDraft((prev) => {
+      const scopes = new Set(prev.scopes)
+      if (scopes.has(scope)) scopes.delete(scope)
+      else scopes.add(scope)
+      return { ...prev, scopes }
     })
   }
 
   const handleCreateKey = () => {
-    if (!keyName.trim() || keyScopes.size === 0) return
-    createKeyMutation.mutate({ name: keyName.trim(), scopes: [...keyScopes] })
+    if (!draft.name.trim() || draft.scopes.size === 0) return
+    createKeyMutation.mutate({ name: draft.name.trim(), scopes: [...draft.scopes], apiVersion: draft.apiVersion })
+  }
+
+  const startDuplicating = (key: BotApiKey) => {
+    setDraft(draftFromKey(key))
+    setShowKeyForm(true)
+    // An already-open form keeps its mounted input, so autoFocus won't bring it back into view.
+    nameInputRef.current?.focus()
   }
 
   const startEditingScopes = (key: BotApiKey) => {
@@ -213,9 +220,10 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
           <div className="space-y-1.5">
             <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Key name</Label>
             <Input
+              ref={nameInputRef}
               placeholder="e.g. production, staging"
-              value={keyName}
-              onChange={(e) => setKeyName(e.target.value)}
+              value={draft.name}
+              onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
               autoFocus
             />
           </div>
@@ -228,14 +236,24 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
                   className="block px-3 py-2.5 cursor-pointer hover:bg-accent/50 transition-colors first:rounded-t-md last:rounded-b-md"
                 >
                   <span className="flex items-center gap-3">
-                    <Checkbox checked={keyScopes.has(perm.slug)} onCheckedChange={() => toggleScope(perm.slug)} />
+                    <Checkbox checked={draft.scopes.has(perm.slug)} onCheckedChange={() => toggleScope(perm.slug)} />
                     <span className="text-sm font-medium">{perm.name}</span>
                   </span>
                   <p className="text-xs text-muted-foreground leading-relaxed ml-7 mt-0.5">{perm.description}</p>
                 </label>
               ))}
             </div>
+            {draft.droppedScopes.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Not copied, no longer available for keys:{" "}
+                {draft.droppedScopes.map((scope) => SCOPE_LABELS[scope] ?? scope).join(", ")}
+              </p>
+            )}
           </div>
+          <ApiKeyVersionControl
+            apiVersion={draft.apiVersion}
+            onChange={(apiVersion) => setDraft((prev) => ({ ...prev, apiVersion }))}
+          />
           <Separator />
           <div className="flex items-center justify-between">
             <Button
@@ -243,8 +261,7 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
               size="sm"
               onClick={() => {
                 setShowKeyForm(false)
-                setKeyName("")
-                setKeyScopes(new Set())
+                setDraft(EMPTY_API_KEY_DRAFT)
               }}
             >
               Cancel
@@ -252,7 +269,7 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
             <Button
               size="sm"
               onClick={handleCreateKey}
-              disabled={!keyName.trim() || keyScopes.size === 0 || createKeyMutation.isPending}
+              disabled={!draft.name.trim() || draft.scopes.size === 0 || createKeyMutation.isPending}
             >
               {createKeyMutation.isPending ? "Creating..." : "Create key"}
             </Button>
@@ -303,6 +320,22 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
                   />
                 </div>
               </div>
+              {!isArchived && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Duplicate ${key.name}`}
+                      className="reveal-actions shrink-0 h-8 w-8"
+                      onClick={() => startDuplicating(key)}
+                    >
+                      <CopyPlus className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground transition-colors" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Duplicate key</TooltipContent>
+                </Tooltip>
+              )}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button

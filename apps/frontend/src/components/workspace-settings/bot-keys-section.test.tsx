@@ -77,3 +77,39 @@ describe("BotKeysSection — API version pin", () => {
     await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", "bot_1", "bak_1", null))
   })
 })
+
+describe("BotKeysSection — duplicate", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    vi.spyOn(useFormattedDateModule, "useFormattedDate").mockReturnValue({
+      formatDate: (date: Date) => date.toISOString().slice(0, 10),
+      formatTime: (date: Date) => date.toISOString(),
+      formatRelative: (date: Date) => date.toISOString(),
+      formatFull: (date: Date) => date.toISOString(),
+    })
+  })
+
+  it("mints a new bot key from an existing key's name, scopes, and pin", async () => {
+    const olderVersion = "2026-10-01"
+    vi.spyOn(botsApi, "listKeys").mockResolvedValue([
+      makeKey({ scopes: ["messages:write", "bot-runtime:write"], apiVersion: olderVersion }),
+    ])
+    const create = vi
+      .spyOn(botsApi, "createKey")
+      .mockResolvedValue({ key: makeKey({ id: "bak_2" }), value: "threa_bk_new" })
+    const user = userEvent.setup()
+
+    renderSection()
+
+    await user.click(await screen.findByRole("button", { name: "Duplicate production" }))
+    await user.click(screen.getByRole("button", { name: "Create key" }))
+
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith("ws_1", "bot_1", {
+        name: "production (copy)",
+        scopes: ["messages:write", "bot-runtime:write"],
+        apiVersion: olderVersion,
+      })
+    )
+  })
+})

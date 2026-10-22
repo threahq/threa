@@ -33,6 +33,7 @@ export interface CreateBotKeyInput {
   name: string
   scopes: string[]
   expiresAt?: string | null
+  apiVersion?: string | null
 }
 
 export interface CreateIncomingWebhookInput {

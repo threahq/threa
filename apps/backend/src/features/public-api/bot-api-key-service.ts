@@ -57,6 +57,8 @@ export class BotApiKeyService {
     name: string
     scopes: WorkspacePermissionSlug[]
     expiresAt: Date | null
+    /** Omitted pins the key to the current version; null leaves it unpinned. */
+    apiVersion?: ApiVersion | null
   }): Promise<{ row: BotApiKeyRow; value: string }> {
     validateScopes(params.scopes)
 
@@ -101,7 +103,7 @@ export class BotApiKeyService {
         keyHash,
         keyPrefix,
         scopes: params.scopes,
-        apiVersion: CURRENT_API_VERSION,
+        apiVersion: params.apiVersion === undefined ? CURRENT_API_VERSION : params.apiVersion,
         expiresAt: params.expiresAt,
       })
     })

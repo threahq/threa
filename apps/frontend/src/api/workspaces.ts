@@ -176,7 +176,12 @@ export const workspacesApi = {
 
   async createUserApiKey(
     workspaceId: string,
-    params: { name: string; scopes: WorkspacePermissionSlug[]; expiresAt?: string | null }
+    params: {
+      name: string
+      scopes: WorkspacePermissionSlug[]
+      expiresAt?: string | null
+      apiVersion?: string | null
+    }
   ): Promise<CreateUserApiKeyResponse> {
     return api.post<CreateUserApiKeyResponse>(`/api/workspaces/${workspaceId}/user-api-keys`, params)
   },

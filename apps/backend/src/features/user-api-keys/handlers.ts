@@ -17,6 +17,7 @@ const createKeySchema = z.object({
     .refine((val) => val == null || new Date(val) > new Date(), {
       message: "expiresAt must be a future date",
     }),
+  apiVersion: z.enum(API_VERSIONS).nullable().optional(),
 })
 
 const updateKeySchema = z
@@ -73,6 +74,7 @@ export function createUserApiKeyHandlers({ userApiKeyService }: Dependencies) {
         name: data.name,
         scopes: data.scopes as WorkspacePermissionSlug[],
         expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
+        apiVersion: data.apiVersion,
       })
 
       res.status(201).json({ key: serializeKey(row), value })

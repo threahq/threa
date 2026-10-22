@@ -80,3 +80,64 @@ describe("UserApiKeysSection — API version pin", () => {
     await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", "uak_1", null))
   })
 })
+
+describe("UserApiKeysSection — duplicate", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    vi.spyOn(useFormattedDateModule, "useFormattedDate").mockReturnValue({
+      formatDate: (date: Date) => date.toISOString().slice(0, 10),
+      formatTime: (date: Date) => date.toISOString(),
+      formatRelative: (date: Date) => date.toISOString(),
+      formatFull: (date: Date) => date.toISOString(),
+    })
+  })
+
+  it("mints a new key from an existing key's name, scopes, and pin, dropping scopes keys can no longer hold", async () => {
+    const olderVersion = "2026-10-01"
+    vi.spyOn(workspacesApi, "listUserApiKeys").mockResolvedValue([
+      makeKey({ scopes: ["messages:write", "streams:read", "bots:manage"], apiVersion: olderVersion }),
+    ])
+    const create = vi
+      .spyOn(workspacesApi, "createUserApiKey")
+      .mockResolvedValue({ key: makeKey({ id: "uak_2" }), value: "threa_uk_new" })
+    const user = userEvent.setup()
+
+    renderSection()
+
+    await user.click(await screen.findByRole("button", { name: "Duplicate CI pipeline" }))
+
+    expect({
+      name: (screen.getByLabelText("Name") as HTMLInputElement).value,
+      dropped: screen.getByText(/Not copied, no longer available for keys/).textContent,
+    }).toEqual({
+      name: "CI pipeline (copy)",
+      dropped: "Not copied, no longer available for keys: Manage bots",
+    })
+
+    await user.click(screen.getByRole("button", { name: "Create key" }))
+
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith("ws_1", {
+        name: "CI pipeline (copy)",
+        scopes: ["messages:write", "streams:read"],
+        apiVersion: olderVersion,
+      })
+    )
+    expect(await screen.findByText("threa_uk_new")).toBeTruthy()
+  })
+
+  it("keeps an unpinned source key unpinned", async () => {
+    vi.spyOn(workspacesApi, "listUserApiKeys").mockResolvedValue([makeKey({ apiVersion: null })])
+    const create = vi
+      .spyOn(workspacesApi, "createUserApiKey")
+      .mockResolvedValue({ key: makeKey({ id: "uak_2" }), value: "threa_uk_new" })
+    const user = userEvent.setup()
+
+    renderSection()
+
+    await user.click(await screen.findByRole("button", { name: "Duplicate CI pipeline" }))
+    await user.click(screen.getByRole("button", { name: "Create key" }))
+
+    await waitFor(() => expect(create).toHaveBeenCalledWith("ws_1", expect.objectContaining({ apiVersion: null })))
+  })
+})

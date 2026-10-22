@@ -216,6 +216,49 @@ describe("Public API header versioning", () => {
     expect((repin.data as { data: { apiVersion: string | null } }).data.apiVersion).toBe(CURRENT_API_VERSION)
   })
 
+  test("keys minted with an explicit apiVersion keep that pin, including unpinned", async () => {
+    const olderVersion = API_VERSIONS[API_VERSIONS.length - 2]
+    const { rows: bots } = await pool.query<{ bot_id: string }>(`SELECT bot_id FROM bot_api_keys WHERE id = $1`, [
+      ctx.botKeyId,
+    ])
+    const mint = async (path: string, apiVersion: string | null) => {
+      const res = await ctx.client.post<{ key: { apiVersion: string | null }; value: string }>(path, {
+        name: `ver-mint-${testRunId}`,
+        scopes: ["messages:read"],
+        apiVersion,
+      })
+      const body = res.data as { key: { apiVersion: string | null }; value: string }
+      return {
+        status: res.status,
+        apiVersion: body.key.apiVersion,
+        pinned: (await fetchMeApiVersion(ctx.workspaceId, body.value)).pinned,
+      }
+    }
+    const userKeysPath = `/api/workspaces/${ctx.workspaceId}/user-api-keys`
+    const botKeysPath = `/api/workspaces/${ctx.workspaceId}/bots/${bots[0].bot_id}/keys`
+
+    expect({
+      userOlder: await mint(userKeysPath, olderVersion),
+      userUnpinned: await mint(userKeysPath, null),
+      botOlder: await mint(botKeysPath, olderVersion),
+      botUnpinned: await mint(botKeysPath, null),
+    }).toEqual({
+      userOlder: { status: 201, apiVersion: olderVersion, pinned: olderVersion },
+      userUnpinned: { status: 201, apiVersion: null, pinned: null },
+      botOlder: { status: 201, apiVersion: olderVersion, pinned: olderVersion },
+      botUnpinned: { status: 201, apiVersion: null, pinned: null },
+    })
+  })
+
+  test("minting a key with an unsupported apiVersion is rejected", async () => {
+    const res = await ctx.client.post(`/api/workspaces/${ctx.workspaceId}/user-api-keys`, {
+      name: `ver-bad-${testRunId}`,
+      scopes: ["messages:read"],
+      apiVersion: "2099-01-01",
+    })
+    expect(res.status).toBe(400)
+  })
+
   test("a stream created as guest_public reads as public to an older pin on every stream operation and as guest_public at the current version", async () => {
     const channel = await createChannel(ctx.client, ctx.workspaceId, `ver-open-${testRunId}`, "guest_public")
     const keyRes = await ctx.client.post<{ value: string }>(`/api/workspaces/${ctx.workspaceId}/user-api-keys`, {
