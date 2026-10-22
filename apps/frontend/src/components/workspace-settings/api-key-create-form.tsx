@@ -88,7 +88,10 @@ export function useApiKeyCreateForm<TCreated extends { key: { name: string }; va
 
   const formProps: Omit<ApiKeyCreateFormProps, "nameLabel" | "namePlaceholder"> | null = draft && {
     draft,
-    onDraftChange: setDraft,
+    onDraftChange: (next) => {
+      if (mutation.isError) mutation.reset()
+      setDraft(next)
+    },
     nameInputRef,
     isPending: mutation.isPending,
     error: mutation.error,

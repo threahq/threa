@@ -188,6 +188,22 @@ describe("UserApiKeysSection — create and duplicate", () => {
     }).toEqual({ name: "", readMessages: "false" })
   })
 
+  it("clears a failed create's error once the draft is edited", async () => {
+    vi.spyOn(workspacesApi, "listUserApiKeys").mockResolvedValue([makeKey()])
+    vi.spyOn(workspacesApi, "createUserApiKey").mockRejectedValue(new Error("Key limit reached"))
+    const user = userEvent.setup()
+
+    renderSection()
+
+    await user.click(await screen.findByRole("button", { name: "Duplicate CI pipeline" }))
+    await user.click(screen.getByRole("button", { name: "Create key" }))
+    expect(await screen.findByText("Key limit reached")).toBeTruthy()
+
+    await user.type(screen.getByLabelText("Name"), "!")
+
+    expect(screen.queryByText("Key limit reached")).toBeNull()
+  })
+
   it("clears a failed create's error when the form is closed and reopened", async () => {
     vi.spyOn(workspacesApi, "listUserApiKeys").mockResolvedValue([makeKey()])
     vi.spyOn(workspacesApi, "createUserApiKey").mockRejectedValue(new Error("Key limit reached"))
