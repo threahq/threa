@@ -55,7 +55,7 @@ describe("BlockquoteBlock collapse behavior", () => {
       return value
     })
     vi.spyOn(preferencesModule, "usePreferencesOptional").mockImplementation(() => buildPreferencesContext())
-    vi.spyOn(lineMeasureModule, "useMeasuredLineCount").mockImplementation(() => measure)
+    vi.spyOn(lineMeasureModule, "useMeasuredLineCount").mockImplementation(() => ({ ...measure, remeasure: () => {} }))
     currentPrefs = { blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD }
     measure = { lineCount: 1, lineHeightPx: 22 }
     await db.markdownBlockCollapse.clear()

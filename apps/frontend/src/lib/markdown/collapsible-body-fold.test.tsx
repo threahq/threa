@@ -52,7 +52,6 @@ function OpenRunWithShortSibling() {
         content="body"
         collapseAtHeight={420}
         collapseToHeight={240}
-        defaultCollapsed={false}
         group={tall ? { collapsed: false, toggleLabel: null, onToggle: () => {} } : undefined}
         onHeight={onHeight}
       >
@@ -179,7 +178,7 @@ describe("CollapsibleBody trailing content", () => {
     expect(screen.getByText("nested:true")).toBeInTheDocument()
   })
 
-  it("holds the nested takeover when dropping the chrome shrinks the body, until the content changes", () => {
+  it("keeps nested folds taken over when dropping their chrome shrinks the body, until the content changes", () => {
     const resize = captureResizeObservers()
     mockBodyHeight({ chrome: 440, plain: 400 })
     const body = (content: string) => (
@@ -209,17 +208,38 @@ describe("CollapsibleBody trailing content", () => {
     expect(screen.queryByRole("button", { name: "Collapse" })).not.toBeInTheDocument()
   })
 
-  it("holds the nested takeover when dropping the chrome makes an open run stop measuring tall", () => {
+  it("keeps an open run tall when dropping the nested chrome shrinks its body", () => {
     const resize = captureResizeObservers()
     mockBodyHeight({ chrome: 430, plain: 395 })
     render(<OpenRunWithShortSibling />)
 
-    const nestedPerTick = Array.from({ length: 4 }, () => {
+    const perTick = Array.from({ length: 4 }, () => {
       resize()
-      return screen.getByText(/plain|chrome/).textContent
+      return {
+        nested: screen.getByText(/plain|chrome/).textContent,
+        ownFold: screen.queryByRole("button", { name: /Collapse|Show more/ })?.textContent ?? null,
+      }
     })
 
-    expect(nestedPerTick).toEqual(["plain", "plain", "plain", "plain"])
+    expect(perTick).toEqual(Array(4).fill({ nested: "plain", ownFold: null }))
+  })
+
+  it("releases the fold when the body itself shrinks under the threshold", () => {
+    const resize = captureResizeObservers()
+    const height = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(450)
+    render(
+      <MarkdownBlockProvider messageId="msg_1">
+        <CollapsibleBody kind="message" content="body" collapseAtHeight={420} collapseToHeight={240}>
+          <span>body</span>
+        </CollapsibleBody>
+      </MarkdownBlockProvider>
+    )
+    expect(screen.getByRole("button", { name: "Show more" })).toBeInTheDocument()
+
+    height.mockReturnValue(200)
+    resize()
+
+    expect(screen.queryByRole("button", { name: /Collapse|Show more/ })).not.toBeInTheDocument()
   })
 
   it("hands nested folds back when a folded run opens or stops folding", () => {

@@ -81,35 +81,46 @@ export function CollapsibleBody({
   onHeight,
 }: CollapsibleBodyProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null)
-  const { lineCount, lineHeightPx, heightPx, widthPx } = useMeasuredLineCount(bodyRef, [content])
-  const lineCollapsible = threshold !== undefined && lineCount !== null && lineCount > threshold + 0.5
-  const heightCollapsible =
-    collapseAtHeight !== undefined && heightPx !== null && heightPx !== undefined && heightPx > collapseAtHeight
+  const { lineCount, lineHeightPx, heightPx, remeasure } = useMeasuredLineCount(bodyRef, [content])
   // Taking over nested folds strips their chrome, which can shrink the body
   // back under the threshold and hand the folds back — a loop on every resize.
-  // Once taken over, hold it until the content, layout, thresholds or run fold
-  // changes. An open run shares the own fold's rule, so a run that stops being
-  // tall once the chrome goes doesn't release the hold either.
-  const runFold = group?.collapsed ? "folded" : "unfolded"
-  const takeoverKey = `${runFold}:${widthPx}:${lineHeightPx}:${collapseAtHeight}:${threshold}`
-  const [takeoverHeldFor, setTakeoverHeldFor] = useState<{ content: string; key: string } | null>(null)
-  const takeoverHeld = takeoverHeldFor?.content === content && takeoverHeldFor.key === takeoverKey
-  const collapsible = heightCollapsible || lineCollapsible || takeoverHeld
+  // While taken over, the stripped chrome still counts toward the body's size.
+  const [strippedChrome, setStrippedChrome] = useState<{ content: string; px: number } | null>(null)
+  const chromePx = strippedChrome?.content === content ? strippedChrome.px : 0
+  const fullHeightPx = heightPx === null || heightPx === undefined ? null : heightPx + chromePx
+  const fullLineCount = lineCount !== null && lineHeightPx ? lineCount + chromePx / lineHeightPx : lineCount
+  const lineCollapsible = threshold !== undefined && fullLineCount !== null && fullLineCount > threshold + 0.5
+  const heightCollapsible = collapseAtHeight !== undefined && fullHeightPx !== null && fullHeightPx > collapseAtHeight
+  const collapsible = heightCollapsible || lineCollapsible
   const own = useBlockCollapse({ kind, content, collapsible: collapsible && !group, defaultCollapsed })
 
   useLayoutEffect(() => {
-    if (heightPx !== null && heightPx !== undefined) onHeight?.(heightPx)
-  }, [heightPx, onHeight])
+    if (fullHeightPx !== null) onHeight?.(fullHeightPx)
+  }, [fullHeightPx, onHeight])
 
   const collapsed = group
-    ? group.collapsed && collapseToHeight !== undefined && heightPx != null && heightPx > collapseToHeight
+    ? group.collapsed && collapseToHeight !== undefined && fullHeightPx !== null && fullHeightPx > collapseToHeight
     : own.collapsed
   const expanded = group ? !group.collapsed : !own.collapsed
   const takesOverNested = group ? collapsible || collapsed : own.canToggle
 
+  // Runs in the commit that stripped the chrome, while `heightPx` still holds
+  // the height measured with it.
+  const wasTakingOverRef = useRef(false)
   useLayoutEffect(() => {
-    if (takesOverNested && !takeoverHeld) setTakeoverHeldFor({ content, key: takeoverKey })
-  }, [takesOverNested, takeoverHeld, content, takeoverKey])
+    const wasTakingOver = wasTakingOverRef.current
+    wasTakingOverRef.current = takesOverNested
+    if (!takesOverNested) {
+      setStrippedChrome(null)
+      return
+    }
+    const node = bodyRef.current
+    if (wasTakingOver || !node || heightPx === null || heightPx === undefined) return
+    const px = heightPx - node.scrollHeight
+    if (px <= 0) return
+    setStrippedChrome({ content, px })
+    remeasure()
+  }, [takesOverNested, heightPx, content, remeasure])
 
   let toggleLabel: string | null = null
   if (group) toggleLabel = group.toggleLabel

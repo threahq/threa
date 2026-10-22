@@ -69,7 +69,7 @@ describe("QuoteReplyBlock collapse behavior", () => {
     vi.spyOn(userProfileModule, "useUserProfile").mockReturnValue({
       openUserProfile: vi.fn(),
     } as unknown as ReturnType<typeof userProfileModule.useUserProfile>)
-    vi.spyOn(lineMeasureModule, "useMeasuredLineCount").mockImplementation(() => measure)
+    vi.spyOn(lineMeasureModule, "useMeasuredLineCount").mockImplementation(() => ({ ...measure, remeasure: () => {} }))
     currentPrefs = { blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD }
     measure = { lineCount: 1, lineHeightPx: 20 }
     await db.markdownBlockCollapse.clear()
