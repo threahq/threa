@@ -616,6 +616,16 @@ describe("RemoteSession.endTurn", () => {
     })
   })
 
+  test("closes silently when the final text is the no-response sentinel", async () => {
+    expect(await ended({ sentCount: 0, finalText: "THREA_NO_RESPONSE\n" })).toEqual({
+      result: { ok: true, message: "sent", closedTurn: true },
+      finalMessageMarkdown: undefined,
+      noResponse: true,
+      completions: 1,
+      inflight: false,
+    })
+  })
+
   test("posts the no-reply note when there is neither a post nor final text", async () => {
     expect(await ended({ sentCount: 0, finalText: "   " })).toEqual({
       result: { ok: true, message: "sent", closedTurn: true },
@@ -680,6 +690,27 @@ describe("RemoteSession empty output", () => {
     })
   })
 
+  test("closes a no-response sentinel reply as noResponse", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport)
+    seedInflight(session, makeInvocation({ id: "binv_sentinel" }))
+
+    const res = await session.reply("binv_sentinel", "  THREA_NO_RESPONSE\n")
+
+    expect({ ok: res.ok, closedTurn: res.closedTurn, body: calls.complete[0]?.body }).toEqual({
+      ok: true,
+      closedTurn: true,
+      body: {
+        instanceId: "rt-test",
+        claimToken: "tok",
+        sourceRevision: 1,
+        noResponse: true,
+        metadata: { "remote.invocationId": "binv_sentinel", "remote.instanceId": "rt-test" },
+      },
+    })
+  })
+
   test("refuses an empty interim message instead of posting one in its place", async () => {
     const { client, calls } = makeFakeClient()
     const { transport } = makeFakeTransport()
@@ -692,6 +723,17 @@ describe("RemoteSession empty output", () => {
       res: { ok: false, retryable: false, message: "An interim message needs content — nothing was posted." },
       posted: [],
     })
+  })
+
+  test("posts no interim message for the no-response sentinel", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport)
+    seedInflight(session, makeInvocation({ id: "binv_quiet" }))
+
+    const res = await session.sendInterim("binv_quiet", "THREA_NO_RESPONSE")
+
+    expect({ ok: res.ok, posted: calls.invocationMessage }).toEqual({ ok: false, posted: [] })
   })
 })
 

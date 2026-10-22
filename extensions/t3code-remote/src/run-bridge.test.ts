@@ -253,18 +253,6 @@ describe("T3TurnRunner", () => {
     expect(session.frames()).toEqual([{ stepType: "thinking", content: "chain of thought" }])
   })
 
-  test("THREA_NO_RESPONSE replies with nothing", async () => {
-    const { t3, session, runner } = setup()
-    t3.script("run_1", [
-      { status: "completed", items: [item(1, "assistant_message", { text: "THREA_NO_RESPONSE\n" })] },
-    ])
-
-    await runner.deliverTurn(turn())
-    await session.settled()
-
-    expect(session.replies).toEqual([{ invocationId: "binv_1", text: "" }])
-  })
-
   test("continues a capped reply from its text offset", async () => {
     const { t3, session, runner } = setup()
     t3.continueText("turn-item:1", "Hello world, at length")
