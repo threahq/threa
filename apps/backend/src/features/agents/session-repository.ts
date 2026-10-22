@@ -432,7 +432,8 @@ export const AgentSessionRepository = {
     db: Querier,
     workspaceId: string,
     triggerMessageId: string,
-    cursor?: AgentSessionCursor
+    cursor?: AgentSessionCursor,
+    personaId?: string
   ): Promise<AgentSession | null> {
     const result = await db.query<SessionRow>(
       sql`
@@ -440,6 +441,7 @@ export const AgentSessionRepository = {
         FROM agent_sessions
         WHERE workspace_id = ${workspaceId}
           AND trigger_message_id = ${triggerMessageId}
+          AND (${personaId ?? null}::text IS NULL OR persona_id = ${personaId ?? null})
           AND (${cursor?.createdAt ?? null}::timestamptz IS NULL OR (created_at, id) < (${cursor?.createdAt ?? null}, ${cursor?.id ?? null}))
         ORDER BY created_at DESC, id DESC
         LIMIT 1

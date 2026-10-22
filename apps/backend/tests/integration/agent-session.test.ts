@@ -138,6 +138,42 @@ describe("Agent Session Repository", () => {
     })
   })
 
+  describe("findByTriggerMessage", () => {
+    test("scoped to an actor, ignores another actor's session for the same message", async () => {
+      const testStreamId = streamId()
+      const triggerMessageId = messageId()
+      const botPersonaId = personaId()
+      const companionPersonaId = personaId()
+
+      await AgentSessionRepository.insert(pool, {
+        workspaceId: testWorkspaceId,
+        id: sessionId(),
+        streamId: testStreamId,
+        personaId: botPersonaId,
+        triggerMessageId,
+        status: SessionStatuses.RUNNING,
+        serverId: "test-server",
+      })
+
+      const [scoped, own, unscoped] = await Promise.all([
+        AgentSessionRepository.findByTriggerMessage(
+          pool,
+          testWorkspaceId,
+          triggerMessageId,
+          undefined,
+          companionPersonaId
+        ),
+        AgentSessionRepository.findByTriggerMessage(pool, testWorkspaceId, triggerMessageId, undefined, botPersonaId),
+        AgentSessionRepository.findByTriggerMessage(pool, testWorkspaceId, triggerMessageId),
+      ])
+      expect({ scoped, own: own?.personaId, unscoped: unscoped?.personaId }).toEqual({
+        scoped: null,
+        own: botPersonaId,
+        unscoped: botPersonaId,
+      })
+    })
+  })
+
   describe("findLatestByStream", () => {
     test("should return null when no sessions exist", async () => {
       const testStreamId = streamId()

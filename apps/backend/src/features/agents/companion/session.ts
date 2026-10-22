@@ -93,7 +93,13 @@ export async function withCompanionSession(
 
   // Phase 1: Session setup (short-lived transaction)
   const setupResult = await withTransaction(pool, async (db) => {
-    const existingSession = await AgentSessionRepository.findByTriggerMessage(db, workspaceId, triggerMessageId)
+    const existingSession = await AgentSessionRepository.findByTriggerMessage(
+      db,
+      workspaceId,
+      triggerMessageId,
+      undefined,
+      personaId
+    )
 
     if (existingSession) {
       if (existingSession.status === SessionStatuses.COMPLETED) {

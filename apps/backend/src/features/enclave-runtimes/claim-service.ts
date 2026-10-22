@@ -368,7 +368,13 @@ export class EnclaveClaimService {
     // Idempotency: the turn already has a session in flight or done for this
     // trigger. A FAILED session is allowed to re-assign — a fresh session id
     // is minted below, so the retry is clean.
-    const existing = await AgentSessionRepository.findByTriggerMessage(pool, workspaceId, triggerId)
+    const existing = await AgentSessionRepository.findByTriggerMessage(
+      pool,
+      workspaceId,
+      triggerId,
+      undefined,
+      ARIADNE_AGENT_ID
+    )
     if (existing?.status === SessionStatuses.COMPLETED) {
       return completeAsNoOp("session already completed")
     }
