@@ -62,7 +62,7 @@ describe("CodeBlock collapse behavior", () => {
       return value
     })
     vi.spyOn(preferencesModule, "usePreferencesOptional").mockImplementation(() => buildPreferencesContext())
-    vi.spyOn(lineMeasureModule, "useMeasuredLineCount").mockImplementation(() => measure)
+    vi.spyOn(lineMeasureModule, "useMeasuredLineCount").mockImplementation(() => ({ ...measure, remeasure: () => {} }))
 
     currentPrefs = { codeBlockCollapseThreshold: DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD }
     measure = { lineCount: 2, lineHeightPx: 20 }
@@ -258,7 +258,7 @@ describe("CodeBlock line wrapping", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     vi.spyOn(preferencesModule, "usePreferencesOptional").mockImplementation(() => buildPreferencesContext())
-    vi.spyOn(lineMeasureModule, "useMeasuredLineCount").mockImplementation(() => measure)
+    vi.spyOn(lineMeasureModule, "useMeasuredLineCount").mockImplementation(() => ({ ...measure, remeasure: () => {} }))
   })
 
   afterEach(() => {
@@ -315,7 +315,7 @@ describe("CodeBlock full-screen trigger", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     vi.spyOn(preferencesModule, "usePreferencesOptional").mockImplementation(() => buildPreferencesContext())
-    vi.spyOn(lineMeasureModule, "useMeasuredLineCount").mockImplementation(() => measure)
+    vi.spyOn(lineMeasureModule, "useMeasuredLineCount").mockImplementation(() => ({ ...measure, remeasure: () => {} }))
   })
 
   it("should not offer full screen without a viewer provider", () => {

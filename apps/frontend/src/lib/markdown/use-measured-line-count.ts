@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState, type RefObject } from "react"
+import { useCallback, useLayoutEffect, useState, type RefObject } from "react"
 
 export interface MeasuredLines {
   /**
@@ -44,40 +44,43 @@ function resolveLineHeightPx(el: HTMLElement): number {
  * padding/border/margin, so `scrollHeight` equals the text block height
  * exactly. Put visual spacing on a non-ref'd ancestor.
  */
-export function useMeasuredLineCount(ref: RefObject<HTMLElement | null>, deps: ReadonlyArray<unknown>): MeasuredLines {
+export function useMeasuredLineCount(
+  ref: RefObject<HTMLElement | null>,
+  deps: ReadonlyArray<unknown>
+): MeasuredLines & { remeasure: () => void } {
   const [measured, setMeasured] = useState<MeasuredLines>(UNMEASURED)
+
+  const remeasure = useCallback(() => {
+    const node = ref.current
+    if (!node) return
+    const lineHeightPx = resolveLineHeightPx(node)
+    const height = node.scrollHeight
+    if (lineHeightPx <= 0 || height <= 0) {
+      // No layout engine (JSDOM) or not yet attached — stay unmeasured so
+      // consumers fall back to "expanded, no chrome".
+      return
+    }
+    const lineCount = height / lineHeightPx
+    setMeasured((prev) =>
+      prev.lineCount !== null &&
+      Math.abs(prev.lineCount - lineCount) < 0.01 &&
+      prev.lineHeightPx === lineHeightPx &&
+      prev.heightPx === height
+        ? prev
+        : { lineCount, lineHeightPx, heightPx: height }
+    )
+  }, [ref])
 
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
 
-    const measure = () => {
-      const node = ref.current
-      if (!node) return
-      const lineHeightPx = resolveLineHeightPx(node)
-      const height = node.scrollHeight
-      if (lineHeightPx <= 0 || height <= 0) {
-        // No layout engine (JSDOM) or not yet attached — stay unmeasured so
-        // consumers fall back to "expanded, no chrome".
-        return
-      }
-      const lineCount = height / lineHeightPx
-      setMeasured((prev) =>
-        prev.lineCount !== null &&
-        Math.abs(prev.lineCount - lineCount) < 0.01 &&
-        prev.lineHeightPx === lineHeightPx &&
-        prev.heightPx === height
-          ? prev
-          : { lineCount, lineHeightPx, heightPx: height }
-      )
-    }
+    remeasure()
 
-    measure()
-
-    const observer = new ResizeObserver(measure)
+    const observer = new ResizeObserver(remeasure)
     observer.observe(el)
     return () => observer.disconnect()
-  }, [ref, ...deps])
+  }, [ref, remeasure, ...deps])
 
-  return measured
+  return { ...measured, remeasure }
 }

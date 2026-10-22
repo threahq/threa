@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type MouseEvent, type ReactNode } from "react"
+import { useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react"
 import { ChevronDown, ChevronUp } from "lucide-react"
 import {
   DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT,
@@ -81,21 +81,53 @@ export function CollapsibleBody({
   onHeight,
 }: CollapsibleBodyProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null)
-  const { lineCount, lineHeightPx, heightPx } = useMeasuredLineCount(bodyRef, [content])
-  const lineCollapsible = threshold !== undefined && lineCount !== null && lineCount > threshold + 0.5
-  const heightCollapsible =
-    collapseAtHeight !== undefined && heightPx !== null && heightPx !== undefined && heightPx > collapseAtHeight
+  const { lineCount, lineHeightPx, heightPx, remeasure } = useMeasuredLineCount(bodyRef, [content])
+  // Taking over nested folds strips their chrome, which can shrink the body
+  // back under the threshold and hand the folds back — a loop on every resize.
+  // While taken over, the stripped chrome still counts toward the body's size.
+  const [strippedChrome, setStrippedChrome] = useState<{ content: string; px: number } | null>(null)
+  const chromePx = strippedChrome?.content === content ? strippedChrome.px : 0
+  const fullHeightPx = heightPx === null || heightPx === undefined ? null : heightPx + chromePx
+  const fullLineCount = lineCount !== null && lineHeightPx ? lineCount + chromePx / lineHeightPx : lineCount
+  const lineCollapsible = threshold !== undefined && fullLineCount !== null && fullLineCount > threshold + 0.5
+  const heightCollapsible = collapseAtHeight !== undefined && fullHeightPx !== null && fullHeightPx > collapseAtHeight
   const collapsible = heightCollapsible || lineCollapsible
   const own = useBlockCollapse({ kind, content, collapsible: collapsible && !group, defaultCollapsed })
 
   useLayoutEffect(() => {
-    if (heightPx !== null && heightPx !== undefined) onHeight?.(heightPx)
-  }, [heightPx, onHeight])
+    if (fullHeightPx !== null) onHeight?.(fullHeightPx)
+  }, [fullHeightPx, onHeight])
 
-  const collapsed = group
-    ? group.collapsed && collapseToHeight !== undefined && heightPx != null && heightPx > collapseToHeight
-    : own.collapsed
+  const exceedsClamp = (height: number | null | undefined) =>
+    collapseToHeight !== undefined && height !== null && height !== undefined && height > collapseToHeight
+  // A folded run takes over on the full height but clamps only what renders,
+  // so a head that fits once stripped shows without the fade.
+  const collapsed = group ? group.collapsed && exceedsClamp(heightPx) : own.collapsed
   const expanded = group ? !group.collapsed : !own.collapsed
+  const takesOverNested = group ? collapsible || (group.collapsed && exceedsClamp(fullHeightPx)) : own.canToggle
+
+  // Runs in the commit that stripped the chrome, while `heightPx` still holds
+  // the height measured with it — unless the content changed in that commit too.
+  const wasTakingOverRef = useRef(false)
+  const measuredContentRef = useRef(content)
+  useLayoutEffect(() => {
+    const wasTakingOver = wasTakingOverRef.current
+    const contentChanged = measuredContentRef.current !== content
+    wasTakingOverRef.current = takesOverNested
+    measuredContentRef.current = content
+    if (!takesOverNested) {
+      setStrippedChrome(null)
+      if (wasTakingOver) remeasure()
+      return
+    }
+    const node = bodyRef.current
+    if (wasTakingOver || contentChanged || !node || heightPx === null || heightPx === undefined) return
+    const px = heightPx - node.scrollHeight
+    if (px <= 0) return
+    setStrippedChrome({ content, px })
+    remeasure()
+  }, [takesOverNested, heightPx, content, remeasure])
+
   let toggleLabel: string | null = null
   if (group) toggleLabel = group.toggleLabel
   else if (own.canToggle) toggleLabel = own.collapsed ? "Show more" : "Collapse"
@@ -142,7 +174,7 @@ export function CollapsibleBody({
 
   return (
     <div>
-      <InsideCollapsibleBlockProvider active={group ? collapsible || collapsed : own.canToggle}>
+      <InsideCollapsibleBlockProvider active={takesOverNested}>
         {/* Expansion lives only on the explicit Show more/less button below — the
             body itself is NOT click-to-toggle. A message body carries clickable
             mentions/links (their onClick would double-fire with the fold) and, on
