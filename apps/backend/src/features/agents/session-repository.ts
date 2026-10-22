@@ -342,8 +342,9 @@ export const AgentSessionRepository = {
   },
 
   /**
-   * Atomically insert a RUNNING session, failing if one already exists for the stream
-   * or if this invocation already created its session on an earlier claim attempt.
+   * Atomically insert a RUNNING session, failing if the same persona or bot already
+   * runs one on the stream or if this invocation already created its session on an
+   * earlier claim attempt.
    * Uses ON CONFLICT DO NOTHING to cover both the partial running-session index
    * and the primary key without surfacing a duplicate-key error.
    *
@@ -652,11 +653,11 @@ export const AgentSessionRepository = {
   },
 
   /**
-   * Find a running session for a stream.
+   * Find the running session a persona or bot holds on a stream.
    *
    * NOTE: Session *creation* never uses this — that goes through
    * `insertRunningOrSkip()`, which atomically prevents duplicates via the partial
-   * unique index on workspace and stream where status is running. This read is for
+   * unique index on workspace, stream and persona where status is running. This read is for
    * opportunistic trace stamping: the public-API bot `sendMessage` path calls it
    * to deep-link a bot message to its live session.
    *
@@ -664,13 +665,19 @@ export const AgentSessionRepository = {
    * absent (returns null), so a caller racing an in-flight invocation simply skips
    * the stamp rather than blocking — best-effort by design.
    */
-  async findRunningByStream(db: Querier, workspaceId: string, streamId: string): Promise<AgentSession | null> {
+  async findRunningByStream(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    personaId: string
+  ): Promise<AgentSession | null> {
     const result = await db.query<SessionRow>(
       sql`
         SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
         FROM agent_sessions
         WHERE workspace_id = ${workspaceId}
           AND stream_id = ${streamId}
+          AND persona_id = ${personaId}
           AND status = ${SessionStatuses.RUNNING}
         FOR UPDATE SKIP LOCKED
         LIMIT 1
@@ -679,7 +686,7 @@ export const AgentSessionRepository = {
     return result.rows[0] ? mapRowToSession(result.rows[0]) : null
   },
 
-  /** RUNNING sessions across many streams; at most one per stream (partial unique index). */
+  /** RUNNING sessions across many streams; at most one per persona or bot on each stream (partial unique index). */
   async findRunningByStreams(db: Querier, workspaceId: string, streamIds: readonly string[]): Promise<AgentSession[]> {
     if (streamIds.length === 0) return []
     const result = await db.query<SessionRow>(

@@ -950,7 +950,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
 
       // Interjection catch-up (parity with the main app's `checkForUnseenMessages`,
       // persona-agent-worker.ts): a user message that landed while this turn ran
-      // was suppressed by the one-running-per-stream guard at claim time, so
+      // was suppressed by the one-running-per-actor guard at claim time, so
       // enqueue a follow-up turn for the latest such message. The enclave saw
       // history up to its trigger and nothing after, so the trigger's sequence is
       // the "seen" boundary. `reopen` resurrects the suppressed message's own

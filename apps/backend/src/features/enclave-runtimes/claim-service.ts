@@ -634,7 +634,7 @@ export class EnclaveClaimService {
     }
 
     // Create the session row owned by the claiming EIK — skip if another
-    // session is already RUNNING for this stream (one-running-per-stream
+    // session is already RUNNING for this persona on the stream (one-running-per-actor
     // guard, INV-20; the post-completion catch-up re-triggers the suppressed
     // message) — and surface the turn in the stream view in the same
     // transaction (INV-7), so a session row never exists without its started

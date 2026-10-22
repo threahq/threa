@@ -433,8 +433,8 @@ describe("public API bot send trace stamping", () => {
     return { handlers, createMessageForPrincipalReturningConversation }
   }
 
-  it("stamps sessionId when a running session on the stream belongs to this bot", async () => {
-    spyOn(AgentSessionRepository, "findRunningByStream").mockResolvedValue({
+  it("stamps sessionId from this bot's running session on the stream", async () => {
+    const findRunning = spyOn(AgentSessionRepository, "findRunningByStream").mockResolvedValue({
       id: "session_1",
       personaId: "bot_1",
     } as never)
@@ -442,24 +442,10 @@ describe("public API bot send trace stamping", () => {
 
     await handlers.sendMessage(botRequest(), createResponse())
 
+    expect(findRunning.mock.calls[0]?.[3]).toBe("bot_1")
     expect(createMessageForPrincipalReturningConversation).toHaveBeenCalledWith(
       { kind: "bot", botId: "bot_1" },
       expect.objectContaining({ sessionId: "session_1", authorId: "bot_1", sentVia: "api_key:bkey_1" })
-    )
-  })
-
-  it("does not stamp when the running session belongs to a different bot", async () => {
-    spyOn(AgentSessionRepository, "findRunningByStream").mockResolvedValue({
-      id: "session_1",
-      personaId: "bot_2",
-    } as never)
-    const { handlers, createMessageForPrincipalReturningConversation } = sendHarness()
-
-    await handlers.sendMessage(botRequest(), createResponse())
-
-    expect(createMessageForPrincipalReturningConversation).toHaveBeenCalledWith(
-      { kind: "bot", botId: "bot_1" },
-      expect.objectContaining({ sessionId: undefined })
     )
   })
 

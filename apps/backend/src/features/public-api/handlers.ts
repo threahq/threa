@@ -3637,16 +3637,13 @@ export function createPublicApiHandlers({
 
         // Stamp the message with the bot's running session so it deep-links to
         // the trace (parity with the enclave path). Bot invocations register the
-        // session on `responseStreamId` under `personaId = bot.id`; match only a
-        // session on this exact stream owned by this bot — a plaintext send with
-        // no active invocation stays unstamped (bots CAN post without a claim).
-        // Known limitation: if a prior invocation's session sticks at
+        // session on `responseStreamId` under `personaId = bot.id` — a plaintext
+        // send with no active invocation stays unstamped (bots CAN post without a
+        // claim). Known limitation: if a prior invocation's session sticks at
         // status='running' (missed terminal event), a later unrelated plaintext
         // send by the same bot on this stream mis-stamps to that stale session.
-        // The partial unique index caps it at one running session per stream, so
-        // this only misfires under the abnormal stuck-running state.
-        const runningSession = await AgentSessionRepository.findRunningByStream(pool, workspaceId, streamId)
-        const sessionId = runningSession?.personaId === bot.id ? runningSession.id : undefined
+        const runningSession = await AgentSessionRepository.findRunningByStream(pool, workspaceId, streamId, bot.id)
+        const sessionId = runningSession?.id
 
         const { message, conversationId } = await eventService.createMessageForPrincipalReturningConversation(
           { kind: "bot", botId: bot.id },
