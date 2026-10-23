@@ -154,7 +154,7 @@ export function ApiKeyCreateForm({
           {API_KEY_ELIGIBLE_PICKER_SCOPES.map((perm) => (
             <label
               key={perm.slug}
-              className="block px-3 py-2.5 cursor-pointer hover:bg-accent/50 transition-colors first:rounded-t-md last:rounded-b-md"
+              className="block px-3 py-2.5 cursor-pointer hover:bg-accent/50 transition-colors first:rounded-t-md last:rounded-b-md has-[:disabled]:cursor-not-allowed has-[:disabled]:hover:bg-transparent"
             >
               <span className="flex items-center gap-3">
                 <Checkbox
@@ -194,7 +194,9 @@ export function ApiKeyCreateForm({
       </div>
 
       {error && (
-        <p className="text-sm text-destructive">{error.message || "Failed to create key. Please try again."}</p>
+        <p role="alert" className="text-sm text-destructive">
+          {error.message || "Failed to create key. Please try again."}
+        </p>
       )}
     </div>
   )

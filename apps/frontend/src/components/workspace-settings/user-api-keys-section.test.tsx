@@ -83,6 +83,9 @@ describe("UserApiKeysSection — API version pin", () => {
   })
 })
 
+// The create form renders above the key list, so its version trigger comes first.
+const formVersionTrigger = () => screen.getAllByRole("button", { name: /API version/ })[0] as HTMLButtonElement
+
 describe("UserApiKeysSection — create and duplicate", () => {
   it("leaves a new key's pin to the server", async () => {
     vi.spyOn(workspacesApi, "listUserApiKeys").mockResolvedValue([])
@@ -197,7 +200,12 @@ describe("UserApiKeysSection — create and duplicate", () => {
 
     await user.click(await screen.findByRole("button", { name: "Duplicate CI pipeline" }))
     await user.click(screen.getByRole("button", { name: "Create key" }))
-    expect(await screen.findByText("Key limit reached")).toBeTruthy()
+    expect((await screen.findByRole("alert")).textContent).toBe("Key limit reached")
+    expect({
+      scope: (screen.getByRole("checkbox", { name: /Write messages/ }) as HTMLButtonElement).disabled,
+      version: formVersionTrigger().disabled,
+      cancel: (screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled,
+    }).toEqual({ scope: false, version: false, cancel: false })
 
     await user.type(screen.getByLabelText("Name"), "!")
 
@@ -244,9 +252,10 @@ describe("UserApiKeysSection — create and duplicate", () => {
       expect({
         name: (screen.getByLabelText("Name") as HTMLInputElement).disabled,
         scope: (screen.getByRole("checkbox", { name: /Write messages/ }) as HTMLButtonElement).disabled,
+        version: formVersionTrigger().disabled,
         cancel: isDisabled("Cancel"),
         duplicate: isDisabled("Duplicate Laptop"),
-      }).toEqual({ name: true, scope: true, cancel: true, duplicate: true })
+      }).toEqual({ name: true, scope: true, version: true, cancel: true, duplicate: true })
     )
 
     resolveCreate({ key: makeKey({ id: "uak_2", name: "CI pipeline (copy)" }), value: "threa_uk_new" })
