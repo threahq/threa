@@ -82,9 +82,9 @@ const CONTRACTED_KEYS: Record<string, { primary: boolean; def: string }> = {
     primary: false,
     def: "CREATE UNIQUE INDEX idx_agent_conversation_summaries_stream_persona ON public.agent_conversation_summaries USING btree (workspace_id, stream_id, persona_id)",
   },
-  idx_agent_sessions_one_running_per_stream: {
+  idx_agent_sessions_one_running_per_actor: {
     primary: false,
-    def: "CREATE UNIQUE INDEX idx_agent_sessions_one_running_per_stream ON public.agent_sessions USING btree (workspace_id, stream_id) WHERE (status = 'running'::text)",
+    def: "CREATE UNIQUE INDEX idx_agent_sessions_one_running_per_actor ON public.agent_sessions USING btree (workspace_id, stream_id, persona_id) WHERE (status = 'running'::text)",
   },
   idx_subagent_runs_one_active: {
     primary: false,

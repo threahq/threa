@@ -24,8 +24,8 @@ export type WithSessionResult =
  * 3. Phase 3: Acquire connection -> atomically complete session -> release
  *
  * Race condition prevention:
- * - Uses a partial unique index on workspace and stream where status is running
- *   to ensure only one running session per workspace and stream
+ * - Uses a partial unique index on workspace, stream and persona where status is
+ *   running to ensure one running session per persona or bot on a stream
  * - INSERT with ON CONFLICT DO NOTHING atomically checks and creates
  */
 export async function withCompanionSession(
@@ -93,7 +93,13 @@ export async function withCompanionSession(
 
   // Phase 1: Session setup (short-lived transaction)
   const setupResult = await withTransaction(pool, async (db) => {
-    const existingSession = await AgentSessionRepository.findByTriggerMessage(db, workspaceId, triggerMessageId)
+    const existingSession = await AgentSessionRepository.findByTriggerMessage(
+      db,
+      workspaceId,
+      triggerMessageId,
+      undefined,
+      personaId
+    )
 
     if (existingSession) {
       if (existingSession.status === SessionStatuses.COMPLETED) {
@@ -136,8 +142,8 @@ export async function withCompanionSession(
     })
 
     if (!session) {
-      logger.info({ streamId }, "Agent already running for stream (concurrent insert), skipping")
-      return { status: "skipped" as const, sessionId: null, reason: "agent already running for stream" }
+      logger.info({ streamId, personaId }, "Persona already running on stream, skipping")
+      return { status: "skipped" as const, sessionId: null, reason: "persona already running on stream" }
     }
 
     const streamEvent = await StreamEventRepository.insert(db, {

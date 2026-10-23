@@ -486,7 +486,7 @@ describe("per-stream session concurrency (roadmap 3.2)", () => {
     expect(result).toEqual({
       status: "skipped",
       sessionId: null,
-      reason: "agent already running for stream",
+      reason: "persona already running on stream",
     })
     expect(eventSpy).not.toHaveBeenCalled()
     expect(outboxSpy).not.toHaveBeenCalled()

@@ -31,7 +31,7 @@ describe("Agent Session Repository", () => {
     test("should return null when no running session exists", async () => {
       const testStreamId = streamId()
 
-      const result = await AgentSessionRepository.findRunningByStream(pool, testWorkspaceId, testStreamId)
+      const result = await AgentSessionRepository.findRunningByStream(pool, testWorkspaceId, testStreamId, personaId())
       expect(result).toBeNull()
     })
 
@@ -52,7 +52,12 @@ describe("Agent Session Repository", () => {
           serverId: "test-server",
         })
 
-        const result = await AgentSessionRepository.findRunningByStream(client, testWorkspaceId, testStreamId)
+        const result = await AgentSessionRepository.findRunningByStream(
+          client,
+          testWorkspaceId,
+          testStreamId,
+          testPersonaId
+        )
 
         expect(result).not.toBeNull()
         expect(result!.id).toBe(testSessionId)
@@ -79,7 +84,12 @@ describe("Agent Session Repository", () => {
 
         await AgentSessionRepository.updateStatus(client, testWorkspaceId, testSessionId, SessionStatuses.COMPLETED)
 
-        const result = await AgentSessionRepository.findRunningByStream(client, testWorkspaceId, testStreamId)
+        const result = await AgentSessionRepository.findRunningByStream(
+          client,
+          testWorkspaceId,
+          testStreamId,
+          testPersonaId
+        )
         expect(result).toBeNull()
       })
     })
@@ -100,8 +110,66 @@ describe("Agent Session Repository", () => {
           serverId: "test-server",
         })
 
-        const result = await AgentSessionRepository.findRunningByStream(client, testWorkspaceId, testStreamId2)
+        const result = await AgentSessionRepository.findRunningByStream(
+          client,
+          testWorkspaceId,
+          testStreamId2,
+          testPersonaId
+        )
         expect(result).toBeNull()
+      })
+    })
+
+    test("should not return another persona's session on the same stream", async () => {
+      const testStreamId = streamId()
+
+      await AgentSessionRepository.insert(pool, {
+        workspaceId: testWorkspaceId,
+        id: sessionId(),
+        streamId: testStreamId,
+        personaId: personaId(),
+        triggerMessageId: messageId(),
+        status: SessionStatuses.RUNNING,
+        serverId: "test-server",
+      })
+
+      const result = await AgentSessionRepository.findRunningByStream(pool, testWorkspaceId, testStreamId, personaId())
+      expect(result).toBeNull()
+    })
+  })
+
+  describe("findByTriggerMessage", () => {
+    test("scoped to an actor, ignores another actor's session for the same message", async () => {
+      const testStreamId = streamId()
+      const triggerMessageId = messageId()
+      const botPersonaId = personaId()
+      const companionPersonaId = personaId()
+
+      await AgentSessionRepository.insert(pool, {
+        workspaceId: testWorkspaceId,
+        id: sessionId(),
+        streamId: testStreamId,
+        personaId: botPersonaId,
+        triggerMessageId,
+        status: SessionStatuses.RUNNING,
+        serverId: "test-server",
+      })
+
+      const [scoped, own, unscoped] = await Promise.all([
+        AgentSessionRepository.findByTriggerMessage(
+          pool,
+          testWorkspaceId,
+          triggerMessageId,
+          undefined,
+          companionPersonaId
+        ),
+        AgentSessionRepository.findByTriggerMessage(pool, testWorkspaceId, triggerMessageId, undefined, botPersonaId),
+        AgentSessionRepository.findByTriggerMessage(pool, testWorkspaceId, triggerMessageId),
+      ])
+      expect({ scoped, own: own?.personaId, unscoped: unscoped?.personaId }).toEqual({
+        scoped: null,
+        own: botPersonaId,
+        unscoped: botPersonaId,
       })
     })
   })
@@ -327,7 +395,12 @@ describe("Agent Session - Concurrency", () => {
     const firstTx = withClient(pool, async (client) => {
       await client.query("BEGIN")
 
-      firstResult = await AgentSessionRepository.findRunningByStream(client, testWorkspaceId, testStreamId)
+      firstResult = await AgentSessionRepository.findRunningByStream(
+        client,
+        testWorkspaceId,
+        testStreamId,
+        testPersonaId
+      )
       resolveFirstAcquired!() // Signal that lock is held
 
       await firstRelease // Wait for signal to release
@@ -342,7 +415,12 @@ describe("Agent Session - Concurrency", () => {
     const secondTx = withClient(pool, async (client) => {
       await client.query("BEGIN")
 
-      secondResult = await AgentSessionRepository.findRunningByStream(client, testWorkspaceId, testStreamId)
+      secondResult = await AgentSessionRepository.findRunningByStream(
+        client,
+        testWorkspaceId,
+        testStreamId,
+        testPersonaId
+      )
 
       await client.query("COMMIT")
     })
@@ -457,13 +535,23 @@ describe("Agent Session - Concurrency", () => {
     const results = await Promise.all([
       withClient(pool, async (client) => {
         await client.query("BEGIN")
-        const result = await AgentSessionRepository.findRunningByStream(client, testWorkspaceId, stream1Id)
+        const result = await AgentSessionRepository.findRunningByStream(
+          client,
+          testWorkspaceId,
+          stream1Id,
+          testPersonaId
+        )
         await client.query("COMMIT")
         return result
       }),
       withClient(pool, async (client) => {
         await client.query("BEGIN")
-        const result = await AgentSessionRepository.findRunningByStream(client, testWorkspaceId, stream2Id)
+        const result = await AgentSessionRepository.findRunningByStream(
+          client,
+          testWorkspaceId,
+          stream2Id,
+          testPersonaId
+        )
         await client.query("COMMIT")
         return result
       }),
@@ -717,6 +805,36 @@ describe("Agent Session - Concurrency", () => {
       })
       expect(session2).not.toBeNull()
       expect(session2!.id).not.toBe(session1!.id)
+    })
+
+    test("a different persona or bot can start while another runs on the same stream", async () => {
+      const testStreamId = streamId()
+      const botSessionId = sessionId()
+      const personaSessionId = sessionId()
+      const insertFor = (id: string, actorId: string) =>
+        AgentSessionRepository.insertRunningOrSkip(pool, {
+          workspaceId: testWorkspaceId,
+          id,
+          streamId: testStreamId,
+          personaId: actorId,
+          triggerMessageId: messageId(),
+          serverId: "server-1",
+          initialSequence: BigInt(0),
+        })
+
+      const botId = personaId()
+      const companionId = personaId()
+      const [bot, companion] = await Promise.all([
+        insertFor(botSessionId, botId),
+        insertFor(personaSessionId, companionId),
+      ])
+      const companionAgain = await insertFor(sessionId(), companionId)
+
+      expect({ bot: bot?.id, companion: companion?.id, companionAgain }).toEqual({
+        bot: botSessionId,
+        companion: personaSessionId,
+        companionAgain: null,
+      })
     })
   })
 })

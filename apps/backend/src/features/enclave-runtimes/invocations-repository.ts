@@ -168,7 +168,7 @@ export const EnclaveInvocationsRepository = {
   /**
    * Enqueue a turn for a message that may already carry a terminal
    * invocation — the post-completion interjection catch-up: a message
-   * suppressed by the one-running-per-stream guard had its invocation
+   * suppressed by the one-running-per-actor guard had its invocation
    * completed without a session, and finishing the running turn re-triggers
    * it. Reopens a terminal row back to pending (fresh attempt budget) or
    * inserts; a live pending/claimed row is left untouched (its turn is
