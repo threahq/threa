@@ -31,7 +31,8 @@ const SCHEDULED_MESSAGE: ScheduledMessageView = {
   contentMarkdown: "",
   attachmentIds: [],
   metadata: null,
-  scheduledFor: new Date(Date.now() + 60_000).toISOString(),
+  // The dialog's time input truncates to the minute, so this lands 2–3 minutes out: past the file's runtime, before the tests' +5 minute clock jumps.
+  scheduledFor: new Date(Date.now() + 3 * 60_000).toISOString(),
   status: "pending",
   sentMessageId: null,
   lastError: null,

@@ -2959,10 +2959,10 @@ describe("registerWorkspaceSocketHandlers", () => {
       workspaceId: "ws_1",
       conversation: { id: "conv_1", lastActivityAt: "2026-06-22T12:00:00.000Z" },
     })
-    await new Promise((resolve) => setTimeout(resolve, 0))
-
-    const row = await db.conversations.get(["ws_1", "conv_1"])
-    expect(row?._lastActivityMs).toBe(Date.parse("2026-06-22T12:00:00.000Z"))
+    await vi.waitFor(async () => {
+      const row = await db.conversations.get(["ws_1", "conv_1"])
+      expect(row?._lastActivityMs).toBe(Date.parse("2026-06-22T12:00:00.000Z"))
+    })
     // A cached card merges in place — no refetch of the board head.
     expect(invalidate).not.toHaveBeenCalledWith(
       expect.objectContaining({ queryKey: [...conversationKeys.all, "workspaceList", "ws_1"] })
