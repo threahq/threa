@@ -51,6 +51,7 @@ import {
   type ExternalHistoryMessage,
   type RuntimeSessionLink,
 } from "./client"
+import { isNoResponse } from "./no-response"
 import { RouteRevokedError, TurnRoute, type CloseRequest, type PostIntent, type PreparedClose } from "./turn-route"
 
 /** Plain messages: what a running turn may take in, and the base of every idle claim. */
@@ -2323,15 +2324,17 @@ export class RemoteSession {
   }
 
   /**
-   * A reply that carries no words and no attachments closes as `noResponse` —
-   * the wire's own word for a turn that said nothing — instead of standing in a
-   * message the session never wrote.
+   * A reply that carries no words and no attachments, or only the
+   * no-response sentinel, closes as `noResponse` — the wire's own word for a
+   * turn that said nothing — instead of standing in a message the session never
+   * wrote.
    */
   private async prepareReply(route: TurnRoute, text: string): Promise<PreparedClose> {
     const sealing = route.invocation.sealing
     const sourceRevision = route.invocation.sourceRevision
+    const body = isNoResponse(text) ? "" : text
     if (sealing) {
-      const { markdown, refs, attachmentIds } = await uploadSealedReplyAttachments(this.client, text, process.cwd())
+      const { markdown, refs, attachmentIds } = await uploadSealedReplyAttachments(this.client, body, process.cwd())
       const spoken = markdown.trim()
       const reply =
         spoken.length > 0 || refs.length > 0
@@ -2350,7 +2353,7 @@ export class RemoteSession {
         },
       }
     }
-    const { markdown, uploaded } = await uploadReplyAttachments(this.client, text, process.cwd())
+    const { markdown, uploaded } = await uploadReplyAttachments(this.client, body, process.cwd())
     const attachmentIds = uploaded.map((attachment) => attachment.id)
     return {
       reason: "reply",
@@ -2520,7 +2523,7 @@ export class RemoteSession {
       return { ok: true, message: "sent" }
     }
     if (route.terminal) return this.terminalResult(invocationId, kind, intent.text)
-    if (intent.text.trim().length === 0) {
+    if (intent.text.trim().length === 0 || isNoResponse(intent.text)) {
       return {
         ok: false,
         retryable: false,
@@ -2555,7 +2558,7 @@ export class RemoteSession {
         message: `No open request with invocation_id ${invocationId} — interim messages need an open request (it may have been answered or closed).`,
       }
     }
-    if (text.trim().length === 0) {
+    if (text.trim().length === 0 || isNoResponse(text)) {
       return { ok: false, retryable: false, message: "An interim message needs content — nothing was posted." }
     }
     const intent = route.snapshotIntent(text)

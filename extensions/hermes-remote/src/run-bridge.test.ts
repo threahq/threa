@@ -282,15 +282,6 @@ describe("HermesTurnRunner", () => {
     ])
   })
 
-  test("a THREA_NO_RESPONSE output closes the turn with no message", async () => {
-    const { session, calls } = makeSession()
-    const { client } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "  THREA_NO_RESPONSE\n" }]])
-    await makeRunner(client, session).deliverTurn(TURN)
-    await settle()
-
-    expect(calls.replies).toEqual([{ invocationId: "binv_1", text: "" }])
-  })
-
   test("run.failed fails the turn with the run's error text", async () => {
     const { session, calls } = makeSession()
     const { client } = makeClient([[{ event: "run.failed", run_id: "run_1", error: "rate limited by provider" }]])

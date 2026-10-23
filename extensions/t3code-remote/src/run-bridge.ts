@@ -12,7 +12,6 @@ import {
   DecisionAbandonedError,
   NO_RESPONSE_SENTINEL,
   StepBatcher,
-  isNoResponse,
   redactAttachDirectives,
   toolTraceContent,
 } from "@threahq/remote-session"
@@ -98,10 +97,6 @@ const PREAMBLE = [
   "To attach a file to the reply, put a line `THREA_ATTACH: /absolute/path/to/file` in it.",
   `To stay silent, reply exactly ${NO_RESPONSE_SENTINEL}.`,
 ].join(" ")
-
-function replyTextFor(output: string): string {
-  return isNoResponse(output) ? "" : output
-}
 
 /** T3 item ids run long; the step id only has to be stable per item. */
 function stepIdFor(itemId: string): string {
@@ -818,7 +813,7 @@ export class T3TurnRunner {
       return
     }
     const text = trace.held ? await this.fullText(run.threadId, trace.held) : ""
-    const result = await this.session.reply(invocationId, replyTextFor(text))
+    const result = await this.session.reply(invocationId, text)
     if (!result.ok) this.log(`run ${run.runId} reply ${result.retryable ? "deferred" : "refused"}: ${result.message}`)
   }
 

@@ -8,7 +8,6 @@ import {
   type SendResult,
   type StepFrame,
   StepBatcher,
-  isNoResponse,
   toolTraceContent,
 } from "@threahq/remote-session"
 import {
@@ -99,10 +98,6 @@ interface OpenRun {
 /** Rewrite Hermes' `MEDIA:` output lines into the directive the SDK uploads attachments from. */
 export function rewriteMediaDirectives(output: string): string {
   return output.replace(MEDIA_LINE_RE, (_line, path: string) => `THREA_ATTACH: ${path}`)
-}
-
-export function replyTextFor(output: string): string {
-  return isNoResponse(output) ? "" : rewriteMediaDirectives(output)
 }
 
 /**
@@ -560,7 +555,9 @@ export class HermesTurnRunner {
       return
     }
     const replyText =
-      terminal.event === "run.cancelled" ? "" : replyTextFor(typeof terminal.output === "string" ? terminal.output : "")
+      terminal.event === "run.cancelled"
+        ? ""
+        : rewriteMediaDirectives(typeof terminal.output === "string" ? terminal.output : "")
     const result = await this.session.reply(invocationId, replyText)
     // The SDK returns refusals instead of throwing; a run that outlived its turn
     // (idle timeout, superseded) would otherwise vanish without a trace.
