@@ -1,12 +1,9 @@
 import { useCallback, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { botsApi, type CreateBotKeyInput } from "@/api/bots"
+import { botsApi } from "@/api/bots"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -23,15 +20,19 @@ import {
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import {
   API_KEY_ELIGIBLE_PICKER_SCOPES,
-  WORKSPACE_PERMISSIONS,
   BOT_KEY_PREFIX,
   type WorkspacePermissionSlug,
   type BotApiKey,
 } from "@threahq/types"
-import { Check, ChevronDown, Copy, Eye, EyeOff, Key, Plus, Trash2 } from "lucide-react"
+import { Check, ChevronDown, Copy, CopyPlus, Eye, EyeOff, Key, Plus, Trash2 } from "lucide-react"
 import { ApiKeyVersionControl } from "./api-key-version-control"
-
-const SCOPE_LABELS: Record<string, string> = Object.fromEntries(WORKSPACE_PERMISSIONS.map((p) => [p.slug, p.name]))
+import {
+  ApiKeyCreateForm,
+  useApiKeyCreateForm,
+  NEW_API_KEY_DRAFT,
+  SCOPE_LABELS,
+  draftFromKey,
+} from "./api-key-create-form"
 
 interface BotKeysSectionProps {
   workspaceId: string
@@ -49,10 +50,7 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
     queryFn: () => botsApi.listKeys(workspaceId, botId),
   })
 
-  const [showKeyForm, setShowKeyForm] = useState(false)
-  const [keyName, setKeyName] = useState("")
-  const [keyScopes, setKeyScopes] = useState<Set<WorkspacePermissionSlug>>(new Set())
-  const [createdKeyValue, setCreatedKeyValue] = useState<string | null>(null)
+  const [createdKey, setCreatedKey] = useState<{ name: string; value: string } | null>(null)
   const [showKeyValue, setShowKeyValue] = useState(false)
   const [copied, setCopied] = useState(false)
   const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null)
@@ -60,15 +58,12 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
   const [editScopes, setEditScopes] = useState<Set<WorkspacePermissionSlug>>(new Set())
   const [revokedOpen, setRevokedOpen] = useState(false)
 
-  const createKeyMutation = useMutation({
-    mutationFn: (data: CreateBotKeyInput) => botsApi.createKey(workspaceId, botId, data),
-    onSuccess: (data) => {
-      setCreatedKeyValue(data.value)
+  const createForm = useApiKeyCreateForm({
+    create: (input) => botsApi.createKey(workspaceId, botId, input),
+    onCreated: (created) => {
+      setCreatedKey({ name: created.key.name, value: created.value })
       setShowKeyValue(true)
       setCopied(false)
-      setKeyName("")
-      setKeyScopes(new Set())
-      setShowKeyForm(false)
       queryClient.invalidateQueries({ queryKey: keysQueryKey })
     },
   })
@@ -99,20 +94,6 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
     },
     onError: () => setRevokeTarget(null),
   })
-
-  const toggleScope = (scope: WorkspacePermissionSlug) => {
-    setKeyScopes((prev) => {
-      const next = new Set(prev)
-      if (next.has(scope)) next.delete(scope)
-      else next.add(scope)
-      return next
-    })
-  }
-
-  const handleCreateKey = () => {
-    if (!keyName.trim() || keyScopes.size === 0) return
-    createKeyMutation.mutate({ name: keyName.trim(), scopes: [...keyScopes] })
-  }
 
   const startEditingScopes = (key: BotApiKey) => {
     setEditTarget({ id: key.id, name: key.name })
@@ -150,20 +131,25 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
     <section className="space-y-3">
       <div className="flex items-center justify-between">
         <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">API Keys</h4>
-        {!isArchived && !showKeyForm && (
-          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowKeyForm(true)}>
+        {!isArchived && !createForm.isOpen && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => createForm.open(NEW_API_KEY_DRAFT)}
+          >
             <Plus className="h-3 w-3 mr-1" />
             New key
           </Button>
         )}
       </div>
 
-      {createdKeyValue && (
+      {createdKey && (
         <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
           <div className="flex items-start gap-2">
             <Key className="h-4 w-4 text-primary mt-0.5 shrink-0" />
             <div className="space-y-1">
-              <p className="text-sm font-medium">Your new bot key</p>
+              <p className="text-sm font-medium break-all">Your new bot key: {createdKey.name}</p>
               <p className="text-xs text-muted-foreground">
                 Copy this key now. For security, it won't be displayed again.
               </p>
@@ -172,7 +158,7 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
           <div className="flex items-center gap-1.5">
             <code className="flex-1 text-xs bg-background border p-2.5 rounded-md break-all font-mono select-all">
               {showKeyValue
-                ? createdKeyValue
+                ? createdKey.value
                 : "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"}
             </code>
             <Tooltip>
@@ -194,7 +180,7 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
                   variant="outline"
                   size="icon"
                   className="shrink-0 h-9 w-9"
-                  onClick={() => copyToClipboard(createdKeyValue)}
+                  onClick={() => copyToClipboard(createdKey.value)}
                 >
                   {copied ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
                 </Button>
@@ -202,67 +188,14 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
               <TooltipContent>{copied ? "Copied!" : "Copy to clipboard"}</TooltipContent>
             </Tooltip>
           </div>
-          <Button variant="ghost" size="sm" className="text-xs h-7" onClick={() => setCreatedKeyValue(null)}>
+          <Button variant="ghost" size="sm" className="text-xs h-7" onClick={() => setCreatedKey(null)}>
             Dismiss
           </Button>
         </div>
       )}
 
-      {showKeyForm && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <div className="space-y-1.5">
-            <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Key name</Label>
-            <Input
-              placeholder="e.g. production, staging"
-              value={keyName}
-              onChange={(e) => setKeyName(e.target.value)}
-              autoFocus
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Permissions</Label>
-            <div className="rounded-md border divide-y">
-              {API_KEY_ELIGIBLE_PICKER_SCOPES.map((perm) => (
-                <label
-                  key={perm.slug}
-                  className="block px-3 py-2.5 cursor-pointer hover:bg-accent/50 transition-colors first:rounded-t-md last:rounded-b-md"
-                >
-                  <span className="flex items-center gap-3">
-                    <Checkbox checked={keyScopes.has(perm.slug)} onCheckedChange={() => toggleScope(perm.slug)} />
-                    <span className="text-sm font-medium">{perm.name}</span>
-                  </span>
-                  <p className="text-xs text-muted-foreground leading-relaxed ml-7 mt-0.5">{perm.description}</p>
-                </label>
-              ))}
-            </div>
-          </div>
-          <Separator />
-          <div className="flex items-center justify-between">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setShowKeyForm(false)
-                setKeyName("")
-                setKeyScopes(new Set())
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleCreateKey}
-              disabled={!keyName.trim() || keyScopes.size === 0 || createKeyMutation.isPending}
-            >
-              {createKeyMutation.isPending ? "Creating..." : "Create key"}
-            </Button>
-          </div>
-          {createKeyMutation.error && (
-            <p className="text-sm text-destructive">
-              {createKeyMutation.error instanceof Error ? createKeyMutation.error.message : "Failed to create key."}
-            </p>
-          )}
-        </div>
+      {createForm.formProps && (
+        <ApiKeyCreateForm {...createForm.formProps} nameLabel="Key name" namePlaceholder="e.g. production, staging" />
       )}
 
       {isLoading && <Skeleton className="h-16 w-full" />}
@@ -303,11 +236,29 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
                   />
                 </div>
               </div>
+              {!isArchived && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Duplicate ${key.name}`}
+                      className="reveal-actions shrink-0 h-8 w-8"
+                      disabled={createForm.isPending}
+                      onClick={() => createForm.open(draftFromKey(key))}
+                    >
+                      <CopyPlus className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground transition-colors" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Duplicate key</TooltipContent>
+                </Tooltip>
+              )}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     variant="ghost"
                     size="icon"
+                    aria-label={`Edit scopes for ${key.name}`}
                     className="reveal-actions shrink-0 h-8 w-8"
                     onClick={() => startEditingScopes(key)}
                   >
@@ -321,6 +272,7 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
                   <Button
                     variant="ghost"
                     size="icon"
+                    aria-label={`Revoke ${key.name}`}
                     className="reveal-actions shrink-0 h-8 w-8"
                     onClick={() => setRevokeTarget({ id: key.id, name: key.name })}
                   >
@@ -334,7 +286,7 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
         </div>
       )}
 
-      {!isLoading && activeKeys.length === 0 && !showKeyForm && (
+      {!isLoading && activeKeys.length === 0 && !createForm.isOpen && (
         <div className="rounded-lg border border-dashed py-6 flex flex-col items-center gap-2">
           <Key className="h-4 w-4 text-muted-foreground/50" />
           <p className="text-xs text-muted-foreground">No API keys yet. Create one to start sending messages.</p>

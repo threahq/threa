@@ -2,11 +2,8 @@ import { useCallback, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { workspacesApi } from "@/api/workspaces"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -21,13 +18,16 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
-import { API_KEY_ELIGIBLE_PICKER_SCOPES, WORKSPACE_PERMISSIONS, type WorkspacePermissionSlug } from "@threahq/types"
-import { Check, ChevronDown, Copy, Key, Plus, Trash2, Eye, EyeOff } from "lucide-react"
+import { API_KEY_ELIGIBLE_PICKER_SCOPES, type WorkspacePermissionSlug } from "@threahq/types"
+import { Check, ChevronDown, Copy, CopyPlus, Key, Plus, Trash2, Eye, EyeOff } from "lucide-react"
 import { ApiKeyVersionControl } from "./api-key-version-control"
-
-// Full catalog drives SCOPE_LABELS so previously-issued keys with scopes
-// outside the eligible picker subset still render a human-readable name.
-const SCOPE_LABELS: Record<string, string> = Object.fromEntries(WORKSPACE_PERMISSIONS.map((p) => [p.slug, p.name]))
+import {
+  ApiKeyCreateForm,
+  useApiKeyCreateForm,
+  NEW_API_KEY_DRAFT,
+  SCOPE_LABELS,
+  draftFromKey,
+} from "./api-key-create-form"
 
 interface UserApiKeysSectionProps {
   workspaceId: string
@@ -43,10 +43,7 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
     queryFn: () => workspacesApi.listUserApiKeys(workspaceId),
   })
 
-  const [showCreateForm, setShowCreateForm] = useState(false)
-  const [newKeyName, setNewKeyName] = useState("")
-  const [selectedScopes, setSelectedScopes] = useState<Set<WorkspacePermissionSlug>>(new Set())
-  const [createdKeyValue, setCreatedKeyValue] = useState<string | null>(null)
+  const [createdKey, setCreatedKey] = useState<{ name: string; value: string } | null>(null)
   const [showKeyValue, setShowKeyValue] = useState(false)
   const [copied, setCopied] = useState(false)
   const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null)
@@ -54,16 +51,12 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
   const [editScopes, setEditScopes] = useState<Set<WorkspacePermissionSlug>>(new Set())
   const [revokedOpen, setRevokedOpen] = useState(false)
 
-  const createMutation = useMutation({
-    mutationFn: (params: { name: string; scopes: WorkspacePermissionSlug[] }) =>
-      workspacesApi.createUserApiKey(workspaceId, params),
-    onSuccess: (data) => {
-      setCreatedKeyValue(data.value)
+  const createForm = useApiKeyCreateForm({
+    create: (input) => workspacesApi.createUserApiKey(workspaceId, input),
+    onCreated: (created) => {
+      setCreatedKey({ name: created.key.name, value: created.value })
       setShowKeyValue(true)
       setCopied(false)
-      setNewKeyName("")
-      setSelectedScopes(new Set())
-      setShowCreateForm(false)
       queryClient.invalidateQueries({ queryKey })
     },
   })
@@ -96,23 +89,6 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
       setRevokeTarget(null)
     },
   })
-
-  const toggleScope = (scope: WorkspacePermissionSlug) => {
-    setSelectedScopes((prev) => {
-      const next = new Set(prev)
-      if (next.has(scope)) {
-        next.delete(scope)
-      } else {
-        next.add(scope)
-      }
-      return next
-    })
-  }
-
-  const handleCreate = () => {
-    if (!newKeyName.trim() || selectedScopes.size === 0) return
-    createMutation.mutate({ name: newKeyName.trim(), scopes: [...selectedScopes] })
-  }
 
   const startEditingScopes = (key: { id: string; name: string; scopes: WorkspacePermissionSlug[] }) => {
     setEditTarget({ id: key.id, name: key.name })
@@ -158,12 +134,12 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
 
   return (
     <div className="space-y-4">
-      {createdKeyValue && (
+      {createdKey && (
         <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
           <div className="flex items-start gap-2">
             <Key className="h-4 w-4 text-primary mt-0.5 shrink-0" />
             <div className="space-y-1">
-              <p className="text-sm font-medium">Your new API key</p>
+              <p className="text-sm font-medium break-all">Your new API key: {createdKey.name}</p>
               <p className="text-xs text-muted-foreground">
                 Copy this key now. For security, it won't be displayed again.
               </p>
@@ -172,7 +148,7 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
 
           <div className="flex items-center gap-1.5">
             <code className="flex-1 text-xs bg-background border p-2.5 rounded-md break-all font-mono select-all">
-              {showKeyValue ? createdKeyValue : "••••••••••••••••••••••••••••••••••••••••"}
+              {showKeyValue ? createdKey.value : "••••••••••••••••••••••••••••••••••••••••"}
             </code>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -193,7 +169,7 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
                   variant="outline"
                   size="icon"
                   className="shrink-0 h-9 w-9"
-                  onClick={() => copyToClipboard(createdKeyValue)}
+                  onClick={() => copyToClipboard(createdKey.value)}
                 >
                   {copied ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
                 </Button>
@@ -202,7 +178,7 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
             </Tooltip>
           </div>
 
-          <Button variant="ghost" size="sm" className="text-xs h-7" onClick={() => setCreatedKeyValue(null)}>
+          <Button variant="ghost" size="sm" className="text-xs h-7" onClick={() => setCreatedKey(null)}>
             Dismiss
           </Button>
         </div>
@@ -212,78 +188,25 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
         <p className="text-sm text-muted-foreground">
           Personal keys act on your behalf with the same stream access as your account.
         </p>
-        {!showCreateForm && (
-          <Button variant="outline" size="sm" className="shrink-0 ml-4" onClick={() => setShowCreateForm(true)}>
+        {!createForm.isOpen && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0 ml-4"
+            onClick={() => createForm.open(NEW_API_KEY_DRAFT)}
+          >
             <Plus className="h-3.5 w-3.5 mr-1.5" />
             New key
           </Button>
         )}
       </div>
 
-      {showCreateForm && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="key-name" className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Name
-            </Label>
-            <Input
-              id="key-name"
-              placeholder="e.g. CI pipeline, local dev script"
-              value={newKeyName}
-              onChange={(e) => setNewKeyName(e.target.value)}
-              autoFocus
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Permissions</Label>
-            <div className="rounded-md border divide-y">
-              {API_KEY_ELIGIBLE_PICKER_SCOPES.map((perm) => (
-                <label
-                  key={perm.slug}
-                  className="block px-3 py-2.5 cursor-pointer hover:bg-accent/50 transition-colors first:rounded-t-md last:rounded-b-md"
-                >
-                  <span className="flex items-center gap-3">
-                    <Checkbox checked={selectedScopes.has(perm.slug)} onCheckedChange={() => toggleScope(perm.slug)} />
-                    <span className="text-sm font-medium">{perm.name}</span>
-                  </span>
-                  <p className="text-xs text-muted-foreground leading-relaxed ml-7 mt-0.5">{perm.description}</p>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <Separator />
-
-          <div className="flex items-center justify-between">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setShowCreateForm(false)
-                setNewKeyName("")
-                setSelectedScopes(new Set())
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleCreate}
-              disabled={!newKeyName.trim() || selectedScopes.size === 0 || createMutation.isPending}
-            >
-              {createMutation.isPending ? "Creating..." : "Create key"}
-            </Button>
-          </div>
-
-          {createMutation.error && (
-            <p className="text-sm text-destructive">
-              {createMutation.error instanceof Error
-                ? createMutation.error.message
-                : "Failed to create key. Please try again."}
-            </p>
-          )}
-        </div>
+      {createForm.formProps && (
+        <ApiKeyCreateForm
+          {...createForm.formProps}
+          nameLabel="Name"
+          namePlaceholder="e.g. CI pipeline, local dev script"
+        />
       )}
 
       {activeKeys.length > 0 && (
@@ -326,6 +249,22 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
                   <Button
                     variant="ghost"
                     size="icon"
+                    aria-label={`Duplicate ${key.name}`}
+                    className="reveal-actions shrink-0 h-8 w-8"
+                    disabled={createForm.isPending}
+                    onClick={() => createForm.open(draftFromKey(key))}
+                  >
+                    <CopyPlus className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground transition-colors" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Duplicate key</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Edit scopes for ${key.name}`}
                     className="reveal-actions shrink-0 h-8 w-8"
                     onClick={() => startEditingScopes(key)}
                   >
@@ -339,6 +278,7 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
                   <Button
                     variant="ghost"
                     size="icon"
+                    aria-label={`Revoke ${key.name}`}
                     className="reveal-actions shrink-0 h-8 w-8"
                     onClick={() => setRevokeTarget({ id: key.id, name: key.name })}
                   >
@@ -352,7 +292,7 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
         </div>
       )}
 
-      {activeKeys.length === 0 && !showCreateForm && (
+      {activeKeys.length === 0 && !createForm.isOpen && (
         <div className="rounded-lg border border-dashed py-8 flex flex-col items-center gap-2">
           <Key className="h-5 w-5 text-muted-foreground/50" />
           <p className="text-sm text-muted-foreground">No API keys yet</p>

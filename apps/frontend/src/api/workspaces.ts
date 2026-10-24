@@ -8,6 +8,7 @@ import type {
   CompleteUserSetupInput,
   PendingInvitation,
   UserApiKey,
+  CreateApiKeyInput,
   CreateUserApiKeyResponse,
   WorkspacePermissionSlug,
   MarkAllAsReadResponse,
@@ -174,10 +175,7 @@ export const workspacesApi = {
     return res.keys
   },
 
-  async createUserApiKey(
-    workspaceId: string,
-    params: { name: string; scopes: WorkspacePermissionSlug[]; expiresAt?: string | null }
-  ): Promise<CreateUserApiKeyResponse> {
+  async createUserApiKey(workspaceId: string, params: CreateApiKeyInput): Promise<CreateUserApiKeyResponse> {
     return api.post<CreateUserApiKeyResponse>(`/api/workspaces/${workspaceId}/user-api-keys`, params)
   },
 

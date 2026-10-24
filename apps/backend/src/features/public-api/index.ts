@@ -3,6 +3,7 @@ export { createDelegationPublicApiHandlers } from "./delegation-handlers"
 export { PUBLIC_API_ROUTES, type OperationId } from "./routes"
 export { toExpressPath, assertHandlerParity } from "./mount"
 export { API_VERSIONS, CURRENT_API_VERSION, parseApiVersion, type ApiVersion } from "./versions"
+export { createApiKeySchema, updateApiKeySchema } from "./api-key-schemas"
 export { createBotRuntimeWriteOps, type BotRuntimeWriteOpsDeps } from "./runtime-write-ops"
 export { serializeTraceStep, botInvocationStepEvents, BotInvocationTraceSink } from "./trace-steps"
 export {

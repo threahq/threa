@@ -6,7 +6,7 @@ import { userApiKeyId } from "../../lib/id"
 import { HttpError } from "../../lib/errors"
 import type { WorkspacePermissionSlug } from "@threahq/types"
 import { API_KEY_ELIGIBLE_SCOPES } from "@threahq/types"
-import { CURRENT_API_VERSION, type ApiVersion } from "../public-api/versions"
+import type { ApiVersion } from "../public-api/versions"
 
 const KEY_PREFIX = "threa_uk_"
 const KEY_BYTE_LENGTH = 32 // 256-bit random key
@@ -58,6 +58,7 @@ export class UserApiKeyService {
     name: string
     scopes: WorkspacePermissionSlug[]
     expiresAt: Date | null
+    apiVersion: ApiVersion | null
   }): Promise<{ row: UserApiKeyRow; value: string }> {
     validateScopes(params.scopes)
 
@@ -92,7 +93,7 @@ export class UserApiKeyService {
         keyHash,
         keyPrefix,
         scopes: params.scopes,
-        apiVersion: CURRENT_API_VERSION,
+        apiVersion: params.apiVersion,
         expiresAt: params.expiresAt,
       })
     })

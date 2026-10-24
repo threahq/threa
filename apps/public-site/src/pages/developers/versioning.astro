@@ -50,9 +50,9 @@ const changelog: ChangelogEntry[] = changelogRaw
   <p>
     A version is a date. The current version is <code>{currentVersion}</code>.
     When you create an API key it is pinned to
-    whatever version is current at that moment, and that pin decides which shapes
-    the key sees on every request. You do not have to send anything for this to
-    work.
+    whatever version is current at that moment, unless you pick another version
+    or none in the create form. That pin decides which shapes the key sees on
+    every request. You do not have to send anything for this to work.
   </p>
   <p>
     When we later ship a version with a breaking change, existing keys are
@@ -145,7 +145,8 @@ if (data.apiVersion.resolved !== data.apiVersion.current) {
     <code>&#123;"apiVersion": null&#125;</code> to unpin it. An unpinned key always
     uses the current version, including future breaking changes, so unpin only if
     you update your integration as versions ship. To adopt newer shapes without
-    touching the pin, send the header or create a new key.
+    touching the pin, send the header or create a new key. Duplicating a key in
+    the app copies its pin along with its permissions.
   </p>
 
   <h2 id="breaking-vs-additive">Breaking vs additive changes</h2>
