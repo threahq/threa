@@ -1730,6 +1730,50 @@ describe("runs T3 starts by itself", () => {
     expect(session.posts).toEqual([])
   })
 
+  test("/clear while a look reads the thread posts none of its runs", async () => {
+    const { t3, session, runner } = setup()
+    await settledTurn(t3, session, runner)
+    t3.startInT3("thread_1")
+    t3.script("run_2", [
+      { status: "completed", items: [item(2, "assistant_message", { runId: "run_2", text: "Old thread's answer." })] },
+    ])
+    const release = t3.holdNext("t3_thread_read")
+    const watching = runner.watch()
+    await idle()
+    runner.forgetThread("stream_root")
+    release()
+    await watching
+    await until(() => !runner.busy)
+
+    expect(session.posts).toEqual([])
+  })
+
+  test("/clear while a relay posts an update stops its reply", async () => {
+    const { t3, session, runner } = setup()
+    await settledTurn(t3, session, runner)
+    t3.startInT3("thread_1")
+    t3.script("run_2", [
+      {
+        status: "completed",
+        items: [
+          item(2, "assistant_message", { runId: "run_2", text: "THREA_UPDATE: Halfway there." }),
+          item(3, "assistant_message", { runId: "run_2", text: "Old thread's answer." }),
+        ],
+      },
+    ])
+    const post = session.session.postToStream
+    session.session.postToStream = async (...args) => {
+      await post(...args)
+      runner.forgetThread("stream_root")
+    }
+    await runner.watch()
+    await until(() => !runner.busy)
+
+    expect(session.posts).toEqual([
+      { streamId: "stream_root", text: "Halfway there.", clientMessageId: "t3upd-turn-item:2" },
+    ])
+  })
+
   test("never posts the runs a forked thread inherits from its source", async () => {
     const { t3, session, runner } = setup()
     await settledTurn(t3, session, runner)

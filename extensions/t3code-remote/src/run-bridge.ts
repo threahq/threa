@@ -480,8 +480,8 @@ export class T3TurnRunner {
           this.watchErrors.set(threadId, text)
           continue
         }
-        // A turn that opened during the read owns what it saw.
-        if (this.hasOpenTurns(streamId)) continue
+        // A turn that opened during the read owns what it saw, and a /clear during it let the thread go.
+        if (this.hasOpenTurns(streamId) || this.threadFor(streamId) !== threadId) continue
         this.relayUnaccounted(streamId, threadId, runs)
       }
     } finally {
@@ -613,7 +613,7 @@ export class T3TurnRunner {
           }
           await this.drain(read, () => {})
           if (signal.aborted) return
-          await this.postUpdates(read, (item, text) => this.postOrDrop(streamId, text, `t3upd-${item.itemId}`))
+          await this.postUpdates(read, (item, text) => this.postOrDrop(relay, streamId, text, `t3upd-${item.itemId}`))
           if (handedOver) return
           if (!adopted && TERMINAL_RUN_STATUSES.has(waited.status)) {
             await this.postFinal(streamId, relay, waited.status)
@@ -638,16 +638,20 @@ export class T3TurnRunner {
     const clientMessageId = `t3run-${relay.runId}`
     if (status === "completed") {
       const text = trace.held ? await this.replyText(threadId, trace.held) : ""
-      if (text.trim() && !isNoResponse(text)) await this.postOrDrop(streamId, text, clientMessageId)
+      if (text.trim() && !isNoResponse(text)) await this.postOrDrop(relay, streamId, text, clientMessageId)
     } else if (status === "failed") {
-      await this.postOrDrop(streamId, trace.lastError ?? "The T3 Code run failed.", clientMessageId)
+      await this.postOrDrop(relay, streamId, trace.lastError ?? "The T3 Code run failed.", clientMessageId)
     } else {
       this.log(`run ${relay.runId} started in T3 Code ended ${status}`)
     }
   }
 
-  /** A post Threa refuses would be refused again, so it is dropped instead of retried. */
-  private async postOrDrop(streamId: string, text: string, clientMessageId: string): Promise<void> {
+  /**
+   * A post Threa refuses would be refused again, so it is dropped instead of retried. A relay aborted while it awaited
+   * an earlier post or a text read posts nothing more.
+   */
+  private async postOrDrop(relay: Relay, streamId: string, text: string, clientMessageId: string): Promise<void> {
+    if (relay.abort.signal.aborted) return
     try {
       await this.session.postToStream(streamId, text, clientMessageId)
     } catch (error) {
