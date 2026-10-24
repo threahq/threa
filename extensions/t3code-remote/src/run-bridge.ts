@@ -35,6 +35,7 @@ export interface BridgeSession {
   readonly rootStreamId?: string
   recordSteps(invocationId: string, frames: StepFrame[], statusText?: string): Promise<boolean>
   reply(invocationId: string, text: string): Promise<SendResult>
+  sendInterim(invocationId: string, text: string): Promise<SendResult>
   /** Posts outside any turn; the same `clientMessageId` posts once. */
   postToStream(streamId: string, text: string, clientMessageId: string): Promise<void>
   failTurn(invocationId: string, errorMessage: string): Promise<boolean>
@@ -95,10 +96,21 @@ const BLOCKING_LABELS: Record<string, string> = {
   approval_request: "an approval",
   secret_request: "a secret",
 }
+const UPDATE_PREFIX = "THREA_UPDATE:"
+
+function isUpdate(text: string | null | undefined): boolean {
+  return (text ?? "").trimStart().startsWith(UPDATE_PREFIX)
+}
+
+function withoutUpdatePrefix(text: string): string {
+  return isUpdate(text) ? text.trimStart().slice(UPDATE_PREFIX.length).trim() : text
+}
+
 const PREAMBLE = [
   "You are answering through Threa, a chat app: your final message is posted there as the reply and renders as GitHub-flavored markdown.",
   "To attach a file to the reply, put a line `THREA_ATTACH: /absolute/path/to/file` in it.",
   `To stay silent, reply exactly ${NO_RESPONSE_SENTINEL}.`,
+  `Your messages before the final one are not posted, except one that starts with ${UPDATE_PREFIX}, which is posted right away: use it to keep the user posted on longer work.`,
   "A run that starts without a message from Threa, such as one started when background work finishes, has its final message posted there too.",
 ].join(" ")
 
@@ -163,6 +175,8 @@ export class RunTrace {
   private readonly emitted = new Map<string, "started" | "final">()
   readonly runIds: Set<string>
   held?: ThreadItem
+  /** Finished `THREA_UPDATE:` messages not yet posted. */
+  readonly updates: ThreadItem[] = []
   blockedOn?: string
   /** The item ids of questions still waiting on an answer. */
   readonly questions = new Set<string>()
@@ -184,7 +198,8 @@ export class RunTrace {
     if (this.emitted.get(item.itemId) === "final") return []
     const frames: StepFrame[] = []
     if (this.held && item.position > this.held.position) {
-      frames.push({ stepType: "thinking", content: redactAttachDirectives(this.held.text ?? "") })
+      if (isUpdate(this.held.text)) this.updates.push(this.held)
+      else frames.push({ stepType: "thinking", content: redactAttachDirectives(this.held.text ?? "") })
       this.emitted.set(this.held.itemId, "final")
       this.held = undefined
     }
@@ -226,6 +241,13 @@ export interface T3TurnRunnerOptions {
   threadStore?: ThreadStore
   log?: (message: string) => void
   sleep?: (ms: number) => Promise<void>
+}
+
+/** A run T3 started by itself, followed until it ends; a turn that takes the run over continues its trace. */
+interface Relay {
+  runId: string
+  abort: AbortController
+  read: Pick<OpenRun, "threadId" | "trace" | "cursor">
 }
 
 interface OpenRun {
@@ -279,7 +301,7 @@ export class T3TurnRunner {
   // Per thread, the newest run a turn or relay already accounts for; a later one was started in T3 itself.
   private readonly seenRuns = new Map<string, string>()
   // Per thread, the run T3 started on its own that is being followed until it ends.
-  private readonly unprompted = new Map<string, { runId: string; abort: AbortController }>()
+  private readonly unprompted = new Map<string, Relay>()
   // Streams whose latest Threa message arrived in plaintext. A post outside a turn can't be sealed, so only these get one.
   private readonly plaintextStreams = new Set<string>()
   // Per thread, the last watch failure logged, so a T3 outage logs once rather than every poll.
@@ -462,7 +484,12 @@ export class T3TurnRunner {
   }
 
   private relay(streamId: string, threadId: string, runId: string): void {
-    const relay = { runId, abort: new AbortController() }
+    const trace = new RunTrace(runId, this.options.traceMode)
+    const relay: Relay = {
+      runId,
+      abort: new AbortController(),
+      read: { threadId, trace, cursor: this.cursors.get(threadId) },
+    }
     this.unprompted.set(threadId, relay)
     this.log(`run ${runId} started in T3 Code; posting its reply to ${streamId}`)
     void this.relayRun(streamId, threadId, relay)
@@ -472,47 +499,52 @@ export class T3TurnRunner {
       })
   }
 
-  private async relayRun(
-    streamId: string,
-    threadId: string,
-    relay: { runId: string; abort: AbortController }
-  ): Promise<void> {
+  private async relayRun(streamId: string, threadId: string, relay: Relay): Promise<void> {
     const { signal } = relay.abort
-    const trace = new RunTrace(relay.runId, this.options.traceMode)
+    const { read } = relay
+    const { trace } = read
     let status: string | undefined
     let failures = 0
-    while (!signal.aborted && !status) {
-      try {
-        const waited = await this.client.call("t3_thread_wait", {
-          threadId,
-          runId: relay.runId,
-          timeoutMs: WAIT_TIMEOUT_MS,
-        })
-        failures = 0
-        if (waited.runId && waited.runId !== relay.runId) {
-          // A turn's images restart the run as one the turn follows and replies with.
-          if (this.turnOwns(threadId, waited.runId)) return
-          if (this.seenRuns.get(threadId) === relay.runId) this.seenRuns.set(threadId, waited.runId)
-          relay.runId = waited.runId
-          trace.runIds.add(waited.runId)
-        } else if (TERMINAL_RUN_STATUSES.has(waited.status)) {
-          status = waited.status
+    try {
+      while (!signal.aborted && !status) {
+        try {
+          const waited = await this.client.call("t3_thread_wait", {
+            threadId,
+            runId: relay.runId,
+            timeoutMs: WAIT_TIMEOUT_MS,
+          })
+          // A turn that took the run over posts its updates from here.
+          if (signal.aborted) return
+          const adopted = waited.runId && waited.runId !== relay.runId ? waited.runId : undefined
+          if (adopted) {
+            // A turn's images restart the run as one the turn follows and replies with.
+            if (this.turnOwns(threadId, adopted)) return
+            if (this.seenRuns.get(threadId) === relay.runId) this.seenRuns.set(threadId, adopted)
+            relay.runId = adopted
+            trace.runIds.add(adopted)
+          }
+          await this.drain(read, () => {})
+          if (signal.aborted) return
+          await this.postUpdates(read, (item, text) =>
+            this.session.postToStream(streamId, text, `t3upd-${item.itemId}`)
+          )
+          failures = 0
+          if (!adopted && TERMINAL_RUN_STATUSES.has(waited.status)) status = waited.status
+        } catch (error) {
+          if (signal.aborted) return
+          failures += 1
+          if (error instanceof T3ToolError) this.unlessGone(error, streamId, threadId)
+          if (error instanceof T3AuthError || failures >= MAX_CONSECUTIVE_POLL_FAILURES) throw error
+          await this.sleep(WAIT_TIMEOUT_MS)
         }
-      } catch (error) {
-        if (signal.aborted) return
-        failures += 1
-        if (error instanceof T3ToolError) this.unlessGone(error, streamId, threadId)
-        if (error instanceof T3AuthError || failures >= MAX_CONSECUTIVE_POLL_FAILURES) throw error
-        await this.sleep(WAIT_TIMEOUT_MS)
       }
+    } finally {
+      this.advanceCursor(threadId, read.cursor)
     }
-    const read: Pick<OpenRun, "threadId" | "trace" | "cursor"> = { threadId, trace, cursor: this.cursors.get(threadId) }
-    await this.drain(read, () => {})
-    this.advanceCursor(threadId, read.cursor)
     // A turn that sent its images into this run follows it and replies with it.
     if (signal.aborted || !status) return
     if (status === "completed") {
-      const text = trace.held ? await this.fullText(threadId, trace.held) : ""
+      const text = trace.held ? await this.replyText(threadId, trace.held) : ""
       if (!text.trim() || isNoResponse(text)) return
       await this.session.postToStream(streamId, text, `t3run-${relay.runId}`)
     } else if (status === "failed") {
@@ -551,7 +583,8 @@ export class T3TurnRunner {
       return
     }
     const relay = this.unprompted.get(started.threadId)
-    if (relay?.runId === started.runId) relay.abort.abort()
+    const takenOver = relay?.runId === started.runId ? relay : undefined
+    takenOver?.abort.abort()
     // A run T3 started by itself since the last look, which this turn's message queued behind.
     const seen = this.seenRuns.get(started.threadId)
     if (latest && seen !== undefined && latest !== seen && latest !== started.runId && !relay && !turn.sealed) {
@@ -562,11 +595,16 @@ export class T3TurnRunner {
     const run: OpenRun = {
       ...started,
       streamId: turn.streamId,
-      trace: new RunTrace(started.runId, mode),
+      // Taking a relayed run over continues its trace, so the updates it already posted aren't posted again.
+      trace: takenOver?.read.trace ?? new RunTrace(started.runId, mode),
       abort: new AbortController(),
       steers: new Set(),
       asked: new Set(stale),
-      ...(this.cursors.has(started.threadId) ? { cursor: this.cursors.get(started.threadId)! } : {}),
+      ...(takenOver
+        ? { cursor: takenOver.read.cursor }
+        : this.cursors.has(started.threadId)
+          ? { cursor: this.cursors.get(started.threadId)! }
+          : {}),
     }
     this.runs.set(turn.invocationId, run)
     void this.follow(turn.invocationId, run).catch((error) => {
@@ -734,6 +772,12 @@ export class T3TurnRunner {
           await this.drain(run, (frame) =>
             frame.phase === "started" ? void batcher.addNow(frame) : batcher.add(frame)
           )
+          await this.postUpdates(run, async (_item, text) => {
+            const result = await this.session.sendInterim(invocationId, text)
+            if (result.ok) return
+            if (result.retryable) throw new Error(`update not posted: ${result.message}`)
+            this.log(`run ${run.runId} update not posted: ${result.message}`)
+          })
           await this.withdrawAnsweredCard(run)
           if (trace.questions.size > 0 && !run.asking) this.askQuestions(invocationId, run)
           failures = 0
@@ -951,9 +995,30 @@ export class T3TurnRunner {
       }
       return
     }
-    const text = trace.held ? await this.fullText(run.threadId, trace.held) : ""
+    const text = trace.held ? await this.replyText(run.threadId, trace.held) : ""
     const result = await this.session.reply(invocationId, text)
     if (!result.ok) this.log(`run ${run.runId} reply ${result.retryable ? "deferred" : "refused"}: ${result.message}`)
+  }
+
+  private async replyText(threadId: string, item: ThreadItem): Promise<string> {
+    return withoutUpdatePrefix(await this.fullText(threadId, item))
+  }
+
+  private async postUpdates(
+    run: Pick<OpenRun, "threadId" | "trace">,
+    post: (item: ThreadItem, text: string) => Promise<void>
+  ): Promise<void> {
+    const { updates } = run.trace
+    // Taken before posting, so a relay and the turn that took its run over never post one twice.
+    for (let item = updates.shift(); item; item = updates.shift()) {
+      try {
+        const text = await this.replyText(run.threadId, item)
+        if (text) await post(item, text)
+      } catch (error) {
+        updates.unshift(item)
+        throw error
+      }
+    }
   }
 
   /** Activity reads cap each item's text; the reply continues from the offset until T3 has no more. */

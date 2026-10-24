@@ -78,6 +78,7 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
       },
       recordSteps: (id, frames, statusText) => session.recordSteps(id, frames, statusText),
       reply: (id, text) => session.reply(id, text),
+      sendInterim: (id, text) => session.sendInterim(id, text),
       postToStream: (streamId, content, clientMessageId) =>
         session.postToStream(streamId, { content, clientMessageId }),
       failTurn: (id, message) => session.failTurn(id, message),

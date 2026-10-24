@@ -257,6 +257,72 @@ describe("T3TurnRunner", () => {
     expect(session.replies).toEqual([{ invocationId: "binv_1", text: "Fixed." }])
   })
 
+  test("posts a THREA_UPDATE message while the run goes on, and replies without the prefix", async () => {
+    const { t3, session, runner } = setup()
+    t3.script("run_1", [
+      {
+        status: "running",
+        items: [
+          item(1, "assistant_message", { text: "THREA_UPDATE: Halfway, tests are running." }),
+          item(2, "command_execution", { status: "running", text: "$ bun test" }),
+        ],
+      },
+    ])
+    const delivered = runner.deliverTurn(turn())
+    await until(() => session.interims.length > 0)
+    const whileRunning = { interims: [...session.interims], replies: [...session.replies] }
+
+    t3.script("run_1", [
+      {
+        status: "completed",
+        items: [
+          item(2, "command_execution", { text: "$ bun test" }),
+          item(3, "assistant_message", { text: "THREA_UPDATE: All green." }),
+        ],
+      },
+    ])
+    await delivered
+    await session.settled()
+
+    expect({
+      whileRunning,
+      interims: session.interims,
+      replies: session.replies,
+      stepTypes: session.frames().map((frame) => frame.stepType),
+    }).toEqual({
+      whileRunning: { interims: [{ invocationId: "binv_1", text: "Halfway, tests are running." }], replies: [] },
+      interims: [{ invocationId: "binv_1", text: "Halfway, tests are running." }],
+      replies: [{ invocationId: "binv_1", text: "All green." }],
+      stepTypes: ["tool_call", "tool_call"],
+    })
+  })
+
+  test("keeps an update a post failed on, and posts it and the ones after it in order", async () => {
+    const { t3, session, runner } = setup()
+    session.interimResults.push({ ok: false, retryable: true, message: "Input update is still in progress" })
+    t3.script("run_1", [
+      {
+        status: "running",
+        items: [
+          item(1, "assistant_message", { text: "THREA_UPDATE: First." }),
+          item(2, "assistant_message", { text: "THREA_UPDATE: Second." }),
+          item(3, "command_execution", { status: "running", text: "$ bun test" }),
+        ],
+      },
+      { status: "running", items: [] },
+    ])
+    const delivered = runner.deliverTurn(turn())
+    await until(() => session.interims.length === 2)
+    t3.script("run_1", [{ status: "completed", items: [item(4, "assistant_message", { text: "Done." })] }])
+    await delivered
+    await session.settled()
+
+    expect(session.interims).toEqual([
+      { invocationId: "binv_1", text: "First." },
+      { invocationId: "binv_1", text: "Second." },
+    ])
+  })
+
   test("shows reasoning on sealed turns when sealedFullTrace is on", async () => {
     const { t3, session, runner } = setup({ sealedFullTrace: true })
     t3.script("run_1", [
@@ -1249,6 +1315,73 @@ describe("runs T3 starts by itself", () => {
     expect({ replies: session.replies, posts: session.posts }).toEqual({
       replies: [{ invocationId: "binv_1", text: "Started the agents." }],
       posts: [{ streamId: "stream_root", text: "The agents found two flaky tests.", clientMessageId: "t3run-run_2" }],
+    })
+  })
+
+  test("posts its THREA_UPDATE messages as they finish", async () => {
+    const { t3, session, runner } = setup()
+    await settledTurn(t3, session, runner)
+    await runner.watch()
+    t3.startInT3("thread_1")
+    t3.script("run_2", [
+      {
+        status: "running",
+        items: [
+          item(2, "assistant_message", { runId: "run_2", text: "THREA_UPDATE: Agents are back, reading results." }),
+          item(3, "command_execution", { runId: "run_2", status: "running", text: "$ cat report.md" }),
+        ],
+      },
+    ])
+    await runner.watch()
+    await until(() => session.posts.length > 0)
+    t3.script("run_2", [
+      { status: "completed", items: [item(4, "assistant_message", { runId: "run_2", text: "Two flaky tests." })] },
+    ])
+    await until(() => !runner.busy)
+
+    expect(session.posts).toEqual([
+      { streamId: "stream_root", text: "Agents are back, reading results.", clientMessageId: "t3upd-turn-item:2" },
+      { streamId: "stream_root", text: "Two flaky tests.", clientMessageId: "t3run-run_2" },
+    ])
+  })
+
+  test("an image steered into a run it follows takes the run over without posting its updates again", async () => {
+    const { t3, session, runner } = setup()
+    await settledTurn(t3, session, runner)
+    await runner.watch()
+    t3.startInT3("thread_1")
+    t3.script("run_2", [
+      {
+        status: "running",
+        items: [
+          item(2, "assistant_message", { runId: "run_2", text: "THREA_UPDATE: Agents are back." }),
+          item(3, "command_execution", { runId: "run_2", status: "running", text: "$ cat report.md" }),
+        ],
+      },
+    ])
+    await runner.watch()
+    await until(() => session.posts.length > 0)
+
+    const delivered = runner.deliverTurn(
+      turn({ invocationId: "binv_2", content: "Also this", attachments: [downloaded("cat.png", "image/png", "png")] })
+    )
+    await until(() => t3.calls.filter((call) => call.name === "t3_thread_wait").length === 4)
+    t3.script("run_2", [
+      {
+        status: "completed",
+        items: [
+          item(3, "command_execution", { runId: "run_2", text: "$ cat report.md" }),
+          item(4, "assistant_message", { runId: "run_2", text: "Two flaky tests, the cat too." }),
+        ],
+      },
+    ])
+    await delivered
+    await session.settled()
+
+    expect({ posts: session.posts, interims: session.interims, reply: session.replies.at(-1) }).toEqual({
+      posts: [{ streamId: "stream_root", text: "Agents are back.", clientMessageId: "t3upd-turn-item:2" }],
+      interims: [],
+      reply: { invocationId: "binv_2", text: "Two flaky tests, the cat too." },
     })
   })
 
