@@ -49,6 +49,7 @@ export interface T3ConnectorOptions {
 
 const IDLE_WIND_DOWN_AFTER_MS = 90 * 60_000
 const IDLE_TICK_MS = 60_000
+const WATCH_TICK_MS = 5_000
 
 export interface T3Connector {
   start(): Promise<void>
@@ -77,6 +78,8 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
       },
       recordSteps: (id, frames, statusText) => session.recordSteps(id, frames, statusText),
       reply: (id, text) => session.reply(id, text),
+      postToStream: (streamId, content, clientMessageId) =>
+        session.postToStream(streamId, { content, clientMessageId }),
       failTurn: (id, message) => session.failTurn(id, message),
       requestDecision: (input, opts) => session.requestDecision(input, opts),
     },
@@ -134,6 +137,10 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
     log,
   })
   const idleTimer = setInterval(() => void dormant.tick(), IDLE_TICK_MS)
+  // Runs T3 starts by itself still post while the session is wound down; an archived scratchpad takes none.
+  const watchTimer = setInterval(() => {
+    if (!dormant.archived) void runner.watch()
+  }, WATCH_TICK_MS)
 
   const createSession = (link: Partial<T3RemoteConfig> = {}) =>
     new RemoteSession({
@@ -167,6 +174,7 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
     },
     shutdown: async (shutdownOptions?: ShutdownOptions) => {
       clearInterval(idleTimer)
+      clearInterval(watchTimer)
       await dormant.stop()
       runner.shutdown()
       await session.shutdown(shutdownOptions)

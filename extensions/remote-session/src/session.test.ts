@@ -1568,6 +1568,32 @@ describe("RemoteSession permission route posts", () => {
     expect(calls.invocationMessage).toEqual([])
     expect(calls.sendMessage).toEqual([{ streamId: "stream_root", body: PROMPT }])
   })
+
+  test("uploads the files a stream post attaches when no turn of ours owns the stream", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport)
+    const file = join(mkdtempSync(join(tmpdir(), "stream-attach-")), "report.txt")
+    writeFileSync(file, "payload")
+    ;(client as unknown as { uploadAttachment: () => Promise<unknown> }).uploadAttachment = async () => ({
+      id: "att_1",
+      filename: "report.txt",
+      mimeType: "text/plain",
+      sizeBytes: 7,
+    })
+
+    await session.postToStream("stream_root", {
+      content: `Done.\nTHREA_ATTACH: ${file}`,
+      clientMessageId: "t3run-run_2",
+    })
+
+    expect(calls.sendMessage).toEqual([
+      {
+        streamId: "stream_root",
+        body: { content: expect.stringMatching(/^Done\.\n\n.*\(attachment:att_1\)/s), clientMessageId: "t3run-run_2" },
+      },
+    ])
+  })
 })
 
 describe("RemoteSession status snapshot", () => {

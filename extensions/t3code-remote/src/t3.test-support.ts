@@ -313,6 +313,8 @@ export function fakeT3() {
       pending.delete(requestId)
       if (request.startsRun) answerAsMessage(request.threadId)
     },
+    /** Start a run from T3 itself, as when background agents finish or a message is queued in T3's composer. */
+    startInT3: (threadId: string) => startRun(threadId),
     /** The environment's default for new threads, unset unless a test sets it. */
     defaultEnvMode: (mode: typeof envMode) => (envMode = mode),
   }
@@ -321,6 +323,7 @@ export function fakeT3() {
 export function fakeSession(rootStreamId = "stream_root") {
   const steps: Array<{ invocationId: string; frames: StepFrame[] }> = []
   const replies: Array<{ invocationId: string; text: string }> = []
+  const posts: Array<{ streamId: string; text: string; clientMessageId: string }> = []
   const fails: Array<{ invocationId: string; errorMessage: string }> = []
   const decisions: Array<{ input: DecisionRequestInput; signal?: AbortSignal }> = []
   const outcomes: Array<DecisionOutcome | DecisionAbandonedError> = []
@@ -337,6 +340,9 @@ export function fakeSession(rootStreamId = "stream_root") {
       replies.push({ invocationId, text })
       settle()
       return { ok: true, message: "" }
+    },
+    postToStream: async (streamId, text, clientMessageId) => {
+      posts.push({ streamId, text, clientMessageId })
     },
     failTurn: async (invocationId, errorMessage) => {
       fails.push({ invocationId, errorMessage })
@@ -363,6 +369,7 @@ export function fakeSession(rootStreamId = "stream_root") {
     session,
     steps,
     replies,
+    posts,
     fails,
     decisions,
     /** Answer the open card, or the next one asked. */

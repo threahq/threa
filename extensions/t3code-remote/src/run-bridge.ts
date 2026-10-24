@@ -12,6 +12,7 @@ import {
   DecisionAbandonedError,
   NO_RESPONSE_SENTINEL,
   StepBatcher,
+  isNoResponse,
   redactAttachDirectives,
   toolTraceContent,
 } from "@threahq/remote-session"
@@ -34,6 +35,8 @@ export interface BridgeSession {
   readonly rootStreamId?: string
   recordSteps(invocationId: string, frames: StepFrame[], statusText?: string): Promise<boolean>
   reply(invocationId: string, text: string): Promise<SendResult>
+  /** Posts outside any turn; the same `clientMessageId` posts once. */
+  postToStream(streamId: string, text: string, clientMessageId: string): Promise<void>
   failTurn(invocationId: string, errorMessage: string): Promise<boolean>
   requestDecision(input: DecisionRequestInput, opts?: { signal?: AbortSignal }): Promise<DecisionOutcome>
 }
@@ -96,6 +99,7 @@ const PREAMBLE = [
   "You are answering through Threa, a chat app: your final message is posted there as the reply and renders as GitHub-flavored markdown.",
   "To attach a file to the reply, put a line `THREA_ATTACH: /absolute/path/to/file` in it.",
   `To stay silent, reply exactly ${NO_RESPONSE_SENTINEL}.`,
+  "A run that starts without a message from Threa, such as one started when background work finishes, has its final message posted there too.",
 ].join(" ")
 
 /** T3 item ids run long; the step id only has to be stable per item. */
@@ -272,6 +276,15 @@ export class T3TurnRunner {
   // Turns inside admission: an interrupt that lands meanwhile stops the run once T3 returns its id.
   private readonly admitting = new Map<string, { abort: AbortController; streamId: string }>()
   readonly runs = new Map<string, OpenRun>()
+  // Per thread, the newest run a turn or relay already accounts for; a later one was started in T3 itself.
+  private readonly seenRuns = new Map<string, string>()
+  // Per thread, the run T3 started on its own that is being followed until it ends.
+  private readonly unprompted = new Map<string, { runId: string; abort: AbortController }>()
+  // Streams whose latest Threa message arrived in plaintext. A post outside a turn can't be sealed, so only these get one.
+  private readonly plaintextStreams = new Set<string>()
+  // Per thread, the last watch failure logged, so a T3 outage logs once rather than every poll.
+  private readonly watchErrors = new Map<string, string>()
+  private watching = false
 
   constructor(options: T3TurnRunnerOptions) {
     this.options = options
@@ -395,19 +408,118 @@ export class T3TurnRunner {
       if (!inScope(run.streamId)) continue
       run.abort.abort()
       this.runs.delete(invocationId)
+      this.seenRuns.set(run.threadId, run.runId)
       this.stopChain(run)
     }
     return true
   }
 
   get busy(): boolean {
-    return this.runs.size > 0 || this.admitting.size > 0
+    return this.runs.size > 0 || this.admitting.size > 0 || this.unprompted.size > 0
   }
 
   shutdown(): void {
     for (const pending of this.admitting.values()) pending.abort.abort()
     for (const run of this.runs.values()) run.abort.abort()
+    for (const relay of this.unprompted.values()) relay.abort.abort()
     this.runs.clear()
+    this.unprompted.clear()
+  }
+
+  /**
+   * Finds runs T3 started without a Threa message, as when background agents finish or a message is queued in T3
+   * itself, and posts each one's reply to its stream once it ends. A thread's first look only notes its latest run,
+   * so a run from before the connector started is never posted.
+   */
+  async watch(): Promise<void> {
+    if (this.watching) return
+    this.watching = true
+    try {
+      for (const [streamId, threadId] of Object.entries(this.state.threads)) {
+        if (!this.plaintextStreams.has(streamId) || this.unprompted.has(threadId) || this.hasOpenTurns(streamId))
+          continue
+        const seen = this.seenRuns.get(threadId)
+        let latest: string | undefined
+        try {
+          latest = await this.latestRunId(threadId)
+          this.watchErrors.delete(threadId)
+        } catch (error) {
+          if (this.forgetIfGone(error, streamId, threadId)) continue
+          const text = errorText(error)
+          if (this.watchErrors.get(threadId) !== text) this.log(`watching thread ${threadId} failed: ${text}`)
+          this.watchErrors.set(threadId, text)
+          continue
+        }
+        // A turn that opened or ended during the read owns what it saw.
+        if (!latest || this.seenRuns.get(threadId) !== seen) continue
+        if (this.unprompted.has(threadId) || this.hasOpenTurns(streamId)) continue
+        this.seenRuns.set(threadId, latest)
+        if (seen !== undefined && seen !== latest) this.relay(streamId, threadId, latest)
+      }
+    } finally {
+      this.watching = false
+    }
+  }
+
+  private relay(streamId: string, threadId: string, runId: string): void {
+    const relay = { runId, abort: new AbortController() }
+    this.unprompted.set(threadId, relay)
+    this.log(`run ${runId} started in T3 Code; posting its reply to ${streamId}`)
+    void this.relayRun(streamId, threadId, relay)
+      .catch((error) => this.log(`run ${relay.runId} relay failed: ${errorText(error)}`))
+      .finally(() => {
+        if (this.unprompted.get(threadId) === relay) this.unprompted.delete(threadId)
+      })
+  }
+
+  private async relayRun(
+    streamId: string,
+    threadId: string,
+    relay: { runId: string; abort: AbortController }
+  ): Promise<void> {
+    const { signal } = relay.abort
+    const trace = new RunTrace(relay.runId, this.options.traceMode)
+    let status: string | undefined
+    let failures = 0
+    while (!signal.aborted && !status) {
+      try {
+        const waited = await this.client.call("t3_thread_wait", {
+          threadId,
+          runId: relay.runId,
+          timeoutMs: WAIT_TIMEOUT_MS,
+        })
+        failures = 0
+        if (waited.runId && waited.runId !== relay.runId) {
+          // A turn's images restart the run as one the turn follows and replies with.
+          if (this.turnOwns(threadId, waited.runId)) return
+          if (this.seenRuns.get(threadId) === relay.runId) this.seenRuns.set(threadId, waited.runId)
+          relay.runId = waited.runId
+          trace.runIds.add(waited.runId)
+        } else if (TERMINAL_RUN_STATUSES.has(waited.status)) {
+          status = waited.status
+        }
+      } catch (error) {
+        if (signal.aborted) return
+        failures += 1
+        if (error instanceof T3ToolError) this.unlessGone(error, streamId, threadId)
+        if (error instanceof T3AuthError || failures >= MAX_CONSECUTIVE_POLL_FAILURES) throw error
+        await this.sleep(WAIT_TIMEOUT_MS)
+      }
+    }
+    const read: Pick<OpenRun, "threadId" | "trace" | "cursor"> = { threadId, trace, cursor: this.cursors.get(threadId) }
+    await this.drain(read, () => {})
+    this.advanceCursor(threadId, read.cursor)
+    // A turn that sent its images into this run follows it and replies with it.
+    if (signal.aborted || !status) return
+    if (status === "completed") {
+      const text = trace.held ? await this.fullText(threadId, trace.held) : ""
+      if (!text.trim() || isNoResponse(text)) return
+      await this.session.postToStream(streamId, text, `t3run-${relay.runId}`)
+    } else if (status === "failed") {
+      await this.session.postToStream(streamId, trace.lastError ?? "The T3 Code run failed.", `t3run-${relay.runId}`)
+    } else {
+      this.log(`run ${relay.runId} started in T3 Code ended ${status}`)
+    }
   }
 
   async deliverTurn(turn: DeliveredTurn): Promise<void> {
@@ -415,22 +527,36 @@ export class T3TurnRunner {
     this.admitting.set(turn.invocationId, { abort: admission, streamId: turn.streamId })
     let started: { threadId: string; runId: string }
     let stale: string[] = []
+    let latest: string | undefined
+    if (turn.sealed) this.plaintextStreams.delete(turn.streamId)
+    else this.plaintextStreams.add(turn.streamId)
     try {
       // A question an earlier turn left open belongs to that turn, not this one.
       const existing = this.threadFor(turn.streamId)
       if (existing) {
-        const pending = await this.client
-          .call("t3_pending_request_list", { threadId: existing })
-          .catch((error) => this.unlessGone(error, turn.streamId, existing))
+        const [pending, latestRun] = await Promise.all([
+          this.client.call("t3_pending_request_list", { threadId: existing }),
+          this.latestRunId(existing),
+        ]).catch((error) => this.unlessGone(error, turn.streamId, existing))
         stale = pending.requestIds
+        latest = latestRun
       }
       started = await this.admit(turn)
     } finally {
       this.admitting.delete(turn.invocationId)
     }
     if (admission.signal.aborted) {
+      this.seenRuns.set(started.threadId, started.runId)
       this.stopRun(started.threadId, started.runId)
       return
+    }
+    const relay = this.unprompted.get(started.threadId)
+    if (relay?.runId === started.runId) relay.abort.abort()
+    // A run T3 started by itself since the last look, which this turn's message queued behind.
+    const seen = this.seenRuns.get(started.threadId)
+    if (latest && seen !== undefined && latest !== seen && latest !== started.runId && !relay && !turn.sealed) {
+      this.seenRuns.set(started.threadId, latest)
+      this.relay(turn.streamId, started.threadId, latest)
     }
     const mode: RunTraceMode = turn.sealed && this.options.sealedFullTrace ? "full" : this.options.traceMode
     const run: OpenRun = {
@@ -558,9 +684,18 @@ export class T3TurnRunner {
 
   /** A thread deleted in T3 is forgotten, so the stream's next message launches a new one instead of failing forever. */
   private unlessGone(error: unknown, streamId: string, threadId: string): never {
-    if (!(error instanceof T3ToolError) || error.code !== "thread_not_found") throw error
-    if (this.threadFor(streamId) === threadId) this.forgetThread(streamId)
+    if (!this.forgetIfGone(error, streamId, threadId)) throw error
     throw new Error(`T3 Code thread \`${threadId}\` is gone; the next message starts a new one.`)
+  }
+
+  private forgetIfGone(error: unknown, streamId: string, threadId: string): boolean {
+    if (!(error instanceof T3ToolError) || error.code !== "thread_not_found") return false
+    if (this.threadFor(streamId) === threadId) this.forgetThread(streamId)
+    return true
+  }
+
+  private turnOwns(threadId: string, runId: string): boolean {
+    return [...this.runs.values()].some((run) => run.threadId === threadId && run.trace.runIds.has(runId))
   }
 
   private stopRun(threadId: string, runId: string): void {
@@ -596,7 +731,9 @@ export class T3TurnRunner {
             if (run.runId === waitedOn) adopt(run, waited.runId)
             else run.trace.runIds.add(waited.runId)
           }
-          await this.drain(run, batcher)
+          await this.drain(run, (frame) =>
+            frame.phase === "started" ? void batcher.addNow(frame) : batcher.add(frame)
+          )
           await this.withdrawAnsweredCard(run)
           if (trace.questions.size > 0 && !run.asking) this.askQuestions(invocationId, run)
           failures = 0
@@ -625,7 +762,6 @@ export class T3TurnRunner {
         } catch (error) {
           if (signal.aborted) break
           failures += 1
-          // T3 answered and refused, so asking again gets the same answer.
           if (error instanceof T3ToolError) this.unlessGone(error, run.streamId, run.threadId)
           if (error instanceof T3AuthError) throw error
           if (failures >= MAX_CONSECUTIVE_POLL_FAILURES) throw error
@@ -638,10 +774,9 @@ export class T3TurnRunner {
       // Released before any await, so a steer can't join a run already judged over, and before the
       // turn closes, so a command right after the reply sees no open run.
       if (this.runs.get(invocationId) === run) this.runs.delete(invocationId)
+      this.seenRuns.set(run.threadId, run.runId)
       await batcher.flush()
-      if (run.cursor !== undefined && run.cursor > (this.cursors.get(run.threadId) ?? -1)) {
-        this.cursors.set(run.threadId, run.cursor)
-      }
+      this.advanceCursor(run.threadId, run.cursor)
     }
     if (signal.aborted) return
     if (run.unanswered) {
@@ -777,7 +912,10 @@ export class T3TurnRunner {
   }
 
   /** Read the thread's activity past the run's cursor; the cursor stops at the run's first unsettled item. */
-  private async drain(run: OpenRun, batcher: StepBatcher): Promise<void> {
+  private async drain(
+    run: Pick<OpenRun, "threadId" | "trace" | "cursor">,
+    emit: (frame: StepFrame) => void
+  ): Promise<void> {
     const { trace } = run
     let after = run.cursor
     let advancing = true
@@ -791,16 +929,17 @@ export class T3TurnRunner {
       })
       this.noteModel(page.thread)
       for (const item of page.items) {
-        for (const frame of trace.observe(item)) {
-          if (frame.phase === "started") void batcher.addNow(frame)
-          else batcher.add(frame)
-        }
+        for (const frame of trace.observe(item)) emit(frame)
         if (trace.owns(item) && OPEN_ITEM_STATUSES.has(item.status ?? "")) advancing = false
         if (advancing) run.cursor = item.position
       }
       if (!page.hasMore || page.nextPosition === null) return
       after = page.nextPosition
     }
+  }
+
+  private advanceCursor(threadId: string, cursor: number | undefined): void {
+    if (cursor !== undefined && cursor > (this.cursors.get(threadId) ?? -1)) this.cursors.set(threadId, cursor)
   }
 
   private async settle(invocationId: string, run: OpenRun, status: string): Promise<void> {
