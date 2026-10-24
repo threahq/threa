@@ -1,0 +1,27 @@
+name: PostHog Desk Tick
+
+# Posts the weekly check-in into the PostHog desk scratchpad (.agents/skills/posthog-desk).
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  tick:
+    name: Post the weekly check-in
+    runs-on: ubuntu-latest
+    env:
+      HOOK_URL: ${{ secrets.THREA_POSTHOG_DESK_HOOK_URL }}
+    steps:
+      - name: Post to the desk hook
+        run: |
+          if [ -z "$HOOK_URL" ]; then
+            echo "THREA_POSTHOG_DESK_HOOK_URL is not set; nothing posted" >&2
+            exit 0
+          fi
+          week="$(date -u +%G-W%V)"
+          curl --fail --silent --show-error --retry 3 --retry-delay 5 --max-time 30 -X POST "$HOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{\"content\":\"Weekly PostHog check-in for $week: triage the last 5 days.\",\"metadata\":{\"posthog.event\":\"tick\",\"posthog.tick\":\"$week\"}}"
