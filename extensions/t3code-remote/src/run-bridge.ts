@@ -312,6 +312,8 @@ export class T3TurnRunner {
   // Per thread, the last watch failure logged, so a T3 outage logs once rather than every poll.
   private readonly watchErrors = new Map<string, string>()
   private watching = false
+  // Counts shutdowns, so a look that read the thread before one posts nothing after it.
+  private generation = 0
 
   constructor(options: T3TurnRunnerOptions) {
     this.options = options
@@ -408,9 +410,10 @@ export class T3TurnRunner {
             attachments: images,
           })
         : await this.sendText(run.threadId, text, edit)
-      // A /stop that landed during the send has already stopped the chain it knew about.
+      // A /stop that landed during the send has already stopped the chain it knew about. T3 folds a steer into
+      // whichever run is going, which can be one ahead of this turn's that a relay already posts.
       if (run.abort.signal.aborted) this.stopRun(run.threadId, sent.runId)
-      else if (sent.runId !== run.runId) adopt(run, sent.runId)
+      else if (sent.runId !== run.runId && !this.accounted.get(run.threadId)?.has(sent.runId)) adopt(run, sent.runId)
       return true
     } catch (error) {
       if (error instanceof T3ToolError && error.code === "thread_not_sendable") return false
@@ -451,6 +454,7 @@ export class T3TurnRunner {
   }
 
   shutdown(): void {
+    this.generation += 1
     for (const pending of this.admitting.values()) pending.abort.abort()
     for (const run of this.runs.values()) run.abort.abort()
     for (const relay of this.unprompted.values()) relay.abort.abort()
@@ -465,6 +469,7 @@ export class T3TurnRunner {
   async watch(): Promise<void> {
     if (this.watching) return
     this.watching = true
+    const generation = this.generation
     try {
       for (const [streamId, threadId] of Object.entries(this.state.threads)) {
         if (!this.plaintextStreams.has(streamId) || this.unprompted.has(threadId) || this.hasOpenTurns(streamId))
@@ -480,6 +485,7 @@ export class T3TurnRunner {
           this.watchErrors.set(threadId, text)
           continue
         }
+        if (this.generation !== generation) return
         // A turn that opened during the read owns what it saw, and a /clear during it let the thread go.
         if (this.hasOpenTurns(streamId) || this.threadFor(streamId) !== threadId) continue
         this.relayUnaccounted(streamId, threadId, runs)
@@ -693,7 +699,7 @@ export class T3TurnRunner {
     if (takenOver) {
       takenOver.abort.abort()
       this.unprompted.delete(threadId)
-      this.relay(turn.streamId, threadId, takenOver.queue, takenOver.from)
+      if (!turn.sealed) this.relay(turn.streamId, threadId, takenOver.queue, takenOver.from)
     }
     // Runs T3 started by itself since the last look, which this turn's message queued behind. A post outside a turn
     // can't be sealed, so on a sealed stream they are only accounted for.

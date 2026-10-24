@@ -1774,6 +1774,53 @@ describe("runs T3 starts by itself", () => {
     ])
   })
 
+  test("archiving while a look reads the thread posts none of its runs", async () => {
+    const { t3, session, runner } = setup()
+    await settledTurn(t3, session, runner)
+    t3.startInT3("thread_1")
+    t3.script("run_2", [
+      { status: "completed", items: [item(2, "assistant_message", { runId: "run_2", text: "Agents done." })] },
+    ])
+    const release = t3.holdNext("t3_thread_read")
+    const watching = runner.watch()
+    await idle()
+    runner.shutdown()
+    release()
+    await watching
+    await until(() => !runner.busy)
+
+    expect(session.posts).toEqual([])
+  })
+
+  test("a steer T3 folds into a relayed run leaves the turn on its own run", async () => {
+    const { t3, session, runner } = setup()
+    await settledTurn(t3, session, runner)
+    t3.startInT3("thread_1")
+    t3.script("run_2", [
+      { status: "running", items: [item(2, "command_execution", { runId: "run_2", status: "running" })] },
+    ])
+    await runner.watch()
+    await runner.deliverTurn(turn({ invocationId: "binv_2", content: "Now the docs" }))
+    expect(await runner.steer("Also mention the cat", "stream_root", [])).toBe(true)
+    // run_3 waits its turn behind run_2, as a T3 wait that times out on a queued run says.
+    t3.script("run_3", [{ status: "running" }])
+    await idle()
+    t3.script("run_2", [
+      { status: "completed", items: [item(3, "assistant_message", { runId: "run_2", text: "Leak found, cat too." })] },
+    ])
+    await until(() => session.posts.length > 0)
+    t3.script("run_3", [
+      { status: "completed", items: [item(4, "assistant_message", { runId: "run_3", text: "Docs updated." })] },
+    ])
+    await session.settled()
+    await until(() => !runner.busy)
+
+    expect({ posts: session.posts, reply: session.replies.at(-1) }).toEqual({
+      posts: [{ streamId: "stream_root", text: "Leak found, cat too.", clientMessageId: "t3run-run_2" }],
+      reply: { invocationId: "binv_2", text: "Docs updated." },
+    })
+  })
+
   test("never posts the runs a forked thread inherits from its source", async () => {
     const { t3, session, runner } = setup()
     await settledTurn(t3, session, runner)
