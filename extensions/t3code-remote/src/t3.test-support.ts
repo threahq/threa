@@ -50,6 +50,7 @@ export function item(
     position,
     itemId: `turn-item:${position}`,
     runId: "run_1",
+    visibility: "local",
     type,
     status: "completed",
     title: null,
@@ -69,7 +70,7 @@ export function fakeT3() {
   const scripts = new Map<string, ScriptStep[]>()
   const failures: Partial<Record<T3ToolName, Error[]>> = {}
   const holds: Partial<Record<T3ToolName, Promise<void>[]>> = {}
-  const wakers = new Map<string, () => void>()
+  const wakers = new Map<string, Array<() => void>>()
   const continuations = new Map<string, string>()
   const uploads: Array<{ relativeUrl: string; bytes: string }> = []
   let threads = 0
@@ -80,6 +81,7 @@ export function fakeT3() {
   const models = new Map<string, ModelSelection>()
   const pending = new Map<string, { threadId: string; questions: PendingQuestion[]; startsRun: boolean }>()
   const latestRuns = new Map<string, string>()
+  const threadRuns = new Map<string, string[]>()
   // Like T3, a wait on a run that already ended returns at once with how it ended.
   const ended = new Map<string, string>()
   // A run waiting on the user has finished its provider turn, so it takes no steer.
@@ -93,13 +95,13 @@ export function fakeT3() {
   const startRun = (threadId: string) => {
     const runId = `run_${++runs}`
     latestRuns.set(threadId, runId)
+    threadRuns.set(threadId, [...(threadRuns.get(threadId) ?? []), runId])
     return runId
   }
   const notSendable = () => new T3ToolError("t3_thread_send", "thread_not_sendable", "not sendable")
-  const activeRun = (threadId: string) => {
-    const runId = latestRuns.get(threadId)
-    return runId !== undefined && !ended.has(runId) && !waiting.has(runId) ? runId : undefined
-  }
+  // A queued run starts once the runs ahead of it end, so the running run is the earliest one still going.
+  const activeRun = (threadId: string) =>
+    threadRuns.get(threadId)?.find((runId) => !ended.has(runId) && !waiting.has(runId))
   // Like T3, only a running run takes a steer; with none, the send is refused.
   const steerRun = (threadId: string) => {
     if (steerDelivery !== "steered") return startRun(threadId)
@@ -124,13 +126,21 @@ export function fakeT3() {
     items.set(threadId, current)
   }
 
-  async function nextStep(runId: string): Promise<ScriptStep> {
+  // Takes a step and records what it did at once, so every other waiter on the run sees it end.
+  async function nextStep(threadId: string, runId: string): Promise<{ runId: string; status: string }> {
     for (;;) {
       const step = scripts.get(runId)?.shift()
-      if (step) return step
+      if (step) {
+        apply(threadId, step)
+        const stepRunId = step.runId ?? runId
+        if (TERMINAL_RUN_STATUSES.has(step.status)) ended.set(stepRunId, step.status)
+        if (step.status === "waiting") waiting.add(stepRunId)
+        else waiting.delete(stepRunId)
+        return { runId: stepRunId, status: step.status }
+      }
       const status = ended.get(runId)
-      if (status) return { status }
-      await new Promise<void>((resolve) => wakers.set(runId, resolve))
+      if (status) return { runId, status }
+      await new Promise<void>((resolve) => wakers.set(runId, [...(wakers.get(runId) ?? []), resolve]))
     }
   }
 
@@ -152,15 +162,10 @@ export function fakeT3() {
       return { attachmentId: `t3att_${prepared}`, relativeUrl: `/api/attachments/upload/tok_${prepared}` }
     },
     t3_thread_wait: async (args) => {
-      const step = await nextStep(args.runId)
-      apply(args.threadId, step)
-      const runId = step.runId ?? args.runId
-      if (TERMINAL_RUN_STATUSES.has(step.status)) ended.set(runId, step.status)
-      if (step.status === "waiting") waiting.add(runId)
-      else waiting.delete(runId)
+      const { runId, status } = await nextStep(args.threadId, args.runId)
       return {
         runId,
-        status: step.status as T3Tools["t3_thread_wait"]["result"]["status"],
+        status: status as T3Tools["t3_thread_wait"]["result"]["status"],
         timedOut: false,
       }
     },
@@ -208,6 +213,12 @@ export function fakeT3() {
       const targetThreadId = `thread_${++threads}`
       const model = models.get(args.threadId)
       if (model) models.set(targetThreadId, model)
+      // Like T3, a fork reads its source's items as inherited, with the source's run ids.
+      const inherited = (items.get(args.threadId) ?? []).map((source) => ({
+        ...source,
+        visibility: "inherited" as const,
+      }))
+      items.set(targetThreadId, inherited)
       return { targetThreadId }
     },
     orchestrator_capabilities: () => ({
@@ -285,7 +296,7 @@ export function fakeT3() {
     callsOf: (name: T3ToolName) => calls.filter((call) => call.name === name).map((call) => call.args),
     script: (runId: string, steps: ScriptStep[]) => {
       scripts.set(runId, [...(scripts.get(runId) ?? []), ...steps])
-      wakers.get(runId)?.()
+      for (const wake of wakers.get(runId) ?? []) wake()
       wakers.delete(runId)
     },
     failNext: (name: T3ToolName, error: Error) => (failures[name] ??= []).push(error),
@@ -315,6 +326,8 @@ export function fakeT3() {
     },
     /** Start a run from T3 itself, as when background agents finish or a message is queued in T3's composer. */
     startInT3: (threadId: string) => startRun(threadId),
+    /** Items a run wrote that no wait has seen yet. */
+    addItems: (threadId: string, added: ThreadItem[]) => apply(threadId, { status: "running", items: added }),
     /** The environment's default for new threads, unset unless a test sets it. */
     defaultEnvMode: (mode: typeof envMode) => (envMode = mode),
   }
@@ -326,6 +339,7 @@ export function fakeSession(rootStreamId = "stream_root") {
   const posts: Array<{ streamId: string; text: string; clientMessageId: string }> = []
   const interims: Array<{ invocationId: string; text: string }> = []
   const interimResults: Array<Awaited<ReturnType<BridgeSession["sendInterim"]>>> = []
+  const postFailures: Error[] = []
   const fails: Array<{ invocationId: string; errorMessage: string }> = []
   const decisions: Array<{ input: DecisionRequestInput; signal?: AbortSignal }> = []
   const outcomes: Array<DecisionOutcome | DecisionAbandonedError> = []
@@ -349,6 +363,8 @@ export function fakeSession(rootStreamId = "stream_root") {
       return result
     },
     postToStream: async (streamId, text, clientMessageId) => {
+      const failure = postFailures.shift()
+      if (failure) throw failure
       posts.push({ streamId, text, clientMessageId })
     },
     failTurn: async (invocationId, errorMessage) => {
@@ -380,6 +396,8 @@ export function fakeSession(rootStreamId = "stream_root") {
     interims,
     /** How the next interim posts answer; unset, they post. */
     interimResults,
+    /** What the next posts to a stream throw; unset, they post. */
+    postFailures,
     fails,
     decisions,
     /** Answer the open card, or the next one asked. */
