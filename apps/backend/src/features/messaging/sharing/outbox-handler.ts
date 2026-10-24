@@ -46,6 +46,9 @@ function extractMessageIdsForInvalidation(event: OutboxEvent): string[] {
   if (isOutboxEventType(event, "messages:moved")) {
     return event.payload.movedMessageIds
   }
+  if (isOutboxEventType(event, "message:shares_granted")) {
+    return event.payload.sourceMessageIds
+  }
   return []
 }
 
@@ -75,7 +78,12 @@ export async function invalidatePointersForEvent(event: OutboxEvent, db: Pool, i
   // so no pointer rows exist. Short-circuit before the share lookup.
   if (await E2eStreamsRepository.isE2eStream(db, workspaceId, streamId)) return
 
-  const shares = await SharedMessageRepository.listBySourceMessageIds(db, workspaceId, sourceMessageIds)
+  const sourceShares = await SharedMessageRepository.listBySourceMessageIds(db, workspaceId, sourceMessageIds)
+  // A grant changes only the granting message's room; the sources themselves
+  // are unchanged everywhere else they're shared.
+  const shares = isOutboxEventType(event, "message:shares_granted")
+    ? sourceShares.filter((share) => share.shareMessageId === event.payload.messageId)
+    : sourceShares
   if (shares.length === 0) return
 
   // Group affected target streams by the source whose pointer they host so

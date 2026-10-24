@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test"
-import { ShareErrorCodes, type ScheduledMessageView } from "@threahq/types"
+import { ShareErrorCodes, type ScheduledMessageView, type UnsharedReferencesResponse } from "@threahq/types"
 import { TestClient, createChannel, createWorkspace, joinWorkspace, loginAs, sendMessage } from "../client"
 
 type EventsResponse = { sharedMessages: Record<string, { state: string }> }
@@ -91,7 +91,7 @@ describe("share privacy on a scheduled send", () => {
     })
   })
 
-  test("a source that turns private after scheduling asks again on edit and sends unrecorded, so readers see it as private", async () => {
+  test("a source that turns private after scheduling asks again on edit, sends unrecorded, and the author can share it afterwards", async () => {
     const laterPrivateStreamId = (await createChannel(alice, workspaceId, "share-scheduled-later-private", "public")).id
     const laterPrivate = {
       messageId: (await sendMessage(alice, workspaceId, laterPrivateStreamId, "public for now")).id,
@@ -108,17 +108,42 @@ describe("share privacy on a scheduled send", () => {
       `/api/workspaces/${workspaceId}/scheduled/${scheduled.data.scheduled.id}/send-now`
     )
     const seen = await bob.get<EventsResponse>(`/api/workspaces/${workspaceId}/streams/${targetStreamId}/events`)
+    const unshared = await alice.get<UnsharedReferencesResponse>(`/api/workspaces/${workspaceId}/unshared-references`)
+    const sentMessageId = sent.data.scheduled.sentMessageId!
+    const shareByOther = await bob.post(`/api/workspaces/${workspaceId}/messages/${sentMessageId}/share-references`)
+    const shared = await alice.post(`/api/workspaces/${workspaceId}/messages/${sentMessageId}/share-references`)
+    const seenAfter = await bob.get<EventsResponse>(`/api/workspaces/${workspaceId}/streams/${targetStreamId}/events`)
+    const unsharedAfter = await alice.get<UnsharedReferencesResponse>(
+      `/api/workspaces/${workspaceId}/unshared-references`
+    )
 
     expect({
       reaskedCode: reasked.data.code,
       sentState: sent.data.scheduled.status,
       consented: seen.data.sharedMessages[consented.messageId]?.state,
       laterPrivate: seen.data.sharedMessages[laterPrivate.messageId]?.state,
+      unshared: unshared.data.references,
+      shareByOtherStatus: shareByOther.status,
+      sharedStatus: shared.status,
+      laterPrivateAfterShare: seenAfter.data.sharedMessages[laterPrivate.messageId]?.state,
+      unsharedAfter: unsharedAfter.data.references,
     }).toEqual({
       reaskedCode: ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED,
       sentState: "sent",
       consented: "ok",
       laterPrivate: "private",
+      unshared: [
+        {
+          messageId: sentMessageId,
+          streamId: targetStreamId,
+          sourceMessageId: laterPrivate.messageId,
+          flavor: "pointer",
+        },
+      ],
+      shareByOtherStatus: 403,
+      sharedStatus: 204,
+      laterPrivateAfterShare: "ok",
+      unsharedAfter: [],
     })
   })
 })

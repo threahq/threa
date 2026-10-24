@@ -673,6 +673,8 @@ export type {
   ReferenceAudienceTarget,
   ReferenceAudience,
   ReferenceAudienceResponse,
+  UnsharedReference,
+  UnsharedReferencesResponse,
   MovedMessagePreview,
   MessagesMovedEventPayload,
   MovedFromProvenance,

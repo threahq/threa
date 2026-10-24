@@ -1,11 +1,10 @@
 import type { Querier } from "../../../db"
 import { HttpError } from "../../../lib/errors"
-import { logger } from "../../../lib/logger"
 import { sharedMessageId } from "../../../lib/id"
 import { type JSONContent, ShareFlavors, type ShareFlavor, ShareErrorCodes } from "@threahq/types"
 import { MessageRepository } from "../repository"
 import type { CanReadStream, FindStreamForSharing } from "./access-check"
-import { SharedMessageRepository } from "./repository"
+import { SharedMessageRepository, UnsharedReferenceRepository, type UnsharedReference } from "./repository"
 import { E2eStreamsRepository } from "../../e2e-streams"
 import { findReadersWithoutAccess } from "../../streams"
 
@@ -170,6 +169,7 @@ export const ShareService = {
       params.workspaceId,
       params.shareMessageId
     )
+    await UnsharedReferenceRepository.deleteByShareMessageId(params.client, params.workspaceId, params.shareMessageId)
 
     if (references.length === 0) return
 
@@ -272,16 +272,17 @@ export const ShareService = {
         recordedSourceMessageIds.has(ref.sourceMessageId) ||
         params.consentedShareSourceIds?.has(ref.sourceMessageId)
       if (exposes && !consented) {
-        // A scheduled fire has no author to ask: send without the grant.
+        // A scheduled fire has no author to ask: send without the grant and
+        // keep the reference so the author can share it afterwards.
         if (!params.consentedShareSourceIds) throw privacyConfirmationRequired()
-        logger.info(
-          {
-            workspaceId: params.workspaceId,
-            shareMessageId: params.shareMessageId,
-            sourceMessageId: ref.sourceMessageId,
-          },
-          "scheduled share sent unrecorded: source exposes readers the author did not consent to"
-        )
+        await UnsharedReferenceRepository.insert(params.client, {
+          workspaceId: params.workspaceId,
+          shareMessageId: params.shareMessageId,
+          sourceMessageId: ref.sourceMessageId,
+          sourceStreamId: ref.sourceStreamId,
+          flavor: ref.flavor,
+          createdBy: params.sharerId,
+        })
         continue
       }
 
@@ -296,5 +297,39 @@ export const ShareService = {
         createdBy: params.sharerId,
       })
     }
+  },
+
+  /**
+   * The user's sent references that went out without a grant and still hide
+   * their source from readers of the message's current stream. A reference
+   * whose source has since opened up to those readers is dropped, not shown.
+   */
+  async listUnsharedReferences(
+    db: Querier,
+    workspaceId: string,
+    userId: string
+  ): Promise<(UnsharedReference & { streamId: string })[]> {
+    const rows = await UnsharedReferenceRepository.listByCreator(db, workspaceId, userId)
+    if (rows.length === 0) return []
+    const messages = await MessageRepository.findByIds(db, workspaceId, [
+      ...new Set(rows.map((row) => row.shareMessageId)),
+    ])
+    const rowsByStream = new Map<string, (UnsharedReference & { streamId: string })[]>()
+    for (const row of rows) {
+      const message = messages.get(row.shareMessageId)
+      if (!message || message.deletedAt) continue
+      const inStream = rowsByStream.get(message.streamId) ?? []
+      inStream.push({ ...row, streamId: message.streamId })
+      rowsByStream.set(message.streamId, inStream)
+    }
+    const exposing = await Promise.all(
+      [...rowsByStream].map(async ([streamId, inStream]) => {
+        const readers = await findReadersWithoutAccess(db, workspaceId, { streamId }, [
+          ...new Set(inStream.map((row) => row.sourceStreamId)),
+        ])
+        return inStream.filter((row) => (readers.get(row.sourceStreamId)?.count ?? 0) > 0)
+      })
+    )
+    return exposing.flat()
   },
 }

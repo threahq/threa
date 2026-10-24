@@ -112,6 +112,30 @@ describe("invalidatePointersForEvent", () => {
     expect(emits).toEqual([])
   })
 
+  it("invalidates only the granting message's room when an author shares unshared references", async () => {
+    stubShares([
+      { sourceMessageId: "msg_a", targetStreamId: "stream_t1" },
+      { sourceMessageId: "msg_a", targetStreamId: "stream_t2" },
+    ])
+    const { io, emits } = fakeIo()
+    await invalidatePointersForEvent(
+      {
+        eventType: "message:shares_granted",
+        payload: {
+          workspaceId: "ws_1",
+          streamId: "stream_t2",
+          messageId: "msg_share_stream_t2",
+          sourceMessageIds: ["msg_a"],
+        },
+      } as any,
+      {} as any,
+      io
+    )
+    expect(emits.map((e) => ({ room: e.room, event: e.event }))).toEqual([
+      { room: "ws:ws_1:stream:stream_t2", event: POINTER_INVALIDATED_EVENT },
+    ])
+  })
+
   it("emits pointer:invalidated once per distinct target stream when pointers exist", async () => {
     stubShares([
       { sourceMessageId: "msg_a", targetStreamId: "stream_t1" },

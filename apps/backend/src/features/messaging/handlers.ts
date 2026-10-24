@@ -25,7 +25,12 @@ import { eventId, commandId as generateCommandId } from "../../lib/id"
 import { toShortcode, normalizeMessage, toEmoji } from "../emoji"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threahq/prosemirror"
 import { deriveContentMarkdown } from "./content"
-import type { JSONContent, ReferenceAudienceInput, ReferenceAudienceResponse } from "@threahq/types"
+import type {
+  JSONContent,
+  ReferenceAudienceInput,
+  ReferenceAudienceResponse,
+  UnsharedReferencesResponse,
+} from "@threahq/types"
 import { messageMetadataSchema } from "./metadata-schema"
 import { e2eEnvelopeSchema, MAX_E2E_CIPHERTEXT_BASE64_BYTES } from "./e2e-schema"
 import type { EnqueuedMessageService } from "./enqueued-message-service"
@@ -826,6 +831,29 @@ export function createMessageHandlers({
 
       const versions = await eventService.getMessageVersions(workspaceId, messageId)
       res.json({ versions: versions.map(serializeBigInt) })
+    },
+
+    async listUnsharedReferences(req: Request, res: Response) {
+      const references = await eventService.listUnsharedReferences(req.workspaceId!, req.user!.id)
+      res.json({ references } satisfies UnsharedReferencesResponse)
+    },
+
+    async shareReferences(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { messageId } = req.params
+
+      const existing = await eventService.getMessageById(workspaceId, messageId)
+      if (!existing || existing.deletedAt) {
+        throw new MessageNotFoundError()
+      }
+      const accessibleStream = await streamService.tryAccess(existing.streamId, workspaceId, userId)
+      if (!accessibleStream) {
+        throw new MessageNotFoundError()
+      }
+
+      await eventService.shareUnsharedReferences({ workspaceId, messageId, userId })
+      res.status(204).send()
     },
   }
 }
