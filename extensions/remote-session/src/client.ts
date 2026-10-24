@@ -326,10 +326,15 @@ export class ThreaClient {
 
   /** `archivedAt` for a stream, or null while it is live. Requires `streams:read`. */
   async getStreamArchivedAt(streamId: string): Promise<string | null> {
-    const body = await this.request<{ data: { archivedAt?: string | null } }>(
+    return (await this.getStream(streamId)).archivedAt
+  }
+
+  /** Requires `streams:read`. */
+  async getStream(streamId: string): Promise<{ archivedAt: string | null; e2eEnabled: boolean }> {
+    const body = await this.request<{ data: { archivedAt?: string | null; e2eEnabled?: boolean } }>(
       this.workspacePath(`/streams/${streamId}`)
     )
-    return body.data?.archivedAt ?? null
+    return { archivedAt: body.data?.archivedAt ?? null, e2eEnabled: body.data?.e2eEnabled === true }
   }
 
   /** Short-lived signed download URL for an attachment. Requires `attachments:read`. */

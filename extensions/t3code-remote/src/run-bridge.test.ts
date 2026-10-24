@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, truncateSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { DownloadedAttachment } from "@threahq/remote-session"
+import { ThreaApiError, type DownloadedAttachment } from "@threahq/remote-session"
 import { T3AuthError } from "./auth"
 import { RunTrace, T3TurnRunner, type RunTraceMode, type ThreadState } from "./run-bridge"
 import { T3ToolError, type PendingQuestion } from "./t3-client"
@@ -374,8 +374,8 @@ describe("T3TurnRunner", () => {
       { threadId: "thread_1", message: "Now the docs", mode: "queue", clientRequestId: "binv_2" },
     ])
     expect(t3.callsOf("t3_thread_read").slice(readsBefore)).toEqual([
-      { threadId: "thread_1", limit: 1 },
-      expect.objectContaining({ threadId: "thread_1", afterPosition: 2 }),
+      expect.objectContaining({ threadId: "thread_1", afterPosition: 2, maxCharsPerItem: 1 }),
+      expect.objectContaining({ threadId: "thread_1", afterPosition: 2, maxCharsPerItem: 8000 }),
     ])
     expect(session.replies.at(-1)).toEqual({ invocationId: "binv_2", text: "Docs updated." })
   })
@@ -1504,6 +1504,176 @@ describe("runs T3 starts by itself", () => {
       busy: false,
       posts: [],
       reply: { invocationId: "binv_2", text: "A cat." },
+    })
+  })
+
+  test("posts each run T3 started between two looks, in order", async () => {
+    const { t3, session, runner } = setup()
+    await settledTurn(t3, session, runner)
+    t3.startInT3("thread_1")
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [
+      item(2, "user_message", { runId: "run_2", text: "Agent A is done" }),
+      item(3, "user_message", { runId: "run_3", text: "Agent B is done" }),
+    ])
+    t3.script("run_2", [
+      { status: "completed", items: [item(4, "assistant_message", { runId: "run_2", text: "A found a leak." })] },
+    ])
+    t3.script("run_3", [
+      { status: "completed", items: [item(5, "assistant_message", { runId: "run_3", text: "B found nothing." })] },
+    ])
+    await runner.watch()
+    await until(() => !runner.busy)
+
+    expect(session.posts).toEqual([
+      { streamId: "stream_root", text: "A found a leak.", clientMessageId: "t3run-run_2" },
+      { streamId: "stream_root", text: "B found nothing.", clientMessageId: "t3run-run_3" },
+    ])
+  })
+
+  test("posts a run a message queued behind while it relays another", async () => {
+    const { t3, session, runner } = setup()
+    await settledTurn(t3, session, runner)
+    t3.startInT3("thread_1")
+    t3.script("run_2", [
+      { status: "running", items: [item(2, "command_execution", { runId: "run_2", status: "running" })] },
+    ])
+    await runner.watch()
+    await idle()
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(3, "user_message", { runId: "run_3", text: "Agent B is done" })])
+    t3.script("run_3", [
+      { status: "completed", items: [item(4, "assistant_message", { runId: "run_3", text: "B found nothing." })] },
+    ])
+    await runner.deliverTurn(turn({ invocationId: "binv_2", content: "Now the docs" }))
+    t3.script("run_4", [
+      { status: "completed", items: [item(5, "assistant_message", { runId: "run_4", text: "Docs updated." })] },
+    ])
+    await session.settled()
+    t3.script("run_2", [
+      { status: "completed", items: [item(6, "assistant_message", { runId: "run_2", text: "A found a leak." })] },
+    ])
+    await until(() => !runner.busy)
+
+    expect({ posts: session.posts, reply: session.replies.at(-1) }).toEqual({
+      posts: [
+        { streamId: "stream_root", text: "A found a leak.", clientMessageId: "t3run-run_2" },
+        { streamId: "stream_root", text: "B found nothing.", clientMessageId: "t3run-run_3" },
+      ],
+      reply: { invocationId: "binv_2", text: "Docs updated." },
+    })
+  })
+
+  test("posts a run T3 started and finished while a turn read past it", async () => {
+    const { t3, session, runner } = setup()
+    await settledTurn(t3, session, runner)
+    await runner.deliverTurn(turn({ invocationId: "binv_2", content: "Now the docs" }))
+    t3.startInT3("thread_1")
+    t3.startInT3("thread_1")
+    t3.script("run_2", [
+      {
+        status: "completed",
+        items: [
+          item(2, "assistant_message", { runId: "run_3", text: "B found nothing." }),
+          item(3, "user_message", { runId: "run_4", text: "Agent C is done" }),
+          item(4, "assistant_message", { runId: "run_2", text: "Docs updated." }),
+        ],
+      },
+    ])
+    t3.script("run_3", [{ status: "completed" }])
+    t3.script("run_4", [
+      { status: "completed", items: [item(5, "assistant_message", { runId: "run_4", text: "C found a leak." })] },
+    ])
+    await session.settled()
+    await runner.watch()
+    await until(() => !runner.busy)
+
+    expect({ posts: session.posts, reply: session.replies.at(-1) }).toEqual({
+      posts: [
+        { streamId: "stream_root", text: "B found nothing.", clientMessageId: "t3run-run_3" },
+        { streamId: "stream_root", text: "C found a leak.", clientMessageId: "t3run-run_4" },
+      ],
+      reply: { invocationId: "binv_2", text: "Docs updated." },
+    })
+  })
+
+  test("/stop while a message is admitted still posts the run it queued behind", async () => {
+    const { t3, session, runner } = setup()
+    await settledTurn(t3, session, runner)
+    t3.startInT3("thread_1")
+    t3.script("run_2", [
+      { status: "completed", items: [item(2, "assistant_message", { runId: "run_2", text: "Agents done." })] },
+    ])
+    const release = t3.holdNext("t3_thread_send")
+    const delivering = runner.deliverTurn(turn({ invocationId: "binv_2", content: "Now the docs" }))
+    await until(() => t3.callsOf("t3_thread_send").length === 1)
+    runner.interrupt("stream_root")
+    release()
+    await delivering
+    await until(() => !runner.busy)
+
+    expect({ posts: session.posts, interrupts: t3.callsOf("t3_thread_interrupt") }).toEqual({
+      posts: [{ streamId: "stream_root", text: "Agents done.", clientMessageId: "t3run-run_2" }],
+      interrupts: [{ threadId: "thread_1", runId: "run_3", reason: "Stopped from Threa" }],
+    })
+  })
+
+  test("retries a reply whose post failed", async () => {
+    const { t3, session, runner } = setup()
+    await settledTurn(t3, session, runner)
+    t3.startInT3("thread_1")
+    t3.script("run_2", [
+      { status: "completed", items: [item(2, "assistant_message", { runId: "run_2", text: "Agents done." })] },
+    ])
+    session.postFailures.push(new Error("socket hang up"))
+    await runner.watch()
+    await until(() => !runner.busy)
+
+    expect(session.posts).toEqual([{ streamId: "stream_root", text: "Agents done.", clientMessageId: "t3run-run_2" }])
+  })
+
+  test("drops an update Threa refuses and still posts the reply", async () => {
+    const { t3, session, logs, runner } = setup()
+    await settledTurn(t3, session, runner)
+    t3.startInT3("thread_1")
+    t3.script("run_2", [
+      {
+        status: "completed",
+        items: [
+          item(2, "assistant_message", { runId: "run_2", text: "THREA_UPDATE: Halfway there." }),
+          item(3, "assistant_message", { runId: "run_2", text: "Agents done." }),
+        ],
+      },
+    ])
+    session.postFailures.push(new ThreaApiError("refused", 400, "E2E_STREAM_REQUIRES_CIPHERTEXT"))
+    await runner.watch()
+    await until(() => !runner.busy)
+
+    expect({
+      posts: session.posts,
+      dropped: logs.filter((line) => line.startsWith("t3upd-turn-item:2 not posted")).length,
+    }).toEqual({
+      posts: [{ streamId: "stream_root", text: "Agents done.", clientMessageId: "t3run-run_2" }],
+      dropped: 1,
+    })
+  })
+
+  test("never posts the runs a forked thread inherits from its source", async () => {
+    const { t3, session, runner } = setup()
+    await settledTurn(t3, session, runner)
+    t3.script("run_2", [
+      { status: "completed", items: [item(2, "assistant_message", { runId: "run_2", text: "Looked into it." })] },
+    ])
+    await runner.deliverTurn(
+      turn({ invocationId: "binv_2", streamId: "stream_thread", rootStreamId: "stream_root", content: "Look into it" })
+    )
+    await session.settled()
+    await runner.watch()
+    await until(() => !runner.busy)
+
+    expect({ posts: session.posts, reply: session.replies.at(-1) }).toEqual({
+      posts: [],
+      reply: { invocationId: "binv_2", text: "Looked into it." },
     })
   })
 })

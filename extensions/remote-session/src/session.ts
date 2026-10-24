@@ -37,6 +37,7 @@ import {
 import {
   downloadInboundAttachments,
   downloadSealedInboundAttachments,
+  extractAttachmentDirectives,
   formatInboundAttachmentManifest,
   selectSealedInboundRefs,
   type DownloadedAttachment,
@@ -98,6 +99,16 @@ const ATTACHMENT_SCAN_LIMIT = 30
 export const COMPLETED_TURN_MEMORY = 64
 // These 4xx responses can clear on retry; other 4xx responses permanently revoke the route.
 const RETRYABLE_POST_STATUSES = new Set([408, 425, 429])
+
+/** True for a Threa refusal that the same post would only meet again. */
+export function isTerminalPostError(error: unknown): boolean {
+  return (
+    error instanceof ThreaApiError &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    !RETRYABLE_POST_STATUSES.has(error.status)
+  )
+}
 
 export interface ModelSuggestionInfo {
   value: string
@@ -2455,17 +2466,8 @@ export class RemoteSession {
     this.completed.set(invocationId, record)
   }
 
-  private isTerminalPostError(error: unknown): boolean {
-    return (
-      error instanceof ThreaApiError &&
-      error.status >= 400 &&
-      error.status < 500 &&
-      !RETRYABLE_POST_STATUSES.has(error.status)
-    )
-  }
-
   private async terminalizeRouteWrite(route: TurnRoute, error: unknown): Promise<boolean> {
-    if (!this.isTerminalPostError(error)) return false
+    if (!isTerminalPostError(error)) return false
     if (!route.terminal) await this.evictTerminalRoute(route)
     return true
   }
@@ -2537,7 +2539,7 @@ export class RemoteSession {
       })
     } catch (error) {
       if (error instanceof RouteRevokedError) return this.revokedResult(route)
-      if (this.isTerminalPostError(error)) return this.terminalWriteResult(invocationId, "message", error)
+      if (isTerminalPostError(error)) return this.terminalWriteResult(invocationId, "message", error)
       return { ok: false, message: `Failed to post message to Threa: ${this.summarize(error)}`, retryable: true }
     }
     if (kind === "reply") route.replyText = intent.text
@@ -2587,7 +2589,7 @@ export class RemoteSession {
           retryable: true,
         }
       }
-      if (this.isTerminalPostError(error)) return this.terminalWriteResult(route.invocation.id, "message", error)
+      if (isTerminalPostError(error)) return this.terminalWriteResult(route.invocation.id, "message", error)
       return { ok: false, message: `Failed to post message to Threa: ${this.summarize(error)}`, retryable: true }
     }
     if (!this.isOutputCurrent(route.invocation, sourceRevision)) {
@@ -2842,6 +2844,14 @@ export class RemoteSession {
     if (route) {
       await this.postRouteOwnedMessage(route, body)
       return
+    }
+    // The server refuses a plaintext body on an encrypted stream, but only after the files went up unsealed.
+    if (extractAttachmentDirectives(body.content).paths.length && (await this.client.getStream(streamId)).e2eEnabled) {
+      throw new ThreaApiError(
+        `Stream ${streamId} is end-to-end encrypted; a post outside a turn can't be sealed.`,
+        400,
+        "E2E_STREAM_REQUIRES_CIPHERTEXT"
+      )
     }
     const { markdown } = await uploadReplyAttachments(this.client, body.content, process.cwd())
     await this.client.sendMessage(streamId, { ...body, content: markdown })

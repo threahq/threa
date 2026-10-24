@@ -50,6 +50,7 @@ export function item(
     position,
     itemId: `turn-item:${position}`,
     runId: "run_1",
+    visibility: "local",
     type,
     status: "completed",
     title: null,
@@ -208,6 +209,12 @@ export function fakeT3() {
       const targetThreadId = `thread_${++threads}`
       const model = models.get(args.threadId)
       if (model) models.set(targetThreadId, model)
+      // Like T3, a fork reads its source's items as inherited, with the source's run ids.
+      const inherited = (items.get(args.threadId) ?? []).map((source) => ({
+        ...source,
+        visibility: "inherited" as const,
+      }))
+      items.set(targetThreadId, inherited)
       return { targetThreadId }
     },
     orchestrator_capabilities: () => ({
@@ -315,6 +322,8 @@ export function fakeT3() {
     },
     /** Start a run from T3 itself, as when background agents finish or a message is queued in T3's composer. */
     startInT3: (threadId: string) => startRun(threadId),
+    /** Items a run wrote that no wait has seen yet. */
+    addItems: (threadId: string, added: ThreadItem[]) => apply(threadId, { status: "running", items: added }),
     /** The environment's default for new threads, unset unless a test sets it. */
     defaultEnvMode: (mode: typeof envMode) => (envMode = mode),
   }
@@ -326,6 +335,7 @@ export function fakeSession(rootStreamId = "stream_root") {
   const posts: Array<{ streamId: string; text: string; clientMessageId: string }> = []
   const interims: Array<{ invocationId: string; text: string }> = []
   const interimResults: Array<Awaited<ReturnType<BridgeSession["sendInterim"]>>> = []
+  const postFailures: Error[] = []
   const fails: Array<{ invocationId: string; errorMessage: string }> = []
   const decisions: Array<{ input: DecisionRequestInput; signal?: AbortSignal }> = []
   const outcomes: Array<DecisionOutcome | DecisionAbandonedError> = []
@@ -349,6 +359,8 @@ export function fakeSession(rootStreamId = "stream_root") {
       return result
     },
     postToStream: async (streamId, text, clientMessageId) => {
+      const failure = postFailures.shift()
+      if (failure) throw failure
       posts.push({ streamId, text, clientMessageId })
     },
     failTurn: async (invocationId, errorMessage) => {
@@ -380,6 +392,8 @@ export function fakeSession(rootStreamId = "stream_root") {
     interims,
     /** How the next interim posts answer; unset, they post. */
     interimResults,
+    /** What the next posts to a stream throw; unset, they post. */
+    postFailures,
     fails,
     decisions,
     /** Answer the open card, or the next one asked. */

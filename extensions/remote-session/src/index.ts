@@ -11,6 +11,7 @@ export {
   runtimeCapabilitiesFor,
   SESSION_CONTROL_CAPABILITY,
   COMPLETED_TURN_MEMORY,
+  isTerminalPostError,
   type ClaimMode,
   type DecisionOutcome,
   type DecisionRequestInput,

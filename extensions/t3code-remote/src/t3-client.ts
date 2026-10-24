@@ -39,6 +39,8 @@ export interface ThreadItem {
   position: number
   itemId: string
   runId: string | null
+  /** `inherited` items are a forked thread's view of its source, and keep the source's run ids. */
+  visibility: "local" | "inherited" | "synthetic"
   type: string
   status: string | null
   title: string | null
