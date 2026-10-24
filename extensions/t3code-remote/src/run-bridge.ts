@@ -13,6 +13,7 @@ import {
   NO_RESPONSE_SENTINEL,
   StepBatcher,
   isNoResponse,
+  isTerminalPostError,
   redactAttachDirectives,
   toolTraceContent,
 } from "@threahq/remote-session"
@@ -243,9 +244,13 @@ export interface T3TurnRunnerOptions {
   sleep?: (ms: number) => Promise<void>
 }
 
-/** A run T3 started by itself, followed until it ends; a turn that takes the run over continues its trace. */
+/** Runs T3 started by itself, followed one by one until each ends; a turn that takes one over continues its trace. */
 interface Relay {
   runId: string
+  /** Runs found after this one, relayed next. */
+  queue: string[]
+  /** Where each run's read starts: the read of the run before may have passed a queued run's settled items. */
+  from: number | undefined
   abort: AbortController
   read: Pick<OpenRun, "threadId" | "trace" | "cursor">
 }
@@ -298,9 +303,9 @@ export class T3TurnRunner {
   // Turns inside admission: an interrupt that lands meanwhile stops the run once T3 returns its id.
   private readonly admitting = new Map<string, { abort: AbortController; streamId: string }>()
   readonly runs = new Map<string, OpenRun>()
-  // Per thread, the newest run a turn or relay already accounts for; a later one was started in T3 itself.
-  private readonly seenRuns = new Map<string, string>()
-  // Per thread, the run T3 started on its own that is being followed until it ends.
+  // Per thread, the runs a turn or relay already accounts for, or that ran before the first look; any other was started in T3 itself.
+  private readonly accounted = new Map<string, Set<string>>()
+  // Per thread, the runs T3 started on their own that are being followed until they end.
   private readonly unprompted = new Map<string, Relay>()
   // Streams whose latest Threa message arrived in plaintext. A post outside a turn can't be sealed, so only these get one.
   private readonly plaintextStreams = new Set<string>()
@@ -430,7 +435,7 @@ export class T3TurnRunner {
       if (!inScope(run.streamId)) continue
       run.abort.abort()
       this.runs.delete(invocationId)
-      this.seenRuns.set(run.threadId, run.runId)
+      this.account(run.threadId, run.trace.runIds)
       this.stopChain(run)
     }
     return true
@@ -450,8 +455,7 @@ export class T3TurnRunner {
 
   /**
    * Finds runs T3 started without a Threa message, as when background agents finish or a message is queued in T3
-   * itself, and posts each one's reply to its stream once it ends. A thread's first look only notes its latest run,
-   * so a run from before the connector started is never posted.
+   * itself, and posts each one's reply to its stream once it ends.
    */
   async watch(): Promise<void> {
     if (this.watching) return
@@ -460,10 +464,9 @@ export class T3TurnRunner {
       for (const [streamId, threadId] of Object.entries(this.state.threads)) {
         if (!this.plaintextStreams.has(streamId) || this.unprompted.has(threadId) || this.hasOpenTurns(streamId))
           continue
-        const seen = this.seenRuns.get(threadId)
-        let latest: string | undefined
+        let runs: string[]
         try {
-          latest = await this.latestRunId(threadId)
+          runs = await this.unaccountedRuns(threadId)
           this.watchErrors.delete(threadId)
         } catch (error) {
           if (this.forgetIfGone(error, streamId, threadId)) continue
@@ -472,41 +475,120 @@ export class T3TurnRunner {
           this.watchErrors.set(threadId, text)
           continue
         }
-        // A turn that opened or ended during the read owns what it saw.
-        if (!latest || this.seenRuns.get(threadId) !== seen) continue
-        if (this.unprompted.has(threadId) || this.hasOpenTurns(streamId)) continue
-        this.seenRuns.set(threadId, latest)
-        if (seen !== undefined && seen !== latest) this.relay(streamId, threadId, latest)
+        // A turn that opened during the read owns what it saw.
+        if (this.hasOpenTurns(streamId)) continue
+        this.relayUnaccounted(streamId, threadId, runs)
       }
     } finally {
       this.watching = false
     }
   }
 
-  private relay(streamId: string, threadId: string, runId: string): void {
-    const trace = new RunTrace(runId, this.options.traceMode)
-    const relay: Relay = {
-      runId,
-      abort: new AbortController(),
-      read: { threadId, trace, cursor: this.cursors.get(threadId) },
-    }
-    this.unprompted.set(threadId, relay)
-    this.log(`run ${runId} started in T3 Code; posting its reply to ${streamId}`)
-    void this.relayRun(streamId, threadId, relay)
-      .catch((error) => this.log(`run ${relay.runId} relay failed: ${errorText(error)}`))
-      .finally(() => {
-        if (this.unprompted.get(threadId) === relay) this.unprompted.delete(threadId)
-      })
+  /** Marks runs accounted for and returns the ones that weren't. */
+  private account(threadId: string, runIds: Iterable<string>): string[] {
+    const accounted = this.accounted.get(threadId) ?? new Set<string>()
+    this.accounted.set(threadId, accounted)
+    const fresh = [...runIds].filter((runId) => !accounted.has(runId))
+    for (const runId of fresh) accounted.add(runId)
+    return fresh
   }
 
-  private async relayRun(streamId: string, threadId: string, relay: Relay): Promise<void> {
+  private isAccounted(threadId: string, runId: string): boolean {
+    return this.accounted.get(threadId)?.has(runId) === true || this.turnOwns(threadId, runId)
+  }
+
+  /** A thread's read may pass an item no unaccounted run owns, since only a relay of that run still needs it. */
+  private passable(threadId: string, item: ThreadItem): boolean {
+    return item.runId === null || item.visibility !== "local" || this.isAccounted(threadId, item.runId)
+  }
+
+  /**
+   * The thread's runs no turn or relay accounts for, oldest first. The first look at a thread accounts for every run
+   * it finds, so a run from before the connector started is never posted.
+   */
+  private async unaccountedRuns(threadId: string): Promise<string[]> {
+    const items: ThreadItem[] = []
+    let latest: string | null = null
+    let after = this.cursors.get(threadId)
+    for (;;) {
+      const page = await this.client.call("t3_thread_read", {
+        threadId,
+        view: "activity",
+        limit: READ_PAGE_LIMIT,
+        maxCharsPerItem: 1,
+        ...(after === undefined ? {} : { afterPosition: after }),
+      })
+      latest = page.thread.latestRunId
+      items.push(...page.items)
+      if (!page.hasMore || page.nextPosition === null) break
+      after = page.nextPosition
+    }
+    const runIds = new Set(
+      items.flatMap((item) => (item.runId !== null && item.visibility === "local" ? [item.runId] : []))
+    )
+    if (latest) runIds.add(latest)
+    if (!this.accounted.has(threadId)) this.account(threadId, runIds)
+    let cursor: number | undefined
+    for (const item of items) {
+      if (!this.passable(threadId, item)) break
+      cursor = item.position
+    }
+    this.advanceCursor(threadId, cursor)
+    return [...runIds].filter((runId) => !this.isAccounted(threadId, runId))
+  }
+
+  /** Posts the replies of runs T3 started by itself, in order, after the ones already being relayed. */
+  private relayUnaccounted(streamId: string, threadId: string, runIds: string[]): void {
+    const fresh = this.account(threadId, runIds)
+    const relay = this.unprompted.get(threadId)
+    if (relay) relay.queue.push(...fresh)
+    else this.relay(streamId, threadId, fresh)
+  }
+
+  private relay(streamId: string, threadId: string, runIds: string[], from = this.cursors.get(threadId)): void {
+    const [runId, ...queue] = runIds
+    if (!runId) return
+    const relay: Relay = {
+      runId,
+      queue,
+      from,
+      abort: new AbortController(),
+      read: { threadId, trace: new RunTrace(runId, this.options.traceMode), cursor: from },
+    }
+    this.unprompted.set(threadId, relay)
+    void this.relayRuns(streamId, relay)
+      .catch((error) => this.log(`run ${relay.runId} relay failed: ${errorText(error)}`))
+      .finally(() => this.release(relay))
+  }
+
+  private release(relay: Relay): void {
+    if (this.unprompted.get(relay.read.threadId) === relay) this.unprompted.delete(relay.read.threadId)
+  }
+
+  private async relayRuns(streamId: string, relay: Relay): Promise<void> {
+    for (;;) {
+      this.log(`run ${relay.runId} started in T3 Code; posting its reply to ${streamId}`)
+      await this.relayRun(streamId, relay)
+      const next = relay.queue.shift()
+      if (relay.abort.signal.aborted) return
+      // Released in the tick the queue runs dry, so a run found meanwhile starts a relay of its own.
+      if (!next) return this.release(relay)
+      relay.runId = next
+      relay.read = {
+        threadId: relay.read.threadId,
+        trace: new RunTrace(next, this.options.traceMode),
+        cursor: relay.from,
+      }
+    }
+  }
+
+  private async relayRun(streamId: string, relay: Relay): Promise<void> {
     const { signal } = relay.abort
     const { read } = relay
-    const { trace } = read
-    let status: string | undefined
+    const { threadId, trace } = read
     let failures = 0
     try {
-      while (!signal.aborted && !status) {
+      while (!signal.aborted) {
         try {
           const waited = await this.client.call("t3_thread_wait", {
             threadId,
@@ -516,20 +598,22 @@ export class T3TurnRunner {
           // A turn that took the run over posts its updates from here.
           if (signal.aborted) return
           const adopted = waited.runId && waited.runId !== relay.runId ? waited.runId : undefined
-          if (adopted) {
-            // A turn's images restart the run as one the turn follows and replies with.
-            if (this.turnOwns(threadId, adopted)) return
-            if (this.seenRuns.get(threadId) === relay.runId) this.seenRuns.set(threadId, adopted)
+          // A turn's images restart the run as one the turn follows and replies with; this run's updates are still ours.
+          const handedOver = adopted !== undefined && this.turnOwns(threadId, adopted)
+          if (adopted && !handedOver) {
+            this.account(threadId, [adopted])
             relay.runId = adopted
             trace.runIds.add(adopted)
           }
           await this.drain(read, () => {})
           if (signal.aborted) return
-          await this.postUpdates(read, (item, text) =>
-            this.session.postToStream(streamId, text, `t3upd-${item.itemId}`)
-          )
+          await this.postUpdates(read, (item, text) => this.postOrDrop(streamId, text, `t3upd-${item.itemId}`))
+          if (handedOver) return
+          if (!adopted && TERMINAL_RUN_STATUSES.has(waited.status)) {
+            await this.postFinal(streamId, relay, waited.status)
+            return
+          }
           failures = 0
-          if (!adopted && TERMINAL_RUN_STATUSES.has(waited.status)) status = waited.status
         } catch (error) {
           if (signal.aborted) return
           failures += 1
@@ -541,16 +625,28 @@ export class T3TurnRunner {
     } finally {
       this.advanceCursor(threadId, read.cursor)
     }
-    // A turn that sent its images into this run follows it and replies with it.
-    if (signal.aborted || !status) return
+  }
+
+  private async postFinal(streamId: string, relay: Relay, status: string): Promise<void> {
+    const { threadId, trace } = relay.read
+    const clientMessageId = `t3run-${relay.runId}`
     if (status === "completed") {
       const text = trace.held ? await this.replyText(threadId, trace.held) : ""
-      if (!text.trim() || isNoResponse(text)) return
-      await this.session.postToStream(streamId, text, `t3run-${relay.runId}`)
+      if (text.trim() && !isNoResponse(text)) await this.postOrDrop(streamId, text, clientMessageId)
     } else if (status === "failed") {
-      await this.session.postToStream(streamId, trace.lastError ?? "The T3 Code run failed.", `t3run-${relay.runId}`)
+      await this.postOrDrop(streamId, trace.lastError ?? "The T3 Code run failed.", clientMessageId)
     } else {
       this.log(`run ${relay.runId} started in T3 Code ended ${status}`)
+    }
+  }
+
+  /** A post Threa refuses would be refused again, so it is dropped instead of retried. */
+  private async postOrDrop(streamId: string, text: string, clientMessageId: string): Promise<void> {
+    try {
+      await this.session.postToStream(streamId, text, clientMessageId)
+    } catch (error) {
+      if (!isTerminalPostError(error)) throw error
+      this.log(`${clientMessageId} not posted to ${streamId}: ${errorText(error)}`)
     }
   }
 
@@ -559,38 +655,39 @@ export class T3TurnRunner {
     this.admitting.set(turn.invocationId, { abort: admission, streamId: turn.streamId })
     let started: { threadId: string; runId: string }
     let stale: string[] = []
-    let latest: string | undefined
+    let ahead: string[] = []
     if (turn.sealed) this.plaintextStreams.delete(turn.streamId)
     else this.plaintextStreams.add(turn.streamId)
     try {
       // A question an earlier turn left open belongs to that turn, not this one.
       const existing = this.threadFor(turn.streamId)
       if (existing) {
-        const [pending, latestRun] = await Promise.all([
+        const [pending, unaccounted] = await Promise.all([
           this.client.call("t3_pending_request_list", { threadId: existing }),
-          this.latestRunId(existing),
+          this.unaccountedRuns(existing),
         ]).catch((error) => this.unlessGone(error, turn.streamId, existing))
         stale = pending.requestIds
-        latest = latestRun
+        ahead = unaccounted
       }
       started = await this.admit(turn)
     } finally {
       this.admitting.delete(turn.invocationId)
     }
-    if (admission.signal.aborted) {
-      this.seenRuns.set(started.threadId, started.runId)
-      this.stopRun(started.threadId, started.runId)
-      return
+    const { threadId, runId } = started
+    const aborted = admission.signal.aborted
+    if (aborted) this.stopRun(threadId, runId)
+    this.account(threadId, [runId])
+    const relay = this.unprompted.get(threadId)
+    const takenOver = !aborted && relay?.runId === runId ? relay : undefined
+    if (relay) relay.queue = relay.queue.filter((queued) => queued !== runId)
+    if (takenOver) {
+      takenOver.abort.abort()
+      this.unprompted.delete(threadId)
+      this.relay(turn.streamId, threadId, takenOver.queue, takenOver.from)
     }
-    const relay = this.unprompted.get(started.threadId)
-    const takenOver = relay?.runId === started.runId ? relay : undefined
-    takenOver?.abort.abort()
-    // A run T3 started by itself since the last look, which this turn's message queued behind.
-    const seen = this.seenRuns.get(started.threadId)
-    if (latest && seen !== undefined && latest !== seen && latest !== started.runId && !relay && !turn.sealed) {
-      this.seenRuns.set(started.threadId, latest)
-      this.relay(turn.streamId, started.threadId, latest)
-    }
+    // Runs T3 started by itself since the last look, which this turn's message queued behind.
+    if (!turn.sealed) this.relayUnaccounted(turn.streamId, threadId, ahead)
+    if (aborted) return
     const mode: RunTraceMode = turn.sealed && this.options.sealedFullTrace ? "full" : this.options.traceMode
     const run: OpenRun = {
       ...started,
@@ -818,7 +915,7 @@ export class T3TurnRunner {
       // Released before any await, so a steer can't join a run already judged over, and before the
       // turn closes, so a command right after the reply sees no open run.
       if (this.runs.get(invocationId) === run) this.runs.delete(invocationId)
-      this.seenRuns.set(run.threadId, run.runId)
+      this.account(run.threadId, run.trace.runIds)
       await batcher.flush()
       this.advanceCursor(run.threadId, run.cursor)
     }
@@ -974,7 +1071,10 @@ export class T3TurnRunner {
       this.noteModel(page.thread)
       for (const item of page.items) {
         for (const frame of trace.observe(item)) emit(frame)
-        if (trace.owns(item) && OPEN_ITEM_STATUSES.has(item.status ?? "")) advancing = false
+        // A run no turn or relay accounts for yet keeps its items ahead of the cursor for the next look.
+        if (trace.owns(item) ? OPEN_ITEM_STATUSES.has(item.status ?? "") : !this.passable(run.threadId, item)) {
+          advancing = false
+        }
         if (advancing) run.cursor = item.position
       }
       if (!page.hasMore || page.nextPosition === null) return

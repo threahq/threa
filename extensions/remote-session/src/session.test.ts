@@ -84,6 +84,7 @@ function makeFakeClient() {
     uploadAttachment: async () => {
       throw new Error("unexpected upload in test")
     },
+    getStream: async () => ({ archivedAt: null, e2eEnabled: false }),
   }
   return { client: client as unknown as ThreaClient, calls }
 }
@@ -1593,6 +1594,22 @@ describe("RemoteSession permission route posts", () => {
         body: { content: expect.stringMatching(/^Done\.\n\n.*\(attachment:att_1\)/s), clientMessageId: "t3run-run_2" },
       },
     ])
+  })
+
+  test("refuses a stream post's files before uploading them when the stream is encrypted", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport)
+    const uploads: unknown[] = []
+    Object.assign(client, {
+      getStream: async () => ({ archivedAt: null, e2eEnabled: true }),
+      uploadAttachment: async (form: unknown) => uploads.push(form),
+    })
+
+    const posting = session.postToStream("stream_root", { content: "Done.\nTHREA_ATTACH: /tmp/report.txt" })
+
+    await expect(posting).rejects.toMatchObject({ status: 400, code: "E2E_STREAM_REQUIRES_CIPHERTEXT" })
+    expect({ uploads, sent: calls.sendMessage }).toEqual({ uploads: [], sent: [] })
   })
 })
 
