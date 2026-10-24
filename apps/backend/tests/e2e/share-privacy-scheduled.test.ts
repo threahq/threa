@@ -1,5 +1,10 @@
 import { beforeAll, describe, expect, test } from "bun:test"
-import { ShareErrorCodes, type ScheduledMessageView, type UnsharedReferencesResponse } from "@threahq/types"
+import {
+  MessageReferenceErrorCodes,
+  ShareErrorCodes,
+  type ScheduledMessageView,
+  type UnsharedReferencesResponse,
+} from "@threahq/types"
 import {
   TestClient,
   createChannel,
@@ -262,6 +267,69 @@ describe("share privacy on a scheduled send", () => {
       sharedWithoutAccess: { status: 204, regained: "private", kept: "ok" },
       listedWithAccess: [regained!.messageId],
       sharedWithAccess: { status: 204, regained: "ok", kept: "ok" },
+    })
+  })
+
+  test("a share whose source the author lost before the send still sends, privately, and can be shared once access returns; a quote of it fails", async () => {
+    const dave = new TestClient()
+    await loginAs(dave, "share-scheduled-dave@example.com", "Share Scheduled Dave")
+    const daveUser = await joinWorkspace(dave, workspaceId)
+    await joinStream(dave, workspaceId, targetStreamId)
+    const sourceStreamId = (await createChannel(alice, workspaceId, "share-scheduled-lost", "public")).id
+    const source = {
+      messageId: (await sendMessage(alice, workspaceId, sourceStreamId, "source")).id,
+      streamId: sourceStreamId,
+    }
+    const scheduled = await dave.post<{ scheduled: ScheduledMessageView }>(`/api/workspaces/${workspaceId}/scheduled`, {
+      streamId: targetStreamId,
+      contentJson: shareContent(source),
+      scheduledFor: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    })
+    const quoted = await dave.post<{ scheduled: ScheduledMessageView }>(`/api/workspaces/${workspaceId}/scheduled`, {
+      streamId: targetStreamId,
+      contentJson: {
+        type: "doc",
+        content: [{ type: "quoteReply", attrs: { ...source, authorName: "Alice", snippet: "source" } }],
+      },
+      scheduledFor: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    })
+    await alice.patch(`/api/workspaces/${workspaceId}/streams/${sourceStreamId}`, { visibility: "private" })
+
+    const quoteSent = await dave.post<{ code?: string }>(
+      `/api/workspaces/${workspaceId}/scheduled/${quoted.data.scheduled.id}/send-now`
+    )
+    const sent = await dave.post<{ scheduled: ScheduledMessageView }>(
+      `/api/workspaces/${workspaceId}/scheduled/${scheduled.data.scheduled.id}/send-now`
+    )
+    const sentMessageId = sent.data.scheduled.sentMessageId
+    const listed = async () => {
+      const unshared = await dave.get<UnsharedReferencesResponse>(`/api/workspaces/${workspaceId}/unshared-references`)
+      return unshared.data.references.filter((ref) => ref.messageId === sentMessageId).map((ref) => ref.sourceMessageId)
+    }
+    const seenByBob = async () => {
+      const seen = await bob.get<EventsResponse>(`/api/workspaces/${workspaceId}/streams/${targetStreamId}/events`)
+      return seen.data.sharedMessages[source.messageId]?.state
+    }
+    const listedWithoutAccess = await listed()
+    const seenWithoutAccess = await seenByBob()
+    await alice.post(`/api/workspaces/${workspaceId}/streams/${sourceStreamId}/members`, { memberId: daveUser.id })
+    const listedWithAccess = await listed()
+    const shared = await dave.post(`/api/workspaces/${workspaceId}/messages/${sentMessageId}/share-references`)
+
+    expect({
+      quoteSent: { status: quoteSent.status, code: quoteSent.data.code },
+      sent: { status: sent.status, hasMessage: Boolean(sentMessageId) },
+      listedWithoutAccess,
+      seenWithoutAccess,
+      listedWithAccess,
+      shared: { status: shared.status, seen: await seenByBob() },
+    }).toEqual({
+      quoteSent: { status: 400, code: MessageReferenceErrorCodes.SOURCE_NOT_FOUND },
+      sent: { status: 200, hasMessage: true },
+      listedWithoutAccess: [],
+      seenWithoutAccess: "private",
+      listedWithAccess: [source.messageId],
+      shared: { status: 204, seen: "ok" },
     })
   })
 })

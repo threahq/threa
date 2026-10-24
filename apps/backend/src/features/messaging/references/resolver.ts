@@ -48,6 +48,12 @@ export interface ResolveMessageReferencesParams {
    * unaffected.
    */
   canReadSourceStream?: (streamId: string) => Promise<boolean>
+  /**
+   * Scheduled fire: a share (not a quote) whose source the author can no
+   * longer read is sent unpinned instead of rejected, so it reaches readers as
+   * private. A quote still rejects — its snippet can't be verified unread.
+   */
+  sendUnreadableSharesUnpinned?: boolean
 }
 
 export interface ResolveMessageReferencesResult {
@@ -174,6 +180,7 @@ export async function resolveMessageReferences(
   // string appears in it, which would answer questions about a message the
   // author cannot open. An unreadable source is indistinguishable from a
   // missing one. `ShareService` still owns recording the share itself.
+  const unreadable = new Set<ReferenceNode>()
   if (params.canReadSourceStream) {
     const readable = new Map<string, boolean>()
     for (const ref of references) {
@@ -184,13 +191,18 @@ export async function resolveMessageReferences(
         allowed = await params.canReadSourceStream(source.streamId)
         readable.set(source.streamId, allowed)
       }
-      if (!allowed) throw referenceError(MessageReferenceErrorCodes.SOURCE_NOT_FOUND, "Referenced message not found")
+      if (allowed) continue
+      if (!params.sendUnreadableSharesUnpinned || ref.isQuote) {
+        throw referenceError(MessageReferenceErrorCodes.SOURCE_NOT_FOUND, "Referenced message not found")
+      }
+      unreadable.add(ref)
     }
   }
+  const pinnable = references.filter((ref) => !unreadable.has(ref))
 
   const versions = new Map<ReferenceNode, { source: Message; version: number }>()
   const versionKeys: MessageVersionKey[] = []
-  for (const ref of references) {
+  for (const ref of pinnable) {
     const source = sourcesById.get(ref.messageId)
     if (!source) {
       throw referenceError(MessageReferenceErrorCodes.SOURCE_NOT_FOUND, "Referenced message not found")
@@ -207,13 +219,13 @@ export async function resolveMessageReferences(
   const versionRows = await MessageVersionRepository.findByMessageVersions(db, params.workspaceId, versionKeys)
 
   const quoteAuthorIds = new Set<string>()
-  for (const ref of references) {
+  for (const ref of pinnable) {
     if (ref.isQuote) quoteAuthorIds.add(versions.get(ref)!.source.authorId)
   }
   const authorNames = await resolveActorNames(db, params.workspaceId, quoteAuthorIds)
 
   let changed = false
-  for (const ref of references) {
+  for (const ref of pinnable) {
     const { source, version } = versions.get(ref)!
     const pinnedDoc =
       version === source.revision

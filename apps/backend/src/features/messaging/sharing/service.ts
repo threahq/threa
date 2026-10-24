@@ -103,7 +103,7 @@ export interface ValidateAndRecordSharesParams {
    * AFTER the exposure is independently established server-side.
    */
   confirmedPrivacyWarning?: boolean
-  /** Scheduled fire: pre-consented share sources; an exposing share outside the set sends unrecorded instead of 409. */
+  /** Scheduled fire: pre-consented share sources; an exposing share outside the set, or one the author can't read, sends unrecorded instead of 409/403. */
   consentedShareSourceIds?: ReadonlySet<string>
 }
 
@@ -257,7 +257,7 @@ export const ShareService = {
         }
         canReadCache.set(ref.sourceStreamId, canRead)
       }
-      if (!canRead) {
+      if (!canRead && !params.consentedShareSourceIds) {
         throw new HttpError("You don't have access to the source message", {
           status: 403,
           code: ShareErrorCodes.SOURCE_FORBIDDEN,
@@ -271,9 +271,10 @@ export const ShareService = {
         params.confirmedPrivacyWarning ||
         recordedSourceMessageIds.has(ref.sourceMessageId) ||
         params.consentedShareSourceIds?.has(ref.sourceMessageId)
-      if (exposes && !consented) {
-        // A scheduled fire has no author to ask: send without the grant and
-        // keep the reference so the author can share it afterwards.
+      if (!canRead || (exposes && !consented)) {
+        // A scheduled fire has no author to ask, and can't grant a source the
+        // author lost read access to: send without the grant and keep the
+        // reference so the author can share it once they can.
         if (!params.consentedShareSourceIds) throw privacyConfirmationRequired()
         await UnsharedReferenceRepository.insert(params.client, {
           workspaceId: params.workspaceId,

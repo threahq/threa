@@ -221,7 +221,7 @@ export interface CreateMessageParams {
    * crosses a privacy boundary before consulting this flag.
    */
   confirmedPrivacyWarning?: boolean
-  /** Scheduled fire: pre-consented share sources; an exposing share outside the set sends unrecorded instead of 409. */
+  /** Scheduled fire: pre-consented share sources; an exposing share outside the set, or one the author can't read, sends unrecorded instead of 409/400. */
   consentedShareSourceIds?: ReadonlySet<string>
   /**
    * Pre-computed access scope used to authorize inline-attachment
@@ -741,6 +741,7 @@ export class EventService {
           params.authorId,
           params.accessibleStreamIds
         ),
+        sendUnreadableSharesUnpinned: params.consentedShareSourceIds !== undefined,
       })
       if (resolvedReferences.changed) {
         params.contentJson = resolvedReferences.contentJson
