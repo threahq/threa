@@ -66,6 +66,7 @@ describe("ScheduledMessagesRepository.insert", () => {
       attachmentIds: [],
       metadata: null,
       conversationDirective: null,
+      consentedShareSourceIds: [],
       scheduledFor: SCHEDULED_FOR,
       clientMessageId: "cli_1",
     })
@@ -91,6 +92,7 @@ describe("ScheduledMessagesRepository.insert", () => {
       attachmentIds: [],
       metadata: null,
       conversationDirective: { intent: "existing", conversationId: "conv_7" },
+      consentedShareSourceIds: [],
       scheduledFor: SCHEDULED_FOR,
       clientMessageId: null,
     })

@@ -410,6 +410,8 @@ describe("deferred generated output authority", () => {
           contentMarkdown: "late",
           attachmentIds: [],
           metadata: null,
+          conversationDirective: null,
+          consentedShareSourceIds: [],
           scheduledFor: new Date(Date.now() - 60_000),
           clientMessageId: null,
         })
@@ -468,6 +470,8 @@ describe("deferred generated output authority", () => {
         contentMarkdown: "cancel",
         attachmentIds: [],
         metadata: null,
+        conversationDirective: null,
+        consentedShareSourceIds: [],
         scheduledFor: new Date(Date.now() + 60_000),
         clientMessageId: null,
       })

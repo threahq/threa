@@ -44,6 +44,8 @@ describe("ScheduledMessagesRepository (integration)", () => {
       contentMarkdown: "hi",
       attachmentIds: [],
       metadata: null,
+      conversationDirective: null,
+      consentedShareSourceIds: [],
       scheduledFor: new Date(Date.now() + 60 * 60_000),
       clientMessageId: null,
     })
@@ -169,6 +171,8 @@ describe("ScheduledMessagesRepository (integration)", () => {
         contentMarkdown: "hi",
         attachmentIds: [],
         metadata: null,
+        conversationDirective: null,
+        consentedShareSourceIds: [],
         scheduledFor: new Date(Date.now() - 1_000),
         clientMessageId: null,
       })

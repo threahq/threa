@@ -220,6 +220,8 @@ export interface CreateMessageParams {
    * crosses a privacy boundary before consulting this flag.
    */
   confirmedPrivacyWarning?: boolean
+  /** Scheduled fire: pre-consented share sources; an exposing share outside the set sends unrecorded instead of 409. */
+  consentedShareSourceIds?: ReadonlySet<string>
   /**
    * Pre-computed access scope used to authorize inline-attachment
    * references and cross-stream share/quote pointers. When omitted, the
@@ -1084,6 +1086,7 @@ export class EventService {
       canReadStream: async (db, workspaceId, streamId, userId) =>
         (await checkStreamAccess(db, streamId, workspaceId, userId)) !== null,
       confirmedPrivacyWarning: params.confirmedPrivacyWarning,
+      consentedShareSourceIds: params.consentedShareSourceIds,
     })
 
     const sharedMessageRefs = new Map<string, SharedMessageRef>()

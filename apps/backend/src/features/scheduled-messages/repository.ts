@@ -18,6 +18,7 @@ interface ScheduledMessageRow {
   attachment_ids: string[]
   metadata: Record<string, string> | null
   conversation_directive: ConversationDirective | null
+  consented_share_source_ids: string[]
   scheduled_for: Date
   status: string
   sent_message_id: string | null
@@ -49,6 +50,8 @@ export interface ScheduledMessage {
    * send with no directive.
    */
   conversationDirective: ConversationDirective | null
+  /** Share sources whose exposure the author confirmed when scheduling. */
+  consentedShareSourceIds: string[]
   scheduledFor: Date
   status: ScheduledMessageStatus
   sentMessageId: string | null
@@ -88,6 +91,7 @@ export interface InsertScheduledMessageParams {
   attachmentIds: string[]
   metadata: Record<string, string> | null
   conversationDirective: ConversationDirective | null
+  consentedShareSourceIds: string[]
   scheduledFor: Date
   clientMessageId: string | null
 }
@@ -100,7 +104,7 @@ export interface ListScheduledOpts {
 }
 
 const COLUMNS =
-  "id, workspace_id, user_id, stream_id, parent_anchor_id, content_json, content_markdown, attachment_ids, metadata, conversation_directive, scheduled_for, status, sent_message_id, last_error, queue_message_id, edit_active_until, client_message_id, retry_count, version, created_at, updated_at, status_changed_at"
+  "id, workspace_id, user_id, stream_id, parent_anchor_id, content_json, content_markdown, attachment_ids, metadata, conversation_directive, consented_share_source_ids, scheduled_for, status, sent_message_id, last_error, queue_message_id, edit_active_until, client_message_id, retry_count, version, created_at, updated_at, status_changed_at"
 
 function mapRow(row: ScheduledMessageRow): ScheduledMessage {
   return {
@@ -114,6 +118,7 @@ function mapRow(row: ScheduledMessageRow): ScheduledMessage {
     attachmentIds: Array.isArray(row.attachment_ids) ? row.attachment_ids : [],
     metadata: row.metadata,
     conversationDirective: row.conversation_directive,
+    consentedShareSourceIds: row.consented_share_source_ids,
     scheduledFor: row.scheduled_for,
     status: row.status as ScheduledMessageStatus,
     sentMessageId: row.sent_message_id,
@@ -142,7 +147,7 @@ export const ScheduledMessagesRepository = {
       INSERT INTO scheduled_messages (
         id, workspace_id, user_id, stream_id, parent_anchor_id,
         content_json, content_markdown, attachment_ids, metadata,
-        conversation_directive, scheduled_for, status, client_message_id
+        conversation_directive, consented_share_source_ids, scheduled_for, status, client_message_id
       )
       VALUES (
         ${params.id},
@@ -155,6 +160,7 @@ export const ScheduledMessagesRepository = {
         ${JSON.stringify(params.attachmentIds)}::jsonb,
         ${params.metadata ? JSON.stringify(params.metadata) : null}::jsonb,
         ${params.conversationDirective ? JSON.stringify(params.conversationDirective) : null}::jsonb,
+        ${params.consentedShareSourceIds},
         ${params.scheduledFor},
         ${ScheduledMessageStatuses.PENDING},
         ${params.clientMessageId}
@@ -267,6 +273,7 @@ export const ScheduledMessagesRepository = {
       contentMarkdown?: string
       attachmentIds?: string[]
       metadata?: Record<string, string> | null
+      consentedShareSourceIds?: string[]
       scheduledFor?: Date
     }
   ): Promise<ScheduledMessage | null> {
@@ -283,6 +290,7 @@ export const ScheduledMessagesRepository = {
           WHEN ${params.metadata === undefined}::boolean THEN metadata
           ELSE ${params.metadata ? JSON.stringify(params.metadata) : null}::jsonb
         END,
+        consented_share_source_ids = COALESCE(${params.consentedShareSourceIds ?? null}::text[], consented_share_source_ids),
         scheduled_for = COALESCE(${params.scheduledFor ?? null}, scheduled_for),
         updated_at = NOW(),
         version = version + 1
