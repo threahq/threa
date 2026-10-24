@@ -18,14 +18,14 @@ import {
 } from "./snapshot"
 import { exitCodeFor, worst, type Level } from "./types"
 
-const SECTIONS: readonly Section[] = ["revision", "liveness", "pipelines", "push", "logs", "resources"]
+const SECTIONS: readonly Section[] = ["revision", "liveness", "pipelines", "push", "logs", "posthog", "resources"]
 
 const HELP = `monitor — post-launch production checks for Threa (read-only).
 
 Usage: bun run monitor <command> [flags]
 
 Commands:
-  status    One snapshot: revision per plane, liveness, outbox/queues/agents, logs, resources. Exit 0 ok / 1 warn / 2 fail.
+  status    One snapshot: revision per plane, liveness, outbox/queues/agents, logs, posthog, resources. Exit 0 ok / 1 warn / 2 fail.
   verify    Poll until every plane serves <sha> (or a gate fails), then run status.
   watch     Repeat status, print only new/resolved findings.
   logs      Error/warn log lines grouped by template.
@@ -33,7 +33,7 @@ Commands:
 
 Flags:
   --sha <sha>        Expected revision (default: origin/main head via git ls-remote).
-  --since <iso|Nm|Nh> Baseline for "since" comparisons. 45m, 2h, or ISO.
+  --since <iso|Nm|Nh|Nd> Baseline for "since" comparisons. 45m, 2h, 7d, or ISO.
                      Default: backend deploy time for status/verify/watch, last 1h for logs.
   --only <a,b>       Sections for status/watch: ${SECTIONS.join(",")}.
   --skip <a,b>       Sections to leave out.
@@ -48,22 +48,23 @@ Flags:
   --for <Nm>         watch: run for (default 60m).          --interval <Nm>: every (default 5m).
 
 Credentials: RAILWAY_READONLY_TOKEN, DB_READ_PROXY_URL/SECRET, THREA_PROD_BASE_URL, THREA_PROD_READ_ONLY_API_KEY,
-THREA_PROD_DEFAULT_WORKSPACE from env, else ~/.threa.env.agents. Missing ones skip their section loudly.`
+THREA_PROD_DEFAULT_WORKSPACE, POSTHOG_READ_ONLY_API_KEY, POSTHOG_PROJECT_ID_EU from env, else ~/.threa.env.agents.
+Missing ones skip their section loudly.`
 
 type Flags = Record<string, string | boolean | undefined>
 
+const DURATION_UNIT_MS = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }
+
 export function parseDuration(value: string | undefined, fallbackMs: number): number {
   if (!value) return fallbackMs
-  const match = /^(\d+)(ms|s|m|h)$/.exec(value.trim())
-  if (!match) throw new Error(`bad duration: ${value} (use 30s, 5m, 2h)`)
-  const amount = Number(match[1])
-  const unit = match[2]
-  return unit === "ms" ? amount : unit === "s" ? amount * 1000 : unit === "m" ? amount * 60_000 : amount * 3_600_000
+  const match = /^(\d+)(ms|s|m|h|d)$/.exec(value.trim())
+  if (!match) throw new Error(`bad duration: ${value} (use 30s, 5m, 2h, 7d)`)
+  return Number(match[1]) * DURATION_UNIT_MS[match[2] as keyof typeof DURATION_UNIT_MS]
 }
 
 export function parseSince(value: string | undefined, now: Date): string | undefined {
   if (!value) return undefined
-  if (/^\d+(s|m|h)$/.test(value)) return new Date(now.getTime() - parseDuration(value, 0)).toISOString()
+  if (/^\d+[a-z]+$/.test(value)) return new Date(now.getTime() - parseDuration(value, 0)).toISOString()
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) throw new Error(`bad --since: ${value}`)
   return date.toISOString()
