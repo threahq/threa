@@ -517,6 +517,7 @@ test.describe("A scheduled share that fires after its source went private", () =
       await reader.goto(`/w/${setup.workspaceId}/s/${setup.pubStreamId}`)
       const readerCard = reader.getByRole("main").locator("[data-message-id] [data-type='shared-message']")
       await expect(readerCard).toContainText("Private message", { timeout: 10000 })
+      await expect(reader.getByTestId("unshared-reference-prompt")).toHaveCount(0)
 
       await page.goto(`/w/${setup.workspaceId}/scheduled/sent`)
       const row = page.getByTestId("unshared-reference-prompt")

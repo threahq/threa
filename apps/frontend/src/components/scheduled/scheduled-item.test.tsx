@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { ScheduledMessageView } from "@threahq/types"
@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { messagesApi } from "@/api/messages"
 import * as hooksModule from "@/hooks"
 import * as streamNameModule from "@/hooks/use-stream-name"
+import { unsharedReferenceKeys } from "@/hooks/use-unshared-references"
 import { ScheduledItem } from "./scheduled-item"
 
 const SENT: ScheduledMessageView = {
@@ -32,13 +33,14 @@ const SENT: ScheduledMessageView = {
 
 function renderItem(scheduled: ScheduledMessageView) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
+  render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
         <ScheduledItem scheduled={scheduled} workspaceId="ws_test" />
       </MemoryRouter>
     </QueryClientProvider>
   )
+  return queryClient
 }
 
 describe("ScheduledItem unshared-reference prompt", () => {
@@ -68,12 +70,18 @@ describe("ScheduledItem unshared-reference prompt", () => {
   })
 
   it("should not prompt on a pending row", async () => {
-    const list = vi.spyOn(messagesApi, "listUnsharedReferences").mockResolvedValue({
+    vi.spyOn(messagesApi, "listUnsharedReferences").mockResolvedValue({
       references: [{ messageId: "msg_sent", streamId: "stream_dst", sourceMessageId: "msg_p", flavor: "pointer" }],
     })
-    renderItem({ ...SENT, status: "pending", scheduledFor: new Date(Date.now() + 60_000).toISOString() })
+    const queryClient = renderItem({
+      ...SENT,
+      status: "pending",
+      scheduledFor: new Date(Date.now() + 60_000).toISOString(),
+    })
 
-    await vi.waitFor(() => expect(list).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(queryClient.getQueryState(unsharedReferenceKeys.list("ws_test"))?.status).toBe("success")
+    )
     expect(screen.queryByTestId("unshared-reference-prompt")).not.toBeInTheDocument()
   })
 })

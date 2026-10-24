@@ -7,6 +7,7 @@ import { toast } from "sonner"
 import { DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD, type UnsharedReference } from "@threahq/types"
 import { messagesApi } from "@/api/messages"
 import { db } from "@/db"
+import { unsharedReferenceKeys } from "@/hooks/use-unshared-references"
 import { QuoteReplyBlock } from "./quote-reply-block"
 import { BlockquoteBlock } from "./blockquote-block"
 import { MarkdownBlockProvider, composeBlockCollapseKey, hashMarkdownBlock } from "./markdown-block-context"
@@ -38,7 +39,7 @@ function buildPreferencesContext() {
 
 function renderQuoteReply(ui: React.ReactElement, messageId = "msg_container", workspaceId = "ws_test") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
+  render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[`/w/${workspaceId}`]}>
         <Routes>
@@ -50,6 +51,7 @@ function renderQuoteReply(ui: React.ReactElement, messageId = "msg_container", w
       </MemoryRouter>
     </QueryClientProvider>
   )
+  return queryClient
 }
 
 /** Inline `max-height` clamp the collapsed body carries, if any. */
@@ -278,17 +280,19 @@ describe("QuoteReplyBlock unshared-reference prompt", () => {
 
     await user.click(await screen.findByRole("button", { name: "Share it" }))
 
-    await waitFor(() => expect(toastError).toHaveBeenCalledWith("You can no longer read the source"))
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Couldn't share"))
     expect(screen.getByTestId("unshared-reference-prompt")).toBeInTheDocument()
   })
 
   it("should not prompt for another message's unshared quote of the same source", async () => {
-    const list = vi
-      .spyOn(messagesApi, "listUnsharedReferences")
-      .mockResolvedValue({ references: [{ ...unsharedQuote, messageId: "msg_other" }] })
-    renderQuoteReply(quote)
+    vi.spyOn(messagesApi, "listUnsharedReferences").mockResolvedValue({
+      references: [{ ...unsharedQuote, messageId: "msg_other" }],
+    })
+    const queryClient = renderQuoteReply(quote)
 
-    await waitFor(() => expect(list).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(queryClient.getQueryState(unsharedReferenceKeys.list("ws_test"))?.status).toBe("success")
+    )
     expect(screen.queryByTestId("unshared-reference-prompt")).not.toBeInTheDocument()
   })
 })

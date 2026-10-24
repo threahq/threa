@@ -31,6 +31,7 @@ import { delegationKeys } from "@/hooks/use-stream-delegations"
 import { subagentKeys } from "@/hooks/use-subagent-run"
 import { commandKeys } from "@/hooks/use-stream-commands"
 import { agentOutcomeKeys } from "@/hooks/use-agent-outcomes"
+import { refreshUnsharedReferencesIf } from "@/hooks/use-unshared-references"
 import type { QueryClient } from "@tanstack/react-query"
 import { commitCounterMutation } from "./catch-up-batch"
 import { effectiveFreshness } from "./bootstrap-diff"
@@ -1615,6 +1616,8 @@ function bindStreamSocketHandlers(
       contentMarkdown: string
       memoEmbeds?: MemoEmbedSummary[]
     }
+    // An edit re-records the message's references server-side.
+    refreshUnsharedReferencesIf(queryClient, workspaceId, (r) => r.messageId === editPayload.messageId)
 
     const now = Date.now()
     await db.transaction("rw", [db.events, db.slots], async () => {
@@ -2057,6 +2060,8 @@ function bindStreamSocketHandlers(
     sharedMessages?: Record<string, SharedMessageSlot>
   }) => {
     if (payload.targetStreamId !== streamId) return
+    // A grant from the author's other device arrives only as this invalidation.
+    refreshUnsharedReferencesIf(queryClient, workspaceId, (r) => r.sourceMessageId === payload.sourceMessageId)
     if (payload.slots || payload.sharedMessages) {
       await writeSlotCarrier({
         database: db,

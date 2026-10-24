@@ -1,11 +1,10 @@
 import { useMemo } from "react"
 import { toast } from "sonner"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import type { ShareFlavor, UnsharedReference } from "@threahq/types"
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query"
+import type { ShareFlavor, UnsharedReference, UnsharedReferencesResponse } from "@threahq/types"
 import { messagesApi } from "@/api/messages"
 
 export const unsharedReferenceKeys = {
-  all: ["unsharedReferences"] as const,
   list: (workspaceId: string) => ["unsharedReferences", workspaceId] as const,
 }
 
@@ -46,11 +45,32 @@ export function useUnsharedReference(
   return byMessage.get(messageId)?.find((r) => r.sourceMessageId === sourceMessageId)?.flavor ?? null
 }
 
+/** The flavor a message's whole prompt takes: pointer when any unshared reference is a share, else quote. */
+export function useUnsharedMessageFlavor(
+  workspaceId: string | undefined,
+  messageId: string | null | undefined
+): ShareFlavor | null {
+  const references = useUnsharedReferences(workspaceId).get(messageId ?? "")
+  if (!messageId || !references) return null
+  return references.some((r) => r.flavor === "pointer") ? "pointer" : "quote"
+}
+
+/** Refetch the list only when a cached row matches, so unrelated stream events cost nothing. */
+export function refreshUnsharedReferencesIf(
+  queryClient: QueryClient,
+  workspaceId: string,
+  matches: (reference: UnsharedReference) => boolean
+) {
+  const queryKey = unsharedReferenceKeys.list(workspaceId)
+  const cached = queryClient.getQueryData<UnsharedReferencesResponse>(queryKey)
+  if (cached?.references.some(matches)) void queryClient.invalidateQueries({ queryKey })
+}
+
 export function useShareReferences(workspaceId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (messageId: string) => messagesApi.shareReferences(workspaceId, messageId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: unsharedReferenceKeys.list(workspaceId) }),
-    onError: (err: Error) => toast.error(err.message || "Couldn't share"),
+    onError: () => toast.error("Couldn't share"),
   })
 }

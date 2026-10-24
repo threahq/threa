@@ -2040,8 +2040,7 @@ export class SyncEngine {
 
   /**
    * Refresh the surfaces a full-bootstrap collapse does NOT re-derive on its
-   * own. Saved and scheduled lists (and the unshared-reference prompts a fire
-   * creates) aren't carried by the workspace bootstrap and
+   * own. Saved and scheduled lists aren't carried by the workspace bootstrap and
    * gate off `refetchOnReconnect` in sync mode (use-saved / use-scheduled), so
    * they are healed only by catch-up replaying their sync-log entries; the
    * activity feed list is likewise handler-invalidated, not bootstrapped; the
