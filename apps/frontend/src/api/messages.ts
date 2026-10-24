@@ -11,6 +11,7 @@ import type {
   ValidateMoveMessagesToThreadResponse,
   ReferenceAudienceInput,
   ReferenceAudienceResponse,
+  UnsharedReferencesResponse,
 } from "@threahq/types"
 
 export type { CreateMessageInput, CreateDmMessageInput, UpdateMessageInput, MoveMessagesToThreadInput }
@@ -67,6 +68,14 @@ export const messagesApi = {
 
   referenceAudience(workspaceId: string, input: ReferenceAudienceInput): Promise<ReferenceAudienceResponse> {
     return api.post(`/api/workspaces/${workspaceId}/messages/reference-audience`, input)
+  },
+
+  listUnsharedReferences(workspaceId: string): Promise<UnsharedReferencesResponse> {
+    return api.get(`/api/workspaces/${workspaceId}/unshared-references`)
+  },
+
+  shareReferences(workspaceId: string, messageId: string): Promise<void> {
+    return api.post(`/api/workspaces/${workspaceId}/messages/${messageId}/share-references`)
   },
 
   addReaction(workspaceId: string, messageId: string, emoji: string): Promise<void> {

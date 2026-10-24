@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
-import { DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD } from "@threahq/types"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { toast } from "sonner"
+import { DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD, type UnsharedReference } from "@threahq/types"
+import { messagesApi } from "@/api/messages"
 import { db } from "@/db"
 import { QuoteReplyBlock } from "./quote-reply-block"
 import { BlockquoteBlock } from "./blockquote-block"
@@ -34,15 +37,18 @@ function buildPreferencesContext() {
 }
 
 function renderQuoteReply(ui: React.ReactElement, messageId = "msg_container", workspaceId = "ws_test") {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <MemoryRouter initialEntries={[`/w/${workspaceId}`]}>
-      <Routes>
-        <Route
-          path="/w/:workspaceId"
-          element={<MarkdownBlockProvider messageId={messageId}>{ui}</MarkdownBlockProvider>}
-        />
-      </Routes>
-    </MemoryRouter>
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[`/w/${workspaceId}`]}>
+        <Routes>
+          <Route
+            path="/w/:workspaceId"
+            element={<MarkdownBlockProvider messageId={messageId}>{ui}</MarkdownBlockProvider>}
+          />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
   )
 }
 
@@ -70,6 +76,7 @@ describe("QuoteReplyBlock collapse behavior", () => {
       openUserProfile: vi.fn(),
     } as unknown as ReturnType<typeof userProfileModule.useUserProfile>)
     vi.spyOn(lineMeasureModule, "useMeasuredLineCount").mockImplementation(() => ({ ...measure, remeasure: () => {} }))
+    vi.spyOn(messagesApi, "listUnsharedReferences").mockResolvedValue({ references: [] })
     currentPrefs = { blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD }
     measure = { lineCount: 1, lineHeightPx: 20 }
     await db.markdownBlockCollapse.clear()
@@ -214,5 +221,74 @@ describe("QuoteReplyBlock collapse behavior", () => {
     // The nested blockquote does NOT render a fold toggle of its own.
     expect(screen.queryByRole("button", { name: /block quote/i })).not.toBeInTheDocument()
     expect(screen.getByText("Inner quote line.")).toBeInTheDocument()
+  })
+})
+
+describe("QuoteReplyBlock unshared-reference prompt", () => {
+  const unsharedQuote: UnsharedReference = {
+    messageId: "msg_container",
+    streamId: "stream_dst",
+    sourceMessageId: "msg_src",
+    flavor: "quote",
+  }
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    vi.spyOn(preferencesModule, "usePreferencesOptional").mockImplementation(() => buildPreferencesContext())
+    vi.spyOn(hooksModule, "useActors").mockReturnValue({
+      getActorAvatar: () => ({ fallback: "AL" }),
+    } as unknown as ReturnType<typeof hooksModule.useActors>)
+    vi.spyOn(userProfileModule, "useUserProfile").mockReturnValue({
+      openUserProfile: vi.fn(),
+    } as unknown as ReturnType<typeof userProfileModule.useUserProfile>)
+    vi.spyOn(lineMeasureModule, "useMeasuredLineCount").mockImplementation(() => ({
+      lineCount: 1,
+      lineHeightPx: 20,
+      remeasure: () => {},
+    }))
+  })
+
+  const quote = (
+    <QuoteReplyBlock authorName="Alex" authorId="user_alex" actorType="user" streamId="stream_src" messageId="msg_src">
+      <p>Quoted line.</p>
+    </QuoteReplyBlock>
+  )
+
+  it("should share the carrying message's references and drop the prompt when Share it succeeds", async () => {
+    const user = userEvent.setup()
+    vi.spyOn(messagesApi, "listUnsharedReferences")
+      .mockResolvedValueOnce({ references: [unsharedQuote] })
+      .mockResolvedValue({ references: [] })
+    const share = vi.spyOn(messagesApi, "shareReferences").mockResolvedValue(undefined)
+    renderQuoteReply(quote)
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Readers can't open the quoted message")
+    await user.click(screen.getByRole("button", { name: "Share it" }))
+
+    await waitFor(() => expect(screen.queryByTestId("unshared-reference-prompt")).not.toBeInTheDocument())
+    expect(share).toHaveBeenCalledWith("ws_test", "msg_container")
+  })
+
+  it("should keep the prompt and say why when Share it fails", async () => {
+    const user = userEvent.setup()
+    vi.spyOn(messagesApi, "listUnsharedReferences").mockResolvedValue({ references: [unsharedQuote] })
+    vi.spyOn(messagesApi, "shareReferences").mockRejectedValue(new Error("You can no longer read the source"))
+    const toastError = vi.spyOn(toast, "error").mockReturnValue("" as ReturnType<typeof toast.error>)
+    renderQuoteReply(quote)
+
+    await user.click(await screen.findByRole("button", { name: "Share it" }))
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("You can no longer read the source"))
+    expect(screen.getByTestId("unshared-reference-prompt")).toBeInTheDocument()
+  })
+
+  it("should not prompt for another message's unshared quote of the same source", async () => {
+    const list = vi
+      .spyOn(messagesApi, "listUnsharedReferences")
+      .mockResolvedValue({ references: [{ ...unsharedQuote, messageId: "msg_other" }] })
+    renderQuoteReply(quote)
+
+    await waitFor(() => expect(list).toHaveBeenCalled())
+    expect(screen.queryByTestId("unshared-reference-prompt")).not.toBeInTheDocument()
   })
 })

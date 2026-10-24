@@ -1,13 +1,15 @@
 import { useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { AlertCircle } from "lucide-react"
-import type { ScheduledMessageView } from "@threahq/types"
+import type { ScheduledMessageView, ShareFlavor } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { formatSendCountdown } from "@/lib/dates"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useLongPress } from "@/hooks/use-long-press"
+import { useUnsharedReferences } from "@/hooks/use-unshared-references"
+import { UnsharedReferencePrompt } from "@/components/shared-messages/unshared-reference-prompt"
 import { RelativeTime } from "@/components/relative-time"
 import { ScheduledActionDrawer } from "./scheduled-action-drawer"
 import { ScheduledActions } from "./scheduled-actions"
@@ -60,6 +62,10 @@ export function ScheduledItem({ scheduled, workspaceId, onEdit, onCancel, onSend
 
   const sentLink =
     isSent && scheduled.sentMessageId ? `/w/${workspaceId}/s/${scheduled.streamId}?m=${scheduled.sentMessageId}` : null
+
+  const unshared = useUnsharedReferences(workspaceId).get(scheduled.sentMessageId ?? "")
+  let unsharedFlavor: ShareFlavor | null = null
+  if (sentLink && unshared) unsharedFlavor = unshared.some((r) => r.flavor === "pointer") ? "pointer" : "quote"
 
   let verbPrefix = "Sending to"
   if (isSent) verbPrefix = "Sent to"
@@ -138,9 +144,19 @@ export function ScheduledItem({ scheduled, workspaceId, onEdit, onCancel, onSend
         onContextMenu={longPress.handlers.onContextMenu}
       >
         {sentLink ? (
-          <Link to={sentLink} className="min-w-0 flex-1">
-            {Content}
-          </Link>
+          <div className="min-w-0 flex-1">
+            <Link to={sentLink} className="block">
+              {Content}
+            </Link>
+            {unsharedFlavor && scheduled.sentMessageId && (
+              <UnsharedReferencePrompt
+                workspaceId={workspaceId}
+                messageId={scheduled.sentMessageId}
+                flavor={unsharedFlavor}
+                className="mt-1.5"
+              />
+            )}
+          </div>
         ) : (
           <button
             type="button"

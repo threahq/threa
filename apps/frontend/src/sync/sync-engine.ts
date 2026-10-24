@@ -34,6 +34,7 @@ import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { savedKeys } from "@/hooks/use-saved"
 import { scheduledKeys } from "@/hooks/use-scheduled"
+import { unsharedReferenceKeys } from "@/hooks/use-unshared-references"
 import { activityKeys } from "@/hooks/use-activity"
 import { conversationKeys } from "@/hooks/use-conversations"
 import { isServerStreamId } from "@/lib/stream-ids"
@@ -2039,7 +2040,8 @@ export class SyncEngine {
 
   /**
    * Refresh the surfaces a full-bootstrap collapse does NOT re-derive on its
-   * own. Saved and scheduled lists aren't carried by the workspace bootstrap and
+   * own. Saved and scheduled lists (and the unshared-reference prompts a fire
+   * creates) aren't carried by the workspace bootstrap and
    * gate off `refetchOnReconnect` in sync mode (use-saved / use-scheduled), so
    * they are healed only by catch-up replaying their sync-log entries; the
    * activity feed list is likewise handler-invalidated, not bootstrapped; the
@@ -2058,6 +2060,7 @@ export class SyncEngine {
     const keys: QueryKey[] = [
       savedKeys.all,
       scheduledKeys.all,
+      unsharedReferenceKeys.list(this.workspaceId),
       activityKeys.all,
       conversationKeys.workspaceLists(this.workspaceId),
     ]
