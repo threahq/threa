@@ -7,6 +7,7 @@ import {
   deleteMessage,
   joinWorkspace,
   loginAs,
+  moveMessagesToThread,
   sendMessage,
 } from "../client"
 
@@ -178,5 +179,31 @@ describe("share privacy on a scheduled send", () => {
       before: [laterPrivate.messageId],
       after: [],
     })
+  })
+
+  test("a reference that can no longer be shared doesn't block sharing the others", async () => {
+    const channelId = (await createChannel(alice, workspaceId, "share-scheduled-moved-source", "public")).id
+    const anchor = await sendMessage(alice, workspaceId, channelId, "thread anchor")
+    const moved = {
+      messageId: (await sendMessage(alice, workspaceId, channelId, "moved later")).id,
+      streamId: channelId,
+    }
+    const kept = { messageId: (await sendMessage(alice, workspaceId, channelId, "stays put")).id, streamId: channelId }
+    const scheduled = await schedule(true, [moved, kept])
+    await alice.patch(`/api/workspaces/${workspaceId}/streams/${channelId}`, { visibility: "private" })
+    const sent = await alice.post<{ scheduled: ScheduledMessageView }>(
+      `/api/workspaces/${workspaceId}/scheduled/${scheduled.data.scheduled.id}/send-now`
+    )
+    const sentMessageId = sent.data.scheduled.sentMessageId!
+    await moveMessagesToThread(alice, workspaceId, channelId, anchor.id, [moved.messageId])
+    const listed = await alice.get<UnsharedReferencesResponse>(`/api/workspaces/${workspaceId}/unshared-references`)
+    const shared = await alice.post(`/api/workspaces/${workspaceId}/messages/${sentMessageId}/share-references`)
+    const seen = await bob.get<EventsResponse>(`/api/workspaces/${workspaceId}/streams/${targetStreamId}/events`)
+
+    expect({
+      listed: listed.data.references.filter((ref) => ref.messageId === sentMessageId).map((ref) => ref.sourceMessageId),
+      sharedStatus: shared.status,
+      kept: seen.data.sharedMessages[kept.messageId]?.state,
+    }).toEqual({ listed: [kept.messageId], sharedStatus: 204, kept: "ok" })
   })
 })

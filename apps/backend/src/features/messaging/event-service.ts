@@ -25,13 +25,7 @@ import {
   type StreamWritePrincipal,
 } from "../streams"
 import { MessageRepository, type Message, type MoveMessageSequenceUpdate } from "./repository"
-import {
-  collectSharedMessageRefs,
-  hydrateSharedMessageRefsForRoom,
-  toDualSlotMaps,
-  ShareService,
-  UnsharedReferenceRepository,
-} from "./sharing"
+import { collectSharedMessageRefs, hydrateSharedMessageRefsForRoom, toDualSlotMaps, ShareService } from "./sharing"
 import { resolveMessageReferences } from "./references"
 import {
   AttachmentRepository,
@@ -2622,31 +2616,19 @@ export class EventService {
         throw new HttpError("Can only share references in your own messages", { status: 403, code: "FORBIDDEN" })
       }
 
-      const unshared = await UnsharedReferenceRepository.listByShareMessageId(
-        client,
-        params.workspaceId,
-        params.messageId
-      )
-      if (unshared.length === 0) return
-
-      await ShareService.validateAndRecordShares({
+      const sourceMessageIds = await ShareService.grantUnsharedReferences({
         client,
         workspaceId: params.workspaceId,
-        targetStreamId: message.streamId,
         shareMessageId: message.id,
-        sharerId: params.userId,
-        contentJson: message.contentJson,
-        findStream: (db, id) => StreamRepository.findById(db, params.workspaceId, id),
-        canReadStream: async (db, workspaceId, streamId, userId) =>
-          (await checkStreamAccess(db, streamId, workspaceId, userId)) !== null,
-        confirmedPrivacyWarning: true,
+        userId: params.userId,
       })
+      if (sourceMessageIds.length === 0) return
 
       await OutboxRepository.insert(client, "message:shares_granted", {
         workspaceId: params.workspaceId,
         streamId: message.streamId,
         messageId: message.id,
-        sourceMessageIds: unshared.map((ref) => ref.sourceMessageId),
+        sourceMessageIds,
       })
     })
   }

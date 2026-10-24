@@ -302,8 +302,7 @@ export const ShareService = {
   /**
    * The user's sent references that went out without a grant and still hide
    * their source from readers of the message's current stream. A reference
-   * the user could no longer share — source deleted, moved, or no longer
-   * readable by them — is dropped along with one whose source has opened up.
+   * whose source has since opened up to those readers is dropped.
    */
   async listUnsharedReferences(
     db: Querier,
@@ -311,23 +310,9 @@ export const ShareService = {
     userId: string
   ): Promise<(UnsharedReference & { streamId: string })[]> {
     const rows = await UnsharedReferenceRepository.listByCreator(db, workspaceId, userId)
-    if (rows.length === 0) return []
-    const messages = await MessageRepository.findByIds(db, workspaceId, [
-      ...new Set(rows.flatMap((row) => [row.shareMessageId, row.sourceMessageId])),
-    ])
-    const readable = await listAccessibleStreamIds(db, workspaceId, userId, [
-      ...new Set(rows.map((row) => row.sourceStreamId)),
-    ])
     const rowsByStream = new Map<string, (UnsharedReference & { streamId: string })[]>()
-    for (const row of rows) {
-      const message = messages.get(row.shareMessageId)
-      const source = messages.get(row.sourceMessageId)
-      if (!message || message.deletedAt || !source || source.deletedAt) continue
-      // validateAndRecordShares rejects a pointer whose source moved streams.
-      if (source.streamId !== row.sourceStreamId || !readable.has(row.sourceStreamId)) continue
-      const inStream = rowsByStream.get(message.streamId) ?? []
-      inStream.push({ ...row, streamId: message.streamId })
-      rowsByStream.set(message.streamId, inStream)
+    for (const row of await shareableUnsharedReferences(db, workspaceId, userId, rows)) {
+      rowsByStream.set(row.streamId, [...(rowsByStream.get(row.streamId) ?? []), row])
     }
     const exposing = await Promise.all(
       [...rowsByStream].map(async ([streamId, inStream]) => {
@@ -339,4 +324,68 @@ export const ShareService = {
     )
     return exposing.flat()
   },
+
+  /**
+   * Records the grants a scheduled send skipped, for the references the
+   * author can still share, and clears the message's unshared rows. Only
+   * those references are checked: the rest of the message keeps its grants,
+   * so one reference that can no longer be shared doesn't block the others.
+   * Returns the source message ids it granted.
+   */
+  async grantUnsharedReferences(params: {
+    client: Querier
+    workspaceId: string
+    shareMessageId: string
+    userId: string
+  }): Promise<string[]> {
+    const rows = await UnsharedReferenceRepository.listByShareMessageId(
+      params.client,
+      params.workspaceId,
+      params.shareMessageId
+    )
+    const shareable = await shareableUnsharedReferences(params.client, params.workspaceId, params.userId, rows)
+    for (const ref of shareable) {
+      await SharedMessageRepository.insert(params.client, {
+        id: sharedMessageId(),
+        workspaceId: params.workspaceId,
+        shareMessageId: ref.shareMessageId,
+        sourceMessageId: ref.sourceMessageId,
+        sourceStreamId: ref.sourceStreamId,
+        targetStreamId: ref.streamId,
+        flavor: ref.flavor,
+        createdBy: params.userId,
+      })
+    }
+    await UnsharedReferenceRepository.deleteByShareMessageId(params.client, params.workspaceId, params.shareMessageId)
+    return shareable.map((ref) => ref.sourceMessageId)
+  },
+}
+
+/**
+ * The references sharing could still fix, with the carrying message's current
+ * stream: both messages exist undeleted, the source still sits in the stream
+ * its pointer names (validation rejects a moved one), and the user still reads
+ * both the source and the destination.
+ */
+async function shareableUnsharedReferences(
+  db: Querier,
+  workspaceId: string,
+  userId: string,
+  rows: UnsharedReference[]
+): Promise<(UnsharedReference & { streamId: string })[]> {
+  if (rows.length === 0) return []
+  const messages = await MessageRepository.findByIds(db, workspaceId, [
+    ...new Set(rows.flatMap((row) => [row.shareMessageId, row.sourceMessageId])),
+  ])
+  const streamIds = new Set(rows.map((row) => row.sourceStreamId))
+  for (const message of messages.values()) streamIds.add(message.streamId)
+  const readable = await listAccessibleStreamIds(db, workspaceId, userId, [...streamIds])
+  return rows.flatMap((row) => {
+    const message = messages.get(row.shareMessageId)
+    const source = messages.get(row.sourceMessageId)
+    if (!message || message.deletedAt || !source || source.deletedAt) return []
+    if (source.streamId !== row.sourceStreamId) return []
+    if (!readable.has(row.sourceStreamId) || !readable.has(message.streamId)) return []
+    return [{ ...row, streamId: message.streamId }]
+  })
 }
