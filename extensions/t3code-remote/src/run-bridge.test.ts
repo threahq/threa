@@ -1658,6 +1658,78 @@ describe("runs T3 starts by itself", () => {
     })
   })
 
+  test("reads a sealed stream past the runs T3 started by itself, and never posts them", async () => {
+    const { t3, session, runner } = setup()
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Started." })] }])
+    await runner.deliverTurn(turn({ sealed: true }))
+    await session.settled()
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(2, "assistant_message", { runId: "run_2", text: "Secret findings." })])
+    t3.script("run_3", [
+      { status: "completed", items: [item(3, "assistant_message", { runId: "run_3", text: "Sealed reply." })] },
+    ])
+    await runner.deliverTurn(turn({ invocationId: "binv_2", sealed: true, content: "Go on" }))
+    await session.settled()
+    t3.script("run_4", [
+      { status: "completed", items: [item(4, "assistant_message", { runId: "run_4", text: "Plain reply." })] },
+    ])
+    await runner.deliverTurn(turn({ invocationId: "binv_3", content: "And now?" }))
+    await session.settled()
+    await runner.watch()
+    await until(() => !runner.busy)
+
+    const looks = t3.callsOf("t3_thread_read").filter((args) => args.maxCharsPerItem === 1)
+    expect({ posts: session.posts, lastLookFrom: looks.at(-1)?.afterPosition }).toEqual({
+      posts: [],
+      lastLookFrom: 4,
+    })
+  })
+
+  test("posts a run once when the relay picks it up while it waits in the queue", async () => {
+    const { t3, session, runner } = setup()
+    await settledTurn(t3, session, runner)
+    t3.startInT3("thread_1")
+    t3.script("run_2", [
+      { status: "running", items: [item(2, "command_execution", { runId: "run_2", status: "running" })] },
+    ])
+    await runner.watch()
+    await idle()
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(3, "user_message", { runId: "run_3", text: "Continue" })])
+    t3.script("run_4", [
+      { status: "completed", items: [item(4, "assistant_message", { runId: "run_4", text: "Docs updated." })] },
+    ])
+    await runner.deliverTurn(turn({ invocationId: "binv_2", content: "Now the docs" }))
+    await session.settled()
+    t3.script("run_2", [{ status: "running", runId: "run_3" }])
+    t3.script("run_3", [
+      { status: "completed", items: [item(5, "assistant_message", { runId: "run_3", text: "Continued answer." })] },
+    ])
+    await until(() => !runner.busy)
+
+    expect(session.posts).toEqual([
+      { streamId: "stream_root", text: "Continued answer.", clientMessageId: "t3run-run_3" },
+    ])
+  })
+
+  test("/clear stops posting the old thread's run", async () => {
+    const { t3, session, runner } = setup()
+    await settledTurn(t3, session, runner)
+    t3.startInT3("thread_1")
+    t3.script("run_2", [
+      { status: "running", items: [item(2, "command_execution", { runId: "run_2", status: "running" })] },
+    ])
+    await runner.watch()
+    await idle()
+    runner.forgetThread("stream_root")
+    t3.script("run_2", [
+      { status: "completed", items: [item(3, "assistant_message", { runId: "run_2", text: "Old thread's answer." })] },
+    ])
+    await until(() => !runner.busy)
+
+    expect(session.posts).toEqual([])
+  })
+
   test("never posts the runs a forked thread inherits from its source", async () => {
     const { t3, session, runner } = setup()
     await settledTurn(t3, session, runner)

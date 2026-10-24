@@ -349,6 +349,11 @@ export class T3TurnRunner {
 
   /** The stream's next turn launches a fresh thread. */
   forgetThread(streamId: string): void {
+    const relay = this.unprompted.get(this.state.threads[streamId] ?? "")
+    if (relay) {
+      relay.abort.abort()
+      this.release(relay)
+    }
     const { [streamId]: _dropped, ...threads } = this.state.threads
     this.saveState({ ...this.state, threads })
   }
@@ -602,6 +607,7 @@ export class T3TurnRunner {
           const handedOver = adopted !== undefined && this.turnOwns(threadId, adopted)
           if (adopted && !handedOver) {
             this.account(threadId, [adopted])
+            relay.queue = relay.queue.filter((queued) => queued !== adopted)
             relay.runId = adopted
             trace.runIds.add(adopted)
           }
@@ -685,8 +691,10 @@ export class T3TurnRunner {
       this.unprompted.delete(threadId)
       this.relay(turn.streamId, threadId, takenOver.queue, takenOver.from)
     }
-    // Runs T3 started by itself since the last look, which this turn's message queued behind.
-    if (!turn.sealed) this.relayUnaccounted(turn.streamId, threadId, ahead)
+    // Runs T3 started by itself since the last look, which this turn's message queued behind. A post outside a turn
+    // can't be sealed, so on a sealed stream they are only accounted for.
+    if (turn.sealed) this.account(threadId, ahead)
+    else this.relayUnaccounted(turn.streamId, threadId, ahead)
     if (aborted) return
     const mode: RunTraceMode = turn.sealed && this.options.sealedFullTrace ? "full" : this.options.traceMode
     const run: OpenRun = {
