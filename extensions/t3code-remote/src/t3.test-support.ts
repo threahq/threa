@@ -324,6 +324,8 @@ export function fakeSession(rootStreamId = "stream_root") {
   const steps: Array<{ invocationId: string; frames: StepFrame[] }> = []
   const replies: Array<{ invocationId: string; text: string }> = []
   const posts: Array<{ streamId: string; text: string; clientMessageId: string }> = []
+  const interims: Array<{ invocationId: string; text: string }> = []
+  const interimResults: Array<Awaited<ReturnType<BridgeSession["sendInterim"]>>> = []
   const fails: Array<{ invocationId: string; errorMessage: string }> = []
   const decisions: Array<{ input: DecisionRequestInput; signal?: AbortSignal }> = []
   const outcomes: Array<DecisionOutcome | DecisionAbandonedError> = []
@@ -340,6 +342,11 @@ export function fakeSession(rootStreamId = "stream_root") {
       replies.push({ invocationId, text })
       settle()
       return { ok: true, message: "" }
+    },
+    sendInterim: async (invocationId, text) => {
+      const result = interimResults.shift() ?? { ok: true, message: "" }
+      if (result.ok) interims.push({ invocationId, text })
+      return result
     },
     postToStream: async (streamId, text, clientMessageId) => {
       posts.push({ streamId, text, clientMessageId })
@@ -370,6 +377,9 @@ export function fakeSession(rootStreamId = "stream_root") {
     steps,
     replies,
     posts,
+    interims,
+    /** How the next interim posts answer; unset, they post. */
+    interimResults,
     fails,
     decisions,
     /** Answer the open card, or the next one asked. */
