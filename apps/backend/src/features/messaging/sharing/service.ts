@@ -6,7 +6,7 @@ import { MessageRepository } from "../repository"
 import type { CanReadStream, FindStreamForSharing } from "./access-check"
 import { SharedMessageRepository, UnsharedReferenceRepository, type UnsharedReference } from "./repository"
 import { E2eStreamsRepository } from "../../e2e-streams"
-import { findReadersWithoutAccess } from "../../streams"
+import { findReadersWithoutAccess, listAccessibleStreamIds } from "../../streams"
 
 /**
  * A share-node extracted from a message's contentJson during scanning.
@@ -302,7 +302,8 @@ export const ShareService = {
   /**
    * The user's sent references that went out without a grant and still hide
    * their source from readers of the message's current stream. A reference
-   * whose source has since opened up to those readers is dropped, not shown.
+   * the user could no longer share — source deleted, moved, or no longer
+   * readable by them — is dropped along with one whose source has opened up.
    */
   async listUnsharedReferences(
     db: Querier,
@@ -312,12 +313,18 @@ export const ShareService = {
     const rows = await UnsharedReferenceRepository.listByCreator(db, workspaceId, userId)
     if (rows.length === 0) return []
     const messages = await MessageRepository.findByIds(db, workspaceId, [
-      ...new Set(rows.map((row) => row.shareMessageId)),
+      ...new Set(rows.flatMap((row) => [row.shareMessageId, row.sourceMessageId])),
+    ])
+    const readable = await listAccessibleStreamIds(db, workspaceId, userId, [
+      ...new Set(rows.map((row) => row.sourceStreamId)),
     ])
     const rowsByStream = new Map<string, (UnsharedReference & { streamId: string })[]>()
     for (const row of rows) {
       const message = messages.get(row.shareMessageId)
-      if (!message || message.deletedAt) continue
+      const source = messages.get(row.sourceMessageId)
+      if (!message || message.deletedAt || !source || source.deletedAt) continue
+      // validateAndRecordShares rejects a pointer whose source moved streams.
+      if (source.streamId !== row.sourceStreamId || !readable.has(row.sourceStreamId)) continue
       const inStream = rowsByStream.get(message.streamId) ?? []
       inStream.push({ ...row, streamId: message.streamId })
       rowsByStream.set(message.streamId, inStream)

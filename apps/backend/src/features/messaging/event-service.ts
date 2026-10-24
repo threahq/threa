@@ -2615,6 +2615,9 @@ export class EventService {
     await withTransaction(this.pool, async (client) => {
       const message = await MessageRepository.findByIdForUpdate(client, params.workspaceId, params.messageId)
       if (!message || message.deletedAt) throw new MessageNotFoundError()
+      if (!(await checkStreamAccess(client, message.streamId, params.workspaceId, params.userId))) {
+        throw new MessageNotFoundError()
+      }
       if (message.authorId !== params.userId) {
         throw new HttpError("Can only share references in your own messages", { status: 403, code: "FORBIDDEN" })
       }

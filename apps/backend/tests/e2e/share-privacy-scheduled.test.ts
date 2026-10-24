@@ -1,6 +1,14 @@
 import { beforeAll, describe, expect, test } from "bun:test"
 import { ShareErrorCodes, type ScheduledMessageView, type UnsharedReferencesResponse } from "@threahq/types"
-import { TestClient, createChannel, createWorkspace, joinWorkspace, loginAs, sendMessage } from "../client"
+import {
+  TestClient,
+  createChannel,
+  createWorkspace,
+  deleteMessage,
+  joinWorkspace,
+  loginAs,
+  sendMessage,
+} from "../client"
 
 type EventsResponse = { sharedMessages: Record<string, { state: string }> }
 
@@ -144,6 +152,31 @@ describe("share privacy on a scheduled send", () => {
       sharedStatus: 204,
       laterPrivateAfterShare: "ok",
       unsharedAfter: [],
+    })
+  })
+
+  test("an unshared reference whose source is deleted stops asking to be shared", async () => {
+    const laterPrivateStreamId = (await createChannel(alice, workspaceId, "share-scheduled-deleted-source", "public"))
+      .id
+    const laterPrivate = {
+      messageId: (await sendMessage(alice, workspaceId, laterPrivateStreamId, "deleted later")).id,
+      streamId: laterPrivateStreamId,
+    }
+    const scheduled = await schedule(true, [laterPrivate])
+    await alice.patch(`/api/workspaces/${workspaceId}/streams/${laterPrivateStreamId}`, { visibility: "private" })
+    const sent = await alice.post<{ scheduled: ScheduledMessageView }>(
+      `/api/workspaces/${workspaceId}/scheduled/${scheduled.data.scheduled.id}/send-now`
+    )
+    const sentMessageId = sent.data.scheduled.sentMessageId!
+    const listed = (unshared: UnsharedReferencesResponse) =>
+      unshared.references.filter((ref) => ref.messageId === sentMessageId).map((ref) => ref.sourceMessageId)
+    const before = await alice.get<UnsharedReferencesResponse>(`/api/workspaces/${workspaceId}/unshared-references`)
+    await deleteMessage(alice, workspaceId, laterPrivate.messageId)
+    const after = await alice.get<UnsharedReferencesResponse>(`/api/workspaces/${workspaceId}/unshared-references`)
+
+    expect({ before: listed(before.data), after: listed(after.data) }).toEqual({
+      before: [laterPrivate.messageId],
+      after: [],
     })
   })
 })

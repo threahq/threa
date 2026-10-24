@@ -843,15 +843,6 @@ export function createMessageHandlers({
       const workspaceId = req.workspaceId!
       const { messageId } = req.params
 
-      const existing = await eventService.getMessageById(workspaceId, messageId)
-      if (!existing || existing.deletedAt) {
-        throw new MessageNotFoundError()
-      }
-      const accessibleStream = await streamService.tryAccess(existing.streamId, workspaceId, userId)
-      if (!accessibleStream) {
-        throw new MessageNotFoundError()
-      }
-
       await eventService.shareUnsharedReferences({ workspaceId, messageId, userId })
       res.status(204).send()
     },
