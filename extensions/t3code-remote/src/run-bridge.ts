@@ -280,6 +280,8 @@ export class T3TurnRunner {
   private readonly seenRuns = new Map<string, string>()
   // Per thread, the run T3 started on its own that is being followed until it ends.
   private readonly unprompted = new Map<string, { runId: string; abort: AbortController }>()
+  // Streams whose latest Threa message arrived in plaintext. A post outside a turn can't be sealed, so only these get one.
+  private readonly plaintextStreams = new Set<string>()
   // Per thread, the last watch failure logged, so a T3 outage logs once rather than every poll.
   private readonly watchErrors = new Map<string, string>()
   private watching = false
@@ -406,6 +408,7 @@ export class T3TurnRunner {
       if (!inScope(run.streamId)) continue
       run.abort.abort()
       this.runs.delete(invocationId)
+      this.seenRuns.set(run.threadId, run.runId)
       this.stopChain(run)
     }
     return true
@@ -433,13 +436,15 @@ export class T3TurnRunner {
     this.watching = true
     try {
       for (const [streamId, threadId] of Object.entries(this.state.threads)) {
-        if (this.unprompted.has(threadId) || this.hasOpenTurns(streamId)) continue
+        if (!this.plaintextStreams.has(streamId) || this.unprompted.has(threadId) || this.hasOpenTurns(streamId))
+          continue
         const seen = this.seenRuns.get(threadId)
         let latest: string | undefined
         try {
           latest = await this.latestRunId(threadId)
           this.watchErrors.delete(threadId)
         } catch (error) {
+          if (this.forgetIfGone(error, streamId, threadId)) continue
           const text = errorText(error)
           if (this.watchErrors.get(threadId) !== text) this.log(`watching thread ${threadId} failed: ${text}`)
           this.watchErrors.set(threadId, text)
@@ -485,6 +490,8 @@ export class T3TurnRunner {
         })
         failures = 0
         if (waited.runId && waited.runId !== relay.runId) {
+          // A turn's images restart the run as one the turn follows and replies with.
+          if (this.turnOwns(threadId, waited.runId)) return
           if (this.seenRuns.get(threadId) === relay.runId) this.seenRuns.set(threadId, waited.runId)
           relay.runId = waited.runId
           trace.runIds.add(waited.runId)
@@ -494,6 +501,7 @@ export class T3TurnRunner {
       } catch (error) {
         if (signal.aborted) return
         failures += 1
+        if (error instanceof T3ToolError) this.unlessGone(error, streamId, threadId)
         if (error instanceof T3AuthError || failures >= MAX_CONSECUTIVE_POLL_FAILURES) throw error
         await this.sleep(WAIT_TIMEOUT_MS)
       }
@@ -519,25 +527,37 @@ export class T3TurnRunner {
     this.admitting.set(turn.invocationId, { abort: admission, streamId: turn.streamId })
     let started: { threadId: string; runId: string }
     let stale: string[] = []
+    let latest: string | undefined
+    if (turn.sealed) this.plaintextStreams.delete(turn.streamId)
+    else this.plaintextStreams.add(turn.streamId)
     try {
       // A question an earlier turn left open belongs to that turn, not this one.
       const existing = this.threadFor(turn.streamId)
       if (existing) {
-        const pending = await this.client
-          .call("t3_pending_request_list", { threadId: existing })
-          .catch((error) => this.unlessGone(error, turn.streamId, existing))
+        const [pending, latestRun] = await Promise.all([
+          this.client.call("t3_pending_request_list", { threadId: existing }),
+          this.latestRunId(existing),
+        ]).catch((error) => this.unlessGone(error, turn.streamId, existing))
         stale = pending.requestIds
+        latest = latestRun
       }
       started = await this.admit(turn)
     } finally {
       this.admitting.delete(turn.invocationId)
     }
     if (admission.signal.aborted) {
+      this.seenRuns.set(started.threadId, started.runId)
       this.stopRun(started.threadId, started.runId)
       return
     }
     const relay = this.unprompted.get(started.threadId)
     if (relay?.runId === started.runId) relay.abort.abort()
+    // A run T3 started by itself since the last look, which this turn's message queued behind.
+    const seen = this.seenRuns.get(started.threadId)
+    if (latest && seen !== undefined && latest !== seen && latest !== started.runId && !relay && !turn.sealed) {
+      this.seenRuns.set(started.threadId, latest)
+      this.relay(turn.streamId, started.threadId, latest)
+    }
     const mode: RunTraceMode = turn.sealed && this.options.sealedFullTrace ? "full" : this.options.traceMode
     const run: OpenRun = {
       ...started,
@@ -664,9 +684,18 @@ export class T3TurnRunner {
 
   /** A thread deleted in T3 is forgotten, so the stream's next message launches a new one instead of failing forever. */
   private unlessGone(error: unknown, streamId: string, threadId: string): never {
-    if (!(error instanceof T3ToolError) || error.code !== "thread_not_found") throw error
-    if (this.threadFor(streamId) === threadId) this.forgetThread(streamId)
+    if (!this.forgetIfGone(error, streamId, threadId)) throw error
     throw new Error(`T3 Code thread \`${threadId}\` is gone; the next message starts a new one.`)
+  }
+
+  private forgetIfGone(error: unknown, streamId: string, threadId: string): boolean {
+    if (!(error instanceof T3ToolError) || error.code !== "thread_not_found") return false
+    if (this.threadFor(streamId) === threadId) this.forgetThread(streamId)
+    return true
+  }
+
+  private turnOwns(threadId: string, runId: string): boolean {
+    return [...this.runs.values()].some((run) => run.threadId === threadId && run.trace.runIds.has(runId))
   }
 
   private stopRun(threadId: string, runId: string): void {
@@ -733,7 +762,6 @@ export class T3TurnRunner {
         } catch (error) {
           if (signal.aborted) break
           failures += 1
-          // T3 answered and refused, so asking again gets the same answer.
           if (error instanceof T3ToolError) this.unlessGone(error, run.streamId, run.threadId)
           if (error instanceof T3AuthError) throw error
           if (failures >= MAX_CONSECUTIVE_POLL_FAILURES) throw error
