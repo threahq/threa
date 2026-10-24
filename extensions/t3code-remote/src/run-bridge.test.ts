@@ -1821,6 +1821,55 @@ describe("runs T3 starts by itself", () => {
     })
   })
 
+  test("a steer T3 folds into a run ahead that nothing relays answers on the turn", async () => {
+    const { t3, session, runner } = setup()
+    await settledTurn(t3, session, runner)
+    t3.startInT3("thread_1")
+    t3.script("run_2", [
+      { status: "running", items: [item(2, "command_execution", { runId: "run_2", status: "running" })] },
+    ])
+    await runner.deliverTurn(turn({ invocationId: "binv_2", content: "Now the docs", sealed: true }))
+    expect(await runner.steer("Also mention the cat", "stream_root", [])).toBe(true)
+    // Nothing waits on run_2, so its items land without a wait, as they do in T3.
+    t3.addItems("thread_1", [
+      item(2, "command_execution", { runId: "run_2", status: "completed" }),
+      item(3, "assistant_message", { runId: "run_2", text: "Cat mentioned." }),
+    ])
+    t3.script("run_3", [
+      { status: "completed", items: [item(4, "assistant_message", { runId: "run_3", text: "Docs updated." })] },
+    ])
+    await session.settled()
+    await until(() => !runner.busy)
+
+    expect({
+      posts: session.posts,
+      thinking: session.frames().filter((frame) => frame.stepType === "thinking"),
+      reply: session.replies.at(-1),
+    }).toEqual({
+      posts: [],
+      thinking: [{ stepType: "thinking", content: "Cat mentioned." }],
+      reply: { invocationId: "binv_2", text: "Docs updated." },
+    })
+  })
+
+  test("archiving while a message is admitted relays none of the runs ahead of it", async () => {
+    const { t3, session, runner } = setup()
+    await settledTurn(t3, session, runner)
+    t3.startInT3("thread_1")
+    t3.script("run_2", [
+      { status: "completed", items: [item(2, "assistant_message", { runId: "run_2", text: "Agents done." })] },
+    ])
+    const release = t3.holdNext("t3_thread_send")
+    const delivering = runner.deliverTurn(turn({ invocationId: "binv_2", content: "Now the docs" }))
+    await until(() => t3.callsOf("t3_thread_send").some((args) => args.message === "Now the docs"))
+    runner.shutdown()
+    release()
+    await delivering
+    await until(() => !runner.busy)
+
+    expect(session.posts).toEqual([])
+  })
+
   test("never posts the runs a forked thread inherits from its source", async () => {
     const { t3, session, runner } = setup()
     await settledTurn(t3, session, runner)

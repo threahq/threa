@@ -411,9 +411,13 @@ export class T3TurnRunner {
           })
         : await this.sendText(run.threadId, text, edit)
       // A /stop that landed during the send has already stopped the chain it knew about. T3 folds a steer into
-      // whichever run is going, which can be one ahead of this turn's that a relay already posts.
+      // whichever run is going, which can be one ahead of this turn's: a relay posts that run's answer, and without
+      // one the turn traces it but still settles on its own run.
       if (run.abort.signal.aborted) this.stopRun(run.threadId, sent.runId)
-      else if (sent.runId !== run.runId && !this.accounted.get(run.threadId)?.has(sent.runId)) adopt(run, sent.runId)
+      else if (sent.runId !== run.runId && !this.relaying(run.threadId, sent.runId)) {
+        if (this.accounted.get(run.threadId)?.has(sent.runId)) run.trace.runIds.add(sent.runId)
+        else adopt(run, sent.runId)
+      }
       return true
     } catch (error) {
       if (error instanceof T3ToolError && error.code === "thread_not_sendable") return false
@@ -572,6 +576,11 @@ export class T3TurnRunner {
       .finally(() => this.release(relay))
   }
 
+  private relaying(threadId: string, runId: string): boolean {
+    const relay = this.unprompted.get(threadId)
+    return relay !== undefined && (relay.runId === runId || relay.queue.includes(runId))
+  }
+
   private release(relay: Relay): void {
     if (this.unprompted.get(relay.read.threadId) === relay) this.unprompted.delete(relay.read.threadId)
   }
@@ -667,6 +676,7 @@ export class T3TurnRunner {
   }
 
   async deliverTurn(turn: DeliveredTurn): Promise<void> {
+    const generation = this.generation
     const admission = new AbortController()
     this.admitting.set(turn.invocationId, { abort: admission, streamId: turn.streamId })
     let started: { threadId: string; runId: string }
@@ -693,6 +703,7 @@ export class T3TurnRunner {
     const aborted = admission.signal.aborted
     if (aborted) this.stopRun(threadId, runId)
     this.account(threadId, [runId])
+    if (this.generation !== generation) return
     const relay = this.unprompted.get(threadId)
     const takenOver = !aborted && relay?.runId === runId ? relay : undefined
     if (relay) relay.queue = relay.queue.filter((queued) => queued !== runId)
