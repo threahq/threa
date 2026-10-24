@@ -12,7 +12,7 @@ export interface DormantLinkOptions {
   isArchived: (rootStreamId: string) => Promise<boolean>
   /** Links the session to the restored scratchpad again; throws when it cannot. */
   revive: (rootStreamId: string) => Promise<void>
-  /** True from a turn's claim until its run ends. */
+  /** True from a turn's claim until its run ends, and while a run T3 started by itself is followed. */
   isBusy: () => boolean
   /** The scratchpad a wind-down would leave, or undefined when the session can't wind down now. */
   windDownTarget: () => string | undefined
@@ -53,6 +53,10 @@ export class DormantLink {
   constructor(private readonly options: DormantLinkOptions) {
     this.now = options.now ?? Date.now
     this.lastActive = this.now()
+  }
+
+  get archived(): boolean {
+    return this.mode === "archived"
   }
 
   sleep(rootStreamId: string): void {

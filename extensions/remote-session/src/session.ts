@@ -2843,7 +2843,8 @@ export class RemoteSession {
       await this.postRouteOwnedMessage(route, body)
       return
     }
-    await this.client.sendMessage(streamId, body)
+    const { markdown } = await uploadReplyAttachments(this.client, body.content, process.cwd())
+    await this.client.sendMessage(streamId, { ...body, content: markdown })
   }
 
   private async postRouteOwnedMessage(

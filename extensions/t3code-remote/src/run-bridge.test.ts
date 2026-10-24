@@ -1206,3 +1206,89 @@ describe("RunTrace", () => {
     expect(trace.observe(item(2, "command_execution", { text: "$ ls" }))).toEqual([])
   })
 })
+
+describe("runs T3 starts by itself", () => {
+  const LINKED: ThreadState = { threads: { stream_root: "thread_1" }, model: MODEL }
+
+  test("posts the reply of a run started after a turn settled, and never re-posts the turn's own run", async () => {
+    const { t3, session, runner } = setup()
+    t3.script("run_1", [
+      { status: "completed", items: [item(1, "assistant_message", { text: "Started the agents." })] },
+    ])
+    await runner.deliverTurn(turn())
+    await session.settled()
+    await runner.watch()
+
+    t3.startInT3("thread_1")
+    t3.script("run_2", [
+      {
+        status: "completed",
+        items: [
+          item(2, "command_execution", { runId: "run_2", text: "$ cat report.md" }),
+          item(3, "assistant_message", { runId: "run_2", text: "The agents found two flaky tests." }),
+        ],
+      },
+    ])
+    await runner.watch()
+    await until(() => !runner.busy)
+    await runner.watch()
+
+    expect({ replies: session.replies, posts: session.posts }).toEqual({
+      replies: [{ invocationId: "binv_1", text: "Started the agents." }],
+      posts: [{ streamId: "stream_root", text: "The agents found two flaky tests.", clientMessageId: "t3run-run_2" }],
+    })
+  })
+
+  test("a thread's first look only notes its latest run", async () => {
+    const { t3, session, runner } = setup({ state: LINKED })
+    t3.startInT3("thread_1")
+    t3.script("run_1", [
+      { status: "completed", items: [item(1, "assistant_message", { text: "Before the restart." })] },
+    ])
+
+    await runner.watch()
+    t3.startInT3("thread_1")
+    t3.script("run_2", [
+      { status: "completed", items: [item(2, "assistant_message", { runId: "run_2", text: "After the restart." })] },
+    ])
+    await runner.watch()
+    await until(() => !runner.busy)
+
+    expect(session.posts).toEqual([
+      { streamId: "stream_root", text: "After the restart.", clientMessageId: "t3run-run_2" },
+    ])
+  })
+
+  test("stays busy while the run goes, and posts nothing for a silent reply", async () => {
+    const { t3, session, runner } = setup({ state: LINKED })
+    t3.startInT3("thread_1")
+    await runner.watch()
+    t3.startInT3("thread_1")
+    await runner.watch()
+    await idle()
+    const busyWhileRunning = runner.busy
+
+    t3.script("run_2", [
+      { status: "completed", items: [item(1, "assistant_message", { runId: "run_2", text: "THREA_NO_RESPONSE" })] },
+    ])
+    await until(() => !runner.busy)
+
+    expect({ busyWhileRunning, posts: session.posts }).toEqual({ busyWhileRunning: true, posts: [] })
+  })
+
+  test("posts why a run it started failed", async () => {
+    const { t3, session, runner } = setup({ state: LINKED })
+    t3.startInT3("thread_1")
+    await runner.watch()
+    t3.startInT3("thread_1")
+    t3.script("run_2", [
+      { status: "failed", items: [item(1, "error", { runId: "run_2", text: "Provider quota exceeded" })] },
+    ])
+    await runner.watch()
+    await until(() => !runner.busy)
+
+    expect(session.posts).toEqual([
+      { streamId: "stream_root", text: "Provider quota exceeded", clientMessageId: "t3run-run_2" },
+    ])
+  })
+})
