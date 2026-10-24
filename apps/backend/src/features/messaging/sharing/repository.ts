@@ -226,6 +226,21 @@ export const UnsharedReferenceRepository = {
     `)
   },
 
+  async deleteBySourceMessageIds(
+    db: Querier,
+    workspaceId: string,
+    shareMessageId: string,
+    sourceMessageIds: string[]
+  ): Promise<void> {
+    if (sourceMessageIds.length === 0) return
+    await db.query(sql`
+      DELETE FROM unshared_references
+      WHERE workspace_id = ${workspaceId}
+        AND share_message_id = ${shareMessageId}
+        AND source_message_id = ANY(${sourceMessageIds})
+    `)
+  },
+
   async listByCreator(db: Querier, workspaceId: string, createdBy: string): Promise<UnsharedReference[]> {
     const result = await db.query<UnsharedReferenceRow>(sql`
       SELECT share_message_id, source_message_id, source_stream_id, flavor

@@ -327,10 +327,10 @@ export const ShareService = {
 
   /**
    * Records the grants a scheduled send skipped, for the references the
-   * author can still share, and clears the message's unshared rows. Only
-   * those references are checked: the rest of the message keeps its grants,
-   * so one reference that can no longer be shared doesn't block the others.
-   * Returns the source message ids it granted.
+   * author can still share, and clears only those rows. Only those references
+   * are checked: the rest of the message keeps its grants, so one reference
+   * that can't be shared now doesn't block the others, and stays listed in
+   * case the author regains access. Returns the source message ids it granted.
    */
   async grantUnsharedReferences(params: {
     client: Querier
@@ -356,8 +356,14 @@ export const ShareService = {
         createdBy: params.userId,
       })
     }
-    await UnsharedReferenceRepository.deleteByShareMessageId(params.client, params.workspaceId, params.shareMessageId)
-    return shareable.map((ref) => ref.sourceMessageId)
+    const granted = shareable.map((ref) => ref.sourceMessageId)
+    await UnsharedReferenceRepository.deleteBySourceMessageIds(
+      params.client,
+      params.workspaceId,
+      params.shareMessageId,
+      granted
+    )
+    return granted
   },
 }
 

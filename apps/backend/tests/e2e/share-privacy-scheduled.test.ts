@@ -5,6 +5,7 @@ import {
   createChannel,
   createWorkspace,
   deleteMessage,
+  joinStream,
   joinWorkspace,
   loginAs,
   moveMessagesToThread,
@@ -205,5 +206,62 @@ describe("share privacy on a scheduled send", () => {
       sharedStatus: shared.status,
       kept: seen.data.sharedMessages[kept.messageId]?.state,
     }).toEqual({ listed: [kept.messageId], sharedStatus: 204, kept: "ok" })
+  })
+
+  test("a reference the author can't read right now stays listed and can be shared once access returns", async () => {
+    const carol = new TestClient()
+    await loginAs(carol, "share-scheduled-carol@example.com", "Share Scheduled Carol")
+    const carolUser = await joinWorkspace(carol, workspaceId)
+    await joinStream(carol, workspaceId, targetStreamId)
+    const [regained, kept] = await Promise.all(
+      ["share-scheduled-regained", "share-scheduled-kept"].map(async (slug) => {
+        const streamId = (await createChannel(alice, workspaceId, slug, "public")).id
+        await joinStream(carol, workspaceId, streamId)
+        return { messageId: (await sendMessage(alice, workspaceId, streamId, `source in ${slug}`)).id, streamId }
+      })
+    )
+    const scheduled = await carol.post<{ scheduled: ScheduledMessageView }>(
+      `/api/workspaces/${workspaceId}/scheduled`,
+      {
+        streamId: targetStreamId,
+        contentJson: shareContent(regained!, kept!),
+        scheduledFor: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        confirmedPrivacyWarning: true,
+      }
+    )
+    for (const { streamId } of [regained!, kept!]) {
+      await alice.patch(`/api/workspaces/${workspaceId}/streams/${streamId}`, { visibility: "private" })
+    }
+    const sent = await carol.post<{ scheduled: ScheduledMessageView }>(
+      `/api/workspaces/${workspaceId}/scheduled/${scheduled.data.scheduled.id}/send-now`
+    )
+    const sentMessageId = sent.data.scheduled.sentMessageId!
+    const listed = async () => {
+      const unshared = await carol.get<UnsharedReferencesResponse>(`/api/workspaces/${workspaceId}/unshared-references`)
+      return unshared.data.references.filter((ref) => ref.messageId === sentMessageId).map((ref) => ref.sourceMessageId)
+    }
+    const shareAndSee = async () => {
+      const shared = await carol.post(`/api/workspaces/${workspaceId}/messages/${sentMessageId}/share-references`)
+      const seen = await bob.get<EventsResponse>(`/api/workspaces/${workspaceId}/streams/${targetStreamId}/events`)
+      return {
+        status: shared.status,
+        regained: seen.data.sharedMessages[regained!.messageId]?.state,
+        kept: seen.data.sharedMessages[kept!.messageId]?.state,
+      }
+    }
+
+    await alice.delete(`/api/workspaces/${workspaceId}/streams/${regained!.streamId}/members/${carolUser.id}`)
+    const listedWithoutAccess = await listed()
+    const sharedWithoutAccess = await shareAndSee()
+    await alice.post(`/api/workspaces/${workspaceId}/streams/${regained!.streamId}/members`, { memberId: carolUser.id })
+    const listedWithAccess = await listed()
+    const sharedWithAccess = await shareAndSee()
+
+    expect({ listedWithoutAccess, sharedWithoutAccess, listedWithAccess, sharedWithAccess }).toEqual({
+      listedWithoutAccess: [kept!.messageId],
+      sharedWithoutAccess: { status: 204, regained: "private", kept: "ok" },
+      listedWithAccess: [regained!.messageId],
+      sharedWithAccess: { status: 204, regained: "ok", kept: "ok" },
+    })
   })
 })
