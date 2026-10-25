@@ -40,7 +40,10 @@
                   "from": { "type": "string" },
                   "type": {
                     "type": "array",
-                    "items": { "type": "string", "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"] }
+                    "items": {
+                      "type": "string",
+                      "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside", "doc"]
+                    }
                   },
                   "before": { "type": "string", "format": "date-time" },
                   "after": { "type": "string", "format": "date-time" },
@@ -5851,7 +5854,7 @@
                           "id": { "type": "string" },
                           "type": {
                             "type": "string",
-                            "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"]
+                            "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside", "doc"]
                           },
                           "displayName": { "type": "string" },
                           "slug": { "type": "string" },
@@ -5965,7 +5968,7 @@
                         "id": { "type": "string" },
                         "type": {
                           "type": "string",
-                          "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"]
+                          "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside", "doc"]
                         },
                         "displayName": { "type": "string" },
                         "slug": { "type": "string" },
@@ -6090,7 +6093,7 @@
                         "id": { "type": "string" },
                         "type": {
                           "type": "string",
-                          "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"]
+                          "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside", "doc"]
                         },
                         "displayName": { "type": "string" },
                         "slug": { "type": "string" },
@@ -6203,7 +6206,7 @@
                         "id": { "type": "string" },
                         "type": {
                           "type": "string",
-                          "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"]
+                          "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside", "doc"]
                         },
                         "displayName": { "type": "string" },
                         "slug": { "type": "string" },
@@ -6316,7 +6319,7 @@
                         "id": { "type": "string" },
                         "type": {
                           "type": "string",
-                          "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"]
+                          "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside", "doc"]
                         },
                         "displayName": { "type": "string" },
                         "slug": { "type": "string" },
