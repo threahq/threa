@@ -443,7 +443,8 @@ export const CallTransferObligationRepository = {
       trackRevision: number
     }
   ): Promise<CallTransferObligationRow | null> {
-    const result = await db.query(sql`UPDATE call_transfer_obligations SET switched = TRUE, switched_at = NOW(),
+    const result =
+      await db.query(sql`UPDATE call_transfer_obligations SET switched = TRUE, switched_at = COALESCE(switched_at, NOW()),
       version = version + 1, updated_at = NOW() WHERE workspace_id = ${p.workspaceId} AND transfer_id = ${p.transferId}
       AND endpoint_id = ${p.endpointId} AND endpoint_epoch = ${p.endpointEpoch}
       AND media_incarnation = ${p.mediaIncarnation} AND membership_revision = ${p.membershipRevision}

@@ -1,4 +1,4 @@
-import type { CallMediaTransport, CallTransportTransfer } from "@threahq/types"
+import { callPublicationsMatch, type CallMediaTransport, type CallTransportTransfer } from "@threahq/types"
 import { ulid } from "ulid"
 import { io } from "socket.io-client"
 import { api, ApiError } from "@/api/client"
@@ -243,6 +243,7 @@ interface CallSession {
   transferChain: Promise<void>
   transferRetryTimer: ReturnType<typeof setTimeout> | null
   transferRetryAttempts: number
+  transferStepFailed: boolean
   transport: MediaTransport
   mediaTransport: "sfu" | "p2p"
   transportGeneration: number
@@ -506,6 +507,7 @@ export class CallManager implements CallController {
         transferChain: Promise.resolve(),
         transferRetryTimer: null,
         transferRetryAttempts: 0,
+        transferStepFailed: false,
         transport,
         mediaTransport: join.mediaTransport,
         transportGeneration: join.transportGeneration,
@@ -990,10 +992,9 @@ export class CallManager implements CallController {
         !s ||
         event.callId !== s.callId ||
         !this.deps.getCallSnapshot ||
-        (s.transfer &&
-          event.transferId === s.transfer.id &&
+        (event.transferId !== undefined &&
           typeof event.version === "number" &&
-          event.version <= s.transfer.version)
+          this.holdsTransferAtOrAbove(s, event.transferId, event.version))
       )
         return
       void this.deps
@@ -1127,9 +1128,7 @@ export class CallManager implements CallController {
     transfer: CallTransportTransfer | null = null
   ): void {
     const rosterChanged = version > session.rosterVersion
-    const transferChanged =
-      transfer !== null &&
-      (!session.transfer || transfer.id !== session.transfer.id || transfer.version > session.transfer.version)
+    const transferChanged = transfer !== null && !this.holdsTransferAtOrAbove(session, transfer.id, transfer.version)
     if (!rosterChanged && !transferChanged) return
     if (rosterChanged) {
       session.rosterVersion = version
@@ -1143,20 +1142,16 @@ export class CallManager implements CallController {
     }
   }
 
-  /** `retry` re-runs the accepted version after a failed step; anything else must be strictly newer. */
-  private queueTransferSnapshot(
-    session: CallSession,
-    transfer: CallTransportTransfer,
-    { retry = false }: { retry?: boolean } = {}
-  ): Promise<void> {
+  /** Only a newer snapshot moves the transfer forward, except that a failed step re-runs at its own version. */
+  private holdsTransferAtOrAbove(session: CallSession, transferId: string, version: number): boolean {
+    const held = session.transfer
+    if (!held || held.id !== transferId) return false
+    return held.version > version || (held.version === version && !session.transferStepFailed)
+  }
+
+  private queueTransferSnapshot(session: CallSession, transfer: CallTransportTransfer): Promise<void> {
     if (transfer.target.generation < session.transportGeneration) return Promise.resolve()
-    const accepted = session.transfer
-    if (
-      accepted &&
-      transfer.id === accepted.id &&
-      (retry ? transfer.version < accepted.version : transfer.version <= accepted.version)
-    )
-      return Promise.resolve()
+    if (this.holdsTransferAtOrAbove(session, transfer.id, transfer.version)) return Promise.resolve()
     if (
       session.transfer &&
       transfer.id !== session.transfer.id &&
@@ -1166,6 +1161,7 @@ export class CallManager implements CallController {
     session.transfer = transfer
     const run = session.transferChain.then(async () => {
       if (this.sessionForGen(session.gen) !== session || session.transfer !== transfer) return
+      session.transferStepFailed = false
       const coordinator = session.transport as MediaTransportCoordinator
       coordinator.onTargetReadinessChange = () =>
         void this.queueTransferWork(session, () => this.acknowledgeTransferProgress(session))
@@ -1196,6 +1192,7 @@ export class CallManager implements CallController {
   private handleTransferFailure(session: CallSession, error: unknown): void {
     if (this.sessionForGen(session.gen) !== session) return
     recordCallLifecycleEvent({ kind: "pull_failed", detail: `transfer: ${describeError(error)}` })
+    session.transferStepFailed = true
     const transfer = session.transfer
     if (transfer) {
       setCallDiagnostics({
@@ -1218,7 +1215,7 @@ export class CallManager implements CallController {
       void getCallSnapshot({ workspaceId: session.workspaceId, callId: session.callId })
         .then((snapshot) => {
           if (this.sessionForGen(session.gen) !== session) return
-          if (snapshot.transfer) void this.queueTransferSnapshot(session, snapshot.transfer, { retry: true })
+          if (snapshot.transfer) void this.queueTransferSnapshot(session, snapshot.transfer)
           else this.applyRoster(session, snapshot.rosterVersion, snapshot.roster, null)
         })
         .catch((retryError) => this.handleTransferFailure(session, retryError))
@@ -1246,7 +1243,12 @@ export class CallManager implements CallController {
         item.endpointEpoch === session.endpointEpoch &&
         item.mediaIncarnation === session.mediaIncarnation
     )
-    if (!obligation) return
+    if (
+      !obligation ||
+      (obligation.ownPublicationsReady &&
+        callPublicationsMatch(obligation.expectedPublications, obligation.readyPublications))
+    )
+      return
     const transferIdentity = transfer
     const readiness = await session.transport.targetReadiness(obligation.expectedPublications)
     if (!readiness.ready || this.sessionForGen(session.gen) !== session || session.transfer !== transferIdentity) return

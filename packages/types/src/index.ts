@@ -1199,6 +1199,7 @@ export {
   callTransportPolicyStatusSchema,
   callTransportGenerationSchema,
   callExpectedPublicationSchema,
+  callPublicationsMatch,
   callTransportSessionSchema,
   callTransferObligationSchema,
   callTransportTransferSchema,

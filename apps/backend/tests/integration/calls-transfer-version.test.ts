@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } from "bun:test"
 import { Pool } from "pg"
 import { Visibilities } from "@threahq/types"
 import { setupTestDatabase, withTransaction, addTestMember } from "./setup"
@@ -21,9 +21,7 @@ beforeAll(async () => {
   })
 })
 
-afterEach(() => {
-  ;(CallTransferRepository.listExpired as unknown as { mockRestore?: () => void }).mockRestore?.()
-})
+afterEach(() => mock.restore())
 
 afterAll(async () => {
   await pool.end()
@@ -31,20 +29,21 @@ afterAll(async () => {
 
 async function startTransfer() {
   const workspaceId = newWorkspaceId()
-  let aUserId = ""
-  let bUserId = ""
-  await withTransaction(pool, async (client) => {
+  const { aUserId, bUserId } = await withTransaction(pool, async (client) => {
     await WorkspaceRepository.insert(client, {
       id: workspaceId,
       name: "Transfer version",
       slug: `xfer-${workspaceId}`,
       createdBy: workspaceId,
     })
-    aUserId = (await addTestMember(client, workspaceId, "xfer-a")).id
-    bUserId = (await addTestMember(client, workspaceId, "xfer-b")).id
+    const members = {
+      aUserId: (await addTestMember(client, workspaceId, "xfer-a")).id,
+      bUserId: (await addTestMember(client, workspaceId, "xfer-b")).id,
+    }
     await FeatureFlagOverrideRepository.replaceForSubject(client, workspaceId, "workspace", workspaceId, {
       callsP2p: "on",
     })
+    return members
   })
   const stream = await new StreamService(pool).createChannel({
     workspaceId,
@@ -99,11 +98,8 @@ async function startTransfer() {
     }
   }
   const stored = async () => {
-    const result = await pool.query<{ phase: string; version: number }>(
-      `SELECT phase, version FROM call_transport_transfers WHERE workspace_id = $1 AND id = $2`,
-      [workspaceId, transfer.id]
-    )
-    return result.rows[0]!
+    const row = await CallTransferRepository.findById(pool, workspaceId, transfer.id)
+    return { phase: row?.phase, version: row?.version }
   }
   return {
     transfer,
@@ -114,7 +110,7 @@ async function startTransfer() {
 }
 
 describe("call transfer version ordering", () => {
-  test("should bump the transfer version on every acknowledgement and still commit and complete under concurrent acks", async () => {
+  test("should bump the transfer version once per obligation change and leave replayed acknowledgements idempotent", async () => {
     const { transfer, stored, a, b } = await startTransfer()
     const ready = (party: typeof a) =>
       calls.acknowledgeTransferReady({
@@ -123,25 +119,38 @@ describe("call transfer version ordering", () => {
         readyPublications: party.expectedPublications,
       })
 
+    await ready(a)
+    const readyOnce = await stored()
+    await ready(a)
+    const readyReplayed = await stored()
     await Promise.all([ready(a), ready(b)])
     const committed = await stored()
     const firstSwitched = await calls.acknowledgeTransferSwitched(a.identity)
     const afterFirstSwitched = await stored()
     await Promise.all([calls.acknowledgeTransferSwitched(a.identity), calls.acknowledgeTransferSwitched(b.identity)])
     const completed = await stored()
+    const terminalReplay = await calls.acknowledgeTransferSwitched(b.identity)
 
     expect({
+      readyOnce,
+      readyReplayed,
       committed,
       firstSwitchedResponse: { phase: firstSwitched.transfer?.phase, version: firstSwitched.transfer?.version },
       afterFirstSwitched,
       completed,
+      terminalReplay: { phase: terminalReplay.transfer?.phase, version: terminalReplay.transfer?.version },
+      afterTerminalReplay: await stored(),
     }).toEqual({
-      // two ready touches plus preparing → committing
+      readyOnce: { phase: "preparing", version: transfer.version + 1 },
+      readyReplayed: { phase: "preparing", version: transfer.version + 1 },
+      // B's ready touch plus preparing → committing; A's concurrent replay adds nothing
       committed: { phase: "committing", version: transfer.version + 3 },
       firstSwitchedResponse: { phase: "committing", version: transfer.version + 4 },
       afterFirstSwitched: { phase: "committing", version: transfer.version + 4 },
-      // two switched touches plus committing → draining → completed
-      completed: { phase: "completed", version: transfer.version + 8 },
+      // B's switched touch plus committing → draining → completed; A's concurrent replay adds nothing
+      completed: { phase: "completed", version: transfer.version + 7 },
+      terminalReplay: { phase: "completed", version: transfer.version + 7 },
+      afterTerminalReplay: { phase: "completed", version: transfer.version + 7 },
     })
   })
 
