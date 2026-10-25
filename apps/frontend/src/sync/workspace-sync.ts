@@ -1793,6 +1793,7 @@ export function registerWorkspaceSocketHandlers(
     // the second add path and the one that leaked the test scratchpad.
     if (payload.stream.purpose === StreamPurposes.PERSONA_TEST) return
     let shouldSubscribeStream = false
+    let hostArrived = false
 
     const guestRoster = getGuestRoster()
     if (guestRoster) {
@@ -1858,6 +1859,7 @@ export function registerWorkspaceSocketHandlers(
 
       const membershipExists = old.streamMemberships.some((m: StreamMember) => m.streamId === payload.streamId)
       const streamExists = old.streams?.some((s) => s.id === payload.streamId)
+      hostArrived = !streamExists
 
       if (!membershipExists) {
         const now = Date.now()
@@ -1896,6 +1898,11 @@ export function registerWorkspaceSocketHandlers(
 
     if (shouldSubscribeStream) {
       refs.subscribeStream(payload.streamId)
+    }
+    // A host this viewer could not see before arrives without its docs (their stream:created went to the host's
+    // room); the bootstrap lists them through the root's access.
+    if (hostArrived && streamTypeCapabilities(payload.stream.type).hostsDocs) {
+      void queryClient.invalidateQueries({ queryKey: workspaceKeys.bootstrap(workspaceId) })
     }
     await Promise.all(writes)
   }

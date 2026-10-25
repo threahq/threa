@@ -104,6 +104,12 @@ function renew(presence: DocPresence) {
 
 const peerIds = (presence: DocPresence) => presence.peers().map((peer) => peer.userId)
 
+/** A caret in the shape y-prosemirror writes: both ends a Yjs relative position. */
+function caret(clock: number) {
+  const at = { item: { client: 1, clock }, assoc: 0 }
+  return { anchor: at, head: at }
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
 })
@@ -134,20 +140,20 @@ describe("DocPresence", () => {
     const { presence, sent } = createPresence()
 
     presence.setLocalUser(ME)
-    presence.awareness.setLocalStateField("cursor", { anchor: 1, head: 1 })
-    presence.awareness.setLocalStateField("cursor", { anchor: 2, head: 3 })
+    presence.awareness.setLocalStateField("cursor", caret(1))
+    presence.awareness.setLocalStateField("cursor", caret(2))
     vi.advanceTimersByTime(PRESENCE_SEND_WINDOW_MS)
 
     expect({ count: sent.length, state: stateSeenByPeer(presence, sent) }).toEqual({
       count: 1,
-      state: { user: seen(ME), cursor: { anchor: 2, head: 3 } },
+      state: { user: seen(ME), cursor: caret(2) },
     })
   })
 
   it("should send nothing when the local state has no user yet", () => {
     const { presence, sent } = createPresence()
 
-    presence.awareness.setLocalStateField("cursor", { anchor: 1, head: 1 })
+    presence.awareness.setLocalStateField("cursor", caret(1))
     vi.advanceTimersByTime(PRESENCE_SEND_WINDOW_MS)
 
     expect(sent).toEqual([])
@@ -198,7 +204,7 @@ describe("DocPresence", () => {
 
     expect({ peers: presence.peers(), caret: presence.awareness.getStates().get(alice.clientID) }).toEqual({
       peers: [seen(ALICE)],
-      caret: { user: seen(ALICE) },
+      caret: { user: seen(ALICE), cursor: null },
     })
   })
 
@@ -206,9 +212,9 @@ describe("DocPresence", () => {
     const { presence } = createPresence()
     presence.setLocalUser(ME)
     const badId = createAwareness()
-    badId.setLocalState({ user: { userId: 1, name: "One" }, cursor: { anchor: 1, head: 1 } })
+    badId.setLocalState({ user: { userId: 1, name: "One" }, cursor: caret(1) })
     const notAnObject = createAwareness()
-    notAnObject.setLocalState({ user: "x", cursor: { anchor: 1, head: 1 } })
+    notAnObject.setLocalState({ user: "x", cursor: caret(1) })
 
     presence.receive(frameOf(badId))
     presence.receive(frameOf(notAnObject))
@@ -218,6 +224,68 @@ describe("DocPresence", () => {
       badId: presence.awareness.getStates().has(badId.clientID),
       notAnObject: presence.awareness.getStates().has(notAnObject.clientID),
     }).toEqual({ peers: [], badId: false, notAnObject: false })
+  })
+
+  it("should keep a peer whose caret would not decode, without the caret", () => {
+    const { presence } = createPresence()
+    presence.setLocalUser(ME)
+    const alice = createAwareness()
+    const frames = [
+      1,
+      { anchor: {}, head: {} },
+      { anchor: { item: { client: "x", clock: "y" } }, head: caret(1).head },
+      { anchor: { item: { client: 1, clock: -1 } }, head: caret(1).head },
+      { anchor: { item: { client: 1, clock: 0.5 } }, head: caret(1).head },
+    ]
+
+    const carets = frames.map((cursor) => {
+      alice.setLocalState({ user: ALICE, cursor })
+      presence.receive(frameOf(alice))
+      return presence.awareness.getStates().get(alice.clientID)?.cursor
+    })
+
+    expect({ peers: presence.peers(), carets }).toEqual({
+      peers: [seen(ALICE)],
+      carets: [null, null, null, null, null],
+    })
+  })
+
+  it("should ignore a frame sent under this client's id", () => {
+    const { presence, sent } = createPresence()
+    presence.setLocalUser(ME)
+    vi.advanceTimersByTime(PRESENCE_SEND_WINDOW_MS)
+    const forgedDoc = new Y.Doc()
+    forgedDoc.clientID = presence.awareness.clientID
+    const forged = new Awareness(forgedDoc)
+    cleanups.push(() => forged.destroy())
+    forged.setLocalState({ user: { userId: "usr_evil", name: "Evil" } })
+    forged.setLocalState({ user: { userId: "usr_evil", name: "Evil" } })
+
+    presence.receive(frameOf(forged))
+    vi.advanceTimersByTime(PRESENCE_SEND_WINDOW_MS)
+
+    expect({ local: presence.awareness.getLocalState(), frames: sent.length }).toEqual({
+      local: { user: seen(ME) },
+      frames: 1,
+    })
+  })
+
+  it("should drop a frame that carries more than one client", () => {
+    const { presence } = createPresence()
+    presence.setLocalUser(ME)
+    const alice = createAwareness()
+    alice.setLocalStateField("user", ALICE)
+    const bob = createAwareness()
+    bob.setLocalStateField("user", BOB)
+    applyAwarenessUpdate(alice, encodeAwarenessUpdate(bob, [bob.clientID]), "test")
+
+    presence.receive({
+      workspaceId: WORKSPACE_ID,
+      docId: DOC_ID,
+      update: bytesToBase64(encodeAwarenessUpdate(alice, [alice.clientID, bob.clientID])),
+    })
+
+    expect(presence.peers()).toEqual([])
   })
 
   it("should keep the peers reference when only a caret moved", () => {
@@ -230,7 +298,7 @@ describe("DocPresence", () => {
     const listener = vi.fn()
     presence.subscribe(listener)
 
-    alice.setLocalStateField("cursor", { anchor: 3, head: 3 })
+    alice.setLocalStateField("cursor", caret(3))
     presence.receive(frameOf(alice))
 
     expect({ same: presence.peers() === before, notified: listener.mock.calls.length }).toEqual({
@@ -248,7 +316,7 @@ describe("DocPresence", () => {
     alice.setLocalStateField("user", ALICE)
     presence.receive(frameOf(alice))
     vi.advanceTimersByTime(PRESENCE_SEND_WINDOW_MS)
-    alice.setLocalStateField("cursor", { anchor: 1, head: 1 })
+    alice.setLocalStateField("cursor", caret(1))
     presence.receive(frameOf(alice))
     vi.advanceTimersByTime(PRESENCE_SEND_WINDOW_MS)
 
@@ -298,7 +366,7 @@ describe("DocPresence", () => {
   it("should withdraw the local client at once and reappear with the same state when restored", () => {
     const { presence, sent } = createPresence()
     presence.setLocalUser(ME)
-    presence.awareness.setLocalStateField("cursor", { anchor: 4, head: 4 })
+    presence.awareness.setLocalStateField("cursor", caret(4))
     vi.advanceTimersByTime(PRESENCE_SEND_WINDOW_MS)
 
     presence.withdraw()
@@ -308,7 +376,7 @@ describe("DocPresence", () => {
 
     expect({ afterWithdraw, afterRestore: stateSeenByPeer(presence, sent) }).toEqual({
       afterWithdraw: undefined,
-      afterRestore: { user: seen(ME), cursor: { anchor: 4, head: 4 } },
+      afterRestore: { user: seen(ME), cursor: caret(4) },
     })
   })
 

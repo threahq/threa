@@ -6,7 +6,26 @@ import type { Awareness } from "y-protocols/awareness"
 // The server applies and reads this fragment with the same pinned y-prosemirror
 // (`apps/backend/src/features/docs/yjs.ts`); keep both on one exact version so
 // the client writes the structure the server parses.
-import { redo, undo, yCursorPlugin, ySyncPlugin, yUndoPlugin } from "y-prosemirror"
+import { defaultCursorBuilder, redo, undo, yCursorPlugin, ySyncPlugin, yUndoPlugin } from "y-prosemirror"
+
+const localUserIdOf = (awareness: Awareness): string | undefined =>
+  (awareness.getLocalState()?.user as { userId?: string } | undefined)?.userId
+
+/** Peers' carets, drawn by y-prosemirror's default builder; the label is decoration, not document text. */
+function caretPlugin(awareness: Awareness) {
+  return yCursorPlugin(awareness, {
+    // The viewer's other tabs are not peers in the header either.
+    awarenessStateFilter: (localClientId: number, clientId: number, state: { user?: { userId?: string } }) => {
+      const localUserId = localUserIdOf(awareness)
+      return localClientId !== clientId && (localUserId === undefined || state.user?.userId !== localUserId)
+    },
+    cursorBuilder: (user) => {
+      const caret = defaultCursorBuilder(user)
+      caret.setAttribute("aria-hidden", "true")
+      return caret
+    },
+  })
+}
 
 const HISTORY_INPUT_COMMANDS: Partial<Record<string, typeof undo>> = { historyUndo: undo, historyRedo: redo }
 
@@ -28,7 +47,7 @@ export const YjsCollaboration = Extension.create<YjsCollaborationOptions>({
     return [
       ySyncPlugin(ydoc.getXmlFragment(DOC_FRAGMENT)),
       yUndoPlugin(),
-      ...(awareness ? [yCursorPlugin(awareness)] : []),
+      ...(awareness ? [caretPlugin(awareness)] : []),
       // Edit-menu, shake and keyboard undo arrive as beforeinput; the browser's own contenteditable undo would bypass Yjs.
       new Plugin({
         props: {

@@ -1,4 +1,5 @@
 import type * as Y from "yjs"
+import { createDecoder, readVarUint } from "lib0/decoding"
 import { applyAwarenessUpdate, Awareness, encodeAwarenessUpdate, modifyAwarenessUpdate } from "y-protocols/awareness"
 import { base64ToBytes, bytesToBase64 } from "@threahq/crypto"
 import type { DocAwarenessPayload } from "@threahq/types"
@@ -19,17 +20,53 @@ interface AwarenessChange {
   removed: number[]
 }
 
+interface ClientRef {
+  client: number
+  clock: number
+}
+
+/** Yjs looks a negative or fractional clock up past the end of a client's structs instead of returning null. */
+const isCounter = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0
+
+function isClientRef(value: unknown): value is ClientRef {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    isCounter((value as ClientRef).client) &&
+    isCounter((value as ClientRef).clock)
+  )
+}
+
+/** The JSON of a Yjs relative position; y-prosemirror decodes carets with `createRelativePositionFromJSON`, which throws on any other shape. */
+function isRelativePositionJson(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false
+  const { type, tname, item, assoc } = value as Record<string, unknown>
+  return (
+    (isClientRef(item) || isClientRef(type) || typeof tname === "string") &&
+    (item == null || isClientRef(item)) &&
+    (type == null || isClientRef(type)) &&
+    (tname == null || typeof tname === "string") &&
+    (assoc == null || typeof assoc === "number")
+  )
+}
+
 /**
- * The wire colour is never trusted (y-prosemirror's caret builders put it in inline styles), and a state without a
- * valid user is treated as absent (y-prosemirror would render it as "User: <clientId>").
+ * Remote states are rebuilt from the two fields the UI reads. The wire colour is never trusted (y-prosemirror's
+ * caret builders put it in inline styles), a state without a valid user is treated as absent (y-prosemirror would
+ * render it as "User: <clientId>"), and a caret that would not decode is dropped (one such state would throw inside
+ * every later remote edit).
  */
 function sanitizeState(state: unknown): Record<string, unknown> | null {
   if (typeof state !== "object" || state === null) return null
-  const user = (state as { user?: unknown }).user
+  const { user, cursor } = state as { user?: unknown; cursor?: unknown }
   if (typeof user !== "object" || user === null) return null
   const { userId, name } = user as { userId?: unknown; name?: unknown }
   if (typeof userId !== "string" || typeof name !== "string") return null
-  return { ...state, user: { userId, name, color: getPresenceColor(userId) } }
+  const { anchor, head } = (cursor ?? {}) as { anchor?: unknown; head?: unknown }
+  return {
+    user: { userId, name, color: getPresenceColor(userId) },
+    cursor: isRelativePositionJson(anchor) && isRelativePositionJson(head) ? cursor : null,
+  }
 }
 
 function samePeers(a: PresenceUser[], b: PresenceUser[]): boolean {
@@ -72,7 +109,12 @@ export class DocPresence {
     if (payload.workspaceId !== this.workspaceId || payload.docId !== this.docId) return
     const known = new Set(this.awareness.getStates().keys())
     try {
-      applyAwarenessUpdate(this.awareness, modifyAwarenessUpdate(base64ToBytes(payload.update), sanitizeState), this)
+      const bytes = base64ToBytes(payload.update)
+      const header = createDecoder(bytes)
+      // A client sends one state per frame: more would let one member flood every roster, and one under this
+      // client's id would overwrite the local state (y-protocols only protects it against removal).
+      if (readVarUint(header) !== 1 || readVarUint(header) === this.awareness.clientID) return
+      applyAwarenessUpdate(this.awareness, modifyAwarenessUpdate(bytes, sanitizeState), this)
     } catch {
       // Any peer can put bytes on this channel; a frame that does not decode is dropped, never thrown into the socket listener.
       return

@@ -3744,6 +3744,53 @@ describe("registerWorkspaceSocketHandlers", () => {
     cleanup()
   })
 
+  it.each([
+    ["refetches", "a private channel the viewer could not see", "private", true],
+    ["keeps", "a channel already in the cache", "public", false],
+  ])(
+    "%s the bootstrap, which lists a host's docs, when the viewer is added to %s",
+    async (_verb, _host, visibility, invalidated) => {
+      const queryClient = new QueryClient()
+      const cached = visibility === "public"
+      const host = {
+        id: "stream_host",
+        workspaceId: "ws_1",
+        type: "channel",
+        displayName: "Host",
+        slug: "host",
+        description: null,
+        visibility,
+        parentStreamId: null,
+        rootStreamId: null,
+        companionMode: "off",
+        companionPersonaId: null,
+        createdBy: "member_2",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        archivedAt: null,
+      }
+      queryClient.setQueryData(
+        workspaceKeys.bootstrap("ws_1"),
+        makeBootstrap({
+          users: [makeWorkspaceUser()],
+          streams: cached ? [{ ...host, lastMessagePreview: null }] : [],
+        })
+      )
+      const { socket, emit } = createTestSocket()
+      const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+        getCurrentStreamId: () => undefined,
+        getCurrentUser: () => ({ id: "workos_1" }),
+        subscribeStream: vi.fn(),
+      })
+
+      emit("stream:member_added", { workspaceId: "ws_1", streamId: host.id, memberId: "member_1", stream: host })
+      await Promise.resolve()
+
+      expect(queryClient.getQueryState(workspaceKeys.bootstrap("ws_1"))?.isInvalidated).toBe(invalidated)
+      cleanup()
+    }
+  )
+
   it("updates the membership read pointer when a stream:read socket event arrives", async () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(
