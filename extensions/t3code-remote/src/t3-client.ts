@@ -156,6 +156,10 @@ export interface T3Tools {
     args: { threadId: string; modelSelection: ModelSelection }
     result: { sequence: number }
   }
+  t3_thread_organize: {
+    args: { threadId: string; action: "archive" }
+    result: unknown
+  }
   t3_thread_fork: {
     args: { threadId: string; sourcePoint: { type: "latest_stable" }; title: string }
     result: { targetThreadId: string }

@@ -1,14 +1,26 @@
 import { describe, expect, test } from "bun:test"
+import { readFileSync } from "node:fs"
+import {
+  discardCommandClaim,
+  discardSpawnBrief,
+  readCommandClaim,
+  type HarnessSpawnSpec,
+  type SpawnRuntimeOption,
+} from "@threahq/harness-client"
 import { T3AuthError } from "./auth"
 import { T3TurnRunner, type ThreadState } from "./run-bridge"
 import { createT3SessionControl, matchModel } from "./session-control"
 import { fakeSession, fakeT3, item, turn, until } from "./t3.test-support"
 
-const CONTEXT = { rootStreamId: "stream_root" } as Parameters<
-  ReturnType<typeof createT3SessionControl>["runCommand"]
->[2]
+const CONTEXT = { rootStreamId: "stream_root", streamId: "stream_root", sourceMessageId: "msg_spawn" }
+const IN_THREAD = { ...CONTEXT, streamId: "stream_thread" }
+const CLAIM = { workspaceId: "ws_1", invocationId: "binv_cmd", instanceId: "inst_1", claimToken: "claim_secret" }
+const RUNTIMES: SpawnRuntimeOption[] = [
+  { value: "claude", label: "Claude Code", installed: true, thinkingLevels: ["high"], models: [] },
+  { value: "pi", label: "Pi", installed: false, thinkingLevels: [], models: [] },
+]
 
-function setup(state: ThreadState = { threads: {} }) {
+function setup(state: ThreadState = { threads: {} }, runtimes: SpawnRuntimeOption[] = RUNTIMES) {
   const t3 = fakeT3()
   const saved: ThreadState[] = []
   const fake = fakeSession()
@@ -21,7 +33,21 @@ function setup(state: ThreadState = { threads: {} }) {
     threadStore: { load: () => state, save: (next) => saved.push(next) },
     sleep: async () => {},
   })
-  return { t3, saved, fake, runner, control: createT3SessionControl(runner, t3.client) }
+  const launched: Array<{ spec: HarnessSpawnSpec; claim: unknown; brief: string | undefined }> = []
+  const control = createT3SessionControl(runner, t3.client, {
+    threa: { baseUrl: "https://threa.example", apiKey: "bot_key" },
+    spawnRuntimes: () => runtimes,
+    spawnLauncher: (spec) => () => {
+      launched.push({
+        spec,
+        claim: readCommandClaim(spec.claimFile!),
+        brief: spec.briefFile && readFileSync(spec.briefFile, "utf8"),
+      })
+      discardCommandClaim(spec.claimFile)
+      discardSpawnBrief(spec.briefFile)
+    },
+  })
+  return { t3, saved, fake, runner, control, launched }
 }
 
 const CHOICES = [
@@ -403,5 +429,104 @@ describe("T3 session control", () => {
     await fake.settled()
 
     expect(cleared).toEqual({ ok: true, summary: "Started a new T3 Code thread" })
+  })
+
+  test("/compact and /clear typed in a thread act on that thread's own T3 thread", async () => {
+    const { t3, saved, control } = setup({ threads: { stream_root: "thread_a", stream_thread: "thread_b" } })
+
+    await control.runCommand("compact", "", IN_THREAD)
+    await control.runCommand("clear", "", IN_THREAD)
+
+    expect({ compacted: t3.callsOf("t3_thread_send"), threads: saved.at(-1)?.threads }).toEqual({
+      compacted: [{ threadId: "thread_b", message: "/compact", mode: "queue" }],
+      threads: { stream_root: "thread_a" },
+    })
+  })
+
+  test("/spawn hands the command to harnessd with the bot's own Threa target", async () => {
+    const { control, launched } = setup()
+
+    const outcome = await control.runCommand("spawn", "claude /thinking high helper\nFix the flaky test", CONTEXT)
+    await outcome.handoff?.(CLAIM)
+
+    expect({ keepsRunning: outcome.handoffKeepsSessionRunning, launched }).toEqual({
+      keepsRunning: true,
+      launched: [
+        {
+          spec: {
+            runtime: "claude",
+            name: "helper",
+            rootStreamId: "stream_root",
+            anchorId: "msg_spawn",
+            briefFile: expect.any(String),
+            claimFile: expect.any(String),
+            thinking: "high",
+          },
+          claim: { runtime: "t3code", baseUrl: "https://threa.example", apiKey: "bot_key", ...CLAIM },
+          brief: "Fix the flaky test",
+        },
+      ],
+    })
+  })
+
+  test("/spawn is refused inside a thread and for a runtime that isn't installed", async () => {
+    const { control } = setup()
+
+    expect(await control.runCommand("spawn", "helper", IN_THREAD)).toEqual({
+      ok: false,
+      message: "Spawn is only available at the scratchpad itself, not inside a thread.",
+    })
+    expect(await control.runCommand("spawn", "pi helper", CONTEXT)).toEqual({
+      ok: false,
+      message: "`pi` is not installed on this machine. Installed: claude.",
+    })
+  })
+
+  test("advertises /spawn and its runtimes only when one is installed", () => {
+    const withRuntime = setup().control
+    const without = setup(undefined, [{ ...RUNTIMES[0]!, installed: false }]).control
+
+    expect({
+      commands: [withRuntime.commands, without.commands],
+      runtimes: withRuntime.spawnRuntimes?.map((runtime) => runtime.value),
+    }).toEqual({
+      commands: [
+        ["stop", "status", "model", "thinking", "compact", "clear", "spawn", "done"],
+        ["stop", "status", "model", "thinking", "compact", "clear", "done"],
+      ],
+      runtimes: ["claude"],
+    })
+  })
+
+  test("/done archives the thread's T3 thread and unlinks it", async () => {
+    const { t3, saved, control } = setup({ threads: { stream_root: "thread_a", stream_thread: "thread_b" } })
+
+    expect(await control.runCommand("done", "", IN_THREAD)).toEqual({
+      ok: true,
+      summary: "Archived the T3 Code thread `thread_b`",
+    })
+    expect({ archived: t3.callsOf("t3_thread_organize"), threads: saved.at(-1)?.threads }).toEqual({
+      archived: [{ threadId: "thread_b", action: "archive" }],
+      threads: { stream_root: "thread_a" },
+    })
+  })
+
+  test("/done is refused on the scratchpad, while a turn runs, and when T3 refuses the archive", async () => {
+    const { t3, saved, runner, control } = setup({ threads: { stream_root: "thread_a", stream_thread: "thread_b" } })
+    t3.script("run_1", [{ status: "running" }])
+    await runner.deliverTurn(turn({ streamId: "stream_thread" }))
+
+    const onScratchpad = await control.runCommand("done", "", CONTEXT)
+    const whileRunning = await control.runCommand("done", "", IN_THREAD)
+    runner.interrupt()
+    t3.failNext("t3_thread_organize", new Error("thread is busy"))
+    const refused = await control.runCommand("done", "", IN_THREAD)
+
+    expect({ onScratchpad, whileRunning, refused, threads: saved.at(-1)?.threads }).toEqual({
+      onScratchpad: { ok: false, message: "/done is only available inside a thread." },
+      whileRunning: { ok: false, message: "Stop the running turn first (/stop)." },
+      refused: { ok: false, message: "Could not archive `thread_b`: thread is busy" },
+      threads: { stream_root: "thread_a", stream_thread: "thread_b" },
+    })
   })
 })

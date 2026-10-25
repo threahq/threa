@@ -212,6 +212,7 @@ export function fakeT3() {
       models.set(args.threadId, args.modelSelection)
       return { sequence: 1 }
     },
+    t3_thread_organize: () => ({ sequence: 1 }),
     t3_thread_fork: (args) => {
       const targetThreadId = `thread_${++threads}`
       const model = models.get(args.threadId)

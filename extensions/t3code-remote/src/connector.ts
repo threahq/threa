@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import { BotSupervisorTransport, heldPresenceBody } from "@threahq/harness-client"
+import { BotSupervisorTransport, heldPresenceBody, spawnRuntimesResolver } from "@threahq/harness-client"
 import {
   RemoteSession,
   ThreaClient,
@@ -91,7 +91,10 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
     threadStore: createFileThreadStore(join(config.install.workDir, "threads.json")),
     log,
   })
-  const sessionControl = createT3SessionControl(runner, t3)
+  const sessionControl = createT3SessionControl(runner, t3, {
+    threa: { baseUrl: config.baseUrl, apiKey: config.apiKey },
+    spawnRuntimes: spawnRuntimesResolver((error) => log(`harnessd runtimes: ${error}; /spawn disabled`)),
+  })
   const client = new ThreaClient(config)
   let presence: RuntimePresenceReport | undefined
 
