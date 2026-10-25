@@ -3,6 +3,7 @@ import { Editor, type Content } from "@tiptap/core"
 import { GapCursor } from "@tiptap/pm/gapcursor"
 import type { ResolvedPos } from "@tiptap/pm/model"
 import type { JSONContent } from "@tiptap/react"
+import { privateQuoteAttrs } from "@threahq/prosemirror"
 import { createEditorExtensions } from "./editor-extensions"
 import { serializeToMarkdown } from "./editor-markdown"
 
@@ -26,6 +27,7 @@ function createQuoteReplyNode(): JSONContent {
       snippet: "The vibes are immaculate",
       version: null,
       range: null,
+      private: false,
     },
   }
 }
@@ -292,5 +294,24 @@ describe("quote reply gap cursor", () => {
 
     expect(node?.attrs).toMatchObject({ version: 7, range: { from: 4, to: 19 } })
     pasted.destroy()
+  })
+})
+
+describe("private quote reply", () => {
+  it("should keep a private quote private through an edit when the server sent it as ids alone", () => {
+    const privateQuote: JSONContent = {
+      type: "quoteReply",
+      attrs: privateQuoteAttrs({ streamId: "stream_123", messageId: "msg_123" }),
+    }
+    const editor = createQuoteReplyEditor({ type: "doc", content: [privateQuote] })
+
+    expect({
+      json: editor.getJSON().content?.[0],
+      markdown: serializeToMarkdown(editor.getJSON()),
+    }).toEqual({
+      json: privateQuote,
+      markdown: "> — [Private quote](quote:stream_123/msg_123?private=1)",
+    })
+    editor.destroy()
   })
 })

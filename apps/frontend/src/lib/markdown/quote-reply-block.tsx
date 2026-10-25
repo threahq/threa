@@ -1,5 +1,5 @@
 import { useMemo, useRef, type ReactNode } from "react"
-import { Quote, ChevronDown, ChevronUp } from "lucide-react"
+import { Quote, ChevronDown, ChevronUp, Lock } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
 import { DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD, type AuthorType } from "@threahq/types"
 import { useActors } from "@/hooks"
@@ -174,6 +174,16 @@ export function QuoteReplyBlock({
         )}
       </div>
     </InsideCollapsibleBlockProvider>
+  )
+}
+
+/** A quote the author couldn't read when it sent: the message carries no author or content to show. */
+export function PrivateQuoteBlock() {
+  return (
+    <div className="my-2 flex items-center gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm">
+      <Lock className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <span className="text-xs font-medium text-muted-foreground">Private quote</span>
+    </div>
   )
 }
 
