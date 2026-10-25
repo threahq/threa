@@ -31,7 +31,6 @@ const noSubscription = () => () => {}
  * One live `Y.Doc` for a doc stream, kept in sync over REST and the doc's room.
  * A rejected edit replaces the doc and its sync: the old doc still holds the
  * dropped bytes, and every later edit built on them would fail as not applicable.
- * A null `docId` opens no session.
  */
 export function useDocSync(workspaceId: string, docId: string | null): DocSyncView {
   const [generation, setGeneration] = useState(0)
