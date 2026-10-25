@@ -273,4 +273,129 @@ describe("DocSync", () => {
     })
     expect(alice.text()).toMatch(/^(?=.*Rotation tracker)(?=.*Second paragraph).*!$/)
   })
+  it("sends an edit made while a post is in flight exactly once, after the post settles", async () => {
+    const client = connect(server)
+    await client.sync.start()
+    const realPost = server.api.postUpdate.getMockImplementation()!
+    let release!: () => void
+    server.api.postUpdate.mockImplementationOnce(async (...args) => {
+      await new Promise<void>((resolve) => (release = resolve))
+      return realPost(...args)
+    })
+
+    type(client.ydoc, "a")
+    await vi.advanceTimersByTimeAsync(400)
+    type(client.ydoc, "b")
+    await vi.advanceTimersByTimeAsync(400)
+    expect(server.api.postUpdate).toHaveBeenCalledTimes(1)
+    release()
+    await vi.advanceTimersByTimeAsync(400)
+
+    const posted = server.api.postUpdate.mock.calls.map((call) => {
+      const doc = new Y.Doc()
+      Y.applyUpdate(doc, base64ToBytes(call[2]))
+      return doc.getText("t").toString()
+    })
+    expect({ posted, serverText: server.text, status: client.sync.getStatus() }).toEqual({
+      posted: ["a", ""],
+      serverText: "ab",
+      status: { phase: "ready", saving: false },
+    })
+  })
+
+  it("keeps its seq when its own echo lands before the post result", async () => {
+    const client = connect(server)
+    await client.sync.start()
+
+    type(client.ydoc, "mine")
+    await vi.advanceTimersByTimeAsync(400)
+    client.sync.receive(server.writeElsewhere(" theirs"))
+
+    expect({ text: client.text(), fetched: server.api.listUpdates.mock.calls.length }).toEqual({
+      text: "mine theirs",
+      fetched: 0,
+    })
+  })
+
+  it("never loses a catch-up requested while another is finishing", async () => {
+    for (let hop = 0; hop < 8; hop++) {
+      const local = new FakeDocServer()
+      const client = connect(local)
+      await client.sync.start()
+      local.writeElsewhere("first")
+      const realList = local.api.listUpdates.getMockImplementation()!
+      let release!: () => void
+      local.api.listUpdates.mockImplementationOnce(async (...args) => {
+        const result = await realList(...args)
+        await new Promise<void>((resolve) => (release = resolve))
+        return result
+      })
+
+      const running = client.sync.catchUp()
+      await vi.advanceTimersByTimeAsync(0)
+      local.writeElsewhere(" late")
+      release()
+      for (let i = 0; i < hop; i++) await Promise.resolve()
+      const again = client.sync.catchUp()
+      await running
+      await again
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect({ hop, text: client.text() }).toEqual({ hop, text: "first late" })
+      client.sync.stop()
+    }
+  })
+
+  it("leaves no timers and sends nothing more when stopped mid-post", async () => {
+    const client = connect(server)
+    await client.sync.start()
+    let fail!: (error: unknown) => void
+    server.api.postUpdate.mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)))
+
+    type(client.ydoc, "x")
+    await vi.advanceTimersByTimeAsync(400)
+    client.sync.stop()
+    fail(new ApiError(400, "DOC_UPDATE_NOT_APPLICABLE", "missing deps"))
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect({ timers: vi.getTimerCount(), posts: server.api.postUpdate.mock.calls.length }).toEqual({
+      timers: 0,
+      posts: 1,
+    })
+  })
+
+  it("adopts the server seq after a 409 reload", async () => {
+    const client = connect(server)
+    await client.sync.start()
+    server.writeElsewhere("a")
+    server.writeElsewhere("b")
+    server.snapshotSeq = 2
+    await client.sync.catchUp()
+
+    client.sync.receive(server.writeElsewhere("c"))
+
+    expect({ text: client.text(), fetched: server.api.listUpdates.mock.calls.length }).toEqual({
+      text: "abc",
+      fetched: 1,
+    })
+  })
+
+  it("notifies subscribers only when the status changes", async () => {
+    const client = connect(server)
+    const seen: unknown[] = [client.sync.getStatus()]
+    client.sync.subscribe(() => seen.push(client.sync.getStatus()))
+
+    await client.sync.start()
+    await client.sync.catchUp()
+    type(client.ydoc, "x")
+    type(client.ydoc, "y")
+    await vi.advanceTimersByTimeAsync(400)
+
+    expect(seen).toEqual([
+      { phase: "loading", saving: false },
+      { phase: "ready", saving: false },
+      { phase: "ready", saving: true },
+      { phase: "ready", saving: false },
+    ])
+  })
 })

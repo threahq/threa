@@ -24,6 +24,13 @@ function backoffMs(failures: number): number {
   return Math.min(1000 * 2 ** (failures - 1), MAX_BACKOFF_MS)
 }
 
+function sameStatus(a: DocSyncStatus, b: DocSyncStatus): boolean {
+  if (a.phase !== b.phase || a.saving !== b.saving) return false
+  if (a.phase === "error" && b.phase === "error") return a.error === b.error
+  if (a.phase === "rejected" && b.phase === "rejected") return a.code === b.code
+  return true
+}
+
 /** Keeps one `Y.Doc` in sync with a doc stream over REST, fed live `doc:updated` payloads by the caller. */
 export class DocSync {
   private readonly workspaceId: string
@@ -93,9 +100,7 @@ export class DocSync {
       this.catchUpAgain = true
       return this.catchUpRun
     }
-    this.catchUpRun = this.runCatchUp().finally(() => {
-      this.catchUpRun = null
-    })
+    this.catchUpRun = this.runCatchUp()
     return this.catchUpRun
   }
 
@@ -120,18 +125,25 @@ export class DocSync {
   }
 
   private async runCatchUp(): Promise<void> {
-    do {
-      this.catchUpAgain = false
-      try {
-        await this.fetchMissed()
-        this.catchUpFailures = 0
-      } catch {
-        if (this.stopped) return
-        this.catchUpFailures += 1
-        this.catchUpTimer = setTimeout(() => void this.catchUp(), backoffMs(this.catchUpFailures))
-        return
-      }
-    } while (this.catchUpAgain && !this.stopped)
+    if (this.catchUpTimer) clearTimeout(this.catchUpTimer)
+    this.catchUpTimer = null
+    // Cleared in the same tick as the last `catchUpAgain` check, so no request can land on a finished run.
+    try {
+      do {
+        this.catchUpAgain = false
+        try {
+          await this.fetchMissed()
+          this.catchUpFailures = 0
+        } catch {
+          if (this.stopped) return
+          this.catchUpFailures += 1
+          this.catchUpTimer = setTimeout(() => void this.catchUp(), backoffMs(this.catchUpFailures))
+          return
+        }
+      } while (this.catchUpAgain && !this.stopped)
+    } finally {
+      this.catchUpRun = null
+    }
   }
 
   private async fetchMissed(): Promise<void> {
@@ -197,6 +209,7 @@ export class DocSync {
     } catch (error) {
       if (!ApiError.isApiError(error) || error.code !== "DOC_UPDATE_NOT_APPLICABLE") throw error
       await this.catchUp()
+      if (this.stopped) return
       result = await this.api.postUpdate(this.workspaceId, this.docId, encoded)
     }
     // Only a single new row is provably ours; a server repair adds a second one this client must still apply.
@@ -227,6 +240,7 @@ export class DocSync {
   }
 
   private setStatus(status: DocSyncStatus): void {
+    if (sameStatus(status, this.status)) return
     this.status = status
     for (const listener of this.listeners) listener()
   }
