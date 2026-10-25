@@ -408,7 +408,7 @@ export const SyncLogRepository = {
    */
   async listUnsequencedOutboxEvents(
     db: Querier,
-    params: { since: Date; until: Date; limit: number; excludeEventTypes: readonly string[] }
+    params: { since: Date; until: Date; limit: number; excludeEventTypes: ReadonlySet<string> }
   ): Promise<Array<{ id: bigint; eventType: string; payload: unknown; createdAt: Date }>> {
     // eslint-disable-next-line threa/workspace-scoped-sql -- reconciliation across every workspace; outbox has no workspace_id
     const result = await db.query<{ id: string; event_type: string; payload: unknown; created_at: Date }>(sql`

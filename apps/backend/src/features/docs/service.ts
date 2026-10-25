@@ -80,6 +80,9 @@ function applyOrRefuse(...args: Parameters<typeof applyClientWrite>): ReturnType
   }
 }
 
+/** `DocState` before serialization: the stream still carries `Date`s. */
+type LoadedDocState = Omit<DocState, "stream"> & { stream: Stream }
+
 export class DocService {
   private pool: Pool
 
@@ -87,11 +90,7 @@ export class DocService {
     this.pool = deps.pool
   }
 
-  async get(params: {
-    workspaceId: string
-    userId: string
-    docId: string
-  }): Promise<Omit<DocState, "stream"> & { stream: Stream }> {
+  async get(params: { workspaceId: string; userId: string; docId: string }): Promise<LoadedDocState> {
     return withClient(this.pool, async (client) => {
       const stream = await this.findReadableDoc(client, params)
       const { ydoc, seq } = await loadStoredState(client, params.workspaceId, params.docId)

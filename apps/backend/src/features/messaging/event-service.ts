@@ -753,11 +753,12 @@ export class EventService {
     }
 
     // Validate attachments before creating the event. Two flavors:
-    // - "new" (`messageId === null`): fresh upload, ownership anchored to this
-    //   message via `attachToMessage` below.
-    // - "referenced" (`messageId !== null`): body re-uses an attachment owned by
-    //   a previous message; ownership stays put and an `attachment_references`
-    //   row records the pointer.
+    // - "new" (no message, and unbound or bound to this stream, e.g. sandbox
+    //   output): fresh upload, ownership anchored to this message via
+    //   `attachToMessage` below.
+    // - "referenced": body re-uses an attachment owned by a previous message or
+    //   by another stream (a doc's inline image); ownership stays put and an
+    //   `attachment_references` row records the pointer.
     // Verifying the author can read a referenced attachment closes the abuse of
     // submitting an arbitrary id to get it silently summarised on the wire.
     let attachmentSummaries: AttachmentSummary[] | undefined
@@ -769,6 +770,7 @@ export class EventService {
         throw new Error("Invalid attachment IDs: not all attachments were found")
       }
       for (const a of attachments) {
+        const isFreshUpload = a.messageId === null && (a.streamId === null || a.streamId === params.streamId)
         // Shareable = scanned-clean OR E2E ciphertext (unscannable, owner's own
         // bytes). Single source of truth with the download path. One widening:
         // the author's OWN still-settling reservation may bind (send-while-
@@ -778,7 +780,7 @@ export class EventService {
           const isPendingReservation =
             (a.safetyStatus === AttachmentSafetyStatuses.PENDING_UPLOAD ||
               a.safetyStatus === AttachmentSafetyStatuses.PENDING_SCAN) &&
-            a.messageId === null &&
+            isFreshUpload &&
             a.uploadedBy === params.authorId
           if (!isPendingReservation) {
             throw new Error(
@@ -798,7 +800,7 @@ export class EventService {
               : "Invalid attachment IDs: a sealed message can only bind E2E attachments"
           )
         }
-        if (a.messageId === null) {
+        if (isFreshUpload) {
           attachmentsToAttach.push(a.id)
           continue
         }
@@ -1601,7 +1603,7 @@ export class EventService {
       if (a.e2eOnly === true) {
         throw new Error("Invalid attachment IDs: an E2E attachment can only be bound to a sealed message")
       }
-      if (a.messageId === null) {
+      if (a.messageId === null && a.streamId === null) {
         // Fresh uploads aren't supported on edit — they'd need `attachToMessage`
         // claiming the row, which would orphan any other message that already
         // points at it (none today, but the invariant is worth preserving).

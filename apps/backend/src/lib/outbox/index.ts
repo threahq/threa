@@ -25,7 +25,7 @@ export {
   isOutboxEventType,
   isOneOfOutboxEventType,
   isStreamScopedEvent,
-  UNLOGGED_EVENT_TYPES,
+  SYNC_LOG_EXCLUDED_EVENT_TYPES,
   isAuthorScopedEvent,
   type OutboxEventType,
   type StreamScopedEventType,

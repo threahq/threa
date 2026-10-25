@@ -29,7 +29,11 @@ import {
 import { EventService } from "../../src/features/messaging/event-service"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { MessageRepository } from "../../src/features/messaging"
-import { AttachmentRepository } from "../../src/features/attachments"
+import {
+  AttachmentReferenceRepository,
+  AttachmentRepository,
+  type InsertAttachmentParams,
+} from "../../src/features/attachments"
 import { resolveDeliveryGroups, streamGroup, type OutboxEvent } from "../../src/lib/outbox"
 import { attachmentId, blockId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { addTestMember, setupIsolatedTestDatabase, testMessageContent, withTransaction } from "./setup"
@@ -109,7 +113,10 @@ async function openClient(docId: string, userIdForClient: string) {
   }
 }
 
-async function seedAttachment(uploadedBy: string): Promise<string> {
+async function seedAttachment(
+  uploadedBy: string,
+  overrides: Partial<Pick<InsertAttachmentParams, "safetyStatus" | "streamId" | "e2eOnly">> = {}
+): Promise<string> {
   const id = attachmentId()
   await AttachmentRepository.insert(pool, {
     id,
@@ -120,6 +127,7 @@ async function seedAttachment(uploadedBy: string): Promise<string> {
     sizeBytes: 12,
     storagePath: `${wsId}/${id}/diagram.png`,
     safetyStatus: "clean",
+    ...overrides,
   })
   return id
 }
@@ -463,38 +471,96 @@ describe("DocService", () => {
     })
   })
 
-  test("should bind only the poster's own unbound uploads to the doc when an update references attachments", async () => {
+  test("should bind only the poster's own unbound, shareable, plaintext uploads to the doc when an update references attachments", async () => {
     const channel = await createChannel("private")
     const doc = await createDoc(channel.id)
     const own = await seedAttachment(owner)
     const others = await seedAttachment(peer)
     const sent = await seedAttachment(owner)
+    const quarantined = await seedAttachment(owner, { safetyStatus: "quarantined" })
+    const elsewhere = await seedAttachment(owner, { streamId: channel.id })
+    const sealed = await seedAttachment(owner, { safetyStatus: "e2e_unscanned", e2eOnly: true })
     const sentMessage = messageId()
     await AttachmentRepository.attachToMessage(pool, wsId, [sent], sentMessage, channel.id)
     const client = await openClient(doc.id, owner)
+    const ids = [own, others, sent, quarantined, elsewhere, sealed]
 
-    await post(doc.id, appendBlock(client.ydoc, attachmentParagraph([own, others, sent])))
+    await post(doc.id, appendBlock(client.ydoc, attachmentParagraph(ids)))
 
     const bindings = Object.fromEntries(
-      (await AttachmentRepository.findByIds(pool, wsId, [own, others, sent])).map((row) => [
+      (await AttachmentRepository.findByIds(pool, wsId, ids)).map((row) => [
         row.id,
         { streamId: row.streamId, messageId: row.messageId },
       ])
     )
-    const bound = (await AttachmentRepository.findById(pool, wsId, own))!
     expect({
       bindings,
-      memberReads: (await streamService.tryAccess(bound.streamId!, wsId, peer))?.id ?? null,
-      outsiderReads: (await streamService.tryAccess(bound.streamId!, wsId, outsider))?.id ?? null,
+      memberReads: (await streamService.tryAccess(doc.id, wsId, peer))?.id ?? null,
+      outsiderReads: (await streamService.tryAccess(doc.id, wsId, outsider))?.id ?? null,
     }).toEqual({
       bindings: {
         [own]: { streamId: doc.id, messageId: null },
         [others]: { streamId: null, messageId: null },
         [sent]: { streamId: channel.id, messageId: sentMessage },
+        [quarantined]: { streamId: null, messageId: null },
+        [elsewhere]: { streamId: channel.id, messageId: null },
+        [sealed]: { streamId: null, messageId: null },
       },
       memberReads: doc.id,
       outsiderReads: null,
     })
+  })
+
+  test("should reference a doc-bound image without re-pointing it when a message elsewhere attaches it", async () => {
+    const host = await createChannel("private")
+    const doc = await createDoc(host.id)
+    const image = await seedAttachment(owner)
+    const client = await openClient(doc.id, owner)
+    await post(doc.id, appendBlock(client.ydoc, attachmentParagraph([image])))
+    const other = await createChannel("private")
+    const outsiderChannel = await streamService.createChannel({
+      workspaceId: wsId,
+      slug: `docs-outsider-${++slugCounter}`,
+      visibility: "public",
+      createdBy: outsider,
+      memberIds: [],
+    })
+    const eventService = new EventService(pool)
+
+    const { message } = await eventService.createMessageForPrincipalReturningConversation(
+      { kind: "user", userId: owner },
+      {
+        workspaceId: wsId,
+        streamId: other.id,
+        authorId: owner,
+        authorType: "user",
+        ...testMessageContent("see the doc image"),
+        attachmentIds: [image],
+      }
+    )
+    const row = (await AttachmentRepository.findById(pool, wsId, image))!
+    const references = await AttachmentReferenceRepository.findByAttachmentId(pool, wsId, image)
+
+    expect({
+      binding: { streamId: row.streamId, messageId: row.messageId },
+      references: references.map((ref) => ({ messageId: ref.messageId, streamId: ref.streamId })),
+    }).toEqual({
+      binding: { streamId: doc.id, messageId: null },
+      references: [{ messageId: message.id, streamId: other.id }],
+    })
+    await expect(
+      eventService.createMessageForPrincipalReturningConversation(
+        { kind: "user", userId: outsider },
+        {
+          workspaceId: wsId,
+          streamId: outsiderChannel.id,
+          authorId: outsider,
+          authorType: "user",
+          ...testMessageContent("stolen"),
+          attachmentIds: [image],
+        }
+      )
+    ).rejects.toThrow("cannot reference an attachment without read access")
   })
 
   test("should write a broadcast doc:created row in the host and route outbox rows when a doc is created and edited", async () => {

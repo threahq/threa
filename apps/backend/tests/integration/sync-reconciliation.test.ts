@@ -53,12 +53,24 @@ describe("SyncLogReconciliationWorker", () => {
   }
 
   /** Sweeps until the predicate holds — background transactions can clamp the frozen cutoff for a beat. */
-  async function sweepUntil(worker: SyncLogReconciliationWorker, predicate: () => Promise<boolean>): Promise<void> {
+  async function sweepUntil(worker: SyncLogReconciliationWorker, predicate: () => Promise<boolean>): Promise<boolean> {
     for (let attempt = 0; attempt < 20; attempt++) {
       await worker.sweepOnce()
-      if (await predicate()) return
+      if (await predicate()) return true
       await new Promise((r) => setTimeout(r, 100))
     }
+    return false
+  }
+
+  /** Sweeps until the window has passed the event (swept_until > its insert). */
+  function sweepPast(worker: SyncLogReconciliationWorker, outboxEventId: bigint): Promise<boolean> {
+    return sweepUntil(worker, async () => {
+      const sweptUntil = await SyncLogRepository.getSweptUntil(pool)
+      const row = await pool.query<{ created_at: Date }>(`SELECT created_at FROM outbox WHERE id = $1`, [
+        outboxEventId.toString(),
+      ])
+      return sweptUntil !== null && sweptUntil > row.rows[0].created_at
+    })
   }
 
   test("rescues a committed client-routed event the dispatcher never sequenced", async () => {
@@ -97,14 +109,7 @@ describe("SyncLogReconciliationWorker", () => {
       invocationId: "inv_1",
     })
 
-    // Sweep until the window has passed the event (swept_until > its insert).
-    await sweepUntil(worker, async () => {
-      const sweptUntil = await SyncLogRepository.getSweptUntil(pool)
-      const row = await pool.query<{ created_at: Date }>(`SELECT created_at FROM outbox WHERE id = $1`, [
-        outboxEventId.toString(),
-      ])
-      return sweptUntil !== null && sweptUntil > row.rows[0].created_at
-    })
+    await sweepPast(worker, outboxEventId)
 
     expect(await getLogRow(outboxEventId)).toBeNull()
   })
@@ -123,18 +128,13 @@ describe("SyncLogReconciliationWorker", () => {
       actorType: "user",
     })
 
-    await sweepUntil(worker, async () => {
-      const sweptUntil = await SyncLogRepository.getSweptUntil(pool)
-      const row = await pool.query<{ created_at: Date }>(`SELECT created_at FROM outbox WHERE id = $1`, [
-        outboxEventId.toString(),
-      ])
-      return sweptUntil !== null && sweptUntil > row.rows[0].created_at
-    })
+    const swept = await sweepPast(worker, outboxEventId)
 
     expect({
+      swept,
       logRow: await getLogRow(outboxEventId),
       emitted: emits.filter((e) => e.payload.workspaceId === workspaceId),
-    }).toEqual({ logRow: null, emitted: [] })
+    }).toEqual({ swept: true, logRow: null, emitted: [] })
   })
 
   test("does not sweep a window an older transaction could still write into", async () => {
