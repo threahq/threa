@@ -115,7 +115,9 @@ function collectRevealFallbacks(page: Page): string[] {
 }
 
 test.describe("Doc pane", () => {
-  test("should create a doc beside its channel and converge two members' edits", async ({ browser }) => {
+  test("should create a doc beside its channel, converge two members' edits and show who is in it", async ({
+    browser,
+  }) => {
     const ownerContext = await browser.newContext()
     const owner = await ownerContext.newPage()
     const { testId, name: ownerName } = await loginAndCreateWorkspace(owner, "doc-owner")
@@ -133,6 +135,7 @@ test.describe("Doc pane", () => {
       )
 
       await openChannel(owner, workspaceId, channelId)
+      await openChannel(member.page, workspaceId, channelId)
       const created = owner.waitForResponse(
         (response) => response.request().method() === "POST" && /\/streams$/.test(new URL(response.url()).pathname)
       )
@@ -148,6 +151,7 @@ test.describe("Doc pane", () => {
       const ownerEditor = docEditor(owner, docId)
       await expect(ownerEditor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
       await expect(pane(owner, docId).getByRole("button", { name: "Bold" })).toBeVisible()
+      await expect(pane(member.page, channelId).getByRole("button", { name: "1 doc" })).toBeVisible({ timeout: 15000 })
 
       await typeAtEnd(owner, ownerEditor, "Rotation tracker")
       await owner.keyboard.press("Enter")
@@ -157,7 +161,6 @@ test.describe("Doc pane", () => {
       await expect(ownerEditor.locator("strong")).toHaveText("Keys")
       await owner.keyboard.press("Enter")
 
-      await openChannel(member.page, workspaceId, channelId)
       const row = anchorRow(member.page, docId)
       await expect(row).toContainText("created a doc", { timeout: 15000 })
       await expect(row).toContainText("Untitled")
@@ -217,11 +220,7 @@ test.describe("Doc pane", () => {
       await expect(presenceStack(owner, docId).getByRole("button", { name: member.name })).toBeVisible({
         timeout: 10000,
       })
-      await pane(member.page, docId)
-        .locator("header")
-        .first()
-        .getByRole("button", { name: "Close", exact: true })
-        .click()
+      await pane(member.page, docId).getByRole("button", { name: "Close", exact: true }).click()
       await expect(pane(member.page, docId)).toHaveCount(0)
       await expect(presenceStack(owner, docId)).toHaveCount(0, { timeout: 10000 })
     } finally {

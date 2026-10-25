@@ -9,7 +9,10 @@ import { createDocumentExtensions } from "./editor-extensions"
 
 const editors: Editor[] = []
 
-function createEditor(ydoc: Y.Doc, awareness?: Awareness): Editor {
+/** y-prosemirror's defaultCursorBuilder pads the caret's name label with word joiners. */
+const CARET_WORD_JOINERS = /\u2060/g
+
+function createEditor(ydoc: Y.Doc, awareness: Awareness | null = null): Editor {
   const element = document.createElement("div")
   document.body.append(element)
   const editor = new Editor({ element, extensions: createDocumentExtensions({ ydoc, awareness }) })
@@ -153,7 +156,7 @@ describe("YjsCollaboration", () => {
         return found
       })
       expect({
-        name: caret.textContent?.replace(/\u2060/g, ""),
+        name: caret.textContent?.replace(CARET_WORD_JOINERS, ""),
         color: caret.style.borderColor,
       }).toEqual({
         name: "Alice",

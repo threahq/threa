@@ -42,7 +42,7 @@ afterEach(() => {
 describe("stampNodeAttrs", () => {
   it("leaves a shared document untouched", () => {
     const ydoc = prosemirrorJSONToYDoc(getThreaSchema(), LINK_DOC, DOC_FRAGMENT)
-    const editor = mount(new Editor({ extensions: createDocumentExtensions({ ydoc }) }))
+    const editor = mount(new Editor({ extensions: createDocumentExtensions({ ydoc, awareness: null }) }))
     const fragmentBefore = ydoc.getXmlFragment(DOC_FRAGMENT).toString()
     const docBefore = editor.state.doc
 

@@ -3196,6 +3196,54 @@ describe("registerWorkspaceSocketHandlers", () => {
     cleanup()
   })
 
+  it("should cache another member's new private doc only when its host is already cached", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({
+        users: [makeWorkspaceUser()],
+        streams: [{ ...makeStream("stream_host", { visibility: "private" }), lastMessagePreview: null }],
+        streamMemberships: [],
+      })
+    )
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => undefined,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream: vi.fn(),
+    })
+    const privateDoc = (id: string, hostId: string) =>
+      makeStream(id, {
+        type: "doc",
+        visibility: "private",
+        parentStreamId: hostId,
+        rootStreamId: hostId,
+        createdBy: "member_2",
+      })
+
+    emit("stream:created", {
+      workspaceId: "ws_1",
+      streamId: "stream_doc_uncached_host",
+      stream: privateDoc("stream_doc_uncached_host", "stream_uncached"),
+    })
+    emit("stream:created", {
+      workspaceId: "ws_1",
+      streamId: "stream_doc",
+      stream: privateDoc("stream_doc", "stream_host"),
+    })
+
+    await vi.waitFor(async () => expect(await db.streams.get(["ws_1", "stream_doc"])).toBeDefined())
+    expect({
+      cachedIds: queryClient
+        .getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+        ?.streams.map((s) => s.id),
+      idbUncachedHost: await db.streams.get(["ws_1", "stream_doc_uncached_host"]),
+    }).toEqual({ cachedIds: ["stream_host", "stream_doc"], idbUncachedHost: undefined })
+
+    cleanup()
+  })
+
   it("should mark Meet Ariadne done when the creator's onboarding scratchpad is created on another device", async () => {
     await db.workspaceMetadata.put({
       id: "ws_1",

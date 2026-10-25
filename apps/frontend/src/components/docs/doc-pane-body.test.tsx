@@ -23,6 +23,7 @@ import { docsApi } from "@/api/docs"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { RevealOnReady } from "@/contexts/coordinated-loading-context"
 import { DocSync, FLUSH_DEBOUNCE_MS } from "@/lib/docs/doc-sync"
+import { PRESENCE_SEND_WINDOW_MS } from "@/lib/docs/doc-presence"
 import { getPresenceColor } from "@/lib/avatar-color"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
@@ -165,6 +166,29 @@ describe("DocPaneBody", () => {
       actorType: "user",
     }
   }
+
+  /** The awareness frames the viewer has sent to this doc's room so far. */
+  function awarenessFrames(): DocAwarenessPayload[] {
+    return socket.emit.mock.calls
+      .filter(([event, payload]) => event === "doc:awareness" && (payload as DocAwarenessPayload).docId === DOC_ID)
+      .map(([, payload]) => payload as DocAwarenessPayload)
+  }
+
+  /** The users a peer in the doc room would see after applying the given frames. */
+  function usersSeenByPeer(frames = awarenessFrames()): unknown[] {
+    const peer = new Awareness(new Y.Doc())
+    try {
+      for (const frame of frames) applyAwarenessUpdate(peer, base64ToBytes(frame.update), "test")
+      return [...peer.getStates().entries()]
+        .filter(([clientId]) => clientId !== peer.clientID)
+        .map(([, state]) => state.user)
+    } finally {
+      peer.destroy()
+    }
+  }
+
+  /** What a peer sees of the viewer: the colour comes from the viewer's id. */
+  const VIEWER_PRESENCE = { userId: "usr_viewer", name: "Viewer", color: getPresenceColor("usr_viewer") }
 
   it("renders the loaded doc in an editable editor with the formatting toolbar", async () => {
     await mountLoaded()
@@ -376,132 +400,24 @@ describe("DocPaneBody", () => {
     expect(off.mock.calls.map(([event]) => event)).toContain("doc:updated")
   })
 
-  it("should announce the viewer to the doc room and withdraw them when the pane closes", async () => {
+  it("announces the viewer to the doc room and withdraws them when the pane closes", async () => {
     const view = await mountLoaded()
-    const awarenessFrames = () =>
-      socket.emit.mock.calls
-        .filter(([event]) => event === "doc:awareness")
-        .map(([, payload]) => payload as DocAwarenessPayload)
-    await waitFor(() => expect(awarenessFrames().length).toBeGreaterThan(0))
-    const peerDoc = new Y.Doc()
-    const peer = new Awareness(peerDoc)
-    const users = () =>
-      [...peer.getStates().entries()].filter(([clientId]) => clientId !== peer.clientID).map(([, state]) => state.user)
-    try {
-      for (const frame of awarenessFrames()) applyAwarenessUpdate(peer, base64ToBytes(frame.update), "test")
-      const whileOpen = users()
+    await waitFor(() => expect(usersSeenByPeer()).toEqual([VIEWER_PRESENCE]))
 
-      view.unmount()
-      const last = awarenessFrames().at(-1)!
-      applyAwarenessUpdate(peer, base64ToBytes(last.update), "test")
+    view.unmount()
 
-      expect({
-        listened: socket.on.mock.calls.some(([event]) => event === "doc:awareness"),
-        stoppedListening: socket.off.mock.calls.some(([event]) => event === "doc:awareness"),
-        frameTarget: { workspaceId: last.workspaceId, docId: last.docId },
-        whileOpen,
-        afterClose: users(),
-      }).toEqual({
-        listened: true,
-        stoppedListening: true,
-        frameTarget: { workspaceId: WORKSPACE_ID, docId: DOC_ID },
-        whileOpen: [{ userId: "usr_viewer", name: "Viewer", color: getPresenceColor("usr_viewer") }],
-        afterClose: [],
-      })
-    } finally {
-      peer.destroy()
-      peerDoc.destroy()
-    }
-  })
-
-  function awarenessFrames(docId = DOC_ID): DocAwarenessPayload[] {
-    return socket.emit.mock.calls
-      .filter(([event, payload]) => event === "doc:awareness" && (payload as DocAwarenessPayload).docId === docId)
-      .map(([, payload]) => payload as DocAwarenessPayload)
-  }
-
-  /** The users a peer in the doc room would see after applying every frame sent so far. */
-  function usersSeenByPeer(docId = DOC_ID): unknown[] {
-    const peer = new Awareness(new Y.Doc())
-    try {
-      for (const frame of awarenessFrames(docId)) applyAwarenessUpdate(peer, base64ToBytes(frame.update), "test")
-      return [...peer.getStates().entries()]
-        .filter(([clientId]) => clientId !== peer.clientID)
-        .map(([, state]) => state.user)
-    } finally {
-      peer.destroy()
-    }
-  }
-
-  const VIEWER_PRESENCE = { userId: "usr_viewer", name: "Viewer", color: getPresenceColor("usr_viewer") }
-
-  it("should open no session and touch no socket when the doc id is null", async () => {
-    const { result } = renderHook(() => useDocSync(WORKSPACE_ID, null))
-    await act(async () => {})
-
+    const last = awarenessFrames().at(-1)!
     expect({
-      view: result.current,
-      loads: vi.mocked(docsApi.get).mock.calls.length,
-      listeners: socket.on.mock.calls.length,
-      frames: socket.emit.mock.calls.length,
-      joins: joinRoom.mock.calls.length,
-    }).toEqual({ view: { phase: "loading" }, loads: 0, listeners: 0, frames: 0, joins: 0 })
-  })
-
-  it("should withdraw the viewer from the old doc before stopping its sync when the doc id changes", async () => {
-    const order: string[] = []
-    socket.emit.mockImplementation((event: string, payload: DocAwarenessPayload) => {
-      if (event === "doc:awareness") order.push(`frame:${payload.docId}`)
+      listened: socket.on.mock.calls.some(([event]) => event === "doc:awareness"),
+      stoppedListening: socket.off.mock.calls.some(([event]) => event === "doc:awareness"),
+      frameTarget: { workspaceId: last.workspaceId, docId: last.docId },
+      afterClose: usersSeenByPeer(),
+    }).toEqual({
+      listened: true,
+      stoppedListening: true,
+      frameTarget: { workspaceId: WORKSPACE_ID, docId: DOC_ID },
+      afterClose: [],
     })
-    const stop = DocSync.prototype.stop
-    vi.spyOn(DocSync.prototype, "stop").mockImplementation(function (this: DocSync) {
-      order.push("stop")
-      stop.call(this)
-    })
-    const { result, rerender } = renderHook(({ docId }) => useDocSync(WORKSPACE_ID, docId), {
-      initialProps: { docId: DOC_ID },
-    })
-    await waitFor(() => expect(result.current.phase).toBe("ready"))
-    await waitFor(() => expect(usersSeenByPeer()).toEqual([VIEWER_PRESENCE]))
-    order.length = 0
-
-    rerender({ docId: "stream_other" })
-
-    expect({ order: order.slice(0, 2), seenInOldDoc: usersSeenByPeer() }).toEqual({
-      order: [`frame:${DOC_ID}`, "stop"],
-      seenInOldDoc: [],
-    })
-  })
-
-  it("should re-send the viewer's presence when the room join is acked after a reconnect", async () => {
-    const reconnects = vi.spyOn(contextsModule, "useSocketReconnectCount").mockReturnValue(0)
-    const { rerender } = renderHook(() => useDocSync(WORKSPACE_ID, DOC_ID))
-    await waitFor(() => expect(usersSeenByPeer()).toEqual([VIEWER_PRESENCE]))
-    await new Promise((resolve) => setTimeout(resolve, 100))
-    const before = awarenessFrames().length
-
-    reconnects.mockReturnValue(1)
-    rerender()
-
-    await waitFor(() => expect(joinRoom).toHaveBeenCalledTimes(2))
-    await waitFor(() => expect(awarenessFrames().length).toBe(before + 1))
-  })
-
-  it("should withdraw the viewer on pagehide and announce them again on pageshow", async () => {
-    renderHook(() => useDocSync(WORKSPACE_ID, DOC_ID))
-    await waitFor(() => expect(usersSeenByPeer()).toEqual([VIEWER_PRESENCE]))
-
-    act(() => {
-      window.dispatchEvent(new Event("pagehide"))
-    })
-    const afterHide = usersSeenByPeer()
-    act(() => {
-      window.dispatchEvent(new Event("pageshow"))
-    })
-
-    await waitFor(() =>
-      expect({ afterHide, afterShow: usersSeenByPeer() }).toEqual({ afterHide: [], afterShow: [VIEWER_PRESENCE] })
-    )
   })
 
   it("drops its still-uploading placeholders from the doc when the pane closes mid-upload", async () => {
@@ -588,6 +504,77 @@ describe("DocPaneBody", () => {
       writable: true,
       readOnly: true,
       uploads: 1,
+    })
+  })
+
+  describe("useDocSync", () => {
+    it("opens no session and touches no socket when the doc id is null", async () => {
+      const { result } = renderHook(() => useDocSync(WORKSPACE_ID, null))
+      await act(async () => {})
+
+      expect({
+        view: result.current,
+        loads: vi.mocked(docsApi.get).mock.calls.length,
+        listeners: socket.on.mock.calls.length,
+        frames: socket.emit.mock.calls.length,
+        joins: joinRoom.mock.calls.length,
+      }).toEqual({ view: { phase: "loading" }, loads: 0, listeners: 0, frames: 0, joins: 0 })
+    })
+
+    it("withdraws the viewer from the old doc before stopping its sync when the doc id changes", async () => {
+      const order: string[] = []
+      socket.emit.mockImplementation((event: string, payload: DocAwarenessPayload) => {
+        if (event === "doc:awareness") order.push(`frame:${payload.docId}`)
+      })
+      const stop = DocSync.prototype.stop
+      vi.spyOn(DocSync.prototype, "stop").mockImplementation(function (this: DocSync) {
+        order.push("stop")
+        stop.call(this)
+      })
+      const { result, rerender } = renderHook(({ docId }) => useDocSync(WORKSPACE_ID, docId), {
+        initialProps: { docId: DOC_ID },
+      })
+      await waitFor(() => expect(result.current.phase).toBe("ready"))
+      await waitFor(() => expect(usersSeenByPeer()).toEqual([VIEWER_PRESENCE]))
+      order.length = 0
+
+      rerender({ docId: "stream_other" })
+
+      expect({ order: order.slice(0, 2), seenInOldDoc: usersSeenByPeer() }).toEqual({
+        order: [`frame:${DOC_ID}`, "stop"],
+        seenInOldDoc: [],
+      })
+    })
+
+    it("re-sends the viewer's presence when the room join is acked after a reconnect", async () => {
+      const reconnects = vi.spyOn(contextsModule, "useSocketReconnectCount").mockReturnValue(0)
+      const { rerender } = renderHook(() => useDocSync(WORKSPACE_ID, DOC_ID))
+      await waitFor(() => expect(usersSeenByPeer()).toEqual([VIEWER_PRESENCE]))
+      await new Promise((resolve) => setTimeout(resolve, PRESENCE_SEND_WINDOW_MS * 2))
+      const before = awarenessFrames().length
+
+      reconnects.mockReturnValue(1)
+      rerender()
+
+      await waitFor(() => expect(joinRoom).toHaveBeenCalledTimes(2))
+      await waitFor(() => expect(usersSeenByPeer(awarenessFrames().slice(before))).toEqual([VIEWER_PRESENCE]))
+    })
+
+    it("withdraws the viewer on pagehide and announces them again on pageshow", async () => {
+      renderHook(() => useDocSync(WORKSPACE_ID, DOC_ID))
+      await waitFor(() => expect(usersSeenByPeer()).toEqual([VIEWER_PRESENCE]))
+
+      act(() => {
+        window.dispatchEvent(new Event("pagehide"))
+      })
+      const afterHide = usersSeenByPeer()
+      act(() => {
+        window.dispatchEvent(new Event("pageshow"))
+      })
+
+      await waitFor(() =>
+        expect({ afterHide, afterShow: usersSeenByPeer() }).toEqual({ afterHide: [], afterShow: [VIEWER_PRESENCE] })
+      )
     })
   })
 })

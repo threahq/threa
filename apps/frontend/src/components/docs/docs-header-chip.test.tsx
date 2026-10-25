@@ -8,6 +8,11 @@ import { DocsHeaderChip } from "./docs-header-chip"
 
 const WORKSPACE_ID = "ws_1"
 const HOST_ID = "stream_host"
+const NOW = new Date("2026-10-26T12:00:00.000Z")
+
+function minutesAgo(minutes: number): string {
+  return new Date(NOW.getTime() - minutes * 60_000).toISOString()
+}
 
 function doc(id: string, createdAt: string, overrides: Partial<workspaceStoreModule.CachedStream> = {}) {
   return {
@@ -26,6 +31,8 @@ describe("DocsHeaderChip", () => {
   let streams: workspaceStoreModule.CachedStream[]
 
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] })
+    vi.setSystemTime(NOW)
     streams = []
     vi.spyOn(workspaceStoreModule, "useWorkspaceStreamsSelect").mockImplementation((_workspaceId, select) =>
       select(streams)
@@ -38,7 +45,18 @@ describe("DocsHeaderChip", () => {
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
+    vi.useRealTimers()
   })
+
+  async function openMenuItems() {
+    await userEvent.click(screen.getByRole("button", { name: /docs?$/ }))
+    return within(await screen.findByRole("menu"))
+      .getAllByRole("menuitem")
+      .map((link) => ({
+        href: link.getAttribute("href"),
+        text: [...link.querySelectorAll("span")].map((span) => span.textContent),
+      }))
+  }
 
   function mount() {
     return render(
@@ -59,35 +77,35 @@ describe("DocsHeaderChip", () => {
 
   it("should list the host's live docs newest first as links to their panes when opened", async () => {
     streams = [
-      doc("stream_older", "2026-10-01T10:00:00.000Z"),
-      doc("stream_newer", "2026-10-03T10:00:00.000Z"),
-      doc("stream_archived", "2026-10-04T10:00:00.000Z", { archivedAt: "2026-10-05T10:00:00.000Z" }),
-      { ...doc("stream_channel", "2026-10-04T10:00:00.000Z"), type: "channel" } as workspaceStoreModule.CachedStream,
+      doc("stream_older", minutesAgo(30)),
+      doc("stream_newer", minutesAgo(5)),
+      doc("stream_archived", minutesAgo(1), { archivedAt: minutesAgo(0) }),
+      { ...doc("stream_channel", minutesAgo(1)), type: "channel" } as workspaceStoreModule.CachedStream,
     ]
     mount()
 
-    const trigger = screen.getByRole("button", { name: "2 docs" })
-    const triggerText = trigger.textContent
-    await userEvent.click(trigger)
+    const triggerText = screen.getByRole("button", { name: "2 docs" }).textContent
 
-    const links = within(await screen.findByRole("menu")).getAllByRole("menuitem")
-    expect({
-      triggerText,
-      links: links.map((link) => ({
-        href: link.getAttribute("href"),
-        label: link.querySelector(".truncate")?.textContent,
-      })),
-    }).toEqual({
+    expect({ triggerText, items: await openMenuItems() }).toEqual({
       triggerText: "2",
-      links: [
-        { href: "/panel/stream_newer", label: "Untitled" },
-        { href: "/panel/stream_older", label: "Untitled" },
+      items: [
+        { href: "/panel/stream_newer", text: ["Untitled", "5m ago"] },
+        { href: "/panel/stream_older", text: ["Untitled", "30m ago"] },
       ],
     })
   })
 
+  it("should date the docs from when the menu opens, not from when the chip rendered", async () => {
+    streams = [doc("stream_only", minutesAgo(5))]
+    mount()
+
+    vi.setSystemTime(new Date(NOW.getTime() + 10 * 60_000))
+
+    expect(await openMenuItems()).toEqual([{ href: "/panel/stream_only", text: ["Untitled", "15m ago"] }])
+  })
+
   it("should name the trigger in the singular when the host has one doc", () => {
-    streams = [doc("stream_only", "2026-10-01T10:00:00.000Z")]
+    streams = [doc("stream_only", minutesAgo(5))]
     mount()
     expect(screen.getByRole("button", { name: "1 doc" })).toBeInTheDocument()
   })

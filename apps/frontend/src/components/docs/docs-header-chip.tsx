@@ -10,17 +10,32 @@ import { useWorkspaceStreamsSelect, type CachedStream } from "@/stores/workspace
 
 const DocGlyph = STREAM_ICONS[StreamTypes.DOC]
 
-interface HostedDoc {
-  id: string
-  type: CachedStream["type"]
-  slug: string | null
-  displayName: string | null
-  createdAt: string
-}
+/** Narrow on purpose: the selector's result keeps its identity only while these fields stay equal. */
+type HostedDoc = Pick<CachedStream, "id" | "type" | "slug" | "displayName" | "createdAt">
 
 interface DocsHeaderChipProps {
   workspaceId: string
   hostId: string
+}
+
+interface HostedDocItemsProps {
+  docs: HostedDoc[]
+  getPanelUrl: (panelId: string) => string
+}
+
+function HostedDocItems({ docs, getPanelUrl }: HostedDocItemsProps) {
+  const now = new Date()
+  return docs.map((doc) => (
+    <DropdownMenuItem key={doc.id} asChild>
+      <Link to={getPanelUrl(doc.id)} className="flex items-center gap-2">
+        <DocGlyph className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="min-w-0 flex-1 truncate">{streamLabel(doc, "generic")}</span>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {formatRelativeTime(new Date(doc.createdAt), now, undefined, { terse: true })}
+        </span>
+      </Link>
+    </DropdownMenuItem>
+  ))
 }
 
 /** The host stream's live docs, newest first, each opening in a pane. Renders nothing while the host has none. */
@@ -37,32 +52,21 @@ export function DocsHeaderChip({ workspaceId, hostId }: DocsHeaderChipProps) {
   const { getPanelUrl } = usePanel()
   if (docs.length === 0) return null
 
-  const now = new Date()
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 gap-1 px-2"
+          className="h-8 gap-1 px-2"
           aria-label={docs.length === 1 ? "1 doc" : `${docs.length} docs`}
         >
-          <DocGlyph className="h-3.5 w-3.5" aria-hidden />
+          <DocGlyph className="h-4 w-4" aria-hidden />
           <span className="text-xs tabular-nums">{docs.length}</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
-        {docs.map((doc) => (
-          <DropdownMenuItem key={doc.id} asChild>
-            <Link to={getPanelUrl(doc.id)} className="flex items-center gap-2">
-              <DocGlyph className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="min-w-0 flex-1 truncate">{streamLabel(doc, "generic")}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">
-                {formatRelativeTime(new Date(doc.createdAt), now, undefined, { terse: true })}
-              </span>
-            </Link>
-          </DropdownMenuItem>
-        ))}
+        <HostedDocItems docs={docs} getPanelUrl={getPanelUrl} />
       </DropdownMenuContent>
     </DropdownMenu>
   )

@@ -867,17 +867,20 @@ export function registerWorkspaceSocketHandlers(
         dmPeerUserId && !old.dmPeers.some((peer) => peer.streamId === payload.stream.id && peer.userId === dmPeerUserId)
       )
       const isPrivate = payload.stream.visibility === Visibilities.PRIVATE
+      const hostCached =
+        payload.stream.type === StreamTypes.DOC && old.streams.some((s) => s.id === payload.stream.parentStreamId)
       const shouldAddStream =
         !streamExists &&
         (payload.stream.type === StreamTypes.DM
           ? isDmParticipant
           : // Private streams (scratchpads, private channels) — only add to sidebar for the creator.
-            // Other members are added via stream:member_added.
-            !isPrivate || isCreator)
+            // Other members are added via stream:member_added; docs take their access from the host.
+            !isPrivate || isCreator || hostCached)
 
       // Ensure members are subscribed immediately for follow-up stream activity.
       shouldJoinStreamRoom = hasMembership || shouldAddMembership
-      shouldCacheStream = payload.stream.type === StreamTypes.DM ? isDmParticipant : !isPrivate || isCreator
+      shouldCacheStream =
+        payload.stream.type === StreamTypes.DM ? isDmParticipant : !isPrivate || isCreator || hostCached
 
       return {
         ...old,

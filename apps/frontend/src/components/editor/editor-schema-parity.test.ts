@@ -46,7 +46,7 @@ describe("editor schema parity", () => {
   })
 
   it("should build the shared schema for the collaborative document editor", () => {
-    const documentSchema = getSchema(createDocumentExtensions({ ydoc: new Y.Doc() }))
+    const documentSchema = getSchema(createDocumentExtensions({ ydoc: new Y.Doc(), awareness: null }))
 
     expect({ nodes: nodeShapes(documentSchema), marks: markShapes(documentSchema) }).toEqual({
       nodes: nodeShapes(sharedSchema),
