@@ -7,16 +7,15 @@ import History from "@tiptap/extension-history"
 import Gapcursor from "@tiptap/extension-gapcursor"
 import Placeholder from "@tiptap/extension-placeholder"
 
-import { AtomAwareBold, AtomAwareItalic, AtomAwareStrike, AtomAwareCode, BoundaryAwareLink } from "./atom-aware-marks"
+import { ThreaHeading, ThreaLink, ThreaTable, codeBlockOptions } from "@threahq/prosemirror/schema"
+import { AtomAwareBold, AtomAwareItalic, AtomAwareStrike, AtomAwareCode } from "./atom-aware-marks"
 
 import Blockquote from "@tiptap/extension-blockquote"
 import BulletList from "@tiptap/extension-bullet-list"
 import OrderedList from "@tiptap/extension-ordered-list"
 import ListItem from "@tiptap/extension-list-item"
-import Heading from "@tiptap/extension-heading"
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight"
 import { common, createLowlight } from "lowlight"
-import { Table } from "@tiptap/extension-table/table"
 import { TableRow } from "@tiptap/extension-table/row"
 import { TableHeader } from "@tiptap/extension-table/header"
 import { TableCell } from "@tiptap/extension-table/cell"
@@ -88,16 +87,13 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     AtomAwareStrike,
     AtomAwareCode,
 
-    Heading.configure({ levels: [1, 2, 3] }),
+    ThreaHeading,
     BulletList,
     OrderedList,
     ListItem,
     Blockquote,
     HorizontalRule,
-    CodeBlockLowlight.configure({
-      lowlight,
-      defaultLanguage: "plaintext",
-    }),
+    CodeBlockLowlight.configure({ lowlight, ...codeBlockOptions }),
 
     // GFM tables. Default cell content (`block+`) is intentionally kept so
     // pasting a table whose cells contain inline marks or hard breaks works
@@ -105,10 +101,7 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     // `renderWrapper: true` emits the standard `<div class="tableWrapper">`
     // around the table so the composer can scroll wide tables horizontally
     // on narrow viewports, matching how the timeline displays them.
-    Table.configure({
-      resizable: false,
-      renderWrapper: true,
-    }),
+    ThreaTable.configure({ renderWrapper: true }),
     TableRow,
     TableHeader,
     TableCell,
@@ -117,7 +110,7 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     // pipe-row paragraphs to a real table node.
     MarkdownTableInputRule,
 
-    BoundaryAwareLink.configure({
+    ThreaLink.configure({
       openOnClick: false,
       autolink: true,
       linkOnPaste: true,

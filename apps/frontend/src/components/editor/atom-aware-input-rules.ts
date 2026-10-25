@@ -17,6 +17,8 @@ interface AtomAwareMarkInputRuleConfig {
    * to their text representation. Use for inline code where you want raw text, not styled atoms.
    */
   convertAtomsToText?: boolean
+  /** Mark names removed from the matched range when the mark is applied */
+  dropMarks?: string[]
 }
 
 /**
@@ -27,7 +29,7 @@ interface AtomAwareMarkInputRuleConfig {
  * 3. Only add atom-specific handling when needed
  */
 export function atomAwareMarkInputRule(config: AtomAwareMarkInputRuleConfig): InputRule {
-  const { openMarker, closeMarker, type, convertAtomsToText = false } = config
+  const { openMarker, closeMarker, type, convertAtomsToText = false, dropMarks = [] } = config
 
   // Build a regex that matches: opening marker, content (non-greedy), closing marker
   // The content must not start or end with whitespace
@@ -259,6 +261,10 @@ export function atomAwareMarkInputRule(config: AtomAwareMarkInputRuleConfig): In
 
       // Apply the mark
       if (markStart < markEnd) {
+        for (const name of dropMarks) {
+          const dropped = state.schema.marks[name]
+          if (dropped) tr.removeMark(markStart, markEnd, dropped)
+        }
         tr.addMark(markStart, markEnd, type.create())
       }
 

@@ -1,4 +1,4 @@
-import { Node, mergeAttributes } from "@tiptap/core"
+import { MemoEmbedNode } from "@threahq/prosemirror/schema"
 import { ReactNodeViewRenderer } from "@tiptap/react"
 import { MemoEmbedView } from "./memo-embed-view"
 
@@ -23,45 +23,9 @@ declare module "@tiptap/core" {
  * compact chip in the composer; the hydrated preview card renders below the
  * sent message (`MemoPreviewList`), mirroring how link previews behave. The
  * chip body is hydrated at render time from the memo detail API (live title);
- * the cached `title` is the pre-hydration label. Mirrors the inline-atom shape
- * of `AttachmentReferenceExtension`.
+ * the cached `title` is the pre-hydration label.
  */
-export const MemoEmbedExtension = Node.create({
-  name: "memoEmbed",
-  group: "inline",
-  inline: true,
-  selectable: true,
-  atom: true,
-  marks: "_", // Allow all marks (bold, italic, etc.)
-
-  addAttributes() {
-    return {
-      memoId: {
-        default: null,
-        parseHTML: (element) => element.getAttribute("data-memo-id"),
-        renderHTML: (attrs) => ({ "data-memo-id": attrs.memoId }),
-      },
-      title: {
-        default: "",
-        parseHTML: (element) => element.getAttribute("data-title"),
-        renderHTML: (attrs) => ({ "data-title": attrs.title }),
-      },
-    }
-  },
-
-  parseHTML() {
-    return [{ tag: 'span[data-type="memo-embed"]' }]
-  },
-
-  renderHTML({ HTMLAttributes }) {
-    return ["span", mergeAttributes(HTMLAttributes, { "data-type": "memo-embed" })]
-  },
-
-  renderText({ node }) {
-    const attrs = node.attrs as MemoEmbedAttrs
-    return attrs.title || "Memo"
-  },
-
+export const MemoEmbedExtension = MemoEmbedNode.extend({
   addCommands() {
     return {
       insertMemoEmbed:

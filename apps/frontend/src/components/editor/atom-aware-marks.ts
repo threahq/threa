@@ -12,8 +12,7 @@
 import { Bold } from "@tiptap/extension-bold"
 import { Italic } from "@tiptap/extension-italic"
 import { Strike } from "@tiptap/extension-strike"
-import { Code } from "@tiptap/extension-code"
-import Link from "@tiptap/extension-link"
+import { ThreaCode } from "@threahq/prosemirror/schema"
 import { atomAwareMarkInputRule } from "./atom-aware-input-rules"
 
 /**
@@ -87,12 +86,26 @@ export const AtomAwareStrike = Strike.extend({
  * Code extension with atom-aware input rules.
  * Typing `text` converts to inline code, even with mentions inside.
  * Mentions are converted to their text representation (e.g., @ariadne becomes plain text).
+ *
+ * The schema allows a link on code (markdown `[\`x\`](url)`), but applying code
+ * in the composer drops links: a URL the autolinker caught before the closing
+ * backtick is code text, not a link.
  */
-export const AtomAwareCode = Code.extend({
+export const AtomAwareCode = ThreaCode.extend({
   exitable: false,
-
   addKeyboardShortcuts() {
     return {} // Formatting shortcuts handled by EditorBehaviors
+  },
+  addCommands() {
+    const parent = this.parent!()
+    const parentToggleCode = parent.toggleCode!
+    return {
+      ...parent,
+      toggleCode: () => (props) => {
+        if (!props.editor.isActive(this.name)) props.commands.unsetMark("link")
+        return parentToggleCode()(props)
+      },
+    }
   },
   addInputRules() {
     return [
@@ -101,20 +114,8 @@ export const AtomAwareCode = Code.extend({
         closeMarker: "`",
         type: this.type,
         convertAtomsToText: true,
+        dropMarks: ["link"],
       }),
     ]
-  },
-})
-
-/**
- * Link extension with explicit boundary behavior:
- * typing at the end of a link should continue outside the link by default,
- * while editing inside the linked text should keep extending the link naturally.
- */
-export const BoundaryAwareLink = Link.extend({
-  exitable: false,
-
-  inclusive() {
-    return false
   },
 })

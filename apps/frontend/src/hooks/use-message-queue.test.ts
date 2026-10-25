@@ -675,12 +675,6 @@ describe("useMessageQueue", () => {
       message: "Couldn't queue that message for the session's next turn. Edit it to send it now.",
       enqueue: true as const,
     },
-    {
-      code: MessageErrorCodes.COMMAND_NOT_ENQUEUEABLE,
-      status: 400,
-      message: "A command can't wait for the next turn. Send it on its own.",
-      enqueue: true as const,
-    },
   ])(
     "should park a message and say why once when the server refuses it with $code",
     async ({ code, status, message, enqueue }) => {

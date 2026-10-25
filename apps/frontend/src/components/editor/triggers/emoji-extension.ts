@@ -1,19 +1,15 @@
-import { Node, mergeAttributes } from "@tiptap/react"
 import { InputRule } from "@tiptap/core"
 import Suggestion from "@tiptap/suggestion"
 import { PluginKey } from "@tiptap/pm/state"
 import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
 import type { EmojiEntry } from "@threahq/types"
+import { EmojiNode } from "@threahq/prosemirror/schema"
 import { currentWordContainsBacktick, isInBacktickWord } from "../markdown-guards"
 import { showOnTypingOnly, withKeyboardCorrectionTolerance } from "./keyboard-correction-match"
 import { currentSuggestionRange } from "./suggestion-range"
+import { withClassName } from "./with-class-name"
 
 export const EmojiPluginKey = new PluginKey("emoji")
-
-export interface EmojiNodeAttrs {
-  shortcode: string
-  emoji: string
-}
 
 export interface EmojiExtensionOptions {
   suggestion: {
@@ -37,14 +33,7 @@ export interface EmojiExtensionOptions {
  * - Input rule to auto-convert :shortcode: to editable emoji text
  * - Renders legacy emoji atom nodes from older message JSON
  */
-export const EmojiExtension = Node.create<EmojiExtensionOptions>({
-  name: "emoji",
-  group: "inline",
-  inline: true,
-  selectable: false,
-  atom: true,
-  marks: "_", // Allow all marks (bold, italic, etc.)
-
+export const EmojiExtension = EmojiNode.extend<EmojiExtensionOptions>({
   addStorage() {
     return { popupVisible: false }
   },
@@ -64,41 +53,10 @@ export const EmojiExtension = Node.create<EmojiExtensionOptions>({
     }
   },
 
-  addAttributes() {
-    return {
-      shortcode: {
-        default: null,
-        parseHTML: (element) => element.getAttribute("data-shortcode"),
-        renderHTML: (attrs) => ({ "data-shortcode": attrs.shortcode }),
-      },
-      emoji: {
-        default: null,
-        parseHTML: (element) => element.getAttribute("data-emoji"),
-        renderHTML: (attrs) => ({ "data-emoji": attrs.emoji }),
-      },
-    }
-  },
-
-  parseHTML() {
-    return [{ tag: 'span[data-type="emoji"]' }]
-  },
-
-  renderHTML({ node, HTMLAttributes }) {
-    return [
-      "span",
-      mergeAttributes(HTMLAttributes, {
-        "data-type": "emoji",
-        // Match trigger atoms' text-like inline layout; Firefox Android handles
-        // adjacent contenteditable=false inline-block emoji spans poorly.
-        class: "inline",
-      }),
-      node.attrs.emoji,
-    ]
-  },
-
-  // Copy/paste serializes back to :shortcode:.
-  renderText({ node }) {
-    return `:${node.attrs.shortcode}:`
+  // Match trigger atoms' text-like inline layout; Firefox Android handles
+  // adjacent contenteditable=false inline-block emoji spans poorly.
+  renderHTML(props) {
+    return withClassName(this.parent!(props), "inline")
   },
 
   addInputRules() {

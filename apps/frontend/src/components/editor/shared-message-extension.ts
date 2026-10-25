@@ -1,8 +1,7 @@
-import { Node, mergeAttributes } from "@tiptap/core"
+import { SharedMessageNode } from "@threahq/prosemirror/schema"
 import { ReactNodeViewRenderer } from "@tiptap/react"
 import type { ContentRange } from "@threahq/types"
 import { SharedMessageView } from "./shared-message-view"
-import { referencePinAttributes } from "./reference-attributes"
 
 export interface SharedMessageAttrs {
   /** The ID of the referenced source message */
@@ -38,64 +37,7 @@ export interface SharedMessageAttrs {
  * `pointer:invalidated` realtime event triggers a refetch so live edits surface
  * without page reload.
  */
-export const SharedMessageExtension = Node.create({
-  name: "sharedMessage",
-  group: "block",
-  selectable: true,
-  draggable: false,
-  atom: true,
-
-  addAttributes() {
-    return {
-      messageId: {
-        default: null,
-        parseHTML: (element) => element.getAttribute("data-message-id"),
-        renderHTML: (attrs) => ({ "data-message-id": attrs.messageId }),
-      },
-      streamId: {
-        default: null,
-        parseHTML: (element) => element.getAttribute("data-stream-id"),
-        renderHTML: (attrs) => ({ "data-stream-id": attrs.streamId }),
-      },
-      authorName: {
-        default: "",
-        parseHTML: (element) => element.getAttribute("data-author-name"),
-        renderHTML: (attrs) => ({ "data-author-name": attrs.authorName }),
-      },
-      authorId: {
-        default: "",
-        parseHTML: (element) => element.getAttribute("data-author-id"),
-        renderHTML: (attrs) => ({ "data-author-id": attrs.authorId }),
-      },
-      actorType: {
-        default: "user",
-        parseHTML: (element) => element.getAttribute("data-actor-type"),
-        renderHTML: (attrs) => ({ "data-actor-type": attrs.actorType }),
-      },
-      conversationId: {
-        default: null,
-        parseHTML: (element) => element.getAttribute("data-conversation-id"),
-        // Omit the attribute entirely when there's no conversation origin so an
-        // in-stream share's HTML/markdown stays the legacy two-segment shape.
-        renderHTML: (attrs) => (attrs.conversationId ? { "data-conversation-id": attrs.conversationId } : {}),
-      },
-      ...referencePinAttributes,
-    }
-  },
-
-  parseHTML() {
-    return [{ tag: 'div[data-type="shared-message"]' }]
-  },
-
-  renderHTML({ HTMLAttributes }) {
-    return ["div", mergeAttributes(HTMLAttributes, { "data-type": "shared-message" })]
-  },
-
-  renderText({ node }) {
-    const attrs = node.attrs as SharedMessageAttrs
-    return `[shared message ${attrs.messageId}]\n`
-  },
-
+export const SharedMessageExtension = SharedMessageNode.extend({
   addNodeView() {
     return ReactNodeViewRenderer(SharedMessageView)
   },

@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, mock } from "bun:test"
 import type { Pool } from "pg"
-import { CommandKinds, MessageErrorCodes } from "@threahq/types"
+import { CommandKinds } from "@threahq/types"
 import { createMessageHandlers, createMessageSchema } from "./handlers"
 import { EnqueuedMessageService } from "./enqueued-message-service"
 
 afterEach(() => mock.restore())
 
-function setup({ commandNames = [] as string[], e2eEnabled = false } = {}) {
+function setup({ e2eEnabled = false } = {}) {
   const order: string[] = []
   const message = { id: "msg_1", streamId: "stream_1", contentMarkdown: "I want option 2", ciphertext: null }
   const createMessageForPrincipalReturningConversation = mock(
@@ -26,7 +26,6 @@ function setup({ commandNames = [] as string[], e2eEnabled = false } = {}) {
     streamService: {
       resolveMessageWriteTarget: mock(async () => ({ kind: "local", stream: { id: "stream_1", e2eEnabled } })),
     } as never,
-    commandRegistry: { has: (name: string) => commandNames.includes(name) } as never,
     enqueuedMessageService: new EnqueuedMessageService({
       commandAvailabilityService: {
         resolveCommandInTransaction: mock(async () => ({
@@ -98,15 +97,5 @@ describe("message + enqueue send", () => {
       enqueued: [{ workspaceId: "ws_1", sourceMessageId: "msg_1", botId: "bot_1" }],
       status: 201,
     })
-  })
-
-  it("refuses to enqueue a server command instead of running it", async () => {
-    const { order, send } = setup({ commandNames: ["echo"] })
-
-    await expect(send({ type: "command", attrs: { name: "echo", args: "hi" } })).rejects.toMatchObject({
-      status: 400,
-      code: MessageErrorCodes.COMMAND_NOT_ENQUEUEABLE,
-    })
-    expect(order).toEqual([])
   })
 })

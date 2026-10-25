@@ -42,7 +42,6 @@ const SEND_REFUSALS: ReadonlyMap<string, string> = new Map([
     MessageErrorCodes.ENQUEUE_UNAVAILABLE,
     "Couldn't queue that message for the session's next turn. Edit it to send it now.",
   ],
-  [MessageErrorCodes.COMMAND_NOT_ENQUEUEABLE, "A command can't wait for the next turn. Send it on its own."],
 ])
 
 /** Whether a body carries a node of the given type, at any depth. */

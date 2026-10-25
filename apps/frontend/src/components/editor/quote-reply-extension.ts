@@ -1,11 +1,10 @@
-import { Node, mergeAttributes } from "@tiptap/core"
+import { QuoteReplyNode } from "@threahq/prosemirror/schema"
 import { GapCursor } from "@tiptap/pm/gapcursor"
 import type { ResolvedPos } from "@tiptap/pm/model"
 import { NodeSelection, Plugin, PluginKey, Selection } from "@tiptap/pm/state"
 import { ReactNodeViewRenderer } from "@tiptap/react"
 import type { ContentRange } from "@threahq/types"
 import { QuoteReplyView } from "./quote-reply-view"
-import { referencePinAttributes } from "./reference-attributes"
 
 function isValidGapCursorPosition($pos: ResolvedPos): boolean {
   const gapCursor = GapCursor as typeof GapCursor & {
@@ -195,67 +194,7 @@ export interface QuoteReplyAttrs {
   private: boolean
 }
 
-export const QuoteReplyExtension = Node.create({
-  name: "quoteReply",
-  group: "block",
-  selectable: true,
-  draggable: false,
-  atom: true,
-
-  addAttributes() {
-    return {
-      messageId: {
-        default: null,
-        parseHTML: (element) => element.getAttribute("data-message-id"),
-        renderHTML: (attrs) => ({ "data-message-id": attrs.messageId }),
-      },
-      streamId: {
-        default: null,
-        parseHTML: (element) => element.getAttribute("data-stream-id"),
-        renderHTML: (attrs) => ({ "data-stream-id": attrs.streamId }),
-      },
-      authorName: {
-        default: "",
-        parseHTML: (element) => element.getAttribute("data-author-name"),
-        renderHTML: (attrs) => ({ "data-author-name": attrs.authorName }),
-      },
-      authorId: {
-        default: "",
-        parseHTML: (element) => element.getAttribute("data-author-id"),
-        renderHTML: (attrs) => ({ "data-author-id": attrs.authorId }),
-      },
-      actorType: {
-        default: "user",
-        parseHTML: (element) => element.getAttribute("data-actor-type"),
-        renderHTML: (attrs) => ({ "data-actor-type": attrs.actorType }),
-      },
-      snippet: {
-        default: "",
-        parseHTML: (element) => element.getAttribute("data-snippet"),
-        renderHTML: (attrs) => ({ "data-snippet": attrs.snippet }),
-      },
-      private: {
-        default: false,
-        parseHTML: (element) => element.getAttribute("data-private") === "true",
-        renderHTML: (attrs) => (attrs.private ? { "data-private": "true" } : {}),
-      },
-      ...referencePinAttributes,
-    }
-  },
-
-  parseHTML() {
-    return [{ tag: 'div[data-type="quote-reply"]' }]
-  },
-
-  renderHTML({ HTMLAttributes }) {
-    return ["div", mergeAttributes(HTMLAttributes, { "data-type": "quote-reply" })]
-  },
-
-  renderText({ node }) {
-    const attrs = node.attrs as QuoteReplyAttrs
-    return `> ${attrs.snippet}\n> — ${attrs.authorName}\n`
-  },
-
+export const QuoteReplyExtension = QuoteReplyNode.extend({
   addNodeView() {
     return ReactNodeViewRenderer(QuoteReplyView)
   },

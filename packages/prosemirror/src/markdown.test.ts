@@ -1673,3 +1673,67 @@ describe("@threahq/prosemirror markdown math", () => {
     expect(parseMarkdown(markdown)).toEqual(doc)
   })
 })
+
+describe("@threahq/prosemirror inline mark nesting", () => {
+  const text = (value: string, marks: JSONContent["marks"]): JSONContent => ({ type: "text", text: value, marks })
+  const link = { type: "link", attrs: { href: "https://x.io" } }
+  const paragraph = (...content: JSONContent[]): JSONContent => ({
+    type: "doc",
+    content: [{ type: "paragraph", content }],
+  })
+
+  it.each([
+    "[plain **bold** tail](https://x.io)",
+    "**plain [link](https://x.io) tail**",
+    "[plain `code` tail](https://x.io)",
+    "see [`foo`](https://x.io) and **`bar`** here",
+    "[a](https://x.io/a)[b](https://x.io/b)",
+  ])("should round-trip %s when marks span differently marked words", (markdown) => {
+    expect(serializeToMarkdown(parseMarkdown(markdown))).toBe(markdown)
+  })
+
+  it.each([
+    [[{ type: "bold" }, { type: "code" }], "**`x`**"],
+    [[link, { type: "code" }], "[`x`](https://x.io)"],
+    [[link, { type: "bold" }], "**[x](https://x.io)**"],
+    [[{ type: "bold" }, link], "[**x**](https://x.io)"],
+  ])("should keep code innermost when the stored mark order is %j", (marks, expected) => {
+    expect(serializeToMarkdown(paragraph(text("x", marks)))).toBe(expected)
+  })
+
+  // Markdown keeps spaces outside delimiters, so compare the words and their marks.
+  const marksOf = (doc: JSONContent) =>
+    doc
+      .content![0].content!.map((node) => [node.text!.trim(), (node.marks ?? []).map((mark) => mark.type).sort()])
+      .filter(([word]) => word !== "")
+
+  it.each([
+    [[text("x ", [{ type: "bold" }]), text("y", [{ type: "bold" }, { type: "italic" }])], "**x** ***y***"],
+    [[text("a", [{ type: "bold" }, { type: "italic" }]), text(" b", [{ type: "italic" }])], "***a*** *b*"],
+    [
+      [
+        text("x ", [{ type: "bold" }]),
+        text("y", [{ type: "bold" }, { type: "italic" }]),
+        text(" z", [{ type: "bold" }]),
+      ],
+      "**x *y* z**",
+    ],
+    [[text("a", [{ type: "code" }]), text("b", [{ type: "bold" }, { type: "code" }])], "`a`**`b`**"],
+    [[text("a", [{ type: "code" }]), text("b", [{ type: "code" }, link])], "`a`[`b`](https://x.io)"],
+  ])("should serialize %j as %s so the parser reads the same marks back", (content, expected) => {
+    const doc = paragraph(...content)
+
+    const markdown = serializeToMarkdown(doc)
+
+    expect({ markdown, reparsed: marksOf(parseMarkdown(markdown)) }).toEqual({
+      markdown: expected,
+      reparsed: marksOf(doc),
+    })
+  })
+
+  it("should keep whitespace outside a link that spans several runs", () => {
+    const doc = paragraph(text(" plain ", [link]), text("bold", [link, { type: "bold" }]), text(" tail ", [link]))
+
+    expect(serializeToMarkdown(doc)).toBe(" [plain **bold** tail](https://x.io) ")
+  })
+})

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { createMessageSchema } from "./handlers"
 
-const base = { streamId: "stream_1", contentJson: { type: "doc" as const, content: [] } }
+const base = { streamId: "stream_1", contentJson: { type: "doc" as const, content: [{ type: "paragraph" }] } }
 const trace = {
   horizonStreamId: "stream_host",
   openedAt: "2026-07-30T10:00:00.000Z",

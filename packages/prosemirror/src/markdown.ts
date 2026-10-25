@@ -381,7 +381,6 @@ function isAtomNode(node: JSONContent): boolean {
     node.type === "mention" ||
     node.type === "channelLink" ||
     node.type === "slashCommand" ||
-    node.type === "command" ||
     node.type === "attachmentReference" ||
     node.type === "emoji" ||
     node.type === "memoEmbed" ||
@@ -418,46 +417,107 @@ function getEffectiveMarks(nodes: JSONContent[], index: number): JSONContentMark
   return []
 }
 
-function marksEqual(a: JSONContentMark[], b: JSONContentMark[]): boolean {
-  if (a.length !== b.length) return false
-  const aTypes = a.map((m) => m.type).sort()
-  const bTypes = b.map((m) => m.type).sort()
-  return aTypes.every((t, i) => t === bTypes[i])
+function sameMark(a: JSONContentMark, b: JSONContentMark): boolean {
+  return a.type === b.type && JSON.stringify(a.attrs ?? {}) === JSON.stringify(b.attrs ?? {})
 }
 
-/** Preserves leading/trailing whitespace outside the marks. */
-function wrapWithMarks(text: string, marks: JSONContentMark[]): string {
-  if (marks.length === 0) return text
+function marksEqual(a: JSONContentMark[], b: JSONContentMark[]): boolean {
+  return a.length === b.length && a.every((mark) => b.some((other) => sameMark(mark, other)))
+}
 
-  const leadingMatch = text.match(/^(\s*)/)
-  const trailingMatch = text.match(/(\s*)$/)
-  const leading = leadingMatch?.[1] ?? ""
-  const trailing = trailingMatch?.[1] ?? ""
-  const trimmed = text.slice(leading.length, text.length - trailing.length)
+interface MarkedRun {
+  text: string
+  marks: JSONContentMark[]
+}
 
-  if (!trimmed) return text
+function wrapWithMark(text: string, mark: JSONContentMark): string {
+  switch (mark.type) {
+    case "bold":
+      return `**${text}**`
+    case "italic":
+      return `*${text}*`
+    case "strike":
+      return `~~${text}~~`
+    case "code":
+      return "`" + text + "`"
+    case "link":
+      return `[${text}](${resolveSerializedLinkHref(text, (mark.attrs?.href as string) ?? "")})`
+    default:
+      return text
+  }
+}
 
-  let result = trimmed
-  for (const mark of marks) {
-    switch (mark.type) {
-      case "bold":
-        result = `**${result}**`
-        break
-      case "italic":
-        result = `*${result}*`
-        break
-      case "strike":
-        result = `~~${result}~~`
-        break
-      case "code":
-        result = "`" + result + "`"
-        break
-      case "link":
-        result = `[${result}](${resolveSerializedLinkHref(result, (mark.attrs?.href as string) ?? "")})`
-        break
+/** Preserves leading/trailing whitespace outside the mark's delimiters. */
+function wrapKeepingEdges(text: string, mark: JSONContentMark): string {
+  const leading = text.match(/^\s*/)?.[0] ?? ""
+  const trailing = text.match(/\s*$/)?.[0] ?? ""
+  const core = text.slice(leading.length, text.length - trailing.length)
+  return core ? leading + wrapWithMark(core, mark) + trailing : text
+}
+
+// Code is a literal span, so it only wraps runs that carry nothing else.
+function spansRun(run: MarkedRun, mark: JSONContentMark): boolean {
+  if (!run.marks.some((other) => sameMark(other, mark))) return false
+  return mark.type !== "code" || run.marks.length === 1
+}
+
+function runLength(runs: MarkedRun[], start: number, mark: JSONContentMark): number {
+  let end = start
+  while (end < runs.length && spansRun(runs[end], mark)) end++
+  return end - start
+}
+
+function serializeInnerRuns(runs: MarkedRun[], start: number, span: number, outer: JSONContentMark): string {
+  const inner = runs
+    .slice(start, start + span)
+    .map((run) => ({ text: run.text, marks: run.marks.filter((mark) => !sameMark(mark, outer)) }))
+  return serializeRuns(inner)
+}
+
+const STAR_MARKS = new Set(["bold", "italic"])
+
+/**
+ * The outermost delimiter at `start`: the mark spanning the most consecutive
+ * runs, so one link can hold differently marked words; ties keep the mark
+ * order ProseMirror stored. Code is a literal span, so it only ever wraps text.
+ */
+function pickOuterMark(runs: MarkedRun[], start: number): JSONContentMark | null {
+  const { marks } = runs[start]
+  const candidates = marks.length > 1 ? marks.filter((mark) => mark.type !== "code") : marks
+  let best: JSONContentMark | null = null
+  let bestLength = 0
+  for (const mark of candidates) {
+    const length = runLength(runs, start, mark)
+    if (length >= bestLength) {
+      best = mark
+      bestLength = length
     }
   }
-  return leading + result + trailing
+  return best
+}
+
+function serializeRuns(runs: MarkedRun[]): string {
+  let out = ""
+  let index = 0
+  while (index < runs.length) {
+    const outer = pickOuterMark(runs, index)
+    if (!outer) {
+      out += runs[index].text
+      index++
+      continue
+    }
+    let span = runLength(runs, index, outer)
+    let inner = serializeInnerRuns(runs, index, span, outer)
+    // `parseMarkdown` reads `**x *y***` as bold "x *y" plus a stray `*`, so a
+    // bold or italic span never ends against the other's delimiter.
+    while (span > 1 && STAR_MARKS.has(outer.type) && /^\*|\*$/.test(inner.trim())) {
+      span--
+      inner = serializeInnerRuns(runs, index, span, outer)
+    }
+    out += wrapKeepingEdges(inner, outer)
+    index += span
+  }
+  return out
 }
 
 function resolveSerializedLinkHref(displayText: string, href: string): string {
@@ -512,7 +572,7 @@ function serializeInline(nodes: JSONContent[] | undefined): string {
   }
 
   // Group consecutive nodes with the same effective marks.
-  const groups: Array<{ text: string; marks: JSONContentMark[] }> = []
+  const groups: MarkedRun[] = []
 
   for (let i = 0; i < nodes.length; i++) {
     const text = texts[i]
@@ -527,7 +587,7 @@ function serializeInline(nodes: JSONContent[] | undefined): string {
     }
   }
 
-  return groups.map((group) => wrapWithMarks(group.text, group.marks)).join("")
+  return serializeRuns(groups)
 }
 
 /**

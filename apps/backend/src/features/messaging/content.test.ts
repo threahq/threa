@@ -1,7 +1,11 @@
 import { describe, expect, it } from "bun:test"
 import type { JSONContent } from "@threahq/types"
+import { normalizeContentJson } from "@threahq/prosemirror/schema"
+import { HttpError } from "../../lib/errors"
+import { validateRequest } from "../../lib/validation"
 import { deriveContentMarkdown } from "./content"
 import { createMessageSchema, normalizeContent, updateMessageSchema } from "./handlers"
+import { doc, everyNodeDoc, paragraph, text } from "./content-json-fixtures"
 
 // A benign document that renders as "hello **world** 👍". Humans see this when
 // the timeline renders `contentJson`; the derived markdown is what agents,
@@ -120,5 +124,54 @@ describe("createMessageSchema conversation directive", () => {
   it("omits the directive when not provided (inferred path)", () => {
     const parsed = createMessageSchema.parse({ streamId: "stream_1", contentJson: benignDoc })
     expect(parsed).not.toHaveProperty("conversation")
+  })
+})
+
+const requestCases = [
+  ["createMessageSchema", createMessageSchema, (contentJson: JSONContent) => ({ streamId: "stream_1", contentJson })],
+  ["updateMessageSchema", updateMessageSchema, (contentJson: JSONContent) => ({ contentJson })],
+] as const
+
+describe.each(requestCases)("%s through validateRequest", (_name, schema, body) => {
+  it("should throw a 400 naming the node when contentJson has an unknown node type", () => {
+    let thrown: unknown
+
+    try {
+      validateRequest(schema, body(doc({ type: "widget" })))
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(HttpError)
+    expect(thrown).toMatchObject({
+      message: "Validation failed",
+      status: 400,
+      code: "VALIDATION_ERROR",
+      details: { contentJson: ["Unknown node type: widget"] },
+    })
+  })
+
+  it("should throw a 400 instead of storing the markdown when an invalid contentJson arrives beside content", () => {
+    const request = () => validateRequest(schema, { ...body(doc({ type: "widget" })), content: "fallback" })
+
+    expect(request).toThrow(HttpError)
+  })
+
+  it("should pass an editor-shaped contentJson through unchanged when it uses every node type", () => {
+    const input = body(normalizeContentJson(everyNodeDoc))
+
+    const parsed = validateRequest(schema, input)
+
+    expect<unknown>(parsed).toEqual(input)
+  })
+})
+
+describe("bold-wrapped code", () => {
+  it("should accept a client doc when a text run carries both bold and code", () => {
+    const input = { streamId: "stream_1", contentJson: doc(paragraph(text("x", [{ type: "bold" }, { type: "code" }]))) }
+
+    const parsed = validateRequest(createMessageSchema, input)
+
+    expect<unknown>(parsed).toEqual(input)
   })
 })

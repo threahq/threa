@@ -414,12 +414,6 @@ describe("Stream connection partner writes", () => {
       files: await attempt({ content: "with a file", attachmentIds: ["attach_unknown"] }),
       metadata: await attempt({ content: "tagged", metadata: { ticket: "T-1" } }),
       conversation: await attempt({ content: "grouped", conversation: { intent: "new" } }),
-      command: await attempt({
-        contentJson: {
-          type: "doc",
-          content: [{ type: "paragraph", content: [{ type: "command", attrs: { name: "invite", args: "@someone" } }] }],
-        },
-      }),
     }
 
     const unsupported = { status: 400, code: StreamConnectionErrorCodes.COPY_WRITE_UNSUPPORTED, details: undefined }
@@ -430,7 +424,6 @@ describe("Stream connection partner writes", () => {
         files: unsupported,
         metadata: unsupported,
         conversation: unsupported,
-        command: unsupported,
       },
       hostCount,
     })

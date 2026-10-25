@@ -16,10 +16,6 @@ import type { JSONContent } from "@threahq/types"
  * Node types with no children — size 1 (or `text.length` for text). Kept in
  * sync with the tiptap schema by the frontend contract test, which fails when
  * an extension adds or changes a leaf node.
- *
- * `command` is the API-only alias for the editor's `slashCommand` node: the
- * public API accepts it and the markdown serializer treats both as atoms, so a
- * stored document can carry either name.
  */
 export const LEAF_NODE_TYPES: ReadonlySet<string> = new Set([
   "text",
@@ -28,7 +24,6 @@ export const LEAF_NODE_TYPES: ReadonlySet<string> = new Set([
   "mention",
   "channelLink",
   "slashCommand",
-  "command",
   "emoji",
   "math",
   "attachmentReference",
