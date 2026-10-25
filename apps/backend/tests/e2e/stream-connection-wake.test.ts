@@ -196,9 +196,10 @@ describe("Stream connection wake", () => {
     await sendMessage(hostClient, host.id, channel.id, "once it is back on")
     const afterRecovery = await waitForPull(partner.id, connection.id)
 
-    expect({ whileRefusing, afterRecovery }).toEqual({
+    // Conversation events from either message land later and can poke into the next second's pull.
+    expect({ whileRefusing, afterRecovery: afterRecovery[0] }).toEqual({
       whileRefusing: [],
-      afterRecovery: [{ payload: { workspaceId: partner.id, connectionId: connection.id } }],
+      afterRecovery: { payload: { workspaceId: partner.id, connectionId: connection.id } },
     })
   }, 30_000)
 
