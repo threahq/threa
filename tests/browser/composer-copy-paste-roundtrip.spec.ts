@@ -265,8 +265,9 @@ test.describe("Composer copy/paste roundtrip", () => {
     }).toPass({ timeout: 10000 })
     expect(partial).toBe("**bold**")
 
-    // Click a text block (not the editor's center, which can land on an
-    // atom chip and swallow focus), then select-all through the editor.
+    // Click the last text block (not the editor's center, which can land on
+    // an atom chip and swallow focus; not the first, which scrolls in under
+    // the floating toolbar), then select-all through the editor.
     // Retried because the click can race the editor settling after paste,
     // leaving the caret (and thus the selection) empty.
     // Control (not ControlOrMeta): the suite's Desktop Chrome device emulates
@@ -278,7 +279,7 @@ test.describe("Composer copy/paste roundtrip", () => {
     // (the DOM selection can briefly lead it after the click).
     let copied = ""
     await expect(async () => {
-      await composerEditor(page).locator("h2").click()
+      await composerEditor(page).getByText("tail paragraph").click()
       await page.keyboard.press("Control+a")
       copied = await captureEditorClipboard(page, "copy")
       expect(copied).not.toBe("")
