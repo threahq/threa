@@ -5,6 +5,8 @@ import type { AttachmentReferenceAttrs } from "./attachment-reference-extension"
 interface InsertFilesOptions {
   /** False once the editor no longer owns the uploads it started, so a late result never lands in the wrong document. */
   isStillTargeting?: () => boolean
+  /** Receives the placeholder ids once they are in the document. */
+  onPlaceholdersInserted?: (tempIds: string[]) => void
 }
 
 /**
@@ -15,7 +17,7 @@ export function insertFilesIntoEditor(
   editor: Editor,
   files: File[],
   uploadFile: (file: File) => Promise<UploadResult>,
-  { isStillTargeting = () => true }: InsertFilesOptions = {}
+  { isStillTargeting = () => true, onPlaceholdersInserted }: InsertFilesOptions = {}
 ): boolean {
   if (editor.isDestroyed || files.length === 0) return false
   const batchId = `${Date.now()}_${Math.random().toString(36).slice(2)}`
@@ -37,6 +39,7 @@ export function insertFilesIntoEditor(
   // intermediate renders can otherwise overwrite one placeholder while the
   // near-simultaneous reservations settle.
   if (!editor.commands.insertAttachmentReferences(insertions.map(({ attrs }) => attrs))) return false
+  onPlaceholdersInserted?.(insertions.map(({ tempId }) => tempId))
 
   const targets = () => !editor.isDestroyed && isStillTargeting()
   for (const { file, tempId, isImage } of insertions) {

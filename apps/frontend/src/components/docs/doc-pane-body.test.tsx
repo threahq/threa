@@ -1,12 +1,12 @@
 import { StrictMode } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import type { Editor, JSONContent } from "@tiptap/core"
 import * as Y from "yjs"
-import { prosemirrorJSONToYDoc } from "y-prosemirror"
+import { prosemirrorJSONToYDoc, yDocToProsemirrorJSON } from "y-prosemirror"
 import { getThreaSchema } from "@threahq/prosemirror/schema"
 import { base64ToBytes, bytesToBase64 } from "@threahq/crypto"
 import type { DocState, DocUpdatedOutboxPayload, Stream } from "@threahq/types"
@@ -15,6 +15,7 @@ import { ApiError } from "@/api/client"
 import { docsApi } from "@/api/docs"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import * as contextsModule from "@/contexts"
+import * as attachmentsModule from "@/hooks/use-attachments"
 import * as mentionablesModule from "@/hooks/use-mentionables"
 import * as workspaceEmojiModule from "@/hooks/use-workspace-emoji"
 import * as socketRoomModule from "@/lib/socket-room"
@@ -274,5 +275,38 @@ describe("DocPaneBody", () => {
 
     await waitFor(() => expect(docsApi.postUpdate).toHaveBeenCalledTimes(1))
     expect(off.mock.calls.map(([event]) => event)).toContain("doc:updated")
+  })
+
+  it("drops its still-uploading placeholders from the doc when the pane closes mid-upload", async () => {
+    const uploadFile = vi.fn(() => new Promise<never>(() => {}))
+    vi.spyOn(attachmentsModule, "useAttachments").mockReturnValue({
+      uploadFile,
+      imageCount: 0,
+    } as unknown as ReturnType<typeof attachmentsModule.useAttachments>)
+    const view = mount()
+    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
+    act(() => {
+      proseMirror().editor.commands.focus("end")
+    })
+
+    const file = new File(["png"], "shot.png", { type: "image/png" })
+    fireEvent.paste(proseMirror(), { clipboardData: { files: [file], types: ["Files"], getData: () => "" } })
+    await waitFor(() => expect(uploadFile).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(docsApi.postUpdate).toHaveBeenCalledTimes(1), { timeout: 2000 })
+    view.unmount()
+
+    await waitFor(() => expect(docsApi.postUpdate).toHaveBeenCalledTimes(2))
+    const replay = (calls: number) => {
+      const replayed = new Y.Doc()
+      Y.applyUpdate(replayed, Y.encodeStateAsUpdate(serverDoc))
+      for (const [, , update] of vi.mocked(docsApi.postUpdate).mock.calls.slice(0, calls)) {
+        Y.applyUpdate(replayed, base64ToBytes(update))
+      }
+      return JSON.stringify(yDocToProsemirrorJSON(replayed, "default"))
+    }
+    expect({ whileUploading: replay(1), afterClose: replay(2) }).toEqual({
+      whileUploading: expect.stringContaining('"type":"attachmentReference"'),
+      afterClose: expect.not.stringContaining('"type":"attachmentReference"'),
+    })
   })
 })

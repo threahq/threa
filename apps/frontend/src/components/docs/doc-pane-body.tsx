@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { EditorContent, useEditor, type Editor } from "@tiptap/react"
 import type * as Y from "yjs"
 import { Button } from "@/components/ui/button"
@@ -108,12 +108,36 @@ function DocEditor({ workspaceId, ydoc, canWrite }: DocEditorProps) {
   const markdownParseOptionsRef = useRef(markdownParseOptions)
   markdownParseOptionsRef.current = markdownParseOptions
   const editorRef = useRef<Editor | null>(null)
+  const placeholderIdsRef = useRef(new Set<string>())
 
   const insertFiles = (files: File[]) => {
     const editor = editorRef.current
     if (!editor?.isEditable) return false
-    return insertFilesIntoEditor(editor, files, (file) => uploadFileRef.current(file))
+    return insertFilesIntoEditor(editor, files, (file) => uploadFileRef.current(file), {
+      onPlaceholdersInserted: (tempIds) => tempIds.forEach((id) => placeholderIdsRef.current.add(id)),
+    })
   }
+
+  // Layout cleanup runs before the parent's passive cleanup stops the sync, so
+  // removing never-settling placeholders still ships in the final flush.
+  useLayoutEffect(() => {
+    const placeholderIds = placeholderIdsRef.current
+    return () => {
+      const editor = editorRef.current
+      if (!editor || editor.isDestroyed) return
+      const stranded = new Set<string>()
+      editor.state.doc.descendants((node) => {
+        if (
+          node.type.name === "attachmentReference" &&
+          node.attrs.status === "uploading" &&
+          placeholderIds.has(node.attrs.id)
+        ) {
+          stranded.add(node.attrs.id)
+        }
+      })
+      stranded.forEach((id) => editor.commands.removeAttachmentReferences(id))
+    }
+  }, [])
 
   const extensions = useMemo(
     () =>
