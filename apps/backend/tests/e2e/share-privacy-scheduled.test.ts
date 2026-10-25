@@ -411,4 +411,55 @@ describe("share privacy on a scheduled send", () => {
       edited: { status: 400, code: MessageReferenceErrorCodes.SOURCE_NOT_FOUND },
     })
   })
+
+  test("should save an edit that keeps references whose source the author lost after scheduling, and still reject a new unreadable one", async () => {
+    const frank = new TestClient()
+    await loginAs(frank, "share-scheduled-frank@example.com", "Share Scheduled Frank")
+    await joinWorkspace(frank, workspaceId)
+    await joinStream(frank, workspaceId, targetStreamId)
+    const sourceStreamId = (await createChannel(alice, workspaceId, "share-scheduled-lost-edit", "public")).id
+    const source = {
+      messageId: (await sendMessage(alice, workspaceId, sourceStreamId, "source")).id,
+      streamId: sourceStreamId,
+    }
+    const body = (...extra: JSONContent[]): JSONContent => ({
+      type: "doc",
+      content: [
+        { type: "sharedMessage", attrs: source },
+        { type: "quoteReply", attrs: { ...source, authorName: "Alice", snippet: "source" } },
+        ...extra,
+      ],
+    })
+    const scheduled = await frank.post<{ scheduled: ScheduledMessageView }>(
+      `/api/workspaces/${workspaceId}/scheduled`,
+      {
+        streamId: targetStreamId,
+        contentJson: body(),
+        scheduledFor: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        confirmedPrivacyWarning: true,
+      }
+    )
+    await alice.patch(`/api/workspaces/${workspaceId}/streams/${sourceStreamId}`, { visibility: "private" })
+    const url = `/api/workspaces/${workspaceId}/scheduled/${scheduled.data.scheduled.id}`
+
+    const kept = await frank.patch<{ scheduled: ScheduledMessageView }>(url, {
+      contentJson: body({ type: "paragraph", content: [{ type: "text", text: "typo fixed" }] }),
+      expectedVersion: scheduled.data.scheduled.version,
+      confirmedPrivacyWarning: true,
+    })
+    const added = await frank.patch<{ code?: string }>(url, {
+      contentJson: body({ type: "sharedMessage", attrs: sources[0]! }),
+      expectedVersion: kept.data.scheduled.version,
+    })
+
+    expect({
+      scheduled: scheduled.status,
+      kept: kept.status,
+      added: { status: added.status, code: added.data.code },
+    }).toEqual({
+      scheduled: 201,
+      kept: 200,
+      added: { status: 400, code: MessageReferenceErrorCodes.SOURCE_NOT_FOUND },
+    })
+  })
 })

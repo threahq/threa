@@ -724,6 +724,39 @@ function clampToFuture(date: Date): Date {
   return date.getTime() < minMs ? new Date(minMs) : date
 }
 
+const REFERENCE_NODE_TYPES = new Set(["sharedMessage", "quoteReply"])
+
+function referencedMessageId(node: JSONContent): string | null {
+  const messageId = node.attrs?.messageId
+  return node.type && REFERENCE_NODE_TYPES.has(node.type) && typeof messageId === "string" ? messageId : null
+}
+
+/**
+ * Drops references to messages the previous body already referenced: they passed the read
+ * check when written, and the fire sends any that became unreadable privately, so an edit
+ * after losing access still saves.
+ */
+function withoutReferencesFrom(contentJson: JSONContent, previous: JSONContent | undefined): JSONContent {
+  if (!previous) return contentJson
+  const gated = new Set<string>()
+  const collect = (node: JSONContent): void => {
+    const messageId = referencedMessageId(node)
+    if (messageId) gated.add(messageId)
+    node.content?.forEach(collect)
+  }
+  collect(previous)
+  const prune = (node: JSONContent): JSONContent => ({
+    ...node,
+    content: node.content
+      ?.filter((child) => {
+        const messageId = referencedMessageId(child)
+        return !messageId || !gated.has(messageId)
+      })
+      .map(prune),
+  })
+  return gated.size === 0 ? contentJson : prune(contentJson)
+}
+
 /**
  * Rejects references the author can't read, as an immediate send would, then 409s unless
  * every exposing source is confirmed now or was consented earlier. Returns the row's consent
@@ -747,7 +780,7 @@ async function scheduledShareConsent(
 ): Promise<string[]> {
   await resolveMessageReferences(client, {
     workspaceId: params.workspaceId,
-    contentJson: params.contentJson,
+    contentJson: withoutReferencesFrom(params.contentJson, params.previousContentJson),
     previousContentJson: params.previousContentJson,
     targetStreamId: params.streamId,
     canReadSourceStream: async (streamId) =>
