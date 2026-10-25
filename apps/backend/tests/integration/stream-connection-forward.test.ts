@@ -24,6 +24,7 @@ import {
   setupIsolatedTestDatabase,
   testContentJson,
   testMessageContent,
+  withMintedBlockIds,
 } from "./setup"
 import { ActivityService } from "../../src/features/activity"
 import { AttachmentRepository } from "../../src/features/attachments"
@@ -463,7 +464,7 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
 
     expect({ users: world.bridge.sent.map((sent) => sent.users), contentJson: message.contentJson }).toEqual({
       users: [[profile(world.sam)]],
-      contentJson: content,
+      contentJson: withMintedBlockIds(content),
     })
   })
 
@@ -779,7 +780,7 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
             job_id: null,
           },
         ],
-        copy: { contentJson: withFile(file, " attached"), attachments: [[file]] },
+        copy: { contentJson: withMintedBlockIds(withFile(file, " attached")), attachments: [[file]] },
       })
     })
 
@@ -909,7 +910,7 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
       )
 
       expect({ contentJson: edited.contentJson, revision: edited.revision, refused }).toEqual({
-        contentJson: withFile(file, " second"),
+        contentJson: withMintedBlockIds(withFile(file, " second")),
         revision: 2,
         refused: UNSUPPORTED,
       })
