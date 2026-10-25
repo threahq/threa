@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { mkdtempSync, symlinkSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { findLocalImageLinks, imageAttachmentLink, redactLocalImageLinks, uploadLocalImageLinks } from "./local-images"
 
 function paths(markdown: string): string[] {
@@ -86,7 +89,24 @@ describe("findLocalImageLinks", () => {
   })
 
   test("skips an image that is a link's text", () => {
-    expect(paths("[![badge](/tmp/badge.png)](https://example.com) ![solo](/tmp/solo.png)")).toEqual(["/tmp/solo.png"])
+    expect(
+      paths(
+        "[![badge](/tmp/badge.png)](https://example.com) [see ![x](/tmp/x.png) here](https://e.com) `[` ![solo](/tmp/solo.png)"
+      )
+    ).toEqual(["/tmp/solo.png"])
+  })
+
+  test("a stray `![` never swallows the prose before a later image", () => {
+    const markdown = "Press ![ to open\n\nmore text ![ and [this] too\n\n![shot](/tmp/s.png)"
+    expect(findLocalImageLinks(markdown)).toEqual([
+      { start: markdown.indexOf("![shot"), end: markdown.length, alt: "shot", path: "/tmp/s.png" },
+    ])
+  })
+
+  test("scans many unclosed `![` in linear time", () => {
+    const started = performance.now()
+    expect(paths("![ x ".repeat(20_000))).toEqual([])
+    expect(performance.now() - started).toBeLessThan(500)
   })
 
   test("keeps offsets into the original text", () => {
@@ -122,22 +142,33 @@ describe("redactLocalImageLinks", () => {
 
 describe("uploadLocalImageLinks", () => {
   test("uploads each path once, rewrites every embed, and drops failures with a reason", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "local-images-"))
+    writeFileSync(join(dir, "a.png"), "png")
+    writeFileSync(join(dir, "id_rsa"), "key")
+    symlinkSync(join(dir, "id_rsa"), join(dir, "logo.png"))
     const calls: string[] = []
     const result = await uploadLocalImageLinks(
-      "A ![one](/tmp/a.png)\nB ![again](/tmp/a.png)\nC ![gone](/tmp/missing.png)\nD ![web](https://x.test/d.png)",
+      [
+        "A ![one](a.png)",
+        `B ![again](${dir}/a.png)`,
+        "C ![gone](missing.png)",
+        "D ![key](logo.png)",
+        "E ![web](https://x.test/e.png)",
+      ].join("\n"),
+      dir,
       async (path) => {
         calls.push(path)
-        if (path === "/tmp/missing.png") throw new Error("ENOENT")
-        return { id: "attach_a", filename: "a.png" }
+        return { id: `attach_${calls.length}` }
       },
       (uploaded, link) => `[${link.alt}](attachment:${uploaded.id})`
     )
-    expect({ calls, result }).toEqual({
-      calls: ["/tmp/a.png", "/tmp/missing.png"],
+    expect({ calls, result: result }).toEqual({
+      calls: ["a.png", `${dir}/a.png`],
       result: {
-        markdown: "A [one](attachment:attach_a)\nB [again](attachment:attach_a)\nC \nD ![web](https://x.test/d.png)",
-        uploaded: [{ id: "attach_a", filename: "a.png" }],
-        failed: ["/tmp/missing.png: ENOENT"],
+        markdown:
+          "A [one](attachment:attach_1)\nB [again](attachment:attach_2)\nC \nD \nE ![web](https://x.test/e.png)",
+        uploaded: [{ id: "attach_1" }, { id: "attach_2" }],
+        failed: [expect.stringMatching(/^missing\.png: ENOENT\b/), "logo.png: it links to a file that is not an image"],
       },
     })
   })
@@ -146,6 +177,7 @@ describe("uploadLocalImageLinks", () => {
     const markdown = "No images, just `![code](/tmp/x.png)`."
     const result = await uploadLocalImageLinks(
       markdown,
+      "/",
       async () => {
         throw new Error("unexpected upload")
       },

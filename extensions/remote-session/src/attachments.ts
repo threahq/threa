@@ -218,7 +218,12 @@ export async function uploadReplyAttachments(
   cwd: string
 ): Promise<{ markdown: string; uploaded: AttachmentSummary[]; failed: string[] }> {
   const { markdown: stripped, paths } = extractAttachmentDirectives(markdown)
-  const images = await uploadLocalImageLinks(stripped, (path) => uploadFile(client, path, cwd), imageAttachmentLink)
+  const images = await uploadLocalImageLinks(
+    stripped,
+    cwd,
+    (path) => uploadFile(client, path, cwd),
+    imageAttachmentLink
+  )
   const listed: AttachmentSummary[] = []
   const failed = [...images.failed]
   for (const path of paths) {
@@ -302,7 +307,7 @@ export async function uploadSealedReplyAttachments(
       failed.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
-  const images = await uploadLocalImageLinks(stripped, upload, () => "")
+  const images = await uploadLocalImageLinks(stripped, cwd, upload, () => "")
   failed.push(...images.failed)
   const failureNote = failed.length > 0 ? ["Attachment upload failed:", ...failed.map((f) => `- ${f}`)].join("\n") : ""
   return {

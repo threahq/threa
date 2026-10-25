@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs"
+import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 /** A markdown image `![alt](target)` whose target is a file on this machine rather than a URL. */
@@ -12,8 +14,9 @@ export interface LocalImageLink {
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/
 const QUOTE_PREFIX_RE = /^(?: {0,3}> ?)*/
 const INDENT_RE = /^(?: {4}| {0,3}\t)/
+// Alt stays on one line and holds no bare `[`, so a stray `![` can't swallow the prose up to a later image.
 const IMAGE_RE =
-  /(?<!\\)!\[((?:\\.|[^\\\]])*)\]\(\s*(<[^>\n]*>|(?:[^\s()]|\([^\s()]*\))+)(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g
+  /(?<!\\)!\[((?:\\.|[^\\[\]\n])*)\]\(\s*(<[^>\n]*>|(?:[^\s()]|\([^\s()]*\))+)(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g
 const SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i
 const WINDOWS_DRIVE_RE = /^[a-z]:[\\/]/i
 // Agents echo `![](…)` from READMEs and tool output; only image files may upload, never a key or `.env`.
@@ -103,16 +106,27 @@ function maskCode(markdown: string): string {
     .join("\n")
 }
 
+/** `[see ![x](a.png)](url)`: the image is a link's text, and an attachment link can't nest inside another link. */
+function insideLinkText(markdown: string, start: number, end: number): boolean {
+  const lineStart = markdown.lastIndexOf("\n", start - 1) + 1
+  let depth = 0
+  for (const bracket of markdown.slice(lineStart, start).replace(/\\./g, "").matchAll(/[[\]]/g)) {
+    depth = bracket[0] === "[" ? depth + 1 : Math.max(0, depth - 1)
+  }
+  const lineEnd = markdown.indexOf("\n", end)
+  return depth > 0 && markdown.slice(end, lineEnd === -1 ? undefined : lineEnd).includes("](")
+}
+
 /** Image files embedded outside code by absolute, relative, or `file:` path. Web URLs and linked images are left alone. */
 export function findLocalImageLinks(markdown: string): LocalImageLink[] {
   const links: LocalImageLink[] = []
-  for (const match of maskCode(markdown).matchAll(IMAGE_RE)) {
+  const masked = maskCode(markdown)
+  for (const match of masked.matchAll(IMAGE_RE)) {
     const start = match.index
     const end = start + match[0].length
     // A match that straddles masked code reads differently in the original; it is not a real image.
     if (markdown.slice(start, end) !== match[0]) continue
-    // `[![x](a.png)](url)`: the image is a link's text, and an attachment link can't nest inside another link.
-    if (markdown[start - 1] === "[" && markdown.startsWith("](", end)) continue
+    if (insideLinkText(masked, start, end)) continue
     const raw = match[2]!
     const path = localPath(raw.startsWith("<") ? raw.slice(1, -1) : raw)
     if (path && IMAGE_FILE_RE.test(path)) links.push({ start, end, alt: match[1]!, path })
@@ -160,13 +174,14 @@ export function redactLocalImageLinks(markdown: string): string {
 }
 
 /**
- * Upload every local file the markdown embeds as an image and replace each
+ * Upload every local image file the markdown embeds, resolved against `cwd`, and replace each
  * `![alt](path)` with `render(uploaded, link)`. A path embedded twice uploads
  * once. A failed upload removes the image and reports `path: reason`, the
  * same shape as a failed `THREA_ATTACH:`.
  */
 export async function uploadLocalImageLinks<T>(
   markdown: string,
+  cwd: string,
   upload: (path: string) => Promise<T>,
   render: (uploaded: T, link: LocalImageLink) => string
 ): Promise<{ markdown: string; uploaded: T[]; failed: string[] }> {
@@ -175,6 +190,9 @@ export async function uploadLocalImageLinks<T>(
   const failed: string[] = []
   for (const path of new Set(links.map((link) => link.path))) {
     try {
+      // A symlink named like an image must not carry a key or `.env` past the extension check.
+      if (!IMAGE_FILE_RE.test(realpathSync(resolve(cwd, path))))
+        throw new Error("it links to a file that is not an image")
       uploads.set(path, await upload(path))
     } catch (error) {
       failed.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)

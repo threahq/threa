@@ -215,14 +215,15 @@ describe("uploadReplyAttachments", () => {
     expect({
       uploads,
       ids: result.uploaded.map((a) => a.id),
-      markdown: result.markdown.replaceAll(dir, "<dir>"),
+      // The rest of the error is the runtime's wording.
+      markdown: result.markdown.replace(/ENOENT.*$/, "ENOENT"),
     }).toEqual({
       uploads: ["shot.png"],
       ids: ["att_img"],
       markdown:
         'Direction 1:\n[First direction](attachment:att_img "threa-attachment:filename=shot.png&mimeType=image%2Fpng&sizeBytes=1")\n\n' +
         "Direction 2:\n\n\n`![code](shot.png)`\n\n" +
-        "Attachment upload failed:\n- ./missing.png: ENOENT: no such file or directory, statx '<dir>/missing.png'",
+        "Attachment upload failed:\n- ./missing.png: ENOENT",
     })
   })
 

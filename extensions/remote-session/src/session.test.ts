@@ -1597,21 +1597,24 @@ describe("RemoteSession permission route posts", () => {
     ])
   })
 
-  test("refuses a stream post's files before uploading them when the stream is encrypted", async () => {
-    const { client, calls } = makeFakeClient()
-    const { transport } = makeFakeTransport()
-    const session = makeSession(client, transport)
-    const uploads: unknown[] = []
-    Object.assign(client, {
-      getStream: async () => ({ archivedAt: null, e2eEnabled: true }),
-      uploadAttachment: async (form: unknown) => uploads.push(form),
-    })
+  test.each([["Done.\nTHREA_ATTACH: /tmp/report.txt"], ["Done.\n\n![chart](/tmp/chart.png)"]])(
+    "refuses a stream post's files before uploading them when the stream is encrypted: %p",
+    async (content) => {
+      const { client, calls } = makeFakeClient()
+      const { transport } = makeFakeTransport()
+      const session = makeSession(client, transport)
+      const uploads: unknown[] = []
+      Object.assign(client, {
+        getStream: async () => ({ archivedAt: null, e2eEnabled: true }),
+        uploadAttachment: async (form: unknown) => uploads.push(form),
+      })
 
-    const posting = session.postToStream("stream_root", { content: "Done.\nTHREA_ATTACH: /tmp/report.txt" })
+      const posting = session.postToStream("stream_root", { content })
 
-    await expect(posting).rejects.toMatchObject({ status: 400, code: "E2E_STREAM_REQUIRES_CIPHERTEXT" })
-    expect({ uploads, sent: calls.sendMessage }).toEqual({ uploads: [], sent: [] })
-  })
+      await expect(posting).rejects.toMatchObject({ status: 400, code: "E2E_STREAM_REQUIRES_CIPHERTEXT" })
+      expect({ uploads, sent: calls.sendMessage }).toEqual({ uploads: [], sent: [] })
+    }
+  )
 })
 
 describe("RemoteSession status snapshot", () => {

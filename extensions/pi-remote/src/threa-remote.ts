@@ -4974,6 +4974,7 @@ async function prepareFinalMarkdown(
   const extracted = extractAttachmentDirectives(markdown.trim())
   const images = await uploadLocalImageLinks(
     extracted.markdown,
+    cwd,
     (path) => uploadAttachment(path, cwd),
     imageAttachmentLink
   )
@@ -5229,7 +5230,7 @@ async function completeSealedWithMarkdown(
       failedUploads.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
-  const images = await uploadLocalImageLinks(extracted.markdown, upload, () => "")
+  const images = await uploadLocalImageLinks(extracted.markdown, cwd, upload, () => "")
   failedUploads.push(...images.failed)
   if (cancelledInvocations.has(invocation) || invocation.sourceRevision !== revision || invocation.sealing !== sealing)
     return
@@ -5411,6 +5412,8 @@ export const __testing = {
   shouldEmitFullTrace,
   traceModeForInvocation,
   completeSealedWithMarkdown,
+  prepareFinalMarkdown,
+  sanitizeTraceText,
   downloadSealedContextAttachments,
   setConfigForTesting: (value: unknown) => {
     config = value as Config | undefined
