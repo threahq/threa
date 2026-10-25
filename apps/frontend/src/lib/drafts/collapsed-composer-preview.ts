@@ -56,6 +56,23 @@ function previewFirstChild(node: JSONContent): string {
   return ""
 }
 
+const CONTAINER_NODE_TYPES: ReadonlySet<string> = new Set([
+  "doc",
+  "bulletList",
+  "orderedList",
+  "taskList",
+  "listItem",
+  "taskItem",
+  "blockquote",
+  "tableRow",
+  "tableHeader",
+  "tableCell",
+])
+
+function isContainerNode(node: JSONContent): boolean {
+  return node.type !== undefined && CONTAINER_NODE_TYPES.has(node.type)
+}
+
 function previewNode(node: JSONContent): string {
   if (node.type === "text") return node.text ?? ""
   if (node.type === "hardBreak") return ""
@@ -118,18 +135,7 @@ function previewNode(node: JSONContent): string {
   if (node.type === "paragraph" || node.type === "heading") {
     return previewChildren(node)
   }
-  if (
-    node.type === "doc" ||
-    node.type === "bulletList" ||
-    node.type === "orderedList" ||
-    node.type === "taskList" ||
-    node.type === "listItem" ||
-    node.type === "taskItem" ||
-    node.type === "blockquote" ||
-    node.type === "tableRow" ||
-    node.type === "tableHeader" ||
-    node.type === "tableCell"
-  ) {
+  if (isContainerNode(node)) {
     return previewFirstChild(node)
   }
 
@@ -158,18 +164,7 @@ function isMultiline(node: JSONContent): boolean {
   if (node.type === "paragraph" || node.type === "heading") {
     return (node.content ?? []).some((child) => child.type === "hardBreak")
   }
-  if (
-    node.type === "doc" ||
-    node.type === "bulletList" ||
-    node.type === "orderedList" ||
-    node.type === "taskList" ||
-    node.type === "listItem" ||
-    node.type === "taskItem" ||
-    node.type === "blockquote" ||
-    node.type === "tableRow" ||
-    node.type === "tableHeader" ||
-    node.type === "tableCell"
-  ) {
+  if (isContainerNode(node)) {
     if (hasMultipleMeaningfulChildren(node)) return true
     const first = (node.content ?? []).find((child) => previewNode(child).trim() !== "")
     return first ? isMultiline(first) : false

@@ -923,6 +923,7 @@ export type {
 export {
   // Validation schema
   threaDocumentSchema,
+  BLOCK_ID_PATTERN,
   // Error class
   ContentValidationError,
   // Type guards and validators

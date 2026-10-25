@@ -651,12 +651,9 @@ const TASK_ITEM_PATTERN = /^\[([ xX])\](?: (.*))?$/
 
 type ListKind = "bullet" | "ordered" | "task"
 
-interface ListLine {
-  indent: number
-  kind: ListKind
-  checked: boolean
-  text: string
-}
+type ListLine =
+  | { indent: number; kind: "bullet" | "ordered"; text: string }
+  | { indent: number; kind: "task"; checked: boolean; text: string }
 
 const LIST_NODE_TYPES: Record<ListKind, string> = {
   bullet: "bulletList",
@@ -664,24 +661,24 @@ const LIST_NODE_TYPES: Record<ListKind, string> = {
   task: "taskList",
 }
 
-function listItemNode(kind: ListKind, checked: boolean, content: JSONContent[]): JSONContent {
-  if (kind === "task") return { type: "taskItem", attrs: { checked }, content }
+function listItemNode(line: ListLine, content: JSONContent[]): JSONContent {
+  if (line.kind === "task") return { type: "taskItem", attrs: { checked: line.checked }, content }
   return { type: "listItem", content }
 }
 
 function parseListLine(match: RegExpMatchArray): ListLine {
   const indent = match[1].length
-  if (match[2] !== "-" && match[2] !== "*") return { indent, kind: "ordered", checked: false, text: match[3] }
+  if (match[2] !== "-" && match[2] !== "*") return { indent, kind: "ordered", text: match[3] }
   const task = match[3].match(TASK_ITEM_PATTERN)
   if (task) return { indent, kind: "task", checked: task[1] !== " ", text: task[2] ?? "" }
-  return { indent, kind: "bullet", checked: false, text: match[3] }
+  return { indent, kind: "bullet", text: match[3] }
 }
 
 /**
  * Build one list node starting at `startIndex`, consuming every line indented
  * at least `baseIndent`. A line indented deeper than the current level becomes
  * a nested list inside the preceding item; a marker-type switch at the same
- * level ends the list so bullet and ordered runs stay separate nodes.
+ * level ends the list so bullet, ordered and task runs stay separate nodes.
  */
 function buildListNode(
   listLines: ListLine[],
@@ -699,22 +696,14 @@ function buildListNode(
     if (listLine.indent > baseIndent) {
       const nested = buildListNode(listLines, i, listLine.indent, options)
       const lastItem = items[items.length - 1]
-      if (lastItem) {
-        lastItem.content = [...(lastItem.content ?? []), nested.node]
-      } else {
-        items.push(listItemNode(kind, false, [{ type: "paragraph" }, nested.node]))
-      }
+      lastItem.content = [...(lastItem.content ?? []), nested.node]
       i = nested.nextIndex
       continue
     }
 
     if (listLine.kind !== kind) break
 
-    items.push(
-      listItemNode(kind, listLine.checked, [
-        { type: "paragraph", content: parseInlineMarkdown(listLine.text, options) },
-      ])
-    )
+    items.push(listItemNode(listLine, [{ type: "paragraph", content: parseInlineMarkdown(listLine.text, options) }]))
     i++
   }
 
@@ -850,7 +839,7 @@ export function parseMarkdown(
       continue
     }
 
-    // Bullet / ordered list, including nested items indented under a parent
+    // Bullet, ordered or task list, including nested items indented under a parent
     // item (the serializer emits two spaces per nesting level).
     if (LIST_LINE_PATTERN.test(line)) {
       const listLines: ListLine[] = []

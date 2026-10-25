@@ -6,6 +6,7 @@ import { MediaGalleryProvider } from "@/contexts"
 import { attachmentsApi } from "@/api"
 import { API_BASE } from "@/api/client"
 import { AttachmentList } from "./attachment-list"
+import { AttachmentProvider } from "@/lib/markdown/attachment-context"
 import * as xhrTransport from "@/lib/uploads/xhr-upload"
 import { startUpload, resetUploadManager } from "@/lib/uploads/upload-manager"
 import type { AttachmentSummary } from "@threahq/types"
@@ -250,50 +251,56 @@ describe("AttachmentList", () => {
   })
 
   describe("body-inline attachments", () => {
-    const attachments = [
-      createAttachment({ id: "img_inline", filename: "inline.png", mimeType: "image/png" }),
-      createAttachment({ id: "img_strip", filename: "strip.png", mimeType: "image/png" }),
-    ]
-    const renderAt = (url: string) =>
+    const inlineLink = (a: AttachmentSummary) =>
+      `[${a.filename}](attachment:${a.id} "threa-attachment:filename=${a.filename}&mimeType=${encodeURIComponent(a.mimeType)}&sizeBytes=${a.sizeBytes}&display=inline")`
+    const renderList = ({
+      attachments,
+      contentMarkdown,
+      url = "/",
+    }: {
+      attachments: AttachmentSummary[]
+      contentMarkdown: string
+      url?: string
+    }) =>
       render(
         <MemoryRouter initialEntries={[url]}>
           <MediaGalleryProvider>
-            <AttachmentList
-              attachments={attachments}
-              workspaceId={workspaceId}
-              inlineAttachmentIds={new Set(["img_inline"])}
-            />
+            <AttachmentProvider workspaceId={workspaceId} attachments={attachments} contentMarkdown={contentMarkdown}>
+              <AttachmentList attachments={attachments} workspaceId={workspaceId} />
+            </AttachmentProvider>
           </MediaGalleryProvider>
         </MemoryRouter>
       )
+    const inlineImage = createAttachment({ id: "img_inline", filename: "inline.png", mimeType: "image/png" })
+    const stripImage = createAttachment({ id: "img_strip", filename: "strip.png", mimeType: "image/png" })
 
     it("should hide only the tile when an image is rendered inline in the body", () => {
-      renderAt("/")
+      renderList({ attachments: [inlineImage, stripImage], contentMarkdown: `see ${inlineLink(inlineImage)}` })
 
       expect(screen.queryByRole("button", { name: "inline.png" })).not.toBeInTheDocument()
       expect(screen.getByRole("button", { name: "strip.png" })).toBeInTheDocument()
     })
 
     it("should keep a non-image tile when its reference has inline display", () => {
-      render(
-        <MemoryRouter>
-          <MediaGalleryProvider>
-            <AttachmentList
-              attachments={[
-                createAttachment({ id: "file_inline", filename: "notes.zip", mimeType: "application/zip" }),
-              ]}
-              workspaceId={workspaceId}
-              inlineAttachmentIds={new Set(["file_inline"])}
-            />
-          </MediaGalleryProvider>
-        </MemoryRouter>
-      )
+      const zip = createAttachment({ id: "file_inline", filename: "notes.zip", mimeType: "application/zip" })
+      renderList({ attachments: [zip], contentMarkdown: inlineLink(zip) })
 
       expect(screen.getByText("notes.zip")).toBeInTheDocument()
     })
 
+    it("should keep the placeholder tile while an inline image is still uploading", () => {
+      const uploading: AttachmentSummary = { ...inlineImage, safetyStatus: "pending_upload" }
+      renderList({ attachments: [uploading], contentMarkdown: inlineLink(uploading) })
+
+      expect(screen.getByText("Uploading…")).toBeInTheDocument()
+    })
+
     it("should open the gallery when the media param names a hidden inline image", async () => {
-      renderAt("/?media=img_inline")
+      renderList({
+        attachments: [inlineImage, stripImage],
+        contentMarkdown: inlineLink(inlineImage),
+        url: "/?media=img_inline",
+      })
 
       await waitFor(() => {
         expect(screen.getByRole("dialog")).toBeInTheDocument()

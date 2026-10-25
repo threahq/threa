@@ -1,20 +1,18 @@
-import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react"
-import { Download, FileText, File, Loader2, Copy, Play, Globe, Check, RotateCcw, ShieldAlert } from "lucide-react"
+import React, { useState, useCallback, useMemo, useSyncExternalStore } from "react"
+import { Download, FileText, File, Loader2, Play, Globe, RotateCcw, ShieldAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { PillProgressBar } from "@/components/composer/attachment-pill"
 import { attachmentPendingState, PENDING_STATE_LABELS } from "@/lib/attachments/pending-state"
-import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
 import { useGalleryAttachmentUrls, type GalleryUrlKind } from "@/components/gallery/use-gallery-attachment-urls"
 import { Skeleton } from "@/components/ui/skeleton"
 import { attachmentsApi, attachmentContentUrl } from "@/api"
 import { cn } from "@/lib/utils"
-import { downloadImage, copyImage, triggerDownload } from "@/lib/image-utils"
+import { triggerDownload } from "@/lib/image-utils"
 import { formatFileSize } from "@/lib/file-size"
 import { useAttachmentContext } from "@/lib/markdown/attachment-context"
 import { useMediaGallery } from "@/contexts"
-import { useTouchCapable } from "@/hooks/use-touch-capable"
-import { useLongPress } from "@/hooks/use-long-press"
+import { ThumbnailImg, thumbnailBox, useImageLongPressDrawer, useThumbnailLoadState } from "./attachment-thumbnail"
 import {
   isHtmlAttachment,
   isMarkdownAttachment,
@@ -35,8 +33,6 @@ interface AttachmentListProps {
   className?: string
   /** Defer image URL hydration until coordinated reveal completes */
   deferHydration?: boolean
-  /** Shown in the message body instead; hidden here but still owned by this list's gallery. */
-  inlineAttachmentIds?: ReadonlySet<string>
 }
 
 interface AttachmentItemProps {
@@ -55,250 +51,11 @@ interface VideoAttachmentItemProps {
   deferHydration?: boolean
 }
 
-// Inline images render at a fixed height; width is derived from the
-// attachment's intrinsic aspect ratio (when known) so the box is reserved
-// before any bytes load. Falls back to a square when dimensions are absent
-// (legacy attachments / thumbnail worker hasn't run yet).
-const INLINE_IMAGE_HEIGHT = 128 // h-32
-const INLINE_IMAGE_MAX_WIDTH = 320 // max-w-xs
-
-function inlineImageBox(width?: number, height?: number): { width: number; height: number } {
-  if (!width || !height || height <= 0) {
-    return { width: INLINE_IMAGE_HEIGHT, height: INLINE_IMAGE_HEIGHT }
-  }
-  const scaled = Math.round((INLINE_IMAGE_HEIGHT * width) / height)
-  return { width: Math.min(Math.max(scaled, 1), INLINE_IMAGE_MAX_WIDTH), height: INLINE_IMAGE_HEIGHT }
-}
-
 function getFileIcon(mimeType: string) {
   if (mimeType.startsWith("text/") || mimeType === "application/pdf") {
     return FileText
   }
   return File
-}
-
-function ImageActionDrawer({
-  open,
-  onOpenChange,
-  filename,
-  workspaceId,
-  attachmentId,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  filename: string
-  workspaceId: string
-  attachmentId: string
-}) {
-  // Confirm in place: the row's icon swaps to a checkmark for a beat, then the
-  // drawer dismisses itself — no toast (the source field stays visible on
-  // mobile). Failures fall back to closing; copyImage/downloadImage surface
-  // their own error toast.
-  const [downloadDone, setDownloadDone] = useState(false)
-  const [copyDone, setCopyDone] = useState(false)
-  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => {
-    if (open) {
-      setDownloadDone(false)
-      setCopyDone(false)
-    }
-    return () => {
-      if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
-    }
-  }, [open])
-
-  const handleDownload = useCallback(async () => {
-    const ok = await downloadImage(workspaceId, attachmentId, filename)
-    if (!ok) {
-      onOpenChange(false)
-      return
-    }
-    setDownloadDone(true)
-    closeTimerRef.current = setTimeout(() => onOpenChange(false), 700)
-  }, [workspaceId, attachmentId, filename, onOpenChange])
-
-  // Copy the full-resolution original, not the inline thumbnail.
-  const handleCopy = useCallback(async () => {
-    try {
-      const url = await attachmentsApi.getDownloadUrl(workspaceId, attachmentId)
-      const ok = await copyImage(url)
-      if (!ok) {
-        onOpenChange(false)
-        return
-      }
-      setCopyDone(true)
-      closeTimerRef.current = setTimeout(() => onOpenChange(false), 700)
-    } catch {
-      // Guards the URL fetch; copyImage surfaces its own failure toast.
-      onOpenChange(false)
-    }
-  }, [workspaceId, attachmentId, onOpenChange])
-
-  return (
-    <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="max-h-[85dvh]">
-        <DrawerTitle className="sr-only">Image actions</DrawerTitle>
-        <div className="px-4 pt-1 pb-3">
-          <div className="rounded-xl bg-muted/60 px-3.5 py-2.5">
-            <p className="text-sm text-foreground/80 truncate">{filename}</p>
-          </div>
-        </div>
-        <div className="px-2 pb-[max(12px,env(safe-area-inset-bottom))]">
-          <button
-            type="button"
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm active:bg-muted/80 transition-colors"
-            onClick={handleDownload}
-          >
-            {downloadDone ? (
-              <Check className="h-[18px] w-[18px] text-primary shrink-0" />
-            ) : (
-              <Download className="h-[18px] w-[18px] text-muted-foreground shrink-0" />
-            )}
-            <span>{downloadDone ? "Download started" : "Save image"}</span>
-          </button>
-          <button
-            type="button"
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm active:bg-muted/80 transition-colors"
-            onClick={handleCopy}
-          >
-            {copyDone ? (
-              <Check className="h-[18px] w-[18px] text-primary shrink-0" />
-            ) : (
-              <Copy className="h-[18px] w-[18px] text-muted-foreground shrink-0" />
-            )}
-            <span>{copyDone ? "Copied" : "Copy image"}</span>
-          </button>
-        </div>
-      </DrawerContent>
-    </Drawer>
-  )
-}
-
-function useThumbnailLoadState() {
-  const [decoded, setDecoded] = useState(false)
-  const [error, setError] = useState(false)
-  // Bumped to remount the <img> after a failed load — the sticky error state
-  // would otherwise outlive the connectivity blip that caused it (an offline
-  // sender's own just-settled image is the common case with background
-  // uploads).
-  const [retryNonce, setRetryNonce] = useState(0)
-
-  const retryLoad = useCallback(() => {
-    setError(false)
-    setDecoded(false)
-    setRetryNonce((n) => n + 1)
-  }, [])
-  useEffect(() => {
-    if (!error) return
-    window.addEventListener("online", retryLoad)
-    return () => window.removeEventListener("online", retryLoad)
-  }, [error, retryLoad])
-
-  const markDecoded = useCallback(() => setDecoded(true), [])
-  const markError = useCallback(() => setError(true), [])
-
-  return { decoded, error, retryNonce, retryLoad, markDecoded, markError }
-}
-
-interface ThumbnailImgProps {
-  src: string
-  alt: string
-  retryNonce: number
-  decoded: boolean
-  onDecoded: () => void
-  onError: () => void
-}
-
-function ThumbnailImg({ src, alt, retryNonce, decoded, onDecoded, onError }: ThumbnailImgProps) {
-  return (
-    <img
-      // Remount on retry so the browser re-requests the same URL.
-      key={retryNonce}
-      // Cache fast path: when the browser already has the bytes (warm
-      // remount — virtua unmount/remount, bootstrap rewrite), the image
-      // is complete before onLoad ever fires. Flip decoded during commit
-      // so the row paints at full opacity instead of replaying the
-      // skeleton → fade-in cycle on content that never left cache.
-      ref={(node) => {
-        if (node?.complete && node.naturalWidth > 0) onDecoded()
-      }}
-      src={src}
-      alt={alt}
-      onLoad={onDecoded}
-      onError={onError}
-      className={cn(
-        "absolute inset-0 h-full w-full object-cover transition-opacity duration-300",
-        decoded ? "opacity-100" : "opacity-0"
-      )}
-    />
-  )
-}
-
-interface InlineAttachmentImageProps {
-  workspaceId: string
-  attachmentId: string
-  filename: string
-  width?: number
-  height?: number
-  onOpen: (attachmentId: string, metaKey: boolean) => void
-}
-
-/**
- * Body-inline rendering of an image attachment. Renders inside a markdown
- * paragraph, so only phrasing elements (button/span/img).
- */
-export function InlineAttachmentImage({
-  workspaceId,
-  attachmentId,
-  filename,
-  width,
-  height,
-  onOpen,
-}: InlineAttachmentImageProps) {
-  const thumbnailUrl = attachmentContentUrl(workspaceId, attachmentId, { variant: "thumbnail" })
-  const load = useThumbnailLoadState()
-  const box = inlineImageBox(width, height)
-  const boxClass = cn(
-    "relative inline-block align-top overflow-hidden rounded-lg border bg-muted/30 my-1",
-    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-  )
-
-  if (load.error) {
-    return (
-      <button
-        type="button"
-        onClick={load.retryLoad}
-        aria-label={`${filename} — failed to load, retry`}
-        style={{ width: box.width, height: box.height }}
-        className={cn(boxClass, "p-2 text-xs text-muted-foreground hover:border-primary")}
-      >
-        Failed to load image — tap to retry
-      </button>
-    )
-  }
-
-  return (
-    <button
-      type="button"
-      aria-label={filename}
-      onClick={(e) => {
-        e.preventDefault()
-        onOpen(attachmentId, e.metaKey || e.ctrlKey)
-      }}
-      style={{ width: box.width, height: box.height }}
-      className={cn(boxClass, "cursor-pointer transition-all hover:border-primary hover:shadow-sm")}
-    >
-      {!load.decoded && <span className="absolute inset-0 animate-pulse bg-muted" />}
-      <ThumbnailImg
-        src={thumbnailUrl}
-        alt={filename}
-        retryNonce={load.retryNonce}
-        decoded={load.decoded}
-        onDecoded={load.markDecoded}
-        onError={load.markError}
-      />
-    </button>
-  )
 }
 
 function ImageAttachment({
@@ -314,11 +71,15 @@ function ImageAttachment({
   const thumbnailUrl = deferHydration
     ? null
     : attachmentContentUrl(workspaceId, attachment.id, { variant: "thumbnail" })
-  const { decoded: imgDecoded, error, retryNonce, retryLoad, markDecoded, markError } = useThumbnailLoadState()
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const touchCapable = useTouchCapable()
+  const load = useThumbnailLoadState()
+  const longPress = useImageLongPressDrawer({
+    workspaceId,
+    attachmentId: attachment.id,
+    filename: attachment.filename,
+    enabled: !!thumbnailUrl,
+  })
 
-  const box = inlineImageBox(attachment.width, attachment.height)
+  const box = thumbnailBox(attachment.width, attachment.height)
 
   // The box is interactable as soon as it mounts — the gallery fetches the
   // full-resolution image itself, so opening it never depends on the inline
@@ -326,30 +87,6 @@ function ImageAttachment({
   const handleClick = useCallback(() => {
     onImageClick?.(attachment.id)
   }, [onImageClick, attachment.id])
-
-  const openDrawer = useCallback(() => setDrawerOpen(true), [])
-  const longPressRaw = useLongPress({
-    onLongPress: openDrawer,
-    enabled: touchCapable && !!thumbnailUrl,
-  })
-
-  // Wrap touch handlers to stop propagation — prevents the message-level
-  // long-press from firing when the user holds on an image.
-  const longPress = {
-    isPressed: longPressRaw.isPressed,
-    handlers: {
-      onTouchStart: (e: React.TouchEvent) => {
-        e.stopPropagation()
-        longPressRaw.handlers.onTouchStart(e)
-      },
-      onTouchEnd: () => longPressRaw.handlers.onTouchEnd(),
-      onTouchMove: (e: React.TouchEvent) => longPressRaw.handlers.onTouchMove(e),
-      onContextMenu: (e: React.MouseEvent) => {
-        e.stopPropagation()
-        longPressRaw.handlers.onContextMenu(e)
-      },
-    },
-  }
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -362,11 +99,11 @@ function ImageAttachment({
     [handleClick]
   )
 
-  if (error) {
+  if (load.error) {
     return (
       <button
         type="button"
-        onClick={retryLoad}
+        onClick={load.retryLoad}
         className="rounded-lg border bg-muted/50 p-2 text-xs text-muted-foreground hover:border-primary"
       >
         Failed to load image — tap to retry
@@ -383,7 +120,7 @@ function ImageAttachment({
         onClick={handleClick}
         onKeyDown={handleKeyDown}
         data-highlighted={isHighlighted || undefined}
-        {...(touchCapable ? longPress.handlers : {})}
+        {...longPress.handlers}
         style={{ width: box.width, height: box.height }}
         className={cn(
           "group/image relative overflow-hidden rounded-lg border bg-muted/30 transition-all cursor-pointer",
@@ -393,27 +130,10 @@ function ImageAttachment({
           longPress.isPressed && "opacity-70 transition-opacity duration-100"
         )}
       >
-        {!imgDecoded && <Skeleton className="absolute inset-0 rounded-none" />}
-        {thumbnailUrl && (
-          <ThumbnailImg
-            src={thumbnailUrl}
-            alt={attachment.filename}
-            retryNonce={retryNonce}
-            decoded={imgDecoded}
-            onDecoded={markDecoded}
-            onError={markError}
-          />
-        )}
+        {!load.decoded && <Skeleton className="absolute inset-0 rounded-none" />}
+        {thumbnailUrl && <ThumbnailImg src={thumbnailUrl} alt={attachment.filename} load={load} />}
       </div>
-      {touchCapable && thumbnailUrl && (
-        <ImageActionDrawer
-          open={drawerOpen}
-          onOpenChange={setDrawerOpen}
-          filename={attachment.filename}
-          workspaceId={workspaceId}
-          attachmentId={attachment.id}
-        />
-      )}
+      {longPress.drawer}
     </>
   )
 }
@@ -649,11 +369,11 @@ export function PendingAttachmentChip({ attachment, state, progress, canRetry }:
 /**
  * In-flight image upload rendered at the size its settled thumbnail will
  * occupy (intrinsic aspect when the summary carries dimensions, square
- * fallback like `inlineImageBox`), so the uploading→settled transition swaps
+ * fallback like `thumbnailBox`), so the uploading→settled transition swaps
  * content in place instead of reshaping the message (INV-21).
  */
 function PendingImagePlaceholder({ attachment, state, progress }: PendingChipInfo) {
-  const box = inlineImageBox(attachment.width, attachment.height)
+  const box = thumbnailBox(attachment.width, attachment.height)
   return (
     <div
       className="relative flex items-center justify-center overflow-hidden rounded-lg border bg-muted/40"
@@ -716,14 +436,9 @@ export function isGalleryPreviewableAttachment(a: AttachmentSummary): boolean {
   return isMarkdownAttachment(a) || isHtmlAttachment(a) || isPdfAttachment(a) || isTextPreviewableAttachment(a)
 }
 
-export function AttachmentList({
-  attachments,
-  workspaceId,
-  className,
-  deferHydration = false,
-  inlineAttachmentIds,
-}: AttachmentListProps) {
+export function AttachmentList({ attachments, workspaceId, className, deferHydration = false }: AttachmentListProps) {
   const attachmentContext = useAttachmentContext()
+  const inlineImages = attachmentContext?.inlineImages
   const hoveredAttachmentId = attachmentContext?.hoveredAttachmentId ?? null
   const { mediaAttachmentId, openMedia, closeMedia } = useMediaGallery()
 
@@ -768,11 +483,11 @@ export function AttachmentList({
     () => settledAttachments.filter((a) => a.mimeType.startsWith("image/")),
     [settledAttachments]
   )
-  // The body renders exactly these (inline display + image row) in place; the
-  // gallery still owns them, so only the strip tiles drop.
+  // The message body renders inline images in place; the gallery below still
+  // owns them, so only their strip tiles drop.
   const visibleImages = useMemo(
-    () => imageAttachments.filter((a) => !inlineAttachmentIds?.has(a.id)),
-    [imageAttachments, inlineAttachmentIds]
+    () => imageAttachments.filter((a) => !inlineImages?.has(a.id)),
+    [imageAttachments, inlineImages]
   )
   // Use processingStatus as the video discriminator — the backend sets it for
   // all video attachments, including application/octet-stream files with video
@@ -934,7 +649,8 @@ export function AttachmentList({
   }
 
   const allFileAttachments = [...fileAttachments, ...failedVideoAttachments]
-  const hasVisibleStrip = attachments.length > imageAttachments.length - visibleImages.length
+  const hiddenInlineCount = imageAttachments.length - visibleImages.length
+  const hasVisibleStrip = attachments.length > hiddenInlineCount
 
   return (
     <>

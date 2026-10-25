@@ -50,6 +50,16 @@ import { ComposerPillDragExtension } from "./composer-pill-drag-extension"
 
 const lowlight = createLowlight(common)
 
+// Schema members only — no input rule, shortcut, command or HTML paste parse: a
+// client deployed ahead of the backend must not be able to emit a node the
+// backend still rejects.
+const InertTaskList = TaskList.extend({
+  parseHTML: () => [],
+  addKeyboardShortcuts: () => ({}),
+  addCommands: () => ({}),
+})
+const InertTaskItem = ThreaTaskItem.extend({ parseHTML: () => [], addInputRules: () => [] })
+
 interface CreateEditorExtensionsOptions {
   placeholder: string
   mentionSuggestion?: MentionOptions["suggestion"]
@@ -99,11 +109,8 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     BulletList,
     OrderedList,
     ListItem,
-    // Schema members only, with no input rule or HTML paste parse: a client
-    // deployed ahead of the backend must not be able to emit a node the
-    // backend still rejects. The composer affordances arrive separately.
-    TaskList.extend({ parseHTML: () => [] }),
-    ThreaTaskItem.extend({ parseHTML: () => [], addInputRules: () => [] }),
+    InertTaskList,
+    InertTaskItem,
     Blockquote,
     HorizontalRule,
     CodeBlockLowlight.configure({ lowlight, ...codeBlockOptions }),

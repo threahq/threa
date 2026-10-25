@@ -71,6 +71,6 @@ export function parseAttachmentMetadata(rawTitle: string | undefined): ParsedAtt
     filename: params.get("filename") ?? undefined,
     mimeType: params.get("mimeType") ?? undefined,
     sizeBytes: parseNonNegativeSafeInteger(params.get("sizeBytes")),
-    ...(params.get("display") === "inline" ? { display: "inline" as const } : {}),
+    display: params.get("display") === "inline" ? "inline" : undefined,
   }
 }

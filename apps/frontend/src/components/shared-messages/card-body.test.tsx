@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import type { ReactNode } from "react"
 import { MediaGalleryProvider } from "@/contexts"
@@ -119,5 +119,57 @@ describe("SharedMessageCardBody — pinned references", () => {
       <SharedMessageCardBody source={{ ...RESOLVED, attachments, range: { from: 1, to: 4 } }} fallbackAuthor="" />
     )
     expect(ranged.container.textContent).not.toContain("plan.pdf")
+  })
+})
+
+describe("SharedMessageCardBody — inline images", () => {
+  const strip: AttachmentSummary = { id: "att_strip", filename: "strip.png", mimeType: "image/png", sizeBytes: 10 }
+  const inline: AttachmentSummary = { id: "att_inline", filename: "inline.png", mimeType: "image/png", sizeBytes: 10 }
+  const inlineLink = (a: AttachmentSummary) =>
+    `[${a.filename}](attachment:${a.id} "threa-attachment:filename=${a.filename}&mimeType=image%2Fpng&sizeBytes=10&display=inline")`
+
+  it("renders the image in the body paragraph instead of the strip, and opens the gallery at it", async () => {
+    const { container } = renderUnderRoute(
+      <SharedMessageCardBody
+        source={{ ...RESOLVED, contentMarkdown: `look ${inlineLink(inline)} here`, attachments: [strip, inline] }}
+        fallbackAuthor=""
+      />
+    )
+
+    const paragraph = container.querySelector("p")
+    expect({
+      bodyImages: Array.from(paragraph?.querySelectorAll("img") ?? []).map((img) => img.getAttribute("alt")),
+      tiles: screen.getAllByRole("button", { name: /\.png$/ }).map((b) => ({
+        name: b.getAttribute("aria-label"),
+        inBody: paragraph?.contains(b) ?? false,
+      })),
+    }).toEqual({
+      bodyImages: ["inline.png"],
+      tiles: [
+        { name: "inline.png", inBody: true },
+        { name: "strip.png", inBody: false },
+      ],
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "inline.png" }))
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+    expect(screen.getByText("2 / 2")).toBeInTheDocument()
+  })
+
+  it("keeps a still-uploading inline image as a body chip with its strip placeholder", () => {
+    const uploading: AttachmentSummary = { ...inline, safetyStatus: "pending_upload" }
+    const { container } = renderUnderRoute(
+      <SharedMessageCardBody
+        source={{ ...RESOLVED, contentMarkdown: `look ${inlineLink(uploading)} here`, attachments: [uploading] }}
+        fallbackAuthor=""
+      />
+    )
+
+    const paragraph = container.querySelector("p")
+    expect({
+      bodyImages: paragraph?.querySelectorAll("img").length,
+      bodyChip: paragraph?.contains(screen.getByRole("button", { name: /inline\.png — / })),
+      stripPlaceholder: screen.queryByText("Uploading…") !== null,
+    }).toEqual({ bodyImages: 0, bodyChip: true, stripPlaceholder: true })
   })
 })

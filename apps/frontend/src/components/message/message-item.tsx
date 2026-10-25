@@ -1,5 +1,4 @@
 import { useCallback, useMemo, useRef, useState } from "react"
-import { inlineAttachmentIdSet } from "@/lib/markdown/inline-attachments"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
 import { Quote, Check, FolderInput } from "lucide-react"
@@ -210,7 +209,6 @@ export function MessageItem({
 }: MessageItemProps) {
   const { formatTime, formatFull } = useFormattedDate()
   const messageCollapse = useMessageCollapseSettings()
-  const inlineAttachmentIds = useMemo(() => inlineAttachmentIdSet(message.contentMarkdown), [message.contentMarkdown])
   const { openUserProfile, openBotProfile } = useUserProfile()
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -670,13 +668,7 @@ export function MessageItem({
         defaultCollapsed={messageCollapse.enabled}
         trailing={
           <>
-            {attachments.length > 0 && (
-              <AttachmentList
-                attachments={attachments}
-                workspaceId={workspaceId}
-                inlineAttachmentIds={inlineAttachmentIds}
-              />
-            )}
+            {attachments.length > 0 && <AttachmentList attachments={attachments} workspaceId={workspaceId} />}
             {linkPreviews.length > 0 && (
               <LinkPreviewList
                 messageId={message.id}
@@ -703,7 +695,11 @@ export function MessageItem({
     <>
       <LinkPreviewProvider>
         {attachments.length > 0 ? (
-          <AttachmentProvider workspaceId={workspaceId} attachments={attachments}>
+          <AttachmentProvider
+            workspaceId={workspaceId}
+            attachments={attachments}
+            contentMarkdown={message.contentMarkdown}
+          >
             {richBody}
           </AttachmentProvider>
         ) : (

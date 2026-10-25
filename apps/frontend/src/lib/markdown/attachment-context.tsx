@@ -1,5 +1,6 @@
 import { createContext, useContext, useCallback, useMemo, useState, type ReactNode } from "react"
 import { toast } from "sonner"
+import { collectInlineAttachmentIds, parseMarkdown } from "@threahq/prosemirror"
 import { attachmentsApi } from "@/api"
 import { triggerDownload } from "@/lib/image-utils"
 import { useMediaGallery } from "@/contexts"
@@ -25,9 +26,28 @@ interface Attachment {
 
 type AttachmentPendingState = ReturnType<typeof attachmentPendingState>
 
+function pendingStateOf(attachment: Attachment): AttachmentPendingState {
+  return attachmentPendingState(attachment as Parameters<typeof attachmentPendingState>[0])
+}
+
+/**
+ * Attachments the message body renders as inline images: referenced with
+ * `display=inline`, an image row, and downloadable. Everything else referenced
+ * inline (pending, E2E octet-stream placeholders, non-images) stays a chip.
+ */
+function resolveInlineImages(contentMarkdown: string, attachments: Attachment[]): ReadonlyMap<string, Attachment> {
+  const candidates = attachments.filter((a) => a.mimeType.startsWith("image/") && !pendingStateOf(a))
+  // The serializer spells an inline reference with this token, so a body
+  // without it has nothing to parse (the common pill-only image message).
+  if (candidates.length === 0 || !contentMarkdown.includes("display=inline")) return new Map()
+  const inlineIds = new Set(collectInlineAttachmentIds(parseMarkdown(contentMarkdown)))
+  return new Map(candidates.filter((a) => inlineIds.has(a.id)).map((a) => [a.id, a]))
+}
+
 interface AttachmentContextValue {
   workspaceId: string
-  getAttachment: (attachmentId: string) => Attachment | undefined
+  /** Rendered in the body in place of a chip; the strip below hides their tiles. */
+  inlineImages: ReadonlyMap<string, Attachment>
   openAttachment: (attachmentId: string, metaKey: boolean) => void
   /**
    * Live upload/scan state for one of this message's attachments, so the
@@ -44,6 +64,7 @@ const AttachmentContext = createContext<AttachmentContextValue | null>(null)
 interface AttachmentProviderProps {
   workspaceId: string
   attachments: Attachment[]
+  contentMarkdown: string
   children: ReactNode
 }
 
@@ -54,19 +75,16 @@ interface AttachmentProviderProps {
  * Gallery display is delegated to the sibling AttachmentList via the shared
  * ?media= URL parameter (MediaGalleryContext).
  */
-export function AttachmentProvider({ workspaceId, attachments, children }: AttachmentProviderProps) {
+export function AttachmentProvider({ workspaceId, attachments, contentMarkdown, children }: AttachmentProviderProps) {
   const [hoveredAttachmentId, setHoveredAttachmentId] = useState<string | null>(null)
   const { openMedia } = useMediaGallery()
 
-  const getAttachment = useCallback(
-    (attachmentId: string) => attachments.find((a) => a.id === attachmentId),
-    [attachments]
-  )
+  const inlineImages = useMemo(() => resolveInlineImages(contentMarkdown, attachments), [contentMarkdown, attachments])
 
   const getAttachmentPendingState = useCallback(
     (attachmentId: string): AttachmentPendingState => {
       const attachment = attachments.find((a) => a.id === attachmentId)
-      return attachment ? attachmentPendingState(attachment as Parameters<typeof attachmentPendingState>[0]) : null
+      return attachment ? pendingStateOf(attachment) : null
     },
     [attachments]
   )
@@ -78,7 +96,7 @@ export function AttachmentProvider({ workspaceId, attachments, children }: Attac
 
       // Bytes may not exist yet (send-while-uploading) or are blocked — a
       // download/preview would 404 or 403 with no explanation.
-      const pending = attachmentPendingState(attachment as Parameters<typeof attachmentPendingState>[0])
+      const pending = pendingStateOf(attachment)
       if (pending) {
         // In-flight states are routine, not failures — error styling is
         // reserved for failed/blocked so a red toast always means something
@@ -131,13 +149,13 @@ export function AttachmentProvider({ workspaceId, attachments, children }: Attac
   const value = useMemo(
     () => ({
       workspaceId,
-      getAttachment,
+      inlineImages,
       openAttachment,
       getAttachmentPendingState,
       hoveredAttachmentId,
       setHoveredAttachmentId,
     }),
-    [workspaceId, getAttachment, openAttachment, getAttachmentPendingState, hoveredAttachmentId]
+    [workspaceId, inlineImages, openAttachment, getAttachmentPendingState, hoveredAttachmentId]
   )
 
   return <AttachmentContext.Provider value={value}>{children}</AttachmentContext.Provider>

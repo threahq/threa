@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest"
-import { render as rtlRender, screen, fireEvent } from "@testing-library/react"
+import { render as rtlRender, screen, fireEvent, act } from "@testing-library/react"
 import type { ReactElement } from "react"
 import { MemoryRouter } from "react-router-dom"
 import { StreamTypes } from "@threahq/types"
@@ -8,6 +8,8 @@ import { ChannelLinkProvider } from "@/lib/markdown/channel-link-context"
 import type { Mentionable } from "@/components/editor/triggers/types"
 import { MediaGalleryProvider, useMediaGallery } from "@/contexts"
 import { API_BASE } from "@/api/client"
+import * as touchCapableModule from "@/hooks/use-touch-capable"
+import { LONG_PRESS_THRESHOLD_MS } from "@/hooks/use-long-press"
 import { MarkdownContent, AttachmentProvider } from "./markdown-content"
 
 // MarkdownLink intercepts same-origin links through useNavigate, which requires
@@ -764,7 +766,7 @@ Some **bold** and *italic* text with \`code\`.
     ) =>
       render(
         <MediaGalleryProvider>
-          <AttachmentProvider workspaceId="ws_1" attachments={attachments}>
+          <AttachmentProvider workspaceId="ws_1" attachments={attachments} contentMarkdown={content}>
             <MarkdownContent content={content} />
           </AttachmentProvider>
           <MediaProbe />
@@ -793,6 +795,51 @@ Some **bold** and *italic* text with \`code\`.
 
       expect(screen.queryByRole("img")).toBeNull()
       expect(screen.getByRole("button", { name: /a\.png/ })).toBeInTheDocument()
+    })
+
+    it("should keep a pill reference a chip when the same image is also inline", () => {
+      renderWithAttachments(
+        `[a.png](attachment:attach_1 "${meta("a.png", "image/png", "inline")}") and [a.png](attachment:attach_1 "${meta("a.png", "image/png")}")`,
+        [image]
+      )
+
+      expect(screen.getAllByRole("img").map((el) => el.getAttribute("alt"))).toEqual(["a.png"])
+      expect(screen.getAllByRole("button", { name: /a\.png/ })).toHaveLength(2)
+    })
+
+    it("should open the image drawer, not the message long-press, when an inline image is held on touch", () => {
+      vi.spyOn(touchCapableModule, "useTouchCapable").mockReturnValue(true)
+      vi.useFakeTimers()
+      const messageTouchStart = vi.fn()
+      try {
+        render(
+          <MediaGalleryProvider>
+            <AttachmentProvider
+              workspaceId="ws_1"
+              attachments={[image]}
+              contentMarkdown={`[a.png](attachment:attach_1 "${meta("a.png", "image/png", "inline")}")`}
+            >
+              <div onTouchStart={messageTouchStart}>
+                <MarkdownContent content={`[a.png](attachment:attach_1 "${meta("a.png", "image/png", "inline")}")`} />
+              </div>
+            </AttachmentProvider>
+          </MediaGalleryProvider>
+        )
+
+        fireEvent.touchStart(screen.getByRole("button", { name: "a.png" }), { touches: [{ clientX: 0, clientY: 0 }] })
+        act(() => {
+          vi.advanceTimersByTime(LONG_PRESS_THRESHOLD_MS)
+        })
+
+        expect({
+          drawer: screen.queryByRole("dialog", { name: "Image actions" }) !== null,
+          saveImage: screen.queryByRole("button", { name: "Save image" }) !== null,
+          messageLongPress: messageTouchStart.mock.calls.length,
+        }).toEqual({ drawer: true, saveImage: true, messageLongPress: 0 })
+      } finally {
+        vi.useRealTimers()
+        vi.restoreAllMocks()
+      }
     })
 
     it("should render the muted chip when an inline image is still uploading", () => {

@@ -26,7 +26,7 @@ import { MemoChip } from "@/components/memo-embed/memo-chip"
 import { GifChip } from "@/components/giphy/gif-chip"
 import { AppLink, appLinkDestinationLabel, appLinkHrefFromGoPath } from "@/components/in-app-link/app-link"
 import { AttachmentChip } from "@/components/timeline/attachment-chip"
-import { InlineAttachmentImage } from "@/components/timeline/attachment-list"
+import { InlineAttachmentImage } from "@/components/timeline/attachment-thumbnail"
 import { PointerMentionChip, ProcessedChildren } from "./mention-renderer"
 import { useAttachmentContext } from "./attachment-context"
 import { PENDING_STATE_LABELS } from "@/lib/attachments/pending-state"
@@ -298,17 +298,16 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
       )
     }
 
-    // The row's mime, not the title's: an E2E row is an octet-stream placeholder
-    // with no thumbnail, so it keeps the chip and the decrypted strip shows it.
-    const attachment = attachmentContext?.getAttachment(attachmentId)
-    if (attachmentContext && attachment && display === "inline" && attachment.mimeType.startsWith("image/")) {
+    // A pill reference to an inline image elsewhere in the body stays a chip.
+    const inlineImage = display === "inline" ? attachmentContext?.inlineImages.get(attachmentId) : undefined
+    if (attachmentContext && inlineImage) {
       return (
         <InlineAttachmentImage
           workspaceId={attachmentContext.workspaceId}
           attachmentId={attachmentId}
-          filename={attachment.filename}
-          width={attachment.width}
-          height={attachment.height}
+          filename={inlineImage.filename}
+          width={inlineImage.width}
+          height={inlineImage.height}
           onOpen={attachmentContext.openAttachment}
         />
       )

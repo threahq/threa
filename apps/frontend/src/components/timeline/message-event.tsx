@@ -84,7 +84,6 @@ import { useSavedForMessage, useSaveMessage, useDeleteSaved } from "@/hooks/use-
 import { useOpenAside } from "@/hooks/use-open-aside"
 import { useAgentBlock } from "./agent-block-context"
 import { parseMarkdown } from "@threahq/prosemirror"
-import { inlineAttachmentIdSet } from "@/lib/markdown/inline-attachments"
 import { MessageActionDrawer } from "./message-action-drawer"
 import { isAgentTraceActor } from "./message-actions"
 import { ThreadSlot } from "./thread-slot"
@@ -604,15 +603,15 @@ function MessageLayout({
   // behave normally and the AttachmentList isn't part of `contentMarkdown`
   // anyway.
   const copyRef = useMessageMarkdownCopy(payload.contentMarkdown)
-  const inlineAttachmentIds = useMemo(
-    () => inlineAttachmentIdSet(payload.contentMarkdown, payload.contentJson),
-    [payload.contentMarkdown, payload.contentJson]
-  )
   const messageCollapse = useMessageCollapseSettings()
   const runFold = useRunFoldBody(payload.messageId)
   const messageBody = children ?? (
     <LinkPreviewProvider>
-      <AttachmentProvider workspaceId={workspaceId} attachments={payload.attachments ?? NO_ATTACHMENTS}>
+      <AttachmentProvider
+        workspaceId={workspaceId}
+        attachments={payload.attachments ?? NO_ATTACHMENTS}
+        contentMarkdown={payload.contentMarkdown}
+      >
         <MarkdownBlockProvider messageId={payload.messageId}>
           <CollapsibleBody
             kind="message"
@@ -640,7 +639,6 @@ function MessageLayout({
                       attachments={payload.attachments}
                       workspaceId={workspaceId}
                       deferHydration={deferSecondaryHydration}
-                      inlineAttachmentIds={inlineAttachmentIds}
                     />
                   )
                 )}

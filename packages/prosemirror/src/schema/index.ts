@@ -29,7 +29,7 @@ import {
   EmojiNode,
 } from "./nodes"
 import { MentionNode, ChannelLinkNode, SlashCommandNode } from "./triggers"
-import { BLOCK_ID_NODE_TYPES } from "../block-ids"
+import { BLOCK_ID_NODE_TYPES } from "./attributes"
 
 export { ThreaCode, ThreaLink } from "./marks"
 export { ThreaHeading, ThreaTable, TaskList, ThreaTaskItem, BlockIdAttribute, codeBlockOptions }
@@ -58,8 +58,10 @@ const BlockIdAttribute = Extension.create({
       {
         types: [...BLOCK_ID_NODE_TYPES],
         attributes: {
-          // JSON-only, so a split or an HTML paste never duplicates an id; the
-          // write sink mints the fresh ones.
+          // JSON-only: `rendered: false` keeps ids out of HTML, so a paste never
+          // carries one; `keepOnSplit: false` only covers an end-of-block Enter,
+          // a mid-block split still copies the id. The write sink is what keeps
+          // ids unique per document.
           blockId: { default: null, rendered: false, keepOnSplit: false },
         },
       },

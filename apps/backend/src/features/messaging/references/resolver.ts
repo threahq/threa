@@ -25,15 +25,15 @@ interface ReferenceAttrs {
   blockId?: unknown
 }
 
-function keepBlockId<T extends object>(attrs: ReferenceAttrs, next: T): T {
-  return typeof attrs.blockId === "string" ? { ...next, blockId: attrs.blockId } : next
-}
-
 interface ReferenceNode {
   node: JSONContent
   attrs: ReferenceAttrs
   messageId: string
   isQuote: boolean
+}
+
+function keepBlockId<T extends object>(attrs: ReferenceAttrs, next: T): T & { blockId?: string } {
+  return typeof attrs.blockId === "string" ? { ...next, blockId: attrs.blockId } : next
 }
 
 export interface ResolveMessageReferencesParams {
@@ -200,8 +200,9 @@ export async function resolveMessageReferences(
     const previous = ref.isQuote && ref.attrs.private === true ? previousPrivateQuotes.get(ref.messageId) : undefined
     if (!previous) continue
     settled.add(ref)
-    if (JSON.stringify(ref.attrs) !== JSON.stringify(previous)) {
-      ref.node.attrs = structuredClone(previous)
+    const restored = keepBlockId(ref.attrs, structuredClone(previous))
+    if (JSON.stringify(ref.attrs) !== JSON.stringify(restored)) {
+      ref.node.attrs = restored
       changed = true
     }
   }

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import type { JSONContent } from "@tiptap/core"
 import { parseMarkdown } from "../markdown"
+import { threaDocumentSchema } from "@threahq/types"
+import { BLOCK_ID_NODE_TYPES } from "./attributes"
 import { getThreaSchema, InvalidContentError, normalizeContentJson } from "./index"
 
 const text = (value: string, marks?: JSONContent["marks"]): JSONContent => ({ type: "text", text: value, marks })
@@ -206,5 +208,50 @@ describe("threa schema", () => {
     "**`bold code`** and [`linked code`](https://example.com) and *`x`* and ~~`y`~~",
   ])("should validate parseMarkdown output when given %s", (markdown) => {
     expect(() => normalizeContentJson(parseMarkdown(markdown))).not.toThrow()
+  })
+})
+
+describe("block id attribute coverage", () => {
+  const BLOCK_ID = `blk_${"0".repeat(26)}`
+  const body = [paragraph(text("x"))]
+  const reference = { messageId: "msg_1", streamId: "stream_1" }
+  // The persistence schema has no table node, so only the editor schema covers it.
+  const minimalNodes: Record<string, JSONContent> = {
+    paragraph: paragraph(text("x")),
+    heading: { type: "heading", attrs: { level: 1 }, content: [text("x")] },
+    bulletList: { type: "bulletList", content: [{ type: "listItem", content: body }] },
+    orderedList: { type: "orderedList", content: [{ type: "listItem", content: body }] },
+    taskList: { type: "taskList", content: [{ type: "taskItem", attrs: { checked: false }, content: body }] },
+    blockquote: { type: "blockquote", content: body },
+    codeBlock: { type: "codeBlock", content: [text("x")] },
+    horizontalRule: { type: "horizontalRule" },
+    agentBlock: { type: "agentBlock", attrs: { authorId: "persona_1", authorName: "Ariadne" }, content: body },
+    quoteReply: {
+      type: "quoteReply",
+      attrs: { ...reference, authorName: "Alice", authorId: "usr_1", actorType: "user", snippet: "hi" },
+    },
+    sharedMessage: { type: "sharedMessage", attrs: reference },
+  }
+
+  test("should list every block-group node of the editor schema in BLOCK_ID_NODE_TYPES", () => {
+    const blockNodes = Object.values(getThreaSchema().nodes)
+      .filter((node) => (node.spec.group ?? "").split(" ").includes("block"))
+      .map((node) => node.name)
+
+    expect(blockNodes.sort()).toEqual([...BLOCK_ID_NODE_TYPES].sort())
+  })
+
+  test("should keep a block id through persistence validation on every block type", () => {
+    const withId = (node: JSONContent): JSONContent => ({ ...node, attrs: { ...node.attrs, blockId: BLOCK_ID } })
+    const kept = Object.fromEntries(
+      Object.entries(minimalNodes).map(([type, node]) => {
+        const parsed = threaDocumentSchema.parse(doc(withId(node))) as JSONContent
+        return [type, parsed.content?.[0]?.attrs?.blockId]
+      })
+    )
+
+    expect(kept).toEqual(
+      Object.fromEntries(BLOCK_ID_NODE_TYPES.filter((type) => type !== "table").map((type) => [type, BLOCK_ID]))
+    )
   })
 })

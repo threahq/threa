@@ -41,6 +41,8 @@ export interface ThreaDocument {
 }
 
 /** Stable per-block identity (`blk_<ULID>`), minted server-side on write. */
+export const BLOCK_ID_PATTERN = /^blk_[0-9A-HJKMNP-TV-Z]{26}$/
+
 export type ThreaBlockIdAttrs = {
   blockId?: string | null
 }
@@ -540,7 +542,7 @@ const inlineNodeSchema: z.ZodType<ThreaInlineNode> = z.union([
   hardBreakNodeSchema,
 ])
 
-const blockIdAttr = { blockId: z.string().nullish() }
+const blockIdAttr = { blockId: z.string().regex(BLOCK_ID_PATTERN).nullish() }
 const blockIdAttrsSchema = z.object(blockIdAttr).optional()
 
 // Block nodes (forward declared for recursion)
@@ -622,13 +624,13 @@ const quoteReplyNodeSchema = z.object({
   type: z.literal("quoteReply"),
   attrs: z
     .object({
+      ...blockIdAttr,
       messageId: z.string(),
       streamId: z.string(),
       authorName: z.string(),
       authorId: z.string(),
       actorType: z.string(),
       snippet: z.string(),
-      ...blockIdAttr,
       ...pinnedAttrs,
     })
     .refine(rangeRequiresVersion.check, { message: rangeRequiresVersion.message }),
@@ -649,12 +651,12 @@ const sharedMessageNodeSchema = z.object({
   type: z.literal("sharedMessage"),
   attrs: z
     .object({
+      ...blockIdAttr,
       messageId: z.string(),
       streamId: z.string(),
       authorName: z.string().optional(),
       authorId: z.string().optional(),
       actorType: z.string().optional(),
-      ...blockIdAttr,
       ...pinnedAttrs,
     })
     .refine(rangeRequiresVersion.check, { message: rangeRequiresVersion.message }),
@@ -679,9 +681,11 @@ const orderedListNodeSchema = z.object({
 
 const taskItemNodeSchema = z.object({
   type: z.literal("taskItem"),
-  attrs: z.object({
-    checked: z.boolean(),
-  }),
+  attrs: z
+    .object({
+      checked: z.boolean().default(false),
+    })
+    .default({ checked: false }),
   content: z.array(blockNodeSchema),
 })
 
