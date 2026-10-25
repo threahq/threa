@@ -482,6 +482,30 @@ describe("attachRuntimeSessionToThread", () => {
     expect(stillFirst).toMatchObject({ id: first.link.id, runtimeSessionId: "first-session" })
   })
 
+  test("concurrent attaches on one scratchpad each get their own thread", async () => {
+    const anchors = []
+    for (let index = 0; index < 6; index++) anchors.push(await anchorMessage())
+
+    const attached = await Promise.all(
+      anchors.map((anchor, index) =>
+        service().attachRuntimeSessionToThread({
+          workspaceId: workspace,
+          botId: bot,
+          ownerUserId: author,
+          runtimeKind: "pi-local",
+          instanceId: `concurrent-instance-${index}`,
+          runtimeSessionId: `concurrent-session-${index}`,
+          rootStreamId: root,
+          anchorId: anchor.id,
+          displayName: "Sub work",
+          traits: ["active-scratchpad"],
+        })
+      )
+    )
+
+    expect(attached.map(({ stream }) => stream.parentAnchorId)).toEqual(anchors.map((anchor) => anchor.id))
+  })
+
   test("rolls back the thread when the link insert loses to a runtime-identity conflict", async () => {
     const conflictingIdentity = {
       runtimeKind: "pi-local" as const,

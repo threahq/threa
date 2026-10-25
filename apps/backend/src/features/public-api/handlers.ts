@@ -1701,6 +1701,7 @@ export function createPublicApiHandlers({
         instanceId: data.instanceId,
         runtimeSessionId: data.runtimeSessionId,
         contentMarkdown: normalizeMessage(data.content),
+        thread: data.thread,
       })
       if (!briefed) throw new HttpError("No active runtime session link found", { status: 404, code: "NOT_FOUND" })
       res.status(201).json({
