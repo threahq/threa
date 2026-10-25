@@ -47,6 +47,7 @@ export {
   type StreamReadOnlyReason,
   StreamReadOnlyReasons,
   StreamErrorCodes,
+  DocErrorCodes,
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
   STREAM_BRIEF_MAX_CHARS,
   // Stream purpose (system-purpose marker; NULL = ordinary stream)
@@ -800,7 +801,8 @@ export type {
   DocState,
   DocUpdateView,
   DocPostUpdateResult,
-  DocUpdatedOutboxPayload,
+  DocUpdatedPayload,
+  DocUpdatesResponse,
   // AI Usage
   AIUsageSummary,
   AIUsageOrigin,

@@ -2448,6 +2448,11 @@ export interface DocUpdateView {
   actorType: AuthorType
 }
 
+/** `GET /workspaces/:ws/docs/:docId/updates?after=`. */
+export interface DocUpdatesResponse {
+  updates: DocUpdateView[]
+}
+
 /** `POST /workspaces/:ws/docs/:docId/updates`. */
 export interface DocPostUpdateResult {
   seq: number
@@ -2455,13 +2460,9 @@ export interface DocPostUpdateResult {
 }
 
 /** Socket `doc:updated` on the doc stream's room: one applied Yjs update; `streamId` is the doc. */
-export interface DocUpdatedOutboxPayload extends DocEditedEventPayload {
+export interface DocUpdatedPayload extends DocUpdateView, DocEditedEventPayload {
   workspaceId: string
   streamId: string
-  /** Base64 Yjs update. */
-  update: string
-  actorId: string
-  actorType: AuthorType
 }
 
 export interface AIUsageSummary {

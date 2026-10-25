@@ -81,6 +81,8 @@ export interface StreamTypeCapabilities {
   threadAnchorPrefixes: readonly ThreadAnchorPrefix[]
   hostsAsides: boolean
   hostsDocs: boolean
+  /** Has its own `stream_members` rows; false = membership and write access resolve through the root. */
+  ownMembers: boolean
 }
 
 export const STREAM_TYPE_CAPABILITIES = {
@@ -91,6 +93,7 @@ export const STREAM_TYPE_CAPABILITIES = {
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
     hostsAsides: true,
     hostsDocs: true,
+    ownMembers: true,
   },
   channel: {
     messagesReadOnly: null,
@@ -99,6 +102,7 @@ export const STREAM_TYPE_CAPABILITIES = {
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
     hostsAsides: true,
     hostsDocs: true,
+    ownMembers: true,
   },
   dm: {
     messagesReadOnly: null,
@@ -107,6 +111,7 @@ export const STREAM_TYPE_CAPABILITIES = {
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
     hostsAsides: true,
     hostsDocs: true,
+    ownMembers: true,
   },
   thread: {
     messagesReadOnly: null,
@@ -115,6 +120,7 @@ export const STREAM_TYPE_CAPABILITIES = {
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
     hostsAsides: true,
     hostsDocs: false,
+    ownMembers: true,
   },
   system: {
     messagesReadOnly: StreamReadOnlyReasons.SYSTEM_STREAM,
@@ -123,6 +129,7 @@ export const STREAM_TYPE_CAPABILITIES = {
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
     hostsAsides: false,
     hostsDocs: false,
+    ownMembers: true,
   },
   aside: {
     messagesReadOnly: null,
@@ -131,6 +138,7 @@ export const STREAM_TYPE_CAPABILITIES = {
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
     hostsAsides: false,
     hostsDocs: false,
+    ownMembers: true,
   },
   doc: {
     messagesReadOnly: StreamReadOnlyReasons.DOC_STREAM,
@@ -139,6 +147,7 @@ export const STREAM_TYPE_CAPABILITIES = {
     threadAnchorPrefixes: [],
     hostsAsides: false,
     hostsDocs: false,
+    ownMembers: false,
   },
 } as const satisfies Record<StreamType, StreamTypeCapabilities>
 
@@ -150,6 +159,7 @@ const UNKNOWN_STREAM_TYPE_CAPABILITIES: StreamTypeCapabilities = {
   threadAnchorPrefixes: [],
   hostsAsides: false,
   hostsDocs: false,
+  ownMembers: true,
 }
 
 export function streamTypeCapabilities(type: string): StreamTypeCapabilities {
@@ -165,6 +175,11 @@ export function isAsideHostType(type: string): boolean {
 export const StreamErrorCodes = {
   READ_ONLY: "STREAM_READ_ONLY",
   CHANNEL_MANAGEMENT_FORBIDDEN: "CHANNEL_MANAGEMENT_FORBIDDEN",
+} as const
+
+export const DocErrorCodes = {
+  HOST_TYPE_INVALID: "DOC_HOST_TYPE_INVALID",
+  E2E_HOST_NOT_ALLOWED: "DOC_E2E_HOST_NOT_ALLOWED",
 } as const
 
 // A stream's system purpose, when it exists to power a feature rather than to be
