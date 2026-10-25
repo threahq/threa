@@ -39,6 +39,10 @@ describe("redactAttachDirectives", () => {
       "Made it\nTHREA_ATTACH: [local path omitted]\nsee THREA_ATTACH: inline"
     )
   })
+
+  test("hides embedded local image paths", () => {
+    expect(redactAttachDirectives("Look: ![shot](/home/a/shot.png)")).toBe("Look: [image: local path omitted]")
+  })
 })
 
 describe("extractAttachmentDirectives", () => {
@@ -210,7 +214,7 @@ describe("uploadReplyAttachments", () => {
     )
     expect({ uploads, ids: result.uploaded.map((a) => a.id) }).toEqual({ uploads: ["shot.png"], ids: ["att_img"] })
     expect(result.markdown).toStartWith(
-      "Direction 1:\n[First direction](attachment:att_img)\n\nDirection 2:\n\n\n`![code](shot.png)`\n\n" +
+      'Direction 1:\n[First direction](attachment:att_img "threa-attachment:filename=shot.png&mimeType=image%2Fpng&sizeBytes=1")\n\nDirection 2:\n\n\n`![code](shot.png)`\n\n' +
         "Attachment upload failed:\n- ./missing.png: ENOENT"
     )
   })
@@ -296,7 +300,7 @@ describe("uploadSealedReplyAttachments", () => {
     })
   })
 
-  test("embedded images and directives share the 16-id cap", async () => {
+  test("directives claim the 16-id cap before embedded images", async () => {
     const dir = tempDir()
     const lines = ["Done"]
     for (let i = 0; i < 16; i++) {
@@ -315,7 +319,7 @@ describe("uploadSealedReplyAttachments", () => {
     const result = await uploadSealedReplyAttachments(client, lines.join("\n"), dir)
     expect(uploadCount).toBe(16)
     expect(result.attachmentIds).toHaveLength(16)
-    expect(result.markdown).toContain("- extra.txt: over the 16-attachment limit for one message")
+    expect(result.markdown).toContain("- img-15.png: over the 16-attachment limit for one message")
   })
 
   test("clamps to the server's 16-id cap: overflow directives become failure notes, not a 400 loop", async () => {

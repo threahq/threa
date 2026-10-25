@@ -6,6 +6,7 @@ import {
   encryptAttachmentBytes,
   findLocalImageLinks,
   imageAttachmentLink,
+  redactLocalImageLinks,
   uploadLocalImageLinks,
   type AttachmentRef,
 } from "@threahq/bot-runtime-client"
@@ -46,9 +47,9 @@ export function hasReplyAttachments(markdown: string): boolean {
   return extractAttachmentDirectives(markdown).paths.length > 0 || findLocalImageLinks(markdown).length > 0
 }
 
-/** A directive line names a local path; trace text shows that a file was attached, never where it lives. */
+/** Directive lines and embedded images name local paths; trace text shows that a file was attached, never where it lives. */
 export function redactAttachDirectives(text: string): string {
-  return text.replace(/^THREA_ATTACH:\s*.+$/gm, "THREA_ATTACH: [local path omitted]")
+  return redactLocalImageLinks(text.replace(/^THREA_ATTACH:\s*.+$/gm, "THREA_ATTACH: [local path omitted]"))
 }
 
 export function guessMimeType(path: string): string {
@@ -296,8 +297,8 @@ export async function uploadSealedReplyAttachments(
     refs.push(ref)
     return ref
   }
-  const images = await uploadLocalImageLinks(stripped, upload, () => "")
-  const failed = [...images.failed]
+  // Explicit directives claim the capped slots before embedded images.
+  const failed: string[] = []
   for (const path of paths) {
     try {
       await upload(path)
@@ -305,6 +306,8 @@ export async function uploadSealedReplyAttachments(
       failed.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
+  const images = await uploadLocalImageLinks(stripped, upload, () => "")
+  failed.push(...images.failed)
   const failureNote = failed.length > 0 ? ["Attachment upload failed:", ...failed.map((f) => `- ${f}`)].join("\n") : ""
   return {
     markdown: [images.markdown.trim(), failureNote].filter(Boolean).join("\n\n"),

@@ -42,6 +42,7 @@ import {
   WS_BACKSTOP_POLL_MS,
   scrubSealedError,
   sealReply,
+  redactLocalImageLinks,
   sealStep,
   uploadLocalImageLinks,
   type AttachmentRef,
@@ -1556,9 +1557,9 @@ function formatToolResultTrace(
 }
 
 function sanitizeTraceText(text: string): string {
-  return text
-    .replace(/, downloaded to [^)\n]+/g, "")
-    .replace(/^THREA_ATTACH:\s*.+$/gm, "THREA_ATTACH: [local path omitted]")
+  return redactLocalImageLinks(
+    text.replace(/, downloaded to [^)\n]+/g, "").replace(/^THREA_ATTACH:\s*.+$/gm, "THREA_ATTACH: [local path omitted]")
+  )
 }
 
 function formatInvocationTrace(invocation: ClaimedInvocation, context: string): string {
@@ -5219,8 +5220,8 @@ async function completeSealedWithMarkdown(
     refs.push(ref)
     return ref
   }
-  const images = await uploadLocalImageLinks(extracted.markdown, upload, () => "")
-  const failedUploads = [...images.failed]
+  // Explicit directives claim the capped slots before embedded images.
+  const failedUploads: string[] = []
   for (const path of extracted.paths) {
     try {
       await upload(path)
@@ -5228,6 +5229,8 @@ async function completeSealedWithMarkdown(
       failedUploads.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
+  const images = await uploadLocalImageLinks(extracted.markdown, upload, () => "")
+  failedUploads.push(...images.failed)
   if (cancelledInvocations.has(invocation) || invocation.sourceRevision !== revision || invocation.sealing !== sealing)
     return
   const uploadFailureNote =

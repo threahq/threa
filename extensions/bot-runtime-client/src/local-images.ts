@@ -10,9 +10,12 @@ export interface LocalImageLink {
 }
 
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/
-const IMAGE_RE = /(?<!\\)!\[((?:\\.|[^\\\]])*)\]\(\s*(<[^>\n]*>|[^\s)]+)(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g
+const IMAGE_RE =
+  /(?<!\\)!\[((?:\\.|[^\\\]])*)\]\(\s*(<[^>\n]*>|(?:[^\s()]|\([^\s()]*\))+)(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g
 const SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i
 const WINDOWS_DRIVE_RE = /^[a-z]:[\\/]/i
+// Agents echo `![](…)` from READMEs and tool output; only image files may upload, never a key or `.env`.
+const IMAGE_FILE_RE = /\.(?:png|jpe?g|gif|webp|svg)$/i
 
 function localPath(target: string): string | null {
   if (target.startsWith("//") || target.startsWith("#")) return null
@@ -85,7 +88,7 @@ function maskCode(markdown: string): string {
     .join("\n")
 }
 
-/** Images outside code whose target is an absolute, relative, or `file:` path. Web URLs are left alone. */
+/** Image files embedded outside code by absolute, relative, or `file:` path. Web URLs and linked images are left alone. */
 export function findLocalImageLinks(markdown: string): LocalImageLink[] {
   const links: LocalImageLink[] = []
   for (const match of maskCode(markdown).matchAll(IMAGE_RE)) {
@@ -93,17 +96,48 @@ export function findLocalImageLinks(markdown: string): LocalImageLink[] {
     const end = start + match[0].length
     // A match that straddles masked code reads differently in the original; it is not a real image.
     if (markdown.slice(start, end) !== match[0]) continue
+    // `[![x](a.png)](url)`: the image is a link's text, and an attachment link can't nest inside another link.
+    if (markdown[start - 1] === "[" && markdown.startsWith("](", end)) continue
     const raw = match[2]!
     const path = localPath(raw.startsWith("<") ? raw.slice(1, -1) : raw)
-    if (path) links.push({ start, end, alt: match[1]!, path })
+    if (path && IMAGE_FILE_RE.test(path)) links.push({ start, end, alt: match[1]!, path })
   }
   return links
 }
 
-/** An inline `attachment:` link for an uploaded image, labelled by its alt text or else its filename. */
-export function imageAttachmentLink(alt: string, attachment: { id: string; filename: string }): string {
-  const label = alt.trim() || attachment.filename.replace(/[\\[\]]/g, "\\$&")
-  return `[${label}](attachment:${attachment.id})`
+/**
+ * An inline `attachment:` link for an uploaded image, labelled by its alt text
+ * or else its filename, with the `threa-attachment:` title Threa reads the
+ * chip's filename and type from.
+ */
+export function imageAttachmentLink(
+  alt: string,
+  attachment: { id: string; filename: string; mimeType: string; sizeBytes: number }
+): string {
+  // A link label can't span lines; one that does stays plain text and the upload never binds.
+  const label = alt.replace(/\s+/g, " ").trim() || attachment.filename.replace(/[\\[\]]/g, "\\$&")
+  const metadata = new URLSearchParams({
+    filename: attachment.filename,
+    mimeType: attachment.mimeType,
+    sizeBytes: String(attachment.sizeBytes),
+  })
+  const title = `threa-attachment:${metadata}`.replace(/[\\"]/g, "\\$&")
+  return `[${label}](attachment:${attachment.id} "${title}")`
+}
+
+function replaceLinks(markdown: string, links: LocalImageLink[], replace: (link: LocalImageLink) => string): string {
+  let out = ""
+  let cursor = 0
+  for (const link of links) {
+    out += markdown.slice(cursor, link.start) + replace(link)
+    cursor = link.end
+  }
+  return out + markdown.slice(cursor)
+}
+
+/** Trace text shows that an image was embedded, never where it lives on disk. */
+export function redactLocalImageLinks(markdown: string): string {
+  return replaceLinks(markdown, findLocalImageLinks(markdown), () => "[image: local path omitted]")
 }
 
 /**
@@ -127,13 +161,9 @@ export async function uploadLocalImageLinks<T>(
       failed.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
-  let rewritten = ""
-  let cursor = 0
-  for (const link of links) {
+  const rewritten = replaceLinks(markdown, links, (link) => {
     const uploaded = uploads.get(link.path)
-    rewritten += markdown.slice(cursor, link.start) + (uploaded === undefined ? "" : render(uploaded, link))
-    cursor = link.end
-  }
-  rewritten += markdown.slice(cursor)
+    return uploaded === undefined ? "" : render(uploaded, link)
+  })
   return { markdown: rewritten, uploaded: [...uploads.values()], failed }
 }

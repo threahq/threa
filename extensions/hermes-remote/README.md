@@ -92,7 +92,8 @@ Inbound: the SDK downloads files attached to a message, including on sealed scra
 names and local paths to the turn content. Hermes reads them from those paths.
 
 Outbound: a `THREA_ATTACH: <path>` line in the run output uploads that file and replaces the line with an attachment.
-Hermes' own `MEDIA: <path>` lines are rewritten to `THREA_ATTACH:` first, so both work. Relative paths resolve against
+Hermes' own `MEDIA: <path>` lines are rewritten to `THREA_ATTACH:` first, so both work. A markdown image pointing at a
+local image file, such as `![chart](/tmp/chart.png)`, uploads too and stays inline. Relative paths resolve against
 `~/.threa/hermes-remote/work`.
 
 ## Encrypted scratchpads

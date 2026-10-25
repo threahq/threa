@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { findLocalImageLinks, imageAttachmentLink, uploadLocalImageLinks } from "./local-images"
+import { findLocalImageLinks, imageAttachmentLink, redactLocalImageLinks, uploadLocalImageLinks } from "./local-images"
 
 function paths(markdown: string): string[] {
   return findLocalImageLinks(markdown).map((link) => link.path)
@@ -54,6 +54,20 @@ describe("findLocalImageLinks", () => {
     expect(paths("\\![escaped](/tmp/a.png) and [link](/tmp/b.png)")).toEqual([])
   })
 
+  test("only image files count, so an echoed key or env file never uploads", () => {
+    expect(paths("![k](/home/u/.ssh/id_rsa) ![e](../.env) ![p](/tmp/report.pdf) ![i](/tmp/SHOT.JPEG)")).toEqual([
+      "/tmp/SHOT.JPEG",
+    ])
+  })
+
+  test("reads one level of parentheses in a path", () => {
+    expect(paths("![copy](/tmp/a(1).png)")).toEqual(["/tmp/a(1).png"])
+  })
+
+  test("skips an image that is a link's text", () => {
+    expect(paths("[![badge](/tmp/badge.png)](https://example.com) ![solo](/tmp/solo.png)")).toEqual(["/tmp/solo.png"])
+  })
+
   test("keeps offsets into the original text", () => {
     const markdown = "Before `code` ![shot](/tmp/shot.png) after"
     const [link] = findLocalImageLinks(markdown)
@@ -63,13 +77,23 @@ describe("findLocalImageLinks", () => {
 })
 
 describe("imageAttachmentLink", () => {
-  test("labels by alt text, falling back to the escaped filename", () => {
-    expect(imageAttachmentLink("Direction 1", { id: "attach_1", filename: "a.png" })).toBe(
-      "[Direction 1](attachment:attach_1)"
+  test("labels by alt text, falling back to the escaped filename, with the chip metadata title", () => {
+    expect(
+      imageAttachmentLink("Direction\n1", { id: "attach_1", filename: "a.png", mimeType: "image/png", sizeBytes: 12 })
+    ).toBe('[Direction 1](attachment:attach_1 "threa-attachment:filename=a.png&mimeType=image%2Fpng&sizeBytes=12")')
+    expect(
+      imageAttachmentLink(" ", { id: "attach_2", filename: "[draft].png", mimeType: "image/png", sizeBytes: 3 })
+    ).toBe(
+      '[\\[draft\\].png](attachment:attach_2 "threa-attachment:filename=%5Bdraft%5D.png&mimeType=image%2Fpng&sizeBytes=3")'
     )
-    expect(imageAttachmentLink(" ", { id: "attach_2", filename: "[draft].png" })).toBe(
-      "[\\[draft\\].png](attachment:attach_2)"
-    )
+  })
+})
+
+describe("redactLocalImageLinks", () => {
+  test("hides local image paths and leaves web images and code alone", () => {
+    expect(
+      redactLocalImageLinks("See ![shot](/home/u/shot.png), ![web](https://x.test/w.png) and `![c](/tmp/c.png)`")
+    ).toBe("See [image: local path omitted], ![web](https://x.test/w.png) and `![c](/tmp/c.png)`")
   })
 })
 
@@ -83,7 +107,7 @@ describe("uploadLocalImageLinks", () => {
         if (path === "/tmp/missing.png") throw new Error("ENOENT")
         return { id: "attach_a", filename: "a.png" }
       },
-      (uploaded, link) => imageAttachmentLink(link.alt, uploaded)
+      (uploaded, link) => `[${link.alt}](attachment:${uploaded.id})`
     )
     expect({ calls, result }).toEqual({
       calls: ["/tmp/a.png", "/tmp/missing.png"],
