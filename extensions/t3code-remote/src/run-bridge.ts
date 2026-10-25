@@ -199,14 +199,19 @@ export class RunTrace {
   /** The item ids of questions still waiting on an answer. */
   readonly questions = new Set<string>()
   lastError?: string
-  /** The chip for the frames the last observed item made. */
-  statusText = T3CODE_RUNTIME.busyStatusText
+  /** The chips of tools still running, by item id, in the order they started. */
+  private readonly runningTools = new Map<string, string>()
 
   constructor(
     runId: string,
     private readonly mode: RunTraceMode
   ) {
     this.runIds = new Set([runId])
+  }
+
+  /** The chip of the tool that started last and still runs, else the busy one. */
+  get statusText(): string {
+    return [...this.runningTools.values()].at(-1) ?? T3CODE_RUNTIME.busyStatusText
   }
 
   owns(item: ThreadItem): boolean {
@@ -224,7 +229,9 @@ export class RunTrace {
       this.held = undefined
     }
     const open = OPEN_ITEM_STATUSES.has(item.status ?? "")
-    this.statusText = (open && TOOLS[item.type]?.statusText) || T3CODE_RUNTIME.busyStatusText
+    const chip = TOOLS[item.type]?.statusText
+    if (open && chip) this.runningTools.set(item.itemId, chip)
+    else this.runningTools.delete(item.itemId)
     if (item.type === "assistant_message") {
       this.held = item
     } else if (item.type in BLOCKING_LABELS) {

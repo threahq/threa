@@ -1277,7 +1277,7 @@ describe("RunTrace", () => {
 
   test("counts a todo list's finished steps without showing them", () => {
     const [frame] = new RunTrace("run_1", "commands").observe(
-      item(1, "todo_list", { text: "[completed] Read the spec\n[running] Write the parser\n[pending] Test it" })
+      item(1, "todo_list", { text: "[completed] Read the spec\n[inProgress] Write the parser\n[pending] Test it" })
     )
     expect(traceOf(frame!.content)).toEqual({ headline: "Todo list: 1/3 done", sections: [] })
   })
@@ -1288,6 +1288,15 @@ describe("RunTrace", () => {
     const editing = trace.statusText
     trace.observe(item(1, "file_change", { text: "src/parser.ts" }))
     expect([editing, trace.statusText]).toEqual(["Editing files…", "Working in T3 Code…"])
+  })
+
+  test("keeps the chip of a tool still running when a later one ends", () => {
+    const trace = new RunTrace("run_1", "commands")
+    trace.observe(item(1, "command_execution", { status: "running", text: "$ bun test" }))
+    trace.observe(item(2, "web_search", { status: "running", text: "bun docs" }))
+    const searching = trace.statusText
+    trace.observe(item(2, "web_search", { text: "bun docs" }))
+    expect([searching, trace.statusText]).toEqual(["Searching the web…", "Running a command…"])
   })
 
   test("ignores other runs and items it already finalized", () => {
