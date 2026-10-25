@@ -11,6 +11,7 @@ import {
   Braces,
   List,
   ListOrdered,
+  ListChecks,
   Heading1,
   Heading2,
   Heading3,
@@ -376,6 +377,12 @@ export function DocumentEditorModal({
               icon={ListOrdered}
               label="Numbered list"
               isActive={editor?.isActive("orderedList")}
+            />
+            <ToolbarButton
+              onAction={() => editor?.chain().focus().toggleTaskList().run()}
+              icon={ListChecks}
+              label="Checklist"
+              isActive={editor?.isActive("taskList")}
             />
             <ToolbarButton
               onAction={() => editor && toggleMultilineBlock(editor, "codeBlock")}

@@ -11,6 +11,7 @@ import {
   Braces,
   List,
   ListOrdered,
+  ListChecks,
   ChevronDown,
   ListIndentIncrease,
   ListIndentDecrease,
@@ -280,6 +281,15 @@ export function EditorToolbar({
         icon={ListOrdered}
         label="Numbered list"
         isActive={editor.isActive("orderedList")}
+        roomy={isMobileInlineToolbar}
+        showTooltip={!isMobileInlineToolbar}
+        keyboardAccessible={inline}
+      />
+      <ToolbarButton
+        onAction={() => editor.chain().focus().toggleTaskList().run()}
+        icon={ListChecks}
+        label="Checklist"
+        isActive={editor.isActive("taskList")}
         roomy={isMobileInlineToolbar}
         showTooltip={!isMobileInlineToolbar}
         keyboardAccessible={inline}

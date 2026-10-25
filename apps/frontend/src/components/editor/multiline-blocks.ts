@@ -776,6 +776,16 @@ export function insertPastedText(
     .run()
 }
 
+/** The innermost list item around the selection, by its node type. */
+export function activeListItemType(editor: Editor): "listItem" | "taskItem" | null {
+  const { $from } = editor.state.selection
+  for (let depth = $from.depth; depth > 0; depth--) {
+    const name = $from.node(depth).type.name
+    if (name === "listItem" || name === "taskItem") return name
+  }
+  return null
+}
+
 /**
  * Handle Enter key press for creating newlines / smart block exits.
  * Shared by keyboard shortcuts and mobile beforeinput handling.
@@ -824,20 +834,21 @@ export function handleEnterTextBehavior(editor: Editor): boolean {
   }
 
   // In lists: exit on empty item, otherwise split to create new item
-  if (editor.isActive("listItem")) {
+  const listItemType = activeListItemType(editor)
+  if (listItemType) {
     const listItem = $from.node($from.depth - 1)
-    if (listItem?.type.name === "listItem") {
+    if (listItem?.type.name === listItemType) {
       const isEmpty =
         listItem.childCount === 1 &&
         listItem.firstChild?.type.name === "paragraph" &&
         listItem.firstChild.content.size === 0
 
       if (isEmpty) {
-        return editor.chain().focus().liftListItem("listItem").run()
+        return editor.chain().focus().liftListItem(listItemType).run()
       }
     }
 
-    return editor.chain().focus().splitListItem("listItem").run()
+    return editor.chain().focus().splitListItem(listItemType).run()
   }
 
   // In code blocks: keep one blank line inside the block, exit on the third newline.

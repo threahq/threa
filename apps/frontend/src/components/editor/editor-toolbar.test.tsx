@@ -138,6 +138,41 @@ describe("EditorToolbar", () => {
     expect(editor.__run).toHaveBeenCalled()
   })
 
+  it("turns the paragraph into a task list from the Checklist button", async () => {
+    const user = userEvent.setup()
+    const element = document.createElement("div")
+    document.body.append(element)
+    const realEditor = new TipTapEditor({
+      element,
+      extensions: createEditorExtensions({ placeholder: "Type a message..." }),
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "milk" }] }] },
+    })
+    realEditor.commands.setTextSelection(3)
+
+    render(<EditorToolbar editor={realEditor as unknown as Editor} isVisible inline />)
+    await user.click(screen.getByRole("button", { name: "Checklist" }))
+
+    expect(realEditor.getJSON()).toEqual({
+      type: "doc",
+      content: [
+        {
+          type: "taskList",
+          attrs: { blockId: null },
+          content: [
+            {
+              type: "taskItem",
+              attrs: { checked: false },
+              content: [{ type: "paragraph", attrs: { blockId: null }, content: [{ type: "text", text: "milk" }] }],
+            },
+          ],
+        },
+      ],
+    })
+
+    realEditor.destroy()
+    element.remove()
+  })
+
   it("turns the selection into an equation from the Math button and opens its TeX", async () => {
     const user = userEvent.setup()
     const element = document.createElement("div")
