@@ -130,9 +130,11 @@ A damaged `threads.json` or `token.json` stops the connector at start instead of
 ## Traces and replies
 
 Tool calls (commands, file changes, searches, subagents) show as steps. `headline` mode shows only what kind of tool
-ran; `commands` mode adds the command's first line, since T3 sends a command and its output as one text. On an encrypted scratchpad with `sealedFullTrace` on (the default), steps
-also carry command output and file change details, and the model's reasoning shows as thinking steps. Other
-scratchpads get no reasoning steps.
+ran; `commands` mode adds the command's first line, since T3 sends a command and its output as one text, and a
+subagent's title. A todo list shows how many of its steps are done in either mode. On an encrypted scratchpad with
+`sealedFullTrace` on (the default), steps also carry command output and file change details, and the model's
+reasoning shows as thinking steps. Other scratchpads get no reasoning steps. While a tool runs, the bot's status
+says what kind it is, such as "Running a command…".
 
 An assistant message followed by more work is posted as a narration step, and the last one is the reply. A message
 that starts with `THREA_UPDATE:` is posted to the scratchpad as soon as it ends, without the prefix, so the agent can

@@ -32,6 +32,20 @@ describe("StepBatcher", () => {
     ])
   })
 
+  test("a batch carries the chip of its latest frame", async () => {
+    const chips: Array<string | undefined> = []
+    const batcher = new StepBatcher("binv_1", {
+      recordSteps: async (_invocationId, _frames, statusText) => chips.push(statusText),
+    })
+
+    batcher.add(frame("a"), "Running a command…")
+    batcher.add(frame("b"), "Working…")
+    await batcher.flush()
+    await batcher.addNow(frame("c"))
+
+    expect(chips).toEqual(["Working…", undefined])
+  })
+
   test("flushes on its own after the delay", async () => {
     const steps = recorder()
     new StepBatcher("binv_1", steps).add(frame("a"))
