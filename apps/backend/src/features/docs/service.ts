@@ -1,6 +1,7 @@
 import type { Pool } from "pg"
 import {
   AuthorTypes,
+  DocErrorCodes,
   StreamTypes,
   type DocEditedEventPayload,
   type DocPostUpdateResult,
@@ -70,11 +71,11 @@ function applyOrRefuse(...args: Parameters<typeof applyClientWrite>): ReturnType
     if (error instanceof DocUpdateNotApplicableError) {
       throw new HttpError("Update depends on doc state the server does not have", {
         status: 400,
-        code: "DOC_UPDATE_NOT_APPLICABLE",
+        code: DocErrorCodes.UPDATE_NOT_APPLICABLE,
       })
     }
     if (error instanceof DocUpdateInvalidError) {
-      throw new HttpError("Update is not a valid doc update", { status: 400, code: "DOC_UPDATE_INVALID" })
+      throw new HttpError("Update is not a valid doc update", { status: 400, code: DocErrorCodes.UPDATE_INVALID })
     }
     throw error
   }

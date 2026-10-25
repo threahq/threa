@@ -40,7 +40,7 @@ interface DocPaneBodyProps {
 /** A doc stream's collaborative editor, mounted only once the doc's state and the viewer's write access have loaded. */
 export function DocPaneBody({ workspaceId, stream, canWrite }: DocPaneBodyProps) {
   const view = useDocSync(workspaceId, stream.id)
-  useRevealReady(view.phase !== "loading" && canWrite !== null)
+  useRevealReady(view.phase === "error" || (view.phase === "ready" && canWrite !== null))
 
   if (view.phase === "error") {
     return (
@@ -96,9 +96,17 @@ function DocEditor({ workspaceId, ydoc, canWrite }: DocEditorProps) {
     if (!editor?.isEditable) return false
     return insertFilesIntoEditor(editor, files, (file) => latestUpload().uploadFile(file), {
       onPlaceholdersInserted: (tempIds) => tempIds.forEach((id) => placeholderIdsRef.current.add(id)),
-      // An error chip would persist the uploader's failure into every reader's copy of the doc.
+      // An error chip would persist the uploader's failure into every reader's copy of the doc,
+      // and undo must not bring the dead placeholder back.
       onUploadFailed: (tempId, error) => {
-        editor.commands.removeAttachmentReferences(tempId)
+        editor
+          .chain()
+          .command(({ tr }) => {
+            tr.setMeta("addToHistory", false)
+            return true
+          })
+          .removeAttachmentReferences(tempId)
+          .run()
         toast.error("Couldn't upload the file", { description: error instanceof Error ? error.message : undefined })
       },
     })

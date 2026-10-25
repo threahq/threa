@@ -183,6 +183,8 @@ export const DOC_FRAGMENT = "default"
 export const DocErrorCodes = {
   HOST_TYPE_INVALID: "DOC_HOST_TYPE_INVALID",
   E2E_HOST_NOT_ALLOWED: "DOC_E2E_HOST_NOT_ALLOWED",
+  UPDATE_NOT_APPLICABLE: "DOC_UPDATE_NOT_APPLICABLE",
+  UPDATE_INVALID: "DOC_UPDATE_INVALID",
 } as const
 
 // A stream's system purpose, when it exists to power a feature rather than to be
