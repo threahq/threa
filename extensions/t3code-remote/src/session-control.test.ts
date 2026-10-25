@@ -7,6 +7,7 @@ import {
   type HarnessSpawnSpec,
   type SpawnRuntimeOption,
 } from "@threahq/harness-client"
+import { ThreaApiError } from "@threahq/remote-session"
 import { T3AuthError } from "./auth"
 import { T3TurnRunner, type ThreadState } from "./run-bridge"
 import { createT3SessionControl, matchModel } from "./session-control"
@@ -34,9 +35,16 @@ function setup(state: ThreadState = { threads: {} }, runtimes: SpawnRuntimeOptio
     sleep: async () => {},
   })
   const launched: Array<{ spec: HarnessSpawnSpec; claim: unknown; brief: string | undefined }> = []
+  const briefs: unknown[] = []
+  const briefFailures: Error[] = []
   const control = createT3SessionControl(runner, t3.client, {
     threa: { baseUrl: "https://threa.example", apiKey: "bot_key" },
     spawnRuntimes: () => runtimes,
+    brief: async (input) => {
+      const failure = briefFailures.shift()
+      if (failure) throw failure
+      briefs.push(input)
+    },
     spawnLauncher: (spec) => () => {
       launched.push({
         spec,
@@ -47,7 +55,7 @@ function setup(state: ThreadState = { threads: {} }, runtimes: SpawnRuntimeOptio
       discardSpawnBrief(spec.briefFile)
     },
   })
-  return { t3, saved, fake, runner, control, launched }
+  return { t3, saved, fake, runner, control, launched, briefs, briefFailures }
 }
 
 const CHOICES = [
@@ -487,36 +495,130 @@ describe("T3 session control", () => {
     })
     expect(await control.runCommand("spawn", "pi helper", CONTEXT)).toEqual({
       ok: false,
-      message: "`pi` is not installed on this machine. Installed: claude.",
+      message: "`pi` is not installed on this machine. Installed: t3code, claude.",
     })
   })
 
-  test("a bare /spawn launches the first installed runtime", async () => {
-    const piOnly = setup(undefined, [
-      { ...RUNTIMES[0]!, installed: false },
-      { ...RUNTIMES[1]!, installed: true },
-    ]).control
+  test("advertises /spawn with T3 Code first, also without harnessd, and defaults to it", async () => {
+    const withHarness = setup().control
+    const without = setup(undefined, []).control
+    await withHarness.loadOptions()
 
     expect({
-      defaults: [setup().control.spawnDefaultRuntime, piOnly.spawnDefaultRuntime],
-      bare: (await piOnly.runCommand("spawn", "helper", CONTEXT)).ok,
-    }).toEqual({ defaults: ["claude", "pi"], bare: true })
-  })
-
-  test("advertises /spawn and its runtimes only when one is installed", () => {
-    const withRuntime = setup().control
-    const without = setup(undefined, [{ ...RUNTIMES[0]!, installed: false }]).control
-
-    expect({
-      commands: [withRuntime.commands, without.commands],
-      runtimes: withRuntime.spawnRuntimes?.map((runtime) => runtime.value),
+      commands: without.commands,
+      defaults: without.spawnDefaultRuntime,
+      runtimes: [withHarness, without].map((control) => control.spawnRuntimes?.map((runtime) => runtime.value)),
+      t3: withHarness.spawnRuntimes?.[0],
     }).toEqual({
-      commands: [
-        ["stop", "status", "model", "thinking", "compact", "clear", "spawn", "done"],
-        ["stop", "status", "model", "thinking", "compact", "clear", "done"],
-      ],
-      runtimes: ["claude"],
+      commands: ["stop", "status", "model", "thinking", "compact", "clear", "spawn", "done"],
+      defaults: "t3code",
+      runtimes: [["t3code", "claude"], ["t3code"]],
+      t3: {
+        value: "t3code",
+        label: "T3 Code",
+        thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+        models: withHarness.modelSuggestions ?? [],
+      },
     })
+  })
+
+  test("/spawn t3code queues a fresh thread on the launch model and briefs it under the /spawn message", async () => {
+    const { saved, control, briefs, launched } = setup({
+      threads: {},
+      model: { instanceId: "codex", model: "gpt-5.5" },
+    })
+
+    const outcome = await control.runCommand("spawn", "t3code helper bot\nFix the flaky test", CONTEXT)
+
+    expect({ outcome, spawns: saved.at(-1)?.spawns, briefs, launched }).toEqual({
+      outcome: { ok: true, summary: "Spawned helper bot in a new T3 Code thread" },
+      spawns: { msg_spawn: { title: "helper bot", model: { instanceId: "codex", model: "gpt-5.5" } } },
+      briefs: [{ content: "Fix the flaky test", thread: { anchorId: "msg_spawn", displayName: "helper bot" } }],
+      launched: [],
+    })
+  })
+
+  test("/spawn t3code launches on its /model at its /thinking, carried over like /model", async () => {
+    const thinking = { instanceId: "codex", model: "gpt-5.5", options: [{ id: "reasoningEffort", value: "high" }] }
+    const picks = [
+      [
+        "/model opus helper",
+        { instanceId: "claudeAgent", model: "claude-opus-5-5", options: [{ id: "effort", value: "high" }] },
+      ],
+      [
+        "/model opus /thinking MAX helper",
+        { instanceId: "claudeAgent", model: "claude-opus-5-5", options: [{ id: "effort", value: "max" }] },
+      ],
+      ["/thinking low helper", { ...thinking, options: [{ id: "reasoningEffort", value: "low" }] }],
+    ] as const
+    const spawned: unknown[] = []
+    for (const [args] of picks) {
+      const { saved, control } = setup({ threads: {}, model: thinking })
+      await control.runCommand("spawn", `t3code ${args}\nGo`, CONTEXT)
+      spawned.push(saved.at(-1)?.spawns)
+    }
+
+    expect(spawned).toEqual(picks.map(([, model]) => ({ msg_spawn: { title: "helper", model } })))
+  })
+
+  test("/spawn t3code without a prompt, a model or a matching level changes nothing", async () => {
+    const codex = { instanceId: "codex", model: "gpt-5.5-mini" }
+    const cases = [
+      [{ threads: {} }, "t3code helper\nGo", "T3 Code needs a model for new threads: pick one with /model."],
+      [{ threads: {} }, "t3code /thinking high helper\nGo", "Pick a model with /model first."],
+      [{ threads: {}, model: codex }, "t3code helper", "T3 Code needs a prompt to start the thread."],
+      [
+        { threads: {}, model: codex },
+        "t3code /model gpt helper\nGo",
+        '"gpt" matches several models: codex::gpt-5.5, codex::gpt-5.5-mini',
+      ],
+      [
+        { threads: {}, model: codex },
+        "t3code /thinking high helper\nGo",
+        "codex::gpt-5.5-mini has no thinking levels.",
+      ],
+    ] as const
+    const outcomes: unknown[] = []
+    for (const [state, args] of cases) {
+      const { saved, control, briefs } = setup(state)
+      await control.loadOptions()
+      outcomes.push({ result: await control.runCommand("spawn", args, CONTEXT), saved, briefs })
+    }
+
+    expect(outcomes).toEqual(cases.map(([, , message]) => ({ result: { ok: false, message }, saved: [], briefs: [] })))
+  })
+
+  test("/spawn t3code whose brief fails drops the pending spawn", async () => {
+    const { saved, control, briefFailures } = setup({ threads: {}, model: { instanceId: "codex", model: "gpt-5.5" } })
+    briefFailures.push(new ThreaApiError("Threa API 400 (BRIEF_ANCHOR_INVALID)", 400, "BRIEF_ANCHOR_INVALID"))
+
+    const outcome = await control.runCommand("spawn", "t3code helper\nGo", CONTEXT)
+
+    expect({ outcome, spawns: saved.map((state) => state.spawns) }).toEqual({
+      outcome: { ok: false, message: "Could not start helper: Threa API 400 (BRIEF_ANCHOR_INVALID)" },
+      spawns: [{ msg_spawn: { title: "helper", model: { instanceId: "codex", model: "gpt-5.5" } } }, {}],
+    })
+  })
+
+  test("/spawn t3code whose brief may have been stored keeps the pending spawn", async () => {
+    const pending = { msg_spawn: { title: "helper", model: { instanceId: "codex", model: "gpt-5.5" } } }
+    const failures = [new ThreaApiError("Threa API 503", 503), new Error("The operation timed out.")]
+    const outcomes: unknown[] = []
+    for (const failure of failures) {
+      const { saved, control, briefFailures } = setup({ threads: {}, model: { instanceId: "codex", model: "gpt-5.5" } })
+      briefFailures.push(failure)
+      outcomes.push({
+        outcome: await control.runCommand("spawn", "t3code helper\nGo", CONTEXT),
+        spawns: saved.map((state) => state.spawns),
+      })
+    }
+
+    expect(outcomes).toEqual(
+      failures.map((failure) => ({
+        outcome: { ok: false, message: `Could not confirm helper started: ${failure.message}` },
+        spawns: [pending],
+      }))
+    )
   })
 
   test("/done archives the thread's T3 thread and unlinks it", async () => {
