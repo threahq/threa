@@ -7,7 +7,15 @@ import History from "@tiptap/extension-history"
 import Gapcursor from "@tiptap/extension-gapcursor"
 import Placeholder from "@tiptap/extension-placeholder"
 
-import { ThreaHeading, ThreaLink, ThreaTable, codeBlockOptions } from "@threahq/prosemirror/schema"
+import {
+  BlockIdAttribute,
+  TaskList,
+  ThreaHeading,
+  ThreaLink,
+  ThreaTable,
+  ThreaTaskItem,
+  codeBlockOptions,
+} from "@threahq/prosemirror/schema"
 import { AtomAwareBold, AtomAwareItalic, AtomAwareStrike, AtomAwareCode } from "./atom-aware-marks"
 
 import Blockquote from "@tiptap/extension-blockquote"
@@ -91,6 +99,11 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     BulletList,
     OrderedList,
     ListItem,
+    // Schema members only, with no input rule or HTML paste parse: a client
+    // deployed ahead of the backend must not be able to emit a node the
+    // backend still rejects. The composer affordances arrive separately.
+    TaskList.extend({ parseHTML: () => [] }),
+    ThreaTaskItem.extend({ parseHTML: () => [], addInputRules: () => [] }),
     Blockquote,
     HorizontalRule,
     CodeBlockLowlight.configure({ lowlight, ...codeBlockOptions }),
@@ -160,6 +173,8 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     config.memoSearchSuggestion
       ? MemoSearchExtension.configure({ suggestion: config.memoSearchSuggestion })
       : MemoSearchExtension,
+
+    BlockIdAttribute,
   ]
 
   return extensions

@@ -28,6 +28,7 @@ function createQuoteReplyNode(): JSONContent {
       version: null,
       range: null,
       private: false,
+      blockId: null,
     },
   }
 }
@@ -176,7 +177,7 @@ describe("quote reply gap cursor", () => {
     expect(pressKey(editor, "Enter")).toBe(true)
     expect(editor.getJSON()).toEqual({
       type: "doc",
-      content: [{ type: "paragraph" }, createQuoteReplyNode()],
+      content: [{ type: "paragraph", attrs: { blockId: null } }, createQuoteReplyNode()],
     })
 
     editor.destroy()
@@ -190,7 +191,7 @@ describe("quote reply gap cursor", () => {
     expect(pressKey(editor, "Enter")).toBe(true)
     expect(editor.getJSON()).toEqual({
       type: "doc",
-      content: [createQuoteReplyNode(), { type: "paragraph" }],
+      content: [createQuoteReplyNode(), { type: "paragraph", attrs: { blockId: null } }],
     })
 
     editor.destroy()
@@ -309,7 +310,7 @@ describe("private quote reply", () => {
       json: editor.getJSON().content?.[0],
       markdown: serializeToMarkdown(editor.getJSON()),
     }).toEqual({
-      json: privateQuote,
+      json: { ...privateQuote, attrs: { ...privateQuote.attrs, blockId: null } },
       markdown: "> — [Private quote](quote:stream_123/msg_123?private=1)",
     })
     editor.destroy()

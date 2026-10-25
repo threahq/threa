@@ -14,6 +14,7 @@ const CHIP_ATTRS: AttachmentReferenceAttrs = {
   status: "uploaded",
   imageIndex: null,
   error: null,
+  display: "pill",
 }
 
 /**
@@ -38,6 +39,7 @@ function createEditorWithChip() {
       content: [
         {
           type: "paragraph",
+          attrs: { blockId: null },
           content: [
             { type: "text", text: "before " },
             { type: "attachmentReference", attrs: CHIP_ATTRS },
@@ -182,6 +184,7 @@ describe("attachment reference insertion", () => {
       content: [
         {
           type: "paragraph",
+          attrs: { blockId: null },
           content: [
             { type: "text", text: "before " },
             { type: "attachmentReference", attrs: CHIP_ATTRS },
@@ -212,6 +215,7 @@ describe("attachment reference clipboard roundtrip", () => {
     expect(parsed.content.toJSON()).toEqual([
       {
         type: "paragraph",
+        attrs: { blockId: null },
         content: [
           { type: "text", text: "before " },
           { type: "attachmentReference", attrs: CHIP_ATTRS },

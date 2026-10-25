@@ -86,8 +86,8 @@ describe("insertPlainText", () => {
     expect(pasted.json).toEqual({
       type: "doc",
       content: [
-        { type: "paragraph", content: [{ type: "text", text: "const a = 1" }] },
-        { type: "paragraph", content: [{ type: "text", text: "const b = 2" }] },
+        { type: "paragraph", attrs: { blockId: null }, content: [{ type: "text", text: "const a = 1" }] },
+        { type: "paragraph", attrs: { blockId: null }, content: [{ type: "text", text: "const b = 2" }] },
       ],
     })
   })
@@ -105,7 +105,7 @@ describe("insertPlainText", () => {
 
     expect(pasted.json).toEqual({
       type: "doc",
-      content: [{ type: "paragraph", content: [{ type: "text", text: "see the docs" }] }],
+      content: [{ type: "paragraph", attrs: { blockId: null }, content: [{ type: "text", text: "see the docs" }] }],
     })
   })
 
@@ -119,7 +119,7 @@ describe("insertPlainText", () => {
       content: [
         {
           type: "codeBlock",
-          attrs: { language: "ts" },
+          attrs: { language: "ts", blockId: null },
           content: [{ type: "text", text: "const a = 1const b = 2\nconst c = 3" }],
         },
       ],
@@ -134,8 +134,8 @@ describe("insertPlainText", () => {
     expect(editor.getJSON()).toEqual({
       type: "doc",
       content: [
-        { type: "paragraph", content: [{ type: "text", text: "lead one" }] },
-        { type: "paragraph", content: [{ type: "text", text: "two" }] },
+        { type: "paragraph", attrs: { blockId: null }, content: [{ type: "text", text: "lead one" }] },
+        { type: "paragraph", attrs: { blockId: null }, content: [{ type: "text", text: "two" }] },
       ],
     })
   })

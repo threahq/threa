@@ -122,7 +122,9 @@ function previewNode(node: JSONContent): string {
     node.type === "doc" ||
     node.type === "bulletList" ||
     node.type === "orderedList" ||
+    node.type === "taskList" ||
     node.type === "listItem" ||
+    node.type === "taskItem" ||
     node.type === "blockquote" ||
     node.type === "tableRow" ||
     node.type === "tableHeader" ||
@@ -160,7 +162,9 @@ function isMultiline(node: JSONContent): boolean {
     node.type === "doc" ||
     node.type === "bulletList" ||
     node.type === "orderedList" ||
+    node.type === "taskList" ||
     node.type === "listItem" ||
+    node.type === "taskItem" ||
     node.type === "blockquote" ||
     node.type === "tableRow" ||
     node.type === "tableHeader" ||

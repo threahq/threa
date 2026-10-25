@@ -176,6 +176,7 @@ describe("/attachment slash command", () => {
       status: "uploaded",
       imageIndex: null,
       error: null,
+      display: "pill",
     })
     expect(editor.state.doc.textContent).toBe("look ")
   })

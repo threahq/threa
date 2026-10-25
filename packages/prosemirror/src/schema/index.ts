@@ -58,11 +58,9 @@ const BlockIdAttribute = Extension.create({
       {
         types: [...BLOCK_ID_NODE_TYPES],
         attributes: {
-          blockId: {
-            default: null,
-            parseHTML: (element: HTMLElement) => element.getAttribute("data-block-id"),
-            renderHTML: (attrs: Record<string, unknown>) => (attrs.blockId ? { "data-block-id": attrs.blockId } : {}),
-          },
+          // JSON-only, so a split or an HTML paste never duplicates an id; the
+          // write sink mints the fresh ones.
+          blockId: { default: null, rendered: false, keepOnSplit: false },
         },
       },
     ]

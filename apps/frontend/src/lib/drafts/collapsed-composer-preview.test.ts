@@ -6,6 +6,11 @@ import { collapsedComposerPreview } from "./collapsed-composer-preview"
 const text = (value: string): JSONContent => ({ type: "text", text: value })
 const paragraph = (...content: JSONContent[]): JSONContent => ({ type: "paragraph", content })
 const listItem = (value: string): JSONContent => ({ type: "listItem", content: [paragraph(text(value))] })
+const taskItem = (value: string): JSONContent => ({
+  type: "taskItem",
+  attrs: { checked: false },
+  content: [paragraph(text(value))],
+})
 const cell = (type: "tableHeader" | "tableCell", value: string): JSONContent => ({
   type,
   content: [paragraph(text(value))],
@@ -30,6 +35,18 @@ const NODE_CASES: Record<string, { content: JSONContent; expected: string }> = {
   },
   listItem: {
     content: doc({ type: "listItem", content: [paragraph(text("First")), paragraph(text("Second"))] }),
+    expected: "First…",
+  },
+  taskList: {
+    content: doc({ type: "taskList", content: [taskItem("First"), taskItem("Second")] }),
+    expected: "First…",
+  },
+  taskItem: {
+    content: doc({
+      type: "taskItem",
+      attrs: { checked: true },
+      content: [paragraph(text("First")), paragraph(text("Second"))],
+    }),
     expected: "First…",
   },
   blockquote: {

@@ -37,7 +37,7 @@ describe("agentBlock in the composer", () => {
     const block = (editor.getJSON() as JSONContent).content?.[0]
     expect({ type: block?.type, attrs: block?.attrs, text: block?.content?.[0]?.content?.[0]?.text }).toEqual({
       type: "agentBlock",
-      attrs: { authorId: "persona_01ARIADNE", authorName: "Ariadne" },
+      attrs: { authorId: "persona_01ARIADNE", authorName: "Ariadne", blockId: null },
       text: "My own wording.",
     })
     editor.destroy()

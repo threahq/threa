@@ -53,6 +53,28 @@ describe("ensureBlockIds", () => {
     })
   })
 
+  it("should re-mint a repeated id so every block id is unique within the document", () => {
+    const input: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", attrs: { blockId: "blk_dup" } },
+        { type: "paragraph", attrs: { blockId: "blk_dup" } },
+        { type: "blockquote", content: [{ type: "paragraph", attrs: { blockId: "blk_dup" } }] },
+      ],
+    }
+
+    const result = ensureBlockIds(input)
+    const [first, second, quote] = result.content!
+    const nested = quote.content![0]
+
+    expect({
+      first: first.attrs?.blockId,
+      secondMinted: BLOCK_ID.test(String(second.attrs?.blockId)),
+      nestedMinted: BLOCK_ID.test(String(nested.attrs?.blockId)),
+      distinct: second.attrs?.blockId !== nested.attrs?.blockId,
+    }).toEqual({ first: "blk_dup", secondMinted: true, nestedMinted: true, distinct: true })
+  })
+
   it("should return the same reference when every block already has an id", () => {
     const input: JSONContent = {
       type: "doc",

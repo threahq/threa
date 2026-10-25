@@ -6,16 +6,17 @@ import { getDictationChunkPositions } from "./dictation-chunk-extension"
 
 const paragraph = (text: string): JSONContent => ({
   type: "doc",
-  content: [{ type: "paragraph", ...(text ? { content: [{ type: "text", text }] } : {}) }],
+  content: [{ type: "paragraph", attrs: { blockId: null }, ...(text ? { content: [{ type: "text", text }] } : {}) }],
 })
 const list: JSONContent = {
   type: "doc",
   content: [
     {
       type: "bulletList",
+      attrs: { blockId: null },
       content: ["one", "two"].map((text) => ({
         type: "listItem",
-        content: [{ type: "paragraph", content: [{ type: "text", text }] }],
+        content: [{ type: "paragraph", attrs: { blockId: null }, content: [{ type: "text", text }] }],
       })),
     },
   ],
@@ -61,8 +62,8 @@ describe("structured dictation chunks", () => {
     const multiBlock: JSONContent = {
       type: "doc",
       content: [
-        { type: "paragraph", content: [{ type: "text", text: "first polished" }] },
-        { type: "paragraph", content: [{ type: "text", text: "second polished" }] },
+        { type: "paragraph", attrs: { blockId: null }, content: [{ type: "text", text: "first polished" }] },
+        { type: "paragraph", attrs: { blockId: null }, content: [{ type: "text", text: "second polished" }] },
       ],
     }
     expect(editor.commands.replaceDictationChunk({ chunkId: "take", contentJson: multiBlock })).toBe(true)
@@ -74,10 +75,19 @@ describe("structured dictation chunks", () => {
   })
 
   it("round-trips exact raw and polished JSON including marks", () => {
-    const raw: JSONContent = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "raw" }] }] }
+    const raw: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", attrs: { blockId: null }, content: [{ type: "text", text: "raw" }] }],
+    }
     const polished: JSONContent = {
       type: "doc",
-      content: [{ type: "paragraph", content: [{ type: "text", marks: [{ type: "bold" }], text: "polished" }] }],
+      content: [
+        {
+          type: "paragraph",
+          attrs: { blockId: null },
+          content: [{ type: "text", marks: [{ type: "bold" }], text: "polished" }],
+        },
+      ],
     }
     editor = make(paragraph(""))
     editor.commands.insertDictationChunk({ chunkId: "take", contentJson: raw })
@@ -91,8 +101,8 @@ describe("structured dictation chunks", () => {
     editor = make({
       type: "doc",
       content: [
-        { type: "paragraph", content: [{ type: "text", text: "one" }] },
-        { type: "paragraph", content: [{ type: "text", text: "two" }] },
+        { type: "paragraph", attrs: { blockId: null }, content: [{ type: "text", text: "one" }] },
+        { type: "paragraph", attrs: { blockId: null }, content: [{ type: "text", text: "two" }] },
       ],
     })
     editor.commands.setTextSelection({ from: 2, to: 8 })
@@ -174,9 +184,9 @@ describe("structured dictation chunks", () => {
     expect(editor.getJSON()).toEqual({
       type: "doc",
       content: [
-        { type: "paragraph", content: [{ type: "text", text: "Typed" }] },
+        { type: "paragraph", attrs: { blockId: null }, content: [{ type: "text", text: "Typed" }] },
         ...list.content!,
-        { type: "paragraph", content: [{ type: "text", text: "tail" }] },
+        { type: "paragraph", attrs: { blockId: null }, content: [{ type: "text", text: "tail" }] },
       ],
     })
 
@@ -195,7 +205,10 @@ describe("structured dictation chunks", () => {
     expect(status).toBe("applied")
     expect(editor.getJSON()).toEqual({
       type: "doc",
-      content: [{ type: "paragraph", content: [{ type: "text", text: "Typed" }] }, ...list.content!],
+      content: [
+        { type: "paragraph", attrs: { blockId: null }, content: [{ type: "text", text: "Typed" }] },
+        ...list.content!,
+      ],
     })
     expect(
       getDictationChunkPositions(editor.state).map(({ chunkId, from, to }) => ({ chunkId, nonempty: from < to }))
