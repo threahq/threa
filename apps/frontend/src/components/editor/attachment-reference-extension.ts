@@ -128,7 +128,8 @@ export const AttachmentReferenceExtension = AttachmentReferenceNode.extend({
           })
 
           if (found) {
-            dispatch(tr)
+            // Settling is not an edit: one undo removes the inserted file.
+            dispatch(tr.setMeta("addToHistory", false))
             return true
           }
           return false

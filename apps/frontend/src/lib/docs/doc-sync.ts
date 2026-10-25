@@ -1,22 +1,18 @@
 import * as Y from "yjs"
 import { base64ToBytes, bytesToBase64 } from "@threahq/crypto"
-import type { DocUpdatedOutboxPayload } from "@threahq/types"
+import type { DocUpdatedPayload } from "@threahq/types"
 import { ApiError, isPermanentApiError } from "@/api/client"
 import { docsApi } from "@/api/docs"
 
 /** Transaction origin of every update that came from the server; anything else is a local edit to send. */
 export const REMOTE_ORIGIN = Symbol("doc-sync-remote")
 
-const FLUSH_DEBOUNCE_MS = 400
+export const FLUSH_DEBOUNCE_MS = 400
 const MAX_BACKOFF_MS = 10_000
 
-export type DocSyncStatus =
-  | { phase: "loading" }
-  | { phase: "ready" }
-  | { phase: "error"; error: unknown }
-  | { phase: "rejected"; code: string }
+export type DocSyncStatus = { phase: "loading" } | { phase: "ready" } | { phase: "error"; error: unknown }
 
-type DocsApi = Pick<typeof docsApi, "get" | "listUpdates" | "postUpdate">
+type DocsApi = typeof docsApi
 
 function backoffMs(failures: number): number {
   return Math.min(1000 * 2 ** (failures - 1), MAX_BACKOFF_MS)
@@ -25,7 +21,6 @@ function backoffMs(failures: number): number {
 function sameStatus(a: DocSyncStatus, b: DocSyncStatus): boolean {
   if (a.phase !== b.phase) return false
   if (a.phase === "error" && b.phase === "error") return a.error === b.error
-  if (a.phase === "rejected" && b.phase === "rejected") return a.code === b.code
   return true
 }
 
@@ -35,12 +30,13 @@ export class DocSync {
   private readonly docId: string
   private readonly ydoc: Y.Doc
   private readonly api: DocsApi
+  private readonly onRejected?: (refusal: ApiError) => void
   private readonly listeners = new Set<() => void>()
   private status: DocSyncStatus = { phase: "loading" }
   private seq: number | null = null
   private highestSeen = 0
   private pending: Uint8Array[] = []
-  private posting: Promise<void> | null = null
+  private inFlight: { update: Uint8Array; request: Promise<void> } | null = null
   private flushTimer: ReturnType<typeof setTimeout> | null = null
   private flushFailures = 0
   private catchUpTimer: ReturnType<typeof setTimeout> | null = null
@@ -49,11 +45,19 @@ export class DocSync {
   private catchUpAgain = false
   private stopped = false
 
-  constructor(params: { workspaceId: string; docId: string; ydoc: Y.Doc; api?: DocsApi }) {
+  constructor(params: {
+    workspaceId: string
+    docId: string
+    ydoc: Y.Doc
+    api?: DocsApi
+    /** Called after the server permanently refused local edits; they were dropped and the doc reloaded. */
+    onRejected?: (refusal: ApiError) => void
+  }) {
     this.workspaceId = params.workspaceId
     this.docId = params.docId
     this.ydoc = params.ydoc
     this.api = params.api ?? docsApi
+    this.onRejected = params.onRejected
   }
 
   getStatus = (): DocSyncStatus => this.status
@@ -72,7 +76,7 @@ export class DocSync {
     return this.load()
   }
 
-  /** Detaches; edits still waiting for the debounce or a retry are sent once more, unobserved. */
+  /** Detaches; edits not yet saved (debounced, in flight, or awaiting a retry) are sent once more, unobserved. */
   stop(): void {
     if (this.stopped) return
     this.stopped = true
@@ -83,8 +87,8 @@ export class DocSync {
     this.flushOnStop()
   }
 
-  receive(payload: DocUpdatedOutboxPayload): void {
-    if (payload.streamId !== this.docId || this.stopped) return
+  receive = (payload: DocUpdatedPayload): void => {
+    if (payload.workspaceId !== this.workspaceId || payload.streamId !== this.docId || this.stopped) return
     this.highestSeen = Math.max(this.highestSeen, payload.seq)
     if (this.seq === null || payload.seq <= this.seq) return
     if (payload.seq === this.seq + 1) {
@@ -105,17 +109,21 @@ export class DocSync {
     return this.catchUpRun
   }
 
+  private get hasMissed(): boolean {
+    return this.seq !== null && this.highestSeen > this.seq
+  }
+
   private async load(): Promise<void> {
-    this.setPhase({ phase: "loading" })
+    this.setStatus({ phase: "loading" })
     try {
       await this.reload()
     } catch (error) {
-      if (!this.stopped) this.setPhase({ phase: "error", error })
+      if (!this.stopped) this.setStatus({ phase: "error", error })
       return
     }
     if (this.stopped) return
-    this.setPhase({ phase: "ready" })
-    if (this.highestSeen > this.seq!) void this.catchUp()
+    this.setStatus({ phase: "ready" })
+    if (this.hasMissed) void this.catchUp()
   }
 
   private async reload(): Promise<void> {
@@ -128,34 +136,41 @@ export class DocSync {
   private async runCatchUp(): Promise<void> {
     if (this.catchUpTimer) clearTimeout(this.catchUpTimer)
     this.catchUpTimer = null
-    // Cleared in the same tick as the last `catchUpAgain` check, so no request can land on a finished run.
     try {
       do {
         this.catchUpAgain = false
+        if (this.seq === null) return
         try {
-          await this.fetchMissed()
+          await this.fetchMissed(this.seq)
           this.catchUpFailures = 0
-        } catch {
+        } catch (error) {
           if (this.stopped) return
+          if (isPermanentApiError(error)) {
+            this.setStatus({ phase: "error", error })
+            return
+          }
           this.catchUpFailures += 1
           this.catchUpTimer = setTimeout(() => void this.catchUp(), backoffMs(this.catchUpFailures))
           return
         }
       } while (this.catchUpAgain && !this.stopped)
     } finally {
+      // Cleared in the same tick as the last `catchUpAgain` check, so no request can land on a finished run.
       this.catchUpRun = null
     }
   }
 
-  private async fetchMissed(): Promise<void> {
+  private async fetchMissed(after: number): Promise<void> {
     try {
-      const { updates } = await this.api.listUpdates(this.workspaceId, this.docId, this.seq!)
+      const { updates } = await this.api.listUpdates(this.workspaceId, this.docId, after)
       if (this.stopped) return
+      let seq = this.seq ?? after
       for (const update of updates) {
-        if (update.seq <= this.seq!) continue
+        if (update.seq <= seq) continue
         this.applyRemote(update.update)
-        this.seq = update.seq
+        seq = update.seq
       }
+      this.seq = seq
     } catch (error) {
       if (ApiError.isApiError(error) && error.status === 409) return this.reload()
       throw error
@@ -177,72 +192,71 @@ export class DocSync {
   }
 
   private async flush(): Promise<void> {
-    if (this.posting || this.pending.length === 0 || this.stopped) return
+    if (this.inFlight || this.pending.length === 0 || this.stopped) return
     const update = Y.mergeUpdates(this.pending)
     this.pending = []
-    this.posting = this.post(update)
+    this.inFlight = { update, request: this.post(update) }
     try {
-      await this.posting
+      await this.inFlight.request
       this.flushFailures = 0
-      if (this.status.phase === "rejected") this.setPhase({ phase: "ready" })
     } catch (error) {
       if (this.stopped) return
       if (isPermanentApiError(error)) {
-        await this.reject(error)
+        await this.discardRefusedEdits(error)
       } else {
         this.pending.unshift(update)
         this.flushFailures += 1
         this.scheduleFlush(backoffMs(this.flushFailures))
       }
     } finally {
-      this.posting = null
+      this.inFlight = null
     }
     if (this.pending.length > 0 && !this.flushTimer && !this.stopped) this.scheduleFlush(FLUSH_DEBOUNCE_MS)
   }
 
   private flushOnStop(): void {
-    if (this.pending.length === 0) return
-    const update = bytesToBase64(Y.mergeUpdates(this.pending))
+    const inFlight = this.inFlight
+    const pending = this.pending
     this.pending = []
-    // Queued behind a POST still in flight: these bytes can depend on it.
-    void (this.posting ?? Promise.resolve())
-      .catch(() => undefined)
-      .then(() => this.api.postUpdate(this.workspaceId, this.docId, update))
+    if (!inFlight && pending.length === 0) return
+    // Queued behind a POST still in flight: these bytes can depend on it, so a transient failure resends it too.
+    const toSend = inFlight
+      ? inFlight.request.then(
+          () => pending,
+          (error: unknown) => (isPermanentApiError(error) ? pending : [inFlight.update, ...pending])
+        )
+      : Promise.resolve(pending)
+    void toSend
+      .then((updates) => {
+        if (updates.length === 0) return
+        return this.api.postUpdate(this.workspaceId, this.docId, bytesToBase64(Y.mergeUpdates(updates)))
+      })
       .catch((error: unknown) =>
         console.error("Doc edits made before closing were not saved", { docId: this.docId, error })
       )
   }
 
   private async post(update: Uint8Array): Promise<void> {
-    const encoded = bytesToBase64(update)
-    let result
-    try {
-      result = await this.api.postUpdate(this.workspaceId, this.docId, encoded)
-    } catch (error) {
-      if (!ApiError.isApiError(error) || error.code !== "DOC_UPDATE_NOT_APPLICABLE") throw error
-      await this.catchUp()
-      if (this.stopped) return
-      result = await this.api.postUpdate(this.workspaceId, this.docId, encoded)
-    }
+    const result = await this.api.postUpdate(this.workspaceId, this.docId, bytesToBase64(update))
     // Only a single new row is provably ours; a server repair adds a second one this client must still apply.
     if (this.seq !== null && result.seq === this.seq + 1) this.seq = result.seq
   }
 
-  private async reject(error: ApiError): Promise<void> {
+  private async discardRefusedEdits(error: ApiError): Promise<void> {
     this.pending = []
     try {
       await this.reload()
     } catch {
       void this.catchUp()
     }
-    if (!this.stopped) this.setPhase({ phase: "rejected", code: error.code })
+    if (!this.stopped) this.onRejected?.(error)
   }
 
   private applyRemote(update: string): void {
     Y.applyUpdate(this.ydoc, base64ToBytes(update), REMOTE_ORIGIN)
   }
 
-  private setPhase(status: DocSyncStatus): void {
+  private setStatus(status: DocSyncStatus): void {
     if (sameStatus(status, this.status)) return
     this.status = status
     for (const listener of this.listeners) listener()

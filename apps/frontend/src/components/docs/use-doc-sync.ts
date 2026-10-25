@@ -1,35 +1,30 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react"
 import { toast } from "sonner"
 import * as Y from "yjs"
-import type { DocUpdatedOutboxPayload } from "@threahq/types"
+import { StreamErrorCodes } from "@threahq/types"
 import { useSocket, useSocketReconnectCount } from "@/contexts"
-import { useStreamSocket } from "@/hooks/use-stream-socket"
 import { DocSync, type DocSyncStatus } from "@/lib/docs/doc-sync"
+import { joinRoomWithAck } from "@/lib/socket-room"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 
 interface DocSession {
   key: string
   ydoc: Y.Doc
   sync: DocSync
+  loaded: Promise<void>
 }
+
+export type DocSyncView = { phase: "loading" } | { phase: "error"; retry: () => void } | { phase: "ready"; ydoc: Y.Doc }
 
 const NO_SESSION_STATUS: DocSyncStatus = { phase: "loading" }
 const noSubscription = () => () => {}
-
-export interface UseDocSyncResult {
-  /** Null until the session for the current generation exists. */
-  ydoc: Y.Doc | null
-  status: DocSyncStatus["phase"]
-  error: unknown
-  retry: () => void
-}
 
 /**
  * One live `Y.Doc` for a doc stream, kept in sync over REST and the doc's room.
  * A rejected edit replaces the doc and its sync: the old doc still holds the
  * dropped bytes, and every later edit built on them would fail as not applicable.
  */
-export function useDocSync(workspaceId: string, docId: string): UseDocSyncResult {
+export function useDocSync(workspaceId: string, docId: string): DocSyncView {
   const [generation, setGeneration] = useState(0)
   const [created, setCreated] = useState<DocSession | null>(null)
   const key = `${workspaceId}:${docId}:${generation}`
@@ -38,54 +33,61 @@ export function useDocSync(workspaceId: string, docId: string): UseDocSyncResult
 
   useEffect(() => {
     const ydoc = new Y.Doc()
-    const sync = new DocSync({ workspaceId, docId, ydoc })
-    setCreated({ key, ydoc, sync })
-    void sync.start()
+    const sync = new DocSync({
+      workspaceId,
+      docId,
+      ydoc,
+      onRejected: (refusal) => {
+        const readOnly = refusal.status === 403 || refusal.code === StreamErrorCodes.READ_ONLY
+        toast.error(readOnly ? "You can't edit this doc" : "Your last edit couldn't be saved", {
+          description: "The doc reloaded with the saved version.",
+        })
+        setGeneration((current) => current + 1)
+      },
+    })
+    setCreated({ key, ydoc, sync, loaded: sync.start() })
     return () => {
       sync.stop()
       ydoc.destroy()
     }
   }, [workspaceId, docId, key])
 
-  useStreamSocket(workspaceId, docId)
-
   const socket = useSocket()
   const syncEngine = useOptionalSyncEngine()
   useEffect(() => {
     const eventSource = syncEngine?.getLiveEventSource() ?? socket
     if (!session || !eventSource) return
-    const onDocUpdated = (payload: DocUpdatedOutboxPayload) => {
-      if (payload.workspaceId === workspaceId) session.sync.receive(payload)
-    }
-    eventSource.on("doc:updated", onDocUpdated)
+    eventSource.on("doc:updated", session.sync.receive)
     return () => {
-      eventSource.off("doc:updated", onDocUpdated)
+      eventSource.off("doc:updated", session.sync.receive)
     }
-  }, [session, socket, syncEngine, workspaceId])
+  }, [session, socket, syncEngine])
 
+  // INV-53: the load may have read the doc before the room join took effect, so catch up once the join is acked.
   const reconnectCount = useSocketReconnectCount()
   useEffect(() => {
-    void session?.sync.catchUp()
-  }, [session, reconnectCount])
+    if (!session || !socket) return
+    const abortController = new AbortController()
+    joinRoomWithAck(socket, `ws:${workspaceId}:stream:${docId}`, { signal: abortController.signal })
+      .then(() => session.loaded)
+      .then(() => {
+        if (!abortController.signal.aborted) void session.sync.catchUp()
+      })
+      .catch((error: unknown) => {
+        if (!abortController.signal.aborted) console.warn("Failed to join the doc room", { docId, error })
+      })
+    // Never leave the room: Socket.io rooms are not reference-counted, and other subscribers share this one.
+    return () => abortController.abort()
+  }, [session, socket, workspaceId, docId, reconnectCount])
 
   const status = useSyncExternalStore(
     session?.sync.subscribe ?? noSubscription,
     () => session?.sync.getStatus() ?? NO_SESSION_STATUS
   )
 
-  const phase = status.phase
-  useEffect(() => {
-    if (phase !== "rejected") return
-    toast.error("Your last edit couldn't be saved", { description: "The doc reloaded with the saved version." })
-    setGeneration((current) => current + 1)
-  }, [phase, session])
-
   const retry = useCallback(() => void session?.sync.retry(), [session])
 
-  return {
-    ydoc: session?.ydoc ?? null,
-    status: phase,
-    error: status.phase === "error" ? status.error : null,
-    retry,
-  }
+  if (!session || status.phase === "loading") return { phase: "loading" }
+  if (status.phase === "error") return { phase: "error", retry }
+  return { phase: "ready", ydoc: session.ydoc }
 }

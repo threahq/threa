@@ -10,7 +10,8 @@ import { countAttachmentReferences } from "./attachment-reference-counts"
 import { buildImageIndexByAttachment } from "@/components/timeline/attachment-image-index"
 import { findUploadJob } from "@/lib/uploads/upload-manager"
 import { createEditorExtensions } from "./editor-extensions"
-import { insertFilesIntoEditor } from "./insert-files"
+import { insertFilesIntoEditor, namePastedImages } from "./insert-files"
+import { EDITOR_CONTENT_CLASS } from "./editor-content-class"
 import { applyExternalEditorContent } from "./apply-external-content"
 import { ReferenceAudienceContext, NO_REFERENCE_AUDIENCE } from "./reference-audience-context"
 import { ComposerPillActions } from "./composer-pill-actions"
@@ -776,25 +777,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         "aria-label": ariaLabel,
         "aria-multiline": "true",
         ...(ariaDescribedBy ? { "aria-describedby": ariaDescribedBy } : {}),
-        class: cn(
-          "min-h-[40px] max-h-[200px] overflow-y-auto w-full py-2 outline-none",
-          "prose prose-sm dark:prose-invert max-w-none text-sm",
-          // Paragraph styling - minimal spacing for chat-like feel
-          "[&_p]:my-0 [&_p]:min-h-[1.5em]",
-          // List styling
-          "[&_ul]:my-1 [&_ul]:pl-5 [&_ol]:my-1 [&_ol]:pl-5",
-          "[&_li]:my-0 [&_li]:pl-0.5",
-          // Code block styling
-          "[&_pre]:my-2 [&_pre]:rounded-md [&_pre]:bg-muted [&_pre]:p-3",
-          "[&_pre_code]:bg-transparent [&_pre_code]:p-0",
-          // Blockquote styling
-          "[&_blockquote]:my-2 [&_blockquote]:border-l-2 [&_blockquote]:border-muted-foreground/30 [&_blockquote]:pl-4 [&_blockquote]:italic",
-          // Heading styling
-          "[&_h1]:text-xl [&_h1]:font-bold [&_h1]:my-2",
-          "[&_h2]:text-lg [&_h2]:font-semibold [&_h2]:my-1.5",
-          "[&_h3]:text-base [&_h3]:font-semibold [&_h3]:my-1",
-          "focus:outline-none"
-        ),
+        class: cn("min-h-[40px] max-h-[200px] overflow-y-auto w-full py-2 outline-none text-sm", EDITOR_CONTENT_CLASS),
       },
       clipboardTextSerializer: serializeClipboardSlice,
       handlePaste: (view, event) => {
@@ -815,16 +798,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         const files = event.clipboardData?.files
         if (files && files.length > 0 && onFileUploadRef.current && editorRef.current) {
           event.preventDefault()
-          let pasteImageOffset = 0
-          const filesToInsert = Array.from(files).map((file) => {
-            if (!file.type.startsWith("image/")) return file
-            pasteImageOffset++
-            const nextIndex = imageCountRef.current + pasteImageOffset
-            const ext = file.name.split(".").pop() || "png"
-            const newName = `pasted-image-${nextIndex}.${ext}`
-            return new File([file], newName, { type: file.type })
-          })
-          handleFilesInsert(filesToInsert, editorRef.current)
+          handleFilesInsert(namePastedImages(Array.from(files), imageCountRef.current), editorRef.current)
           return true
         }
 

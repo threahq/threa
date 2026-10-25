@@ -144,10 +144,42 @@ describe("AttachmentReferenceView", () => {
     expect(img.getAttribute("src")).toBe("blob:local-preview")
   })
 
-  it("should replace the skeleton with an unavailable notice when the image fails to load", async () => {
+  it("should keep the skeleton and re-request a failed image with backoff", async () => {
     mount({ ...IMAGE, display: "inline" })
-    fireEvent.error(await findInNode("img"))
-    await waitFor(() => expect(screen.queryByText("Image unavailable")).not.toBeNull())
+    const failed = await findInNode("img")
+    vi.useFakeTimers()
+    try {
+      fireEvent.error(failed)
+      expect({
+        unavailable: screen.queryByText("Image unavailable") !== null,
+        skeleton: document.querySelector('[data-type="attachment-reference"] .animate-pulse') !== null,
+      }).toEqual({ unavailable: false, skeleton: true })
+
+      await act(() => vi.advanceTimersByTimeAsync(2_000))
+      const retried = document.querySelector('[data-type="attachment-reference"] img')
+      fireEvent.load(retried!)
+      expect({ remounted: retried !== failed, unavailable: screen.queryByText("Image unavailable") !== null }).toEqual({
+        remounted: true,
+        unavailable: false,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("should replace the skeleton with an unavailable notice once the image's load retries run out", async () => {
+    mount({ ...IMAGE, display: "inline" })
+    await findInNode("img")
+    vi.useFakeTimers()
+    try {
+      for (let attempt = 0; attempt < 10; attempt++) {
+        fireEvent.error(document.querySelector('[data-type="attachment-reference"] img')!)
+        await act(() => vi.advanceTimersByTimeAsync(30_000))
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(screen.queryByText("Image unavailable")).not.toBeNull()
     expect({
       img: document.querySelector('[data-type="attachment-reference"] img'),
       skeleton: document.querySelector('[data-type="attachment-reference"] .animate-pulse'),

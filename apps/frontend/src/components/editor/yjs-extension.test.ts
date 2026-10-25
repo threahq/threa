@@ -87,6 +87,27 @@ describe("YjsCollaboration", () => {
     expect({ local: texts(editor), peer: texts(peer) }).toEqual({ local: ["theirs"], peer: ["theirs"] })
   })
 
+  it("routes the platform's historyUndo and historyRedo input to the shared undo", () => {
+    const editor = createEditor(new Y.Doc())
+    editor.commands.insertContent("hello")
+    const fire = (inputType: string) => {
+      const event = new InputEvent("beforeinput", { inputType, bubbles: true, cancelable: true })
+      editor.view.dom.dispatchEvent(event)
+      return event.defaultPrevented
+    }
+
+    const undoPrevented = fire("historyUndo")
+    const afterUndo = texts(editor)
+    const redoPrevented = fire("historyRedo")
+
+    expect({ undoPrevented, afterUndo, redoPrevented, afterRedo: texts(editor) }).toEqual({
+      undoPrevented: true,
+      afterUndo: [""],
+      redoPrevented: true,
+      afterRedo: ["hello"],
+    })
+  })
+
   it("detaches every Yjs observer it added once the editor is destroyed", () => {
     const ydoc = new Y.Doc()
     const fragment = ydoc.getXmlFragment("default")

@@ -86,17 +86,19 @@ interface CreateDocumentExtensionsOptions extends ContentExtensionsOptions {
 export function createEditorExtensions(options: CreateEditorExtensionsOptions | string) {
   // Support legacy string-only signature
   const config: CreateEditorExtensionsOptions = typeof options === "string" ? { placeholder: options } : options
-  return buildExtensions(config, true)
+  return buildExtensions(config, "composer")
 }
 
 /** A collaborative document editor: the shared content extensions without composer tooling, bound to a Yjs fragment that also owns undo. */
 export function createDocumentExtensions({ ydoc, ...options }: CreateDocumentExtensionsOptions) {
-  return [...buildExtensions(options, false), YjsCollaboration.configure({ ydoc })]
+  return [...buildExtensions(options, "document"), YjsCollaboration.configure({ ydoc })]
 }
 
+type ExtensionSurface = "composer" | "document"
+
 // One list so the composer keeps its extension order (plugin and keymap precedence follow it).
-function buildExtensions(config: Partial<CreateEditorExtensionsOptions>, composer: boolean): AnyExtension[] {
-  const composerOnly = (...extensions: AnyExtension[]) => (composer ? extensions : [])
+function buildExtensions(config: Partial<CreateEditorExtensionsOptions>, surface: ExtensionSurface): AnyExtension[] {
+  const composerOnly = (...extensions: AnyExtension[]) => (surface === "composer" ? extensions : [])
 
   const extensions: AnyExtension[] = [
     Document,

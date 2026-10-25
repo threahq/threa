@@ -1,70 +1,59 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react"
 import { EditorContent, useEditor, type Editor } from "@tiptap/react"
 import type * as Y from "yjs"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { createDocumentExtensions } from "@/components/editor/editor-extensions"
-import { isSuggestionActive } from "@/components/editor/editor-behaviors"
+import { EDITOR_CONTENT_CLASS } from "@/components/editor/editor-content-class"
+import { handleBeforeInput } from "@/components/editor/editor-behaviors"
 import { isProseMirrorClipboardEvent } from "@/components/editor/editor-markdown"
 import { serializeClipboardSlice } from "@/components/editor/clipboard-copy"
 import { insertPlainText, isPlainTextPaste } from "@/components/editor/plain-text-paste"
-import { insertFilesIntoEditor } from "@/components/editor/insert-files"
-import {
-  handleBeforeInputAtomDelete,
-  handleBeforeInputGraphemeDelete,
-  handleBeforeInputKeyboardPaste,
-  handleBeforeInputNewline,
-  insertPastedText,
-} from "@/components/editor/multiline-blocks"
+import { insertFilesIntoEditor, namePastedImages } from "@/components/editor/insert-files"
+import { insertPastedText } from "@/components/editor/multiline-blocks"
 import { useMentionSuggestion, useChannelSuggestion, useEmojiSuggestion } from "@/components/editor/triggers"
 import { EditorToolbar } from "@/components/editor/editor-toolbar"
+import { useRevealReady } from "@/contexts/coordinated-loading-context"
 import { useMentionables, useMarkdownTriggerLookups } from "@/hooks/use-mentionables"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useAttachments } from "@/hooks/use-attachments"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useLatest } from "@/hooks/use-latest"
 import { cn } from "@/lib/utils"
 import { useDocSync } from "./use-doc-sync"
 
 const COLUMN_CLASS = "mx-auto w-full max-w-3xl px-4 sm:px-6"
 
-// The composer's content styling, minus its height cap, so a doc renders blocks the way messages do.
-const EDITOR_SURFACE_CLASS = cn(
-  "w-full outline-none",
-  "prose prose-sm dark:prose-invert max-w-none text-sm",
-  "[&_p]:my-0 [&_p]:min-h-[1.5em]",
-  "[&_ul]:my-1 [&_ul]:pl-5 [&_ol]:my-1 [&_ol]:pl-5",
-  "[&_li]:my-0 [&_li]:pl-0.5",
-  "[&_pre]:my-2 [&_pre]:rounded-md [&_pre]:bg-muted [&_pre]:p-3",
-  "[&_pre_code]:bg-transparent [&_pre_code]:p-0",
-  "[&_blockquote]:my-2 [&_blockquote]:border-l-2 [&_blockquote]:border-muted-foreground/30 [&_blockquote]:pl-4 [&_blockquote]:italic",
-  "[&_h1]:text-xl [&_h1]:font-bold [&_h1]:my-2",
-  "[&_h2]:text-lg [&_h2]:font-semibold [&_h2]:my-1.5",
-  "[&_h3]:text-base [&_h3]:font-semibold [&_h3]:my-1",
-  "focus:outline-none"
-)
+const EDITOR_SURFACE_CLASS = cn("w-full outline-none text-sm", EDITOR_CONTENT_CLASS)
+
+/** Text a dragged-off-page file also carries, which the browser drops as a link or text instead of opening the file. */
+const DROPPABLE_TEXT_TYPES = ["text/plain", "text/uri-list", "text/html"]
 
 interface DocPaneBodyProps {
   workspaceId: string
   stream: { id: string }
-  canWrite: boolean
+  /** Null while the viewer's write access is unresolved. */
+  canWrite: boolean | null
 }
 
-/** A doc stream's collaborative editor, mounted only once the doc's state has loaded. */
+/** A doc stream's collaborative editor, mounted only once the doc's state and the viewer's write access have loaded. */
 export function DocPaneBody({ workspaceId, stream, canWrite }: DocPaneBodyProps) {
-  const { ydoc, status, retry } = useDocSync(workspaceId, stream.id)
+  const view = useDocSync(workspaceId, stream.id)
+  useRevealReady(view.phase !== "loading" && canWrite !== null)
 
-  if (status === "error") {
+  if (view.phase === "error") {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
         <p className="text-sm text-muted-foreground">This doc couldn't be loaded.</p>
-        <Button variant="outline" size="sm" onClick={retry}>
+        <Button variant="outline" size="sm" onClick={view.retry}>
           Retry
         </Button>
       </div>
     )
   }
 
-  if (!ydoc || status === "loading") {
+  if (view.phase === "loading" || canWrite === null) {
     return (
       <div className={cn(COLUMN_CLASS, "space-y-3 py-8")} aria-busy="true" aria-label="Loading doc">
         <Skeleton className="h-6 w-1/2" />
@@ -75,7 +64,7 @@ export function DocPaneBody({ workspaceId, stream, canWrite }: DocPaneBodyProps)
     )
   }
 
-  return <DocEditor key={ydoc.guid} workspaceId={workspaceId} ydoc={ydoc} canWrite={canWrite} />
+  return <DocEditor key={view.ydoc.guid} workspaceId={workspaceId} ydoc={view.ydoc} canWrite={canWrite} />
 }
 
 interface DocEditorProps {
@@ -96,25 +85,22 @@ function DocEditor({ workspaceId, ydoc, canWrite }: DocEditorProps) {
   const { suggestionConfig: emojiConfig, renderEmojiGrid } = useEmojiSuggestion({ emojis, emojiWeights })
   const { uploadFile, imageCount } = useAttachments(workspaceId, { e2eEnabled: false })
 
-  const getMentionTypeRef = useRef(getMentionType)
-  const toEmojiRef = useRef(toEmoji)
-  const uploadFileRef = useRef(uploadFile)
-  const imageCountRef = useRef(imageCount)
-  getMentionTypeRef.current = getMentionType
-  toEmojiRef.current = toEmoji
-  uploadFileRef.current = uploadFile
-  imageCountRef.current = imageCount
   const markdownParseOptions = useMemo(() => ({ emojiAsText: true, isKnownChannel }), [isKnownChannel])
-  const markdownParseOptionsRef = useRef(markdownParseOptions)
-  markdownParseOptionsRef.current = markdownParseOptions
+  const latestLookups = useLatest({ getMentionType, toEmoji, parseOptions: markdownParseOptions })
+  const latestUpload = useLatest({ uploadFile, imageCount })
   const editorRef = useRef<Editor | null>(null)
   const placeholderIdsRef = useRef(new Set<string>())
 
   const insertFiles = (files: File[]) => {
     const editor = editorRef.current
     if (!editor?.isEditable) return false
-    return insertFilesIntoEditor(editor, files, (file) => uploadFileRef.current(file), {
+    return insertFilesIntoEditor(editor, files, (file) => latestUpload().uploadFile(file), {
       onPlaceholdersInserted: (tempIds) => tempIds.forEach((id) => placeholderIdsRef.current.add(id)),
+      // An error chip would persist the uploader's failure into every reader's copy of the doc.
+      onUploadFailed: (tempId, error) => {
+        editor.commands.removeAttachmentReferences(tempId)
+        toast.error("Couldn't upload the file", { description: error instanceof Error ? error.message : undefined })
+      },
     })
   }
 
@@ -164,27 +150,16 @@ function DocEditor({ workspaceId, ydoc, canWrite }: DocEditorProps) {
 
         const files = event.clipboardData?.files
         if (files && files.length > 0) {
-          event.preventDefault()
-          let pastedImages = 0
-          const named = Array.from(files).map((file) => {
-            if (!file.type.startsWith("image/")) return file
-            pastedImages++
-            const ext = file.name.split(".").pop() || "png"
-            return new File([file], `pasted-image-${imageCountRef.current + pastedImages}.${ext}`, { type: file.type })
-          })
-          return insertFiles(named)
+          const handled = insertFiles(namePastedImages(Array.from(files), latestUpload().imageCount))
+          if (handled) event.preventDefault()
+          return handled
         }
 
         const text = event.clipboardData?.getData("text/plain")
         if (!text || !editorRef.current) return false
         const insert = pasteAsPlainText ? insertPlainText : insertPastedText
-        const handled = insert(
-          editorRef.current,
-          text,
-          getMentionTypeRef.current,
-          toEmojiRef.current,
-          markdownParseOptionsRef.current
-        )
+        const { getMentionType, toEmoji, parseOptions } = latestLookups()
+        const handled = insert(editorRef.current, text, getMentionType, toEmoji, parseOptions)
         if (handled) event.preventDefault()
         return handled
       },
@@ -192,35 +167,15 @@ function DocEditor({ workspaceId, ydoc, canWrite }: DocEditorProps) {
         if (moved) return false
         const files = event.dataTransfer?.files
         if (!files || files.length === 0) return false
-        event.preventDefault()
-        return insertFiles(Array.from(files))
+        const handled = insertFiles(Array.from(files))
+        if (handled) event.preventDefault()
+        return handled
       },
       handleDOMEvents: {
         beforeinput: (_view, event) => {
           const current = editorRef.current
           if (!current) return false
-          const inputEvent = event as InputEvent
-
-          const suggestionActive = isSuggestionActive(current)
-          if (handleBeforeInputNewline(current, inputEvent, { allowDuringComposition: suggestionActive })) return true
-          if (suggestionActive) return false
-
-          // Android atom deletion: keymap doesn't fire for Backspace, so delete
-          // adjacent inline atoms here before the browser's two-step selection.
-          if (handleBeforeInputAtomDelete(current, inputEvent)) return true
-
-          // Firefox Android can delete emoji text by code unit, leaving a
-          // broken half-grapheme. Delete the whole grapheme before native input.
-          if (handleBeforeInputGraphemeDelete(current, inputEvent)) return true
-
-          // Gboard / SwiftKey clipboard-bar paste arrives as insertText, not paste.
-          return handleBeforeInputKeyboardPaste(
-            current,
-            inputEvent,
-            getMentionTypeRef.current,
-            toEmojiRef.current,
-            markdownParseOptionsRef.current
-          )
+          return handleBeforeInput(current, event as InputEvent, latestLookups())
         },
       },
     },
@@ -230,6 +185,22 @@ function DocEditor({ workspaceId, ydoc, canWrite }: DocEditorProps) {
   useEffect(() => {
     if (editor && editor.isEditable !== canWrite) editor.setEditable(canWrite)
   }, [editor, canWrite])
+
+  // Files dropped beside the editor (the spacer, a read-only doc) would otherwise open in place of the app.
+  const onDragOver = (event: DragEvent) => {
+    if (event.dataTransfer.types.includes("Files")) event.preventDefault()
+  }
+  const onDrop = (event: DragEvent) => {
+    if (event.defaultPrevented || event.dataTransfer.files.length === 0) return
+    if (canWrite && editor) {
+      editor.commands.focus("end")
+      if (insertFiles(Array.from(event.dataTransfer.files))) {
+        event.preventDefault()
+        return
+      }
+    }
+    if (!DROPPABLE_TEXT_TYPES.some((type) => event.dataTransfer.getData(type))) event.preventDefault()
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -246,7 +217,7 @@ function DocEditor({ workspaceId, ydoc, canWrite }: DocEditorProps) {
           />
         </div>
       )}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto" onDragOver={onDragOver} onDrop={onDrop}>
         <div className={cn(COLUMN_CLASS, "flex min-h-full flex-col py-8")}>
           <EditorContent editor={editor} />
           {renderMentionList()}

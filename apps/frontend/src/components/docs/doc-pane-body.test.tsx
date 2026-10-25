@@ -1,5 +1,5 @@
-import { StrictMode } from "react"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { StrictMode, type ReactNode } from "react"
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest"
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -9,11 +9,13 @@ import * as Y from "yjs"
 import { prosemirrorJSONToYDoc, yDocToProsemirrorJSON } from "y-prosemirror"
 import { getThreaSchema } from "@threahq/prosemirror/schema"
 import { base64ToBytes, bytesToBase64 } from "@threahq/crypto"
-import type { DocState, DocUpdatedOutboxPayload, Stream } from "@threahq/types"
+import type { DocState, DocUpdatedPayload, Stream } from "@threahq/types"
 import { toast } from "sonner"
 import { ApiError } from "@/api/client"
 import { docsApi } from "@/api/docs"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { RevealOnReady } from "@/contexts/coordinated-loading-context"
+import { FLUSH_DEBOUNCE_MS } from "@/lib/docs/doc-sync"
 import * as contextsModule from "@/contexts"
 import * as attachmentsModule from "@/hooks/use-attachments"
 import * as mentionablesModule from "@/hooks/use-mentionables"
@@ -45,6 +47,7 @@ describe("DocPaneBody", () => {
   let gate: SocketEventGate
   let serverDoc: Y.Doc
   let queryClient: QueryClient
+  let joinRoom: MockInstance<typeof socketRoomModule.joinRoomWithAck>
 
   beforeEach(() => {
     serverDoc = prosemirrorJSONToYDoc(getThreaSchema(), paragraphs("Rotation tracker"), "default")
@@ -58,7 +61,7 @@ describe("DocPaneBody", () => {
       preferences: { keyboardShortcuts: {} },
       isLoading: false,
     } as unknown as ReturnType<typeof contextsModule.usePreferences>)
-    vi.spyOn(socketRoomModule, "joinRoomFireAndForget").mockImplementation(() => {})
+    joinRoom = vi.spyOn(socketRoomModule, "joinRoomWithAck").mockResolvedValue(undefined)
     vi.spyOn(syncEngineModule, "useOptionalSyncEngine").mockReturnValue({
       getLiveEventSource: () => gate,
       backfillStreamGap: vi.fn(),
@@ -93,7 +96,7 @@ describe("DocPaneBody", () => {
     vi.restoreAllMocks()
   })
 
-  function tree(canWrite: boolean) {
+  function tree(canWrite: boolean | null, wrap: (body: ReactNode) => ReactNode = (body) => body) {
     return (
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
@@ -101,7 +104,7 @@ describe("DocPaneBody", () => {
             <Routes>
               <Route
                 path="/w/:workspaceId"
-                element={<DocPaneBody workspaceId={WORKSPACE_ID} stream={{ id: DOC_ID }} canWrite={canWrite} />}
+                element={wrap(<DocPaneBody workspaceId={WORKSPACE_ID} stream={{ id: DOC_ID }} canWrite={canWrite} />)}
               />
             </Routes>
           </MemoryRouter>
@@ -110,16 +113,27 @@ describe("DocPaneBody", () => {
     )
   }
 
-  function mount(canWrite = true, { strict = false } = {}) {
+  function mount(
+    canWrite: boolean | null = true,
+    { strict = false, wrap }: { strict?: boolean; wrap?: (body: ReactNode) => ReactNode } = {}
+  ) {
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    const view = render(strict ? <StrictMode>{tree(canWrite)}</StrictMode> : tree(canWrite))
+    const view = render(strict ? <StrictMode>{tree(canWrite, wrap)}</StrictMode> : tree(canWrite, wrap))
     return {
       ...view,
-      rerender: (next: boolean) => view.rerender(strict ? <StrictMode>{tree(next)}</StrictMode> : tree(next)),
+      rerender: (next: boolean | null) =>
+        view.rerender(strict ? <StrictMode>{tree(next, wrap)}</StrictMode> : tree(next, wrap)),
     }
   }
 
-  function remoteParagraph(text: string, seq: number): DocUpdatedOutboxPayload {
+  /** Mounts and waits until the editor shows the loaded doc. */
+  async function mountLoaded(...args: Parameters<typeof mount>) {
+    const view = mount(...args)
+    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
+    return view
+  }
+
+  function remoteParagraph(text: string, seq: number): DocUpdatedPayload {
     const before = Y.encodeStateVector(serverDoc)
     const paragraph = new Y.XmlElement("paragraph")
     paragraph.insert(0, [new Y.XmlText(text)])
@@ -136,9 +150,7 @@ describe("DocPaneBody", () => {
   }
 
   it("renders the loaded doc in an editable editor with the formatting toolbar", async () => {
-    mount()
-
-    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
+    await mountLoaded()
     expect({
       editable: proseMirror().getAttribute("contenteditable"),
       toolbar: screen.queryByRole("button", { name: "Bold" }) !== null,
@@ -146,8 +158,7 @@ describe("DocPaneBody", () => {
   })
 
   it("posts a local edit once after the debounce", async () => {
-    mount()
-    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
+    await mountLoaded()
 
     act(() => {
       proseMirror().editor.chain().focus("end").insertContent(" for March").run()
@@ -166,20 +177,18 @@ describe("DocPaneBody", () => {
   })
 
   it("shows a remote update delivered through the live event source", async () => {
-    mount()
-    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
+    await mountLoaded()
+    await waitFor(() => expect(docsApi.listUpdates).toHaveBeenCalledTimes(1))
 
     const payload = remoteParagraph("Second shift", 2)
     await act(() => gate.dispatch("doc:updated", payload))
 
     await waitFor(() => expect(proseMirror().textContent).toBe("Rotation trackerSecond shift"))
-    expect(docsApi.listUpdates).not.toHaveBeenCalled()
+    expect(docsApi.listUpdates).toHaveBeenCalledTimes(1)
   })
 
   it("gives a read-only viewer no toolbar and a non-editable editor", async () => {
-    mount(false)
-
-    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
+    await mountLoaded(false)
     expect({
       editable: proseMirror().getAttribute("contenteditable"),
       toolbar: screen.queryByRole("button", { name: "Bold" }) !== null,
@@ -189,8 +198,7 @@ describe("DocPaneBody", () => {
   it("reports a refused edit once and remounts on a fresh copy of the saved doc", async () => {
     const toastError = vi.spyOn(toast, "error").mockReturnValue("toast")
     vi.mocked(docsApi.postUpdate).mockRejectedValueOnce(new ApiError(400, "DOC_UPDATE_INVALID", "invalid"))
-    mount()
-    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
+    await mountLoaded()
     const firstEditor = proseMirror().editor
 
     act(() => {
@@ -204,6 +212,7 @@ describe("DocPaneBody", () => {
       loads: vi.mocked(docsApi.get).mock.calls.length,
     }).toEqual({
       toasts: ["Your last edit couldn't be saved"],
+      // The first open, the refused session's own reload, and the fresh session that replaces it.
       loads: 3,
     })
   })
@@ -219,8 +228,7 @@ describe("DocPaneBody", () => {
   })
 
   it("keeps one live session under StrictMode: one load in use, one POST per edit, remote updates applied", async () => {
-    mount(true, { strict: true })
-    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
+    await mountLoaded(true, { strict: true })
 
     act(() => {
       proseMirror().editor.chain().focus("end").insertContent(" for March").run()
@@ -229,29 +237,104 @@ describe("DocPaneBody", () => {
     await act(() => gate.dispatch("doc:updated", remoteParagraph("Second shift", 3)))
 
     await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker for MarchSecond shift"))
-    await new Promise((resolve) => setTimeout(resolve, 600))
+    await new Promise((resolve) => setTimeout(resolve, FLUSH_DEBOUNCE_MS + 200))
     expect(docsApi.postUpdate).toHaveBeenCalledTimes(1)
   })
 
-  it("catches up after a socket reconnect, not on first mount", async () => {
+  it("catches up from the loaded seq once the room join is acked, and again after a reconnect", async () => {
     const reconnects = vi.spyOn(contextsModule, "useSocketReconnectCount").mockReturnValue(0)
-    const view = mount()
-    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
-    const beforeReconnect = vi.mocked(docsApi.listUpdates).mock.calls.length
+    const view = await mountLoaded()
+    await waitFor(() => expect(docsApi.listUpdates).toHaveBeenCalledTimes(1))
 
     reconnects.mockReturnValue(1)
     view.rerender(true)
 
-    await waitFor(() => expect(docsApi.listUpdates).toHaveBeenCalledTimes(1))
-    expect({ beforeReconnect, call: vi.mocked(docsApi.listUpdates).mock.calls[0] }).toEqual({
-      beforeReconnect: 0,
-      call: [WORKSPACE_ID, DOC_ID, 1],
+    await waitFor(() => expect(docsApi.listUpdates).toHaveBeenCalledTimes(2))
+    expect({
+      rooms: joinRoom.mock.calls.map(([, room]) => room),
+      afters: vi.mocked(docsApi.listUpdates).mock.calls.map(([, , after]) => after),
+    }).toEqual({
+      rooms: [`ws:${WORKSPACE_ID}:stream:${DOC_ID}`, `ws:${WORKSPACE_ID}:stream:${DOC_ID}`],
+      afters: [1, 1],
     })
   })
 
-  it("follows a write permission change on the same editor", async () => {
-    const view = mount(true)
+  it("applies an update committed between the load and the room join once the join is acked", async () => {
+    let ackJoin!: () => void
+    joinRoom.mockImplementation(() => new Promise<void>((resolve) => (ackJoin = resolve)))
+    await mountLoaded()
+    const missed = remoteParagraph("Committed before the join", 2)
+    vi.mocked(docsApi.listUpdates).mockResolvedValue({ updates: [missed] })
+    expect(docsApi.listUpdates).not.toHaveBeenCalled()
+
+    await act(async () => ackJoin())
+
+    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation trackerCommitted before the join"))
+  })
+
+  it("reports reveal-ready once the doc has loaded, not while it loads", async () => {
+    let finishLoad!: () => void
+    vi.mocked(docsApi.get).mockImplementationOnce(
+      () => new Promise<DocState>((resolve) => (finishLoad = () => resolve(docState(serverDoc, 1))))
+    )
+    const onReveal = vi.fn()
+    mount(true, {
+      wrap: (body) => (
+        <RevealOnReady revealed={false} onReveal={onReveal} fallback={null}>
+          {body}
+        </RevealOnReady>
+      ),
+    })
+    await waitFor(() => expect(docsApi.get).toHaveBeenCalledTimes(1))
+    const whileLoading = onReveal.mock.calls.length
+
+    await act(async () => finishLoad())
+
+    await waitFor(() => expect(onReveal).toHaveBeenCalled())
+    expect(whileLoading).toBe(0)
+  })
+
+  it("holds the skeleton and the reveal until the viewer's write access resolves", async () => {
+    const onReveal = vi.fn()
+    const view = mount(null, {
+      wrap: (body) => (
+        <RevealOnReady revealed={false} onReveal={onReveal} fallback={null}>
+          {body}
+        </RevealOnReady>
+      ),
+    })
+    await waitFor(() => expect(docsApi.get).toHaveBeenCalledTimes(1))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const unresolved = {
+      skeleton: screen.queryByLabelText("Loading doc") !== null,
+      editor: document.querySelector(".ProseMirror") !== null,
+      revealed: onReveal.mock.calls.length > 0,
+    }
+
+    view.rerender(true)
+
     await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
+    expect({ unresolved, revealed: onReveal.mock.calls.length > 0 }).toEqual({
+      unresolved: { skeleton: true, editor: false, revealed: false },
+      revealed: true,
+    })
+  })
+
+  it("tells a viewer whose edit was refused for lack of access that the doc is read-only for them", async () => {
+    const toastError = vi.spyOn(toast, "error").mockReturnValue("toast")
+    vi.mocked(docsApi.postUpdate).mockRejectedValueOnce(new ApiError(403, "STREAM_READ_ONLY", "read only"))
+    await mountLoaded()
+
+    act(() => {
+      proseMirror().editor.chain().focus("end").insertContent(" refused").run()
+    })
+
+    await waitFor(() => expect(toastError).toHaveBeenCalled(), { timeout: 2000 })
+    expect(toastError.mock.calls.map(([message]) => message)).toEqual(["You can't edit this doc"])
+  })
+
+  it("follows a write permission change on the same editor", async () => {
+    const view = await mountLoaded(true)
     const editor = proseMirror().editor
 
     view.rerender(false)
@@ -265,8 +348,7 @@ describe("DocPaneBody", () => {
 
   it("sends unsaved edits and stops listening when the pane closes", async () => {
     const off = vi.spyOn(gate, "off")
-    const view = mount()
-    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
+    const view = await mountLoaded()
 
     act(() => {
       proseMirror().editor.chain().focus("end").insertContent(" closing").run()
@@ -283,8 +365,7 @@ describe("DocPaneBody", () => {
       uploadFile,
       imageCount: 0,
     } as unknown as ReturnType<typeof attachmentsModule.useAttachments>)
-    const view = mount()
-    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
+    const view = await mountLoaded()
     act(() => {
       proseMirror().editor.commands.focus("end")
     })
@@ -307,6 +388,61 @@ describe("DocPaneBody", () => {
     expect({ whileUploading: replay(1), afterClose: replay(2) }).toEqual({
       whileUploading: expect.stringContaining('"type":"attachmentReference"'),
       afterClose: expect.not.stringContaining('"type":"attachmentReference"'),
+    })
+  })
+
+  it("removes a placeholder whose upload failed instead of leaving an error chip in the shared doc", async () => {
+    const toastError = vi.spyOn(toast, "error").mockReturnValue("toast")
+    let failUpload!: (error: Error) => void
+    const uploadFile = vi.fn(() => new Promise<never>((_resolve, reject) => (failUpload = reject)))
+    vi.spyOn(attachmentsModule, "useAttachments").mockReturnValue({
+      uploadFile,
+      imageCount: 0,
+    } as unknown as ReturnType<typeof attachmentsModule.useAttachments>)
+    await mountLoaded()
+    act(() => {
+      proseMirror().editor.commands.focus("end")
+    })
+
+    const file = new File(["png"], "shot.png", { type: "image/png" })
+    fireEvent.paste(proseMirror(), { clipboardData: { files: [file], types: ["Files"], getData: () => "" } })
+    await waitFor(() => expect(uploadFile).toHaveBeenCalledTimes(1))
+    const withPlaceholder = JSON.stringify(proseMirror().editor.getJSON())
+    await act(async () => failUpload(new Error("Too large")))
+
+    await waitFor(() => expect(toastError).toHaveBeenCalled())
+    expect({
+      withPlaceholder: withPlaceholder.includes('"type":"attachmentReference"'),
+      afterFailure: JSON.stringify(proseMirror().editor.getJSON()).includes('"type":"attachmentReference"'),
+      toasts: toastError.mock.calls.map(([message]) => message),
+    }).toEqual({ withPlaceholder: true, afterFailure: false, toasts: ["Couldn't upload the file"] })
+  })
+
+  it("keeps a file dropped beside the editor from opening in place of the app", async () => {
+    const uploadFile = vi.fn(() => new Promise<never>(() => {}))
+    vi.spyOn(attachmentsModule, "useAttachments").mockReturnValue({
+      uploadFile,
+      imageCount: 0,
+    } as unknown as ReturnType<typeof attachmentsModule.useAttachments>)
+    const view = await mountLoaded()
+    const scroller = proseMirror().closest(".overflow-y-auto")!
+    const file = new File(["png"], "shot.png", { type: "image/png" })
+    const drop = () => {
+      const event = new Event("drop", { bubbles: true, cancelable: true })
+      Object.assign(event, { dataTransfer: { files: [file], types: ["Files"], getData: () => "" } })
+      scroller.dispatchEvent(event)
+      return event.defaultPrevented
+    }
+
+    const writable = drop()
+    view.rerender(false)
+    await waitFor(() => expect(proseMirror().getAttribute("contenteditable")).toBe("false"))
+    const readOnly = drop()
+
+    expect({ writable, readOnly, uploads: uploadFile.mock.calls.length }).toEqual({
+      writable: true,
+      readOnly: true,
+      uploads: 1,
     })
   })
 })

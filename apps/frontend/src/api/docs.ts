@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { DocPostUpdateResult, DocState, DocUpdateView } from "@threahq/types"
+import type { DocPostUpdateResult, DocState, DocUpdatesResponse } from "@threahq/types"
 
 /** Collaborative doc streams: full state, the update log, and Yjs writes (base64). */
 export const docsApi = {
@@ -7,8 +7,8 @@ export const docsApi = {
     return api.get<DocState>(`/api/workspaces/${workspaceId}/docs/${docId}`)
   },
 
-  listUpdates(workspaceId: string, docId: string, after: number): Promise<{ updates: DocUpdateView[] }> {
-    return api.get<{ updates: DocUpdateView[] }>(`/api/workspaces/${workspaceId}/docs/${docId}/updates?after=${after}`)
+  listUpdates(workspaceId: string, docId: string, after: number): Promise<DocUpdatesResponse> {
+    return api.get<DocUpdatesResponse>(`/api/workspaces/${workspaceId}/docs/${docId}/updates?after=${after}`)
   },
 
   postUpdate(workspaceId: string, docId: string, update: string): Promise<DocPostUpdateResult> {
