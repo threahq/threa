@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react"
+import { useRef, useState, type ReactNode } from "react"
 import { useParams } from "react-router-dom"
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react"
 import { attachmentReferenceLabel } from "@threahq/prosemirror"
@@ -55,25 +55,66 @@ function InlineImage({
   )
 }
 
+function AttachmentTooltip({ attrs, children }: { attrs: AttachmentReferenceAttrs; children: ReactNode }) {
+  if (attrs.status === "uploading") return children
+
+  return (
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>{children}</TooltipTrigger>
+        {attrs.status === "error" ? (
+          <TooltipContent side="top" className="max-w-[200px]">
+            <p className="text-sm">{attrs.error || "Upload failed"}</p>
+          </TooltipContent>
+        ) : (
+          <TooltipContent side="top" className="max-w-[250px]">
+            <div className="space-y-1">
+              <p className="text-sm font-medium truncate">{attrs.filename}</p>
+              <p className="text-xs text-muted-foreground">{formatFileSize(attrs.sizeBytes)}</p>
+            </div>
+          </TooltipContent>
+        )}
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
 function ImageDisplayToggle({
   attrs,
   updateAttributes,
+  focusAfterNode,
   children,
 }: {
   attrs: AttachmentReferenceAttrs
   updateAttributes: NodeViewProps["updateAttributes"]
+  focusAfterNode: () => void
   children: ReactNode
 }) {
   const [open, setOpen] = useState(false)
+  const dismissedOutside = useRef(false)
   const inline = attrs.display === "inline"
+  // The tooltip wraps only the trigger: focus moving into the portaled content
+  // bubbles through the React tree, and an ancestor tooltip would open on it.
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button type="button" aria-label={attrs.filename} className="inline cursor-pointer align-baseline">
-          {children}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent side="top" className="w-auto p-1">
+      <AttachmentTooltip attrs={attrs}>
+        <PopoverTrigger asChild>
+          <button type="button" aria-label={attrs.filename} className="inline cursor-pointer align-baseline">
+            {children}
+          </button>
+        </PopoverTrigger>
+      </AttachmentTooltip>
+      <PopoverContent
+        side="top"
+        className="w-auto p-1"
+        onInteractOutside={() => (dismissedOutside.current = true)}
+        onCloseAutoFocus={(event) => {
+          // Back to the composer, not the pill: a focused trigger takes no typing.
+          event.preventDefault()
+          if (!dismissedOutside.current) focusAfterNode()
+          dismissedOutside.current = false
+        }}
+      >
         <Button
           variant="ghost"
           size="sm"
@@ -89,7 +130,7 @@ function ImageDisplayToggle({
   )
 }
 
-export function AttachmentReferenceView({ node, updateAttributes }: NodeViewProps) {
+export function AttachmentReferenceView({ node, updateAttributes, editor, getPos }: NodeViewProps) {
   const attrs = node.attrs as AttachmentReferenceAttrs
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const isImage = attrs.mimeType.startsWith("image/")
@@ -101,46 +142,27 @@ export function AttachmentReferenceView({ node, updateAttributes }: NodeViewProp
     <AttachmentChip label={getDisplayText(attrs)} mimeType={attrs.mimeType} status={attrs.status} />
   )
 
-  const content = (
-    <NodeViewWrapper as="span" data-type="attachment-reference">
-      {isImage ? (
-        <ImageDisplayToggle attrs={attrs} updateAttributes={updateAttributes}>
-          {visual}
-        </ImageDisplayToggle>
-      ) : (
-        visual
-      )}
-    </NodeViewWrapper>
-  )
-
-  if (attrs.status === "uploading") {
-    return content
-  }
-
-  if (attrs.status === "error") {
+  if (!isImage) {
     return (
-      <TooltipProvider delayDuration={300}>
-        <Tooltip>
-          <TooltipTrigger asChild>{content}</TooltipTrigger>
-          <TooltipContent side="top" className="max-w-[200px]">
-            <p className="text-sm">{attrs.error || "Upload failed"}</p>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+      <AttachmentTooltip attrs={attrs}>
+        <NodeViewWrapper as="span" data-type="attachment-reference">
+          {visual}
+        </NodeViewWrapper>
+      </AttachmentTooltip>
     )
   }
 
+  const focusAfterNode = () => {
+    const pos = getPos()
+    if (pos === undefined) editor.commands.focus()
+    else editor.commands.focus(pos + node.nodeSize)
+  }
+
   return (
-    <TooltipProvider delayDuration={300}>
-      <Tooltip>
-        <TooltipTrigger asChild>{content}</TooltipTrigger>
-        <TooltipContent side="top" className="max-w-[250px]">
-          <div className="space-y-1">
-            <p className="text-sm font-medium truncate">{attrs.filename}</p>
-            <p className="text-xs text-muted-foreground">{formatFileSize(attrs.sizeBytes)}</p>
-          </div>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <NodeViewWrapper as="span" data-type="attachment-reference">
+      <ImageDisplayToggle attrs={attrs} updateAttributes={updateAttributes} focusAfterNode={focusAfterNode}>
+        {visual}
+      </ImageDisplayToggle>
+    </NodeViewWrapper>
   )
 }

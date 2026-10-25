@@ -65,6 +65,37 @@ describe("AttachmentReferenceView", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Show as image" })).toBeNull())
   })
 
+  it("should return focus to the composer after the pill when the action is chosen", async () => {
+    const getEditor = mount(IMAGE)
+    fireEvent.click(await pill("photo.png"))
+    fireEvent.click(await screen.findByRole("button", { name: "Show as image" }))
+    await waitFor(() => expect(getEditor().isFocused).toBe(true))
+    expect({
+      caret: getEditor().state.selection.from,
+      tooltip: document.querySelector('[role="tooltip"]'),
+    }).toEqual({ caret: 2, tooltip: null })
+  })
+
+  it("should close the popover on Escape without opening the tooltip", async () => {
+    mount(IMAGE)
+    fireEvent.click(await pill("photo.png"))
+    const action = await screen.findByRole("button", { name: "Show as image" })
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    fireEvent.keyDown(action, { key: "Escape" })
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Show as image" })).toBeNull())
+  })
+
+  it("should keep display inline when the upload settles after the switch", async () => {
+    const getEditor = mount({ ...IMAGE, id: "temp_1", status: "uploading" })
+    fireEvent.click(await pill("photo.png"))
+    fireEvent.click(await screen.findByRole("button", { name: "Show as image" }))
+    act(() => {
+      getEditor().commands.updateAttachmentReference("temp_1", { id: IMAGE.id, status: "uploaded" })
+    })
+    await waitFor(() => expect(document.querySelector('[data-type="attachment-reference"] img')).not.toBeNull())
+    expect(nodeAttrs(getEditor())).toEqual({ ...IMAGE, display: "inline" })
+  })
+
   it("should render the thumbnail when an inline image is uploaded", async () => {
     mount({ ...IMAGE, display: "inline" })
     const img = await waitFor(() => {
