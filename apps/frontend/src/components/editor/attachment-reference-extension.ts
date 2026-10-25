@@ -1,8 +1,17 @@
 import { AttachmentReferenceNode } from "@threahq/prosemirror/schema"
 import { ReactNodeViewRenderer } from "@tiptap/react"
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model"
+import { isImageAttachment } from "@/lib/attachment-kind"
 import { AttachmentReferenceView } from "./attachment-reference-view"
 
 export type AttachmentStatus = "uploading" | "uploaded" | "error"
+
+export type AttachmentDisplay = "pill" | "inline"
+
+export const DISPLAY_TOGGLE_LABEL: Record<AttachmentDisplay, string> = {
+  pill: "Show as image",
+  inline: "Show as chip",
+}
 
 export interface AttachmentReferenceAttrs {
   /** Attachment ID (temp ID while uploading, real ID after) */
@@ -20,7 +29,19 @@ export interface AttachmentReferenceAttrs {
   /** Error message if status is "error" */
   error: string | null
   /** How the sent message draws it: a chip, or an image in the body. */
-  display?: "pill" | "inline"
+  display?: AttachmentDisplay
+}
+
+/** The current display of an image reference; null for any other node. */
+export function imageReferenceDisplay(node: ProseMirrorNode): AttachmentDisplay | null {
+  if (node.type.name !== "attachmentReference") return null
+  const attrs = node.attrs as AttachmentReferenceAttrs
+  if (!isImageAttachment(attrs)) return null
+  return attrs.display === "inline" ? "inline" : "pill"
+}
+
+export function toggledDisplay(display: AttachmentDisplay): AttachmentDisplay {
+  return display === "inline" ? "pill" : "inline"
 }
 
 declare module "@tiptap/core" {

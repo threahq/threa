@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it } from "vitest"
 import { Editor, type JSONContent } from "@tiptap/core"
 import { createEditorExtensions } from "./editor-extensions"
 import { EditorBehaviors } from "./editor-behaviors"
@@ -13,12 +13,11 @@ afterEach(() => {
 function createTestEditor(content: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }) {
   const element = document.createElement("div")
   document.body.append(element)
-  const onSubmit = vi.fn()
   const editor = new Editor({
     element,
     extensions: [
       ...createEditorExtensions({ placeholder: "Type a message..." }),
-      EditorBehaviors.configure({ sendModeRef: { current: "enter" }, onSubmitRef: { current: onSubmit } }),
+      EditorBehaviors.configure({ sendModeRef: { current: "cmdEnter" } }),
     ],
     content,
   })
@@ -26,7 +25,7 @@ function createTestEditor(content: JSONContent = { type: "doc", content: [{ type
   editor.on("destroy", () => element.remove())
   editors.push(editor)
   editor.commands.focus("end")
-  return { editor, onSubmit }
+  return { editor }
 }
 
 function typeText(editor: Editor, text: string) {
@@ -86,6 +85,26 @@ describe("composer task lists", () => {
     ])
   })
 
+  it("converts `- [] ` into an unchecked task item", () => {
+    const { editor } = createTestEditor()
+    typeText(editor, "- [] milk")
+
+    expect(editor.getJSON()).toEqual(doc(taskList(taskItem(false, paragraph("milk")))))
+  })
+
+  it("keeps an ordered list item ordered when `[ ] ` is typed in it", () => {
+    const { editor } = createTestEditor()
+    typeText(editor, "1. [ ] milk")
+
+    expect(editor.getJSON()).toEqual(
+      doc({
+        type: "orderedList",
+        attrs: { blockId: null, start: 1, type: null },
+        content: [{ type: "listItem", content: [paragraph("[ ] milk")] }],
+      })
+    )
+  })
+
   it("converts only the bullet item being typed, keeping its siblings bullets", () => {
     const { editor } = createTestEditor()
     typeText(editor, "- a")
@@ -104,17 +123,16 @@ describe("composer task lists", () => {
     )
   })
 
-  it("splits on Enter without sending, and lifts out of an empty trailing item", () => {
-    const { editor, onSubmit } = createTestEditor()
+  it("splits on Enter, and lifts out of an empty trailing item", () => {
+    const { editor } = createTestEditor()
     typeText(editor, "[x] one")
     pressKey(editor, "Enter")
     const afterSplit = editor.getJSON()
     pressKey(editor, "Enter")
 
-    expect({ afterSplit, afterLift: editor.getJSON(), sent: onSubmit.mock.calls.length }).toEqual({
+    expect({ afterSplit, afterLift: editor.getJSON() }).toEqual({
       afterSplit: doc(taskList(taskItem(true, paragraph("one")), taskItem(false, paragraph()))),
       afterLift: doc(taskList(taskItem(true, paragraph("one"))), paragraph()),
-      sent: 0,
     })
   })
 

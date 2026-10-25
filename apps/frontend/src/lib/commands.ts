@@ -52,7 +52,16 @@ const isEnqueueNode = (node: JSONContent) =>
   node.type === "slashCommand" && String(node.attrs?.name ?? "").toLowerCase() === ENQUEUE_COMMAND
 // Blocks that hold nothing once the directive is gone are dropped with it. Table
 // parts are not: removing a cell or row would reshape the table.
-const PRUNABLE_WHEN_EMPTIED = new Set(["paragraph", "heading", "listItem", "bulletList", "orderedList", "blockquote"])
+const PRUNABLE_WHEN_EMPTIED = new Set([
+  "paragraph",
+  "heading",
+  "listItem",
+  "bulletList",
+  "orderedList",
+  "taskItem",
+  "taskList",
+  "blockquote",
+])
 
 function hasBoundaryAt(node: JSONContent | undefined, edge: "start" | "end"): boolean {
   if (!node || node.type === "hardBreak") return true

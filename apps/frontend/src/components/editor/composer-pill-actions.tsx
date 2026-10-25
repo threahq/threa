@@ -9,18 +9,24 @@ import { useInputMode } from "@/hooks/use-input-mode"
 import { cn } from "@/lib/utils"
 import { serializeClipboardSlice } from "./clipboard-copy"
 import { ComposerPillDragPluginKey, isComposerPillNode } from "./composer-pill-drag-extension"
+import {
+  DISPLAY_TOGGLE_LABEL,
+  imageReferenceDisplay,
+  toggledDisplay,
+  type AttachmentDisplay,
+} from "./attachment-reference-extension"
 
 const COPY_CONFIRMATION_MS = 1_200
-const COPY_BUTTON_GAP_PX = 8
-const COPY_BUTTON_SIZE_PX = 40
-const ACTION_BAR_GAP_PX = 8
+const ACTION_BAR_OFFSET_PX = 8
+const ACTION_BUTTON_SIZE_PX = 40
+const ACTION_BUTTON_GAP_PX = 8
 
 interface ActionBarAnchor {
   pos: number
   left: number
   top: number
   below: boolean
-  displayToggle: "pill" | "inline" | null
+  imageDisplay: AttachmentDisplay | null
 }
 
 function pillRect(editor: Editor, pos: number): DOMRect | null {
@@ -58,19 +64,18 @@ function actionBarAnchor(editor: Editor): ActionBarAnchor | null {
   const rect = pillRect(editor, pos)
   if (!rect || rect.bottom < 0 || rect.top > window.innerHeight) return null
   const node = editor.state.doc.nodeAt(pos)
-  const isImagePill = node?.type.name === "attachmentReference" && String(node.attrs.mimeType).startsWith("image/")
-  const currentDisplay = node?.attrs.display === "inline" ? "inline" : "pill"
-  const displayToggle = isImagePill ? currentDisplay : null
-  const barWidth = displayToggle ? COPY_BUTTON_SIZE_PX * 2 + ACTION_BAR_GAP_PX : COPY_BUTTON_SIZE_PX
+  const imageDisplay = node ? imageReferenceDisplay(node) : null
+  const buttonCount = imageDisplay ? 2 : 1
+  const barWidth = buttonCount * ACTION_BUTTON_SIZE_PX + (buttonCount - 1) * ACTION_BUTTON_GAP_PX
   const half = barWidth / 2
   const left = Math.min(Math.max(rect.left + rect.width / 2, half), Math.max(half, window.innerWidth - half))
-  const below = rect.top < COPY_BUTTON_SIZE_PX + COPY_BUTTON_GAP_PX
+  const below = rect.top < ACTION_BUTTON_SIZE_PX + ACTION_BAR_OFFSET_PX
   return {
     pos,
     left,
-    top: below ? rect.bottom + COPY_BUTTON_GAP_PX : rect.top - COPY_BUTTON_GAP_PX,
+    top: below ? rect.bottom + ACTION_BAR_OFFSET_PX : rect.top - ACTION_BAR_OFFSET_PX,
     below,
-    displayToggle,
+    imageDisplay,
   }
 }
 
@@ -82,16 +87,16 @@ function sameAnchor(left: ActionBarAnchor | null, right: ActionBarAnchor | null)
     left.left === right.left &&
     left.top === right.top &&
     left.below === right.below &&
-    left.displayToggle === right.displayToggle
+    left.imageDisplay === right.imageDisplay
   )
 }
 
 /**
- * Touch-owned actions for a selected composer pill (copy, and the display
- * toggle for an image). Blink resolves a
- * long press inside a contenteditable against its own editing heuristics, so a
- * native selection can neither be pinned to one atom nor share the gesture with
- * the app's drag; the pill's exact `NodeSelection` gets its own control instead.
+ * Touch-owned actions for a selected composer pill (copy, and the display toggle
+ * for an image). Blink resolves a long press inside a contenteditable against its
+ * own editing heuristics, so a native selection can neither be pinned to one atom
+ * nor share the gesture with the app's drag; the pill's exact `NodeSelection`
+ * gets its own control instead.
  */
 export function ComposerPillActions({ editor }: { editor: Editor | null }) {
   const inputMode = useInputMode()
@@ -163,9 +168,9 @@ export function ComposerPillActions({ editor }: { editor: Editor | null }) {
     if (!editor || editor.isDestroyed) return
     const pos = selectedPillPos(editor)
     const node = pos === null ? null : editor.state.doc.nodeAt(pos)
-    if (pos === null || !node) return
-    const display = node.attrs.display === "inline" ? "pill" : "inline"
-    const tr = editor.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, display })
+    const current = node ? imageReferenceDisplay(node) : null
+    if (pos === null || !node || !current) return
+    const tr = editor.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, display: toggledDisplay(current) })
     editor.view.dispatch(tr.setSelection(NodeSelection.create(tr.doc, pos)))
   }, [editor])
 
@@ -180,8 +185,8 @@ export function ComposerPillActions({ editor }: { editor: Editor | null }) {
 
   return createPortal(
     <div
-      className={cn("fixed z-[80] flex -translate-x-1/2 gap-2", anchor.below ? "translate-y-0" : "-translate-y-full")}
-      style={{ left: anchor.left, top: anchor.top }}
+      className={cn("fixed z-[80] flex -translate-x-1/2", anchor.below ? "translate-y-0" : "-translate-y-full")}
+      style={{ left: anchor.left, top: anchor.top, gap: ACTION_BUTTON_GAP_PX }}
     >
       <Button
         type="button"
@@ -194,7 +199,7 @@ export function ComposerPillActions({ editor }: { editor: Editor | null }) {
       >
         {copied ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
       </Button>
-      {anchor.displayToggle && (
+      {anchor.imageDisplay && (
         <Button
           type="button"
           variant="outline"
@@ -202,9 +207,9 @@ export function ComposerPillActions({ editor }: { editor: Editor | null }) {
           className={buttonClass}
           onPointerDown={keepSelection}
           onClick={toggleDisplay}
-          aria-label={anchor.displayToggle === "inline" ? "Show as chip" : "Show as image"}
+          aria-label={DISPLAY_TOGGLE_LABEL[anchor.imageDisplay]}
         >
-          {anchor.displayToggle === "inline" ? <Tag className="size-4" /> : <Image className="size-4" />}
+          {anchor.imageDisplay === "inline" ? <Tag className="size-4" /> : <Image className="size-4" />}
         </Button>
       )}
     </div>,

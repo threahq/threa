@@ -7,8 +7,15 @@ import History from "@tiptap/extension-history"
 import Gapcursor from "@tiptap/extension-gapcursor"
 import Placeholder from "@tiptap/extension-placeholder"
 
-import { BlockIdAttribute, ThreaHeading, ThreaLink, ThreaTable, codeBlockOptions } from "@threahq/prosemirror/schema"
-import { TaskItemExtension, TaskListExtension } from "./task-list-extension"
+import {
+  BlockIdAttribute,
+  TaskList,
+  ThreaHeading,
+  ThreaLink,
+  ThreaTable,
+  codeBlockOptions,
+} from "@threahq/prosemirror/schema"
+import { TaskItemExtension } from "./task-list-extension"
 import { AtomAwareBold, AtomAwareItalic, AtomAwareStrike, AtomAwareCode } from "./atom-aware-marks"
 
 import Blockquote from "@tiptap/extension-blockquote"
@@ -92,7 +99,7 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     BulletList,
     OrderedList,
     ListItem,
-    TaskListExtension,
+    TaskList,
     TaskItemExtension,
     Blockquote,
     HorizontalRule,

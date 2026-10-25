@@ -8,7 +8,14 @@ import { Button } from "@/components/ui/button"
 import { AttachmentChip } from "@/components/timeline/attachment-chip"
 import { ThumbnailImg, thumbnailBox, useThumbnailLoadState } from "@/components/timeline/attachment-thumbnail"
 import { attachmentContentUrl } from "@/api"
-import type { AttachmentReferenceAttrs } from "./attachment-reference-extension"
+import { getUploadJobByAttachmentId } from "@/lib/uploads/upload-manager"
+import {
+  DISPLAY_TOGGLE_LABEL,
+  imageReferenceDisplay,
+  toggledDisplay,
+  type AttachmentDisplay,
+  type AttachmentReferenceAttrs,
+} from "./attachment-reference-extension"
 
 function formatFileSize(bytes: number | null): string {
   if (bytes == null) return "Size unavailable"
@@ -40,17 +47,26 @@ function InlineImage({
 }) {
   const load = useThumbnailLoadState()
   const box = thumbnailBox()
+  // The id is reserved before the bytes land, so the server thumbnail can 404
+  // mid-upload; the job's local preview lives until the composer releases it.
+  const src =
+    getUploadJobByAttachmentId(attachmentId)?.previewUrl ??
+    attachmentContentUrl(workspaceId, attachmentId, { variant: "thumbnail" })
   return (
     <span
       style={{ width: box.width, height: box.height }}
       className="relative inline-block align-top overflow-hidden rounded-lg border bg-muted/30"
     >
-      {!load.decoded && <span className="absolute inset-0 animate-pulse bg-muted" />}
-      <ThumbnailImg
-        src={attachmentContentUrl(workspaceId, attachmentId, { variant: "thumbnail" })}
-        alt={filename}
-        load={load}
-      />
+      {load.error ? (
+        <span className="absolute inset-0 flex items-center justify-center p-2 text-center text-xs text-muted-foreground">
+          Image unavailable
+        </span>
+      ) : (
+        <>
+          {!load.decoded && <span className="absolute inset-0 animate-pulse bg-muted" />}
+          <ThumbnailImg src={src} alt={filename} load={load} />
+        </>
+      )}
     </span>
   )
 }
@@ -81,18 +97,19 @@ function AttachmentTooltip({ attrs, children }: { attrs: AttachmentReferenceAttr
 
 function ImageDisplayToggle({
   attrs,
+  display,
   updateAttributes,
   focusAfterNode,
   children,
 }: {
   attrs: AttachmentReferenceAttrs
+  display: AttachmentDisplay
   updateAttributes: NodeViewProps["updateAttributes"]
   focusAfterNode: () => void
   children: ReactNode
 }) {
   const [open, setOpen] = useState(false)
   const dismissedOutside = useRef(false)
-  const inline = attrs.display === "inline"
   // The tooltip wraps only the trigger: focus moving into the portaled content
   // bubbles through the React tree, and an ancestor tooltip would open on it.
   return (
@@ -107,9 +124,12 @@ function ImageDisplayToggle({
       <PopoverContent
         side="top"
         className="w-auto p-1"
-        onInteractOutside={() => (dismissedOutside.current = true)}
+        // The composer takes typing, a focused trigger does not; an outside
+        // press already put focus where the user meant it.
+        onInteractOutside={() => {
+          dismissedOutside.current = true
+        }}
         onCloseAutoFocus={(event) => {
-          // Back to the composer, not the pill: a focused trigger takes no typing.
           event.preventDefault()
           if (!dismissedOutside.current) focusAfterNode()
           dismissedOutside.current = false
@@ -119,11 +139,11 @@ function ImageDisplayToggle({
           variant="ghost"
           size="sm"
           onClick={() => {
-            updateAttributes({ display: inline ? "pill" : "inline" })
+            updateAttributes({ display: toggledDisplay(display) })
             setOpen(false)
           }}
         >
-          {inline ? "Show as chip" : "Show as image"}
+          {DISPLAY_TOGGLE_LABEL[display]}
         </Button>
       </PopoverContent>
     </Popover>
@@ -133,16 +153,17 @@ function ImageDisplayToggle({
 export function AttachmentReferenceView({ node, updateAttributes, editor, getPos }: NodeViewProps) {
   const attrs = node.attrs as AttachmentReferenceAttrs
   const { workspaceId } = useParams<{ workspaceId: string }>()
-  const isImage = attrs.mimeType.startsWith("image/")
-  const showInline = isImage && attrs.display === "inline" && attrs.status === "uploaded" && workspaceId
+  const display = imageReferenceDisplay(node)
+  const showInline = display === "inline" && attrs.status === "uploaded"
 
-  const visual = showInline ? (
-    <InlineImage workspaceId={workspaceId} attachmentId={attrs.id} filename={attrs.filename} />
-  ) : (
-    <AttachmentChip label={getDisplayText(attrs)} mimeType={attrs.mimeType} status={attrs.status} />
-  )
+  const visual =
+    showInline && workspaceId ? (
+      <InlineImage workspaceId={workspaceId} attachmentId={attrs.id} filename={attrs.filename} />
+    ) : (
+      <AttachmentChip label={getDisplayText(attrs)} mimeType={attrs.mimeType} status={attrs.status} />
+    )
 
-  if (!isImage) {
+  if (!display) {
     return (
       <AttachmentTooltip attrs={attrs}>
         <NodeViewWrapper as="span" data-type="attachment-reference">
@@ -160,7 +181,12 @@ export function AttachmentReferenceView({ node, updateAttributes, editor, getPos
 
   return (
     <NodeViewWrapper as="span" data-type="attachment-reference">
-      <ImageDisplayToggle attrs={attrs} updateAttributes={updateAttributes} focusAfterNode={focusAfterNode}>
+      <ImageDisplayToggle
+        attrs={attrs}
+        display={display}
+        updateAttributes={updateAttributes}
+        focusAfterNode={focusAfterNode}
+      >
         {visual}
       </ImageDisplayToggle>
     </NodeViewWrapper>

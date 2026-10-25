@@ -205,6 +205,20 @@ describe("extractEnqueueDirective", () => {
       }),
     },
     {
+      name: "a task item holding only the directive",
+      input: docOf({
+        type: "taskList",
+        content: [
+          { type: "taskItem", attrs: { checked: false }, content: [paragraph(text("/enqueue"))] },
+          { type: "taskItem", attrs: { checked: false }, content: [paragraph(text("start with tests"))] },
+        ],
+      }),
+      expected: docOf({
+        type: "taskList",
+        content: [{ type: "taskItem", attrs: { checked: false }, content: [paragraph(text("start with tests"))] }],
+      }),
+    },
+    {
       name: "a quote holding only the directive",
       input: docOf({ type: "blockquote", content: [paragraph(text("/enqueue"))] }, paragraph(text("fix the tests"))),
       expected: docOf(paragraph(text("fix the tests"))),
@@ -220,11 +234,21 @@ describe("extractEnqueueDirective", () => {
 
   it("should report no message when the directive is all there is", () => {
     const emptyList = docOf({ type: "bulletList", content: [{ type: "listItem", content: [paragraph(enqueueNode)] }] })
+    const emptyTaskList = docOf({
+      type: "taskList",
+      content: [{ type: "taskItem", attrs: { checked: false }, content: [paragraph(text("/enqueue"))] }],
+    })
     expect({
       typed: extractEnqueueDirective(docOf(paragraph(text("/enqueue")), { type: "paragraph" }), typed),
       picked: extractEnqueueDirective(docOf(paragraph(enqueueNode, text(" "))), typed),
       list: extractEnqueueDirective(emptyList, typed),
-    }).toEqual({ typed: { kind: "empty-enqueue" }, picked: { kind: "empty-enqueue" }, list: { kind: "empty-enqueue" } })
+      taskList: extractEnqueueDirective(emptyTaskList, typed),
+    }).toEqual({
+      typed: { kind: "empty-enqueue" },
+      picked: { kind: "empty-enqueue" },
+      list: { kind: "empty-enqueue" },
+      taskList: { kind: "empty-enqueue" },
+    })
   })
 
   it("should keep an attachment as message content", () => {

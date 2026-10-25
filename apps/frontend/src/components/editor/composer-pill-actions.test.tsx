@@ -104,8 +104,8 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe("composer pill copy control", () => {
-  it("copies exactly the selected pill's canonical markdown", async () => {
+describe("ComposerPillActions", () => {
+  it("should copy exactly the selected pill's canonical markdown when Copy is tapped", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     stubClipboard(writeText)
     const editor = createPillEditor()
@@ -120,7 +120,7 @@ describe("composer pill copy control", () => {
     expect(writeText).toHaveBeenCalledTimes(1)
   })
 
-  it("confirms in place without resizing the control", async () => {
+  it("should confirm in place without resizing the control when the copy succeeds", async () => {
     stubClipboard(vi.fn().mockResolvedValue(undefined))
     const editor = createPillEditor()
     render(<ComposerPillActions editor={editor} />)
@@ -134,7 +134,7 @@ describe("composer pill copy control", () => {
     expect(control.className).toBe(beforeClass)
   })
 
-  it("warns instead of confirming when the clipboard rejects", async () => {
+  it("should warn instead of confirming when the clipboard rejects", async () => {
     const { toast } = await import("sonner")
     const error = vi.spyOn(toast, "error").mockReturnValue("id")
     stubClipboard(vi.fn().mockRejectedValue(new Error("denied")))
@@ -148,7 +148,7 @@ describe("composer pill copy control", () => {
     expect(screen.queryByRole("button", { name: /pill copied/i })).toBeNull()
   })
 
-  it("keeps the press off the document so the pill keeps its selection", () => {
+  it("should keep the press off the document when a control is pressed, so the pill keeps its selection", () => {
     const editor = createPillEditor()
     render(<ComposerPillActions editor={editor} />)
 
@@ -159,7 +159,7 @@ describe("composer pill copy control", () => {
     expect(pointerDown.defaultPrevented).toBe(true)
   })
 
-  it("offers nothing for a text selection, a mouse, or a drag in flight", () => {
+  it("should offer nothing when the selection is text, the pointer is a mouse, or a drag is in flight", () => {
     const editor = createPillEditor()
     render(<ComposerPillActions editor={editor} />)
 
@@ -221,5 +221,26 @@ describe("composer pill copy control", () => {
 
     selectPill(editor, "attachmentReference")
     expect(actionLabels()).toEqual(["Copy pill"])
+  })
+
+  it("should keep the bar half its width from the viewport edge when the pill sits at either edge", () => {
+    const editor = createPillEditor([attachmentPill("image/png")])
+    render(<ComposerPillActions editor={editor} />)
+    const pillDom = editor.view.nodeDOM(nodePos(editor, "attachmentReference")) as HTMLElement
+    const rect = vi.spyOn(pillDom, "getBoundingClientRect")
+    const barLeftAt = (x: number) => {
+      rect.mockReturnValue(new DOMRect(x, 300, 0, 20))
+      selectPill(editor, "attachmentReference")
+      act(() => {
+        window.dispatchEvent(new Event("resize"))
+      })
+      return screen.getByRole("button", { name: "Copy pill" }).parentElement!.style.left
+    }
+    const halfBar = (2 * 40 + 8) / 2
+
+    expect({ start: barLeftAt(0), end: barLeftAt(window.innerWidth) }).toEqual({
+      start: `${halfBar}px`,
+      end: `${window.innerWidth - halfBar}px`,
+    })
   })
 })
