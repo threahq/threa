@@ -1,3 +1,4 @@
+import { StrictMode } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -42,6 +43,7 @@ function proseMirror(): HTMLElement & { editor: Editor } {
 describe("DocPaneBody", () => {
   let gate: SocketEventGate
   let serverDoc: Y.Doc
+  let queryClient: QueryClient
 
   beforeEach(() => {
     serverDoc = prosemirrorJSONToYDoc(getThreaSchema(), paragraphs("Rotation tracker"), "default")
@@ -90,9 +92,8 @@ describe("DocPaneBody", () => {
     vi.restoreAllMocks()
   })
 
-  function mount(canWrite = true) {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(
+  function tree(canWrite: boolean) {
+    return (
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <MemoryRouter initialEntries={[`/w/${WORKSPACE_ID}`]}>
@@ -106,6 +107,31 @@ describe("DocPaneBody", () => {
         </TooltipProvider>
       </QueryClientProvider>
     )
+  }
+
+  function mount(canWrite = true, { strict = false } = {}) {
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const view = render(strict ? <StrictMode>{tree(canWrite)}</StrictMode> : tree(canWrite))
+    return {
+      ...view,
+      rerender: (next: boolean) => view.rerender(strict ? <StrictMode>{tree(next)}</StrictMode> : tree(next)),
+    }
+  }
+
+  function remoteParagraph(text: string, seq: number): DocUpdatedOutboxPayload {
+    const before = Y.encodeStateVector(serverDoc)
+    const paragraph = new Y.XmlElement("paragraph")
+    paragraph.insert(0, [new Y.XmlText(text)])
+    serverDoc.getXmlFragment("default").push([paragraph])
+    return {
+      workspaceId: WORKSPACE_ID,
+      streamId: DOC_ID,
+      seq,
+      update: bytesToBase64(Y.encodeStateAsUpdate(serverDoc, before)),
+      touchedBlockIds: [],
+      actorId: "usr_other",
+      actorType: "user",
+    }
   }
 
   it("renders the loaded doc in an editable editor with the formatting toolbar", async () => {
@@ -142,19 +168,7 @@ describe("DocPaneBody", () => {
     mount()
     await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
 
-    const before = Y.encodeStateVector(serverDoc)
-    const paragraph = new Y.XmlElement("paragraph")
-    paragraph.insert(0, [new Y.XmlText("Second shift")])
-    serverDoc.getXmlFragment("default").push([paragraph])
-    const payload: DocUpdatedOutboxPayload = {
-      workspaceId: WORKSPACE_ID,
-      streamId: DOC_ID,
-      seq: 2,
-      update: bytesToBase64(Y.encodeStateAsUpdate(serverDoc, before)),
-      touchedBlockIds: [],
-      actorId: "usr_other",
-      actorType: "user",
-    }
+    const payload = remoteParagraph("Second shift", 2)
     await act(() => gate.dispatch("doc:updated", payload))
 
     await waitFor(() => expect(proseMirror().textContent).toBe("Rotation trackerSecond shift"))
@@ -201,5 +215,64 @@ describe("DocPaneBody", () => {
 
     await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
     expect(docsApi.get).toHaveBeenCalledTimes(2)
+  })
+
+  it("keeps one live session under StrictMode: one load in use, one POST per edit, remote updates applied", async () => {
+    mount(true, { strict: true })
+    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
+
+    act(() => {
+      proseMirror().editor.chain().focus("end").insertContent(" for March").run()
+    })
+    await waitFor(() => expect(docsApi.postUpdate).toHaveBeenCalledTimes(1), { timeout: 2000 })
+    await act(() => gate.dispatch("doc:updated", remoteParagraph("Second shift", 3)))
+
+    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker for MarchSecond shift"))
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    expect(docsApi.postUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it("catches up after a socket reconnect, not on first mount", async () => {
+    const reconnects = vi.spyOn(contextsModule, "useSocketReconnectCount").mockReturnValue(0)
+    const view = mount()
+    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
+    const beforeReconnect = vi.mocked(docsApi.listUpdates).mock.calls.length
+
+    reconnects.mockReturnValue(1)
+    view.rerender(true)
+
+    await waitFor(() => expect(docsApi.listUpdates).toHaveBeenCalledTimes(1))
+    expect({ beforeReconnect, call: vi.mocked(docsApi.listUpdates).mock.calls[0] }).toEqual({
+      beforeReconnect: 0,
+      call: [WORKSPACE_ID, DOC_ID, 1],
+    })
+  })
+
+  it("follows a write permission change on the same editor", async () => {
+    const view = mount(true)
+    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
+    const editor = proseMirror().editor
+
+    view.rerender(false)
+
+    await waitFor(() => expect(proseMirror().getAttribute("contenteditable")).toBe("false"))
+    expect({
+      sameEditor: proseMirror().editor === editor,
+      toolbar: screen.queryByRole("button", { name: "Bold" }) !== null,
+    }).toEqual({ sameEditor: true, toolbar: false })
+  })
+
+  it("sends unsaved edits and stops listening when the pane closes", async () => {
+    const off = vi.spyOn(gate, "off")
+    const view = mount()
+    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
+
+    act(() => {
+      proseMirror().editor.chain().focus("end").insertContent(" closing").run()
+    })
+    view.unmount()
+
+    await waitFor(() => expect(docsApi.postUpdate).toHaveBeenCalledTimes(1))
+    expect(off.mock.calls.map(([event]) => event)).toContain("doc:updated")
   })
 })

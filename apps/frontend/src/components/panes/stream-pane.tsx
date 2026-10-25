@@ -38,8 +38,8 @@ import { cn } from "@/lib/utils"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { foldHeaderControls } from "@/lib/pane-header-fold"
 import { tabRowReserve } from "@/lib/panel-tab-fit"
-import { useStreamOrDraft, isDmDraftId, useActiveBotPresence, useEffectiveArchived, useWorkspaceUserId } from "@/hooks"
-import { useWorkspaceDmPeers, useWorkspaceMetadata, useWorkspaceStreamMembership } from "@/stores/workspace-store"
+import { useStreamOrDraft, isDmDraftId, useActiveBotPresence } from "@/hooks"
+import { useWorkspaceDmPeers, useWorkspaceMetadata } from "@/stores/workspace-store"
 import { createConversationsPanelId, useCoordinatedLoading, useCurrentPane, usePanel, useSidebar } from "@/contexts"
 import { StreamLoadingIndicator } from "@/components/loading"
 import { useUserProfile } from "@/components/user-profile"
@@ -49,6 +49,7 @@ import { useOutcomesUrlState } from "@/components/agent-outcomes"
 import { StreamContent, TimelineSkeleton, AgentActivityHeaderChip } from "@/components/timeline"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { DocPaneBody } from "@/components/docs/doc-pane-body"
+import { useDocCanWrite } from "@/components/docs/use-doc-can-write"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { LabelStack } from "@/components/labels/label-stack"
 import { StreamHeaderEncryptionAction } from "@/components/encryption/stream-encryption-affordance"
@@ -169,19 +170,7 @@ export function StreamPane({
   const isChannel = stream?.type === StreamTypes.CHANNEL
   const isDm = stream?.type === StreamTypes.DM
   const isDoc = stream?.type === StreamTypes.DOC
-  // A doc has no members of its own: whoever is a member of its root may edit it while nothing above it is archived.
-  const viewerUserId = useWorkspaceUserId(workspaceId)
-  const rootMembership = useWorkspaceStreamMembership(
-    workspaceId,
-    stream?.rootStreamId ?? "",
-    isDoc ? viewerUserId : null
-  )
-  const { isArchived: docArchived } = useEffectiveArchived({
-    workspaceId,
-    stream: isDoc ? stream : null,
-    fallbackArchived: null,
-  })
-  const canWriteDoc = isDoc && rootMembership !== undefined && !docArchived
+  const canWriteDoc = useDocCanWrite(workspaceId, stream)
   // Only the stream page sets a list beside its stream; under an aside it would land out of sight.
   const offersList = (isChannel || isDm) && hasTabs && offersContext
   const dmPeerUserId = isDm ? dmPeers.find((p) => p.streamId === streamId)?.userId : null
