@@ -59,8 +59,9 @@ function collectQuoteReplyRefs(content: JSONContent | undefined): QuoteRef[] {
   const walk = (node: JSONContent | undefined): void => {
     if (!node) return
     if (node.type === "quoteReply") {
-      const attrs = node.attrs as { messageId?: string; version?: number | null } | undefined
-      if (attrs?.messageId) refs.push({ messageId: attrs.messageId, version: attrs.version ?? null })
+      const attrs = node.attrs as { messageId?: string; version?: number | null; private?: boolean } | undefined
+      if (attrs?.messageId && attrs.private !== true)
+        refs.push({ messageId: attrs.messageId, version: attrs.version ?? null })
     }
     for (const child of node.content ?? []) walk(child)
   }

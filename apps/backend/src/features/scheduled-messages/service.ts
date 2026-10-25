@@ -15,12 +15,13 @@ import "../workspaces"
 import { OutboxRepository } from "../../lib/outbox"
 import {
   assertStreamWritable,
+  checkStreamAccess,
   createStreamReadOnlyError,
   findReadersWithoutAccess,
   resolveLockedStreamAuthorities,
   StreamRepository,
 } from "../streams"
-import { MessageRepository, ShareService } from "../messaging"
+import { MessageRepository, ShareService, resolveMessageReferences } from "../messaging"
 import { EventService } from "../messaging"
 import { scheduledMessageId, scheduledMessageQueueId } from "../../lib/id"
 import { JobQueues, QueueRepository, enqueueQueuedJob, type ScheduledMessageSendJobData } from "../../lib/queue"
@@ -150,6 +151,7 @@ export class ScheduledMessagesService {
 
         const consentedShareSourceIds = await scheduledShareConsent(client, {
           workspaceId: params.workspaceId,
+          userId: params.userId,
           streamId: params.streamId,
           contentJson: params.contentJson,
           confirmedPrivacyWarning: params.confirmedPrivacyWarning,
@@ -302,8 +304,10 @@ export class ScheduledMessagesService {
       const consentedShareSourceIds = params.contentJson
         ? await scheduledShareConsent(client, {
             workspaceId: params.workspaceId,
+            userId: params.userId,
             streamId: existing.streamId,
             contentJson: params.contentJson,
+            previousContentJson: existing.contentJson,
             consentedShareSourceIds: existing.consentedShareSourceIds,
             confirmedPrivacyWarning: params.confirmedPrivacyWarning,
           })
@@ -721,19 +725,34 @@ function clampToFuture(date: Date): Date {
 }
 
 /**
- * 409s unless every exposing source is confirmed now or was consented earlier. Returns the
- * row's consent after this write.
+ * Rejects references the author can't read, as an immediate send would, then 409s unless
+ * every exposing source is confirmed now or was consented earlier. Returns the row's consent
+ * after this write.
+ *
+ * Only the fire may send an unreadable reference privately, and only one that was readable
+ * when scheduled: checking here keeps send-now from answering whether a guessed message
+ * exists or where it lives.
  */
 async function scheduledShareConsent(
   client: PoolClient,
   params: {
     workspaceId: string
+    userId: string
     streamId: string
     contentJson: JSONContent
+    previousContentJson?: JSONContent
     consentedShareSourceIds?: string[]
     confirmedPrivacyWarning?: boolean
   }
 ): Promise<string[]> {
+  await resolveMessageReferences(client, {
+    workspaceId: params.workspaceId,
+    contentJson: params.contentJson,
+    previousContentJson: params.previousContentJson,
+    targetStreamId: params.streamId,
+    canReadSourceStream: async (streamId) =>
+      (await checkStreamAccess(client, streamId, params.workspaceId, params.userId)) !== null,
+  })
   return ShareService.assertSharesConfirmed({
     contentJson: params.contentJson,
     targetStreamId: params.streamId,

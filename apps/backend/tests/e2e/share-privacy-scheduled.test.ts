@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test"
 import { privateQuoteAttrs } from "@threahq/prosemirror"
 import {
+  MessageReferenceErrorCodes,
   ShareErrorCodes,
   type JSONContent,
   type ScheduledMessageView,
@@ -367,6 +368,47 @@ describe("share privacy on a scheduled send", () => {
       seenWithoutAccess: "private",
       listedWithAccess: [source.messageId],
       shared: { status: 204, seen: "ok" },
+    })
+  })
+
+  test("should reject scheduling or editing in a reference the author can't read, as it rejects a message that doesn't exist", async () => {
+    const erin = new TestClient()
+    await loginAs(erin, "share-scheduled-erin@example.com", "Share Scheduled Erin")
+    await joinWorkspace(erin, workspaceId)
+    await joinStream(erin, workspaceId, targetStreamId)
+    const unreadable = sources[0]!
+    const missing = { messageId: "msg_01JZZZZZZZZZZZZZZZZZZZZZZZ", streamId: unreadable.streamId }
+    const quote = (ref: { messageId: string; streamId: string }) => ({
+      type: "doc",
+      content: [{ type: "quoteReply", attrs: { ...ref, authorName: "Alice", snippet: "guess" } }],
+    })
+    const create = (contentJson: JSONContent) =>
+      erin.post<{ code?: string }>(`/api/workspaces/${workspaceId}/scheduled`, {
+        streamId: targetStreamId,
+        contentJson,
+        scheduledFor: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      })
+    const plain = await erin.post<{ scheduled: ScheduledMessageView }>(`/api/workspaces/${workspaceId}/scheduled`, {
+      streamId: targetStreamId,
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "draft" }] }] },
+      scheduledFor: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    })
+    const edited = await erin.patch<{ code?: string }>(
+      `/api/workspaces/${workspaceId}/scheduled/${plain.data.scheduled.id}`,
+      { contentJson: quote(unreadable), expectedVersion: plain.data.scheduled.version }
+    )
+    const results = await Promise.all([
+      create(quote(unreadable)),
+      create(shareContent(unreadable)),
+      create(quote(missing)),
+    ])
+
+    expect({
+      created: results.map((r) => ({ status: r.status, code: r.data.code })),
+      edited: { status: edited.status, code: edited.data.code },
+    }).toEqual({
+      created: Array(3).fill({ status: 400, code: MessageReferenceErrorCodes.SOURCE_NOT_FOUND }),
+      edited: { status: 400, code: MessageReferenceErrorCodes.SOURCE_NOT_FOUND },
     })
   })
 })

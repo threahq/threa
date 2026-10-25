@@ -157,8 +157,8 @@ function validateRange(pinnedDoc: JSONContent, raw: ContentRange): ContentRange 
  *
  * Runs on create and on edit, right after mention resolution and before the
  * version snapshot, the event, the projections and the outbox, so everything
- * downstream reads one already-pinned body. Idempotent: re-running over its own
- * output reports `changed: false` and produces identical JSON.
+ * downstream reads one already-pinned body. Re-running over its own output
+ * produces identical JSON.
  *
  * Soft-deleted sources still resolve — a message that pinned a source keeps
  * resolving after the source is deleted, and the hydration layer decides what a
@@ -196,7 +196,7 @@ export async function resolveMessageReferences(
     if (!previous) continue
     settled.add(ref)
     if (JSON.stringify(ref.attrs) !== JSON.stringify(previous)) {
-      ref.node.attrs = previous
+      ref.node.attrs = structuredClone(previous)
       changed = true
     }
   }
@@ -229,8 +229,12 @@ export async function resolveMessageReferences(
       unreadable.add(ref)
       if (ref.isQuote) {
         ref.node.attrs = privateQuoteAttrs({ streamId: source.streamId, messageId: source.id })
-        changed = true
+      } else {
+        // Readers can't open the source either: keep only what a later share needs, not its author.
+        const { messageId, streamId, version, range } = ref.attrs
+        ref.node.attrs = { messageId, streamId, version, range }
       }
+      changed = true
     }
   }
   const pinnable = references.filter((ref) => !unreadable.has(ref) && !settled.has(ref))
