@@ -334,7 +334,7 @@ export function fakeT3() {
 }
 
 export function fakeSession(rootStreamId = "stream_root") {
-  const steps: Array<{ invocationId: string; frames: StepFrame[] }> = []
+  const steps: Array<{ invocationId: string; frames: StepFrame[]; statusText?: string }> = []
   const replies: Array<{ invocationId: string; text: string }> = []
   const posts: Array<{ streamId: string; text: string; clientMessageId: string }> = []
   const interims: Array<{ invocationId: string; text: string }> = []
@@ -348,8 +348,8 @@ export function fakeSession(rootStreamId = "stream_root") {
   let settled = new Promise<void>((resolve) => (settle = resolve))
   const session: BridgeSession = {
     rootStreamId,
-    recordSteps: async (invocationId, frames) => {
-      steps.push({ invocationId, frames })
+    recordSteps: async (invocationId, frames, statusText) => {
+      steps.push({ invocationId, frames, ...(statusText === undefined ? {} : { statusText }) })
       return true
     },
     reply: async (invocationId, text) => {

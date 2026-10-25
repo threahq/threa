@@ -8,6 +8,7 @@ import {
   type RuntimeDescriptor,
   type SendResult,
   type StepFrame,
+  type ToolTraceSection,
   type TraceMode,
   DecisionAbandonedError,
   NO_RESPONSE_SENTINEL,
@@ -79,18 +80,19 @@ const MAX_IMAGES_PER_MESSAGE = 8
 export const TERMINAL_RUN_STATUSES = new Set<string>(["completed", "failed", "cancelled", "interrupted", "rolled_back"])
 const UNANSWERED_MESSAGE = "T3 Code asked a question that went unanswered."
 const OPEN_ITEM_STATUSES = new Set<string>(["idle", "pending", "running", "waiting"])
-const TOOL_LABELS: Record<string, string> = {
-  command_execution: "Shell command",
-  background_command: "Background command",
-  file_change: "File change",
-  dynamic_tool: "Tool call",
-  web_search: "Web search",
-  file_search: "File search",
-  subagent: "Subagent",
-  delegated_task: "Delegated task",
-  background_task: "Background task",
-  monitor: "Monitor",
-  todo_list: "Todo list",
+// Chips are fixed text per item type: a chip is shown to everyone in the stream, whatever the trace mode.
+const TOOLS: Record<string, { label: string; statusText: string }> = {
+  command_execution: { label: "Shell command", statusText: "Running a command…" },
+  background_command: { label: "Background command", statusText: "Running a command…" },
+  file_change: { label: "File change", statusText: "Editing files…" },
+  dynamic_tool: { label: "Tool call", statusText: "Using a tool…" },
+  web_search: { label: "Web search", statusText: "Searching the web…" },
+  file_search: { label: "File search", statusText: "Searching files…" },
+  subagent: { label: "Subagent", statusText: "Running a subagent…" },
+  delegated_task: { label: "Delegated task", statusText: "Delegating a task…" },
+  background_task: { label: "Background task", statusText: "Running a background task…" },
+  monitor: { label: "Monitor", statusText: "Monitoring…" },
+  todo_list: { label: "Todo list", statusText: "Updating the todo list…" },
 }
 const NOTE_TYPES = new Set(["reasoning", "system_notice", "compaction", "error"])
 const BLOCKING_LABELS: Record<string, string> = {
@@ -124,8 +126,15 @@ function firstLine(text: string): string {
   return text.split("\n", 1)[0]!.trim()
 }
 
+/** T3 lists each step of a todo list as `[status] text`; the count shows progress without the steps' text. */
+function todoProgress(text: string): string | undefined {
+  const statuses = text.split("\n").flatMap((line) => /^\[(\w+)\] /.exec(line)?.slice(1) ?? [])
+  if (statuses.length === 0) return undefined
+  return `${statuses.filter((status) => status === "completed").length}/${statuses.length} done`
+}
+
 function toolStepContent(item: ThreadItem, mode: RunTraceMode): string {
-  const label = TOOL_LABELS[item.type]!
+  const { label } = TOOLS[item.type]!
   const text = item.text ?? ""
   if (item.type === "command_execution" || item.type === "background_command") {
     if (mode === "headline") return toolTraceContent({ headline: label, sections: [] })
@@ -139,15 +148,23 @@ function toolStepContent(item: ThreadItem, mode: RunTraceMode): string {
           : [{ label: "Output", body: text, lang: null }],
     })
   }
-  if (item.type === "file_change") {
-    const path = firstLine(text)
-    return toolTraceContent({
-      headline: path ? `${label}: ${path.split("/").pop()}` : label,
-      sections: mode === "full" ? [{ label: "Details", body: text, lang: null }] : [],
-    })
+  const sections: ToolTraceSection[] = mode === "full" ? [{ label: "Details", body: text, lang: null }] : []
+  const detail = toolDetail(item, text, mode)
+  if (detail) return toolTraceContent({ headline: `${label}: ${detail}`, sections })
+  return toolTraceContent({ headline: mode === "full" ? (item.title ?? label) : label, sections })
+}
+
+function toolDetail(item: ThreadItem, text: string, mode: RunTraceMode): string | undefined {
+  switch (item.type) {
+    case "file_change":
+      return firstLine(text).split("/").pop()
+    case "todo_list":
+      return todoProgress(text)
+    // A subagent's title is the one its parent gave it, or the start of its prompt, so a headline trace leaves it out.
+    case "subagent":
+      return mode === "headline" ? undefined : (item.title ?? undefined)
   }
-  if (mode !== "full") return toolTraceContent({ headline: label, sections: [] })
-  return toolTraceContent({ headline: item.title ?? label, sections: [{ label: "Details", body: text, lang: null }] })
+  return undefined
 }
 
 function noteFrame(item: ThreadItem, mode: RunTraceMode): StepFrame {
@@ -182,6 +199,8 @@ export class RunTrace {
   /** The item ids of questions still waiting on an answer. */
   readonly questions = new Set<string>()
   lastError?: string
+  /** The chip for the frames the last observed item made. */
+  statusText = T3CODE_RUNTIME.busyStatusText
 
   constructor(
     runId: string,
@@ -205,6 +224,7 @@ export class RunTrace {
       this.held = undefined
     }
     const open = OPEN_ITEM_STATUSES.has(item.status ?? "")
+    this.statusText = (open && TOOLS[item.type]?.statusText) || T3CODE_RUNTIME.busyStatusText
     if (item.type === "assistant_message") {
       this.held = item
     } else if (item.type in BLOCKING_LABELS) {
@@ -212,7 +232,7 @@ export class RunTrace {
     } else if (item.type === "user_input_request") {
       if (open) this.questions.add(item.itemId)
       else this.questions.delete(item.itemId)
-    } else if (item.type in TOOL_LABELS) {
+    } else if (item.type in TOOLS) {
       const clientStepId = stepIdFor(item.itemId)
       const content = toolStepContent(item, this.mode)
       if (!open) {
@@ -896,7 +916,9 @@ export class T3TurnRunner {
             else run.trace.runIds.add(waited.runId)
           }
           await this.drain(run, (frame) =>
-            frame.phase === "started" ? void batcher.addNow(frame) : batcher.add(frame)
+            frame.phase === "started"
+              ? void batcher.addNow(frame, trace.statusText)
+              : batcher.add(frame, trace.statusText)
           )
           await this.postUpdates(run, async (_item, text) => {
             const result = await this.session.sendInterim(invocationId, text)

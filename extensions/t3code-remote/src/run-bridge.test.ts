@@ -116,6 +116,7 @@ describe("T3TurnRunner", () => {
       clientStepId: started!.clientStepId!,
       content,
     })
+    expect(session.steps.map((batch) => batch.statusText)).toEqual(["Running a command…", "Working in T3 Code…"])
     expect(session.replies).toEqual([{ invocationId: "binv_1", text: "All green." }])
   })
 
@@ -1262,6 +1263,31 @@ describe("RunTrace", () => {
   ])("%s mode traces case %#", (mode, traced, expected) => {
     const [frame] = new RunTrace("run_1", mode).observe(traced)
     expect(traceOf(frame!.content)).toEqual(expected)
+  })
+
+  test.each<[RunTraceMode, string]>([
+    ["headline", "Subagent"],
+    ["commands", "Subagent: Audit the parser"],
+  ])("%s mode titles a subagent", (mode, headline) => {
+    const [frame] = new RunTrace("run_1", mode).observe(
+      item(1, "subagent", { title: "Audit the parser", text: "Read src/parser.ts and list its bugs." })
+    )
+    expect(traceOf(frame!.content)).toEqual({ headline, sections: [] })
+  })
+
+  test("counts a todo list's finished steps without showing them", () => {
+    const [frame] = new RunTrace("run_1", "commands").observe(
+      item(1, "todo_list", { text: "[completed] Read the spec\n[running] Write the parser\n[pending] Test it" })
+    )
+    expect(traceOf(frame!.content)).toEqual({ headline: "Todo list: 1/3 done", sections: [] })
+  })
+
+  test("chips a running tool by its type, and anything else as working", () => {
+    const trace = new RunTrace("run_1", "commands")
+    trace.observe(item(1, "file_change", { status: "running", text: "src/parser.ts" }))
+    const editing = trace.statusText
+    trace.observe(item(1, "file_change", { text: "src/parser.ts" }))
+    expect([editing, trace.statusText]).toEqual(["Editing files…", "Working in T3 Code…"])
   })
 
   test("ignores other runs and items it already finalized", () => {
