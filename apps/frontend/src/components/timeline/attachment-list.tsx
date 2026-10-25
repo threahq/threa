@@ -35,6 +35,8 @@ interface AttachmentListProps {
   className?: string
   /** Defer image URL hydration until coordinated reveal completes */
   deferHydration?: boolean
+  /** Shown in the message body instead; hidden here but still owned by this list's gallery. */
+  inlineAttachmentIds?: ReadonlySet<string>
 }
 
 interface AttachmentItemProps {
@@ -172,6 +174,133 @@ function ImageActionDrawer({
   )
 }
 
+function useThumbnailLoadState() {
+  const [decoded, setDecoded] = useState(false)
+  const [error, setError] = useState(false)
+  // Bumped to remount the <img> after a failed load — the sticky error state
+  // would otherwise outlive the connectivity blip that caused it (an offline
+  // sender's own just-settled image is the common case with background
+  // uploads).
+  const [retryNonce, setRetryNonce] = useState(0)
+
+  const retryLoad = useCallback(() => {
+    setError(false)
+    setDecoded(false)
+    setRetryNonce((n) => n + 1)
+  }, [])
+  useEffect(() => {
+    if (!error) return
+    window.addEventListener("online", retryLoad)
+    return () => window.removeEventListener("online", retryLoad)
+  }, [error, retryLoad])
+
+  const markDecoded = useCallback(() => setDecoded(true), [])
+  const markError = useCallback(() => setError(true), [])
+
+  return { decoded, error, retryNonce, retryLoad, markDecoded, markError }
+}
+
+interface ThumbnailImgProps {
+  src: string
+  alt: string
+  retryNonce: number
+  decoded: boolean
+  onDecoded: () => void
+  onError: () => void
+}
+
+function ThumbnailImg({ src, alt, retryNonce, decoded, onDecoded, onError }: ThumbnailImgProps) {
+  return (
+    <img
+      // Remount on retry so the browser re-requests the same URL.
+      key={retryNonce}
+      // Cache fast path: when the browser already has the bytes (warm
+      // remount — virtua unmount/remount, bootstrap rewrite), the image
+      // is complete before onLoad ever fires. Flip decoded during commit
+      // so the row paints at full opacity instead of replaying the
+      // skeleton → fade-in cycle on content that never left cache.
+      ref={(node) => {
+        if (node?.complete && node.naturalWidth > 0) onDecoded()
+      }}
+      src={src}
+      alt={alt}
+      onLoad={onDecoded}
+      onError={onError}
+      className={cn(
+        "absolute inset-0 h-full w-full object-cover transition-opacity duration-300",
+        decoded ? "opacity-100" : "opacity-0"
+      )}
+    />
+  )
+}
+
+interface InlineAttachmentImageProps {
+  workspaceId: string
+  attachmentId: string
+  filename: string
+  width?: number
+  height?: number
+  onOpen: (attachmentId: string, metaKey: boolean) => void
+}
+
+/**
+ * Body-inline rendering of an image attachment. Renders inside a markdown
+ * paragraph, so only phrasing elements (button/span/img).
+ */
+export function InlineAttachmentImage({
+  workspaceId,
+  attachmentId,
+  filename,
+  width,
+  height,
+  onOpen,
+}: InlineAttachmentImageProps) {
+  const thumbnailUrl = attachmentContentUrl(workspaceId, attachmentId, { variant: "thumbnail" })
+  const load = useThumbnailLoadState()
+  const box = inlineImageBox(width, height)
+  const boxClass = cn(
+    "relative inline-block align-top overflow-hidden rounded-lg border bg-muted/30 my-1",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+  )
+
+  if (load.error) {
+    return (
+      <button
+        type="button"
+        onClick={load.retryLoad}
+        aria-label={`${filename} — failed to load, retry`}
+        style={{ width: box.width, height: box.height }}
+        className={cn(boxClass, "p-2 text-xs text-muted-foreground hover:border-primary")}
+      >
+        Failed to load image — tap to retry
+      </button>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      aria-label={filename}
+      onClick={(e) => {
+        e.preventDefault()
+        onOpen(attachmentId, e.metaKey || e.ctrlKey)
+      }}
+      style={{ width: box.width, height: box.height }}
+      className={cn(boxClass, "cursor-pointer transition-all hover:border-primary hover:shadow-sm")}
+    >
+      {!load.decoded && <span className="absolute inset-0 animate-pulse bg-muted" />}
+      <ThumbnailImg
+        src={thumbnailUrl}
+        alt={filename}
+        retryNonce={load.retryNonce}
+        decoded={load.decoded}
+        onDecoded={load.markDecoded}
+        onError={load.markError}
+      />
+    </button>
+  )
+}
+
 function ImageAttachment({
   attachment,
   workspaceId,
@@ -185,26 +314,9 @@ function ImageAttachment({
   const thumbnailUrl = deferHydration
     ? null
     : attachmentContentUrl(workspaceId, attachment.id, { variant: "thumbnail" })
-  const [imgDecoded, setImgDecoded] = useState(false)
-  const [error, setError] = useState(false)
-  // Bumped to remount the <img> after a failed load — the sticky error state
-  // would otherwise outlive the connectivity blip that caused it (an offline
-  // sender's own just-settled image is the common case with background
-  // uploads).
-  const [retryNonce, setRetryNonce] = useState(0)
+  const { decoded: imgDecoded, error, retryNonce, retryLoad, markDecoded, markError } = useThumbnailLoadState()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const touchCapable = useTouchCapable()
-
-  const retryLoad = useCallback(() => {
-    setError(false)
-    setImgDecoded(false)
-    setRetryNonce((n) => n + 1)
-  }, [])
-  useEffect(() => {
-    if (!error) return
-    window.addEventListener("online", retryLoad)
-    return () => window.removeEventListener("online", retryLoad)
-  }, [error, retryLoad])
 
   const box = inlineImageBox(attachment.width, attachment.height)
 
@@ -283,25 +395,13 @@ function ImageAttachment({
       >
         {!imgDecoded && <Skeleton className="absolute inset-0 rounded-none" />}
         {thumbnailUrl && (
-          <img
-            // Remount on retry so the browser re-requests the same URL.
-            key={retryNonce}
-            // Cache fast path: when the browser already has the bytes (warm
-            // remount — virtua unmount/remount, bootstrap rewrite), the image
-            // is complete before onLoad ever fires. Flip imgDecoded during
-            // commit so the row paints at full opacity instead of replaying
-            // the skeleton → fade-in cycle on content that never left cache.
-            ref={(node) => {
-              if (node?.complete && node.naturalWidth > 0) setImgDecoded(true)
-            }}
+          <ThumbnailImg
             src={thumbnailUrl}
             alt={attachment.filename}
-            onLoad={() => setImgDecoded(true)}
-            onError={() => setError(true)}
-            className={cn(
-              "absolute inset-0 h-full w-full object-cover transition-opacity duration-300",
-              imgDecoded ? "opacity-100" : "opacity-0"
-            )}
+            retryNonce={retryNonce}
+            decoded={imgDecoded}
+            onDecoded={markDecoded}
+            onError={markError}
           />
         )}
       </div>
@@ -616,7 +716,13 @@ export function isGalleryPreviewableAttachment(a: AttachmentSummary): boolean {
   return isMarkdownAttachment(a) || isHtmlAttachment(a) || isPdfAttachment(a) || isTextPreviewableAttachment(a)
 }
 
-export function AttachmentList({ attachments, workspaceId, className, deferHydration = false }: AttachmentListProps) {
+export function AttachmentList({
+  attachments,
+  workspaceId,
+  className,
+  deferHydration = false,
+  inlineAttachmentIds,
+}: AttachmentListProps) {
   const attachmentContext = useAttachmentContext()
   const hoveredAttachmentId = attachmentContext?.hoveredAttachmentId ?? null
   const { mediaAttachmentId, openMedia, closeMedia } = useMediaGallery()
@@ -661,6 +767,15 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
   const imageAttachments = useMemo(
     () => settledAttachments.filter((a) => a.mimeType.startsWith("image/")),
     [settledAttachments]
+  )
+  // The body renders exactly these (inline display + image row) in place; the
+  // gallery still owns them, so only the strip tiles drop.
+  const visibleImages = useMemo(
+    () =>
+      inlineAttachmentIds && inlineAttachmentIds.size > 0
+        ? imageAttachments.filter((a) => !inlineAttachmentIds.has(a.id))
+        : imageAttachments,
+    [imageAttachments, inlineAttachmentIds]
   )
   // Use processingStatus as the video discriminator — the backend sets it for
   // all video attachments, including application/octet-stream files with video
@@ -822,97 +937,100 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
   }
 
   const allFileAttachments = [...fileAttachments, ...failedVideoAttachments]
+  const hasVisibleStrip = attachments.length > imageAttachments.length - visibleImages.length
 
   return (
     <>
-      <div className={cn("flex flex-col gap-2 mt-2", className)}>
-        {pendingUploadChips.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {pendingUploadChips.map((chip) => (
-              <PendingAttachmentChip key={chip.attachment.id} {...chip} />
-            ))}
-          </div>
-        )}
-        {(imageAttachments.length > 0 || videoAttachments.length > 0 || pendingImagePlaceholders.length > 0) && (
-          <div className="flex flex-wrap gap-2">
-            {pendingImagePlaceholders.map((chip) => (
-              <PendingImagePlaceholder key={chip.attachment.id} {...chip} />
-            ))}
-            {imageAttachments.map((attachment) => (
-              <ImageAttachment
-                key={attachment.id}
-                attachment={attachment}
-                workspaceId={workspaceId}
-                onImageClick={handleImageClick}
-                isHighlighted={attachment.id === hoveredAttachmentId}
-                deferHydration={deferHydration}
-              />
-            ))}
-            {videoAttachments.map((attachment) => (
-              <VideoAttachment
-                key={attachment.id}
-                attachment={attachment}
-                workspaceId={workspaceId}
-                onVideoClick={handleVideoClick}
-                isHighlighted={attachment.id === hoveredAttachmentId}
-                deferHydration={deferHydration}
-              />
-            ))}
-          </div>
-        )}
-        {(allFileAttachments.length > 0 ||
-          markdownAttachments.length > 0 ||
-          htmlAttachments.length > 0 ||
-          pdfAttachments.length > 0 ||
-          textAttachments.length > 0) && (
-          <div className="flex flex-wrap gap-2">
-            {markdownAttachments.map((attachment) => (
-              <OpenableFileChip
-                key={attachment.id}
-                attachment={attachment}
-                isHighlighted={attachment.id === hoveredAttachmentId}
-                icon={FileText}
-                onOpen={handleTextOpen}
-              />
-            ))}
-            {htmlAttachments.map((attachment) => (
-              <OpenableFileChip
-                key={attachment.id}
-                attachment={attachment}
-                isHighlighted={attachment.id === hoveredAttachmentId}
-                icon={Globe}
-                onOpen={handleTextOpen}
-              />
-            ))}
-            {pdfAttachments.map((attachment) => (
-              <OpenableFileChip
-                key={attachment.id}
-                attachment={attachment}
-                isHighlighted={attachment.id === hoveredAttachmentId}
-                icon={FileText}
-                onOpen={handleTextOpen}
-              />
-            ))}
-            {textAttachments.map((attachment) => (
-              <OpenableFileChip
-                key={attachment.id}
-                attachment={attachment}
-                isHighlighted={attachment.id === hoveredAttachmentId}
-                icon={FileText}
-                onOpen={handleTextOpen}
-              />
-            ))}
-            {allFileAttachments.map((attachment) => (
-              <FileAttachment
-                key={attachment.id}
-                attachment={attachment}
-                workspaceId={workspaceId}
-                isHighlighted={attachment.id === hoveredAttachmentId}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      {hasVisibleStrip && (
+        <div className={cn("flex flex-col gap-2 mt-2", className)}>
+          {pendingUploadChips.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {pendingUploadChips.map((chip) => (
+                <PendingAttachmentChip key={chip.attachment.id} {...chip} />
+              ))}
+            </div>
+          )}
+          {(visibleImages.length > 0 || videoAttachments.length > 0 || pendingImagePlaceholders.length > 0) && (
+            <div className="flex flex-wrap gap-2">
+              {pendingImagePlaceholders.map((chip) => (
+                <PendingImagePlaceholder key={chip.attachment.id} {...chip} />
+              ))}
+              {visibleImages.map((attachment) => (
+                <ImageAttachment
+                  key={attachment.id}
+                  attachment={attachment}
+                  workspaceId={workspaceId}
+                  onImageClick={handleImageClick}
+                  isHighlighted={attachment.id === hoveredAttachmentId}
+                  deferHydration={deferHydration}
+                />
+              ))}
+              {videoAttachments.map((attachment) => (
+                <VideoAttachment
+                  key={attachment.id}
+                  attachment={attachment}
+                  workspaceId={workspaceId}
+                  onVideoClick={handleVideoClick}
+                  isHighlighted={attachment.id === hoveredAttachmentId}
+                  deferHydration={deferHydration}
+                />
+              ))}
+            </div>
+          )}
+          {(allFileAttachments.length > 0 ||
+            markdownAttachments.length > 0 ||
+            htmlAttachments.length > 0 ||
+            pdfAttachments.length > 0 ||
+            textAttachments.length > 0) && (
+            <div className="flex flex-wrap gap-2">
+              {markdownAttachments.map((attachment) => (
+                <OpenableFileChip
+                  key={attachment.id}
+                  attachment={attachment}
+                  isHighlighted={attachment.id === hoveredAttachmentId}
+                  icon={FileText}
+                  onOpen={handleTextOpen}
+                />
+              ))}
+              {htmlAttachments.map((attachment) => (
+                <OpenableFileChip
+                  key={attachment.id}
+                  attachment={attachment}
+                  isHighlighted={attachment.id === hoveredAttachmentId}
+                  icon={Globe}
+                  onOpen={handleTextOpen}
+                />
+              ))}
+              {pdfAttachments.map((attachment) => (
+                <OpenableFileChip
+                  key={attachment.id}
+                  attachment={attachment}
+                  isHighlighted={attachment.id === hoveredAttachmentId}
+                  icon={FileText}
+                  onOpen={handleTextOpen}
+                />
+              ))}
+              {textAttachments.map((attachment) => (
+                <OpenableFileChip
+                  key={attachment.id}
+                  attachment={attachment}
+                  isHighlighted={attachment.id === hoveredAttachmentId}
+                  icon={FileText}
+                  onOpen={handleTextOpen}
+                />
+              ))}
+              {allFileAttachments.map((attachment) => (
+                <FileAttachment
+                  key={attachment.id}
+                  attachment={attachment}
+                  workspaceId={workspaceId}
+                  isHighlighted={attachment.id === hoveredAttachmentId}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <MediaGallery
         isOpen={selectedAttachmentId !== null && galleryIndex !== -1}

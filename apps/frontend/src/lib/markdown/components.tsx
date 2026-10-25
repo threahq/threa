@@ -26,6 +26,7 @@ import { MemoChip } from "@/components/memo-embed/memo-chip"
 import { GifChip } from "@/components/giphy/gif-chip"
 import { AppLink, appLinkDestinationLabel, appLinkHrefFromGoPath } from "@/components/in-app-link/app-link"
 import { AttachmentChip } from "@/components/timeline/attachment-chip"
+import { InlineAttachmentImage } from "@/components/timeline/attachment-list"
 import { PointerMentionChip, ProcessedChildren } from "./mention-renderer"
 import { useAttachmentContext } from "./attachment-context"
 import { PENDING_STATE_LABELS } from "@/lib/attachments/pending-state"
@@ -266,7 +267,7 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
 
   if (href?.startsWith("attachment:")) {
     const attachmentId = href.replace("attachment:", "")
-    const { mimeType } = parseAttachmentMetadata(title)
+    const { mimeType, display } = parseAttachmentMetadata(title)
 
     // Still uploading/scanning, failed, or quarantined: the bytes may not
     // exist (or must not be served), and the status chip below the message
@@ -294,6 +295,22 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
             status="pending"
           />
         </button>
+      )
+    }
+
+    // The row's mime, not the title's: an E2E row is an octet-stream placeholder
+    // with no thumbnail, so it keeps the chip and the decrypted strip shows it.
+    const attachment = attachmentContext?.getAttachment(attachmentId)
+    if (attachmentContext && attachment && display === "inline" && attachment.mimeType.startsWith("image/")) {
+      return (
+        <InlineAttachmentImage
+          workspaceId={attachmentContext.workspaceId}
+          attachmentId={attachmentId}
+          filename={attachment.filename}
+          width={attachment.width}
+          height={attachment.height}
+          onOpen={attachmentContext.openAttachment}
+        />
       )
     }
 

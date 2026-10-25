@@ -7,6 +7,7 @@ import { AttachmentList } from "@/components/timeline/attachment-list"
 import { type SharedMessageSource } from "@/hooks/use-shared-message-source"
 import { streamFallbackLabel } from "@/lib/streams"
 import { VISIBILITY_LABELS } from "@/lib/stream-visuals"
+import { inlineAttachmentIdSet } from "@/lib/markdown/inline-attachments"
 import { Visibilities, type StreamType, type Visibility } from "@threahq/types"
 
 /**
@@ -119,7 +120,11 @@ export function SharedMessageCardBody({
       {hasAttachments ? (
         <AttachmentProvider workspaceId={workspaceId} attachments={attachments}>
           {body}
-          <AttachmentList attachments={attachments} workspaceId={workspaceId} />
+          <AttachmentList
+            attachments={attachments}
+            workspaceId={workspaceId}
+            inlineAttachmentIds={inlineAttachmentIdSet(source.contentMarkdown)}
+          />
         </AttachmentProvider>
       ) : (
         body

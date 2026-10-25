@@ -62,6 +62,7 @@ export { sliceContent, isRangeValid, normalizeRange, isEmptySlice } from "./slic
 export { resolveSelectionRange, type SelectionRangeInput } from "./selection-range"
 export {
   collectAttachmentReferenceIds,
+  collectInlineAttachmentIds,
   collectGiphyEmbeds,
   collectLinkUrls,
   collectQuoteReplyMessageIds,

@@ -249,6 +249,59 @@ describe("AttachmentList", () => {
     })
   })
 
+  describe("body-inline attachments", () => {
+    const attachments = [
+      createAttachment({ id: "img_inline", filename: "inline.png", mimeType: "image/png" }),
+      createAttachment({ id: "img_strip", filename: "strip.png", mimeType: "image/png" }),
+    ]
+    const renderAt = (url: string) =>
+      render(
+        <MemoryRouter initialEntries={[url]}>
+          <MediaGalleryProvider>
+            <AttachmentList
+              attachments={attachments}
+              workspaceId={workspaceId}
+              inlineAttachmentIds={new Set(["img_inline"])}
+            />
+          </MediaGalleryProvider>
+        </MemoryRouter>
+      )
+
+    it("should hide only the tile when an image is rendered inline in the body", () => {
+      renderAt("/")
+
+      expect(screen.queryByRole("button", { name: "inline.png" })).not.toBeInTheDocument()
+      expect(screen.getByRole("button", { name: "strip.png" })).toBeInTheDocument()
+    })
+
+    it("should keep a non-image tile when its reference has inline display", () => {
+      render(
+        <MemoryRouter>
+          <MediaGalleryProvider>
+            <AttachmentList
+              attachments={[
+                createAttachment({ id: "file_inline", filename: "notes.zip", mimeType: "application/zip" }),
+              ]}
+              workspaceId={workspaceId}
+              inlineAttachmentIds={new Set(["file_inline"])}
+            />
+          </MediaGalleryProvider>
+        </MemoryRouter>
+      )
+
+      expect(screen.getByText("notes.zip")).toBeInTheDocument()
+    })
+
+    it("should open the gallery when the media param names a hidden inline image", async () => {
+      renderAt("/?media=img_inline")
+
+      await waitFor(() => {
+        expect(screen.getByRole("dialog")).toBeInTheDocument()
+      })
+      expect(screen.getByText("1 / 2")).toBeInTheDocument()
+    })
+  })
+
   describe("image lightbox", () => {
     it("should open lightbox when image is clicked", async () => {
       const user = userEvent.setup()

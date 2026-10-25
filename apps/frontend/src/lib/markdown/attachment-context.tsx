@@ -19,11 +19,15 @@ interface Attachment {
   processingStatus?: string
   safetyStatus?: string
   uploadStatus?: string
+  width?: number
+  height?: number
 }
 
 type AttachmentPendingState = ReturnType<typeof attachmentPendingState>
 
 interface AttachmentContextValue {
+  workspaceId: string
+  getAttachment: (attachmentId: string) => Attachment | undefined
   openAttachment: (attachmentId: string, metaKey: boolean) => void
   /**
    * Live upload/scan state for one of this message's attachments, so the
@@ -53,6 +57,11 @@ interface AttachmentProviderProps {
 export function AttachmentProvider({ workspaceId, attachments, children }: AttachmentProviderProps) {
   const [hoveredAttachmentId, setHoveredAttachmentId] = useState<string | null>(null)
   const { openMedia } = useMediaGallery()
+
+  const getAttachment = useCallback(
+    (attachmentId: string) => attachments.find((a) => a.id === attachmentId),
+    [attachments]
+  )
 
   const getAttachmentPendingState = useCallback(
     (attachmentId: string): AttachmentPendingState => {
@@ -120,8 +129,15 @@ export function AttachmentProvider({ workspaceId, attachments, children }: Attac
   )
 
   const value = useMemo(
-    () => ({ openAttachment, getAttachmentPendingState, hoveredAttachmentId, setHoveredAttachmentId }),
-    [openAttachment, getAttachmentPendingState, hoveredAttachmentId]
+    () => ({
+      workspaceId,
+      getAttachment,
+      openAttachment,
+      getAttachmentPendingState,
+      hoveredAttachmentId,
+      setHoveredAttachmentId,
+    }),
+    [workspaceId, getAttachment, openAttachment, getAttachmentPendingState, hoveredAttachmentId]
   )
 
   return <AttachmentContext.Provider value={value}>{children}</AttachmentContext.Provider>

@@ -6,7 +6,9 @@ import { StreamTypes } from "@threahq/types"
 import { MentionProvider, type MentionType } from "@/lib/markdown/mention-context"
 import { ChannelLinkProvider } from "@/lib/markdown/channel-link-context"
 import type { Mentionable } from "@/components/editor/triggers/types"
-import { MarkdownContent } from "./markdown-content"
+import { MediaGalleryProvider, useMediaGallery } from "@/contexts"
+import { API_BASE } from "@/api/client"
+import { MarkdownContent, AttachmentProvider } from "./markdown-content"
 
 // MarkdownLink intercepts same-origin links through useNavigate, which requires
 // a Router context. Wrap every render with MemoryRouter so existing tests
@@ -736,6 +738,118 @@ Some **bold** and *italic* text with \`code\`.
 
       // Same content should result in same DOM node
       expect(firstRender).toBe(secondRender)
+    })
+  })
+
+  describe("attachment display", () => {
+    const meta = (filename: string, mimeType: string, display?: string) =>
+      `threa-attachment:filename=${filename}&mimeType=${encodeURIComponent(mimeType)}&sizeBytes=10${display ? `&display=${display}` : ""}`
+
+    function MediaProbe() {
+      const { mediaAttachmentId } = useMediaGallery()
+      return <output data-testid="media">{mediaAttachmentId ?? ""}</output>
+    }
+
+    const renderWithAttachments = (
+      content: string,
+      attachments: Array<{
+        id: string
+        filename: string
+        mimeType: string
+        sizeBytes: number
+        safetyStatus?: string
+        width?: number
+        height?: number
+      }>
+    ) =>
+      render(
+        <MediaGalleryProvider>
+          <AttachmentProvider workspaceId="ws_1" attachments={attachments}>
+            <MarkdownContent content={content} />
+          </AttachmentProvider>
+          <MediaProbe />
+        </MediaGalleryProvider>
+      )
+
+    const image = { id: "attach_1", filename: "a.png", mimeType: "image/png", sizeBytes: 10 }
+
+    it("should render a thumbnail button that opens the gallery when an image has inline display", () => {
+      renderWithAttachments(`see [a.png](attachment:attach_1 "${meta("a.png", "image/png", "inline")}")`, [image])
+
+      const img = screen.getByAltText("a.png")
+      expect(img).toHaveAttribute(
+        "src",
+        `${API_BASE}/api/workspaces/ws_1/attachments/attach_1/content?variant=thumbnail`
+      )
+      const button = screen.getByRole("button", { name: "a.png" })
+      expect(button.closest("p")).not.toBeNull()
+
+      fireEvent.click(button)
+      expect(screen.getByTestId("media")).toHaveTextContent("attach_1")
+    })
+
+    it("should keep the chip when an image has pill display", () => {
+      renderWithAttachments(`[a.png](attachment:attach_1 "${meta("a.png", "image/png")}")`, [image])
+
+      expect(screen.queryByRole("img")).toBeNull()
+      expect(screen.getByRole("button", { name: /a\.png/ })).toBeInTheDocument()
+    })
+
+    it("should render the muted chip when an inline image is still uploading", () => {
+      renderWithAttachments(`[a.png](attachment:attach_1 "${meta("a.png", "image/png", "inline")}")`, [
+        { ...image, safetyStatus: "pending_upload" },
+      ])
+
+      expect(screen.queryByRole("img")).toBeNull()
+      expect(screen.getByRole("button", { name: /a\.png — / })).toBeInTheDocument()
+    })
+
+    it("should keep the chip when an inline image's row is an E2E octet-stream placeholder", () => {
+      renderWithAttachments(`[a.png](attachment:attach_1 "${meta("a.png", "image/png", "inline")}")`, [
+        { ...image, filename: "attachment", mimeType: "application/octet-stream" },
+      ])
+
+      expect(screen.queryByRole("img")).toBeNull()
+      expect(screen.getByRole("button", { name: /a\.png/ })).toBeInTheDocument()
+    })
+
+    it("should render inside the paragraph without nesting warnings when text surrounds an inline image", () => {
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
+      try {
+        const { container } = renderWithAttachments(
+          `before [a.png](attachment:attach_1 "${meta("a.png", "image/png", "inline")}") after`,
+          [{ ...image, width: 800, height: 400 }]
+        )
+
+        const paragraph = container.querySelector("p")
+        const button = screen.getByRole("button", { name: "a.png" })
+        expect({
+          text: paragraph?.textContent,
+          buttonInParagraph: paragraph?.contains(button),
+          blockDescendants: paragraph?.querySelectorAll("div, p").length,
+          reservedBox: { width: button.style.width, height: button.style.height },
+          nestingWarnings: consoleError.mock.calls.filter((call) =>
+            /validateDOMNesting|cannot be a descendant|cannot contain a nested/.test(String(call[0]))
+          ),
+        }).toEqual({
+          text: "before  after",
+          buttonInParagraph: true,
+          blockDescendants: 0,
+          reservedBox: { width: "256px", height: "128px" },
+          nestingWarnings: [],
+        })
+      } finally {
+        consoleError.mockRestore()
+      }
+    })
+
+    it("should keep the chip when a non-image has inline display", () => {
+      renderWithAttachments(`[r.pdf](attachment:attach_2 "${meta("r.pdf", "application/pdf", "inline")}")`, [
+        { id: "attach_2", filename: "r.pdf", mimeType: "application/pdf", sizeBytes: 10 },
+      ])
+
+      expect(screen.queryByRole("img")).toBeNull()
+      expect(screen.getByRole("button", { name: /r\.pdf/ })).toBeInTheDocument()
     })
   })
 })
