@@ -50,6 +50,27 @@ describe("findLocalImageLinks", () => {
     expect(paths(markdown)).toEqual(["/tmp/real.png"])
   })
 
+  test("skips indented code and fences inside blockquotes and list items", () => {
+    const markdown = [
+      "Para",
+      "",
+      "    ![indented](/tmp/indented.png)",
+      "",
+      "    ![still](/tmp/still.png)",
+      "> ```",
+      "> ![quoted](/tmp/quoted.png)",
+      "> ```",
+      "- item",
+      "  ```",
+      "  ![listed](/tmp/listed.png)",
+      "  ```",
+      "> ![quote](/tmp/quote.png)",
+      "Text",
+      "    ![continuation](/tmp/continuation.png)",
+    ].join("\n")
+    expect(paths(markdown)).toEqual(["/tmp/quote.png", "/tmp/continuation.png"])
+  })
+
   test("skips escaped images and plain links", () => {
     expect(paths("\\![escaped](/tmp/a.png) and [link](/tmp/b.png)")).toEqual([])
   })
@@ -78,14 +99,16 @@ describe("findLocalImageLinks", () => {
 
 describe("imageAttachmentLink", () => {
   test("labels by alt text, falling back to the escaped filename, with the chip metadata title", () => {
-    expect(
-      imageAttachmentLink("Direction\n1", { id: "attach_1", filename: "a.png", mimeType: "image/png", sizeBytes: 12 })
-    ).toBe('[Direction 1](attachment:attach_1 "threa-attachment:filename=a.png&mimeType=image%2Fpng&sizeBytes=12")')
-    expect(
-      imageAttachmentLink(" ", { id: "attach_2", filename: "[draft].png", mimeType: "image/png", sizeBytes: 3 })
-    ).toBe(
-      '[\\[draft\\].png](attachment:attach_2 "threa-attachment:filename=%5Bdraft%5D.png&mimeType=image%2Fpng&sizeBytes=3")'
-    )
+    const image = { mimeType: "image/png", sizeBytes: 12 }
+    expect([
+      imageAttachmentLink({ ...image, id: "attach_1", filename: "a.png" }, { alt: "Direction\n1" }),
+      imageAttachmentLink({ ...image, id: "attach_2", filename: "[draft].png" }, { alt: " " }),
+      imageAttachmentLink({ ...image, id: "attach_3", filename: "c.png" }, { alt: "a [b \\] c" }),
+    ]).toEqual([
+      '[Direction 1](attachment:attach_1 "threa-attachment:filename=a.png&mimeType=image%2Fpng&sizeBytes=12")',
+      '[\\[draft\\].png](attachment:attach_2 "threa-attachment:filename=%5Bdraft%5D.png&mimeType=image%2Fpng&sizeBytes=12")',
+      '[a \\[b \\] c](attachment:attach_3 "threa-attachment:filename=c.png&mimeType=image%2Fpng&sizeBytes=12")',
+    ])
   })
 })
 

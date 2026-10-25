@@ -141,7 +141,7 @@ THREA_ATTACH: ./reports/out.png
 
 The channel uploads the file (one per `THREA_ATTACH:` line; paths resolve against the working directory) and rewrites the line into an `[out.png](attachment:…)` link the reply carries into the scratchpad. An upload that fails is reported inline rather than dropping the reply.
 
-A markdown image pointing at a local image file (png, jpg, gif, webp or svg), such as `![chart](./reports/out.png)`, uploads the same way and stays where Claude put it. Web URLs and images inside code are left as written.
+A markdown image outside code that points at a local png, jpg, gif, webp or svg file, such as `![chart](/tmp/chart.png)`, uploads too. On plaintext scratchpads it becomes an attachment link where it was written; on encrypted ones it is attached to the reply. Web URLs are left as written.
 
 ## Delegations
 

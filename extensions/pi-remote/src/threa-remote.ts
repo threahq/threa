@@ -4975,7 +4975,7 @@ async function prepareFinalMarkdown(
   const images = await uploadLocalImageLinks(
     extracted.markdown,
     (path) => uploadAttachment(path, cwd),
-    (attachment, link) => imageAttachmentLink(link.alt, attachment)
+    imageAttachmentLink
   )
   const listedAttachments: UploadedAttachment[] = []
   const failedUploads = [...images.failed]
@@ -4983,7 +4983,7 @@ async function prepareFinalMarkdown(
     try {
       listedAttachments.push(await uploadAttachment(path, cwd))
     } catch (error) {
-      failedUploads.push(`${path}: ${String(error)}`)
+      failedUploads.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
   const attachmentLinks = listedAttachments.map(

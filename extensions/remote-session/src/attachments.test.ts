@@ -212,11 +212,18 @@ describe("uploadReplyAttachments", () => {
       "Direction 1:\n![First direction](shot.png)\n\nDirection 2:\n![](./missing.png)\n\n`![code](shot.png)`",
       dir
     )
-    expect({ uploads, ids: result.uploaded.map((a) => a.id) }).toEqual({ uploads: ["shot.png"], ids: ["att_img"] })
-    expect(result.markdown).toStartWith(
-      'Direction 1:\n[First direction](attachment:att_img "threa-attachment:filename=shot.png&mimeType=image%2Fpng&sizeBytes=1")\n\nDirection 2:\n\n\n`![code](shot.png)`\n\n' +
-        "Attachment upload failed:\n- ./missing.png: ENOENT"
-    )
+    expect({
+      uploads,
+      ids: result.uploaded.map((a) => a.id),
+      markdown: result.markdown.replaceAll(dir, "<dir>"),
+    }).toEqual({
+      uploads: ["shot.png"],
+      ids: ["att_img"],
+      markdown:
+        'Direction 1:\n[First direction](attachment:att_img "threa-attachment:filename=shot.png&mimeType=image%2Fpng&sizeBytes=1")\n\n' +
+        "Direction 2:\n\n\n`![code](shot.png)`\n\n" +
+        "Attachment upload failed:\n- ./missing.png: ENOENT: no such file or directory, statx '<dir>/missing.png'",
+    })
   })
 
   test("leaves the markdown empty when there was nothing to say and nothing to attach", async () => {
@@ -286,14 +293,21 @@ describe("uploadSealedReplyAttachments", () => {
   test("uploads an embedded image as a sealed ref and removes its markup", async () => {
     const dir = tempDir()
     writeFileSync(join(dir, "shot.png"), new Uint8Array([9, 9]))
+    const e2eFlags: unknown[] = []
     const client = {
       async uploadAttachment(form: FormData): Promise<AttachmentSummary> {
-        expect(form.get("e2e")).toBe("true")
+        e2eFlags.push(form.get("e2e"))
         return summary({ id: "att_e2e_img", filename: "encrypted" })
       },
     }
     const result = await uploadSealedReplyAttachments(client, "Look:\n![shot](shot.png)", dir)
-    expect({ markdown: result.markdown, ids: result.attachmentIds, filename: result.refs[0]?.filename }).toEqual({
+    expect({
+      e2eFlags,
+      markdown: result.markdown,
+      ids: result.attachmentIds,
+      filename: result.refs[0]?.filename,
+    }).toEqual({
+      e2eFlags: ["true"],
       markdown: "Look:",
       ids: ["att_e2e_img"],
       filename: "shot.png",
@@ -317,9 +331,11 @@ describe("uploadSealedReplyAttachments", () => {
       },
     }
     const result = await uploadSealedReplyAttachments(client, lines.join("\n"), dir)
-    expect(uploadCount).toBe(16)
-    expect(result.attachmentIds).toHaveLength(16)
-    expect(result.markdown).toContain("- img-15.png: over the 16-attachment limit for one message")
+    expect({ uploadCount, ids: result.attachmentIds.length, markdown: result.markdown }).toEqual({
+      uploadCount: 16,
+      ids: 16,
+      markdown: "Done\n\nAttachment upload failed:\n- img-15.png: over the 16-attachment limit for one message",
+    })
   })
 
   test("clamps to the server's 16-id cap: overflow directives become failure notes, not a 400 loop", async () => {

@@ -218,11 +218,7 @@ export async function uploadReplyAttachments(
   cwd: string
 ): Promise<{ markdown: string; uploaded: AttachmentSummary[]; failed: string[] }> {
   const { markdown: stripped, paths } = extractAttachmentDirectives(markdown)
-  const images = await uploadLocalImageLinks(
-    stripped,
-    (path) => uploadFile(client, path, cwd),
-    (attachment, link) => imageAttachmentLink(link.alt, attachment)
-  )
+  const images = await uploadLocalImageLinks(stripped, (path) => uploadFile(client, path, cwd), imageAttachmentLink)
   const listed: AttachmentSummary[] = []
   const failed = [...images.failed]
   for (const path of paths) {

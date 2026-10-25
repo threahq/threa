@@ -10,6 +10,8 @@ export interface LocalImageLink {
 }
 
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/
+const QUOTE_PREFIX_RE = /^(?: {0,3}> ?)*/
+const INDENT_RE = /^(?: {4}| {0,3}\t)/
 const IMAGE_RE =
   /(?<!\\)!\[((?:\\.|[^\\\]])*)\]\(\s*(<[^>\n]*>|(?:[^\s()]|\([^\s()]*\))+)(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g
 const SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i
@@ -66,24 +68,37 @@ function maskCodeSpans(line: string): string {
   return out
 }
 
-/** Same-length copy with fenced blocks and inline code spans blanked, so offsets still index the original. */
+/**
+ * Same-length copy with fenced blocks, indented code and inline code spans
+ * blanked, so offsets still index the original. Fences inside blockquotes
+ * count; an indented list paragraph reads as code, which only leaves its
+ * image unrewritten.
+ */
 function maskCode(markdown: string): string {
   let fence: string | null = null
+  let indented = false
+  let previousBlank = true
   return markdown
     .split("\n")
     .map((line) => {
-      const marker = line.match(FENCE_RE)?.[1]
+      const body = line.slice(line.match(QUOTE_PREFIX_RE)![0].length)
+      const isBlank = body.trim() === ""
+      const marker = body.match(FENCE_RE)?.[1]
+      let code: boolean
       if (fence) {
-        const closes =
-          marker !== undefined && marker[0] === fence[0] && marker.length >= fence.length && line.trim() === marker
-        if (closes) fence = null
-        return blank(line)
-      }
-      if (marker) {
+        if (marker !== undefined && marker[0] === fence[0] && marker.length >= fence.length && body.trim() === marker) {
+          fence = null
+        }
+        code = true
+      } else if (marker) {
         fence = marker
-        return blank(line)
+        code = true
+      } else {
+        if (!isBlank) indented = INDENT_RE.test(body) && (previousBlank || indented)
+        code = indented
       }
-      return maskCodeSpans(line)
+      previousBlank = isBlank
+      return code ? blank(line) : maskCodeSpans(line)
     })
     .join("\n")
 }
@@ -111,11 +126,15 @@ export function findLocalImageLinks(markdown: string): LocalImageLink[] {
  * chip's filename and type from.
  */
 export function imageAttachmentLink(
-  alt: string,
-  attachment: { id: string; filename: string; mimeType: string; sizeBytes: number }
+  attachment: { id: string; filename: string; mimeType: string; sizeBytes: number },
+  link: Pick<LocalImageLink, "alt">
 ): string {
-  // A link label can't span lines; one that does stays plain text and the upload never binds.
-  const label = alt.replace(/\s+/g, " ").trim() || attachment.filename.replace(/[\\[\]]/g, "\\$&")
+  // A link label can't span lines or hold a bare bracket; either leaves plain text and the upload never binds.
+  const alt = link.alt
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\\.|[[\]]/g, (match) => (match.length === 2 ? match : `\\${match}`))
+  const label = alt || attachment.filename.replace(/[\\[\]]/g, "\\$&")
   const metadata = new URLSearchParams({
     filename: attachment.filename,
     mimeType: attachment.mimeType,
