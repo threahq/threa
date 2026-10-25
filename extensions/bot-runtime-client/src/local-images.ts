@@ -109,19 +109,31 @@ function maskCode(markdown: string): string {
 /**
  * Per offset, how many link texts enclose it: a `[`…`]` closed on the same line and followed by `(` or `[`,
  * other than an image's own alt. `[see ![x](a.png)](url)` puts the image in a link's text, and an attachment
- * link can't nest inside another link.
+ * link can't nest inside another link. Image targets and titles are blanked first so their brackets don't count.
  */
-function linkTextDepth(markdown: string): Int32Array {
-  const depth = new Int32Array(markdown.length + 1)
+function linkTextDepth(markdown: string, images: RegExpExecArray[]): Int32Array {
+  const altOpens = new Set<number>()
+  let text = ""
+  let cursor = 0
+  for (const image of images) {
+    const targetStart = image.index + image[1]!.length + 3
+    const end = image.index + image[0].length
+    altOpens.add(image.index + 1)
+    text += markdown.slice(cursor, targetStart) + blank(markdown.slice(targetStart, end))
+    cursor = end
+  }
+  text += markdown.slice(cursor)
+
+  const depth = new Int32Array(text.length + 1)
   let open: number[] = []
-  for (let i = 0; i < markdown.length; i++) {
-    const char = markdown[i]
-    if (char === "\\" && markdown[i + 1] !== "\n") i++
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i]
+    if (char === "\\" && text[i + 1] !== "\n") i++
     else if (char === "\n") open = []
     else if (char === "[") open.push(i)
     else if (char === "]") {
       const start = open.pop()
-      if (start !== undefined && markdown[start - 1] !== "!" && (markdown[i + 1] === "(" || markdown[i + 1] === "[")) {
+      if (start !== undefined && !altOpens.has(start) && (text[i + 1] === "(" || text[i + 1] === "[")) {
         depth[start + 1]!++
         depth[i]!--
       }
@@ -135,13 +147,14 @@ function linkTextDepth(markdown: string): Int32Array {
 export function findLocalImageLinks(markdown: string): LocalImageLink[] {
   const links: LocalImageLink[] = []
   const masked = maskCode(markdown)
-  const inLinkText = linkTextDepth(masked)
-  for (const match of masked.matchAll(IMAGE_RE)) {
+  const images = [...masked.matchAll(IMAGE_RE)]
+  const linkDepth = linkTextDepth(masked, images)
+  for (const match of images) {
     const start = match.index
     const end = start + match[0].length
     // A match that straddles masked code reads differently in the original; it is not a real image.
     if (markdown.slice(start, end) !== match[0]) continue
-    if (inLinkText[start]! > 0) continue
+    if (linkDepth[start]! > 0) continue
     const raw = match[2]!
     const path = localPath(raw.startsWith("<") ? raw.slice(1, -1) : raw)
     if (path && IMAGE_FILE_RE.test(path)) links.push({ start, end, alt: match[1]!, path })

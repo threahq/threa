@@ -104,6 +104,16 @@ describe("findLocalImageLinks", () => {
     ]).toEqual([["/tmp/plot.png"], ["/tmp/a.png", "/tmp/b.png"], ["/tmp/z.png"]])
   })
 
+  test("brackets in an image's path or title, an escaped `!`, or an outer image don't hide the enclosing link", () => {
+    expect([
+      paths('[ ![a](/tmp/a.png "t]") ](https://x.test)'),
+      paths('[ ![a](/tmp/a.png "t[") ](https://x.test)'),
+      paths("[see ![a](/tmp/x].png) more](https://x.test)"),
+      paths("\\![see ![a](/tmp/a.png)](https://x.test)"),
+      paths("![outer ![in](/tmp/in.png)](https://x.test)"),
+    ]).toEqual([[], [], [], [], []])
+  })
+
   test("scans many images and links on one line in linear time", () => {
     const line = "[l](https://e.test) ![i](/tmp/i.png) ".repeat(5_000)
     const started = performance.now()
