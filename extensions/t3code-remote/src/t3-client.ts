@@ -56,6 +56,7 @@ export interface ThreadSummary {
   latestRunId: string | null
   providerInstanceId: string
   model: string
+  archived: boolean
 }
 
 export interface ImageAttachment {
@@ -155,6 +156,10 @@ export interface T3Tools {
   t3_thread_configure: {
     args: { threadId: string; modelSelection: ModelSelection }
     result: { sequence: number }
+  }
+  t3_thread_organize: {
+    args: { threadId: string; action: "archive" }
+    result: unknown
   }
   t3_thread_fork: {
     args: { threadId: string; sourcePoint: { type: "latest_stable" }; title: string }

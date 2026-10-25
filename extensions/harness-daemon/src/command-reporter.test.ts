@@ -1,6 +1,8 @@
 import { describe, expect, spyOn, test } from "bun:test"
-import type { CommandClaim } from "@threahq/harness-client"
-import { CLAIM_RENEW_EVERY_MS, CLAIM_TTL_SECONDS, claimCommandReporter } from "./command-reporter"
+import { existsSync } from "node:fs"
+import { readCommandClaim, writeCommandClaim, type CommandClaim } from "@threahq/harness-client"
+import { parseSpawn } from "./cli"
+import { CLAIM_RENEW_EVERY_MS, CLAIM_TTL_SECONDS, claimCommandReporter, parseOrFailClaim } from "./command-reporter"
 
 const TARGET = { baseUrl: "https://threa.test", workspaceId: "ws_1", apiKey: "key" }
 const CLAIM: CommandClaim = {
@@ -96,5 +98,24 @@ describe("claimCommandReporter", () => {
       "harnessd: could not fail the /done command: 404 claim lost",
       "harnessd: could not close the /done command: 404 claim lost",
     ])
+  })
+})
+
+describe("parseOrFailClaim", () => {
+  test("arguments that don't parse fail the claimed command and remove its claim file", async () => {
+    const claimFile = writeCommandClaim(CLAIM)
+    const { posted, post } = fakePost()
+    const deps = () => ({
+      readClaim: readCommandClaim,
+      commandReporter: (claim: CommandClaim) => claimCommandReporter(TARGET, claim, "spawn", post),
+    })
+
+    await expect(
+      parseOrFailClaim(["--attach", "stream_root", "--claim-file", claimFile], parseSpawn, deps)
+    ).rejects.toThrow("spawn requires runtime")
+    expect({ fileLeft: existsSync(claimFile), posted: posted.map(({ path }) => path) }).toEqual({
+      fileLeft: false,
+      posted: ["/bot-invocations/binv_done/renew", "/bot-invocations/binv_done/fail"],
+    })
   })
 })

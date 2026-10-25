@@ -416,6 +416,11 @@ export class T3TurnRunner {
     )
   }
 
+  /** Whether a run T3 started by itself is being posted to the stream. */
+  isRelaying(streamId: string): boolean {
+    return this.unprompted.has(this.state.threads[streamId] ?? "")
+  }
+
   openRuns(): OpenRun[] {
     return [...this.runs.values()]
   }

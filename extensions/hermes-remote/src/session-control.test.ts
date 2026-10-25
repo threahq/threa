@@ -4,7 +4,11 @@ import { HermesApiError, type HermesRunsClient, type ModelOptions } from "./herm
 import type { HermesTurnRunner } from "./run-bridge"
 import { createHermesSessionControl, matchModel } from "./session-control"
 
-const CONTEXT: SessionControlInvocationContext = { rootStreamId: "stream_root", sourceMessageId: "msg_1" }
+const CONTEXT: SessionControlInvocationContext = {
+  rootStreamId: "stream_root",
+  streamId: "stream_root",
+  sourceMessageId: "msg_1",
+}
 
 const OPTIONS: ModelOptions = {
   provider: "openrouter",

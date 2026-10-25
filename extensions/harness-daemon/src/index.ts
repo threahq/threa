@@ -14,6 +14,7 @@ import {
   parseTombstone,
   usage,
 } from "./cli"
+import { parseOrFailClaim } from "./command-reporter"
 import {
   attachAgent,
   backfillIdentitiesCommand,
@@ -48,7 +49,7 @@ async function main(): Promise<void> {
   const [, , command, ...args] = process.argv
   if (!command || command === "help" || command === "--help" || command === "-h") usage()
   if (command === "spawn") {
-    const options = parseSpawn(args)
+    const options = await parseOrFailClaim(args, parseSpawn, defaultAttachedSpawnDeps)
     if (options.attach) {
       await runAttachedSpawn(options, defaultAttachedSpawnDeps())
       return
@@ -91,7 +92,7 @@ async function main(): Promise<void> {
   if (command === "unhold") return unholdAgent(args[0] ?? die("unhold requires an agent id or name"))
   if (command === "kick") return kickAgent(args[0] ?? die("kick requires an agent id, name, or runtime session id"))
   if (command === "clear") return clearAgent(args[0] ?? die("clear requires an agent id, name, or runtime session id"))
-  if (command === "done") return doneAgent(parseDone(args), defaultDoneDeps())
+  if (command === "done") return doneAgent(await parseOrFailClaim(args, parseDone, defaultDoneDeps), defaultDoneDeps())
   if (command === "interrupt") return interruptAgent(args[0] ?? die("interrupt requires an agent id or name"))
   if (command === "steer")
     return steerAgent(args[0] ?? die("steer requires an agent id or name"), args.slice(1).join(" "))

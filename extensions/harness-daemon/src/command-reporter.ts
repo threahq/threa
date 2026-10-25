@@ -53,6 +53,43 @@ export function claimCommandReporter(
   }
 }
 
+export interface ClaimReporterDeps {
+  readClaim: (path: string) => CommandClaim
+  commandReporter: (claim: CommandClaim) => CommandReporter
+}
+
+/**
+ * Parses a command's arguments. When they don't parse, the claim file they name is still read, which removes it, and
+ * its command fails with the parse error: otherwise the file's token outlives this process and the command waits out
+ * its lease.
+ */
+export async function parseOrFailClaim<T>(
+  args: string[],
+  parse: (args: string[]) => T,
+  deps: () => ClaimReporterDeps
+): Promise<T> {
+  try {
+    return parse(args)
+  } catch (error) {
+    const index = args.indexOf("--claim-file")
+    const path = index === -1 ? undefined : args[index + 1]
+    if (path && !path.startsWith("--")) {
+      try {
+        const { readClaim, commandReporter } = deps()
+        const reporter = commandReporter(readClaim(path))
+        try {
+          await reporter.fail(error instanceof Error ? error.message : String(error))
+        } finally {
+          reporter.stop()
+        }
+      } catch (failure) {
+        console.error(`harnessd: could not fail the command: ${failure instanceof Error ? failure.message : failure}`)
+      }
+    }
+    throw error
+  }
+}
+
 /** A command typed at the terminal has no Threa command to drive; its steps go to stdout. */
 export function consoleCommandReporter(command: string): CommandReporter {
   return {

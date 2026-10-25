@@ -1265,7 +1265,11 @@ describe("HermesTurnRunner threads", () => {
     }
 
     const before = connect()
-    await before.control.runCommand("model", "muse-spark", { rootStreamId: "stream_root", sourceMessageId: "msg_1" })
+    await before.control.runCommand("model", "muse-spark", {
+      rootStreamId: "stream_root",
+      streamId: "stream_root",
+      sourceMessageId: "msg_1",
+    })
     const after = connect()
     await after.runner.deliverTurn(TURN)
     await settle()

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
+  claimThreaTarget,
   claudeLaunchCommand,
   claudeResumeSessionId,
   e2eKeyStoreEnvironment,
@@ -659,4 +660,26 @@ test("a session CLI config declares the bot principal and is readable only by it
     principal: "bot",
   })
   expect(statSync(path).mode & 0o777).toBe(0o600)
+})
+
+test("a T3 Code claim reports with the credentials it carries, any other with its runtime's", () => {
+  const fields = { workspaceId: "ws_1", invocationId: "binv_1", instanceId: "t3-1", claimToken: "tok" }
+  const resolved: string[] = []
+  const resolver = (runtime: string, purpose: string) => {
+    resolved.push(`${runtime}: ${purpose}`)
+    return { baseUrl: "https://runtime.example", workspaceId: "ws_runtime", apiKey: "runtime-key" }
+  }
+
+  const t3 = claimThreaTarget(
+    { ...fields, runtime: "t3code", baseUrl: "https://t3.example", apiKey: "t3-key" },
+    "drive /spawn",
+    resolver
+  )
+  const claude = claimThreaTarget({ ...fields, runtime: "claude" }, "drive /spawn", resolver)
+
+  expect({ t3, claude, resolved }).toEqual({
+    t3: { baseUrl: "https://t3.example", workspaceId: "ws_1", apiKey: "t3-key" },
+    claude: { baseUrl: "https://runtime.example", workspaceId: "ws_runtime", apiKey: "runtime-key" },
+    resolved: ["claude: drive /spawn"],
+  })
 })

@@ -15,7 +15,7 @@ import {
   type WindowDecisionDeps,
 } from "./reap"
 import { parseScratchpadUrl } from "./resume"
-import { runtimeThreaTarget, type RuntimeTargetResolver } from "./spawners"
+import { claimThreaTarget, runtimeThreaTarget, type RuntimeTargetResolver } from "./spawners"
 import { failureExcerpt, postThrea, type ThreaTarget } from "./threa-http"
 import type { ManagedAgent, RuntimeKind } from "./types"
 
@@ -74,7 +74,8 @@ export function defaultDoneDeps(
     endSession: ({ runtime, ...identity }) =>
       endRuntimeSession(targetForRuntime(runtime, "end a runtime session"), identity),
     readClaim: readCommandClaim,
-    commandReporter: (claim) => claimCommandReporter(targetForRuntime(claim.runtime, "drive /done"), claim, "done"),
+    commandReporter: (claim) =>
+      claimCommandReporter(claimThreaTarget(claim, "drive /done", targetForRuntime), claim, "done"),
   }
 }
 

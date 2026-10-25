@@ -1,12 +1,36 @@
-import type { ModelSuggestionInfo, SessionControlActuator } from "@threahq/remote-session"
+import {
+  discardCommandClaim,
+  discardSpawnBrief,
+  harnessReconnectAvailable,
+  installedSpawnRuntimes,
+  parseSpawnCommandArgs,
+  prepareHarnessSpawn,
+  writeCommandClaim,
+  writeSpawnBrief,
+  type SpawnRuntimeOption,
+} from "@threahq/harness-client"
+import type {
+  ModelSuggestionInfo,
+  SessionControlActuator,
+  SessionControlInvocationContext,
+} from "@threahq/remote-session"
 import { errorText, type T3TurnRunner } from "./run-bridge"
 import type { ModelOptionDescriptor, ModelSelection, ProviderInfo, T3Client } from "./t3-client"
 
 const MAX_AMBIGUOUS_CANDIDATES = 8
 /** Codex calls its effort setting `reasoningEffort`, Claude `effort`, Pi `thinking`. */
 const EFFORT_OPTION_IDS: ReadonlySet<string> = new Set(["reasoningEffort", "effort", "thinking"])
+/** T3 Code has no runtime of its own, so a bare `/spawn` launches the first installed one, else this. */
+const SPAWN_FALLBACK_RUNTIME = "claude"
 
-type CommandResult = { ok: boolean; summary?: string; message?: string }
+type CommandResult = Awaited<ReturnType<SessionControlActuator["runCommand"]>>
+
+export interface T3SessionControlOptions {
+  /** The bot's own Threa target. harnessd reports a handed-off `/spawn` there, since nothing else it reads knows it. */
+  threa: { baseUrl: string; apiKey: string }
+  spawnRuntimes: () => readonly SpawnRuntimeOption[]
+  spawnLauncher?: typeof prepareHarnessSpawn
+}
 
 export interface T3SessionControl extends SessionControlActuator {
   /** Load the model picker's options; rejects when they could not be loaded. */
@@ -81,7 +105,11 @@ function suggestionsFrom(providers: readonly ProviderInfo[]): ModelSuggestionInf
   )
 }
 
-export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): T3SessionControl {
+export function createT3SessionControl(
+  runner: T3TurnRunner,
+  client: T3Client,
+  { threa, spawnRuntimes, spawnLauncher = prepareHarnessSpawn }: T3SessionControlOptions
+): T3SessionControl {
   let providers: ProviderInfo[] = []
 
   /** Re-reads the models T3 offers; returns the failure to report when it can't. */
@@ -94,8 +122,8 @@ export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): 
     return undefined
   }
 
-  async function status(rootStreamId: string): Promise<string> {
-    const threadId = runner.threadFor(rootStreamId)
+  async function status(streamId: string): Promise<string> {
+    const threadId = runner.threadFor(streamId)
     const lines: string[] = []
     if (!threadId) lines.push("No T3 Code thread yet; the next message launches one.")
     else {
@@ -125,8 +153,7 @@ export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): 
     return lines.map((line) => `- ${line}`).join("\n")
   }
 
-  // The SDK hands a command only its root stream, so /model and /thinking move the scratchpad's thread and every
-  // later launch. The launch model is saved before this runs.
+  // /model and /thinking move the scratchpad's thread and every later launch. The launch model is saved before this runs.
   async function configureThread(
     threadId: string | undefined,
     selection: ModelSelection,
@@ -193,26 +220,101 @@ export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): 
     return await configureThread(threadId, next, summary)
   }
 
-  // The SDK hands a command only its root stream, so /compact and /clear typed in a thread act on the scratchpad's thread.
-  async function compact(rootStreamId: string): Promise<CommandResult> {
-    const threadId = runner.threadFor(rootStreamId)
+  async function compact(streamId: string): Promise<CommandResult> {
+    const threadId = runner.threadFor(streamId)
     if (!threadId) return { ok: false, message: "No T3 Code thread to compact yet." }
     try {
-      await runner.compact(rootStreamId, threadId)
+      await runner.compact(streamId, threadId)
     } catch (error) {
       return { ok: false, message: `Could not compact \`${threadId}\`: ${errorText(error)}` }
     }
     return { ok: true, summary: "Queued a compaction of the T3 Code thread" }
   }
 
-  function clear(rootStreamId: string): CommandResult {
-    if (runner.hasOpenTurns(rootStreamId)) return { ok: false, message: "Stop the running turn first (/stop)." }
-    runner.forgetThread(rootStreamId)
+  function clear(streamId: string): CommandResult {
+    if (runner.hasOpenTurns(streamId)) return { ok: false, message: "Stop the running turn first (/stop)." }
+    runner.forgetThread(streamId)
     return { ok: true, summary: "Started a new T3 Code thread" }
   }
 
+  function spawn(args: string, context: SessionControlInvocationContext): CommandResult {
+    const parsed = parseSpawnCommandArgs(args, { runtimes: spawnRuntimes(), defaultRuntime: spawnDefaultRuntime() })
+    if ("error" in parsed) return { ok: false, message: parsed.error }
+    if (context.streamId !== context.rootStreamId) {
+      return { ok: false, message: "Spawn is only available at the scratchpad itself, not inside a thread." }
+    }
+    // harnessd launches the agent in a thread under the user's `/spawn` and closes the command there itself.
+    return {
+      ok: true,
+      handoffKeepsSessionRunning: true,
+      handoff: async (claim) => {
+        // Written on the handoff, so a handoff the session abandons leaves nothing behind. harnessd refuses a blank
+        // brief, so an empty prompt gets no file.
+        const briefFile = parsed.prompt ? writeSpawnBrief(parsed.prompt) : undefined
+        const claimFile = writeCommandClaim({ runtime: "t3code", ...threa, ...claim })
+        try {
+          spawnLauncher({
+            runtime: parsed.runtime,
+            name: parsed.name,
+            rootStreamId: context.rootStreamId,
+            anchorId: context.sourceMessageId,
+            briefFile,
+            claimFile,
+            ...(parsed.model ? { model: parsed.model } : {}),
+            ...(parsed.thinking ? { thinking: parsed.thinking } : {}),
+          })()
+        } catch (error) {
+          discardCommandClaim(claimFile)
+          discardSpawnBrief(briefFile)
+          throw error
+        }
+      },
+    }
+  }
+
+  async function done(streamId: string, rootStreamId: string): Promise<CommandResult> {
+    if (streamId === rootStreamId) return { ok: false, message: "/done is only available inside a thread." }
+    const threadId = runner.threadFor(streamId)
+    if (!threadId) return { ok: false, message: "This thread has no T3 Code thread to archive." }
+    if (runner.hasOpenTurns(streamId)) return { ok: false, message: "Stop the running turn first (/stop)." }
+    if (runner.isRelaying(streamId)) {
+      return { ok: false, message: "T3 Code is running a turn it started itself here; try again once it finishes." }
+    }
+    try {
+      await client.call("t3_thread_organize", { threadId, action: "archive" })
+    } catch (error) {
+      // T3 refuses to archive a thread archived in its own app, which would leave it linked for good.
+      if (!(await isArchived(threadId))) {
+        return { ok: false, message: `Could not archive \`${threadId}\`: ${errorText(error)}` }
+      }
+    }
+    runner.forgetThread(streamId)
+    return { ok: true, summary: `Archived the T3 Code thread \`${threadId}\`` }
+  }
+
+  async function isArchived(threadId: string): Promise<boolean> {
+    try {
+      return (await client.call("t3_thread_read", { threadId, limit: 1 })).thread.archived
+    } catch {
+      return false
+    }
+  }
+
+  function spawnDefaultRuntime(): string {
+    return installedSpawnRuntimes(spawnRuntimes())[0]?.value ?? SPAWN_FALLBACK_RUNTIME
+  }
+
   return {
-    commands: ["stop", "status", "model", "thinking", "compact", "clear"],
+    get commands() {
+      const spawnable = harnessReconnectAvailable() && installedSpawnRuntimes(spawnRuntimes()).length > 0
+      return ["stop", "status", "model", "thinking", "compact", "clear", ...(spawnable ? ["spawn"] : []), "done"]
+    },
+    get spawnRuntimes() {
+      return installedSpawnRuntimes(spawnRuntimes())
+    },
+    get spawnDefaultRuntime() {
+      return spawnDefaultRuntime()
+    },
     get modelSuggestions() {
       return suggestionsFrom(providers)
     },
@@ -227,17 +329,21 @@ export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): 
     runCommand: async (name, args, context) => {
       switch (name) {
         case "status":
-          return { ok: true, message: await status(context.rootStreamId) }
+          return { ok: true, message: await status(context.streamId) }
         case "model":
           return await setModel(args, context.rootStreamId)
         case "thinking":
           return await setThinking(args, context.rootStreamId)
         case "compact":
-          return await compact(context.rootStreamId)
+          return await compact(context.streamId)
+        case "spawn":
+          return spawn(args, context)
+        case "done":
+          return await done(context.streamId, context.rootStreamId)
         // The SDK runs /stop itself and routes only the advertised commands here.
         case "clear":
         default:
-          return clear(context.rootStreamId)
+          return clear(context.streamId)
       }
     },
   }
