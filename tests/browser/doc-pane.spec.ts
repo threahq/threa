@@ -142,6 +142,11 @@ test.describe("Doc pane", () => {
 
       await typeAtEnd(owner, ownerEditor, "Rotation tracker")
       await owner.keyboard.press("Enter")
+      await owner.keyboard.press("ControlOrMeta+b")
+      await owner.keyboard.type("Keys")
+      await owner.keyboard.press("ControlOrMeta+b")
+      await expect(ownerEditor.locator("strong")).toHaveText("Keys")
+      await owner.keyboard.press("Enter")
 
       await openChannel(member.page, workspaceId, channelId)
       const row = anchorRow(member.page, docId)
@@ -151,6 +156,7 @@ test.describe("Doc pane", () => {
       const memberEditor = docEditor(member.page, docId)
       await expectRevealed(memberEditor)
       await expect(memberEditor).toContainText("Rotation tracker", { timeout: 15000 })
+      await expect(memberEditor.locator("strong")).toHaveText("Keys")
       await expect(memberEditor).toHaveAttribute("contenteditable", "true")
 
       await typeAtEnd(member.page, memberEditor, "AWS key rotated")

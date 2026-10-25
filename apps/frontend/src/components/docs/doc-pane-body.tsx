@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { createDocumentExtensions } from "@/components/editor/editor-extensions"
 import { EDITOR_CONTENT_CLASS } from "@/components/editor/editor-content-class"
-import { handleBeforeInput } from "@/components/editor/editor-behaviors"
+import { EditorBehaviors, handleBeforeInput } from "@/components/editor/editor-behaviors"
 import { isProseMirrorClipboardEvent } from "@/components/editor/editor-markdown"
 import { serializeClipboardSlice } from "@/components/editor/clipboard-copy"
 import { insertPlainText, isPlainTextPaste } from "@/components/editor/plain-text-paste"
@@ -14,12 +14,14 @@ import { insertFilesIntoEditor, namePastedImages } from "@/components/editor/ins
 import { insertPastedText } from "@/components/editor/multiline-blocks"
 import { useMentionSuggestion, useChannelSuggestion, useEmojiSuggestion } from "@/components/editor/triggers"
 import { EditorToolbar } from "@/components/editor/editor-toolbar"
+import { usePreferences } from "@/contexts"
 import { useRevealReady } from "@/contexts/coordinated-loading-context"
 import { useMentionables, useMarkdownTriggerLookups } from "@/hooks/use-mentionables"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useAttachments } from "@/hooks/use-attachments"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useLatest } from "@/hooks/use-latest"
+import { getEffectiveEditorBindings } from "@/lib/keyboard-shortcuts"
 import { cn } from "@/lib/utils"
 import { useDocSync } from "./use-doc-sync"
 
@@ -29,6 +31,10 @@ const EDITOR_SURFACE_CLASS = cn("w-full outline-none text-sm", EDITOR_CONTENT_CL
 
 /** Text a dragged-off-page file also carries, which the browser drops as a link or text instead of opening the file. */
 const DROPPABLE_TEXT_TYPES = ["text/plain", "text/uri-list", "text/html"]
+
+// A doc has nothing to send: Enter is text and Mod+Enter is inert.
+const DOC_SEND_MODE = { current: "cmdEnter" as const }
+const NO_SUBMIT = { current: () => {} }
 
 interface DocPaneBodyProps {
   workspaceId: string
@@ -90,6 +96,10 @@ function DocEditor({ workspaceId, ydoc, canWrite }: DocEditorProps) {
   const latestUpload = useLatest({ uploadFile, imageCount })
   const editorRef = useRef<Editor | null>(null)
   const placeholderIdsRef = useRef(new Set<string>())
+  const { preferences } = usePreferences()
+  const customBindings = preferences?.keyboardShortcuts
+  const keyBindingsRef = useRef<Record<string, string>>({})
+  keyBindingsRef.current = useMemo(() => getEffectiveEditorBindings(customBindings ?? {}), [customBindings])
 
   const insertFiles = (files: File[]) => {
     const editor = editorRef.current
@@ -134,8 +144,8 @@ function DocEditor({ workspaceId, ydoc, canWrite }: DocEditorProps) {
   }, [])
 
   const extensions = useMemo(
-    () =>
-      createDocumentExtensions({
+    () => [
+      ...createDocumentExtensions({
         ydoc,
         placeholder: "Start writing…",
         mentionSuggestion: mentionConfig,
@@ -143,6 +153,8 @@ function DocEditor({ workspaceId, ydoc, canWrite }: DocEditorProps) {
         emojiSuggestion: emojiConfig,
         toEmoji,
       }),
+      EditorBehaviors.configure({ sendModeRef: DOC_SEND_MODE, onSubmitRef: NO_SUBMIT, keyBindingsRef }),
+    ],
     [ydoc, mentionConfig, channelConfig, emojiConfig, toEmoji]
   )
 
