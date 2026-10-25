@@ -398,6 +398,7 @@ const addMemberAllowed: Record<StreamType, boolean> = {
   [StreamTypes.DM]: false,
   [StreamTypes.SYSTEM]: false,
   [StreamTypes.ASIDE]: false,
+  [StreamTypes.DOC]: false,
 }
 
 const disallowedUpdateFields: Record<StreamType, Record<string, string> | null> = {
@@ -418,6 +419,11 @@ const disallowedUpdateFields: Record<StreamType, Record<string, string> | null> 
     slug: "Asides do not have slugs",
     visibility: "Asides are always private",
     memoryMode: "Asides never extract memory",
+  },
+  [StreamTypes.DOC]: {
+    slug: "Docs do not have slugs",
+    visibility: "Docs inherit visibility from their host",
+    memoryMode: "Docs inherit memory settings from their host",
   },
 }
 

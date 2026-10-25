@@ -146,13 +146,16 @@ export function collectSharedMessageRefs(node: JSONContent | undefined, into: Ma
 
 /**
  * An aside presents as a scratchpad to non-viewers: neither a direct aside
- * source nor a thread whose root is an aside may leak the kind. Both branches
- * of {@link resolveSourceForPrivatePlaceholder} route through this map, which
- * is also why the placeholder vocabulary is `SharedSourceStreamKind`, not
+ * source nor a thread whose root is an aside may leak the kind. A doc nests
+ * under a host like a thread, so it presents as one. Both branches of
+ * {@link resolveSourceForPrivatePlaceholder} route through this map, which is
+ * also why the placeholder vocabulary is `SharedSourceStreamKind`, not
  * `StreamType`.
  */
 function presentedSourceStreamKind(type: StreamType): SharedSourceStreamKind {
-  return type === StreamTypes.ASIDE ? StreamTypes.SCRATCHPAD : type
+  if (type === StreamTypes.ASIDE) return StreamTypes.SCRATCHPAD
+  if (type === StreamTypes.DOC) return StreamTypes.THREAD
+  return type
 }
 
 /**

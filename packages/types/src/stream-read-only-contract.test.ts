@@ -17,7 +17,7 @@ type Assert<T extends true> = T
 type _Reason = Assert<
   Equal<
     StreamReadOnlyReason,
-    "archived" | "system_stream" | "shared_copy" | "disconnected" | "not_a_member" | "guest_dm_policy"
+    "archived" | "system_stream" | "shared_copy" | "disconnected" | "not_a_member" | "guest_dm_policy" | "doc_stream"
   >
 >
 type _State = Assert<Equal<StreamViewerState, { readOnly: boolean; readOnlyReason: StreamReadOnlyReason | null }>>
@@ -34,7 +34,15 @@ describe("stream read-only contract", () => {
       errorCode: StreamErrorCodes.READ_ONLY,
       compileTimeContract,
     }).toEqual({
-      reasons: ["archived", "system_stream", "shared_copy", "disconnected", "not_a_member", "guest_dm_policy"],
+      reasons: [
+        "archived",
+        "system_stream",
+        "shared_copy",
+        "disconnected",
+        "not_a_member",
+        "guest_dm_policy",
+        "doc_stream",
+      ],
       reasonObject: {
         ARCHIVED: "archived",
         SYSTEM_STREAM: "system_stream",
@@ -42,6 +50,7 @@ describe("stream read-only contract", () => {
         DISCONNECTED: "disconnected",
         NOT_A_MEMBER: "not_a_member",
         GUEST_DM_POLICY: "guest_dm_policy",
+        DOC_STREAM: "doc_stream",
       },
       errorCode: "STREAM_READ_ONLY",
       compileTimeContract: [true, true, true, true],
