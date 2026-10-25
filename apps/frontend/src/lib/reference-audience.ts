@@ -66,7 +66,7 @@ function nodeReference(node: JSONContent, targetStreamId: string | null): Compos
     case "sharedMessage":
       return attrReference("share", attrs)
     case "quoteReply":
-      return attrs.streamId === targetStreamId ? null : attrReference("share", attrs)
+      return attrs.streamId === targetStreamId || attrs.private === true ? null : attrReference("share", attrs)
     case "inAppLink":
       return attrReference("link", attrs)
     case "text":

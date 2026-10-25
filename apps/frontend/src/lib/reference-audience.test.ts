@@ -26,13 +26,14 @@ function warning(tone: SendWarning["tone"], count: number, convertible: boolean)
 }
 
 describe("collectComposerReferences", () => {
-  it("collects shares, cross-stream quotes and in-app links, skipping same-stream quotes and conversation links", () => {
+  it("collects shares, cross-stream quotes and in-app links, skipping same-stream quotes, private quotes and conversation links", () => {
     const doc: JSONContent = {
       type: "doc",
       content: [
         { type: "sharedMessage", attrs: { messageId: "msg_1", streamId: "stream_s" } },
         { type: "quoteReply", attrs: { messageId: "msg_2", streamId: "stream_target" } },
         { type: "quoteReply", attrs: { messageId: "msg_3", streamId: "stream_q" } },
+        { type: "quoteReply", attrs: { messageId: "msg_5", streamId: "stream_p", private: true } },
         {
           type: "paragraph",
           content: [

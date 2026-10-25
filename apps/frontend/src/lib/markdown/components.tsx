@@ -191,7 +191,7 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
     if (!isIdShaped(messagePointer.streamId, "stream_") || !isIdShaped(messagePointer.messageId, "msg_")) {
       return <span>{label}</span>
     }
-    if (!workspaceId) return <span>{label}</span>
+    if (!workspaceId || quote?.private) return <span>{label}</span>
 
     const target = sharedMessage?.conversationId
       ? buildConversationPanelPath(workspaceId, sharedMessage.conversationId, sharedMessage.messageId)

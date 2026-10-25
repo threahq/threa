@@ -60,6 +60,13 @@ describe("MarkdownContent inline message pointers", () => {
     )
   })
 
+  it("should render an inline private quote pointer as plain text when its source was unreadable at send", () => {
+    renderMarkdown("Revisit [Private quote](quote:stream_src/msg_abc?private=1).")
+
+    expect(screen.queryByRole("link", { name: "Private quote" })).toBeNull()
+    expect(screen.getByText("Private quote").tagName).toBe("SPAN")
+  })
+
   it("should show a generic pending label for a repaired bare message ID", () => {
     vi.spyOn(linkPreviewsApi, "resolveInAppLinkByUrl").mockReturnValue(new Promise(() => {}))
     const messageId = "msg_01ARZ3NDEKTSV4RRFFQ69G5FAV"
