@@ -36,20 +36,21 @@ describe("editor schema parity", () => {
     expect(nodeShapes(editorSchema)).toEqual(nodeShapes(sharedSchema))
   })
 
-  it("should match the shared mark specs when the editor sets the link class", () => {
-    const expected = markShapes(sharedSchema).map((mark) =>
-      mark.name === "link" ? { ...mark, attrs: { ...mark.attrs, class: expect.any(String) } } : mark
-    )
+  // The editor's link mark defaults `class` to its styling; the attr itself is shared.
+  const expectedMarks = markShapes(sharedSchema).map((mark) =>
+    mark.name === "link" ? { ...mark, attrs: { ...mark.attrs, class: expect.any(String) } } : mark
+  )
 
-    expect(markShapes(editorSchema)).toEqual(expected)
+  it("should match the shared mark specs when the editor sets the link class", () => {
+    expect(markShapes(editorSchema)).toEqual(expectedMarks)
   })
 
   it("should build the shared schema for the collaborative document editor", () => {
     const documentSchema = getSchema(createDocumentExtensions({ ydoc: new Y.Doc() }))
 
     expect({ nodes: nodeShapes(documentSchema), marks: markShapes(documentSchema) }).toEqual({
-      nodes: nodeShapes(editorSchema),
-      marks: markShapes(editorSchema),
+      nodes: nodeShapes(sharedSchema),
+      marks: expectedMarks,
     })
   })
 })

@@ -86,4 +86,21 @@ describe("YjsCollaboration", () => {
 
     expect({ local: texts(editor), peer: texts(peer) }).toEqual({ local: ["theirs"], peer: ["theirs"] })
   })
+
+  it("detaches every Yjs observer it added once the editor is destroyed", () => {
+    const ydoc = new Y.Doc()
+    const fragment = ydoc.getXmlFragment("default")
+    const observers = () => ({
+      fragment: fragment._dEH.l.length,
+      doc: Object.fromEntries([...ydoc._observers].map(([event, handlers]) => [event, handlers.size])),
+    })
+    const before = observers()
+
+    const editor = createEditor(ydoc)
+    editor.commands.insertContent("hello")
+    expect(observers()).not.toEqual(before)
+    editor.destroy()
+
+    expect(observers()).toEqual(before)
+  })
 })
