@@ -376,6 +376,29 @@ export const AttachmentRepository = {
     return result.rowCount ?? 0
   },
 
+  /**
+   * Bind free-floating uploads to a stream without a message (a doc referencing
+   * inline images). Only the uploader's own unbound, bindable rows move, so a
+   * reference to someone else's pending upload never claims it (INV-20).
+   */
+  async attachToStream(
+    client: Querier,
+    workspaceId: string,
+    attachmentIds: string[],
+    streamId: string,
+    uploadedBy: string
+  ): Promise<number> {
+    if (attachmentIds.length === 0) return 0
+    const result = await client.query(sql`
+      UPDATE attachments
+      SET stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${attachmentIds})
+        AND stream_id IS NULL AND message_id IS NULL AND uploaded_by = ${uploadedBy}
+        AND safety_status = ANY(${[...BINDABLE_ATTACHMENT_SAFETY_STATUSES]})
+    `)
+    return result.rowCount ?? 0
+  },
+
   async delete(client: Querier, workspaceId: string, id: string): Promise<boolean> {
     const result = await client.query(sql`
       DELETE FROM attachments WHERE workspace_id = ${workspaceId} AND id = ${id}

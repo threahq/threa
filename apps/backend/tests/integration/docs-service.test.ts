@@ -29,8 +29,9 @@ import {
 import { EventService } from "../../src/features/messaging/event-service"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { MessageRepository } from "../../src/features/messaging"
+import { AttachmentRepository } from "../../src/features/attachments"
 import { resolveDeliveryGroups, streamGroup, type OutboxEvent } from "../../src/lib/outbox"
-import { blockId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
+import { attachmentId, blockId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { addTestMember, setupIsolatedTestDatabase, testMessageContent, withTransaction } from "./setup"
 
 let pool: Pool
@@ -107,6 +108,38 @@ async function openClient(docId: string, userIdForClient: string) {
     },
   }
 }
+
+async function seedAttachment(uploadedBy: string): Promise<string> {
+  const id = attachmentId()
+  await AttachmentRepository.insert(pool, {
+    id,
+    workspaceId: wsId,
+    uploadedBy,
+    filename: "diagram.png",
+    mimeType: "image/png",
+    sizeBytes: 12,
+    storagePath: `${wsId}/${id}/diagram.png`,
+    safetyStatus: "clean",
+  })
+  return id
+}
+
+const attachmentParagraph = (ids: string[]): JSONContent => ({
+  type: "paragraph",
+  content: ids.map((id) => ({
+    type: "attachmentReference",
+    attrs: {
+      id,
+      filename: "diagram.png",
+      mimeType: "image/png",
+      sizeBytes: 12,
+      status: "uploaded",
+      imageIndex: null,
+      error: null,
+      display: "inline",
+    },
+  })),
+})
 
 function post(docId: string, update: string, userIdForPost = owner) {
   return docService.postUpdate({ workspaceId: wsId, userId: userIdForPost, docId, update })
@@ -427,6 +460,40 @@ describe("DocService", () => {
       state: replayed,
       body: replayed.bodyMarkdown,
       sections: replayed.sections,
+    })
+  })
+
+  test("should bind only the poster's own unbound uploads to the doc when an update references attachments", async () => {
+    const channel = await createChannel("private")
+    const doc = await createDoc(channel.id)
+    const own = await seedAttachment(owner)
+    const others = await seedAttachment(peer)
+    const sent = await seedAttachment(owner)
+    const sentMessage = messageId()
+    await AttachmentRepository.attachToMessage(pool, wsId, [sent], sentMessage, channel.id)
+    const client = await openClient(doc.id, owner)
+
+    await post(doc.id, appendBlock(client.ydoc, attachmentParagraph([own, others, sent])))
+
+    const bindings = Object.fromEntries(
+      (await AttachmentRepository.findByIds(pool, wsId, [own, others, sent])).map((row) => [
+        row.id,
+        { streamId: row.streamId, messageId: row.messageId },
+      ])
+    )
+    const bound = (await AttachmentRepository.findById(pool, wsId, own))!
+    expect({
+      bindings,
+      memberReads: (await streamService.tryAccess(bound.streamId!, wsId, peer))?.id ?? null,
+      outsiderReads: (await streamService.tryAccess(bound.streamId!, wsId, outsider))?.id ?? null,
+    }).toEqual({
+      bindings: {
+        [own]: { streamId: doc.id, messageId: null },
+        [others]: { streamId: null, messageId: null },
+        [sent]: { streamId: channel.id, messageId: sentMessage },
+      },
+      memberReads: doc.id,
+      outsiderReads: null,
     })
   })
 

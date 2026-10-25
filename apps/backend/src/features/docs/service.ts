@@ -7,10 +7,12 @@ import {
   type DocState,
   type DocUpdateView,
 } from "@threahq/types"
+import { collectAttachmentReferenceIds } from "@threahq/prosemirror"
 import { withClient, withTransaction, type Querier } from "../../db"
 import { HttpError, StreamNotFoundError } from "../../lib/errors"
 import { eventId } from "../../lib/id"
 import { OutboxRepository } from "../../lib/outbox"
+import { AttachmentRepository } from "../attachments"
 import {
   StreamEventRepository,
   assertViewerStreamWritable,
@@ -176,6 +178,13 @@ export class DocService {
         bodyMarkdown: projection.bodyMarkdown,
         bodyJson: projection.bodyJson,
       })
+      await AttachmentRepository.attachToStream(
+        client,
+        workspaceId,
+        collectAttachmentReferenceIds(content),
+        docId,
+        userId
+      )
 
       await StreamEventRepository.insert(client, {
         id: eventId(),
