@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { T3AuthError } from "./auth"
 import { T3TurnRunner, type ThreadState } from "./run-bridge"
 import { createT3SessionControl, matchModel } from "./session-control"
-import { fakeSession, fakeT3, item, turn } from "./t3.test-support"
+import { fakeSession, fakeT3, item, turn, until } from "./t3.test-support"
 
 const CONTEXT = { rootStreamId: "stream_root" } as Parameters<
   ReturnType<typeof createT3SessionControl>["runCommand"]
@@ -62,18 +62,60 @@ describe("T3 session control", () => {
     expect(control.modelSuggestions).toEqual([])
   })
 
-  test("/status lists the thread, its model and the T3 server as markdown bullets", async () => {
-    const { control } = setup({ threads: { stream_root: "thread_a" } })
+  test("/status lists the thread, its model, the access and the T3 server as markdown bullets", async () => {
+    const { t3, control } = setup({ threads: { stream_root: "thread_a" } })
+    t3.threadModel("thread_a", { instanceId: "claudeAgent", model: "claude-opus-5-5" })
 
     expect(await control.runCommand("status", "", CONTEXT)).toEqual({
       ok: true,
       message: [
         "- Thread: Fake thread (`thread_a`, idle)",
-        "- Model: `codex::gpt-5.5`",
+        "- Model: `claudeAgent::claude-opus-5-5`",
+        "- Access: full-access",
         "- No run is open.",
         "- T3 Code: http://t3.test",
       ].join("\n"),
     })
+  })
+
+  test("/status names the latest run of a running thread, and the thread when its model can't be read", async () => {
+    const { t3, runner, control } = setup({ threads: {}, model: { instanceId: "codex", model: "gpt-5.5" } })
+    t3.script("run_1", [{ status: "running" }])
+    await runner.deliverTurn(turn())
+    t3.failNext("t3_thread_configuration", new Error("busy"))
+
+    expect(await control.runCommand("status", "", CONTEXT)).toEqual({
+      ok: true,
+      message: [
+        "- Thread: Fake thread (`thread_1`, running, latest run `run_1`)",
+        "- Model: unavailable (busy)",
+        "- Open runs: `run_1`",
+        "- New threads launch on `codex::gpt-5.5`",
+        "- T3 Code: http://t3.test",
+      ].join("\n"),
+    })
+    runner.interrupt()
+  })
+
+  test("/status shows the thinking level and the questions an open run waits on", async () => {
+    const thinking = { instanceId: "codex", model: "gpt-5.5", options: [{ id: "reasoningEffort", value: "high" }] }
+    const { t3, runner, control } = setup({ threads: {}, model: thinking })
+    t3.script("run_1", [{ status: "waiting", items: [item(1, "user_input_request", { status: "pending" })] }])
+    await runner.deliverTurn(turn())
+    await until(() => runner.openRuns()[0]?.trace.questions.size === 1)
+
+    expect(await control.runCommand("status", "", CONTEXT)).toEqual({
+      ok: true,
+      message: [
+        "- Thread: Fake thread (`thread_1`, idle)",
+        "- Model: `codex::gpt-5.5`, thinking high",
+        "- Access: full-access",
+        "- Open runs: `run_1` (waiting on 1 answer)",
+        "- New threads launch on `codex::gpt-5.5`, thinking high",
+        "- T3 Code: http://t3.test",
+      ].join("\n"),
+    })
+    runner.interrupt()
   })
 
   test("/model moves the scratchpad's thread and the next launch to the model", async () => {
@@ -308,6 +350,25 @@ describe("T3 session control", () => {
     expect({ model: saved.at(-1)?.model, levels: control.thinkingLevels }).toEqual({
       model: expected,
       levels: ["low", "medium", "high", "max"],
+    })
+  })
+
+  test("/compact queues T3's own compaction on the scratchpad's thread", async () => {
+    const { t3, control } = setup({ threads: { stream_root: "thread_a" } })
+
+    expect(await control.runCommand("compact", "", CONTEXT)).toEqual({
+      ok: true,
+      summary: "Queued a compaction of the T3 Code thread",
+    })
+    expect(t3.callsOf("t3_thread_send")).toEqual([{ threadId: "thread_a", message: "/compact", mode: "queue" }])
+  })
+
+  test("/compact before the first message has nothing to compact", async () => {
+    const { control } = setup()
+
+    expect(await control.runCommand("compact", "", CONTEXT)).toEqual({
+      ok: false,
+      message: "No T3 Code thread to compact yet.",
     })
   })
 

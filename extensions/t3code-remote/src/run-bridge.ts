@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { readFile, stat } from "node:fs/promises"
 import {
   type DecisionOutcome,
@@ -385,6 +385,27 @@ export class T3TurnRunner {
     }
     const { [streamId]: _dropped, ...threads } = this.state.threads
     this.saveState({ ...this.state, threads })
+  }
+
+  /**
+   * Queues T3's own `/compact` turn on the thread. Its run is accounted for, so nothing is posted for it; it stays in
+   * admission meanwhile so a look at the thread can't relay the run before that.
+   */
+  async compact(streamId: string, threadId: string): Promise<void> {
+    const admission = new AbortController()
+    const key = `compact:${randomUUID()}`
+    this.admitting.set(key, { abort: admission, streamId })
+    try {
+      // On the connector's first look at the thread its earlier runs are history; accounting the compaction alone
+      // would leave them to be posted by the next turn.
+      if (!this.accounted.has(threadId)) await this.unaccountedRuns(threadId)
+      if (admission.signal.aborted) return
+      const { runId } = await this.client.call("t3_thread_send", { threadId, message: "/compact", mode: "queue" })
+      this.account(threadId, [runId])
+      if (admission.signal.aborted) this.stopRun(threadId, runId)
+    } finally {
+      this.admitting.delete(key)
+    }
   }
 
   hasOpenTurns(streamId?: string): boolean {

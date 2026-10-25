@@ -6,14 +6,11 @@ import { ThreaApiError, type DownloadedAttachment } from "@threahq/remote-sessio
 import { T3AuthError } from "./auth"
 import { RunTrace, T3TurnRunner, type RunTraceMode, type ThreadState } from "./run-bridge"
 import { T3ToolError, type PendingQuestion } from "./t3-client"
-import { DECISION, fakeSession, fakeT3, item, picked, turn } from "./t3.test-support"
+import { DECISION, fakeSession, fakeT3, item, picked, turn, until } from "./t3.test-support"
 
 const MODEL = { instanceId: "codex", model: "gpt-5.5" }
 
 const idle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
-const until = async (done: () => boolean) => {
-  while (!done()) await idle()
-}
 
 function setup(options: { state?: ThreadState; sealedFullTrace?: boolean; projectId?: string } = {}) {
   const t3 = fakeT3()
@@ -1323,6 +1320,55 @@ describe("runs T3 starts by itself", () => {
     await runner.deliverTurn(turn())
     await session.settled()
   }
+
+  test("posts nothing for the run of a /compact", async () => {
+    const { t3, session, runner } = setup()
+    await settledTurn(t3, session, runner)
+    await runner.watch()
+
+    await runner.compact("stream_root", "thread_1")
+    t3.script("run_2", [
+      { status: "completed", items: [item(2, "assistant_message", { runId: "run_2", text: "Compacted." })] },
+    ])
+    await runner.watch()
+    await until(() => !runner.busy)
+
+    expect(session.posts).toEqual([])
+  })
+
+  test("a /compact as the first look at a thread after a restart keeps its earlier runs as history", async () => {
+    const { t3, session, runner } = setup({ state: LINKED })
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(1, "assistant_message", { runId: "run_1", text: "Before the restart." })])
+    t3.script("run_1", [{ status: "completed" }])
+
+    await runner.compact("stream_root", "thread_1")
+    t3.script("run_2", [{ status: "completed" }])
+    t3.script("run_3", [{ status: "completed", items: [item(3, "assistant_message", { text: "After it." })] }])
+    await runner.deliverTurn(turn())
+    await session.settled()
+    await until(() => !runner.busy)
+
+    expect(session.posts).toEqual([])
+  })
+
+  test("a /stop before a /compact is sent queues nothing", async () => {
+    const { t3, runner } = setup({ state: LINKED })
+
+    const compacting = runner.compact("stream_root", "thread_1")
+    runner.interrupt("stream_root")
+    await compacting
+
+    expect({ sent: t3.callsOf("t3_thread_send"), open: runner.hasOpenTurns() }).toEqual({ sent: [], open: false })
+  })
+
+  test("a /compact T3 refuses rejects and leaves no turn open", async () => {
+    const { t3, runner } = setup({ state: LINKED })
+    t3.failNext("t3_thread_send", new Error("thread is archived"))
+
+    await expect(runner.compact("stream_root", "thread_1")).rejects.toThrow("thread is archived")
+    expect(runner.hasOpenTurns()).toBe(false)
+  })
 
   test("posts the reply of a run started after a turn settled, and never re-posts the turn's own run", async () => {
     const { t3, session, runner } = setup()

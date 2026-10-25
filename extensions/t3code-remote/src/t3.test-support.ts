@@ -41,6 +41,10 @@ export const picked = (optionId: string, note: string | null = null): DecisionOu
   decision: DECISION,
 })
 
+export async function until(done: () => boolean): Promise<void> {
+  while (!done()) await new Promise<void>((resolve) => setTimeout(resolve, 0))
+}
+
 export function item(
   position: number,
   type: string,
@@ -173,7 +177,7 @@ export function fakeT3() {
       const thread = {
         threadId: args.threadId,
         title: "Fake thread",
-        status: "idle" as const,
+        status: activeRun(args.threadId) ? ("running" as const) : ("idle" as const),
         latestRunId: latestRuns.get(args.threadId) ?? null,
         providerInstanceId: models.get(args.threadId)?.instanceId ?? "codex",
         model: models.get(args.threadId)?.model ?? "gpt-5.5",
@@ -200,11 +204,10 @@ export function fakeT3() {
       }
     },
     t3_thread_interrupt: () => ({ status: "interrupt_requested" }),
-    t3_thread_configuration: (args) => {
-      const modelSelection = models.get(args.threadId)
-      if (!modelSelection) throw new Error(`Thread ${args.threadId} not found`)
-      return { modelSelection }
-    },
+    t3_thread_configuration: (args) => ({
+      modelSelection: models.get(args.threadId) ?? { instanceId: "codex", model: "gpt-5.5" },
+      runtimeMode: "full-access",
+    }),
     t3_thread_configure: (args) => {
       models.set(args.threadId, args.modelSelection)
       return { sequence: 1 }

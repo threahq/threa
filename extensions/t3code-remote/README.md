@@ -117,7 +117,8 @@ A damaged `threads.json` or `token.json` stops the connector at start instead of
 
 - `/stop` interrupts the open runs and closes their turns.
 - A message sent while a run is open is steered into it when T3 accepts that, and otherwise queued as the next turn.
-- `/status` shows the scratchpad's thread, its model, the open runs and the T3 URL.
+- `/status` shows the scratchpad's thread with its model, thinking level, access mode and latest run, the open runs
+  and the questions they wait on, the model new threads launch on, and the T3 URL.
 - `/model` picks a model from the T3 server's providers, as `instance::model`, a model id, or a substring matching
   one of them. It moves the scratchpad's thread and every thread launched after it. Threads that already exist under
   the scratchpad or elsewhere keep theirs. A scratch thread can't launch until one is picked. A project thread launched
@@ -125,6 +126,7 @@ A damaged `threads.json` or `token.json` stops the connector at start instead of
   moves the one new threads launch on. The thinking level carries over when the new model offers it.
 - `/thinking` sets the reasoning effort the picked model offers, on the scratchpad's thread and every thread launched
   after it. The composer suggests the model's levels.
+- `/compact` queues T3's own compaction on the scratchpad's thread. Nothing is posted for its run.
 - `/clear` starts a new T3 thread for the scratchpad. It is refused while a turn is open.
 
 ## Traces and replies

@@ -50,6 +50,11 @@ function effortOf(selection: ModelSelection | undefined): string | undefined {
   return typeof value === "string" ? value : undefined
 }
 
+function described(selection: ModelSelection): string {
+  const effort = effortOf(selection)
+  return `\`${label(selection)}\`${effort ? `, thinking ${effort}` : ""}`
+}
+
 function levelsOf(option: ModelOptionDescriptor | undefined): string[] {
   return option?.options?.map((level) => level.id) ?? []
 }
@@ -94,20 +99,28 @@ export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): 
     const lines: string[] = []
     if (!threadId) lines.push("No T3 Code thread yet; the next message launches one.")
     else {
-      try {
-        const { thread } = await client.call("t3_thread_read", { threadId, limit: 1 })
-        lines.push(`Thread: ${thread.title} (\`${threadId}\`, ${thread.status})`)
-        lines.push(`Model: \`${thread.providerInstanceId}::${thread.model}\``)
-      } catch (error) {
-        lines.push(`Thread: \`${threadId}\` (status unavailable: ${errorText(error)})`)
-      }
+      const [read, configuration] = await Promise.allSettled([
+        client.call("t3_thread_read", { threadId, limit: 1 }),
+        client.call("t3_thread_configuration", { threadId }),
+      ])
+      if (read.status === "fulfilled") {
+        const { thread } = read.value
+        const latestRun = thread.status !== "idle" && thread.latestRunId ? `, latest run \`${thread.latestRunId}\`` : ""
+        lines.push(`Thread: ${thread.title} (\`${threadId}\`, ${thread.status}${latestRun})`)
+      } else lines.push(`Thread: \`${threadId}\` (status unavailable: ${errorText(read.reason)})`)
+      if (configuration.status === "fulfilled") {
+        lines.push(`Model: ${described(configuration.value.modelSelection)}`)
+        lines.push(`Access: ${configuration.value.runtimeMode}`)
+      } else lines.push(`Model: unavailable (${errorText(configuration.reason)})`)
     }
-    const open = runner.openRuns()
-    lines.push(open.length === 0 ? "No run is open." : `Open runs: ${open.map((run) => `\`${run.runId}\``).join(", ")}`)
-    if (runner.model) {
-      const effort = effortOf(runner.model)
-      lines.push(`New threads launch on \`${label(runner.model)}\`${effort ? `, thinking ${effort}` : ""}`)
-    }
+    const open = runner.openRuns().map(({ runId, trace }) => {
+      const waiting = trace.questions.size
+      return waiting === 0
+        ? `\`${runId}\``
+        : `\`${runId}\` (waiting on ${waiting} ${waiting === 1 ? "answer" : "answers"})`
+    })
+    lines.push(open.length === 0 ? "No run is open." : `Open runs: ${open.join(", ")}`)
+    if (runner.model) lines.push(`New threads launch on ${described(runner.model)}`)
     lines.push(`T3 Code: ${client.baseUrl}`)
     return lines.map((line) => `- ${line}`).join("\n")
   }
@@ -180,7 +193,18 @@ export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): 
     return await configureThread(threadId, next, summary)
   }
 
-  // The SDK hands a command only its root stream, so a /clear typed in a thread clears the scratchpad's thread.
+  // The SDK hands a command only its root stream, so /compact and /clear typed in a thread act on the scratchpad's thread.
+  async function compact(rootStreamId: string): Promise<CommandResult> {
+    const threadId = runner.threadFor(rootStreamId)
+    if (!threadId) return { ok: false, message: "No T3 Code thread to compact yet." }
+    try {
+      await runner.compact(rootStreamId, threadId)
+    } catch (error) {
+      return { ok: false, message: `Could not compact \`${threadId}\`: ${errorText(error)}` }
+    }
+    return { ok: true, summary: "Queued a compaction of the T3 Code thread" }
+  }
+
   function clear(rootStreamId: string): CommandResult {
     if (runner.hasOpenTurns(rootStreamId)) return { ok: false, message: "Stop the running turn first (/stop)." }
     runner.forgetThread(rootStreamId)
@@ -188,7 +212,7 @@ export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): 
   }
 
   return {
-    commands: ["stop", "status", "model", "thinking", "clear"],
+    commands: ["stop", "status", "model", "thinking", "compact", "clear"],
     get modelSuggestions() {
       return suggestionsFrom(providers)
     },
@@ -208,6 +232,8 @@ export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): 
           return await setModel(args, context.rootStreamId)
         case "thinking":
           return await setThinking(args, context.rootStreamId)
+        case "compact":
+          return await compact(context.rootStreamId)
         // The SDK runs /stop itself and routes only the advertised commands here.
         case "clear":
         default:
