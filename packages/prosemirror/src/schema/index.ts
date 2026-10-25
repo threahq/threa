@@ -30,6 +30,7 @@ import {
 } from "./nodes"
 import { MentionNode, ChannelLinkNode, SlashCommandNode } from "./triggers"
 import { BLOCK_ID_NODE_TYPES } from "./attributes"
+export { BLOCK_ID_NODE_TYPES } from "./attributes"
 
 export { ThreaCode, ThreaLink } from "./marks"
 export { ThreaHeading, ThreaTable, TaskList, ThreaTaskItem, BlockIdAttribute, codeBlockOptions }

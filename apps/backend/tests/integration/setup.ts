@@ -3,7 +3,10 @@
  * Ensures the test database exists and provides connection helpers.
  */
 
+import { expect } from "bun:test"
 import { Pool, type PoolClient } from "pg"
+import { BLOCK_ID_PATTERN, type JSONContent } from "@threahq/types"
+import { BLOCK_ID_NODE_TYPES } from "@threahq/prosemirror/schema"
 import { createDatabasePool } from "../../src/db"
 import { createMigrator } from "../../src/db/migrations"
 import { botChannelAccessId, linkPreviewId, streamId, userId, workspaceId } from "../../src/lib/id"
@@ -223,6 +226,18 @@ export async function withTestTransaction<T>(pool: Pool, callback: (client: Pool
   } finally {
     client.release()
   }
+}
+
+/** The doc as the write sink stores it: every block carries a minted id. */
+export function withMintedBlockIds(doc: JSONContent): JSONContent {
+  const stamp = (node: JSONContent): JSONContent => {
+    const content = node.content?.map(stamp)
+    const attrs = BLOCK_ID_NODE_TYPES.includes(node.type ?? "")
+      ? { ...node.attrs, blockId: expect.stringMatching(BLOCK_ID_PATTERN) }
+      : node.attrs
+    return { ...node, ...(attrs && { attrs }), ...(content && { content }) }
+  }
+  return stamp(doc)
 }
 
 /**

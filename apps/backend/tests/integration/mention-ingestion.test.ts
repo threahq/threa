@@ -8,7 +8,7 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
 import type { JSONContent } from "@threahq/types"
 
-import { setupTestDatabase, withTransaction } from "./setup"
+import { setupTestDatabase, withMintedBlockIds, withTransaction } from "./setup"
 import { StreamRepository, StreamMemberRepository } from "../../src/features/streams"
 import { UserRepository, WorkspaceRepository } from "../../src/features/workspaces"
 import { EventService, MessageRepository } from "../../src/features/messaging"
@@ -95,7 +95,7 @@ describe("mention ingestion", () => {
 
     const stored = await MessageRepository.findById(pool, testWorkspaceId, message.id)
     expect({ contentJson: stored!.contentJson, contentMarkdown: stored!.contentMarkdown }).toEqual({
-      contentJson: {
+      contentJson: withMintedBlockIds({
         type: "doc",
         content: [
           {
@@ -111,7 +111,7 @@ describe("mention ingestion", () => {
             ],
           },
         ],
-      },
+      }),
       contentMarkdown: `[@${author.slug}](user:${author.id}) and **@nobody** in [#${channel.slug}](channel:${channel.id}) not #nowhere`,
     })
   })
