@@ -22,6 +22,11 @@ interface ReferenceAttrs {
   version?: unknown
   range?: unknown
   private?: unknown
+  blockId?: unknown
+}
+
+function keepBlockId<T extends object>(attrs: ReferenceAttrs, next: T): T {
+  return typeof attrs.blockId === "string" ? { ...next, blockId: attrs.blockId } : next
 }
 
 interface ReferenceNode {
@@ -228,11 +233,11 @@ export async function resolveMessageReferences(
       }
       unreadable.add(ref)
       if (ref.isQuote) {
-        ref.node.attrs = privateQuoteAttrs({ streamId: source.streamId, messageId: source.id })
+        ref.node.attrs = keepBlockId(ref.attrs, privateQuoteAttrs({ streamId: source.streamId, messageId: source.id }))
       } else {
         // Readers can't open the source either: keep only what a later share needs, not its author.
         const { messageId, streamId, version, range } = ref.attrs
-        ref.node.attrs = { messageId, streamId, version, range }
+        ref.node.attrs = keepBlockId(ref.attrs, { messageId, streamId, version, range })
       }
       changed = true
     }
@@ -296,7 +301,7 @@ export async function resolveMessageReferences(
       const authorName =
         authorNames.get(source.authorId) ??
         (typeof ref.attrs.authorName === "string" && ref.attrs.authorName.length > 0 ? ref.attrs.authorName : "Unknown")
-      const next = {
+      const next = keepBlockId(ref.attrs, {
         messageId: source.id,
         streamId: source.streamId,
         authorName,
@@ -305,7 +310,7 @@ export async function resolveMessageReferences(
         snippet: sliceReferenceContent(pinnedDoc, range).contentMarkdown,
         version,
         range,
-      }
+      })
       if (
         Object.keys(ref.attrs).length !== Object.keys(next).length ||
         ref.attrs.messageId !== next.messageId ||

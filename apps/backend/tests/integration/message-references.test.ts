@@ -46,6 +46,8 @@ function quoteNode(attrs: Record<string, unknown>): JSONContent {
   }
 }
 
+const anyBlockId = expect.stringMatching(/^blk_/)
+
 function quoteAttrs(message: { contentJson: JSONContent }): Record<string, unknown> {
   const node = (message.contentJson.content ?? []).find((n) => n.type === "quoteReply")
   return (node?.attrs ?? {}) as Record<string, unknown>
@@ -147,6 +149,7 @@ describe("message reference resolution", () => {
 
     const stored = await MessageRepository.findById(pool, testWorkspaceId, quoting.id)
     expect(quoteAttrs(stored!)).toEqual({
+      blockId: anyBlockId,
       messageId: src.id,
       streamId: source,
       authorName: expect.any(String),
@@ -157,6 +160,94 @@ describe("message reference resolution", () => {
       range,
     })
     expect(quoteAttrs(stored!).snippet).toBe("first")
+  })
+
+  test("should mint block ids on every stored body and keep them across an edit", async () => {
+    const created = await eventService.createMessage({
+      workspaceId: testWorkspaceId,
+      streamId: source,
+      authorId: author,
+      authorType: "user",
+      contentJson: {
+        type: "doc",
+        content: [
+          ...docOf("first").content!,
+          { type: "bulletList", content: [{ type: "listItem", content: docOf("item").content }] },
+        ],
+      },
+      contentMarkdown: "first\n\n- item",
+    })
+    const stored = (await MessageRepository.findById(pool, testWorkspaceId, created.id))!
+    expect(stored.contentJson).toEqual({
+      type: "doc",
+      content: [
+        { type: "paragraph", attrs: { blockId: anyBlockId }, content: [{ type: "text", text: "first" }] },
+        {
+          type: "bulletList",
+          attrs: { blockId: anyBlockId },
+          content: [
+            {
+              type: "listItem",
+              content: [
+                { type: "paragraph", attrs: { blockId: anyBlockId }, content: [{ type: "text", text: "item" }] },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    expect(stored.contentMarkdown).not.toContain("blk_")
+
+    await eventService.editMessageInternal({
+      workspaceId: testWorkspaceId,
+      messageId: created.id,
+      streamId: source,
+      actorId: author,
+      contentJson: { ...stored.contentJson, content: [stored.contentJson.content![0], ...docOf("added").content!] },
+      contentMarkdown: "first\n\nadded",
+    })
+    const edited = (await MessageRepository.findById(pool, testWorkspaceId, created.id))!
+    expect(edited.contentJson.content!.map((node) => node.attrs?.blockId)).toEqual([
+      stored.contentJson.content![0].attrs!.blockId,
+      anyBlockId,
+    ])
+  })
+
+  test("should keep reference block ids when the resolver re-pins quotes and shares on create and edit", async () => {
+    const src = await seedEditedSource()
+    const range = { from: 1, to: 6 }
+    const body = (text: string): JSONContent => ({
+      type: "doc",
+      content: [
+        quoteNode({ messageId: src.id, streamId: source, version: 1, range, blockId: "blk_quote" }),
+        { type: "sharedMessage", attrs: { messageId: src.id, streamId: source, blockId: "blk_share" } },
+        ...docOf(text).content!,
+      ],
+    })
+
+    const quoting = await eventService.createMessage({
+      workspaceId: testWorkspaceId,
+      streamId: source,
+      authorId: author,
+      authorType: "user",
+      contentJson: body("agreed"),
+      contentMarkdown: "agreed",
+    })
+    await eventService.editMessageInternal({
+      workspaceId: testWorkspaceId,
+      messageId: quoting.id,
+      streamId: source,
+      actorId: author,
+      contentJson: body("agreed again"),
+      contentMarkdown: "agreed again",
+    })
+
+    const stored = await MessageRepository.findById(pool, testWorkspaceId, quoting.id)
+    expect({
+      quote: quoteAttrs(stored!).blockId,
+      share: shareAttrs(stored!).blockId,
+      revision: stored!.revision,
+    }).toEqual({ quote: "blk_quote", share: "blk_share", revision: 2 })
   })
 
   test("(b) a forged snippet is replaced by the slice the range names", async () => {
@@ -353,6 +444,7 @@ describe("message reference resolution", () => {
     })
 
     expect(quoteAttrs((await MessageRepository.findById(pool, testWorkspaceId, quoting.id))!)).toEqual({
+      blockId: anyBlockId,
       messageId: src.id,
       streamId: source,
       authorName: expect.any(String),
@@ -504,7 +596,7 @@ describe("message reference resolution", () => {
 
       expect(edited).not.toBeNull()
       const stored = (await MessageRepository.findById(pool, testWorkspaceId, legacy.id))!
-      expect(quoteAttrs(stored)).toEqual(before)
+      expect(quoteAttrs(stored)).toEqual({ ...before, blockId: anyBlockId })
       expect(stored.contentMarkdown).toContain("and one more thing")
     })
 

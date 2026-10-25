@@ -56,7 +56,7 @@ import {
 } from "../../lib/id"
 import { MessageVersionRepository, type MessageVersion } from "./version-repository"
 import { MessageComposeTraceRepository } from "./compose-trace-repository"
-import { collectAgentBlockAuthorIds, collectMemoEmbedIds } from "@threahq/prosemirror"
+import { collectAgentBlockAuthorIds, collectMemoEmbedIds, ensureBlockIds } from "@threahq/prosemirror"
 import { withDerivedMessageMetadata } from "./metadata-schema"
 import { serializeBigInt } from "@threahq/backend-common"
 import { messagesTotal } from "../../lib/observability"
@@ -747,6 +747,7 @@ export class EventService {
         params.contentJson = resolvedReferences.contentJson
         params.contentMarkdown = deriveContentMarkdown(resolvedReferences.contentJson)
       }
+      params.contentJson = ensureBlockIds(params.contentJson)
     }
 
     // Validate attachments before creating the event. Two flavors:
@@ -1377,6 +1378,7 @@ export class EventService {
             params.contentJson = resolvedEditReferences.contentJson
             params.contentMarkdown = deriveContentMarkdown(resolvedEditReferences.contentJson)
           }
+          params.contentJson = ensureBlockIds(params.contentJson)
 
           const snapshot = await MessageVersionRepository.insert(client, {
             id: messageVersionId(),

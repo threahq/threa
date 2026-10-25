@@ -127,3 +127,69 @@ describe("math validation", () => {
     ).toBeNull()
   })
 })
+
+describe("block ids and task lists", () => {
+  it("should keep block ids, task items and inline attachment display when validating", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          attrs: { blockId: "blk_1" },
+          content: [
+            {
+              type: "attachmentReference",
+              attrs: {
+                id: "attach_1",
+                filename: "a.png",
+                mimeType: "image/png",
+                sizeBytes: 1,
+                status: "uploaded",
+                display: "inline",
+              },
+            },
+          ],
+        },
+        {
+          type: "taskList",
+          attrs: { blockId: "blk_2" },
+          content: [
+            {
+              type: "taskItem",
+              attrs: { checked: true },
+              content: [{ type: "paragraph", attrs: { blockId: "blk_3" }, content: [{ type: "text", text: "done" }] }],
+            },
+          ],
+        },
+        { type: "heading", attrs: { blockId: "blk_4", level: 2 }, content: [{ type: "text", text: "h" }] },
+      ],
+    }
+    expect(validateContent(doc) as JSONContent).toEqual(doc)
+  })
+
+  it("should reject a task item without checked, a non-string block id, or an unknown display", () => {
+    const taskList = (item: Record<string, unknown>) => ({
+      type: "doc",
+      content: [{ type: "taskList", content: [item] }],
+    })
+    const paragraph = { type: "paragraph", content: [{ type: "text", text: "x" }] }
+    expect(tryValidateContent(taskList({ type: "taskItem", content: [paragraph] }))).toBeNull()
+    expect(tryValidateContent({ type: "doc", content: [{ ...paragraph, attrs: { blockId: 7 } }] })).toBeNull()
+    expect(
+      tryValidateContent({
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              {
+                type: "attachmentReference",
+                attrs: { id: "a", filename: "a", mimeType: "x", sizeBytes: 1, status: "uploaded", display: "huge" },
+              },
+            ],
+          },
+        ],
+      })
+    ).toBeNull()
+  })
+})

@@ -174,7 +174,10 @@ describe.each(requestCases)("%s through validateRequest", (_name, schema, body) 
 
 describe("bold-wrapped code", () => {
   it("should accept a client doc when a text run carries both bold and code", () => {
-    const input = { streamId: "stream_1", contentJson: doc(paragraph(text("x", [{ type: "bold" }, { type: "code" }]))) }
+    const input = {
+      streamId: "stream_1",
+      contentJson: normalizeContentJson(doc(paragraph(text("x", [{ type: "bold" }, { type: "code" }])))),
+    }
 
     const parsed = validateRequest(createMessageSchema, input)
 

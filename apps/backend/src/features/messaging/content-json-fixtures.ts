@@ -18,6 +18,10 @@ export const everyNodeDoc = doc(
     { type: "slashCommand", attrs: { name: "invite" } },
     { type: "emoji", attrs: { shortcode: "smile", emoji: "😄" } },
     { type: "attachmentReference", attrs: { id: "attach_1", filename: "a.pdf", status: "uploaded" } },
+    {
+      type: "attachmentReference",
+      attrs: { id: "attach_2", filename: "b.png", status: "uploaded", display: "inline" },
+    },
     { type: "memoEmbed", attrs: { memoId: "memo_1", title: "Memo" } },
     { type: "inAppLink", attrs: { url: "/w/x", streamId: "stream_1", name: "x" } },
     { type: "giphyEmbed", attrs: { giphyUrl: "https://giphy.com/x", width: 10, height: 10 } },
@@ -25,6 +29,10 @@ export const everyNodeDoc = doc(
   ),
   { type: "bulletList", content: [{ type: "listItem", content: [paragraph(text("a"))] }] },
   { type: "orderedList", content: [{ type: "listItem", content: [paragraph(text("b"))] }] },
+  {
+    type: "taskList",
+    content: [{ type: "taskItem", attrs: { checked: true }, content: [paragraph(text("done"))] }],
+  },
   { type: "blockquote", content: [paragraph(text("q"))] },
   { type: "horizontalRule" },
   { type: "codeBlock", attrs: { language: "ts" }, content: [text("const x = 1")] },
