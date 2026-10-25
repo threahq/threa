@@ -58,12 +58,14 @@ export function deriveStreamViewerState(params: {
   participates: boolean
   /** Whether the guest DM policy closes the target's DM root to writers. */
   guestDmClosed: boolean
+  /** For writes that are not messages (a doc's Yjs updates): the type's message read-only reason does not apply. */
+  ignoreTypeReadOnly?: boolean
 }): StreamViewerState {
   if (params.target.archivedAt || params.ancestorArchived) {
     return { readOnly: true, readOnlyReason: StreamReadOnlyReasons.ARCHIVED }
   }
   const typeReadOnlyReason = STREAM_TYPE_CAPABILITIES[params.target.type].messagesReadOnly
-  if (typeReadOnlyReason) {
+  if (typeReadOnlyReason && !params.ignoreTypeReadOnly) {
     return { readOnly: true, readOnlyReason: typeReadOnlyReason }
   }
   if (!params.participates) {
@@ -272,7 +274,12 @@ function inaccessibleStream(): StreamNotFoundError {
  */
 export async function resolveLockedStreamAuthorities(
   db: Querier,
-  params: { workspaceId: string; streamIds: readonly string[]; principal: StreamWritePrincipal }
+  params: {
+    workspaceId: string
+    streamIds: readonly string[]
+    principal: StreamWritePrincipal
+    ignoreTypeReadOnly?: boolean
+  }
 ): Promise<LockedStreamAuthority[]> {
   const facts = await lockEffectiveStreams(db, params.workspaceId, params.streamIds)
   if (facts.length === 0) return []
@@ -317,6 +324,7 @@ export async function resolveLockedStreamAuthorities(
         ancestorArchived,
         participates,
         guestDmClosed: closedDmRootIds.has(root.id),
+        ignoreTypeReadOnly: params.ignoreTypeReadOnly,
       }),
     })
   }

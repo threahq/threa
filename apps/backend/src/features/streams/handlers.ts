@@ -53,7 +53,7 @@ const DRAFT_ID_PATTERN = /^draft_[A-Za-z0-9]{1,64}$/
 
 const createStreamSchema = z
   .object({
-    type: streamTypeSchema.extract(["scratchpad", "channel", "thread", "aside"]),
+    type: streamTypeSchema.extract(["scratchpad", "channel", "thread", "aside", "doc"]),
     slug: z
       .string()
       .regex(SLUG_PATTERN, {
@@ -128,6 +128,10 @@ const createStreamSchema = z
   })
   .refine((data) => data.type !== "aside" || !!data.parentStreamId, {
     message: "parentStreamId is required for asides",
+    path: ["parentStreamId"],
+  })
+  .refine((data) => data.type !== "doc" || (!!data.parentStreamId && data.parentAnchorId === undefined), {
+    message: "parentStreamId is required for docs, and a doc has no anchor",
     path: ["parentStreamId"],
   })
   .refine((data) => data.conversationId === undefined || data.type === "aside", {

@@ -13,3 +13,5 @@ export {
   encodeUpdateBase64,
   decodeUpdateBase64,
 } from "./yjs"
+export { DocService, DOC_SNAPSHOT_INTERVAL, type DocState, type DocUpdateView, type DocWriterType } from "./service"
+export { createDocHandlers } from "./handlers"
