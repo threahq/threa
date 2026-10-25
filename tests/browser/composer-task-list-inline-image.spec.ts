@@ -1,5 +1,11 @@
 import { test, expect, type Page, type Locator } from "@playwright/test"
-import { editLastMessageViaArrowUp, expectApiOk, loginAndCreateWorkspace, workspaceIdFromUrl } from "./helpers"
+import {
+  clickComposerToolbarButton,
+  editLastMessageViaArrowUp,
+  expectApiOk,
+  loginAndCreateWorkspace,
+  workspaceIdFromUrl,
+} from "./helpers"
 
 const PNG_1X1 = [
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00,
@@ -11,6 +17,10 @@ const IMAGE_NAME = "pasted-image-1.png"
 
 function composerEditor(page: Page): Locator {
   return page.locator("[data-editor-zone='main'] [contenteditable='true']").last()
+}
+
+function taskItems(editor: Locator): Locator {
+  return editor.locator("ul[data-type='taskList'] > li")
 }
 
 function editForm(page: Page): Locator {
@@ -69,9 +79,9 @@ test.describe("Composer task lists and inline images", () => {
     await page.keyboard.type("- [ ] milk")
     await page.keyboard.press("Shift+Enter")
     await page.keyboard.type("done")
-    await expect(composerEditor(page).locator("ul[data-type='taskList'] > li")).toHaveCount(2)
+    await expect(taskItems(composerEditor(page))).toHaveCount(2)
     // The second item's checkbox is the composer's own control.
-    await composerEditor(page).locator("ul[data-type='taskList'] > li").nth(1).locator("input[type='checkbox']").check()
+    await taskItems(composerEditor(page)).nth(1).locator("input[type='checkbox']").check()
     await sendComposer(page)
 
     const checkboxes = lastMessage(page).getByRole("checkbox")
@@ -83,18 +93,16 @@ test.describe("Composer task lists and inline images", () => {
     await expectLastMessageConfirmed(page)
 
     await editLastMessageViaArrowUp(page)
-    await expect(editForm(page).locator("ul[data-type='taskList'] > li")).toHaveCount(2)
+    await expect(taskItems(editForm(page))).toHaveCount(2)
     await page.getByRole("button", { name: "Cancel", exact: true }).click()
     await expect(page.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0)
   })
 
-  test("should start a task list when the Checklist button is clicked", async ({ page }) => {
+  test("should start a task list when the Checklist button is clicked, and remove it when the composer is cleared", async ({
+    page,
+  }) => {
     await composerEditor(page).click()
-    const checklist = page.getByRole("main").getByRole("button", { name: "Checklist", exact: true })
-    if (!(await checklist.isVisible())) {
-      await page.getByRole("main").getByRole("button", { name: "Formatting", exact: true }).click()
-    }
-    await checklist.click()
+    await clickComposerToolbarButton(page, "Checklist")
     await page.keyboard.type("a")
     await expect(composerEditor(page).locator("ul[data-type='taskList']")).toContainText("a")
 
