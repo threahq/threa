@@ -1,13 +1,12 @@
 import type { Querier } from "../../../db"
 import { HttpError } from "../../../lib/errors"
-import { logger } from "../../../lib/logger"
 import { sharedMessageId } from "../../../lib/id"
 import { type JSONContent, ShareFlavors, type ShareFlavor, ShareErrorCodes } from "@threahq/types"
 import { MessageRepository } from "../repository"
 import type { CanReadStream, FindStreamForSharing } from "./access-check"
-import { SharedMessageRepository } from "./repository"
+import { SharedMessageRepository, UnsharedReferenceRepository, type UnsharedReference } from "./repository"
 import { E2eStreamsRepository } from "../../e2e-streams"
-import { findReadersWithoutAccess } from "../../streams"
+import { findReadersWithoutAccess, listAccessibleStreamIds } from "../../streams"
 
 /**
  * A share-node extracted from a message's contentJson during scanning.
@@ -23,7 +22,8 @@ interface ShareReference {
 /**
  * Walk a ProseMirror content tree and collect every sharedMessage or cross-stream
  * quoteReply node. Same-stream quoteReply is skipped — it's the existing
- * quote-reply feature, not a share.
+ * quote-reply feature, not a share — and so is a private quote, which carries
+ * nothing of its source to grant.
  */
 export function collectShareReferences(content: JSONContent, targetStreamId: string): ShareReference[] {
   const found: ShareReference[] = []
@@ -42,8 +42,8 @@ export function collectShareReferences(content: JSONContent, targetStreamId: str
         })
       }
     } else if (node.type === "quoteReply") {
-      const attrs = node.attrs as { messageId?: string; streamId?: string } | undefined
-      if (attrs?.messageId && attrs.streamId && attrs.streamId !== targetStreamId) {
+      const attrs = node.attrs as { messageId?: string; streamId?: string; private?: boolean } | undefined
+      if (attrs?.messageId && attrs.streamId && attrs.streamId !== targetStreamId && !attrs.private) {
         found.push({
           flavor: ShareFlavors.QUOTE,
           sourceMessageId: attrs.messageId,
@@ -104,7 +104,7 @@ export interface ValidateAndRecordSharesParams {
    * AFTER the exposure is independently established server-side.
    */
   confirmedPrivacyWarning?: boolean
-  /** Scheduled fire: pre-consented share sources; an exposing share outside the set sends unrecorded instead of 409. */
+  /** Scheduled fire: pre-consented share sources; an exposing share outside the set, or one the author can't read, sends unrecorded instead of 409/403. */
   consentedShareSourceIds?: ReadonlySet<string>
 }
 
@@ -170,6 +170,7 @@ export const ShareService = {
       params.workspaceId,
       params.shareMessageId
     )
+    await UnsharedReferenceRepository.deleteByShareMessageId(params.client, params.workspaceId, params.shareMessageId)
 
     if (references.length === 0) return
 
@@ -257,7 +258,7 @@ export const ShareService = {
         }
         canReadCache.set(ref.sourceStreamId, canRead)
       }
-      if (!canRead) {
+      if (!canRead && !params.consentedShareSourceIds) {
         throw new HttpError("You don't have access to the source message", {
           status: 403,
           code: ShareErrorCodes.SOURCE_FORBIDDEN,
@@ -271,17 +272,19 @@ export const ShareService = {
         params.confirmedPrivacyWarning ||
         recordedSourceMessageIds.has(ref.sourceMessageId) ||
         params.consentedShareSourceIds?.has(ref.sourceMessageId)
-      if (exposes && !consented) {
-        // A scheduled fire has no author to ask: send without the grant.
+      if (!canRead || (exposes && !consented)) {
+        // A scheduled fire has no author to ask, and can't grant a source the
+        // author lost read access to: send without the grant and keep the
+        // reference so the author can share it once they can.
         if (!params.consentedShareSourceIds) throw privacyConfirmationRequired()
-        logger.info(
-          {
-            workspaceId: params.workspaceId,
-            shareMessageId: params.shareMessageId,
-            sourceMessageId: ref.sourceMessageId,
-          },
-          "scheduled share sent unrecorded: source exposes readers the author did not consent to"
-        )
+        await UnsharedReferenceRepository.insert(params.client, {
+          workspaceId: params.workspaceId,
+          shareMessageId: params.shareMessageId,
+          sourceMessageId: ref.sourceMessageId,
+          sourceStreamId: ref.sourceStreamId,
+          flavor: ref.flavor,
+          createdBy: params.sharerId,
+        })
         continue
       }
 
@@ -297,4 +300,100 @@ export const ShareService = {
       })
     }
   },
+
+  /**
+   * The user's sent references that went out without a grant and still hide
+   * their source from readers of the message's current stream. A reference
+   * whose source has since opened up to those readers is dropped.
+   */
+  async listUnsharedReferences(
+    db: Querier,
+    workspaceId: string,
+    userId: string
+  ): Promise<(UnsharedReference & { streamId: string })[]> {
+    const rows = await UnsharedReferenceRepository.listByCreator(db, workspaceId, userId)
+    const rowsByStream = new Map<string, (UnsharedReference & { streamId: string })[]>()
+    for (const row of await shareableUnsharedReferences(db, workspaceId, userId, rows)) {
+      rowsByStream.set(row.streamId, [...(rowsByStream.get(row.streamId) ?? []), row])
+    }
+    const exposing = await Promise.all(
+      [...rowsByStream].map(async ([streamId, inStream]) => {
+        const readers = await findReadersWithoutAccess(db, workspaceId, { streamId }, [
+          ...new Set(inStream.map((row) => row.sourceStreamId)),
+        ])
+        return inStream.filter((row) => (readers.get(row.sourceStreamId)?.count ?? 0) > 0)
+      })
+    )
+    return exposing.flat()
+  },
+
+  /**
+   * Records the grants a scheduled send skipped, for the references the
+   * author can still share, and clears only those rows. Only those references
+   * are checked: the rest of the message keeps its grants, so one reference
+   * that can't be shared now doesn't block the others, and stays listed in
+   * case the author regains access. Returns the source message ids it granted.
+   */
+  async grantUnsharedReferences(params: {
+    client: Querier
+    workspaceId: string
+    shareMessageId: string
+    userId: string
+  }): Promise<string[]> {
+    const rows = await UnsharedReferenceRepository.listByShareMessageId(
+      params.client,
+      params.workspaceId,
+      params.shareMessageId
+    )
+    const shareable = await shareableUnsharedReferences(params.client, params.workspaceId, params.userId, rows)
+    for (const ref of shareable) {
+      await SharedMessageRepository.insert(params.client, {
+        id: sharedMessageId(),
+        workspaceId: params.workspaceId,
+        shareMessageId: ref.shareMessageId,
+        sourceMessageId: ref.sourceMessageId,
+        sourceStreamId: ref.sourceStreamId,
+        targetStreamId: ref.streamId,
+        flavor: ref.flavor,
+        createdBy: params.userId,
+      })
+    }
+    const granted = shareable.map((ref) => ref.sourceMessageId)
+    await UnsharedReferenceRepository.deleteBySourceMessageIds(
+      params.client,
+      params.workspaceId,
+      params.shareMessageId,
+      granted
+    )
+    return granted
+  },
+}
+
+/**
+ * The references sharing could still fix, with the carrying message's current
+ * stream: both messages exist undeleted, the source still sits in the stream
+ * its pointer names (validation rejects a moved one), and the user still reads
+ * both the source and the destination.
+ */
+async function shareableUnsharedReferences(
+  db: Querier,
+  workspaceId: string,
+  userId: string,
+  rows: UnsharedReference[]
+): Promise<(UnsharedReference & { streamId: string })[]> {
+  if (rows.length === 0) return []
+  const messages = await MessageRepository.findByIds(db, workspaceId, [
+    ...new Set(rows.flatMap((row) => [row.shareMessageId, row.sourceMessageId])),
+  ])
+  const streamIds = new Set(rows.map((row) => row.sourceStreamId))
+  for (const message of messages.values()) streamIds.add(message.streamId)
+  const readable = await listAccessibleStreamIds(db, workspaceId, userId, [...streamIds])
+  return rows.flatMap((row) => {
+    const message = messages.get(row.shareMessageId)
+    const source = messages.get(row.sourceMessageId)
+    if (!message || message.deletedAt || !source || source.deletedAt) return []
+    if (source.streamId !== row.sourceStreamId) return []
+    if (!readable.has(row.sourceStreamId) || !readable.has(message.streamId)) return []
+    return [{ ...row, streamId: message.streamId }]
+  })
 }

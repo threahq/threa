@@ -1193,6 +1193,18 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     message.getHistory
   )
   app.post(
+    "/api/workspaces/:workspaceId/messages/:messageId/share-references",
+    ...authed,
+    audit("messages.share_references", "write"),
+    message.shareReferences
+  )
+  app.get(
+    "/api/workspaces/:workspaceId/unshared-references",
+    ...authed,
+    audit("messages.list_unshared_references", "read"),
+    message.listUnsharedReferences
+  )
+  app.post(
     "/api/workspaces/:workspaceId/messages/:messageId/reactions",
     ...authed,
     audit("messages.add_reaction", "write"),

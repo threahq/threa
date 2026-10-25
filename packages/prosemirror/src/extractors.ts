@@ -175,14 +175,15 @@ export function mapMentionAndChannelNodes(
 /**
  * Message IDs this document explicitly quote-replies to, read from the
  * `quoteReply` node attrs (so it works for any language/script — no markdown
- * pattern matching, INV-54). Dedupes preserving first-seen order.
+ * pattern matching, INV-54). Dedupes preserving first-seen order. Private
+ * quotes are skipped: the author couldn't read their source when sending.
  */
 export function collectQuoteReplyMessageIds(content: JSONContent): string[] {
   const seen = new Set<string>()
   const ordered: string[] = []
 
   const walk = (node: JSONContent): void => {
-    if (node.type === "quoteReply") {
+    if (node.type === "quoteReply" && node.attrs?.private !== true) {
       const messageId = node.attrs?.messageId
       if (typeof messageId === "string" && messageId.length > 0 && !seen.has(messageId)) {
         seen.add(messageId)

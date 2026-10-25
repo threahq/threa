@@ -90,6 +90,7 @@ import {
   type StreamEvent as WireStreamEvent,
   type MessagesMovedEventPayload,
   type MovedMessagePreview,
+  type UnsharedReference,
 } from "@threahq/types"
 
 type MessageMutationAuthority =
@@ -220,7 +221,7 @@ export interface CreateMessageParams {
    * crosses a privacy boundary before consulting this flag.
    */
   confirmedPrivacyWarning?: boolean
-  /** Scheduled fire: pre-consented share sources; an exposing share outside the set sends unrecorded instead of 409. */
+  /** Scheduled fire: pre-consented share sources; an exposing share outside the set, or one the author can't read, sends unrecorded instead of 409/400. */
   consentedShareSourceIds?: ReadonlySet<string>
   /**
    * Pre-computed access scope used to authorize inline-attachment
@@ -740,6 +741,7 @@ export class EventService {
           params.authorId,
           params.accessibleStreamIds
         ),
+        sendUnreadableReferencesPrivate: params.consentedShareSourceIds !== undefined,
       })
       if (resolvedReferences.changed) {
         params.contentJson = resolvedReferences.contentJson
@@ -2587,6 +2589,49 @@ export class EventService {
 
   async getMessageById(workspaceId: string, messageId: string): Promise<Message | null> {
     return MessageRepository.findById(this.pool, workspaceId, messageId)
+  }
+
+  async listUnsharedReferences(workspaceId: string, userId: string): Promise<UnsharedReference[]> {
+    const refs = await ShareService.listUnsharedReferences(this.pool, workspaceId, userId)
+    return refs.map((ref) => ({
+      messageId: ref.shareMessageId,
+      streamId: ref.streamId,
+      sourceMessageId: ref.sourceMessageId,
+      flavor: ref.flavor,
+    }))
+  }
+
+  /**
+   * Grant the shares a scheduled send went out without. Re-records every
+   * reference the message carries with the author's consent, so readers of
+   * its current stream can open the sources. No-op when nothing is unshared.
+   */
+  async shareUnsharedReferences(params: { workspaceId: string; messageId: string; userId: string }): Promise<void> {
+    await withTransaction(this.pool, async (client) => {
+      const message = await MessageRepository.findByIdForUpdate(client, params.workspaceId, params.messageId)
+      if (!message || message.deletedAt) throw new MessageNotFoundError()
+      if (!(await checkStreamAccess(client, message.streamId, params.workspaceId, params.userId))) {
+        throw new MessageNotFoundError()
+      }
+      if (message.authorId !== params.userId) {
+        throw new HttpError("Can only share references in your own messages", { status: 403, code: "FORBIDDEN" })
+      }
+
+      const sourceMessageIds = await ShareService.grantUnsharedReferences({
+        client,
+        workspaceId: params.workspaceId,
+        shareMessageId: message.id,
+        userId: params.userId,
+      })
+      if (sourceMessageIds.length === 0) return
+
+      await OutboxRepository.insert(client, "message:shares_granted", {
+        workspaceId: params.workspaceId,
+        streamId: message.streamId,
+        messageId: message.id,
+        sourceMessageIds,
+      })
+    })
   }
 
   async listEvents(

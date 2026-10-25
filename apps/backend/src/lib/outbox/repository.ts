@@ -41,6 +41,7 @@ export type OutboxEventType =
   | "message:created"
   | "message:edited"
   | "message:deleted"
+  | "message:shares_granted"
   | "messages:moved"
   | "thread:updated"
   | "reaction:added"
@@ -166,6 +167,7 @@ export type StreamScopedEventType =
   | "message:created"
   | "message:edited"
   | "message:deleted"
+  | "message:shares_granted"
   | "messages:moved"
   | "thread:updated"
   | "reaction:added"
@@ -255,6 +257,12 @@ export interface MessageEditedOutboxPayload extends StreamScopedPayload {
 export interface MessageDeletedOutboxPayload extends StreamScopedPayload {
   messageId: string
   deletedAt: string
+}
+
+/** The author shared references a scheduled send carried without a grant. */
+export interface MessageSharesGrantedOutboxPayload extends StreamScopedPayload {
+  messageId: string
+  sourceMessageIds: string[]
 }
 
 export interface MessagesMovedOutboxPayload extends StreamScopedPayload {
@@ -1428,6 +1436,7 @@ export interface OutboxEventPayloadMap {
   "message:created": MessageCreatedOutboxPayload
   "message:edited": MessageEditedOutboxPayload
   "message:deleted": MessageDeletedOutboxPayload
+  "message:shares_granted": MessageSharesGrantedOutboxPayload
   "messages:moved": MessagesMovedOutboxPayload
   "thread:updated": ThreadUpdatedOutboxPayload
   "stream:message_count": StreamMessageCountOutboxPayload
@@ -1588,6 +1597,7 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "message:created",
   "message:edited",
   "message:deleted",
+  "message:shares_granted",
   "messages:moved",
   "thread:updated",
   "reaction:added",

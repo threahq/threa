@@ -96,7 +96,8 @@ function collectUnpinnedNodes(root: JSONContent): UnpinnedNode[] {
     if (node.type === "quoteReply" || node.type === "sharedMessage") {
       const attrs = (node.attrs ?? {}) as Record<string, unknown>
       const messageId = attrs.messageId
-      if (typeof messageId === "string" && messageId.length > 0 && (attrs.version ?? null) === null) {
+      const unpinned = (attrs.version ?? null) === null && attrs.private !== true
+      if (typeof messageId === "string" && messageId.length > 0 && unpinned) {
         found.push({ node, attrs, messageId, isQuote: node.type === "quoteReply" })
       }
     }

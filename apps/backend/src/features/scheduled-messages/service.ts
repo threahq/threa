@@ -15,12 +15,13 @@ import "../workspaces"
 import { OutboxRepository } from "../../lib/outbox"
 import {
   assertStreamWritable,
+  checkStreamAccess,
   createStreamReadOnlyError,
   findReadersWithoutAccess,
   resolveLockedStreamAuthorities,
   StreamRepository,
 } from "../streams"
-import { MessageRepository, ShareService } from "../messaging"
+import { MessageRepository, ShareService, resolveMessageReferences } from "../messaging"
 import { EventService } from "../messaging"
 import { scheduledMessageId, scheduledMessageQueueId } from "../../lib/id"
 import { JobQueues, QueueRepository, enqueueQueuedJob, type ScheduledMessageSendJobData } from "../../lib/queue"
@@ -150,6 +151,7 @@ export class ScheduledMessagesService {
 
         const consentedShareSourceIds = await scheduledShareConsent(client, {
           workspaceId: params.workspaceId,
+          userId: params.userId,
           streamId: params.streamId,
           contentJson: params.contentJson,
           confirmedPrivacyWarning: params.confirmedPrivacyWarning,
@@ -302,8 +304,10 @@ export class ScheduledMessagesService {
       const consentedShareSourceIds = params.contentJson
         ? await scheduledShareConsent(client, {
             workspaceId: params.workspaceId,
+            userId: params.userId,
             streamId: existing.streamId,
             contentJson: params.contentJson,
+            previousContentJson: existing.contentJson,
             consentedShareSourceIds: existing.consentedShareSourceIds,
             confirmedPrivacyWarning: params.confirmedPrivacyWarning,
           })
@@ -720,20 +724,68 @@ function clampToFuture(date: Date): Date {
   return date.getTime() < minMs ? new Date(minMs) : date
 }
 
+const REFERENCE_NODE_TYPES = new Set(["sharedMessage", "quoteReply"])
+
+function referencedMessageId(node: JSONContent): string | null {
+  const messageId = node.attrs?.messageId
+  return node.type && REFERENCE_NODE_TYPES.has(node.type) && typeof messageId === "string" ? messageId : null
+}
+
 /**
- * 409s unless every exposing source is confirmed now or was consented earlier. Returns the
- * row's consent after this write.
+ * Drops references to messages the previous body already referenced: they passed the read
+ * check when written, and the fire sends any that became unreadable privately, so an edit
+ * after losing access still saves.
+ */
+function withoutReferencesFrom(contentJson: JSONContent, previous: JSONContent | undefined): JSONContent {
+  if (!previous) return contentJson
+  const gated = new Set<string>()
+  const collect = (node: JSONContent): void => {
+    const messageId = referencedMessageId(node)
+    if (messageId) gated.add(messageId)
+    node.content?.forEach(collect)
+  }
+  collect(previous)
+  const prune = (node: JSONContent): JSONContent => ({
+    ...node,
+    content: node.content
+      ?.filter((child) => {
+        const messageId = referencedMessageId(child)
+        return !messageId || !gated.has(messageId)
+      })
+      .map(prune),
+  })
+  return gated.size === 0 ? contentJson : prune(contentJson)
+}
+
+/**
+ * Rejects references the author can't read, as an immediate send would, then 409s unless
+ * every exposing source is confirmed now or was consented earlier. Returns the row's consent
+ * after this write.
+ *
+ * Only the fire may send an unreadable reference privately, and only one that was readable
+ * when scheduled: checking here keeps send-now from answering whether a guessed message
+ * exists or where it lives.
  */
 async function scheduledShareConsent(
   client: PoolClient,
   params: {
     workspaceId: string
+    userId: string
     streamId: string
     contentJson: JSONContent
+    previousContentJson?: JSONContent
     consentedShareSourceIds?: string[]
     confirmedPrivacyWarning?: boolean
   }
 ): Promise<string[]> {
+  await resolveMessageReferences(client, {
+    workspaceId: params.workspaceId,
+    contentJson: withoutReferencesFrom(params.contentJson, params.previousContentJson),
+    previousContentJson: params.previousContentJson,
+    targetStreamId: params.streamId,
+    canReadSourceStream: async (streamId) =>
+      (await checkStreamAccess(client, streamId, params.workspaceId, params.userId)) !== null,
+  })
   return ShareService.assertSharesConfirmed({
     contentJson: params.contentJson,
     targetStreamId: params.streamId,

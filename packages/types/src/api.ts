@@ -22,6 +22,7 @@ import type {
   DecisionRequestStatus,
   DelegationReopenReason,
   SubagentStatus,
+  ShareFlavor,
 } from "./constants"
 import type { WorkspaceInvitableRole } from "./workspace-permissions"
 import type { ContextBag, ContextIntent, ContextRefKind } from "./context-bag"
@@ -1760,6 +1761,18 @@ export interface ReferenceAudience {
 
 export interface ReferenceAudienceResponse {
   audiences: ReferenceAudience[]
+}
+
+/** A sent reference whose source the message's readers still can't open. */
+export interface UnsharedReference {
+  messageId: string
+  streamId: string
+  sourceMessageId: string
+  flavor: ShareFlavor
+}
+
+export interface UnsharedReferencesResponse {
+  references: UnsharedReference[]
 }
 
 export interface CreateWorkspaceInput {

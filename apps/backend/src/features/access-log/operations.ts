@@ -150,6 +150,8 @@ export const ACCESS_LOG_OPERATIONS = [
   "messages.update",
   "messages.delete",
   "messages.get_history",
+  "messages.share_references",
+  "messages.list_unshared_references",
   "messages.add_reaction",
   "messages.remove_reaction",
   // Attachments

@@ -322,6 +322,7 @@ describe("message reference resolution", () => {
       { messageId: secret.id, streamId: walled, version: 99 },
       { messageId: secret.id, streamId: walled, version: 1, range: { from: 0, to: 9999 } },
       { messageId: secret.id, streamId: walled, version: 1, snippet: "> secret" },
+      { messageId: secret.id, streamId: walled, private: true },
     ]) {
       await expectReferenceError(
         eventService.createMessage({
@@ -335,6 +336,32 @@ describe("message reference resolution", () => {
         MessageReferenceErrorCodes.SOURCE_NOT_FOUND
       )
     }
+  })
+
+  test("(l) a client-sent private quote of a readable source resolves as an ordinary quote", async () => {
+    const src = await seedEditedSource()
+    const quoting = await eventService.createMessage({
+      workspaceId: testWorkspaceId,
+      streamId: target,
+      authorId: author,
+      authorType: "user",
+      contentJson: {
+        type: "doc",
+        content: [quoteNode({ messageId: src.id, streamId: source, snippet: "second body", private: true })],
+      },
+      contentMarkdown: "> second body",
+    })
+
+    expect(quoteAttrs((await MessageRepository.findById(pool, testWorkspaceId, quoting.id))!)).toEqual({
+      messageId: src.id,
+      streamId: source,
+      authorName: expect.any(String),
+      authorId: author,
+      actorType: "user",
+      snippet: "second body",
+      version: 2,
+      range: null,
+    })
   })
 
   describe("(g) share hydration serves the pin", () => {

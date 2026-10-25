@@ -144,6 +144,11 @@ export interface ThreaQuoteReply {
     version?: number | null
     /** Span inside the pinned version's content; null/absent = the whole message */
     range?: ContentRange | null
+    /**
+     * Server-set when the author couldn't read the source as it sent; every
+     * other field but the ids is empty, so the message reveals nothing of it.
+     */
+    private?: boolean
   }
 }
 

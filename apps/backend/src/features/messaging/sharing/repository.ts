@@ -189,3 +189,84 @@ export const SharedMessageRepository = {
     )
   },
 }
+
+interface UnsharedReferenceRow {
+  share_message_id: string
+  source_message_id: string
+  source_stream_id: string
+  flavor: string
+}
+
+export interface UnsharedReference {
+  shareMessageId: string
+  sourceMessageId: string
+  sourceStreamId: string
+  flavor: ShareFlavor
+}
+
+export const UnsharedReferenceRepository = {
+  async insert(db: Querier, params: UnsharedReference & { workspaceId: string; createdBy: string }): Promise<void> {
+    await db.query(sql`
+      INSERT INTO unshared_references (
+        workspace_id, share_message_id, source_message_id, source_stream_id, flavor, created_by
+      )
+      VALUES (
+        ${params.workspaceId}, ${params.shareMessageId}, ${params.sourceMessageId},
+        ${params.sourceStreamId}, ${params.flavor}, ${params.createdBy}
+      )
+      ON CONFLICT (workspace_id, share_message_id, source_message_id) DO NOTHING
+    `)
+  },
+
+  async deleteByShareMessageId(db: Querier, workspaceId: string, shareMessageId: string): Promise<void> {
+    await db.query(sql`
+      DELETE FROM unshared_references
+      WHERE workspace_id = ${workspaceId}
+        AND share_message_id = ${shareMessageId}
+    `)
+  },
+
+  async deleteBySourceMessageIds(
+    db: Querier,
+    workspaceId: string,
+    shareMessageId: string,
+    sourceMessageIds: string[]
+  ): Promise<void> {
+    if (sourceMessageIds.length === 0) return
+    await db.query(sql`
+      DELETE FROM unshared_references
+      WHERE workspace_id = ${workspaceId}
+        AND share_message_id = ${shareMessageId}
+        AND source_message_id = ANY(${sourceMessageIds})
+    `)
+  },
+
+  async listByCreator(db: Querier, workspaceId: string, createdBy: string): Promise<UnsharedReference[]> {
+    const result = await db.query<UnsharedReferenceRow>(sql`
+      SELECT share_message_id, source_message_id, source_stream_id, flavor
+      FROM unshared_references
+      WHERE workspace_id = ${workspaceId}
+        AND created_by = ${createdBy}
+    `)
+    return result.rows.map(mapUnsharedReference)
+  },
+
+  async listByShareMessageId(db: Querier, workspaceId: string, shareMessageId: string): Promise<UnsharedReference[]> {
+    const result = await db.query<UnsharedReferenceRow>(sql`
+      SELECT share_message_id, source_message_id, source_stream_id, flavor
+      FROM unshared_references
+      WHERE workspace_id = ${workspaceId}
+        AND share_message_id = ${shareMessageId}
+    `)
+    return result.rows.map(mapUnsharedReference)
+  },
+}
+
+function mapUnsharedReference(row: UnsharedReferenceRow): UnsharedReference {
+  return {
+    shareMessageId: row.share_message_id,
+    sourceMessageId: row.source_message_id,
+    sourceStreamId: row.source_stream_id,
+    flavor: row.flavor as ShareFlavor,
+  }
+}

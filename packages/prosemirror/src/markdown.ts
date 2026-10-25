@@ -26,6 +26,7 @@ import {
   parseMentionPointerHref,
   parseQuoteHref,
   parseSharedMessageHref,
+  privateQuoteAttrs,
   type ReferencePin,
 } from "./pointer-urls"
 
@@ -126,6 +127,9 @@ function serializeNode(node: JSONContent, listDepth = 0, listIndex?: number): st
         snippet: string
         version?: number | null
         range?: ContentRange | null
+      }
+      if (node.attrs?.private) {
+        return `> — [Private quote](${buildQuoteHref({ streamId, messageId, authorId: "", actorType: "user", private: true })})`
       }
       const quotedLines = snippet
         .split("\n")
@@ -715,7 +719,9 @@ export function parseMarkdown(
       const quoteReplyMatch = lastLine?.match(/^—\s*\[((?:\\.|[^\]])+)\]\((quote:[\w\-/]+(?:\?[\w=&-]+)?)\)$/)
       const quoteHref = quoteReplyMatch ? parseQuoteHref(quoteReplyMatch[2]) : null
 
-      if (quoteReplyMatch && quoteHref) {
+      if (quoteReplyMatch && quoteHref?.private) {
+        content.push({ type: "quoteReply", attrs: privateQuoteAttrs(quoteHref) })
+      } else if (quoteReplyMatch && quoteHref) {
         // Unescape \] and \\ in author name
         const authorName = quoteReplyMatch[1].replace(/\\([\]\\])/g, "$1")
         // Strip the attribution line and any blank separator line before it
