@@ -17,7 +17,8 @@ export const DOC_FRAGMENT = "default"
  * The Yjs client id of every server-authored write. Safe to share across
  * requests because writes are serialized under the doc's row lock, so each
  * one sees the clock the previous one left; a random id per request would add
- * a permanent state-vector entry per stamp.
+ * a permanent state-vector entry per stamp. A client that drew the same id
+ * would diverge silently, so its updates are refused.
  */
 export const DOC_SERVER_CLIENT_ID = 1
 
@@ -63,6 +64,9 @@ export function loadDocState({
  */
 export function applyClientUpdate(ydoc: Y.Doc, update: Uint8Array): void {
   try {
+    if (Y.decodeUpdate(update).structs.some((struct) => struct.id.client === DOC_SERVER_CLIENT_ID)) {
+      throw new Error(`Client ${DOC_SERVER_CLIENT_ID} is the server`)
+    }
     Y.applyUpdate(ydoc, update)
   } catch (error) {
     throw new DocUpdateInvalidError({ cause: error })

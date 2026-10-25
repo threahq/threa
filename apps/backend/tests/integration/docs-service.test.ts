@@ -276,7 +276,12 @@ describe("DocService", () => {
       code: "DOC_UPDATE_INVALID",
     })
     await expect(post(doc.id, dependent)).rejects.toMatchObject({ status: 400, code: "DOC_UPDATE_NOT_APPLICABLE" })
-    expect((await DocRepository.findHead(pool, wsId, doc.id))?.updateSeq).toBe(1)
+    const head = await DocRepository.findHead(pool, wsId, doc.id)
+    expect({
+      updateSeq: head?.updateSeq,
+      bodyMarkdown: head?.bodyMarkdown,
+      storedSeqs: (await DocRepository.listUpdatesAfter(pool, wsId, doc.id, 0)).map((update) => update.seq),
+    }).toEqual({ updateSeq: 1, bodyMarkdown: "Seen", storedSeqs: [1] })
   })
 
   test("should repair the merged state and keep the later client in sync when two valid edits merge into a schema-invalid doc", async () => {
@@ -311,12 +316,18 @@ describe("DocService", () => {
 
     const updates = await docService.listUpdates({ workspaceId: wsId, userId: owner, docId: doc.id, after: 2 })
     const server = await serverJson(doc.id)
+    const head = await DocRepository.findHead(pool, wsId, doc.id)
+    const { sections } = await docService.get({ workspaceId: wsId, userId: owner, docId: doc.id })
     expect({
       merged: merged.seq,
       later: later.seq,
       actors: updates.map(({ seq, actorType }) => ({ seq, actorType })),
       server: server.content?.map((block) => block.type),
       bob: ydocToContentJson(bob.ydoc),
+      projected: {
+        bodyJson: head?.bodyJson,
+        sections: sections.map(({ blockId, markdown }) => ({ blockId, markdown })),
+      },
     }).toEqual({
       merged: 4,
       later: 5,
@@ -327,6 +338,10 @@ describe("DocService", () => {
       ],
       server: ["paragraph", "paragraph"],
       bob: server,
+      projected: {
+        bodyJson: server,
+        sections: projectDoc(server).sections.map(({ blockId, markdown }) => ({ blockId, markdown })),
+      },
     })
   })
 
