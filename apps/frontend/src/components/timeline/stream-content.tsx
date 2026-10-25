@@ -78,7 +78,9 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { ErrorView } from "@/components/error-view"
 import {
+  StreamReadOnlyReasons,
   StreamTypes,
+  streamTypeCapabilities,
   type Stream,
   type StreamEvent,
   type StreamMember,
@@ -731,7 +733,7 @@ export function StreamContent({
 
   const stream = streamFromProps ?? idbStream ?? bootstrap?.stream
   const isThread = stream?.type === StreamTypes.THREAD
-  const isSystem = stream?.type === StreamTypes.SYSTEM
+  const typeReadOnlyReason = stream ? streamTypeCapabilities(stream.type).messagesReadOnly : null
   const isSharedCopy = !!stream?.originWorkspaceId
   // The guest DM policy closes a DM and everything under it, so the peer is read off the root.
   const dmPeers = useWorkspaceDmPeers(workspaceId)
@@ -2330,7 +2332,7 @@ export function StreamContent({
   const isMember = !!membership
   const membershipResolved = currentWorkspaceUserId !== null || bootstrap !== undefined
   let disabledReason: string | undefined
-  if (isSystem) {
+  if (typeReadOnlyReason === StreamReadOnlyReasons.SYSTEM_STREAM) {
     disabledReason = "System notifications are read-only."
   } else if (stream?.archivedAt) {
     disabledReason = "This thread has been sealed in the labyrinth. It can be read but not extended."

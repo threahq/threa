@@ -55,6 +55,7 @@ import {
 import { PeoplePurposes, UserRepository } from "../workspaces"
 import { BotChannelAccessRepository } from "../api-keys"
 import {
+  STREAM_TYPE_CAPABILITIES,
   StreamTypes,
   isAsideHostType,
   Visibilities,
@@ -1114,7 +1115,10 @@ export class StreamService {
     let anchorActorType: AuthorType | null = null
     let anchorMessage: Message | null = null
     let anchorEventRow: StreamEvent | null = null
-    if (anchorId.startsWith("msg_")) {
+    const anchorPrefix = STREAM_TYPE_CAPABILITIES[parentStream.type].threadAnchorPrefixes.find((prefix) =>
+      anchorId.startsWith(prefix)
+    )
+    if (anchorPrefix === "msg_") {
       // Lock the anchor message: a concurrent message move re-parents
       // the message (UPDATE messages.stream_id) after an unlocked read would have
       // validated `streamId === parentStreamId`, letting this insert a thread under
@@ -1129,7 +1133,7 @@ export class StreamService {
       anchorActorId = parentMessage.authorId
       anchorActorType = parentMessage.authorType
       anchorMessage = parentMessage
-    } else if (anchorId.startsWith("event_")) {
+    } else if (anchorPrefix === "event_") {
       const anchorEvent = await StreamEventRepository.findById(client, params.workspaceId, anchorId)
       if (!anchorEvent || anchorEvent.streamId !== params.parentStreamId) {
         throw new HttpError("Thread anchor event not found", { status: 404, code: "ANCHOR_NOT_FOUND" })

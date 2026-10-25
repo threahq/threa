@@ -1,4 +1,4 @@
-import { SLUG_MAX_LENGTH, StreamTypes } from "@threahq/types"
+import { SLUG_MAX_LENGTH, StreamTypes, streamTypeCapabilities } from "@threahq/types"
 import type { StreamType } from "@threahq/types"
 import { Bell, FileText, Hash, MessageSquare, MessageSquareDashed, NotebookPen } from "lucide-react"
 import type { ComponentType } from "react"
@@ -38,7 +38,7 @@ export function isUtilityStream(stream: { purpose?: string | null }): boolean {
  * badge on every agent reply, against its decided silent attention.
  */
 export function isHiddenStreamType(stream: { type: string }): boolean {
-  return stream.type === StreamTypes.ASIDE
+  return !streamTypeCapabilities(stream.type).listed
 }
 
 /**
