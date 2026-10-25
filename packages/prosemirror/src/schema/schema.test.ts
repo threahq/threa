@@ -104,6 +104,11 @@ describe("threa schema", () => {
     ["a paragraph nests in a paragraph", doc(paragraph(paragraph(text("x")))), "Invalid content for node paragraph"],
     ["a text node has an unknown mark", doc(paragraph(text("x", [{ type: "underline" }]))), "underline"],
     ["a text node sits at the top level", doc(text("x")), "Invalid content for node doc"],
+    [
+      "a link href is not a string",
+      doc(paragraph(text("x", [{ type: "link", attrs: { href: { url: "https://example.com" } } }]))),
+      "for attribute href on type link",
+    ],
   ])("should throw InvalidContentError naming the culprit when %s", (_label, json, message) => {
     expect(() => normalizeContentJson(json)).toThrow(InvalidContentError)
     expect(() => normalizeContentJson(json)).toThrow(message)

@@ -1,3 +1,4 @@
+import type { Attributes } from "@tiptap/core"
 import { Code } from "@tiptap/extension-code"
 import Link from "@tiptap/extension-link"
 
@@ -13,5 +14,12 @@ export const ThreaLink = Link.extend({
 
   inclusive() {
     return false
+  },
+
+  // Enforced by `check()` on the write path: an object href would otherwise
+  // reach the markdown projection as "[object Object]".
+  addAttributes() {
+    const parent: Attributes = this.parent?.() ?? {}
+    return { ...parent, href: { ...parent.href, validate: "string|null" } }
   },
 })
