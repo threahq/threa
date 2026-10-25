@@ -12,7 +12,7 @@ import { findUploadJob } from "@/lib/uploads/upload-manager"
 import { createEditorExtensions } from "./editor-extensions"
 import { applyExternalEditorContent } from "./apply-external-content"
 import { ReferenceAudienceContext, NO_REFERENCE_AUDIENCE } from "./reference-audience-context"
-import { ComposerPillCopyButton } from "./composer-pill-copy-button"
+import { ComposerPillActions } from "./composer-pill-actions"
 import { getDictationChunkPositions } from "./dictation-chunk-extension"
 import { EditorBehaviors, isSuggestionActive } from "./editor-behaviors"
 import { openSelectedMath } from "./math-extension"
@@ -1498,7 +1498,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         <ReferenceAudienceContext.Provider value={audienceByStreamId}>
           <EditorContent editor={editor} className="flex min-h-0 flex-1 flex-col" />
         </ReferenceAudienceContext.Provider>
-        <ComposerPillCopyButton editor={editor} />
+        <ComposerPillActions editor={editor} />
         {enableMentions ? renderMentionList() : null}
         {enableChannels ? renderChannelList() : null}
         {enableCommands ? renderCommandList() : null}
