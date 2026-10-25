@@ -96,6 +96,21 @@ describe("findLocalImageLinks", () => {
     ).toEqual(["/tmp/solo.png"])
   })
 
+  test("only the bracket that closes into a link makes link text", () => {
+    expect([
+      paths("Range [0, 10) ![plot](/tmp/plot.png) see [docs](https://d.test)"),
+      paths("[ ![a](/tmp/a.png) | ![b](/tmp/b.png) ]"),
+      paths("[see ![x](/tmp/x.png)][ref] and [y]: ![z](/tmp/z.png)"),
+    ]).toEqual([["/tmp/plot.png"], ["/tmp/a.png", "/tmp/b.png"], ["/tmp/z.png"]])
+  })
+
+  test("scans many images and links on one line in linear time", () => {
+    const line = "[l](https://e.test) ![i](/tmp/i.png) ".repeat(5_000)
+    const started = performance.now()
+    expect(paths(line)).toHaveLength(5_000)
+    expect(performance.now() - started).toBeLessThan(500)
+  })
+
   test("a stray `![` never swallows the prose before a later image", () => {
     const markdown = "Press ![ to open\n\nmore text ![ and [this] too\n\n![shot](/tmp/s.png)"
     expect(findLocalImageLinks(markdown)).toEqual([

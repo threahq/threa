@@ -292,6 +292,60 @@ describe("sealed attachments (outbound)", () => {
       refs: [{ attachmentId: "att_img_1", filename: "shot.png" }],
     })
   })
+
+  test("directive files claim the sealed attachment cap before an embedded image", async () => {
+    __testing.setConfigForTesting(BASE_CONFIG)
+    const dir = tempDir()
+    const files = Array.from({ length: 16 }, (_, i) => `f${i}.txt`)
+    for (const file of files) writeFileSync(join(dir, file), "x")
+    writeFileSync(join(dir, "shot.png"), new Uint8Array([1, 2, 3]))
+    const completions: Array<Record<string, unknown>> = []
+    let uploads = 0
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      const url = String(input)
+      if (url.endsWith("/attachments")) {
+        uploads++
+        return jsonResponse({
+          data: { id: `att_${uploads}`, filename: "encrypted", mimeType: "application/octet-stream", sizeBytes: 1 },
+        })
+      }
+      if (url.endsWith("/sealed-complete")) {
+        completions.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return jsonResponse({ data: {} })
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    }) as typeof fetch)
+
+    try {
+      await __testing.completeSealedWithMarkdown(
+        invocation({ sealing: sealingState }) as never,
+        sealingState as never,
+        ["![screen](shot.png)", ...files.map((file) => `THREA_ATTACH: ${file}`)].join("\n"),
+        dir
+      )
+    } finally {
+      fetchSpy.mockRestore()
+    }
+
+    const reply = (completions[0] as { reply: { ciphertext: string; envelope: StreamEnvelope } }).reply
+    const payload = parseSealedPayload(
+      await openMessageAsString({
+        key: sealingState.replySsk,
+        envelope: reply.envelope,
+        ciphertext: base64ToBytes(reply.ciphertext),
+      })
+    )
+    expect({
+      filenames: payload.attachmentRefs.map((ref) => ref.filename),
+      contentMarkdown: payload.contentMarkdown,
+    }).toEqual({
+      filenames: files,
+      contentMarkdown: "Attachment upload failed:\n- shot.png: over the 16-attachment limit for one message",
+    })
+  })
 })
 
 describe("sealed attachments (inbound)", () => {

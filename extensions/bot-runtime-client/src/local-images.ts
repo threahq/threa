@@ -106,27 +106,42 @@ function maskCode(markdown: string): string {
     .join("\n")
 }
 
-/** `[see ![x](a.png)](url)`: the image is a link's text, and an attachment link can't nest inside another link. */
-function insideLinkText(markdown: string, start: number, end: number): boolean {
-  const lineStart = markdown.lastIndexOf("\n", start - 1) + 1
-  let depth = 0
-  for (const bracket of markdown.slice(lineStart, start).replace(/\\./g, "").matchAll(/[[\]]/g)) {
-    depth = bracket[0] === "[" ? depth + 1 : Math.max(0, depth - 1)
+/**
+ * Per offset, how many link texts enclose it: a `[`…`]` closed on the same line and followed by `(` or `[`,
+ * other than an image's own alt. `[see ![x](a.png)](url)` puts the image in a link's text, and an attachment
+ * link can't nest inside another link.
+ */
+function linkTextDepth(markdown: string): Int32Array {
+  const depth = new Int32Array(markdown.length + 1)
+  let open: number[] = []
+  for (let i = 0; i < markdown.length; i++) {
+    const char = markdown[i]
+    if (char === "\\" && markdown[i + 1] !== "\n") i++
+    else if (char === "\n") open = []
+    else if (char === "[") open.push(i)
+    else if (char === "]") {
+      const start = open.pop()
+      if (start !== undefined && markdown[start - 1] !== "!" && (markdown[i + 1] === "(" || markdown[i + 1] === "[")) {
+        depth[start + 1]!++
+        depth[i]!--
+      }
+    }
   }
-  const lineEnd = markdown.indexOf("\n", end)
-  return depth > 0 && markdown.slice(end, lineEnd === -1 ? undefined : lineEnd).includes("](")
+  for (let i = 1; i < depth.length; i++) depth[i]! += depth[i - 1]!
+  return depth
 }
 
 /** Image files embedded outside code by absolute, relative, or `file:` path. Web URLs and linked images are left alone. */
 export function findLocalImageLinks(markdown: string): LocalImageLink[] {
   const links: LocalImageLink[] = []
   const masked = maskCode(markdown)
+  const inLinkText = linkTextDepth(masked)
   for (const match of masked.matchAll(IMAGE_RE)) {
     const start = match.index
     const end = start + match[0].length
     // A match that straddles masked code reads differently in the original; it is not a real image.
     if (markdown.slice(start, end) !== match[0]) continue
-    if (insideLinkText(masked, start, end)) continue
+    if (inLinkText[start]! > 0) continue
     const raw = match[2]!
     const path = localPath(raw.startsWith("<") ? raw.slice(1, -1) : raw)
     if (path && IMAGE_FILE_RE.test(path)) links.push({ start, end, alt: match[1]!, path })
