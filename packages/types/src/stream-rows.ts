@@ -363,9 +363,9 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
     readBlocking: false,
   },
 
-  // A doc created under the host stream: every member sees the row (broadcast
-  // slot), but it carries no body to read and moves no board card.
-  "doc:created": CHROME_BROADCAST,
+  // A doc created under the host stream: every member gets the broadcast slot,
+  // but it carries no body to read and moves no board card. S5 renders the row.
+  "doc:created": { ...CHROME_BROADCAST, rendersAsOwnRow: false },
   // An edit in the doc stream's own log; no timeline row, no slot.
   "doc:edited": {
     rendersAsOwnRow: false,

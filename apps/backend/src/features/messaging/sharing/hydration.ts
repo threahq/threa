@@ -146,11 +146,11 @@ export function collectSharedMessageRefs(node: JSONContent | undefined, into: Ma
 
 /**
  * An aside presents as a scratchpad to non-viewers: neither a direct aside
- * source nor a thread whose root is an aside may leak the kind. A doc nests
- * under a host like a thread, so it presents as one. Both branches of
- * {@link resolveSourceForPrivatePlaceholder} route through this map, which is
- * also why the placeholder vocabulary is `SharedSourceStreamKind`, not
- * `StreamType`.
+ * source nor a thread whose root is an aside may leak the kind. A doc whose
+ * root is not loaded presents as a thread, the other kind that nests under a
+ * root. Both branches of {@link resolveSourceForPrivatePlaceholder} route
+ * through this map, which is also why the placeholder vocabulary is
+ * `SharedSourceStreamKind`, not `StreamType`.
  */
 function presentedSourceStreamKind(type: StreamType): SharedSourceStreamKind {
   if (type === StreamTypes.ASIDE) return StreamTypes.SCRATCHPAD
@@ -158,9 +158,13 @@ function presentedSourceStreamKind(type: StreamType): SharedSourceStreamKind {
   return type
 }
 
+function nestsUnderRoot(stream: Stream): boolean {
+  return stream.type === StreamTypes.THREAD || stream.type === StreamTypes.DOC
+}
+
 /**
  * Resolve the (kind, visibility) the `private` placeholder should report.
- * For thread sources we surface the root's kind/visibility so the
+ * For thread and doc sources we surface the root's kind/visibility so the
  * placeholder vocabulary stays in {channel, dm, scratchpad} —
  * "thread" by itself wouldn't tell the viewer what kind of stream sits
  * behind the wall.
@@ -169,7 +173,7 @@ function resolveSourceForPrivatePlaceholder(
   source: Stream,
   byStreamId: ReadonlyMap<string, Stream>
 ): { kind: SharedSourceStreamKind; visibility: Visibility } {
-  if (source.type === StreamTypes.THREAD && source.rootStreamId) {
+  if (nestsUnderRoot(source) && source.rootStreamId) {
     const root = byStreamId.get(source.rootStreamId)
     if (root) return { kind: presentedSourceStreamKind(root.type), visibility: root.visibility }
   }
@@ -326,7 +330,7 @@ async function hydrateSharedMessageRefsWithResolvers(
     const rootIds = [
       ...new Set(
         streams.flatMap((s) =>
-          s.type === StreamTypes.THREAD && s.rootStreamId && !byStreamId.has(s.rootStreamId) ? [s.rootStreamId] : []
+          nestsUnderRoot(s) && s.rootStreamId && !byStreamId.has(s.rootStreamId) ? [s.rootStreamId] : []
         )
       ),
     ]

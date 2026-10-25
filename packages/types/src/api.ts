@@ -2414,12 +2414,10 @@ export interface DocCreatedEventPayload {
   createdBy: string
 }
 
-/** Payload for `doc:edited` in the doc stream: one applied Yjs update. */
+/** Payload for `doc:edited` in the doc stream: one applied Yjs update; the event row carries the actor. */
 export interface DocEditedEventPayload {
   seq: number
   touchedBlockIds: string[]
-  actorId: string
-  actorType: AuthorType
 }
 
 export interface AIUsageSummary {

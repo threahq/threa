@@ -23,10 +23,11 @@ export function projectDoc(json: JSONContent): DocProjection {
     if (typeof blockId !== "string") {
       throw new Error(`Top-level ${block.type} block at position ${position} has no blockId`)
     }
+    if (!block.type) throw new Error(`Top-level block ${blockId} at position ${position} has no type`)
     return {
       blockId,
       position,
-      kind: block.type ?? "",
+      kind: block.type,
       markdown: serializeToMarkdown({ type: "doc", content: [block] }),
       contentJson: block,
     }

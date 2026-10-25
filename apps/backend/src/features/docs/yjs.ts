@@ -1,19 +1,43 @@
 import * as Y from "yjs"
-import { prosemirrorJSONToYDoc, updateYFragment, yDocToProsemirrorJSON } from "y-prosemirror"
+import {
+  prosemirrorJSONToYDoc,
+  updateYFragment,
+  yDocToProsemirrorJSON,
+  yXmlFragmentToProseMirrorRootNode,
+} from "y-prosemirror"
+import { ensureBlockIds } from "@threahq/prosemirror"
 import { getThreaSchema, normalizeContentJson } from "@threahq/prosemirror/schema"
 import type { JSONContent } from "@threahq/types"
+import { blockId } from "../../lib/id"
 
 /** The fragment TipTap's Collaboration extension binds by default; y-prosemirror's own default is "prosemirror". */
 export const DOC_FRAGMENT = "default"
 
-/** ProseMirror requires `block+`, but a Y fragment can be empty; this is the stored shape of an empty doc. */
-export const EMPTY_DOC_JSON: JSONContent = { type: "doc", content: [] }
+/**
+ * The Yjs client id of every server-authored write. Safe to share across
+ * requests because writes are serialized under the doc's row lock, so each
+ * one sees the clock the previous one left; a random id per request would add
+ * a permanent state-vector entry per stamp.
+ */
+export const DOC_SERVER_CLIENT_ID = 1
 
 export class DocUpdateNotApplicableError extends Error {
   constructor() {
     super("Yjs update depends on state the doc does not have")
     this.name = "DocUpdateNotApplicableError"
   }
+}
+
+export class DocUpdateInvalidError extends Error {
+  constructor(options?: { cause?: unknown }) {
+    super("Not a valid Yjs update for a Threa doc", options)
+    this.name = "DocUpdateInvalidError"
+  }
+}
+
+/** ProseMirror requires `block+`, but a Y fragment can be empty; this is the stored shape of an empty doc. */
+function emptyDocJson(): JSONContent {
+  return { type: "doc", content: [] }
 }
 
 /** Updates are applied in the order given (seq order); Yjs converges regardless, the order keeps replay deterministic. */
@@ -38,8 +62,62 @@ export function loadDocState({
  * is refused. The doc is left mutated either way — discard it on throw.
  */
 export function applyClientUpdate(ydoc: Y.Doc, update: Uint8Array): void {
-  Y.applyUpdate(ydoc, update)
+  try {
+    Y.applyUpdate(ydoc, update)
+  } catch (error) {
+    throw new DocUpdateInvalidError({ cause: error })
+  }
   if (ydoc.store.pendingStructs !== null || ydoc.store.pendingDs !== null) throw new DocUpdateNotApplicableError()
+}
+
+/**
+ * Applies a client update, then reads the merged state the way every
+ * y-prosemirror client does: an element the schema rejects (a merge of two
+ * individually valid edits can produce one) is deleted from the Y doc, and
+ * block ids are stamped. Those server writes come back merged as
+ * `serverUpdate` (the transactions' own updates, not a state-vector diff,
+ * which would carry the doc's whole delete set), null when nothing changed.
+ * Throws `DocUpdateNotApplicableError` or `DocUpdateInvalidError`; the doc is
+ * left mutated either way.
+ */
+export function applyClientWrite(
+  ydoc: Y.Doc,
+  update: Uint8Array,
+  previousBody: JSONContent
+): { content: JSONContent; serverUpdate: Uint8Array | null } {
+  applyClientUpdate(ydoc, update)
+  const serverWrites: Uint8Array[] = []
+  const onUpdate = (written: Uint8Array) => {
+    serverWrites.push(written)
+  }
+  ydoc.on("update", onUpdate)
+  try {
+    let content = readRepairedContent(ydoc)
+    const stamped = ensureBlockIds(content, blockId, previousBody)
+    if (stamped !== content) {
+      writeContentJson(ydoc, stamped)
+      content = readRepairedContent(ydoc)
+    }
+    return { content, serverUpdate: serverWrites.length > 0 ? Y.mergeUpdates(serverWrites) : null }
+  } finally {
+    ydoc.off("update", onUpdate)
+  }
+}
+
+/** Deletes schema-invalid elements from the fragment (y-prosemirror's repair) and returns the valid remainder. */
+function readRepairedContent(ydoc: Y.Doc): JSONContent {
+  let json: JSONContent
+  try {
+    json = yXmlFragmentToProseMirrorRootNode(ydoc.getXmlFragment(DOC_FRAGMENT), getThreaSchema()).toJSON()
+  } catch (error) {
+    throw new DocUpdateInvalidError({ cause: error })
+  }
+  if (!json.content?.length) return emptyDocJson()
+  try {
+    return normalizeContentJson(json)
+  } catch (error) {
+    throw new DocUpdateInvalidError({ cause: error })
+  }
 }
 
 export function encodeFullState(ydoc: Y.Doc): Uint8Array {
@@ -48,7 +126,7 @@ export function encodeFullState(ydoc: Y.Doc): Uint8Array {
 
 /** Throws `InvalidContentError` when the fragment holds content the Threa schema rejects. */
 export function ydocToContentJson(ydoc: Y.Doc): JSONContent {
-  if (ydoc.getXmlFragment(DOC_FRAGMENT).length === 0) return EMPTY_DOC_JSON
+  if (ydoc.getXmlFragment(DOC_FRAGMENT).length === 0) return emptyDocJson()
   return normalizeContentJson(yDocToProsemirrorJSON(ydoc, DOC_FRAGMENT) as JSONContent)
 }
 

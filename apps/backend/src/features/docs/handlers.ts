@@ -1,6 +1,5 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import { AuthorTypes } from "@threahq/types"
 import { validateRequest } from "../../lib/validation"
 import type { DocService } from "./service"
 
@@ -50,8 +49,7 @@ export function createDocHandlers({ docService }: Dependencies) {
       const { update } = validateRequest(postUpdateSchema, req.body)
       const result = await docService.postUpdate({
         workspaceId: req.workspaceId!,
-        actorId: req.user!.id,
-        actorType: AuthorTypes.USER,
+        userId: req.user!.id,
         docId,
         update,
       })

@@ -20,11 +20,17 @@ import {
   writeContentJson,
   ydocToContentJson,
 } from "../../src/features/docs"
-import { StreamEventRepository, StreamService } from "../../src/features/streams"
+import {
+  StreamEventRepository,
+  StreamMemberRepository,
+  StreamRepository,
+  StreamService,
+} from "../../src/features/streams"
+import { EventService } from "../../src/features/messaging/event-service"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { MessageRepository } from "../../src/features/messaging"
 import { resolveDeliveryGroups, streamGroup, type OutboxEvent } from "../../src/lib/outbox"
-import { blockId, messageId, userId, workspaceId } from "../../src/lib/id"
+import { blockId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { addTestMember, setupIsolatedTestDatabase, testMessageContent, withTransaction } from "./setup"
 
 let pool: Pool
@@ -102,8 +108,8 @@ async function openClient(docId: string, userIdForClient: string) {
   }
 }
 
-function post(docId: string, update: string, actorId = owner) {
-  return docService.postUpdate({ workspaceId: wsId, actorId, actorType: "user", docId, update })
+function post(docId: string, update: string, userIdForPost = owner) {
+  return docService.postUpdate({ workspaceId: wsId, userId: userIdForPost, docId, update })
 }
 
 async function serverJson(docId: string): Promise<JSONContent> {
@@ -243,7 +249,138 @@ describe("DocService", () => {
     await expect(createDoc(sealed.id)).rejects.toMatchObject({ status: 400, code: "DOC_E2E_HOST_NOT_ALLOWED" })
   })
 
-  test("should reproduce body and sections from a snapshot when more than 200 updates were posted", async () => {
+  test("should append a doc:edited row to the doc stream when an update is posted", async () => {
+    const channel = await createChannel("public")
+    const doc = await createDoc(channel.id)
+    const client = await openClient(doc.id, owner)
+    const { seq, touchedBlockIds } = await post(doc.id, appendBlock(client.ydoc, paragraph("Edited", blockId())))
+
+    const rows = (await StreamEventRepository.list(pool, wsId, doc.id, { viewerId: owner })).filter(
+      (event) => event.eventType === "doc:edited"
+    )
+    expect(
+      rows.map(({ eventType, payload, actorId, actorType }) => ({ eventType, payload, actorId, actorType }))
+    ).toEqual([{ eventType: "doc:edited", payload: { seq, touchedBlockIds }, actorId: owner, actorType: "user" }])
+  })
+
+  test("should refuse the update and leave the head when the bytes are not an applicable Yjs update", async () => {
+    const channel = await createChannel("public")
+    const doc = await createDoc(channel.id)
+    const origin = await openClient(doc.id, owner)
+    await post(doc.id, appendBlock(origin.ydoc, paragraph("Seen", blockId())))
+    appendBlock(origin.ydoc, paragraph("Never posted", blockId()))
+    const dependent = appendBlock(origin.ydoc, paragraph("Depends on it", blockId()))
+
+    await expect(post(doc.id, Buffer.from("not a yjs update").toString("base64"))).rejects.toMatchObject({
+      status: 400,
+      code: "DOC_UPDATE_INVALID",
+    })
+    await expect(post(doc.id, dependent)).rejects.toMatchObject({ status: 400, code: "DOC_UPDATE_NOT_APPLICABLE" })
+    expect((await DocRepository.findHead(pool, wsId, doc.id))?.updateSeq).toBe(1)
+  })
+
+  test("should repair the merged state and keep the later client in sync when two valid edits merge into a schema-invalid doc", async () => {
+    const channel = await createChannel("public")
+    const doc = await createDoc(channel.id)
+    const setup = await openClient(doc.id, owner)
+    const list: JSONContent = {
+      type: "bulletList",
+      attrs: { blockId: blockId() },
+      content: [{ type: "listItem", content: [paragraph("a", blockId()), paragraph("b", blockId())] }],
+    }
+    const tail = paragraph("tail", blockId())
+    await post(doc.id, encodeUpdateBase64(writeContentJson(setup.ydoc, { type: "doc", content: [list, tail] })))
+
+    const alice = await openClient(doc.id, owner)
+    const bob = await openClient(doc.id, peer)
+    const withListItem = (content: JSONContent[]): JSONContent => ({
+      type: "doc",
+      content: [{ ...list, content: [{ type: "listItem", content }] }, tail],
+    })
+    const [first, second] = list.content![0]!.content!
+    await post(doc.id, encodeUpdateBase64(writeContentJson(alice.ydoc, withListItem([second!]))), owner)
+    const codeBlock: JSONContent = { type: "codeBlock", content: [{ type: "text", text: "b" }] }
+    const merged = await post(
+      doc.id,
+      encodeUpdateBase64(writeContentJson(bob.ydoc, withListItem([first!, codeBlock]))),
+      peer
+    )
+    await bob.sync()
+    const later = await post(doc.id, appendBlock(bob.ydoc, paragraph("Bob later", blockId())), peer)
+    await bob.sync()
+
+    const updates = await docService.listUpdates({ workspaceId: wsId, userId: owner, docId: doc.id, after: 2 })
+    const server = await serverJson(doc.id)
+    expect({
+      merged: merged.seq,
+      later: later.seq,
+      actors: updates.map(({ seq, actorType }) => ({ seq, actorType })),
+      server: server.content?.map((block) => block.type),
+      bob: ydocToContentJson(bob.ydoc),
+    }).toEqual({
+      merged: 4,
+      later: 5,
+      actors: [
+        { seq: 3, actorType: "user" },
+        { seq: 4, actorType: "system" },
+        { seq: 5, actorType: "user" },
+      ],
+      server: ["paragraph", "paragraph"],
+      bob: server,
+    })
+  })
+
+  test("should store both updates and both edits when two clients post concurrently", async () => {
+    const channel = await createChannel("public")
+    const doc = await createDoc(channel.id)
+    const alice = await openClient(doc.id, owner)
+    const bob = await openClient(doc.id, peer)
+
+    const results = await Promise.all([
+      post(doc.id, appendBlock(alice.ydoc, paragraph("Alice", blockId())), owner),
+      post(doc.id, appendBlock(bob.ydoc, paragraph("Bob", blockId())), peer),
+    ])
+
+    const { sections } = await docService.get({ workspaceId: wsId, userId: owner, docId: doc.id })
+    expect({
+      seqs: results.map((result) => result.seq).sort(),
+      text: sections.map((section) => section.markdown).sort(),
+    }).toEqual({ seqs: [1, 2], text: ["Alice", "Bob"] })
+  })
+
+  test("should refuse a message with reason doc_stream when it is posted to a doc", async () => {
+    const channel = await createChannel("public")
+    const doc = await createDoc(channel.id)
+
+    await expect(
+      new EventService(pool).createMessageForPrincipalReturningConversation(
+        { kind: "user", userId: owner },
+        { workspaceId: wsId, streamId: doc.id, authorId: owner, authorType: "user", ...testMessageContent("no") }
+      )
+    ).rejects.toMatchObject({ status: 403, code: "STREAM_READ_ONLY", details: { reason: "doc_stream" } })
+  })
+
+  test("should refuse a doc when the host is archived or a system stream", async () => {
+    const archived = await createChannel("public")
+    await streamService.archiveStream(archived.id, wsId, owner)
+    const system = await StreamRepository.insert(pool, {
+      id: streamId(),
+      workspaceId: wsId,
+      type: "system",
+      visibility: "private",
+      createdBy: owner,
+    })
+    await StreamMemberRepository.insert(pool, wsId, system.id, owner)
+
+    await expect(createDoc(archived.id)).rejects.toMatchObject({
+      status: 403,
+      code: "STREAM_READ_ONLY",
+      details: { reason: "archived" },
+    })
+    await expect(createDoc(system.id)).rejects.toMatchObject({ status: 400, code: "DOC_HOST_TYPE_INVALID" })
+  })
+
+  test("should reproduce body and sections from a snapshot and refuse updates behind it when more than 200 updates were posted", async () => {
     const channel = await createChannel("public")
     const doc = await createDoc(channel.id)
     const client = await openClient(doc.id, owner)
@@ -251,24 +388,26 @@ describe("DocService", () => {
       await post(doc.id, appendBlock(client.ydoc, paragraph(`Line ${index}`, blockId())))
     }
 
-    const updates = await docService.listUpdates({ workspaceId: wsId, userId: owner, docId: doc.id, after: 0 })
+    const updates = await DocRepository.listUpdatesAfter(pool, wsId, doc.id, 0)
     const replayed = projectDoc(
-      ydocToContentJson(
-        loadDocState({ snapshot: null, updates: updates.map((update) => decodeUpdateBase64(update.update)) })
-      )
+      ydocToContentJson(loadDocState({ snapshot: null, updates: updates.map((update) => update.update) }))
     )
     const read = await docService.get({ workspaceId: wsId, userId: owner, docId: doc.id })
     const head = await DocRepository.findHead(pool, wsId, doc.id)
+    const tail = await docService.listUpdates({ workspaceId: wsId, userId: owner, docId: doc.id, after: 200 })
+    await expect(
+      docService.listUpdates({ workspaceId: wsId, userId: owner, docId: doc.id, after: 199 })
+    ).rejects.toMatchObject({ status: 409, code: "DOC_UPDATES_BEHIND_SNAPSHOT" })
     expect({
       snapshotSeq: (await DocRepository.findLatestSnapshot(pool, wsId, doc.id))?.seq,
-      headSnapshotSeq: head?.snapshotSeq,
+      tailSeqs: tail.map((update) => update.seq),
       seq: read.seq,
       state: projectDoc(ydocToContentJson(loadDocState({ snapshot: decodeUpdateBase64(read.state), updates: [] }))),
       body: head?.bodyMarkdown,
       sections: read.sections,
     }).toEqual({
       snapshotSeq: 200,
-      headSnapshotSeq: 200,
+      tailSeqs: [201],
       seq: 201,
       state: replayed,
       body: replayed.bodyMarkdown,

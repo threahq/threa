@@ -340,7 +340,7 @@ export function EventItem({
 
     case "doc:created":
     case "doc:edited":
-      // No doc surface yet: the row holds its broadcast slot and renders nothing.
+      // No doc surface yet (S5): doc:created holds its host broadcast slot, doc:edited lives in the doc stream.
       return null
 
     case "agent:follow_up_cancelled":

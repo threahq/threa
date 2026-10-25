@@ -6,7 +6,6 @@ import { blockId } from "../../lib/id"
 import { diffSections, projectDoc } from "./projection"
 import {
   DocUpdateNotApplicableError,
-  EMPTY_DOC_JSON,
   applyClientUpdate,
   contentJsonToYDoc,
   encodeFullState,
@@ -62,7 +61,7 @@ describe("doc projection", () => {
   test("projects an emptied doc to no sections", () => {
     expect(projectDoc(ydocToContentJson(new Y.Doc()))).toEqual({
       bodyMarkdown: "",
-      bodyJson: EMPTY_DOC_JSON,
+      bodyJson: { type: "doc", content: [] },
       sections: [],
     })
   })

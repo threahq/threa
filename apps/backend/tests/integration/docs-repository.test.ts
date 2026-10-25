@@ -1,5 +1,5 @@
 /**
- * DocRepository against the real schema (INV-68): head lock and seq bump, the
+ * DocRepository against the real schema (INV-68): head lock and advance, the
  * update log and snapshots as bytes, and section replacement as a set.
  */
 
@@ -31,40 +31,37 @@ const section = (blockId: string, position: number, markdown: string): DocSectio
 })
 
 describe("DocRepository", () => {
-  test("allocates seqs under the head lock and refuses a stale bump", async () => {
+  test("advances the head under its row lock, scoped to the workspace", async () => {
     const ws = workspaceId()
     const doc = streamId()
     await DocRepository.insertHead(pool, { workspaceId: ws, streamId: doc })
+    const bodyJson = { type: "doc", content: [] }
 
-    const bumped = await withTransaction(pool, async (client) => {
+    await withTransaction(pool, async (client) => {
       const head = await DocRepository.findHeadForUpdate(client, ws, doc)
-      return DocRepository.bumpHead(client, {
+      await DocRepository.bumpHead(client, {
         workspaceId: ws,
         streamId: doc,
         seq: head!.updateSeq + 1,
         bodyMarkdown: "Hello",
-        bodyJson: { type: "doc", content: [] },
-        snapshotSeq: 1,
+        bodyJson,
       })
     })
-    const stale = await DocRepository.bumpHead(pool, {
-      workspaceId: ws,
+    await DocRepository.bumpHead(pool, {
+      workspaceId: workspaceId(),
       streamId: doc,
-      seq: 1,
-      bodyMarkdown: "Stale",
-      bodyJson: { type: "doc", content: [] },
+      seq: 9,
+      bodyMarkdown: "Other",
+      bodyJson,
     })
 
+    const head = await DocRepository.findHead(pool, ws, doc)
     expect({
-      bumped: { updateSeq: bumped?.updateSeq, snapshotSeq: bumped?.snapshotSeq, bodyMarkdown: bumped?.bodyMarkdown },
-      stale,
+      head: { updateSeq: head?.updateSeq, bodyMarkdown: head?.bodyMarkdown },
       otherWorkspace: await DocRepository.findHeadForUpdate(pool, workspaceId(), doc),
-      head: (await DocRepository.findHead(pool, ws, doc))?.bodyMarkdown,
     }).toEqual({
-      bumped: { updateSeq: 1, snapshotSeq: 1, bodyMarkdown: "Hello" },
-      stale: null,
+      head: { updateSeq: 1, bodyMarkdown: "Hello" },
       otherWorkspace: null,
-      head: "Hello",
     })
   })
 

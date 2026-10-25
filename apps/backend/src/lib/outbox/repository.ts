@@ -35,6 +35,7 @@ import type {
   StreamReadFrontierSnapshot,
   CallTransferPhase,
   StreamConnectionUpdatedPayload,
+  DocEditedEventPayload,
 } from "@threahq/types"
 
 export type OutboxEventType =
@@ -758,11 +759,9 @@ export interface StreamDocCreatedOutboxPayload extends StreamScopedPayload {
 }
 
 /** One applied Yjs update, delivered to the doc stream's room; `streamId` is the doc. */
-export interface DocUpdatedOutboxPayload extends StreamScopedPayload {
-  seq: number
+export interface DocUpdatedOutboxPayload extends StreamScopedPayload, DocEditedEventPayload {
   /** Base64 Yjs update. */
   update: string
-  touchedBlockIds: string[]
   actorId: string
   actorType: AuthorType
 }

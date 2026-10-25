@@ -51,6 +51,17 @@ import {
 /** Client-minted scratchpad draft ids: `draft_` + a short base36/ULID tail. */
 const DRAFT_ID_PATTERN = /^draft_[A-Za-z0-9]{1,64}$/
 
+const DOC_UNSUPPORTED_CREATE_FIELDS = [
+  "slug",
+  "displayName",
+  "description",
+  "visibility",
+  "companionMode",
+  "companionPersonaId",
+  "memberIds",
+  "e2eOwnerKeyId",
+] as const
+
 const createStreamSchema = z
   .object({
     type: streamTypeSchema.extract(["scratchpad", "channel", "thread", "aside", "doc"]),
@@ -130,9 +141,17 @@ const createStreamSchema = z
     message: "parentStreamId is required for asides",
     path: ["parentStreamId"],
   })
-  .refine((data) => data.type !== "doc" || (!!data.parentStreamId && data.parentAnchorId === undefined), {
-    message: "parentStreamId is required for docs, and a doc has no anchor",
+  .refine((data) => data.type !== "doc" || !!data.parentStreamId, {
+    message: "parentStreamId is required for docs",
     path: ["parentStreamId"],
+  })
+  .refine((data) => data.type !== "doc" || data.parentAnchorId === undefined, {
+    message: "A doc has no anchor",
+    path: ["parentAnchorId"],
+  })
+  .refine((data) => data.type !== "doc" || DOC_UNSUPPORTED_CREATE_FIELDS.every((field) => data[field] === undefined), {
+    message: `Docs do not support ${DOC_UNSUPPORTED_CREATE_FIELDS.join(", ")} on creation`,
+    path: ["type"],
   })
   .refine((data) => data.conversationId === undefined || data.type === "aside", {
     message: "conversationId is only supported on aside creation",
@@ -424,11 +443,7 @@ const disallowedUpdateFields: Record<StreamType, Record<string, string> | null> 
     visibility: "Asides are always private",
     memoryMode: "Asides never extract memory",
   },
-  [StreamTypes.DOC]: {
-    slug: "Docs do not have slugs",
-    visibility: "Docs inherit visibility from their host",
-    memoryMode: "Docs inherit memory settings from their host",
-  },
+  [StreamTypes.DOC]: null,
 }
 
 function updateSchemaForType(streamType: StreamType) {

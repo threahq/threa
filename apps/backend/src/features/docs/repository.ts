@@ -6,7 +6,6 @@ interface DocHeadRow {
   workspace_id: string
   stream_id: string
   update_seq: number
-  snapshot_seq: number
   body_markdown: string
   body_json: JSONContent
   created_at: Date
@@ -17,7 +16,6 @@ export interface DocHead {
   workspaceId: string
   streamId: string
   updateSeq: number
-  snapshotSeq: number
   bodyMarkdown: string
   bodyJson: JSONContent
   createdAt: Date
@@ -51,15 +49,13 @@ interface DocSectionRow {
   content_json: JSONContent
 }
 
-const HEAD_COLUMNS =
-  "workspace_id, stream_id, update_seq, snapshot_seq, body_markdown, body_json, created_at, updated_at"
+const HEAD_COLUMNS = "workspace_id, stream_id, update_seq, body_markdown, body_json, created_at, updated_at"
 
 function mapHead(row: DocHeadRow): DocHead {
   return {
     workspaceId: row.workspace_id,
     streamId: row.stream_id,
     updateSeq: row.update_seq,
-    snapshotSeq: row.snapshot_seq,
     bodyMarkdown: row.body_markdown,
     bodyJson: row.body_json,
     createdAt: row.created_at,
@@ -84,7 +80,10 @@ export const DocRepository = {
     return result.rows[0] ? mapHead(result.rows[0]) : null
   },
 
-  /** The per-doc write lock: seq allocation and projection happen under this row lock. */
+  /**
+   * The per-doc write lock, taken after the stream chain's lock
+   * (`resolveLockedStreamAuthorities`): seq allocation and projection happen under it.
+   */
   async findHeadForUpdate(db: Querier, workspaceId: string, streamId: string): Promise<DocHead | null> {
     const result = await db.query<DocHeadRow>(sql`
       SELECT ${sql.raw(HEAD_COLUMNS)} FROM docs
@@ -94,42 +93,22 @@ export const DocRepository = {
     return result.rows[0] ? mapHead(result.rows[0]) : null
   },
 
-  /** Advances the head to `seq`; null when the head is already at or past it (stale writer). */
+  /** Caller holds the head row lock (`findHeadForUpdate`). */
   async bumpHead(
     db: Querier,
-    params: {
-      workspaceId: string
-      streamId: string
-      seq: number
-      bodyMarkdown: string
-      bodyJson: JSONContent
-      snapshotSeq?: number
-    }
-  ): Promise<DocHead | null> {
-    const result = await db.query<DocHeadRow>(sql`
+    params: { workspaceId: string; streamId: string; seq: number; bodyMarkdown: string; bodyJson: JSONContent }
+  ): Promise<void> {
+    await db.query(sql`
       UPDATE docs SET
         update_seq = ${params.seq},
-        snapshot_seq = COALESCE(${params.snapshotSeq ?? null}::integer, snapshot_seq),
         body_markdown = ${params.bodyMarkdown},
         body_json = ${JSON.stringify(params.bodyJson)}::jsonb,
         updated_at = NOW()
-      WHERE workspace_id = ${params.workspaceId} AND stream_id = ${params.streamId} AND update_seq < ${params.seq}
-      RETURNING ${sql.raw(HEAD_COLUMNS)}
+      WHERE workspace_id = ${params.workspaceId} AND stream_id = ${params.streamId}
     `)
-    return result.rows[0] ? mapHead(result.rows[0]) : null
   },
 
-  async insertUpdate(
-    db: Querier,
-    params: {
-      workspaceId: string
-      docId: string
-      seq: number
-      update: Uint8Array
-      actorId: string
-      actorType: AuthorType
-    }
-  ): Promise<void> {
+  async insertUpdate(db: Querier, params: { workspaceId: string; docId: string } & DocUpdate): Promise<void> {
     await db.query(sql`
       INSERT INTO doc_updates (workspace_id, doc_id, seq, update, actor_id, actor_type)
       VALUES (
@@ -197,7 +176,7 @@ export const DocRepository = {
         ${sections.map((section) => section.markdown)}::text[],
         ${sections.map((section) => JSON.stringify(section.contentJson))}::jsonb[]
       ) AS s(block_id, position, kind, markdown, content_json)
-      ON CONFLICT (doc_id, block_id) DO UPDATE SET
+      ON CONFLICT (workspace_id, doc_id, block_id) DO UPDATE SET
         position = EXCLUDED.position,
         kind = EXCLUDED.kind,
         markdown = EXCLUDED.markdown,

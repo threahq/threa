@@ -1037,7 +1037,6 @@ export class StreamService {
         memoryMode: root.memoryMode,
         createdBy: params.createdBy,
       })
-      await StreamMemberRepository.insert(client, params.workspaceId, stream.id, params.createdBy)
       await DocRepository.insertHead(client, { workspaceId: params.workspaceId, streamId: stream.id })
 
       await OutboxRepository.insert(client, "stream:created", {
