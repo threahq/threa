@@ -856,7 +856,10 @@ export function registerWorkspaceSocketHandlers(
       const existingStream = old.streams.find((stream) => stream.id === payload.stream.id)
       cachedStream = existingStream ? mergeStreamByRevision(existingStream, incomingCachedStream) : incomingCachedStream
       const hasMembership = old.streamMemberships.some((m: StreamMember) => m.streamId === payload.stream.id)
-      shouldAddMembership = Boolean(currentUserId && !hasMembership && (isCreator || isDmParticipant))
+      // A doc has no members row: writing it is granted by membership of its host.
+      shouldAddMembership = Boolean(
+        currentUserId && !hasMembership && payload.stream.type !== StreamTypes.DOC && (isCreator || isDmParticipant)
+      )
       shouldAddDmPeer = Boolean(
         dmPeerUserId && !old.dmPeers.some((peer) => peer.streamId === payload.stream.id && peer.userId === dmPeerUserId)
       )

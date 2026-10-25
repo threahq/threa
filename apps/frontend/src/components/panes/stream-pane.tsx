@@ -25,6 +25,7 @@ import {
   ChevronDown,
   UserRound,
   MessageSquareDashed,
+  FilePlus,
 } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { DraftAgentSettings } from "@/components/stream-settings/draft-agent-settings"
@@ -62,6 +63,7 @@ import { ThreadHeader } from "@/components/thread"
 import { StreamTitlePreview } from "@/components/layout"
 import { AsideHeaderChip, useAsideHeaderAction } from "@/components/aside/aside-header-chip"
 import { useInputMode } from "@/hooks/use-input-mode"
+import { useCreateDoc } from "@/hooks/use-create-doc"
 import { useCoverClose } from "@/hooks/use-cover-close"
 import { CONVERSATION_OVERLAY_COVER } from "@/lib/covers"
 import { panelIdsOf, primaryPanelOf } from "@/lib/panel-tabs"
@@ -171,6 +173,7 @@ export function StreamPane({
   const isDm = stream?.type === StreamTypes.DM
   const isDoc = stream?.type === StreamTypes.DOC
   const canWriteDoc = useDocCanWrite(workspaceId, stream)
+  const createDoc = useCreateDoc(workspaceId, isDraft ? undefined : stream)
   // Only the stream page sets a list beside its stream; under an aside it would land out of sight.
   const offersList = (isChannel || isDm) && hasTabs && offersContext
   const dmPeerUserId = isDm ? dmPeers.find((p) => p.streamId === streamId)?.userId : null
@@ -276,6 +279,14 @@ export function StreamPane({
     icon: Link2,
     onSelect: () => void copyStreamLink(workspaceId, streamId),
   })
+  if (createDoc.enabled) {
+    streamMenuActions.push({
+      id: "new-doc",
+      label: "New doc",
+      icon: FilePlus,
+      onSelect: createDoc.run,
+    })
+  }
   if (!isArchived && !isSystem && !isDoc) {
     streamMenuActions.push({
       id: "move-messages",

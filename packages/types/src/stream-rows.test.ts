@@ -117,4 +117,20 @@ describe("STREAM_ROW_SPEC", () => {
     // None of them are message bodies (those are `self-message`, handled directly).
     for (const type of BOARD_EVENT_ROW_TYPES) expect(STREAM_ROW_SPEC[type].authorGroupable).toBe(false)
   })
+  test("doc:created is a host chrome row with a broadcast slot; doc:edited has no row", () => {
+    expect([STREAM_ROW_SPEC["doc:created"], STREAM_ROW_SPEC["doc:edited"].rendersAsOwnRow]).toEqual([
+      {
+        rendersAsOwnRow: true,
+        grouping: null,
+        authorGroupable: false,
+        patchesRow: false,
+        broadcastSlot: true,
+        conversationRef: "none",
+        bumps: false,
+        threadable: false,
+        readBlocking: false,
+      },
+      false,
+    ])
+  })
 })

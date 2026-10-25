@@ -375,4 +375,41 @@ describe("useCreateStream", () => {
     expect(bootstrap?.streams.map((stream) => stream.id)).toEqual(["stream_new"])
     expect(bootstrap?.streamMemberships.map((membership) => membership.streamId)).toEqual(["stream_new"])
   })
+  it("caches a created doc without a local membership (writing a doc rides host membership)", async () => {
+    const queryClient = new QueryClient()
+    vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeWorkspaceBootstrap())
+
+    const createdAt = new Date().toISOString()
+    mockCreate.mockResolvedValue({
+      id: "stream_doc",
+      workspaceId: "ws_1",
+      type: "doc",
+      displayName: null,
+      slug: null,
+      description: null,
+      visibility: "private",
+      parentStreamId: "stream_host",
+      rootStreamId: "stream_host",
+      companionMode: "off",
+      companionPersonaId: null,
+      createdBy: "member_1",
+      createdAt,
+      updatedAt: createdAt,
+      archivedAt: null,
+    })
+
+    const { result } = renderHook(() => useCreateStream("ws_1"), { wrapper: createWrapper(queryClient) })
+    await act(async () => {
+      await result.current.mutateAsync({ type: "doc", parentStreamId: "stream_host" })
+    })
+
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect({
+      cachedIds: bootstrap?.streams.map((stream) => stream.id),
+      memberships: bootstrap?.streamMemberships,
+      idbStream: (await db.streams.get(["ws_1", "stream_doc"]))?.id,
+      idbMembership: await db.streamMemberships.get("ws_1:stream_doc"),
+    }).toEqual({ cachedIds: ["stream_doc"], memberships: [], idbStream: "stream_doc", idbMembership: undefined })
+  })
 })

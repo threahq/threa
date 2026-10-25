@@ -5,6 +5,7 @@ import * as membershipEventModule from "./membership-event"
 import * as memoCapturedEventModule from "./memo-captured-event"
 import * as descriptionSetEventModule from "./description-set-event"
 import * as systemEventModule from "./system-event"
+import * as docAnchorEventModule from "./doc-anchor-event"
 import { EventItem } from "./event-item"
 import type { StreamEvent } from "@threahq/types"
 
@@ -30,6 +31,9 @@ beforeEach(() => {
   vi.spyOn(descriptionSetEventModule, "DescriptionSetEvent").mockImplementation((() => (
     <div data-testid="description-set-event" />
   )) as unknown as typeof descriptionSetEventModule.DescriptionSetEvent)
+  vi.spyOn(docAnchorEventModule, "DocAnchorEvent").mockImplementation((() => (
+    <div data-testid="doc-anchor-event" />
+  )) as unknown as typeof docAnchorEventModule.DocAnchorEvent)
 })
 
 const createMessageEvent = (messageId: string, contentMarkdown: string): StreamEvent => ({
@@ -174,6 +178,27 @@ describe("EventItem", () => {
       render(<EventItem event={event} workspaceId={workspaceId} streamId={streamId} />)
 
       expect(screen.getByTestId("description-set-event")).toBeInTheDocument()
+    })
+
+    it("renders the doc anchor row for doc:created and nothing for doc:edited", () => {
+      const docEvent = (eventType: "doc:created" | "doc:edited"): StreamEvent => ({
+        id: `evt_${eventType}`,
+        streamId,
+        sequence: "12",
+        eventType,
+        actorId: "member_123",
+        actorType: "user",
+        createdAt: new Date().toISOString(),
+        payload: { docId: "stream_doc", createdBy: "member_123" },
+      })
+
+      const { container, rerender } = render(
+        <EventItem event={docEvent("doc:created")} workspaceId={workspaceId} streamId={streamId} />
+      )
+      expect(screen.getByTestId("doc-anchor-event")).toBeInTheDocument()
+
+      rerender(<EventItem event={docEvent("doc:edited")} workspaceId={workspaceId} streamId={streamId} />)
+      expect(container).toBeEmptyDOMElement()
     })
   })
 })

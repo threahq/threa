@@ -7,6 +7,7 @@ import { db } from "@/db"
 import { joinRoomBestEffort } from "@/lib/socket-room"
 import { applyStreamBootstrap, toCachedStreamBootstrap, type CachedStreamBootstrap } from "@/sync/stream-sync"
 import { deleteStreamSlots } from "@/stores/slot-store"
+import { StreamTypes } from "@threahq/types"
 import type {
   Stream,
   StreamMember,
@@ -152,6 +153,8 @@ export function useCreateStream(workspaceId: string) {
   return useMutation({
     mutationFn: (data: CreateStreamInput) => streamService.create(workspaceId, data),
     onSuccess: async (newStream) => {
+      // A doc has no members row: writing it is granted by membership of its host.
+      const addsMembership = newStream.type !== StreamTypes.DOC
       const membership: StreamMember = {
         streamId: newStream.id,
         memberId: newStream.createdBy,
@@ -172,7 +175,7 @@ export function useCreateStream(workspaceId: string) {
         return {
           ...old,
           streams: [...old.streams, { ...newStream, lastMessagePreview: null }],
-          streamMemberships: [...old.streamMemberships, membership],
+          streamMemberships: addsMembership ? [...old.streamMemberships, membership] : old.streamMemberships,
         }
       })
 
@@ -181,15 +184,16 @@ export function useCreateStream(workspaceId: string) {
       const now = Date.now()
       await Promise.all([
         persistStreamByRevision(newStream),
-        db.streamMemberships.put({
-          id: `${workspaceId}:${newStream.id}`,
-          workspaceId,
-          streamId: newStream.id,
-          memberId: newStream.createdBy,
-          notificationLevel: null,
-          joinedAt: newStream.createdAt,
-          _cachedAt: now,
-        }),
+        addsMembership &&
+          db.streamMemberships.put({
+            id: `${workspaceId}:${newStream.id}`,
+            workspaceId,
+            streamId: newStream.id,
+            memberId: newStream.createdBy,
+            notificationLevel: null,
+            joinedAt: newStream.createdAt,
+            _cachedAt: now,
+          }),
       ])
     },
   })

@@ -22,6 +22,7 @@ import { BriefUpdatedEvent } from "./brief-updated-event"
 import { DescriptionSetEvent } from "./description-set-event"
 import { CallCard } from "./call-card"
 import { AsideAnchorEvent } from "./aside-anchor-event"
+import { DocAnchorEvent } from "./doc-anchor-event"
 import { SystemEvent } from "./system-event"
 import { DeletedMessageEvent } from "./deleted-message-event"
 
@@ -339,8 +340,14 @@ export function EventItem({
       )
 
     case "doc:created":
+      return (
+        <div data-event-id={event.id}>
+          <DocAnchorEvent event={event} workspaceId={workspaceId} />
+        </div>
+      )
+
     case "doc:edited":
-      // No doc surface yet (S5): doc:created holds its host broadcast slot, doc:edited lives in the doc stream.
+      // Lives in the doc stream's own log; no row.
       return null
 
     case "agent:follow_up_cancelled":

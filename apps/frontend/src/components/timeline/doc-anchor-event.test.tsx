@@ -1,0 +1,92 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { render, screen } from "@testing-library/react"
+import { MemoryRouter, Route, Routes } from "react-router-dom"
+import { StreamTypes, type StreamEvent } from "@threahq/types"
+import * as hooksModule from "@/hooks"
+import * as workspaceStoreModule from "@/stores/workspace-store"
+import { PanelProvider, usePanel } from "@/contexts"
+import { createMockStream } from "@/test/fixtures"
+import { DocAnchorEvent } from "./doc-anchor-event"
+
+const DOC = "stream_doc_1"
+
+const event: StreamEvent = {
+  id: "evt_doc",
+  streamId: "stream_host",
+  sequence: "7",
+  broadcastSequence: "5",
+  eventType: "doc:created",
+  payload: { docId: DOC, createdBy: "usr_kris" },
+  actorId: "usr_kris",
+  actorType: "user",
+  createdAt: new Date(Date.now() - 9 * 60_000).toISOString(),
+}
+
+let expectedHref = ""
+function PanelUrlProbe() {
+  expectedHref = usePanel().getPanelUrl(DOC)
+  return null
+}
+
+function renderRow() {
+  return render(
+    <MemoryRouter initialEntries={["/w/ws_1/s/stream_host"]}>
+      <PanelProvider>
+        <Routes>
+          <Route
+            path="/w/:workspaceId/s/:streamId"
+            element={
+              <>
+                <PanelUrlProbe />
+                <DocAnchorEvent event={event} workspaceId="ws_1" />
+              </>
+            }
+          />
+        </Routes>
+      </PanelProvider>
+    </MemoryRouter>
+  )
+}
+
+function cacheStreams(streams: ReturnType<typeof createMockStream>[]) {
+  vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue(streams as never)
+}
+
+beforeEach(() => {
+  vi.spyOn(hooksModule, "useActors").mockReturnValue({
+    getActorName: (id: string | null) => (id === "usr_kris" ? "Kris" : "Someone"),
+  } as unknown as ReturnType<typeof hooksModule.useActors>)
+  vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([] as never)
+  vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockReturnValue([] as never)
+})
+
+afterEach(() => vi.restoreAllMocks())
+
+describe("DocAnchorEvent", () => {
+  it("links the actor's row to the doc's pane, titled Untitled while the doc has no name", () => {
+    cacheStreams([createMockStream({ id: DOC, type: StreamTypes.DOC, displayName: null })])
+    renderRow()
+
+    const link = screen.getByRole("link")
+    expect({ href: link.getAttribute("href"), text: link.textContent }).toEqual({
+      href: expectedHref,
+      text: expect.stringMatching(/^Kris created a docUntitled/),
+    })
+    expect(expectedHref).toContain(DOC)
+  })
+
+  it("shows Untitled when the doc row is not cached", () => {
+    cacheStreams([])
+    renderRow()
+
+    expect(screen.getByRole("link")).toHaveTextContent("Untitled")
+  })
+
+  it("shows the doc's cached name", () => {
+    cacheStreams([createMockStream({ id: DOC, type: StreamTypes.DOC, displayName: "Rotation tracker" })])
+    renderRow()
+
+    expect(screen.getByRole("link")).toHaveTextContent("Rotation tracker")
+    expect(screen.getByRole("link")).not.toHaveTextContent("Untitled")
+  })
+})
