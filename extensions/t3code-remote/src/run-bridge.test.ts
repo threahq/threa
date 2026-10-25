@@ -6,14 +6,11 @@ import { ThreaApiError, type DownloadedAttachment } from "@threahq/remote-sessio
 import { T3AuthError } from "./auth"
 import { RunTrace, T3TurnRunner, type RunTraceMode, type ThreadState } from "./run-bridge"
 import { T3ToolError, type PendingQuestion } from "./t3-client"
-import { DECISION, fakeSession, fakeT3, item, picked, turn } from "./t3.test-support"
+import { DECISION, fakeSession, fakeT3, item, picked, turn, until } from "./t3.test-support"
 
 const MODEL = { instanceId: "codex", model: "gpt-5.5" }
 
 const idle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
-const until = async (done: () => boolean) => {
-  while (!done()) await idle()
-}
 
 function setup(options: { state?: ThreadState; sealedFullTrace?: boolean; projectId?: string } = {}) {
   const t3 = fakeT3()
@@ -1323,6 +1320,21 @@ describe("runs T3 starts by itself", () => {
     await runner.deliverTurn(turn())
     await session.settled()
   }
+
+  test("posts nothing for the run of a /compact", async () => {
+    const { t3, session, runner } = setup()
+    await settledTurn(t3, session, runner)
+    await runner.watch()
+
+    await runner.compact("stream_root", "thread_1")
+    t3.script("run_2", [
+      { status: "completed", items: [item(2, "assistant_message", { runId: "run_2", text: "Compacted." })] },
+    ])
+    await runner.watch()
+    await until(() => !runner.busy)
+
+    expect(session.posts).toEqual([])
+  })
 
   test("posts the reply of a run started after a turn settled, and never re-posts the turn's own run", async () => {
     const { t3, session, runner } = setup()

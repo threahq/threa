@@ -359,6 +359,10 @@ export class T3TurnRunner {
     return this.state.model
   }
 
+  get access(): T3Access {
+    return this.options.access
+  }
+
   setModel(model: ModelSelection): void {
     this.saveState({ ...this.state, model })
   }
@@ -385,6 +389,23 @@ export class T3TurnRunner {
     }
     const { [streamId]: _dropped, ...threads } = this.state.threads
     this.saveState({ ...this.state, threads })
+  }
+
+  /**
+   * Queues T3's own `/compact` turn on the thread. Its run is accounted for, so nothing is posted for it; it stays in
+   * admission meanwhile so a look at the thread can't relay the run before that.
+   */
+  async compact(streamId: string, threadId: string): Promise<void> {
+    const admission = new AbortController()
+    const key = `compact:${threadId}`
+    this.admitting.set(key, { abort: admission, streamId })
+    try {
+      const { runId } = await this.client.call("t3_thread_send", { threadId, message: "/compact", mode: "queue" })
+      this.account(threadId, [runId])
+      if (admission.signal.aborted) this.stopRun(threadId, runId)
+    } finally {
+      this.admitting.delete(key)
+    }
   }
 
   hasOpenTurns(streamId?: string): boolean {
