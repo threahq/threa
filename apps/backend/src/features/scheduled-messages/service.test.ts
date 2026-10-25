@@ -57,6 +57,7 @@ function fakeScheduled(overrides: Partial<ScheduledMessage> = {}): ScheduledMess
     attachmentIds: [],
     metadata: null,
     conversationDirective: null,
+    consentedShareSourceIds: [],
     scheduledFor: FUTURE,
     status: ScheduledMessageStatuses.PENDING,
     sentMessageId: null,

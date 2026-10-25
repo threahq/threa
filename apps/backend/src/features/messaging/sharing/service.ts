@@ -1,5 +1,6 @@
 import type { Querier } from "../../../db"
 import { HttpError } from "../../../lib/errors"
+import { logger } from "../../../lib/logger"
 import { sharedMessageId } from "../../../lib/id"
 import { type JSONContent, ShareFlavors, type ShareFlavor, ShareErrorCodes } from "@threahq/types"
 import { MessageRepository } from "../repository"
@@ -103,6 +104,8 @@ export interface ValidateAndRecordSharesParams {
    * AFTER the exposure is independently established server-side.
    */
   confirmedPrivacyWarning?: boolean
+  /** Scheduled fire: pre-consented share sources; an exposing share outside the set sends unrecorded instead of 409. */
+  consentedShareSourceIds?: ReadonlySet<string>
 }
 
 /**
@@ -130,31 +133,31 @@ export const ShareService = {
    * Checks shares before a write that `validateAndRecordShares` can't gate: a first DM message
    * creates the DM, so a 409 must not leave behind a DM the author never sent anything to, and a
    * scheduled send is consented when it is written, not when it fires. `targetStreamId` is null
-   * for a DM that doesn't exist yet. References already in `previousContentJson` were accepted
-   * when they were added, so an edit that keeps them doesn't ask again.
+   * for a DM that doesn't exist yet. Sources in `consentedShareSourceIds` were consented to by
+   * an earlier write, so an edit that keeps them doesn't ask again. Returns the consent after
+   * this write: every exposing source, plus earlier consents the content still references.
    */
   async assertSharesConfirmed(params: {
     contentJson: JSONContent
     targetStreamId: string | null
-    previousContentJson?: JSONContent
+    consentedShareSourceIds?: ReadonlySet<string>
     confirmedPrivacyWarning?: boolean
-    listAudiences: (streamIds: string[]) => Promise<{ count: number }[]>
-  }): Promise<void> {
-    if (params.confirmedPrivacyWarning) return
+    listAudiences: (streamIds: string[]) => Promise<{ streamId: string; count: number }[]>
+  }): Promise<string[]> {
     const targetStreamId = params.targetStreamId ?? ""
-    const accepted = new Set(
-      params.previousContentJson
-        ? collectShareReferences(params.previousContentJson, targetStreamId).map((ref) => ref.sourceMessageId)
-        : []
-    )
-    const streamIds = new Set(
-      collectShareReferences(params.contentJson, targetStreamId)
-        .filter((ref) => !accepted.has(ref.sourceMessageId))
-        .map((ref) => ref.sourceStreamId)
-    )
-    if (streamIds.size === 0) return
-    const audiences = await params.listAudiences([...streamIds])
-    if (audiences.some((audience) => audience.count > 0)) throw privacyConfirmationRequired()
+    const references = collectShareReferences(params.contentJson, targetStreamId)
+    if (references.length === 0) return []
+    const audiences = await params.listAudiences([...new Set(references.map((ref) => ref.sourceStreamId))])
+    const exposingStreamIds = new Set(audiences.filter((a) => a.count > 0).map((a) => a.streamId))
+    const consented = params.consentedShareSourceIds ?? new Set<string>()
+    const exposed = references
+      .filter((ref) => exposingStreamIds.has(ref.sourceStreamId))
+      .map((ref) => ref.sourceMessageId)
+    if (!params.confirmedPrivacyWarning && exposed.some((id) => !consented.has(id))) {
+      throw privacyConfirmationRequired()
+    }
+    const stillConsented = references.map((ref) => ref.sourceMessageId).filter((id) => consented.has(id))
+    return [...new Set([...exposed, ...stillConsented])]
   },
 
   async validateAndRecordShares(params: ValidateAndRecordSharesParams): Promise<void> {
@@ -261,16 +264,25 @@ export const ShareService = {
         })
       }
 
-      // `confirmedPrivacyWarning` is a single boolean covering every reference
-      // in the message, so one confirmation consents for all of them. A
-      // reference this message already recorded was accepted when it was
+      // A reference this message already recorded was accepted when it was
       // added, so an edit that keeps it doesn't ask again.
-      if (
-        (exposedReaders.get(ref.sourceStreamId)?.count ?? 0) > 0 &&
-        !params.confirmedPrivacyWarning &&
-        !recordedSourceMessageIds.has(ref.sourceMessageId)
-      ) {
-        throw privacyConfirmationRequired()
+      const exposes = (exposedReaders.get(ref.sourceStreamId)?.count ?? 0) > 0
+      const consented =
+        params.confirmedPrivacyWarning ||
+        recordedSourceMessageIds.has(ref.sourceMessageId) ||
+        params.consentedShareSourceIds?.has(ref.sourceMessageId)
+      if (exposes && !consented) {
+        // A scheduled fire has no author to ask: send without the grant.
+        if (!params.consentedShareSourceIds) throw privacyConfirmationRequired()
+        logger.info(
+          {
+            workspaceId: params.workspaceId,
+            shareMessageId: params.shareMessageId,
+            sourceMessageId: ref.sourceMessageId,
+          },
+          "scheduled share sent unrecorded: source exposes readers the author did not consent to"
+        )
+        continue
       }
 
       await SharedMessageRepository.insert(params.client, {

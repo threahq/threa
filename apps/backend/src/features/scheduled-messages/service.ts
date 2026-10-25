@@ -148,7 +148,7 @@ export class ScheduledMessagesService {
           }
         }
 
-        await assertScheduledSharesConfirmed(client, {
+        const consentedShareSourceIds = await scheduledShareConsent(client, {
           workspaceId: params.workspaceId,
           streamId: params.streamId,
           contentJson: params.contentJson,
@@ -167,6 +167,7 @@ export class ScheduledMessagesService {
           attachmentIds: params.attachmentIds,
           metadata: params.metadata,
           conversationDirective: params.conversationDirective,
+          consentedShareSourceIds,
           scheduledFor: clamped,
           clientMessageId: params.clientMessageId,
         })
@@ -298,15 +299,15 @@ export class ScheduledMessagesService {
       })
       await this.assertSchedulingTransportSupported(client, authority.target)
       this.assertRowPending(existing)
-      if (params.contentJson) {
-        await assertScheduledSharesConfirmed(client, {
-          workspaceId: params.workspaceId,
-          streamId: existing.streamId,
-          contentJson: params.contentJson,
-          previousContentJson: existing.contentJson,
-          confirmedPrivacyWarning: params.confirmedPrivacyWarning,
-        })
-      }
+      const consentedShareSourceIds = params.contentJson
+        ? await scheduledShareConsent(client, {
+            workspaceId: params.workspaceId,
+            streamId: existing.streamId,
+            contentJson: params.contentJson,
+            consentedShareSourceIds: existing.consentedShareSourceIds,
+            confirmedPrivacyWarning: params.confirmedPrivacyWarning,
+          })
+        : undefined
 
       const updated = await ScheduledMessagesRepository.update(client, {
         workspaceId: params.workspaceId,
@@ -317,6 +318,7 @@ export class ScheduledMessagesService {
         contentMarkdown: params.contentMarkdown,
         attachmentIds: params.attachmentIds,
         metadata: params.metadata,
+        consentedShareSourceIds,
         scheduledFor: params.scheduledFor,
       })
       if (!updated) {
@@ -588,9 +590,9 @@ export class ScheduledMessagesService {
         // restart between createMessage and markSent), the second attempt
         // returns the existing message instead of duplicating.
         clientMessageId: `scheduled:${row.id}`,
-        // Every write of this row's content passed `assertScheduledSharesConfirmed`, so the
-        // author consented to (or didn't need to consent to) its shares when scheduling.
-        confirmedPrivacyWarning: true,
+        // A share whose source began exposing readers after scheduling sends without its grant:
+        // consent covers only the exposure the author saw.
+        consentedShareSourceIds: new Set(row.consentedShareSourceIds),
       }
     )
 
@@ -718,25 +720,28 @@ function clampToFuture(date: Date): Date {
   return date.getTime() < minMs ? new Date(minMs) : date
 }
 
-async function assertScheduledSharesConfirmed(
+/**
+ * 409s unless every exposing source is confirmed now or was consented earlier. Returns the
+ * row's consent after this write.
+ */
+async function scheduledShareConsent(
   client: PoolClient,
   params: {
     workspaceId: string
     streamId: string
     contentJson: JSONContent
-    previousContentJson?: JSONContent
+    consentedShareSourceIds?: string[]
     confirmedPrivacyWarning?: boolean
   }
-): Promise<void> {
-  await ShareService.assertSharesConfirmed({
+): Promise<string[]> {
+  return ShareService.assertSharesConfirmed({
     contentJson: params.contentJson,
     targetStreamId: params.streamId,
-    previousContentJson: params.previousContentJson,
+    consentedShareSourceIds: new Set(params.consentedShareSourceIds),
     confirmedPrivacyWarning: params.confirmedPrivacyWarning,
-    listAudiences: async (streamIds) => [
-      ...(
-        await findReadersWithoutAccess(client, params.workspaceId, { streamId: params.streamId }, streamIds)
-      ).values(),
-    ],
+    listAudiences: async (streamIds) =>
+      [...(await findReadersWithoutAccess(client, params.workspaceId, { streamId: params.streamId }, streamIds))].map(
+        ([streamId, { count }]) => ({ streamId, count })
+      ),
   })
 }
