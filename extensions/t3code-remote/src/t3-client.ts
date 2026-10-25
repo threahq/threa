@@ -150,7 +150,7 @@ export interface T3Tools {
   }
   t3_thread_configuration: {
     args: { threadId: string }
-    result: { modelSelection: ModelSelection }
+    result: { modelSelection: ModelSelection; runtimeMode: T3Access }
   }
   t3_thread_configure: {
     args: { threadId: string; modelSelection: ModelSelection }

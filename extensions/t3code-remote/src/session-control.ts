@@ -99,19 +99,20 @@ export function createT3SessionControl(runner: T3TurnRunner, client: T3Client): 
     const lines: string[] = []
     if (!threadId) lines.push("No T3 Code thread yet; the next message launches one.")
     else {
-      try {
-        const [{ thread }, { modelSelection }] = await Promise.all([
-          client.call("t3_thread_read", { threadId, limit: 1 }),
-          client.call("t3_thread_configuration", { threadId }),
-        ])
-        const run = thread.status !== "idle" && thread.latestRunId ? ` \`${thread.latestRunId}\`` : ""
-        lines.push(`Thread: ${thread.title} (\`${threadId}\`, ${thread.status}${run})`)
-        lines.push(`Model: ${described(modelSelection)}`)
-      } catch (error) {
-        lines.push(`Thread: \`${threadId}\` (status unavailable: ${errorText(error)})`)
-      }
+      const [read, configuration] = await Promise.allSettled([
+        client.call("t3_thread_read", { threadId, limit: 1 }),
+        client.call("t3_thread_configuration", { threadId }),
+      ])
+      if (read.status === "fulfilled") {
+        const { thread } = read.value
+        const latestRun = thread.status !== "idle" && thread.latestRunId ? `, latest run \`${thread.latestRunId}\`` : ""
+        lines.push(`Thread: ${thread.title} (\`${threadId}\`, ${thread.status}${latestRun})`)
+      } else lines.push(`Thread: \`${threadId}\` (status unavailable: ${errorText(read.reason)})`)
+      if (configuration.status === "fulfilled") {
+        lines.push(`Model: ${described(configuration.value.modelSelection)}`)
+        lines.push(`Access: ${configuration.value.runtimeMode}`)
+      } else lines.push(`Model: unavailable (${errorText(configuration.reason)})`)
     }
-    lines.push(`Access: ${runner.access}`)
     const open = runner.openRuns().map(({ runId, trace }) => {
       const waiting = trace.questions.size
       return waiting === 0

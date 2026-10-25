@@ -63,18 +63,38 @@ describe("T3 session control", () => {
   })
 
   test("/status lists the thread, its model, the access and the T3 server as markdown bullets", async () => {
-    const { control } = setup({ threads: { stream_root: "thread_a" } })
+    const { t3, control } = setup({ threads: { stream_root: "thread_a" } })
+    t3.threadModel("thread_a", { instanceId: "claudeAgent", model: "claude-opus-5-5" })
 
     expect(await control.runCommand("status", "", CONTEXT)).toEqual({
       ok: true,
       message: [
         "- Thread: Fake thread (`thread_a`, idle)",
-        "- Model: `codex::gpt-5.5`",
+        "- Model: `claudeAgent::claude-opus-5-5`",
         "- Access: full-access",
         "- No run is open.",
         "- T3 Code: http://t3.test",
       ].join("\n"),
     })
+  })
+
+  test("/status names the latest run of a running thread, and the thread when its model can't be read", async () => {
+    const { t3, runner, control } = setup({ threads: {}, model: { instanceId: "codex", model: "gpt-5.5" } })
+    t3.script("run_1", [{ status: "running" }])
+    await runner.deliverTurn(turn())
+    t3.failNext("t3_thread_configuration", new Error("busy"))
+
+    expect(await control.runCommand("status", "", CONTEXT)).toEqual({
+      ok: true,
+      message: [
+        "- Thread: Fake thread (`thread_1`, running, latest run `run_1`)",
+        "- Model: unavailable (busy)",
+        "- Open runs: `run_1`",
+        "- New threads launch on `codex::gpt-5.5`",
+        "- T3 Code: http://t3.test",
+      ].join("\n"),
+    })
+    runner.interrupt()
   })
 
   test("/status shows the thinking level and the questions an open run waits on", async () => {
