@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
+import type { CommandClaim } from "@threahq/harness-client"
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs"
 import { homedir, hostname } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
@@ -152,6 +153,18 @@ export type RuntimeTargetResolver = (runtime: RuntimeKind, purpose: string) => T
 
 export const runtimeThreaTarget: RuntimeTargetResolver = (runtime, purpose) =>
   requireThreadSessionTarget(runtime === "pi" ? readPiRemoteConfig() : readThreaChannelConfig(), purpose)
+
+/** Where a handed-off command reports: a T3 Code claim carries its connector's credentials, harnessd reads the rest's. */
+export function claimThreaTarget(
+  claim: CommandClaim,
+  purpose: string,
+  targetForRuntime: RuntimeTargetResolver = runtimeThreaTarget
+): ThreaTarget {
+  if (claim.runtime === "t3code") {
+    return { baseUrl: claim.baseUrl, workspaceId: claim.workspaceId, apiKey: claim.apiKey }
+  }
+  return targetForRuntime(claim.runtime, purpose)
+}
 
 export async function prelinkThreadSession(
   target: ThreaTarget,

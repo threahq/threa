@@ -594,7 +594,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       undefined,
       undefined,
       undefined,
-      { rootStreamId: "root", sourceMessageId: "msg_slash_spawn" },
+      { rootStreamId: "root", streamId: "root", sourceMessageId: "msg_slash_spawn" },
       () => activeStreamId,
       (spec: HarnessSpawnSpec) => {
         specs.push(spec)
@@ -719,7 +719,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       undefined,
       undefined,
       undefined,
-      { rootStreamId: "root", sourceMessageId: "msg_slash_spawn" },
+      { rootStreamId: "root", streamId: "root", sourceMessageId: "msg_slash_spawn" },
       () => "root",
       (spec: HarnessSpawnSpec) => {
         briefFile = spec.briefFile
@@ -761,7 +761,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       undefined,
       undefined,
       undefined,
-      { rootStreamId: invocationRootStreamId, sourceMessageId: "msg_slash" },
+      { rootStreamId: invocationRootStreamId, streamId: invocationRootStreamId, sourceMessageId: "msg_slash" },
       () => activeStreamId,
       undefined,
       undefined,
@@ -831,7 +831,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       undefined,
       undefined,
       undefined,
-      { rootStreamId: "root", sourceMessageId: "msg_slash" },
+      { rootStreamId: "root", streamId: "root", sourceMessageId: "msg_slash" },
       () => "thread",
       undefined,
       undefined,
@@ -862,7 +862,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       undefined,
       undefined,
       ((...args: unknown[]) => sends.push(args)) as any,
-      { rootStreamId: "root", sourceMessageId: "msg_slash_spawn" }
+      { rootStreamId: "root", streamId: "root", sourceMessageId: "msg_slash_spawn" }
     )
     expect({ outcome, sends }).toEqual({
       outcome: { ok: true, summary: "Sent `ctrl-d` to the linked Claude session." },
@@ -885,7 +885,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
         undefined,
         undefined,
         ((...args: unknown[]) => sends.push(args)) as any,
-        { rootStreamId: "root-a", sourceMessageId: "msg_slash" }
+        { rootStreamId: "root-a", streamId: "root-a", sourceMessageId: "msg_slash" }
       )
     ).rejects.toThrow("Key control request no longer matches the linked scratchpad")
     expect(sends).toEqual([])
@@ -907,7 +907,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
         (() => {
           throw new Error("pane inspection failed")
         }) as any,
-        { rootStreamId: "root", sourceMessageId: "msg_slash_spawn" }
+        { rootStreamId: "root", streamId: "root", sourceMessageId: "msg_slash_spawn" }
       )
     ).rejects.toThrow("pane inspection failed")
     await expect(runClaudeCommand("key", "enter", undefined, undefined, () => "root")).rejects.toThrow(
@@ -929,7 +929,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       undefined,
       undefined,
       ((...args: unknown[]) => sends.push(args)) as any,
-      { rootStreamId: "root", sourceMessageId: "msg_slash_spawn" }
+      { rootStreamId: "root", streamId: "root", sourceMessageId: "msg_slash_spawn" }
     )
     expect({ outcome, sends }).toEqual({
       outcome: { ok: true, summary: "Sent `enter` to the linked Claude session." },
@@ -955,7 +955,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
           (() => {
             sent = true
           }) as any,
-          { rootStreamId: "root", sourceMessageId: "msg_slash_spawn" }
+          { rootStreamId: "root", streamId: "root", sourceMessageId: "msg_slash_spawn" }
         )
       ).toEqual({ ok: false, message: "Usage: `/key <name>`." })
       expect(sent).toBe(false)

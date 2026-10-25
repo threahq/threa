@@ -3,7 +3,7 @@ import { readFileSync, unlinkSync } from "node:fs"
 import { spawnAgent } from "./commands"
 import { claimCommandReporter, consoleCommandReporter, type CommandReporter } from "./command-reporter"
 import { die } from "./errors"
-import { runtimeThreaTarget, type RuntimeTargetResolver } from "./spawners"
+import { claimThreaTarget, runtimeThreaTarget, type RuntimeTargetResolver } from "./spawners"
 import { failureExcerpt, postThrea } from "./threa-http"
 import type { RuntimeKind, SpawnOptions, SpawnResult } from "./types"
 
@@ -127,7 +127,8 @@ export function defaultAttachedSpawnDeps(
       if (!response.ok) throw new Error(`harnessd: could not deliver the brief: ${await failureExcerpt(response)}`)
     },
     readClaim: readCommandClaim,
-    commandReporter: (claim) => claimCommandReporter(targetForRuntime(claim.runtime, "drive /spawn"), claim, "spawn"),
+    commandReporter: (claim) =>
+      claimCommandReporter(claimThreaTarget(claim, "drive /spawn", targetForRuntime), claim, "spawn"),
     log: (message) => console.error(message),
   }
 }

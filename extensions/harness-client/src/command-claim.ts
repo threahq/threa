@@ -3,20 +3,21 @@ import { readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-/**
- * A still-open slash command handed to harnessd to drive to its end: the
- * invocation stays claimed, harnessd renews it, reports its steps into it and
- * closes it. `runtime` names whose credentials the claim was made under.
- */
-export interface CommandClaim {
-  runtime: "claude" | "pi"
+interface ClaimFields {
   workspaceId: string
   invocationId: string
   instanceId: string
   claimToken: string
 }
 
-const CLAIM_FIELDS = ["runtime", "workspaceId", "invocationId", "instanceId", "claimToken"] as const
+/**
+ * A still-open slash command handed to harnessd to drive to its end: the
+ * invocation stays claimed, harnessd renews it, reports its steps into it and
+ * closes it. `runtime` names whose credentials the claim was made under; a
+ * T3 Code connector's live nowhere harnessd reads, so its claim carries them.
+ */
+export type CommandClaim = ClaimFields &
+  ({ runtime: "claude" | "pi" } | { runtime: "t3code"; baseUrl: string; apiKey: string })
 
 /** harnessd reads the claim once and unlinks it; only a launch that never reached harnessd needs {@link discardCommandClaim}. */
 export function writeCommandClaim(claim: CommandClaim, options: { dir?: string } = {}): string {
@@ -36,20 +37,21 @@ export function readCommandClaim(path: string): CommandClaim {
   const parsed: unknown = JSON.parse(raw)
   if (!parsed || typeof parsed !== "object") throw new Error(`claim file ${path} is not an object`)
   const record = parsed as Record<string, unknown>
-  for (const field of CLAIM_FIELDS) {
-    const value = record[field]
-    if (typeof value !== "string" || !value.trim()) throw new Error(`claim file ${path} is missing ${field}`)
+  const field = (name: string): string => {
+    const value = record[name]
+    if (typeof value !== "string" || !value.trim()) throw new Error(`claim file ${path} is missing ${name}`)
+    return value
   }
-  if (record.runtime !== "claude" && record.runtime !== "pi") {
-    throw new Error(`claim file ${path} names an unknown runtime`)
+  const fields: ClaimFields = {
+    workspaceId: field("workspaceId"),
+    invocationId: field("invocationId"),
+    instanceId: field("instanceId"),
+    claimToken: field("claimToken"),
   }
-  return {
-    runtime: record.runtime,
-    workspaceId: record.workspaceId as string,
-    invocationId: record.invocationId as string,
-    instanceId: record.instanceId as string,
-    claimToken: record.claimToken as string,
-  }
+  const runtime = record.runtime
+  if (runtime === "claude" || runtime === "pi") return { runtime, ...fields }
+  if (runtime === "t3code") return { runtime, baseUrl: field("baseUrl"), apiKey: field("apiKey"), ...fields }
+  throw new Error(`claim file ${path} names an unknown runtime`)
 }
 
 export function discardCommandClaim(path: string | undefined): void {

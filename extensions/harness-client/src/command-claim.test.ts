@@ -29,6 +29,22 @@ describe("command claim file", () => {
     })
   })
 
+  it("round-trips a T3 Code claim with the Threa credentials it was made under", () => {
+    const dir = mkdtempSync(join(tmpdir(), "command-claim-test-"))
+    const claim: CommandClaim = { ...CLAIM, runtime: "t3code", baseUrl: "https://threa.example", apiKey: "key-secret" }
+
+    expect(readCommandClaim(writeCommandClaim(claim, { dir }))).toEqual(claim)
+  })
+
+  it("rejects a T3 Code claim without its credentials", () => {
+    const dir = mkdtempSync(join(tmpdir(), "command-claim-test-"))
+    const path = join(dir, "t3code.json")
+    writeFileSync(path, JSON.stringify({ ...CLAIM, runtime: "t3code", baseUrl: "https://threa.example" }))
+
+    expect(() => readCommandClaim(path)).toThrow("missing apiKey")
+    expect(existsSync(path)).toBe(false)
+  })
+
   it("rejects a claim missing a field or naming an unknown runtime, and still removes the file", () => {
     const dir = mkdtempSync(join(tmpdir(), "command-claim-test-"))
     const missing = join(dir, "missing.json")

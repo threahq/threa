@@ -25,6 +25,7 @@ import {
   type RuntimeDescriptor,
   type RuntimePresenceReport,
   type SessionControlActuator,
+  type SessionControlInvocationContext,
 } from "./session"
 import type { DownloadedAttachment } from "./attachments"
 import type { RemoteSessionConfig } from "./identity"
@@ -2322,13 +2323,13 @@ describe("session control via the actuator", () => {
   test("routes an advertised command to runCommand and closes it with the summary on its own entry", async () => {
     const { client, calls } = makeFakeClient()
     const { transport } = makeFakeTransport()
-    const ran: Array<{ name: string; args: string; rootStreamId: string }> = []
+    const ran: Array<{ name: string; args: string; context: SessionControlInvocationContext }> = []
     const session = makeSession(client, transport, {
       sessionControl: {
         commands: ["stop", "model"],
         interrupt: () => true,
         runCommand: async (name, args, context) => {
-          ran.push({ name, args, rootStreamId: context.rootStreamId })
+          ran.push({ name, args, context })
           return { ok: true, summary: "Set model to `opus`." }
         },
       },
@@ -2336,6 +2337,7 @@ describe("session control via the actuator", () => {
     const invocation = makeInvocation({
       id: "binv_cmd",
       trigger: "session-control",
+      responseStreamId: "stream_thread",
       promptMarkdown: "/model opus",
       metadata: { command: { executionKind: "bot-runtime", id: "cmd_1", name: "model", args: "opus" } },
     })
@@ -2344,7 +2346,17 @@ describe("session control via the actuator", () => {
       session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
     ).handleSessionControl(invocation)
 
-    expect(ran).toEqual([{ name: "model", args: "opus", rootStreamId: "stream_root" }])
+    expect(ran).toEqual([
+      {
+        name: "model",
+        args: "opus",
+        context: {
+          rootStreamId: "stream_root",
+          streamId: "stream_thread",
+          sourceMessageId: invocation.sourceMessageId,
+        },
+      },
+    ])
     expect(calls.complete[0]?.body).toEqual({
       instanceId: "rt-test",
       claimToken: invocation.claimToken,

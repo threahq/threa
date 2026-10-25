@@ -4,7 +4,7 @@ import { listLocalTmuxPanes, type LocalTmuxPane } from "./discovery"
 import { defaultDoneDeps, doneAgent, type DoneRequest } from "./done"
 import { acquireProcessLock, RECONCILE_LOCK_WAIT_MS, resumeActiveLockPath } from "./lock"
 import { output } from "./shell"
-import { runtimeThreaTarget, type RuntimeTargetResolver } from "./spawners"
+import { claimThreaTarget, runtimeThreaTarget, type RuntimeTargetResolver } from "./spawners"
 import { suspendPlaceholderNotice } from "./suspend"
 import { failureExcerpt, postThrea, type ThreaTarget } from "./threa-http"
 import type { ManagedAgent, RuntimeKind } from "./types"
@@ -47,7 +47,7 @@ export function defaultSupervisedDoneDeps(): SupervisedDoneDeps {
     killPane: (paneId) => {
       output(["tmux", "kill-pane", "-t", paneId], { allowFailure: true })
     },
-    reporter: (claim) => claimCommandReporter(runtimeThreaTarget(claim.runtime, "drive /done"), claim, "done"),
+    reporter: (claim) => claimCommandReporter(claimThreaTarget(claim, "drive /done"), claim, "done"),
     done: (request) => doneAgent(request, doneDeps),
     log: (message) => console.log(message),
   }
