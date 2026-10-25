@@ -27,6 +27,7 @@ export class DocPresence {
   private readonly send: (payload: DocAwarenessPayload) => void
   private sendTimer: ReturnType<typeof setTimeout> | null = null
   private peersSnapshot: PresenceUser[] | null = null
+  private stateBeforeLeave: Record<string, unknown> | null = null
 
   constructor(params: {
     ydoc: Y.Doc
@@ -50,7 +51,27 @@ export class DocPresence {
 
   receive = (payload: DocAwarenessPayload): void => {
     if (payload.workspaceId !== this.workspaceId || payload.docId !== this.docId) return
-    applyAwarenessUpdate(this.awareness, base64ToBytes(payload.update), REMOTE_ORIGIN)
+    try {
+      applyAwarenessUpdate(this.awareness, base64ToBytes(payload.update), REMOTE_ORIGIN)
+    } catch {
+      // Any peer can put bytes on this channel; a frame that does not decode is dropped, never thrown into the socket listener.
+    }
+  }
+
+  /** Withdraws the local client from peers (the page is going away or into the back-forward cache) without ending the session. */
+  leave = (): void => {
+    const state = this.awareness.getLocalState()
+    if (!state) return
+    this.stateBeforeLeave = state
+    this.awareness.setLocalState(null)
+  }
+
+  /** Re-announces the state `leave` withdrew; a no-op unless the client left. */
+  rejoin = (): void => {
+    const state = this.stateBeforeLeave
+    if (!state) return
+    this.stateBeforeLeave = null
+    this.awareness.setLocalState(state)
   }
 
   resend(): void {

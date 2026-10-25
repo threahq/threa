@@ -64,8 +64,13 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
       docId,
       send: (payload) => latestSocket()?.emit("doc:awareness", payload),
     })
+    // Unload and the back-forward cache never unmount, so peers would keep a ghost caret until the 30 s awareness timeout.
+    window.addEventListener("pagehide", presence.leave)
+    window.addEventListener("pageshow", presence.rejoin)
     setCreated({ key, ydoc, sync, presence, loaded: sync.start() })
     return () => {
+      window.removeEventListener("pagehide", presence.leave)
+      window.removeEventListener("pageshow", presence.rejoin)
       presence.destroy()
       sync.stop()
       ydoc.destroy()

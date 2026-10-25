@@ -130,31 +130,35 @@ describe("YjsCollaboration", () => {
     expect(observers()).toEqual(before)
   })
 
-  it("should draw a peer's caret with their name when their awareness carries a cursor", async () => {
-    const ydoc = prosemirrorJSONToYDoc(getThreaSchema(), paragraphs("hello"), DOC_FRAGMENT)
-    const awareness = new Awareness(ydoc)
-    const peerDoc = new Y.Doc()
-    Y.applyUpdate(peerDoc, Y.encodeStateAsUpdate(ydoc))
-    const peer = new Awareness(peerDoc)
-    awarenesses.push(awareness, peer)
-    const editor = createEditor(ydoc, awareness)
+  it.each([true, false])(
+    "should draw a peer's caret with their name when their awareness carries a cursor and editable is %s",
+    async (editable) => {
+      const ydoc = prosemirrorJSONToYDoc(getThreaSchema(), paragraphs("hello"), DOC_FRAGMENT)
+      const awareness = new Awareness(ydoc)
+      const peerDoc = new Y.Doc()
+      Y.applyUpdate(peerDoc, Y.encodeStateAsUpdate(ydoc))
+      const peer = new Awareness(peerDoc)
+      awarenesses.push(awareness, peer)
+      const editor = createEditor(ydoc, awareness)
+      editor.setEditable(editable)
 
-    const text = peerDoc.getXmlFragment(DOC_FRAGMENT).get(0) as Y.XmlElement
-    const at = Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(text.get(0) as Y.XmlText, 2))
-    peer.setLocalState({ user: { name: "Alice", color: "#d97706" }, cursor: { anchor: at, head: at } })
-    applyAwarenessUpdate(awareness, encodeAwarenessUpdate(peer, [peer.clientID]), "remote")
+      const text = peerDoc.getXmlFragment(DOC_FRAGMENT).get(0) as Y.XmlElement
+      const at = Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(text.get(0) as Y.XmlText, 2))
+      peer.setLocalState({ user: { name: "Alice", color: "#d97706" }, cursor: { anchor: at, head: at } })
+      applyAwarenessUpdate(awareness, encodeAwarenessUpdate(peer, [peer.clientID]), "remote")
 
-    const caret = await vi.waitFor(() => {
-      const found = editor.view.dom.querySelector<HTMLElement>(".ProseMirror-yjs-cursor")
-      if (!found) throw new Error("no caret yet")
-      return found
-    })
-    expect({
-      name: caret.textContent?.replace(/\u2060/g, ""),
-      color: caret.style.borderColor,
-    }).toEqual({
-      name: "Alice",
-      color: "rgb(217, 119, 6)",
-    })
-  })
+      const caret = await vi.waitFor(() => {
+        const found = editor.view.dom.querySelector<HTMLElement>(".ProseMirror-yjs-cursor")
+        if (!found) throw new Error("no caret yet")
+        return found
+      })
+      expect({
+        name: caret.textContent?.replace(/\u2060/g, ""),
+        color: caret.style.borderColor,
+      }).toEqual({
+        name: "Alice",
+        color: "rgb(217, 119, 6)",
+      })
+    }
+  )
 })

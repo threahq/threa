@@ -174,4 +174,108 @@ describe("DocPresence", () => {
       state: { user: ME },
     })
   })
+  it("should drop a frame without throwing when its update is not a decodable awareness frame", () => {
+    const { presence } = createPresence()
+    presence.setLocalUser(ME)
+
+    const receiveGarbage = () => {
+      presence.receive({ workspaceId: WORKSPACE_ID, docId: DOC_ID, update: "%%% not base64 %%%" })
+      presence.receive({ workspaceId: WORKSPACE_ID, docId: DOC_ID, update: bytesToBase64(new Uint8Array([5, 1])) })
+    }
+    expect(receiveGarbage).not.toThrow()
+    presence.receive(remoteFrame(ALICE))
+
+    expect(presence.peers()).toEqual([ALICE])
+  })
+
+  it("should withdraw the local client at once when leaving and reappear with the same state when rejoining", () => {
+    const { presence, sent } = createPresence()
+    presence.setLocalUser(ME)
+    presence.awareness.setLocalStateField("cursor", { anchor: 4, head: 4 })
+    vi.advanceTimersByTime(PRESENCE_SEND_DEBOUNCE_MS)
+    const receiver = createAwareness()
+    const clientId = presence.awareness.clientID
+    const deliver = () => {
+      for (const frame of sent.splice(0)) decodeInto(receiver, frame)
+    }
+    deliver()
+
+    presence.leave()
+    deliver()
+    const afterLeave = receiver.getStates().get(clientId) ?? null
+    presence.rejoin()
+    vi.advanceTimersByTime(PRESENCE_SEND_DEBOUNCE_MS)
+    deliver()
+
+    expect({ afterLeave, afterRejoin: receiver.getStates().get(clientId) }).toEqual({
+      afterLeave: null,
+      afterRejoin: { user: ME, cursor: { anchor: 4, head: 4 } },
+    })
+  })
+
+  it("should converge in one round and stay quiet on renewals when a newcomer joins three peers", () => {
+    const room: DocPresence[] = []
+    const queue: Array<{ from: DocPresence; frame: DocAwarenessPayload }> = []
+    const sentBy = new Map<DocPresence, number>()
+    const join = (user: PresenceUser) => {
+      const presence: DocPresence = new DocPresence({
+        ydoc: new Y.Doc(),
+        workspaceId: WORKSPACE_ID,
+        docId: DOC_ID,
+        send: (frame) => {
+          sentBy.set(presence, (sentBy.get(presence) ?? 0) + 1)
+          queue.push({ from: presence, frame })
+        },
+      })
+      cleanups.push(() => presence.destroy())
+      room.push(presence)
+      presence.setLocalUser(user)
+      return presence
+    }
+    const settle = () => {
+      for (let round = 0; round < 10; round++) {
+        vi.advanceTimersByTime(PRESENCE_SEND_DEBOUNCE_MS)
+        if (queue.length === 0) return
+        for (const { from, frame } of queue.splice(0))
+          for (const member of room) if (member !== from) member.receive(frame)
+      }
+      throw new Error("presence never settled")
+    }
+    const users: PresenceUser[] = [
+      ALICE,
+      { userId: "usr_bob", name: "Bob", color: "#059669" },
+      { userId: "usr_cara", name: "Cara", color: "#7c3aed" },
+    ]
+    for (const user of users) {
+      join(user)
+      settle()
+    }
+    sentBy.clear()
+
+    join(ME)
+    settle()
+    const joinFrames = room.map((member) => sentBy.get(member) ?? 0)
+    const converged = room.map((member) =>
+      member
+        .peers()
+        .map((peer) => peer.userId)
+        .sort()
+    )
+    sentBy.clear()
+
+    // What y-protocols' 15 s renewal does; its clock is lib0's captured Date.now, which fake timers cannot move.
+    for (const member of room) member.awareness.setLocalState(member.awareness.getLocalState())
+    settle()
+
+    const everyone = [...users, ME].map((user) => user.userId)
+    expect({
+      joinFrames,
+      converged,
+      renewalFrames: room.map((member) => sentBy.get(member) ?? 0),
+    }).toEqual({
+      joinFrames: [1, 1, 1, 2],
+      converged: everyone.map((_, i) => everyone.filter((__, j) => j !== i).sort()),
+      renewalFrames: [1, 1, 1, 1],
+    })
+  })
 })
