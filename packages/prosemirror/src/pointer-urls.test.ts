@@ -169,6 +169,7 @@ describe("reference pins", () => {
       actorType: "user",
       version: 3,
       range: { from: 4, to: 9 },
+      private: false,
     })
     expect(parseQuoteHref("quote:stream_1/msg_1")).toEqual({
       streamId: "stream_1",
@@ -177,7 +178,29 @@ describe("reference pins", () => {
       actorType: "user",
       version: null,
       range: null,
+      private: false,
     })
+  })
+
+  it("should round-trip a private quote as ids alone when it carries no content", () => {
+    const href = buildQuoteHref({ ...quote, version: 3, range: { from: 4, to: 9 }, private: true })
+    expect({ href, parsed: parseQuoteHref(href) }).toEqual({
+      href: "quote:stream_1/msg_1?private=1",
+      parsed: {
+        streamId: "stream_1",
+        messageId: "msg_1",
+        authorId: "",
+        actorType: "user",
+        version: null,
+        range: null,
+        private: true,
+      },
+    })
+  })
+
+  it("should reject a private quote href that also carries an author or a pin", () => {
+    expect(parseQuoteHref("quote:stream_1/msg_1/usr_1/user?private=1")).toBeNull()
+    expect(parseQuoteHref("quote:stream_1/msg_1?private=1&v=2")).toBeNull()
   })
 
   it("rejects a malformed pin instead of reading the href as unpinned", () => {

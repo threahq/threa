@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import { attachmentReferenceLabel, normalizeMarkdownTables, parseMarkdown, serializeToMarkdown } from "./markdown"
+import { privateQuoteAttrs } from "./pointer-urls"
 import type { JSONContent } from "@threahq/types"
 
 describe("@threahq/prosemirror markdown links", () => {
@@ -447,6 +448,32 @@ describe("@threahq/prosemirror quote reply round-trip", () => {
         actorType: "user",
         snippet: "Line one\nLine two\nLine three",
       },
+    })
+  })
+
+  it("should carry a private quote as ids alone when it round-trips through markdown", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "quoteReply", attrs: privateQuoteAttrs({ streamId: "stream_01XYZ", messageId: "msg_01ABC" }) },
+        { type: "paragraph", content: [{ type: "text", text: "after" }] },
+      ],
+    }
+
+    const markdown = serializeToMarkdown(doc)
+
+    expect({ markdown, parsed: parseMarkdown(markdown) }).toEqual({
+      markdown: "> — [Private quote](quote:stream_01XYZ/msg_01ABC?private=1)\n\nafter",
+      parsed: doc,
+    })
+  })
+
+  it("should drop any snippet or author riding on a private quote when parsing", () => {
+    const parsed = parseMarkdown("> leaked text\n>\n> — [Alice](quote:stream_01XYZ/msg_01ABC?private=1)")
+
+    expect(parsed.content?.[0]).toEqual({
+      type: "quoteReply",
+      attrs: privateQuoteAttrs({ streamId: "stream_01XYZ", messageId: "msg_01ABC" }),
     })
   })
 

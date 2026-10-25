@@ -22,7 +22,8 @@ interface ShareReference {
 /**
  * Walk a ProseMirror content tree and collect every sharedMessage or cross-stream
  * quoteReply node. Same-stream quoteReply is skipped — it's the existing
- * quote-reply feature, not a share.
+ * quote-reply feature, not a share — and so is a private quote, which carries
+ * nothing of its source to grant.
  */
 export function collectShareReferences(content: JSONContent, targetStreamId: string): ShareReference[] {
   const found: ShareReference[] = []
@@ -41,8 +42,8 @@ export function collectShareReferences(content: JSONContent, targetStreamId: str
         })
       }
     } else if (node.type === "quoteReply") {
-      const attrs = node.attrs as { messageId?: string; streamId?: string } | undefined
-      if (attrs?.messageId && attrs.streamId && attrs.streamId !== targetStreamId) {
+      const attrs = node.attrs as { messageId?: string; streamId?: string; private?: boolean } | undefined
+      if (attrs?.messageId && attrs.streamId && attrs.streamId !== targetStreamId && !attrs.private) {
         found.push({
           flavor: ShareFlavors.QUOTE,
           sourceMessageId: attrs.messageId,

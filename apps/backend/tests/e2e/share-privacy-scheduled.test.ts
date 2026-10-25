@@ -1,7 +1,8 @@
 import { beforeAll, describe, expect, test } from "bun:test"
+import { privateQuoteAttrs } from "@threahq/prosemirror"
 import {
-  MessageReferenceErrorCodes,
   ShareErrorCodes,
+  type JSONContent,
   type ScheduledMessageView,
   type UnsharedReferencesResponse,
 } from "@threahq/types"
@@ -12,6 +13,7 @@ import {
   deleteMessage,
   joinStream,
   joinWorkspace,
+  listEvents,
   loginAs,
   moveMessagesToThread,
   sendMessage,
@@ -270,7 +272,7 @@ describe("share privacy on a scheduled send", () => {
     })
   })
 
-  test("a share whose source the author lost before the send still sends, privately, and can be shared once access returns; a quote of it fails", async () => {
+  test("a reference whose source the author lost before the send still sends, privately: a share can be shared once access returns, a quote stays a private quote", async () => {
     const dave = new TestClient()
     await loginAs(dave, "share-scheduled-dave@example.com", "Share Scheduled Dave")
     const daveUser = await joinWorkspace(dave, workspaceId)
@@ -295,9 +297,10 @@ describe("share privacy on a scheduled send", () => {
     })
     await alice.patch(`/api/workspaces/${workspaceId}/streams/${sourceStreamId}`, { visibility: "private" })
 
-    const quoteSent = await dave.post<{ code?: string }>(
+    const quoteSent = await dave.post<{ scheduled: ScheduledMessageView }>(
       `/api/workspaces/${workspaceId}/scheduled/${quoted.data.scheduled.id}/send-now`
     )
+    const quoteMessageId = quoteSent.data.scheduled.sentMessageId!
     const sent = await dave.post<{ scheduled: ScheduledMessageView }>(
       `/api/workspaces/${workspaceId}/scheduled/${scheduled.data.scheduled.id}/send-now`
     )
@@ -310,21 +313,55 @@ describe("share privacy on a scheduled send", () => {
       const seen = await bob.get<EventsResponse>(`/api/workspaces/${workspaceId}/streams/${targetStreamId}/events`)
       return seen.data.sharedMessages[source.messageId]?.state
     }
+    const quoteSeenByBob = async () => {
+      const events = await listEvents(bob, workspaceId, targetStreamId, ["message_created", "message_edited"])
+      const payload = events.findLast(
+        (event) => (event.payload as { messageId?: string }).messageId === quoteMessageId
+      )!.payload as { contentJson: JSONContent; contentMarkdown: string }
+      return { quote: payload.contentJson.content?.[0], markdown: payload.contentMarkdown }
+    }
+    const quoteListed = async () => {
+      const unshared = await dave.get<UnsharedReferencesResponse>(`/api/workspaces/${workspaceId}/unshared-references`)
+      return unshared.data.references.filter((ref) => ref.messageId === quoteMessageId)
+    }
+    const privateQuote = { type: "quoteReply", attrs: privateQuoteAttrs(source) }
+    const quoteSeenWithoutAccess = await quoteSeenByBob()
     const listedWithoutAccess = await listed()
     const seenWithoutAccess = await seenByBob()
     await alice.post(`/api/workspaces/${workspaceId}/streams/${sourceStreamId}/members`, { memberId: daveUser.id })
     const listedWithAccess = await listed()
     const shared = await dave.post(`/api/workspaces/${workspaceId}/messages/${sentMessageId}/share-references`)
+    const quoteEdited = await dave.patch(`/api/workspaces/${workspaceId}/messages/${quoteMessageId}`, {
+      contentJson: {
+        type: "doc",
+        content: [privateQuote, { type: "paragraph", content: [{ type: "text", text: "edited" }] }],
+      },
+    })
 
     expect({
-      quoteSent: { status: quoteSent.status, code: quoteSent.data.code },
+      quoteSent: { status: quoteSent.status, seen: quoteSeenWithoutAccess },
+      quoteEdited: { status: quoteEdited.status, seen: await quoteSeenByBob(), listed: await quoteListed() },
       sent: { status: sent.status, hasMessage: Boolean(sentMessageId) },
       listedWithoutAccess,
       seenWithoutAccess,
       listedWithAccess,
       shared: { status: shared.status, seen: await seenByBob() },
     }).toEqual({
-      quoteSent: { status: 400, code: MessageReferenceErrorCodes.SOURCE_NOT_FOUND },
+      quoteSent: {
+        status: 200,
+        seen: {
+          quote: privateQuote,
+          markdown: `> — [Private quote](quote:${source.streamId}/${source.messageId}?private=1)`,
+        },
+      },
+      quoteEdited: {
+        status: 200,
+        seen: {
+          quote: privateQuote,
+          markdown: `> — [Private quote](quote:${source.streamId}/${source.messageId}?private=1)\n\nedited`,
+        },
+        listed: [],
+      },
       sent: { status: 200, hasMessage: true },
       listedWithoutAccess: [],
       seenWithoutAccess: "private",

@@ -30,6 +30,7 @@ export {
   buildQuoteHref,
   isValidPin,
   parseQuoteHref,
+  privateQuoteAttrs,
   buildAgentBlockHref,
   parseAgentBlockHref,
   buildSharedMessageHref,

@@ -741,7 +741,7 @@ export class EventService {
           params.authorId,
           params.accessibleStreamIds
         ),
-        sendUnreadableSharesUnpinned: params.consentedShareSourceIds !== undefined,
+        sendUnreadableReferencesPrivate: params.consentedShareSourceIds !== undefined,
       })
       if (resolvedReferences.changed) {
         params.contentJson = resolvedReferences.contentJson

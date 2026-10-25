@@ -7,7 +7,8 @@
  *     attribution link inside a `quoteReply` block. `authorId`/`actorType` are
  *     optional for backward compat with messages serialized before
  *     denormalised author metadata was added; the `?v=`/`&r=` suffix pins the
- *     source revision and the quoted span (see `ReferencePin`).
+ *     source revision and the quoted span (see `ReferencePin`). A private quote
+ *     is `quote:streamId/messageId?private=1` and carries nothing else.
  *   - `shared-message:streamId/messageId[/conversationId][?v=n&r=from-to]` — the inline
  *     pointer link a `sharedMessage` block serialises to. The optional third
  *     segment is the conversation the message was shared from; when present the
@@ -30,6 +31,8 @@
  * react-markdown pointer-detection in the timeline all agree by
  * construction.
  */
+
+import type { ThreaQuoteReply } from "@threahq/types"
 
 import {
   actorTypeFromMentionId,
@@ -59,9 +62,12 @@ export interface QuoteHref extends ReferencePin {
   authorId: string
   /** Defaults to `"user"` when omitted, matching the legacy schema. */
   actorType: string
+  /** The author couldn't read the source when it was sent, so the quote holds no content. */
+  private?: boolean
 }
 
 export function buildQuoteHref(params: QuoteHref): string {
+  if (params.private) return `quote:${params.streamId}/${params.messageId}?private=1`
   const query = buildReferenceQuery(params)
   // Emit the legacy two-segment form when authorId is empty, otherwise the
   // four-segment string with `//user` in the middle wouldn't match the
@@ -79,6 +85,20 @@ export function parseQuoteHref(href: string): QuoteHref | null {
   const parts = split.path.split("/")
   // Exactly the 2-segment (legacy) or 4-segment shapes `buildQuoteHref` emits.
   if ((parts.length !== 2 && parts.length !== 4) || parts.some((part) => part.length === 0)) return null
+  const query = href.indexOf("?")
+  const isPrivate = query >= 0 && new URLSearchParams(href.slice(query + 1)).get("private") === "1"
+  if (isPrivate) {
+    if (parts.length !== 2 || split.pin.version !== null) return null
+    return {
+      streamId: parts[0],
+      messageId: parts[1],
+      authorId: "",
+      actorType: "user",
+      version: null,
+      range: null,
+      private: true,
+    }
+  }
   return {
     streamId: parts[0],
     messageId: parts[1],
@@ -86,6 +106,22 @@ export function parseQuoteHref(href: string): QuoteHref | null {
     actorType: parts[3] ?? "user",
     version: split.pin.version,
     range: split.pin.range,
+    private: false,
+  }
+}
+
+/** The only attrs a private quote carries: its ids, no content or author. */
+export function privateQuoteAttrs(source: { streamId: string; messageId: string }): ThreaQuoteReply["attrs"] {
+  return {
+    messageId: source.messageId,
+    streamId: source.streamId,
+    authorName: "",
+    authorId: "",
+    actorType: "user",
+    snippet: "",
+    version: null,
+    range: null,
+    private: true,
   }
 }
 

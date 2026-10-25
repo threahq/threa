@@ -1,4 +1,4 @@
-import { isEmptySlice, isRangeValid, normalizeRange } from "@threahq/prosemirror"
+import { isEmptySlice, isRangeValid, normalizeRange, privateQuoteAttrs } from "@threahq/prosemirror"
 import { MessageReferenceErrorCodes, type ContentRange, type JSONContent } from "@threahq/types"
 
 import type { Querier } from "../../../db"
@@ -21,6 +21,7 @@ interface ReferenceAttrs {
   snippet?: unknown
   version?: unknown
   range?: unknown
+  private?: unknown
 }
 
 interface ReferenceNode {
@@ -49,11 +50,12 @@ export interface ResolveMessageReferencesParams {
    */
   canReadSourceStream?: (streamId: string) => Promise<boolean>
   /**
-   * Scheduled fire: a share (not a quote) whose source the author can no
-   * longer read is sent unpinned instead of rejected, so it reaches readers as
-   * private. A quote still rejects — its snippet can't be verified unread.
+   * Scheduled fire: a reference whose source the author can no longer read is
+   * sent instead of rejected, and reveals nothing of it. A share goes out
+   * unpinned, so hydration shows it as private. A quote is replaced by a
+   * private quote: its ids, no snippet, no author.
    */
-  sendUnreadableSharesUnpinned?: boolean
+  sendUnreadableReferencesPrivate?: boolean
 }
 
 export interface ResolveMessageReferencesResult {
@@ -113,6 +115,16 @@ function collectLegacyQuoteKeys(root: JSONContent | undefined): Set<string> {
   return keys
 }
 
+/** Private quotes already in the body being edited, by quoted message id. */
+function collectPrivateQuotes(root: JSONContent | undefined): Map<string, JSONContent["attrs"]> {
+  const found = new Map<string, JSONContent["attrs"]>()
+  if (!root) return found
+  for (const ref of collectReferenceNodes(root)) {
+    if (ref.isQuote && ref.attrs.private === true) found.set(ref.messageId, ref.node.attrs)
+  }
+  return found
+}
+
 function sameRange(a: ContentRange | null, b: ContentRange | null): boolean {
   if (a === null || b === null) return a === b
   return a.from === b.from && a.to === b.to
@@ -159,6 +171,11 @@ function validateRange(pinnedDoc: JSONContent, raw: ContentRange): ContentRange 
  * edit would strand the author — they would be unable to fix a typo in their
  * own message forever. Such a node is left exactly as it was; a NEWLY added
  * unlocatable quote is still rejected.
+ *
+ * A private quote already in `previousContentJson` is kept as it was too:
+ * nothing in it came from the source, so there is nothing to re-check. Any
+ * other node claiming to be private is resolved like an ordinary quote, so a
+ * client can't use the flag to skip the read gate or smuggle in a snippet.
  */
 export async function resolveMessageReferences(
   db: Querier,
@@ -170,6 +187,19 @@ export async function resolveMessageReferences(
   const contentJson = structuredClone(params.contentJson)
   const references = collectReferenceNodes(contentJson)
   const legacyKeys = collectLegacyQuoteKeys(params.previousContentJson)
+  const previousPrivateQuotes = collectPrivateQuotes(params.previousContentJson)
+
+  let changed = false
+  const settled = new Set<ReferenceNode>()
+  for (const ref of references) {
+    const previous = ref.isQuote && ref.attrs.private === true ? previousPrivateQuotes.get(ref.messageId) : undefined
+    if (!previous) continue
+    settled.add(ref)
+    if (JSON.stringify(ref.attrs) !== JSON.stringify(previous)) {
+      ref.node.attrs = previous
+      changed = true
+    }
+  }
 
   const sourcesById = await MessageRepository.findByIds(db, params.workspaceId, [
     ...new Set(references.map((ref) => ref.messageId)),
@@ -184,6 +214,7 @@ export async function resolveMessageReferences(
   if (params.canReadSourceStream) {
     const readable = new Map<string, boolean>()
     for (const ref of references) {
+      if (settled.has(ref)) continue
       const source = sourcesById.get(ref.messageId)
       if (!source || source.streamId === params.targetStreamId) continue
       let allowed = readable.get(source.streamId)
@@ -192,13 +223,17 @@ export async function resolveMessageReferences(
         readable.set(source.streamId, allowed)
       }
       if (allowed) continue
-      if (!params.sendUnreadableSharesUnpinned || ref.isQuote) {
+      if (!params.sendUnreadableReferencesPrivate) {
         throw referenceError(MessageReferenceErrorCodes.SOURCE_NOT_FOUND, "Referenced message not found")
       }
       unreadable.add(ref)
+      if (ref.isQuote) {
+        ref.node.attrs = privateQuoteAttrs({ streamId: source.streamId, messageId: source.id })
+        changed = true
+      }
     }
   }
-  const pinnable = references.filter((ref) => !unreadable.has(ref))
+  const pinnable = references.filter((ref) => !unreadable.has(ref) && !settled.has(ref))
 
   const versions = new Map<ReferenceNode, { source: Message; version: number }>()
   const versionKeys: MessageVersionKey[] = []
@@ -224,7 +259,6 @@ export async function resolveMessageReferences(
   }
   const authorNames = await resolveActorNames(db, params.workspaceId, quoteAuthorIds)
 
-  let changed = false
   for (const ref of pinnable) {
     const { source, version } = versions.get(ref)!
     const pinnedDoc =
