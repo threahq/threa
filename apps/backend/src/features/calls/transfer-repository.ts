@@ -6,7 +6,7 @@ import type {
   CallTransferPhase,
 } from "@threahq/types"
 import type { Querier } from "../../db"
-import { sql } from "../../db"
+import { composeSql, sql } from "../../db"
 import type { PublishedTrack } from "./config"
 
 export type TransferSessionStatus = "preparing" | "ready" | "active" | "draining" | "closed" | "failed"
@@ -146,6 +146,10 @@ function obligation(row: Record<string, any>): CallTransferObligationRow {
   }
 }
 
+const transferColumnsSql = sql`${sql.raw(TRANSFER_COLUMNS)}`
+const expiredTransfer = (now: Date) => sql`((phase = 'preparing' AND prepare_deadline <= ${now})
+  OR (phase IN ('committing', 'draining', 'aborting') AND recovery_deadline <= ${now}))`
+
 export const CallTransferRepository = {
   async maxGeneration(db: Querier, workspaceId: string, callId: string, activeGeneration: number): Promise<number> {
     const result = await db.query<{ generation: number }>(sql`
@@ -223,7 +227,7 @@ export const CallTransferRepository = {
   ): Promise<CallTransportTransferRow | null> {
     const result = await db.query(sql`UPDATE call_transport_transfers SET version = version + 1, updated_at = NOW()
       WHERE workspace_id = ${p.workspaceId} AND id = ${p.id} AND generation = ${p.generation}
-      AND version = ${p.version} AND phase IN ('preparing', 'committing') RETURNING ${sql.raw(TRANSFER_COLUMNS)}`)
+      AND version = ${p.version} RETURNING ${sql.raw(TRANSFER_COLUMNS)}`)
     return result.rows[0] ? transfer(result.rows[0]) : null
   },
   async updateMembershipRevision(
@@ -239,12 +243,18 @@ export const CallTransferRepository = {
   async listExpired(db: Querier, now: Date): Promise<CallTransportTransferRow[]> {
     const result = await db.query(
       // eslint-disable-next-line threa/workspace-scoped-sql -- transfer-deadline sweep covers every workspace
-      sql`SELECT ${sql.raw(TRANSFER_COLUMNS)} FROM call_transport_transfers
-      WHERE (phase = 'preparing' AND prepare_deadline <= ${now})
-         OR (phase IN ('committing', 'draining', 'aborting') AND recovery_deadline <= ${now})
-      ORDER BY call_id, generation`
+      composeSql`SELECT ${transferColumnsSql} FROM call_transport_transfers
+      WHERE ${expiredTransfer(now)} ORDER BY call_id, generation`
     )
     return result.rows.map(transfer)
+  },
+  async findExpired(
+    db: Querier,
+    p: { workspaceId: string; id: string; now: Date }
+  ): Promise<CallTransportTransferRow | null> {
+    const result = await db.query(composeSql`SELECT ${transferColumnsSql} FROM call_transport_transfers
+      WHERE workspace_id = ${p.workspaceId} AND id = ${p.id} AND ${expiredTransfer(p.now)}`)
+    return result.rows[0] ? transfer(result.rows[0]) : null
   },
   async markRecoveryTimedOut(
     db: Querier,

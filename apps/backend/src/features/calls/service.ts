@@ -673,6 +673,7 @@ export class CallService {
       })
       if (!updated)
         throw new HttpError("Transfer acknowledgement is stale", { status: 409, code: "CALL_STALE_TRANSFER" })
+      const touched = await this.touchAcknowledgedTransfer(client, transfer)
       const obligations = await CallTransferObligationRepository.list(client, params.workspaceId, transfer.id)
       const allReady = obligations.every(
         (item) => item.ownPublicationsReady && this.publicationsMatch(item.expectedPublications, item.readyPublications)
@@ -683,7 +684,7 @@ export class CallService {
           id: transfer.id,
           generation: transfer.generation,
           from: "preparing",
-          version: transfer.version,
+          version: touched.version,
           to: "committing",
           recoveryDeadline: new Date(Date.now() + CALL_TRANSFER_RECOVERY_TIMEOUT_MS),
         })
@@ -730,6 +731,7 @@ export class CallService {
       const updated = await CallTransferObligationRepository.acknowledgeSwitched(client, params)
       if (!updated)
         throw new HttpError("Transfer acknowledgement is stale", { status: 409, code: "CALL_STALE_TRANSFER" })
+      const touched = await this.touchAcknowledgedTransfer(client, transfer)
       const obligations = await CallTransferObligationRepository.list(client, params.workspaceId, transfer.id)
       if (transfer.phase === "committing" && obligations.every((item) => item.switched)) {
         const committed = await CallRepository.commitTransportGeneration(client, {
@@ -765,7 +767,7 @@ export class CallService {
           id: transfer.id,
           generation: transfer.generation,
           from: "committing",
-          version: transfer.version,
+          version: touched.version,
           to: "draining",
         })
         if (draining) {
@@ -840,6 +842,7 @@ export class CallService {
       const updated = await CallTransferObligationRepository.acknowledgeRestored(client, params)
       if (!updated)
         throw new HttpError("Transfer acknowledgement is stale", { status: 409, code: "CALL_STALE_TRANSFER" })
+      const touched = await this.touchAcknowledgedTransfer(client, transfer)
       const obligations = await CallTransferObligationRepository.list(client, params.workspaceId, transfer.id)
       const liveEndpoints = await CallEndpointRepository.listLiveByCall(client, params.workspaceId, params.callId)
       const allCurrentRestored = liveEndpoints.every((current) =>
@@ -862,7 +865,7 @@ export class CallService {
         id: transfer.id,
         generation: transfer.generation,
         from: "aborting",
-        version: transfer.version,
+        version: touched.version,
         to: "failed",
       })
       if (failed) {
@@ -880,9 +883,12 @@ export class CallService {
     for (const candidate of expired) {
       const cleanup = await withTransaction(this.pool, async (client) => {
         const call = await CallRepository.findByIdForUpdate(client, candidate.workspaceId, candidate.callId)
-        const current = await CallTransferRepository.findById(client, candidate.workspaceId, candidate.id)
-        if (!call || !current || current.version !== candidate.version || current.phase !== candidate.phase)
-          return [] as string[]
+        const current = await CallTransferRepository.findExpired(client, {
+          workspaceId: candidate.workspaceId,
+          id: candidate.id,
+          now,
+        })
+        if (!call || !current) return [] as string[]
         if (current.phase === "aborting") {
           const timedOut = await CallTransferRepository.markRecoveryTimedOut(client, {
             workspaceId: current.workspaceId,
@@ -937,6 +943,21 @@ export class CallService {
       })
       for (const sessionId of cleanup) await this.bestEffortCloseSession(sessionId)
     }
+  }
+
+  /** Every obligation write moves the transfer version, so clients can drop any snapshot at or below the one they hold. */
+  private async touchAcknowledgedTransfer(
+    client: PoolClient,
+    transfer: CallTransportTransferRow
+  ): Promise<CallTransportTransferRow> {
+    const touched = await CallTransferRepository.touch(client, {
+      workspaceId: transfer.workspaceId,
+      id: transfer.id,
+      generation: transfer.generation,
+      version: transfer.version,
+    })
+    if (!touched) throw new HttpError("Transfer acknowledgement is stale", { status: 409, code: "CALL_STALE_TRANSFER" })
+    return touched
   }
 
   private async reconcileTransferPublications(
