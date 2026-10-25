@@ -104,6 +104,15 @@ describe("T3 session control", () => {
     })
   })
 
+  test("/status in a thread shows that thread's own T3 thread", async () => {
+    const { t3, control } = setup({ threads: { stream_root: "thread_a", stream_thread: "thread_b" } })
+
+    const message = (await control.runCommand("status", "", IN_THREAD)).message ?? ""
+
+    expect(message.split("\n")[0]).toBe("- Thread: Fake thread (`thread_b`, idle)")
+    expect(t3.callsOf("t3_thread_read")).toEqual([{ threadId: "thread_b", limit: 1 }])
+  })
+
   test("/status names the latest run of a running thread, and the thread when its model can't be read", async () => {
     const { t3, runner, control } = setup({ threads: {}, model: { instanceId: "codex", model: "gpt-5.5" } })
     t3.script("run_1", [{ status: "running" }])
@@ -482,6 +491,18 @@ describe("T3 session control", () => {
     })
   })
 
+  test("a bare /spawn launches the first installed runtime", async () => {
+    const piOnly = setup(undefined, [
+      { ...RUNTIMES[0]!, installed: false },
+      { ...RUNTIMES[1]!, installed: true },
+    ]).control
+
+    expect({
+      defaults: [setup().control.spawnDefaultRuntime, piOnly.spawnDefaultRuntime],
+      bare: (await piOnly.runCommand("spawn", "helper", CONTEXT)).ok,
+    }).toEqual({ defaults: ["claude", "pi"], bare: true })
+  })
+
   test("advertises /spawn and its runtimes only when one is installed", () => {
     const withRuntime = setup().control
     const without = setup(undefined, [{ ...RUNTIMES[0]!, installed: false }]).control
@@ -528,5 +549,44 @@ describe("T3 session control", () => {
       refused: { ok: false, message: "Could not archive `thread_b`: thread is busy" },
       threads: { stream_root: "thread_a", stream_thread: "thread_b" },
     })
+  })
+
+  test("/done is refused while T3 runs a turn it started itself in the thread", async () => {
+    const { t3, fake, saved, runner, control } = setup({
+      threads: { stream_root: "thread_a", stream_thread: "thread_b" },
+    })
+    t3.script("run_1", [{ status: "completed" }])
+    await runner.deliverTurn(turn({ streamId: "stream_thread" }))
+    await fake.settled()
+    await runner.watch()
+    t3.startInT3("thread_b")
+    t3.script("run_2", [{ status: "running" }])
+    await runner.watch()
+    await until(() => runner.isRelaying("stream_thread"))
+
+    const whileRelaying = await control.runCommand("done", "", IN_THREAD)
+    t3.script("run_2", [{ status: "completed" }])
+    await until(() => !runner.isRelaying("stream_thread"))
+    const afterwards = await control.runCommand("done", "", IN_THREAD)
+
+    expect({ whileRelaying, afterwards, threads: saved.at(-1)?.threads }).toEqual({
+      whileRelaying: {
+        ok: false,
+        message: "T3 Code is running a turn it started itself here; try again once it finishes.",
+      },
+      afterwards: { ok: true, summary: "Archived the T3 Code thread `thread_b`" },
+      threads: { stream_root: "thread_a" },
+    })
+  })
+
+  test("/done unlinks a thread already archived in T3", async () => {
+    const { t3, saved, control } = setup({ threads: { stream_root: "thread_a", stream_thread: "thread_b" } })
+    t3.archiveInT3("thread_b")
+
+    expect(await control.runCommand("done", "", IN_THREAD)).toEqual({
+      ok: true,
+      summary: "Archived the T3 Code thread `thread_b`",
+    })
+    expect(saved.at(-1)?.threads).toEqual({ stream_root: "thread_a" })
   })
 })

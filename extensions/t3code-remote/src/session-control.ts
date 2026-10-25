@@ -20,7 +20,8 @@ import type { ModelOptionDescriptor, ModelSelection, ProviderInfo, T3Client } fr
 const MAX_AMBIGUOUS_CANDIDATES = 8
 /** Codex calls its effort setting `reasoningEffort`, Claude `effort`, Pi `thinking`. */
 const EFFORT_OPTION_IDS: ReadonlySet<string> = new Set(["reasoningEffort", "effort", "thinking"])
-const SPAWN_DEFAULT_RUNTIME = "claude"
+/** T3 Code has no runtime of its own, so a bare `/spawn` launches the first installed one, else this. */
+const SPAWN_FALLBACK_RUNTIME = "claude"
 
 type CommandResult = Awaited<ReturnType<SessionControlActuator["runCommand"]>>
 
@@ -121,8 +122,8 @@ export function createT3SessionControl(
     return undefined
   }
 
-  async function status(rootStreamId: string): Promise<string> {
-    const threadId = runner.threadFor(rootStreamId)
+  async function status(streamId: string): Promise<string> {
+    const threadId = runner.threadFor(streamId)
     const lines: string[] = []
     if (!threadId) lines.push("No T3 Code thread yet; the next message launches one.")
     else {
@@ -237,7 +238,7 @@ export function createT3SessionControl(
   }
 
   function spawn(args: string, context: SessionControlInvocationContext): CommandResult {
-    const parsed = parseSpawnCommandArgs(args, { runtimes: spawnRuntimes(), defaultRuntime: SPAWN_DEFAULT_RUNTIME })
+    const parsed = parseSpawnCommandArgs(args, { runtimes: spawnRuntimes(), defaultRuntime: spawnDefaultRuntime() })
     if ("error" in parsed) return { ok: false, message: parsed.error }
     if (context.streamId !== context.rootStreamId) {
       return { ok: false, message: "Spawn is only available at the scratchpad itself, not inside a thread." }
@@ -276,13 +277,31 @@ export function createT3SessionControl(
     const threadId = runner.threadFor(streamId)
     if (!threadId) return { ok: false, message: "This thread has no T3 Code thread to archive." }
     if (runner.hasOpenTurns(streamId)) return { ok: false, message: "Stop the running turn first (/stop)." }
+    if (runner.isRelaying(streamId)) {
+      return { ok: false, message: "T3 Code is running a turn it started itself here; try again once it finishes." }
+    }
     try {
       await client.call("t3_thread_organize", { threadId, action: "archive" })
     } catch (error) {
-      return { ok: false, message: `Could not archive \`${threadId}\`: ${errorText(error)}` }
+      // T3 refuses to archive a thread archived in its own app, which would leave it linked for good.
+      if (!(await isArchived(threadId))) {
+        return { ok: false, message: `Could not archive \`${threadId}\`: ${errorText(error)}` }
+      }
     }
     runner.forgetThread(streamId)
     return { ok: true, summary: `Archived the T3 Code thread \`${threadId}\`` }
+  }
+
+  async function isArchived(threadId: string): Promise<boolean> {
+    try {
+      return (await client.call("t3_thread_read", { threadId, limit: 1 })).thread.archived
+    } catch {
+      return false
+    }
+  }
+
+  function spawnDefaultRuntime(): string {
+    return installedSpawnRuntimes(spawnRuntimes())[0]?.value ?? SPAWN_FALLBACK_RUNTIME
   }
 
   return {
@@ -293,7 +312,9 @@ export function createT3SessionControl(
     get spawnRuntimes() {
       return installedSpawnRuntimes(spawnRuntimes())
     },
-    spawnDefaultRuntime: SPAWN_DEFAULT_RUNTIME,
+    get spawnDefaultRuntime() {
+      return spawnDefaultRuntime()
+    },
     get modelSuggestions() {
       return suggestionsFrom(providers)
     },
@@ -308,7 +329,7 @@ export function createT3SessionControl(
     runCommand: async (name, args, context) => {
       switch (name) {
         case "status":
-          return { ok: true, message: await status(context.rootStreamId) }
+          return { ok: true, message: await status(context.streamId) }
         case "model":
           return await setModel(args, context.rootStreamId)
         case "thinking":

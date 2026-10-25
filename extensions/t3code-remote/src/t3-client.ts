@@ -56,6 +56,7 @@ export interface ThreadSummary {
   latestRunId: string | null
   providerInstanceId: string
   model: string
+  archived: boolean
 }
 
 export interface ImageAttachment {

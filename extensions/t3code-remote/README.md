@@ -117,8 +117,9 @@ A damaged `threads.json` or `token.json` stops the connector at start instead of
 
 - `/stop` interrupts the open runs and closes their turns.
 - A message sent while a run is open is steered into it when T3 accepts that, and otherwise queued as the next turn.
-- `/status` shows the scratchpad's thread with its model, thinking level, access mode and latest run, the open runs
-  and the questions they wait on, the model new threads launch on, and the T3 URL.
+- `/status` shows the T3 thread of the stream it is typed in, the scratchpad or a thread under it, with its model,
+  thinking level, access mode and latest run. It also lists the open runs and the questions they wait on, the model
+  new threads launch on, and the T3 URL.
 - `/model` picks a model from the T3 server's providers, as `instance::model`, a model id, or a substring matching
   one of them. It moves the scratchpad's thread and every thread launched after it. Threads that already exist under
   the scratchpad or elsewhere keep theirs. A scratch thread can't launch until one is picked. A project thread launched
@@ -130,13 +131,14 @@ A damaged `threads.json` or `token.json` stops the connector at start instead of
   under it. Nothing is posted for its run.
 - `/clear` starts a new T3 thread for the stream it is typed in. It is refused while a turn is open there.
 - `/spawn` launches another agent (Claude Code or Pi) in a thread under the `/spawn` message, through harnessd, the
-  same as from a Claude Code scratchpad. It works only in the scratchpad itself, and is offered only when harnessd is
+  same as from a Claude Code scratchpad. Without a runtime named, it launches the first one installed. It works only in the scratchpad itself, and is offered only when harnessd is
   installed with a runtime to launch. An npm install doesn't ship harnessd, so set `THREA_HARNESSD_ENTRYPOINT` (and
   `THREA_HARNESSD_BUN_BIN` when bun isn't on the unit's `PATH`) to a Threa checkout's
   `extensions/harness-daemon/src/index.ts`.
 - `/done`, typed in a thread, archives that thread's T3 thread and unlinks it, so the thread's next message forks the
-  scratchpad's T3 thread again. The Threa thread itself stays. It is refused in the scratchpad and while a turn is
-  open in the thread.
+  scratchpad's T3 thread again. The Threa thread itself stays. It is refused in the scratchpad, while a turn is open in
+  the thread, and while T3 runs a turn it started by itself there. A T3 thread already archived in the T3 app is
+  unlinked the same way.
 
 ## Traces and replies
 

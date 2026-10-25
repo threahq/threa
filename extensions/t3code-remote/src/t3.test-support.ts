@@ -85,6 +85,7 @@ export function fakeT3() {
   const models = new Map<string, ModelSelection>()
   const pending = new Map<string, { threadId: string; questions: PendingQuestion[]; startsRun: boolean }>()
   const latestRuns = new Map<string, string>()
+  const archived = new Set<string>()
   const threadRuns = new Map<string, string[]>()
   // Like T3, a wait on a run that already ended returns at once with how it ended.
   const ended = new Map<string, string>()
@@ -181,6 +182,7 @@ export function fakeT3() {
         latestRunId: latestRuns.get(args.threadId) ?? null,
         providerInstanceId: models.get(args.threadId)?.instanceId ?? "codex",
         model: models.get(args.threadId)?.model ?? "gpt-5.5",
+        archived: archived.has(args.threadId),
       }
       if (args.itemId !== undefined) {
         const text = continuations.get(args.itemId) ?? ""
@@ -212,7 +214,11 @@ export function fakeT3() {
       models.set(args.threadId, args.modelSelection)
       return { sequence: 1 }
     },
-    t3_thread_organize: () => ({ sequence: 1 }),
+    t3_thread_organize: (args) => {
+      if (archived.has(args.threadId)) throw new Error(`Thread ${args.threadId} is already archived.`)
+      archived.add(args.threadId)
+      return { sequence: 1 }
+    },
     t3_thread_fork: (args) => {
       const targetThreadId = `thread_${++threads}`
       const model = models.get(args.threadId)
@@ -316,6 +322,8 @@ export function fakeT3() {
     steerAs: (delivery: typeof steerDelivery) => (steerDelivery = delivery),
     /** Put a thread on a model, as when the user configures it in T3. */
     threadModel: (threadId: string, selection: ModelSelection) => models.set(threadId, selection),
+    /** Archive a thread in T3 itself. */
+    archiveInT3: (threadId: string) => archived.add(threadId),
     /**
      * Put questions to the user on a thread, as a provider's ask-user tool does. `startsRun` asks
      * them as Codex's async questions do, where the answer arrives as a message that starts a run.
