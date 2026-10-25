@@ -75,8 +75,13 @@ async function savedUpdateCount(page: Page, workspaceId: string, docId: string):
   return response.ok() ? ((await response.json()) as { updates: unknown[] }).updates.length : 0
 }
 
-/** `RevealOnReady` hides a pane with opacity 0 on an ancestor, which `toBeVisible` ignores; this multiplies up the tree. */
+/**
+ * `RevealOnReady` hides a pane with opacity 0 on an ancestor, which `toBeVisible` ignores. The editor mounts
+ * in the commit that reports ready, so once it is attached the reveal is a frame away; only the 3 s cap
+ * would reveal it later than that.
+ */
 async function expectRevealed(editor: Locator): Promise<void> {
+  await expect(editor).toBeAttached({ timeout: 15000 })
   await expect
     .poll(
       () =>
@@ -87,7 +92,7 @@ async function expectRevealed(editor: Locator): Promise<void> {
           }
           return opacity
         }),
-      { timeout: 1500, message: "the doc pane should reveal without waiting out the reveal cap" }
+      { timeout: 750, message: "the doc pane should reveal as soon as the editor mounts, not at the reveal cap" }
     )
     .toBe(1)
 }
