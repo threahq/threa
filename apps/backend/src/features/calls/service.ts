@@ -953,12 +953,13 @@ export class CallService {
 
   /**
    * Every obligation change moves the transfer version so clients can drop snapshots at or below the one they hold.
-   * Replayed acks must not touch: a newer response re-runs the step, which acks again.
+   * Replayed acks must not touch: a newer response re-runs the step, which acks again. Settled transfers never move.
    */
   private async touchAcknowledgedTransfer(
     client: PoolClient,
     transfer: CallTransportTransferRow
   ): Promise<CallTransportTransferRow> {
+    if (transfer.phase === "completed" || transfer.phase === "failed") return transfer
     const touched = await CallTransferRepository.touch(client, {
       workspaceId: transfer.workspaceId,
       id: transfer.id,

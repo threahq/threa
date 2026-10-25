@@ -83,8 +83,9 @@ export function callPublicationsMatch(expected: CallExpectedPublication[], ready
       publication.publicationRevision,
       publication.muted ?? null,
     ])
-  const keys = new Set(ready.map(publicationKey))
-  return expected.every((item) => keys.has(publicationKey(item)))
+  const expectedKeys = expected.map(publicationKey).sort()
+  const readyKeys = ready.map(publicationKey).sort()
+  return expectedKeys.every((key, index) => key === readyKeys[index])
 }
 
 export const callTransportSessionSchema = z.object({

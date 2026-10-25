@@ -101,23 +101,41 @@ async function startTransfer() {
     const row = await CallTransferRepository.findById(pool, workspaceId, transfer.id)
     return { phase: row?.phase, version: row?.version }
   }
+  const publishOnTarget = (publicationId: string) =>
+    calls.setP2pPublications({
+      workspaceId,
+      callId: started.call.id,
+      userId: bUserId,
+      endpointId: joined.endpoint.id,
+      endpointEpoch: joined.endpoint.epoch,
+      endpointConnectionSeq: joined.endpoint.connectionSeq,
+      mediaIncarnation: "inc_b",
+      generation: transfer.target.generation,
+      revision: 1,
+      publications: [{ kind: "mic", publicationId }],
+    })
+  const currentExpected = async (endpointId: string) => {
+    const snapshot = await calls.getRosterSnapshot(workspaceId, started.call.id)
+    return snapshot.transfer!.obligations.find((item) => item.endpointId === endpointId)!.expectedPublications
+  }
   return {
     transfer,
     stored,
+    publishOnTarget,
+    currentExpected,
     a: ack(aUserId, started.endpoint, "inc_a"),
     b: ack(bUserId, joined.endpoint, "inc_b"),
   }
 }
 
+type Party = Awaited<ReturnType<typeof startTransfer>>["a"]
+
+const ready = (party: Party, readyPublications = party.expectedPublications) =>
+  calls.acknowledgeTransferReady({ ...party.identity, ownPublicationsReady: true, readyPublications })
+
 describe("call transfer version ordering", () => {
   test("should bump the transfer version once per obligation change and leave replayed acknowledgements idempotent", async () => {
     const { transfer, stored, a, b } = await startTransfer()
-    const ready = (party: typeof a) =>
-      calls.acknowledgeTransferReady({
-        ...party.identity,
-        ownPublicationsReady: true,
-        readyPublications: party.expectedPublications,
-      })
 
     await ready(a)
     const readyOnce = await stored()
@@ -159,16 +177,54 @@ describe("call transfer version ordering", () => {
     const listExpired = CallTransferRepository.listExpired
     spyOn(CallTransferRepository, "listExpired").mockImplementation(async (db, now) => {
       const expired = await listExpired(db, now)
-      await calls.acknowledgeTransferReady({
-        ...a.identity,
-        ownPublicationsReady: true,
-        readyPublications: a.expectedPublications,
-      })
+      await ready(a)
       return expired
     })
 
     await calls.sweepTransportTransfers(new Date(Date.now() + 120_000))
 
     expect((await stored()).phase).toBe("failed")
+  })
+
+  test("should bump the version when a ready acknowledgement follows a publication change", async () => {
+    const { transfer, stored, publishOnTarget, currentExpected, a } = await startTransfer()
+
+    await ready(a)
+    await publishOnTarget("xfer_b_mic")
+    const afterPublish = await stored()
+    await ready(a, await currentExpected(a.identity.endpointId))
+
+    expect({ afterPublish, afterReady: await stored() }).toEqual({
+      afterPublish: { phase: "preparing", version: transfer.version + 2 },
+      afterReady: { phase: "preparing", version: transfer.version + 3 },
+    })
+  })
+
+  test("should leave the version unchanged for replayed restored acknowledgements and on failed transfers", async () => {
+    const aborted = await startTransfer()
+    const failed = await startTransfer()
+    await Promise.all([ready(aborted.a), ready(aborted.b)])
+    await calls.sweepTransportTransfers(new Date(Date.now() + 120_000))
+    const aborting = await aborted.stored()
+    const failedBefore = await failed.stored()
+
+    await calls.acknowledgeTransferRestored(aborted.a.identity)
+    const restoredOnce = await aborted.stored()
+    await calls.acknowledgeTransferRestored(aborted.a.identity)
+    await calls.acknowledgeTransferRestored(failed.a.identity)
+
+    expect({
+      aborting: aborting.phase,
+      restoredOnce,
+      restoredReplayed: await aborted.stored(),
+      failedBefore: failedBefore.phase,
+      failedAfterRestore: await failed.stored(),
+    }).toEqual({
+      aborting: "aborting",
+      restoredOnce: { phase: "aborting", version: aborting.version! + 1 },
+      restoredReplayed: { phase: "aborting", version: aborting.version! + 1 },
+      failedBefore: "failed",
+      failedAfterRestore: failedBefore,
+    })
   })
 })

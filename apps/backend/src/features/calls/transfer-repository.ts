@@ -443,12 +443,11 @@ export const CallTransferObligationRepository = {
       trackRevision: number
     }
   ): Promise<CallTransferObligationRow | null> {
-    const result =
-      await db.query(sql`UPDATE call_transfer_obligations SET switched = TRUE, switched_at = COALESCE(switched_at, NOW()),
-      version = version + 1, updated_at = NOW() WHERE workspace_id = ${p.workspaceId} AND transfer_id = ${p.transferId}
-      AND endpoint_id = ${p.endpointId} AND endpoint_epoch = ${p.endpointEpoch}
-      AND media_incarnation = ${p.mediaIncarnation} AND membership_revision = ${p.membershipRevision}
-      AND track_revision = ${p.trackRevision} RETURNING ${sql.raw(OBLIGATION_COLUMNS)}`)
+    const result = await db.query(sql`UPDATE call_transfer_obligations SET switched = TRUE,
+      switched_at = CASE WHEN switched THEN switched_at ELSE NOW() END, version = version + 1, updated_at = NOW()
+      WHERE workspace_id = ${p.workspaceId} AND transfer_id = ${p.transferId} AND endpoint_id = ${p.endpointId}
+      AND endpoint_epoch = ${p.endpointEpoch} AND media_incarnation = ${p.mediaIncarnation}
+      AND membership_revision = ${p.membershipRevision} AND track_revision = ${p.trackRevision} RETURNING ${sql.raw(OBLIGATION_COLUMNS)}`)
     return result.rows[0] ? obligation(result.rows[0]) : null
   },
   async revisePublisherKind(
@@ -492,7 +491,8 @@ export const CallTransferObligationRepository = {
     }
   ): Promise<CallTransferObligationRow | null> {
     const result = await db.query(sql`UPDATE call_transfer_obligations SET restored_to_source = TRUE,
-      restored_to_source_at = COALESCE(restored_to_source_at, NOW()), version = version + 1, updated_at = NOW()
+      restored_to_source_at = CASE WHEN restored_to_source THEN restored_to_source_at ELSE NOW() END,
+      version = version + 1, updated_at = NOW()
       WHERE workspace_id = ${p.workspaceId} AND transfer_id = ${p.transferId} AND endpoint_id = ${p.endpointId}
       AND endpoint_epoch = ${p.endpointEpoch} AND media_incarnation = ${p.mediaIncarnation}
       AND membership_revision = ${p.membershipRevision} AND track_revision = ${p.trackRevision}
