@@ -1086,6 +1086,7 @@ export class BotRuntimeService {
     }
     const { anchorId, displayName } = params.thread
     await this.assertOwnedLiveScratchpad(db, { ...params, rootStreamId: link.rootStreamId })
+    await BotInvocationRepository.lockSource(db, { workspaceId: params.workspaceId, sourceMessageId: anchorId })
     const anchor = anchorId.startsWith("msg_")
       ? await MessageRepository.findByIdForUpdate(db, params.workspaceId, anchorId)
       : null
