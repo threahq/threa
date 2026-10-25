@@ -15,7 +15,7 @@ const COPY_BUTTON_GAP_PX = 8
 const COPY_BUTTON_SIZE_PX = 40
 const ACTION_BAR_GAP_PX = 8
 
-interface CopyButtonAnchor {
+interface ActionBarAnchor {
   pos: number
   left: number
   top: number
@@ -50,7 +50,7 @@ function selectedPillPos(editor: Editor): number | null {
   return selection.from
 }
 
-function copyButtonAnchor(editor: Editor): CopyButtonAnchor | null {
+function actionBarAnchor(editor: Editor): ActionBarAnchor | null {
   if (editor.isDestroyed || ComposerPillDragPluginKey.getState(editor.state)) return null
   const pos = selectedPillPos(editor)
   if (pos === null) return null
@@ -59,9 +59,8 @@ function copyButtonAnchor(editor: Editor): CopyButtonAnchor | null {
   if (!rect || rect.bottom < 0 || rect.top > window.innerHeight) return null
   const node = editor.state.doc.nodeAt(pos)
   const isImagePill = node?.type.name === "attachmentReference" && String(node.attrs.mimeType).startsWith("image/")
-  const inline = node?.attrs.display === "inline"
-  let displayToggle: CopyButtonAnchor["displayToggle"] = null
-  if (isImagePill) displayToggle = inline ? "inline" : "pill"
+  const currentDisplay = node?.attrs.display === "inline" ? "inline" : "pill"
+  const displayToggle = isImagePill ? currentDisplay : null
   const barWidth = displayToggle ? COPY_BUTTON_SIZE_PX * 2 + ACTION_BAR_GAP_PX : COPY_BUTTON_SIZE_PX
   const half = barWidth / 2
   const left = Math.min(Math.max(rect.left + rect.width / 2, half), Math.max(half, window.innerWidth - half))
@@ -75,7 +74,7 @@ function copyButtonAnchor(editor: Editor): CopyButtonAnchor | null {
   }
 }
 
-function sameAnchor(left: CopyButtonAnchor | null, right: CopyButtonAnchor | null): boolean {
+function sameAnchor(left: ActionBarAnchor | null, right: ActionBarAnchor | null): boolean {
   if (left === right) return true
   if (!left || !right) return false
   return (
@@ -96,7 +95,7 @@ function sameAnchor(left: CopyButtonAnchor | null, right: CopyButtonAnchor | nul
  */
 export function ComposerPillActions({ editor }: { editor: Editor | null }) {
   const inputMode = useInputMode()
-  const [anchor, setAnchor] = useState<CopyButtonAnchor | null>(null)
+  const [anchor, setAnchor] = useState<ActionBarAnchor | null>(null)
   const [copied, setCopied] = useState(false)
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -107,7 +106,7 @@ export function ComposerPillActions({ editor }: { editor: Editor | null }) {
     }
 
     const sync = () => {
-      const next = copyButtonAnchor(editor)
+      const next = actionBarAnchor(editor)
       setAnchor((current) => (sameAnchor(current, next) ? current : next))
     }
     const hide = () => setAnchor(null)

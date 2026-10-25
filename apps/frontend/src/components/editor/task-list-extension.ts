@@ -26,13 +26,8 @@ const bulletToTaskItemRule = new InputRule({
         const listPos = $pos.before(-2)
         const index = $pos.index(-2)
 
-        const siblings = (from: number, to: number) => {
-          const nodes: ProseMirrorNode[] = []
-          for (let i = from; i < to; i++) nodes.push(list.child(i))
-          return nodes
-        }
-        const before = siblings(0, index)
-        const after = siblings(index + 1, list.childCount)
+        const before = list.content.content.slice(0, index)
+        const after = list.content.content.slice(index + 1)
 
         const replacement: ProseMirrorNode[] = []
         if (before.length > 0) replacement.push(list.type.create(list.attrs, before))
