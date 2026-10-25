@@ -771,10 +771,7 @@ export function AttachmentList({
   // The body renders exactly these (inline display + image row) in place; the
   // gallery still owns them, so only the strip tiles drop.
   const visibleImages = useMemo(
-    () =>
-      inlineAttachmentIds && inlineAttachmentIds.size > 0
-        ? imageAttachments.filter((a) => !inlineAttachmentIds.has(a.id))
-        : imageAttachments,
+    () => imageAttachments.filter((a) => !inlineAttachmentIds?.has(a.id)),
     [imageAttachments, inlineAttachmentIds]
   )
   // Use processingStatus as the video discriminator — the backend sets it for

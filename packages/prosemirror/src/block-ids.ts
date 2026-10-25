@@ -18,10 +18,6 @@ export const BLOCK_ID_NODE_TYPES: readonly string[] = [
 
 const BLOCK_ID_TYPE_SET: ReadonlySet<string> = new Set(BLOCK_ID_NODE_TYPES)
 
-export function newBlockId(): string {
-  return `blk_${ulid()}`
-}
-
 export function ensureBlockIds(doc: JSONContent): JSONContent {
   return assignBlockIds(doc, new Set())
 }
@@ -31,7 +27,7 @@ export function ensureBlockIds(doc: JSONContent): JSONContent {
 function assignBlockIds(doc: JSONContent, seen: Set<string>): JSONContent {
   const current = doc.attrs?.blockId
   const needsId = BLOCK_ID_TYPE_SET.has(doc.type ?? "") && (typeof current !== "string" || seen.has(current))
-  const blockId = needsId ? newBlockId() : current
+  const blockId = needsId ? `blk_${ulid()}` : current
   if (typeof blockId === "string") seen.add(blockId)
 
   let content = doc.content
