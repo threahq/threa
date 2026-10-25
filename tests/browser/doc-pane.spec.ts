@@ -1,0 +1,216 @@
+import { test, expect, type Browser, type Page, type Locator } from "@playwright/test"
+import { expectApiOk, loginAndCreateWorkspace, loginInNewContext, workspaceIdFromUrl } from "./helpers"
+
+/**
+ * A doc opens as a pane beside its host channel. Two members editing it
+ * converge, a reload shows what was saved, a reader outside a public channel
+ * gets the text without an editor, and a phone shows the doc full-screen.
+ */
+
+test.describe.configure({ timeout: 150_000 })
+
+const pane = (page: Page, id: string): Locator => page.locator(`[data-panel-tab="${id}"]`)
+const docEditor = (page: Page, docId: string): Locator => pane(page, docId).locator(".ProseMirror")
+const anchorRow = (page: Page, docId: string): Locator => page.locator(`a[data-doc-id="${docId}"]`)
+
+async function createChannel(
+  page: Page,
+  workspaceId: string,
+  slug: string,
+  visibility: "public" | "private"
+): Promise<string> {
+  const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
+    data: { type: "channel", slug, visibility },
+  })
+  await expectApiOk(response, `Create ${visibility} channel`)
+  return ((await response.json()) as { stream: { id: string } }).stream.id
+}
+
+async function createDoc(page: Page, workspaceId: string, hostId: string): Promise<string> {
+  const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
+    data: { type: "doc", parentStreamId: hostId },
+  })
+  await expectApiOk(response, "Create doc")
+  return ((await response.json()) as { stream: { id: string } }).stream.id
+}
+
+async function joinWorkspace(browser: Browser, workspaceId: string, prefix: string, testId: string) {
+  const email = `${prefix}-${testId}@example.com`
+  const name = `${prefix} ${testId}`
+  const user = await loginInNewContext(browser, email, name)
+  await expectApiOk(
+    await user.page.request.post(`/api/dev/workspaces/${workspaceId}/join`, { data: { role: "member", name } }),
+    `${prefix} joins workspace`
+  )
+  return { ...user, email }
+}
+
+async function userIdByEmail(page: Page, workspaceId: string, email: string): Promise<string> {
+  const response = await page.request.get(`/api/workspaces/${workspaceId}/bootstrap`)
+  await expectApiOk(response, "Get workspace bootstrap")
+  const body = (await response.json()) as { data: { users: Array<{ id: string; email: string }> } }
+  const user = body.data.users.find((candidate) => candidate.email === email)
+  if (!user) throw new Error(`No workspace user for ${email}`)
+  return user.id
+}
+
+async function openChannel(page: Page, workspaceId: string, streamId: string): Promise<void> {
+  await page.goto(`/w/${workspaceId}/s/${streamId}`)
+  await expect(page.locator(`[data-stream-scroller="${streamId}"]`)).toBeVisible({ timeout: 20000 })
+}
+
+/** Moves the caret to the end of the doc through ProseMirror's own keymap, then types. */
+async function typeAtEnd(page: Page, editor: Locator, text: string): Promise<void> {
+  await editor.click()
+  await page.keyboard.press("ControlOrMeta+End")
+  await page.keyboard.type(text)
+}
+
+test.describe("Doc pane", () => {
+  test("should create a doc beside its channel and converge two members' edits", async ({ browser }) => {
+    const ownerContext = await browser.newContext()
+    const owner = await ownerContext.newPage()
+    const { testId } = await loginAndCreateWorkspace(owner, "doc-owner")
+    const workspaceId = workspaceIdFromUrl(owner)
+    const channelId = await createChannel(owner, workspaceId, `docs-${testId}`, "private")
+    const member = await joinWorkspace(browser, workspaceId, "doc-member", testId)
+
+    try {
+      await expectApiOk(
+        await owner.request.post(`/api/workspaces/${workspaceId}/streams/${channelId}/members`, {
+          data: { memberId: await userIdByEmail(owner, workspaceId, member.email) },
+        }),
+        "Add member to channel"
+      )
+
+      await openChannel(owner, workspaceId, channelId)
+      const created = owner.waitForResponse(
+        (response) => response.request().method() === "POST" && /\/streams$/.test(new URL(response.url()).pathname)
+      )
+      await pane(owner, channelId).getByRole("button", { name: "Stream actions" }).first().click()
+      await owner.getByRole("menuitem", { name: "New doc" }).click()
+      const createdResponse = await created
+      await expectApiOk(createdResponse, "New doc")
+      const docId = ((await createdResponse.json()) as { stream: { id: string } }).stream.id
+
+      await expect.poll(() => new URL(owner.url()).searchParams.get("panel")).toContain(docId)
+      await expect(pane(owner, channelId)).toBeVisible()
+      await expect(pane(owner, docId)).toContainText("Untitled", { timeout: 15000 })
+      const ownerEditor = docEditor(owner, docId)
+      await expect(ownerEditor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+      await expect(pane(owner, docId).getByRole("button", { name: "Bold" })).toBeVisible()
+
+      await typeAtEnd(owner, ownerEditor, "Rotation tracker")
+      await owner.keyboard.press("Enter")
+
+      await openChannel(member.page, workspaceId, channelId)
+      const row = anchorRow(member.page, docId)
+      await expect(row).toContainText("created a doc", { timeout: 15000 })
+      await expect(row).toContainText("Untitled")
+      await row.click()
+      const memberEditor = docEditor(member.page, docId)
+      await expect(memberEditor).toContainText("Rotation tracker", { timeout: 15000 })
+      await expect(memberEditor).toHaveAttribute("contenteditable", "true")
+
+      await typeAtEnd(member.page, memberEditor, "AWS key rotated")
+
+      const bothTexts = async () => [await ownerEditor.innerText(), await memberEditor.innerText()]
+      await expect
+        .poll(
+          async () => {
+            const [a, b] = await bothTexts()
+            return a === b && a.includes("Rotation tracker") && a.includes("AWS key rotated")
+          },
+          { timeout: 15000, message: "both editors should hold both edits" }
+        )
+        .toBe(true)
+
+      // Give the 400 ms debounce time to post before the reload drops the page.
+      await expect
+        .poll(async () => {
+          const response = await owner.request.get(`/api/workspaces/${workspaceId}/docs/${docId}/updates?after=0`)
+          return response.ok() ? ((await response.json()) as { updates: Array<{ actorId: string }> }).updates.length : 0
+        })
+        .toBeGreaterThan(1)
+      await owner.reload()
+      await expect(ownerEditor).toContainText("Rotation tracker", { timeout: 20000 })
+      await expect(ownerEditor).toContainText("AWS key rotated")
+
+      await typeAtEnd(owner, ownerEditor, "")
+      await owner.keyboard.press("Enter")
+      await owner.keyboard.type("- [ ] revoke old key")
+      const ownerTask = ownerEditor.locator("ul[data-type='taskList'] > li")
+      await expect(ownerTask).toHaveCount(1)
+      await expect(ownerTask).toContainText("revoke old key")
+      await ownerTask.locator("input[type='checkbox']").check()
+      await expect(ownerTask).toHaveAttribute("data-checked", "true")
+
+      const memberTask = memberEditor.locator("ul[data-type='taskList'] > li")
+      await expect(memberTask).toContainText("revoke old key", { timeout: 15000 })
+      await expect(memberTask).toHaveAttribute("data-checked", "true", { timeout: 15000 })
+    } finally {
+      await ownerContext.close()
+      await member.context.close()
+    }
+  })
+
+  test("should show a public channel's doc read-only to a workspace member outside the channel", async ({
+    browser,
+  }) => {
+    const ownerContext = await browser.newContext()
+    const owner = await ownerContext.newPage()
+    const { testId } = await loginAndCreateWorkspace(owner, "doc-public")
+    const workspaceId = workspaceIdFromUrl(owner)
+    const channelId = await createChannel(owner, workspaceId, `public-docs-${testId}`, "public")
+    const docId = await createDoc(owner, workspaceId, channelId)
+    const reader = await joinWorkspace(browser, workspaceId, "doc-reader", testId)
+
+    try {
+      await openChannel(owner, workspaceId, channelId)
+      await anchorRow(owner, docId).click()
+      await typeAtEnd(owner, docEditor(owner, docId), "Visible to the whole workspace")
+      await expect
+        .poll(async () => {
+          const response = await reader.page.request.get(`/api/workspaces/${workspaceId}/docs/${docId}/updates?after=0`)
+          return response.ok() ? ((await response.json()) as { updates: unknown[] }).updates.length : 0
+        })
+        .toBeGreaterThan(0)
+
+      await openChannel(reader.page, workspaceId, channelId)
+      await anchorRow(reader.page, docId).click()
+      const readerEditor = docEditor(reader.page, docId)
+      await expect(readerEditor).toContainText("Visible to the whole workspace", { timeout: 15000 })
+      await expect(readerEditor).toHaveAttribute("contenteditable", "false")
+      await expect(pane(reader.page, docId).getByRole("button", { name: "Bold" })).toHaveCount(0)
+    } finally {
+      await ownerContext.close()
+      await reader.context.close()
+    }
+  })
+
+  test.describe("phone", () => {
+    test.use({ hasTouch: true })
+
+    test("should open the doc full-screen from the anchor row and go back to the channel", async ({ page }) => {
+      const { testId } = await loginAndCreateWorkspace(page, "doc-phone")
+      const workspaceId = workspaceIdFromUrl(page)
+      const channelId = await createChannel(page, workspaceId, `phone-docs-${testId}`, "public")
+      const docId = await createDoc(page, workspaceId, channelId)
+      await page.setViewportSize({ width: 390, height: 780 })
+      await openChannel(page, workspaceId, channelId)
+
+      await anchorRow(page, docId).tap()
+      const docPane = pane(page, docId)
+      await expect(docEditor(page, docId)).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+      await expect.poll(async () => (await docPane.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(380)
+      const box = (await docPane.boundingBox())!
+      expect(box.x).toBeLessThanOrEqual(5)
+
+      await docPane.locator("header").first().getByRole("button", { name: "Back" }).tap()
+      await expect(docPane).toHaveCount(0)
+      await expect.poll(() => new URL(page.url()).searchParams.get("panel")).toBeNull()
+      const channelBox = (await pane(page, channelId).boundingBox())!
+      expect({ x: Math.round(channelBox.x), width: Math.round(channelBox.width) }).toEqual({ x: 0, width: 390 })
+    })
+  })
+})
