@@ -82,13 +82,20 @@ export class DocPresence {
 
   private onUpdate = ({ added, updated, removed }: AwarenessChange, origin: unknown): void => {
     const local = this.awareness.clientID
-    if (origin === REMOTE_ORIGIN) return
+    if (origin === REMOTE_ORIGIN) {
+      // A newcomer has none of our state until our next change; known peers are never re-added, so this settles.
+      if (added.length > 0) this.scheduleSend()
+      return
+    }
     if (removed.includes(local)) {
       this.clearSendTimer()
       this.sendLocalState()
       return
     }
-    if (!added.includes(local) && !updated.includes(local)) return
+    if (added.includes(local) || updated.includes(local)) this.scheduleSend()
+  }
+
+  private scheduleSend(): void {
     this.sendTimer ??= setTimeout(() => {
       this.sendTimer = null
       this.sendLocalState()

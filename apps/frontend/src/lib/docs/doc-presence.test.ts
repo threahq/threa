@@ -120,6 +120,32 @@ describe("DocPresence", () => {
     }).toEqual({ ignored: [], peers: [ALICE], stable: true, notified: true, echoed: 1 })
   })
 
+  it("should re-announce the local user once when a new peer appears, not when a known peer changes", () => {
+    const { presence, sent } = createPresence()
+    presence.setLocalUser(ME)
+    vi.advanceTimersByTime(PRESENCE_SEND_DEBOUNCE_MS)
+    const alice = createAwareness()
+    const aliceFrame = () => ({
+      workspaceId: WORKSPACE_ID,
+      docId: DOC_ID,
+      update: bytesToBase64(encodeAwarenessUpdate(alice, [alice.clientID])),
+    })
+
+    alice.setLocalStateField("user", ALICE)
+    presence.receive(aliceFrame())
+    vi.advanceTimersByTime(PRESENCE_SEND_DEBOUNCE_MS)
+    alice.setLocalStateField("cursor", { anchor: 1, head: 1 })
+    presence.receive(aliceFrame())
+    vi.advanceTimersByTime(PRESENCE_SEND_DEBOUNCE_MS)
+
+    const receiver = createAwareness()
+    decodeInto(receiver, sent[1])
+    expect({ frames: sent.length, state: receiver.getStates().get(presence.awareness.clientID) }).toEqual({
+      frames: 2,
+      state: { user: ME },
+    })
+  })
+
   it("should send the removal synchronously when destroyed", () => {
     const { presence, sent } = createPresence()
     presence.setLocalUser(ME)

@@ -7,16 +7,25 @@ import { MemoryRouter, Route, Routes } from "react-router-dom"
 import type { Editor, JSONContent } from "@tiptap/core"
 import * as Y from "yjs"
 import { prosemirrorJSONToYDoc, yDocToProsemirrorJSON } from "y-prosemirror"
+import { applyAwarenessUpdate, Awareness } from "y-protocols/awareness"
 import { getThreaSchema } from "@threahq/prosemirror/schema"
 import { base64ToBytes, bytesToBase64 } from "@threahq/crypto"
-import { DOC_FRAGMENT, type DocState, type DocUpdatedPayload, type Stream } from "@threahq/types"
+import {
+  DOC_FRAGMENT,
+  type DocAwarenessPayload,
+  type DocState,
+  type DocUpdatedPayload,
+  type Stream,
+} from "@threahq/types"
 import { toast } from "sonner"
 import { ApiError } from "@/api/client"
 import { docsApi } from "@/api/docs"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { RevealOnReady } from "@/contexts/coordinated-loading-context"
 import { FLUSH_DEBOUNCE_MS } from "@/lib/docs/doc-sync"
+import { getPresenceColor } from "@/lib/avatar-color"
 import * as contextsModule from "@/contexts"
+import * as hooksModule from "@/hooks"
 import * as attachmentsModule from "@/hooks/use-attachments"
 import * as mentionablesModule from "@/hooks/use-mentionables"
 import * as workspaceEmojiModule from "@/hooks/use-workspace-emoji"
@@ -25,6 +34,7 @@ import * as syncEngineModule from "@/sync/sync-engine"
 import { SocketEventGate } from "@/sync/socket-event-gate"
 import * as triggersModule from "@/components/editor/triggers"
 import { DocPaneBody } from "./doc-pane-body"
+import { useDocSync } from "./use-doc-sync"
 
 const WORKSPACE_ID = "ws_1"
 const DOC_ID = "stream_doc"
@@ -43,16 +53,22 @@ function proseMirror(): HTMLElement & { editor: Editor } {
   return element as HTMLElement & { editor: Editor }
 }
 
+function DocPane({ canWrite }: { canWrite: boolean | null }) {
+  const view = useDocSync(WORKSPACE_ID, DOC_ID)
+  return <DocPaneBody workspaceId={WORKSPACE_ID} canWrite={canWrite} view={view} />
+}
+
 describe("DocPaneBody", () => {
   let gate: SocketEventGate
   let serverDoc: Y.Doc
   let queryClient: QueryClient
   let joinRoom: MockInstance<typeof socketRoomModule.joinRoomWithAck>
+  let socket: { on: MockInstance; off: MockInstance; emit: MockInstance; connected: boolean }
 
   beforeEach(() => {
     serverDoc = prosemirrorJSONToYDoc(getThreaSchema(), paragraphs("Rotation tracker"), DOC_FRAGMENT)
     gate = new SocketEventGate(WORKSPACE_ID)
-    const socket = { on: vi.fn(), off: vi.fn(), emit: vi.fn(), connected: true }
+    socket = { on: vi.fn(), off: vi.fn(), emit: vi.fn(), connected: true }
     vi.spyOn(contextsModule, "useSocket").mockReturnValue(
       socket as unknown as ReturnType<typeof contextsModule.useSocket>
     )
@@ -61,6 +77,10 @@ describe("DocPaneBody", () => {
       preferences: { keyboardShortcuts: {} },
       isLoading: false,
     } as unknown as ReturnType<typeof contextsModule.usePreferences>)
+    vi.spyOn(hooksModule, "useCurrentWorkspaceUser").mockReturnValue({
+      id: "usr_viewer",
+      name: "Viewer",
+    } as unknown as ReturnType<typeof hooksModule.useCurrentWorkspaceUser>)
     joinRoom = vi.spyOn(socketRoomModule, "joinRoomWithAck").mockResolvedValue(undefined)
     vi.spyOn(syncEngineModule, "useOptionalSyncEngine").mockReturnValue({
       getLiveEventSource: () => gate,
@@ -102,10 +122,7 @@ describe("DocPaneBody", () => {
         <TooltipProvider>
           <MemoryRouter initialEntries={[`/w/${WORKSPACE_ID}`]}>
             <Routes>
-              <Route
-                path="/w/:workspaceId"
-                element={wrap(<DocPaneBody workspaceId={WORKSPACE_ID} stream={{ id: DOC_ID }} canWrite={canWrite} />)}
-              />
+              <Route path="/w/:workspaceId" element={wrap(<DocPane canWrite={canWrite} />)} />
             </Routes>
           </MemoryRouter>
         </TooltipProvider>
@@ -357,6 +374,44 @@ describe("DocPaneBody", () => {
 
     await waitFor(() => expect(docsApi.postUpdate).toHaveBeenCalledTimes(1))
     expect(off.mock.calls.map(([event]) => event)).toContain("doc:updated")
+  })
+
+  it("should announce the viewer to the doc room and withdraw them when the pane closes", async () => {
+    const view = await mountLoaded()
+    const awarenessFrames = () =>
+      socket.emit.mock.calls
+        .filter(([event]) => event === "doc:awareness")
+        .map(([, payload]) => payload as DocAwarenessPayload)
+    await waitFor(() => expect(awarenessFrames().length).toBeGreaterThan(0))
+    const peerDoc = new Y.Doc()
+    const peer = new Awareness(peerDoc)
+    const users = () =>
+      [...peer.getStates().entries()].filter(([clientId]) => clientId !== peer.clientID).map(([, state]) => state.user)
+    try {
+      for (const frame of awarenessFrames()) applyAwarenessUpdate(peer, base64ToBytes(frame.update), "test")
+      const whileOpen = users()
+
+      view.unmount()
+      const last = awarenessFrames().at(-1)!
+      applyAwarenessUpdate(peer, base64ToBytes(last.update), "test")
+
+      expect({
+        listened: socket.on.mock.calls.some(([event]) => event === "doc:awareness"),
+        stoppedListening: socket.off.mock.calls.some(([event]) => event === "doc:awareness"),
+        frameTarget: { workspaceId: last.workspaceId, docId: last.docId },
+        whileOpen,
+        afterClose: users(),
+      }).toEqual({
+        listened: true,
+        stoppedListening: true,
+        frameTarget: { workspaceId: WORKSPACE_ID, docId: DOC_ID },
+        whileOpen: [{ userId: "usr_viewer", name: "Viewer", color: getPresenceColor("usr_viewer") }],
+        afterClose: [],
+      })
+    } finally {
+      peer.destroy()
+      peerDoc.destroy()
+    }
   })
 
   it("drops its still-uploading placeholders from the doc when the pane closes mid-upload", async () => {

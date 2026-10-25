@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react"
 import { EditorContent, useEditor, type Editor } from "@tiptap/react"
 import type * as Y from "yjs"
+import type { Awareness } from "y-protocols/awareness"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -23,7 +24,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { useLatest } from "@/hooks/use-latest"
 import { getEffectiveEditorBindings } from "@/lib/keyboard-shortcuts"
 import { cn } from "@/lib/utils"
-import { useDocSync } from "./use-doc-sync"
+import type { DocSyncView } from "./use-doc-sync"
 
 const COLUMN_CLASS = "mx-auto w-full max-w-3xl px-4 sm:px-6"
 
@@ -38,14 +39,13 @@ const NO_SUBMIT = { current: () => {} }
 
 interface DocPaneBodyProps {
   workspaceId: string
-  stream: { id: string }
   /** Null while the viewer's write access is unresolved. */
   canWrite: boolean | null
+  view: DocSyncView
 }
 
 /** A doc stream's collaborative editor, mounted only once the doc's state and the viewer's write access have loaded. */
-export function DocPaneBody({ workspaceId, stream, canWrite }: DocPaneBodyProps) {
-  const view = useDocSync(workspaceId, stream.id)
+export function DocPaneBody({ workspaceId, canWrite, view }: DocPaneBodyProps) {
   useRevealReady(view.phase === "error" || (view.phase === "ready" && canWrite !== null))
 
   if (view.phase === "error") {
@@ -70,16 +70,25 @@ export function DocPaneBody({ workspaceId, stream, canWrite }: DocPaneBodyProps)
     )
   }
 
-  return <DocEditor key={view.ydoc.guid} workspaceId={workspaceId} ydoc={view.ydoc} canWrite={canWrite} />
+  return (
+    <DocEditor
+      key={view.ydoc.guid}
+      workspaceId={workspaceId}
+      ydoc={view.ydoc}
+      awareness={view.presence.awareness}
+      canWrite={canWrite}
+    />
+  )
 }
 
 interface DocEditorProps {
   workspaceId: string
   ydoc: Y.Doc
+  awareness: Awareness
   canWrite: boolean
 }
 
-function DocEditor({ workspaceId, ydoc, canWrite }: DocEditorProps) {
+function DocEditor({ workspaceId, ydoc, awareness, canWrite }: DocEditorProps) {
   const isMobile = useIsMobile()
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
 
@@ -147,6 +156,7 @@ function DocEditor({ workspaceId, ydoc, canWrite }: DocEditorProps) {
     () => [
       ...createDocumentExtensions({
         ydoc,
+        awareness,
         placeholder: "Start writing…",
         mentionSuggestion: mentionConfig,
         channelSuggestion: channelConfig,
@@ -155,7 +165,7 @@ function DocEditor({ workspaceId, ydoc, canWrite }: DocEditorProps) {
       }),
       EditorBehaviors.configure({ sendModeRef: DOC_SEND_MODE, onSubmitRef: NO_SUBMIT, keyBindingsRef }),
     ],
-    [ydoc, mentionConfig, channelConfig, emojiConfig, toEmoji]
+    [ydoc, awareness, mentionConfig, channelConfig, emojiConfig, toEmoji]
   )
 
   const editor = useEditor({

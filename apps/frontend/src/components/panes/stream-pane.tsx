@@ -51,6 +51,9 @@ import { StreamContent, TimelineSkeleton, AgentActivityHeaderChip } from "@/comp
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { DocPaneBody } from "@/components/docs/doc-pane-body"
 import { useDocCanWrite } from "@/components/docs/use-doc-can-write"
+import { useDocSync } from "@/components/docs/use-doc-sync"
+import { DocPresenceAvatars } from "@/components/docs/doc-presence-avatars"
+import { DocsHeaderChip } from "@/components/docs/docs-header-chip"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { LabelStack } from "@/components/labels/label-stack"
 import { StreamHeaderEncryptionAction } from "@/components/encryption/stream-encryption-affordance"
@@ -68,7 +71,13 @@ import { useCoverClose } from "@/hooks/use-cover-close"
 import { CONVERSATION_OVERLAY_COVER } from "@/lib/covers"
 import { panelIdsOf, primaryPanelOf } from "@/lib/panel-tabs"
 import { InviteActorButton, InviteBotButton } from "@/components/encryption"
-import { BotRuntimeStatuses, CompanionModes, LabelableResourceTypes, StreamTypes } from "@threahq/types"
+import {
+  BotRuntimeStatuses,
+  CompanionModes,
+  LabelableResourceTypes,
+  StreamTypes,
+  streamTypeCapabilities,
+} from "@threahq/types"
 import { getStreamTypeLabel, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamSheet } from "@/components/stream-sheet"
 import { PaneHeader } from "./pane-header"
@@ -175,6 +184,7 @@ export function StreamPane({
   // A doc's body is its editor: no timeline to search, move, browse or summarize, and no settings of its own.
   const hasTimeline = !isDoc
   const canWriteDoc = useDocCanWrite(workspaceId, stream)
+  const docSync = useDocSync(workspaceId, isDoc ? streamId : null)
   const createDoc = useCreateDoc(workspaceId, isDraft ? undefined : stream)
   // Only the stream page sets a list beside its stream; under an aside it would land out of sight.
   const offersList = (isChannel || isDm) && hasTabs && offersContext
@@ -739,6 +749,10 @@ export function StreamPane({
     <div ref={chipsRef} className="flex shrink-0 items-center gap-2 empty:hidden">
       {!tabbed && companionModeIndicator}
       <AgentActivityHeaderChip workspaceId={workspaceId} streamId={streamId} compact={isMobile || tabbed} />
+      {docSync.phase === "ready" && <DocPresenceAvatars workspaceId={workspaceId} presence={docSync.presence} />}
+      {stream && !isDraft && streamTypeCapabilities(stream.type).hostsDocs && (
+        <DocsHeaderChip workspaceId={workspaceId} hostId={stream.id} />
+      )}
     </div>
   )
 
@@ -941,7 +955,7 @@ export function StreamPane({
           <StreamEncryptionGate workspaceId={workspaceId} encrypted={isEncryptedScratchpad && !isDraft}>
             <PaneLanded fallback={<TimelineSkeleton />}>
               {isDoc && stream ? (
-                <DocPaneBody workspaceId={workspaceId} stream={stream} canWrite={canWriteDoc} />
+                <DocPaneBody workspaceId={workspaceId} canWrite={canWriteDoc} view={docSync} />
               ) : (
                 <StreamContent
                   workspaceId={workspaceId}
