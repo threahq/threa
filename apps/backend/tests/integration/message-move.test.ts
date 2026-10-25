@@ -5,7 +5,7 @@ import { DraftsRepository } from "../../src/features/drafts"
 import { AgentSessionRepository, SessionStatuses } from "../../src/features/agents"
 import { StreamEventRepository, StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { eventId, messageId, personaId, sessionId, streamId, userId, workspaceId } from "../../src/lib/id"
-import { deleteAllStreams, addTestMember, setupIsolatedTestDatabase, testMessageContent } from "./setup"
+import { addTestMember, setupIsolatedTestDatabase, testMessageContent } from "./setup"
 
 describe("message move integration", () => {
   let pool: Pool
@@ -31,7 +31,7 @@ describe("message move integration", () => {
     await pool.query("DELETE FROM messages")
     await pool.query("DELETE FROM stream_events")
     await pool.query("DELETE FROM stream_sequences")
-    await deleteAllStreams(pool)
+    await pool.query("DELETE FROM streams")
     await pool.query(
       "DELETE FROM outbox WHERE id > (SELECT COALESCE(MAX(last_processed_id), 0) FROM outbox_listeners WHERE listener_id = 'broadcast')"
     )
