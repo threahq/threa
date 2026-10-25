@@ -4,7 +4,7 @@ import { seedBotRuntimeFixture, testContentJson, type BotRuntimeFixture, botRunt
 import { BotRuntimeSessionLinkRepository } from "../../src/features/bot-runtimes"
 import { MessageRepository } from "../../src/features/messaging"
 import { E2eStreamsRepository } from "../../src/features/e2e-streams"
-import { botRuntimeSessionLinkId, messageId } from "../../src/lib/id"
+import { botRuntimeSessionLinkId, messageId, streamId } from "../../src/lib/id"
 
 describe("briefRuntimeSession", () => {
   let fixture: BotRuntimeFixture
@@ -376,6 +376,194 @@ describe("briefRuntimeSession", () => {
       [workspace]
     )
     expect(invocations.rows[0]!.count).toBe("0")
+  })
+
+  describe("opening a thread from a root-linked session", () => {
+    const brief = {
+      instanceId: "target-instance",
+      runtimeSessionId: "rootlinked-session",
+      contentMarkdown: "brief content",
+    }
+
+    async function linkRoot() {
+      return BotRuntimeSessionLinkRepository.upsert(pool, {
+        id: botRuntimeSessionLinkId(),
+        workspaceId: workspace,
+        botId: bot,
+        runtimeKind: "openclaw",
+        instanceId: brief.instanceId,
+        runtimeSessionId: brief.runtimeSessionId,
+        rootStreamId: root,
+        activeStreamId: root,
+        linkedBy: author,
+      })
+    }
+
+    const briefWith = (thread: { anchorId: string; displayName: string }, overrides: Partial<typeof brief> = {}) =>
+      service().briefRuntimeSession({
+        workspaceId: workspace,
+        botId: bot,
+        ownerUserId: author,
+        ...brief,
+        ...overrides,
+        thread,
+      })
+
+    async function listThreads() {
+      const rows = await pool.query<{
+        id: string
+        parent_stream_id: string
+        parent_anchor_id: string
+        created_by: string
+      }>(
+        "SELECT id, parent_stream_id, parent_anchor_id, created_by FROM streams WHERE workspace_id = $1 AND type = 'thread'",
+        [workspace]
+      )
+      return rows.rows
+    }
+
+    test("creates the thread as the bot and answers into it", async () => {
+      const link = await linkRoot()
+      const anchor = await anchorMessage("/spawn t3code review")
+
+      const briefed = await briefWith({ anchorId: anchor.id, displayName: "review" })
+
+      const threads = await listThreads()
+      expect(threads).toEqual([
+        { id: expect.any(String), parent_stream_id: root, parent_anchor_id: anchor.id, created_by: bot },
+      ])
+      expect(briefed!.invocation).toMatchObject({
+        workspaceId: workspace,
+        rootStreamId: root,
+        activeStreamId: root,
+        sourceMessageId: anchor.id,
+        responseStreamId: threads[0]!.id,
+        actorId: bot,
+        trigger: "brief",
+        requiredCapability: "active-scratchpad",
+        status: "pending",
+        promptMarkdown: "brief content",
+        authorUserId: author,
+        targetInstanceId: link.instanceId,
+        targetRuntimeSessionId: link.runtimeSessionId,
+      })
+    })
+
+    test("a retry with the same prompt and thread resolves to the same invocation and thread", async () => {
+      await linkRoot()
+      const anchor = await anchorMessage()
+      const thread = { anchorId: anchor.id, displayName: "review" }
+
+      const first = await briefWith(thread)
+      const retry = await briefWith(thread)
+
+      expect(retry!.invocation).toMatchObject({
+        id: first!.invocation.id,
+        responseStreamId: first!.invocation.responseStreamId,
+      })
+      expect((await listThreads()).map(({ id }) => id)).toEqual([first!.invocation.responseStreamId])
+    })
+
+    test("concurrent briefs on one anchor resolve to one invocation and one thread", async () => {
+      await linkRoot()
+      const anchor = await anchorMessage()
+      const thread = { anchorId: anchor.id, displayName: "review" }
+
+      const briefed = await Promise.all([briefWith(thread), briefWith(thread), briefWith(thread)])
+
+      const [first] = briefed
+      expect(briefed.map((result) => result!.invocation.id)).toEqual(Array(3).fill(first!.invocation.id))
+      expect((await listThreads()).map(({ id }) => id)).toEqual([first!.invocation.responseStreamId])
+    })
+
+    test("refuses a retry with a different prompt and keeps the one thread", async () => {
+      await linkRoot()
+      const anchor = await anchorMessage()
+      const thread = { anchorId: anchor.id, displayName: "review" }
+      const first = await briefWith(thread)
+
+      await expect(briefWith(thread, { contentMarkdown: "a different brief" })).rejects.toMatchObject({
+        status: 409,
+        code: "BRIEF_SOURCE_ALREADY_INVOKED",
+      })
+      expect((await listThreads()).map(({ id }) => id)).toEqual([first!.invocation.responseStreamId])
+    })
+
+    test("refuses an anchor whose thread another session is linked to", async () => {
+      const { anchor } = await attachThread("sibling-instance", "sibling-session")
+      await linkRoot()
+
+      await expect(briefWith({ anchorId: anchor.id, displayName: "review" })).rejects.toMatchObject({
+        status: 409,
+        code: "THREAD_SESSION_EXISTS",
+      })
+      const invocations = await pool.query("SELECT id FROM bot_invocations WHERE workspace_id = $1", [workspace])
+      expect(invocations.rows).toEqual([])
+    })
+
+    test("refuses a session linked to a thread", async () => {
+      await attachThread("target-instance", "target-session")
+      const anchor = await anchorMessage()
+
+      await expect(
+        service().briefRuntimeSession({
+          workspaceId: workspace,
+          botId: bot,
+          ownerUserId: author,
+          instanceId: "target-instance",
+          runtimeSessionId: "target-session",
+          contentMarkdown: "brief content",
+          thread: { anchorId: anchor.id, displayName: "review" },
+        })
+      ).rejects.toMatchObject({ status: 400, code: "BRIEF_THREAD_REQUIRES_ROOT_LINK" })
+    })
+
+    test("refuses an anchor that lives in another stream", async () => {
+      await linkRoot()
+      const otherStream = streamId()
+      await pool.query(
+        "INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)",
+        [otherStream, workspace, author]
+      )
+      const foreign = await MessageRepository.insert(pool, {
+        workspaceId: workspace,
+        id: messageId(),
+        streamId: otherStream,
+        sequence: 1n,
+        authorId: author,
+        authorType: "user",
+        contentJson: testContentJson("elsewhere"),
+        contentMarkdown: "elsewhere",
+      })
+
+      await expect(briefWith({ anchorId: foreign.id, displayName: "review" })).rejects.toMatchObject({
+        status: 400,
+        code: "BRIEF_ANCHOR_INVALID",
+      })
+      expect(await listThreads()).toEqual([])
+    })
+
+    test("refuses a deleted anchor", async () => {
+      await linkRoot()
+      const anchor = await anchorMessage()
+      await pool.query("UPDATE messages SET deleted_at = NOW() WHERE id = $1", [anchor.id])
+
+      await expect(briefWith({ anchorId: anchor.id, displayName: "review" })).rejects.toMatchObject({
+        status: 400,
+        code: "BRIEF_ANCHOR_INVALID",
+      })
+      expect(await listThreads()).toEqual([])
+    })
+
+    test("refuses an anchor that is not a message id", async () => {
+      await linkRoot()
+
+      await expect(briefWith({ anchorId: root, displayName: "review" })).rejects.toMatchObject({
+        status: 400,
+        code: "BRIEF_ANCHOR_INVALID",
+      })
+      expect(await listThreads()).toEqual([])
+    })
   })
 
   describe("against an end-to-end encrypted root", () => {

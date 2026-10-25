@@ -2198,7 +2198,16 @@
                 "properties": {
                   "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
                   "runtimeSessionId": { "type": "string", "minLength": 1, "maxLength": 256 },
-                  "content": { "type": "string", "minLength": 1, "maxLength": 50000 }
+                  "content": { "type": "string", "minLength": 1, "maxLength": 50000 },
+                  "thread": {
+                    "type": "object",
+                    "properties": {
+                      "anchorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                      "displayName": { "type": "string", "minLength": 1, "maxLength": 100 }
+                    },
+                    "required": ["anchorId", "displayName"],
+                    "additionalProperties": false
+                  }
                 },
                 "required": ["instanceId", "runtimeSessionId", "content"],
                 "additionalProperties": false

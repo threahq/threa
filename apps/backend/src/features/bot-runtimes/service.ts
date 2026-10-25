@@ -1,4 +1,4 @@
-import type { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
 import type { Querier } from "../../db"
 import {
   AuthorTypes,
@@ -138,6 +138,9 @@ function resolveAdvertisedKeys(params: {
   if (params.publicKey && params.publicKeyId) return [{ keyId: params.publicKeyId, publicKey: params.publicKey }]
   return params.retainBik ? undefined : []
 }
+
+/** Where a brief lands: the message its turn reads from and the thread it answers into. */
+type BriefTarget = { anchorId: string; responseStreamId: string }
 
 export class BotRuntimeService {
   private readonly pool: Pool
@@ -492,23 +495,8 @@ export class BotRuntimeService {
     localCwd?: string
     traits: readonly BotTrait[]
   }): Promise<{ link: BotRuntimeSessionLink; stream: Stream }> {
-    const { streamService, labelAssignmentService } = this
-    if (!streamService || !labelAssignmentService) {
-      throw new Error("BotRuntimeService missing scratchpad session dependencies")
-    }
-
     return withTransaction(this.pool, async (client) => {
-      const root = await StreamRepository.findByIdForShare(client, params.workspaceId, params.rootStreamId)
-      if (!root) throw new HttpError("Scratchpad not found", { status: 404, code: "NOT_FOUND" })
-      if (root.type !== StreamTypes.SCRATCHPAD) {
-        throw new HttpError("attachTo root must be a scratchpad", { status: 400, code: "ATTACH_ROOT_NOT_SCRATCHPAD" })
-      }
-      if (root.archivedAt) {
-        throw new HttpError("Scratchpad is archived", { status: 409, code: "SCRATCHPAD_ARCHIVED" })
-      }
-      if (root.createdBy !== params.ownerUserId) {
-        throw new HttpError("Scratchpad belongs to another user", { status: 403, code: "FORBIDDEN" })
-      }
+      await this.assertOwnedLiveScratchpad(client, params)
       // The brief that follows an attach is plaintext, so an E2E root would leave a
       // thread, a link and a running agent that can never be briefed (INV-11).
       if (await E2eStreamsRepository.isE2eStream(client, params.workspaceId, params.rootStreamId)) {
@@ -518,58 +506,7 @@ export class BotRuntimeService {
         })
       }
 
-      // The bot writes the thread as itself, and a thread's access resolves
-      // through its root (INV-62), so it needs a grant on the scratchpad or
-      // `resolveLockedStreamAuthorities` refuses the create as a non-member.
-      // Same grant `createLinkedScratchpadSession` applies to the scratchpad it
-      // mints, and idempotent — the owner asking for the attach IS the approval
-      // a `bot_access_requests` card would collect, and the owner check above
-      // has already run.
-      await streamService.addBotToStreamOn(
-        client,
-        params.rootStreamId,
-        params.botId,
-        params.workspaceId,
-        params.ownerUserId
-      )
-
-      const found = await streamService.createThreadForPrincipalOn(
-        client,
-        { kind: "bot", botId: params.botId },
-        {
-          workspaceId: params.workspaceId,
-          parentStreamId: params.rootStreamId,
-          parentAnchorId: params.anchorId,
-          // The session name is the only title this thread can get: nothing
-          // anchors it that a reader can skim, and dynamic naming only fires on
-          // a user's message, which never lands in an agent's own thread.
-          displayName: params.displayName,
-          createdBy: params.botId,
-          createdByType: "bot",
-        }
-      )
-      // An anchor keeps its thread, so a spawn after `/done` finds the thread
-      // that command archived: reopen it rather than link a runtime to a
-      // read-only thread. Only the bot's own thread reopens this way; one a
-      // user closed stays closed.
-      const thread = await this.reopenOwnArchivedThread(client, params.workspaceId, params.botId, found)
-      await labelAssignmentService.inheritInTransaction(client, {
-        workspaceId: params.workspaceId,
-        from: { resourceType: LabelableResourceTypes.STREAM, resourceId: params.rootStreamId },
-        to: { resourceType: LabelableResourceTypes.STREAM, resourceId: thread.id },
-      })
-
-      const existingLinks = await BotRuntimeSessionLinkRepository.listActiveByStreamForShare(client, {
-        workspaceId: params.workspaceId,
-        rootStreamId: params.rootStreamId,
-        activeStreamId: thread.id,
-      })
-      if (existingLinks.length > 0) {
-        throw new HttpError("A runtime session is already linked to this thread", {
-          status: 409,
-          code: "THREAD_SESSION_EXISTS",
-        })
-      }
+      const thread = await this.openBotThreadInTransaction(client, params)
 
       await this.repairBotTraitsInTransaction(client, {
         workspaceId: params.workspaceId,
@@ -600,6 +537,97 @@ export class BotRuntimeService {
       }
       return { link, stream: thread }
     })
+  }
+
+  // Exclusive, not shared: the thread create that follows locks the root FOR
+  // UPDATE, and two transactions upgrading a shared lock on it deadlock.
+  private async assertOwnedLiveScratchpad(
+    client: Querier,
+    params: { workspaceId: string; rootStreamId: string; ownerUserId: string }
+  ): Promise<void> {
+    const root = await StreamRepository.findByIdForUpdateBlocking(client, params.workspaceId, params.rootStreamId)
+    if (!root) throw new HttpError("Scratchpad not found", { status: 404, code: "NOT_FOUND" })
+    if (root.type !== StreamTypes.SCRATCHPAD) {
+      throw new HttpError("Root stream must be a scratchpad", { status: 400, code: "ATTACH_ROOT_NOT_SCRATCHPAD" })
+    }
+    if (root.archivedAt) {
+      throw new HttpError("Scratchpad is archived", { status: 409, code: "SCRATCHPAD_ARCHIVED" })
+    }
+    if (root.createdBy !== params.ownerUserId) {
+      throw new HttpError("Scratchpad belongs to another user", { status: 403, code: "FORBIDDEN" })
+    }
+  }
+
+  /** Opens (or reopens) the bot's thread on `anchorId`, refusing one another runtime session is linked to. */
+  private async openBotThreadInTransaction(
+    client: PoolClient,
+    params: {
+      workspaceId: string
+      botId: string
+      ownerUserId: string
+      rootStreamId: string
+      anchorId: string
+      displayName: string
+    }
+  ): Promise<Stream> {
+    const { streamService, labelAssignmentService } = this
+    if (!streamService || !labelAssignmentService) {
+      throw new Error("BotRuntimeService missing scratchpad session dependencies")
+    }
+
+    // The bot writes the thread as itself, and a thread's access resolves
+    // through its root (INV-62), so it needs a grant on the scratchpad or
+    // `resolveLockedStreamAuthorities` refuses the create as a non-member.
+    // Same grant `createLinkedScratchpadSession` applies to the scratchpad it
+    // mints, and idempotent — the owner asking for the attach or brief IS the
+    // approval a `bot_access_requests` card would collect, and the caller has
+    // already checked ownership.
+    await streamService.addBotToStreamOn(
+      client,
+      params.rootStreamId,
+      params.botId,
+      params.workspaceId,
+      params.ownerUserId
+    )
+
+    const found = await streamService.createThreadForPrincipalOn(
+      client,
+      { kind: "bot", botId: params.botId },
+      {
+        workspaceId: params.workspaceId,
+        parentStreamId: params.rootStreamId,
+        parentAnchorId: params.anchorId,
+        // The session name is the only title this thread can get: nothing
+        // anchors it that a reader can skim, and dynamic naming only fires on
+        // a user's message, which never lands in an agent's own thread.
+        displayName: params.displayName,
+        createdBy: params.botId,
+        createdByType: "bot",
+      }
+    )
+    // An anchor keeps its thread, so a spawn after `/done` finds the thread
+    // that command archived: reopen it rather than link a runtime to a
+    // read-only thread. Only the bot's own thread reopens this way; one a
+    // user closed stays closed.
+    const thread = await this.reopenOwnArchivedThread(client, params.workspaceId, params.botId, found)
+    await labelAssignmentService.inheritInTransaction(client, {
+      workspaceId: params.workspaceId,
+      from: { resourceType: LabelableResourceTypes.STREAM, resourceId: params.rootStreamId },
+      to: { resourceType: LabelableResourceTypes.STREAM, resourceId: thread.id },
+    })
+
+    const existingLinks = await BotRuntimeSessionLinkRepository.listActiveByStreamForShare(client, {
+      workspaceId: params.workspaceId,
+      rootStreamId: params.rootStreamId,
+      activeStreamId: thread.id,
+    })
+    if (existingLinks.length > 0) {
+      throw new HttpError("A runtime session is already linked to this thread", {
+        status: 409,
+        code: "THREAD_SESSION_EXISTS",
+      })
+    }
+    return thread
   }
 
   private async reopenOwnArchivedThread(
@@ -963,7 +991,9 @@ export class BotRuntimeService {
    * thread's own anchor message: the invocation reads from the anchor in the
    * root and answers into the thread, so a brief writes no message of its own.
    * `brief` is unrouted, so the caller's prompt survives instead of being
-   * rewritten from the anchor the way a routed trigger's would be.
+   * rewritten from the anchor the way a routed trigger's would be. With
+   * `thread`, a session linked to the scratchpad itself first opens a bot
+   * thread on that anchor and answers into it.
    */
   async briefRuntimeSession(params: {
     workspaceId: string
@@ -972,6 +1002,7 @@ export class BotRuntimeService {
     instanceId: string
     runtimeSessionId: string
     contentMarkdown: string
+    thread?: { anchorId: string; displayName: string }
   }): Promise<{ invocation: BotInvocation } | null> {
     return withTransaction(this.pool, async (db) => {
       const link = await BotRuntimeSessionLinkRepository.findActiveByRuntimeSessionForShare(db, {
@@ -987,26 +1018,15 @@ export class BotRuntimeService {
           code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
         })
       }
-      const thread = await StreamRepository.findById(db, params.workspaceId, link.activeStreamId)
-      const anchorId = thread?.type === StreamTypes.THREAD ? thread.parentAnchorId : null
-      const anchor = anchorId?.startsWith("msg_")
-        ? await MessageRepository.findInvocationSourceStateForShare(db, {
-            workspaceId: params.workspaceId,
-            messageId: anchorId,
-          })
-        : null
-      if (!anchorId || !anchor || anchor.deleted) {
-        throw new HttpError("Runtime session is not attached to a live message thread", {
-          status: 400,
-          code: "SESSION_NOT_MESSAGE_ANCHORED",
-        })
-      }
+      const { anchorId, responseStreamId } = params.thread
+        ? await this.openBriefThreadInTransaction(db, { ...params, thread: params.thread }, link)
+        : await this.linkedBriefTargetInTransaction(db, params.workspaceId, link)
       const { invocation, wasNewlyInserted } = await this.createInvocationInTransaction(db, {
         workspaceId: params.workspaceId,
         rootStreamId: link.rootStreamId,
         activeStreamId: link.rootStreamId,
         sourceMessageId: anchorId,
-        responseStreamId: link.activeStreamId,
+        responseStreamId,
         actorId: params.botId,
         trigger: BotInvocationTriggers.BRIEF,
         requiredCapability: BotInvocationCapabilities.ACTIVE_SCRATCHPAD,
@@ -1027,6 +1047,61 @@ export class BotRuntimeService {
       }
       return { invocation }
     })
+  }
+
+  private async linkedBriefTargetInTransaction(
+    db: Querier,
+    workspaceId: string,
+    link: BotRuntimeSessionLink
+  ): Promise<BriefTarget> {
+    const thread = await StreamRepository.findById(db, workspaceId, link.activeStreamId)
+    const anchorId = thread?.type === StreamTypes.THREAD ? thread.parentAnchorId : null
+    const anchor = anchorId?.startsWith("msg_")
+      ? await MessageRepository.findInvocationSourceStateForShare(db, { workspaceId, messageId: anchorId })
+      : null
+    if (!anchorId || !anchor || anchor.deleted) {
+      throw new HttpError("Runtime session is not attached to a live message thread", {
+        status: 400,
+        code: "SESSION_NOT_MESSAGE_ANCHORED",
+      })
+    }
+    return { anchorId, responseStreamId: link.activeStreamId }
+  }
+
+  private async openBriefThreadInTransaction(
+    db: PoolClient,
+    params: {
+      workspaceId: string
+      botId: string
+      ownerUserId: string
+      thread: { anchorId: string; displayName: string }
+    },
+    link: BotRuntimeSessionLink
+  ): Promise<BriefTarget> {
+    if (link.activeStreamId !== link.rootStreamId) {
+      throw new HttpError("A brief can only open a thread for a session linked to the scratchpad itself", {
+        status: 400,
+        code: "BRIEF_THREAD_REQUIRES_ROOT_LINK",
+      })
+    }
+    const { anchorId, displayName } = params.thread
+    await this.assertOwnedLiveScratchpad(db, { ...params, rootStreamId: link.rootStreamId })
+    const anchor = anchorId.startsWith("msg_")
+      ? await MessageRepository.findByIdForUpdate(db, params.workspaceId, anchorId)
+      : null
+    if (!anchor || anchor.deletedAt || anchor.streamId !== link.rootStreamId) {
+      throw new HttpError("Thread anchor must be a live message in the linked scratchpad", {
+        status: 400,
+        code: "BRIEF_ANCHOR_INVALID",
+      })
+    }
+    const thread = await this.openBotThreadInTransaction(db, {
+      ...params,
+      anchorId,
+      displayName,
+      rootStreamId: link.rootStreamId,
+    })
+    return { anchorId, responseStreamId: thread.id }
   }
 
   private async terminalizeCancelledSessions(

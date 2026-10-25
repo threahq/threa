@@ -268,6 +268,8 @@ export const briefRuntimeSessionSchema = z.object({
   instanceId: z.string().min(1).max(128),
   runtimeSessionId: z.string().min(1).max(256),
   content: z.string().min(1).max(50_000),
+  // Opens a bot thread on `anchorId` and answers into it; root-linked sessions only.
+  thread: z.object({ anchorId: z.string().min(1).max(128), displayName: z.string().min(1).max(100) }).optional(),
 })
 
 export const claimInvocationSchema = z.object({
