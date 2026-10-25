@@ -1,8 +1,9 @@
 import { describe, test, expect } from "bun:test"
-import { io, Socket } from "socket.io-client"
 import {
   TestClient,
-  getBaseUrl,
+  connectSocket,
+  createSocket,
+  joinAck,
   loginAs,
   createWorkspace,
   createChannel,
@@ -11,39 +12,6 @@ import {
   joinWorkspace,
   addStreamMember,
 } from "../client"
-
-function createSocket(client: TestClient): Socket {
-  const cookies = (client as unknown as { cookies?: Map<string, string> }).cookies
-  return io(getBaseUrl(), {
-    extraHeaders: {
-      Cookie: cookies
-        ? Array.from(cookies.entries())
-            .map(([k, v]) => `${k}=${v}`)
-            .join("; ")
-        : "",
-    },
-    transports: ["websocket"],
-    autoConnect: false,
-  })
-}
-
-function connectSocket(socket: Socket): Promise<void> {
-  return new Promise((resolve, reject) => {
-    socket.on("connect", () => resolve())
-    socket.on("connect_error", reject)
-    socket.connect()
-  })
-}
-
-function joinAck(socket: Socket, room: string): Promise<{ ok: boolean; error?: string }> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error(`Socket join timeout for room: ${room}`)), 5000)
-    socket.emit("join", room, (result: { ok: boolean; error?: string }) => {
-      clearTimeout(timeout)
-      resolve(result)
-    })
-  })
-}
 
 const testRunId = Math.random().toString(36).slice(2, 8)
 

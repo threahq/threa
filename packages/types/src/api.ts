@@ -2465,13 +2465,6 @@ export interface DocUpdatedPayload extends DocUpdateView, DocEditedEventPayload 
   streamId: string
 }
 
-export interface DocAwarenessPayload {
-  workspaceId: string
-  docId: string
-  /** base64 y-protocols awareness update */
-  update: string
-}
-
 export interface AIUsageSummary {
   totalCostUsd: number
   promptTokens: number

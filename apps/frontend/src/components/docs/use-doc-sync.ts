@@ -1,12 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react"
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react"
 import { toast } from "sonner"
 import * as Y from "yjs"
 import { StreamErrorCodes } from "@threahq/types"
 import { useSocket, useSocketReconnectCount } from "@/contexts"
 import { useCurrentWorkspaceUser } from "@/hooks"
 import { useLatest } from "@/hooks/use-latest"
-import { getPresenceColor } from "@/lib/avatar-color"
-import { DocPresence, type PresenceUser } from "@/lib/docs/doc-presence"
+import { DocPresence } from "@/lib/docs/doc-presence"
 import { DocSync, type DocSyncStatus } from "@/lib/docs/doc-sync"
 import { joinRoomWithAck } from "@/lib/socket-room"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
@@ -64,12 +63,12 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
       send: (payload) => latestSocket()?.emit("doc:awareness", payload),
     })
     // Unload and the back-forward cache never unmount, so peers would keep a ghost caret until the 30 s awareness timeout.
-    window.addEventListener("pagehide", presence.leave)
-    window.addEventListener("pageshow", presence.rejoin)
+    window.addEventListener("pagehide", presence.withdraw)
+    window.addEventListener("pageshow", presence.restore)
     setCreated({ key, ydoc, sync, presence, loaded: sync.start() })
     return () => {
-      window.removeEventListener("pagehide", presence.leave)
-      window.removeEventListener("pageshow", presence.rejoin)
+      window.removeEventListener("pagehide", presence.withdraw)
+      window.removeEventListener("pageshow", presence.restore)
       presence.destroy()
       sync.stop()
       ydoc.destroy()
@@ -77,19 +76,13 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
   }, [workspaceId, docId, key, latestSocket])
 
   const viewer = useCurrentWorkspaceUser(workspaceId)
-  const viewerUserId = viewer?.id
+  const viewerId = viewer?.id
   const viewerName = viewer?.name
-  const presenceUser = useMemo<PresenceUser | null>(
-    () =>
-      viewerUserId && viewerName
-        ? { userId: viewerUserId, name: viewerName, color: getPresenceColor(viewerUserId) }
-        : null,
-    [viewerUserId, viewerName]
-  )
   useEffect(() => {
-    session?.presence.setLocalUser(presenceUser)
-  }, [session, presenceUser])
+    session?.presence.setLocalUser(viewerId && viewerName ? { userId: viewerId, name: viewerName } : null)
+  }, [session, viewerId, viewerName])
 
+  // Awareness is unsequenced, so it rides the socket, not the live event source.
   useEffect(() => {
     if (!session || !socket) return
     socket.on("doc:awareness", session.presence.receive)
@@ -108,7 +101,7 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
     }
   }, [session, socket, syncEngine])
 
-  // INV-53: the load may have read the doc before the room join took effect, so catch up once the join is acked.
+  // INV-53: the load may have read the doc before the room join took effect, so catch up once the join is acked; presence re-announces to peers who joined or timed us out meanwhile.
   const reconnectCount = useSocketReconnectCount()
   useEffect(() => {
     if (!session || !socket || !docId) return

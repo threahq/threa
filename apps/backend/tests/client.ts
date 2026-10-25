@@ -3,7 +3,7 @@
  * Black box testing - treats the API as an external service.
  */
 
-import type { Socket } from "socket.io-client"
+import { io, type Socket } from "socket.io-client"
 import { INTERNAL_API_KEY_HEADER } from "@threahq/backend-common"
 import {
   WORKSPACE_ROLE_SLUGS,
@@ -978,6 +978,40 @@ export function checkSlugAvailable(client: TestClient, workspaceId: string, slug
   const params = new URLSearchParams({ slug })
   if (exclude) params.set("exclude", exclude)
   return client.get<{ available: boolean }>(`/api/workspaces/${workspaceId}/streams/slug-available?${params}`)
+}
+
+export function createSocket(client: TestClient): Socket {
+  const cookies = (client as unknown as { cookies?: Map<string, string> }).cookies
+  return io(getBaseUrl(), {
+    extraHeaders: {
+      Cookie: cookies
+        ? Array.from(cookies.entries())
+            .map(([k, v]) => `${k}=${v}`)
+            .join("; ")
+        : "",
+    },
+    transports: ["websocket"],
+    autoConnect: false,
+  })
+}
+
+export function connectSocket(socket: Socket): Promise<void> {
+  return new Promise((resolve, reject) => {
+    socket.on("connect", () => resolve())
+    socket.on("connect_error", reject)
+    socket.connect()
+  })
+}
+
+/** Like {@link joinRoom}, but resolves with the server's ack instead of rejecting a refusal. */
+export function joinAck(socket: Socket, room: string): Promise<{ ok: boolean; error?: string }> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(`Socket join timeout for room: ${room}`)), 5000)
+    socket.emit("join", room, (result: { ok: boolean; error?: string }) => {
+      clearTimeout(timeout)
+      resolve(result)
+    })
+  })
 }
 
 /**
