@@ -75,6 +75,56 @@ function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })
 }
 
+describe("plaintext attachments (outbound)", () => {
+  test("prepareFinalMarkdown links an embedded image in place and lists directive files", async () => {
+    __testing.setConfigForTesting(BASE_CONFIG)
+    const dir = tempDir()
+    writeFileSync(join(dir, "chart.png"), new Uint8Array([1, 2, 3]))
+    writeFileSync(join(dir, "notes.txt"), "notes")
+    const uploaded: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (!String(input).endsWith("/attachments")) throw new Error(`unexpected fetch: ${String(input)}`)
+      const file = (init?.body as FormData).get("file") as Blob & { name?: string }
+      uploaded.push(file.name ?? "")
+      const id = `att_${uploaded.length}`
+      return jsonResponse({ data: { id, filename: file.name, mimeType: file.type, sizeBytes: file.size } })
+    }) as typeof fetch)
+
+    let result: Awaited<ReturnType<typeof __testing.prepareFinalMarkdown>>
+    try {
+      result = await __testing.prepareFinalMarkdown(
+        "See ![the chart](chart.png) and ![gone](gone.png).\nTHREA_ATTACH: notes.txt",
+        dir
+      )
+    } finally {
+      fetchSpy.mockRestore()
+    }
+
+    expect({ uploaded, markdown: result.finalMarkdown.replace(/ENOENT.*$/m, "ENOENT") }).toEqual({
+      uploaded: ["chart.png", "notes.txt"],
+      markdown: [
+        'See [the chart](attachment:att_1 "threa-attachment:filename=chart.png&mimeType=image%2Fpng&sizeBytes=3") and .',
+        "",
+        "Attachments:",
+        "",
+        "- [notes.txt](attachment:att_2)",
+        "",
+        "Attachment upload failed:",
+        "- gone.png: ENOENT",
+      ].join("\n"),
+    })
+  })
+
+  test("trace text hides embedded image and directive paths", () => {
+    expect(__testing.sanitizeTraceText("![shot](/home/u/shot.png)\nTHREA_ATTACH: /home/u/notes.txt")).toBe(
+      "[image: local path omitted]\nTHREA_ATTACH: [local path omitted]"
+    )
+  })
+})
+
 describe("sealed attachments (outbound)", () => {
   test("completeSealedWithMarkdown encrypts + uploads directives and seals the refs into the reply", async () => {
     __testing.setConfigForTesting(BASE_CONFIG)
@@ -187,6 +237,114 @@ describe("sealed attachments (outbound)", () => {
     expect(payload.contentMarkdown).toContain("Answer.")
     expect(payload.contentMarkdown).toContain("Attachment upload failed:")
     expect(payload.attachmentRefs).toEqual([])
+  })
+
+  test("an image embedded from disk is sealed as a ref and its markup removed", async () => {
+    __testing.setConfigForTesting(BASE_CONFIG)
+    const dir = tempDir()
+    writeFileSync(join(dir, "shot.png"), new Uint8Array([1, 2, 3]))
+    const completions: Array<Record<string, unknown>> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      const url = String(input)
+      if (url.endsWith("/attachments")) {
+        return jsonResponse({
+          data: { id: "att_img_1", filename: "encrypted", mimeType: "application/octet-stream", sizeBytes: 1 },
+        })
+      }
+      if (url.endsWith("/sealed-complete")) {
+        completions.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return jsonResponse({ data: {} })
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    }) as typeof fetch)
+
+    try {
+      await __testing.completeSealedWithMarkdown(
+        invocation({ sealing: sealingState }) as never,
+        sealingState as never,
+        "Here it is:\n\n![screen](./shot.png)",
+        dir
+      )
+    } finally {
+      fetchSpy.mockRestore()
+    }
+
+    const reply = (
+      completions[0] as { reply: { ciphertext: string; envelope: StreamEnvelope; attachmentIds?: string[] } }
+    ).reply
+    const payload = parseSealedPayload(
+      await openMessageAsString({
+        key: sealingState.replySsk,
+        envelope: reply.envelope,
+        ciphertext: base64ToBytes(reply.ciphertext),
+      })
+    )
+    expect({
+      attachmentIds: reply.attachmentIds,
+      contentMarkdown: payload.contentMarkdown,
+      refs: payload.attachmentRefs.map(({ attachmentId, filename }) => ({ attachmentId, filename })),
+    }).toEqual({
+      attachmentIds: ["att_img_1"],
+      contentMarkdown: "Here it is:",
+      refs: [{ attachmentId: "att_img_1", filename: "shot.png" }],
+    })
+  })
+
+  test("directive files claim the sealed attachment cap before an embedded image", async () => {
+    __testing.setConfigForTesting(BASE_CONFIG)
+    const dir = tempDir()
+    const files = Array.from({ length: 16 }, (_, i) => `f${i}.txt`)
+    for (const file of files) writeFileSync(join(dir, file), "x")
+    writeFileSync(join(dir, "shot.png"), new Uint8Array([1, 2, 3]))
+    const completions: Array<Record<string, unknown>> = []
+    let uploads = 0
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      const url = String(input)
+      if (url.endsWith("/attachments")) {
+        uploads++
+        return jsonResponse({
+          data: { id: `att_${uploads}`, filename: "encrypted", mimeType: "application/octet-stream", sizeBytes: 1 },
+        })
+      }
+      if (url.endsWith("/sealed-complete")) {
+        completions.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return jsonResponse({ data: {} })
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    }) as typeof fetch)
+
+    try {
+      await __testing.completeSealedWithMarkdown(
+        invocation({ sealing: sealingState }) as never,
+        sealingState as never,
+        ["![screen](shot.png)", ...files.map((file) => `THREA_ATTACH: ${file}`)].join("\n"),
+        dir
+      )
+    } finally {
+      fetchSpy.mockRestore()
+    }
+
+    const reply = (completions[0] as { reply: { ciphertext: string; envelope: StreamEnvelope } }).reply
+    const payload = parseSealedPayload(
+      await openMessageAsString({
+        key: sealingState.replySsk,
+        envelope: reply.envelope,
+        ciphertext: base64ToBytes(reply.ciphertext),
+      })
+    )
+    expect({
+      filenames: payload.attachmentRefs.map((ref) => ref.filename),
+      contentMarkdown: payload.contentMarkdown,
+    }).toEqual({
+      filenames: files,
+      contentMarkdown: "Attachment upload failed:\n- shot.png: over the 16-attachment limit for one message",
+    })
   })
 })
 

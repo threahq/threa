@@ -34,8 +34,10 @@ trace detail (real commands, file contents, tool output) instead of the
 "omitted for safety" redactions headline mode keeps. Set `sealedFullTrace:
 false` to use the configured `traceMode` on sealed turns too. For command-only
 traces everywhere, use `traceMode: "commands"` with `sealedFullTrace: false`.
-The toggle can never enable full detail on a plaintext turn. Attachments (`THREA_ATTACH:`) work on
-sealed turns too: the file is encrypted locally under a fresh single-use key,
+The toggle can never enable full detail on a plaintext turn. Attachments
+(`THREA_ATTACH:` lines, and markdown images outside code that point at a local
+png, jpg, gif, webp or svg) work on sealed turns too: the file is encrypted
+locally under a fresh single-use key,
 only ciphertext is uploaded (placeholder name/mime on the server), and the key
 rides sealed inside the reply payload — inbound attachments are likewise
 fetched as ciphertext and decrypted locally. Deleting the BIK file orphans the

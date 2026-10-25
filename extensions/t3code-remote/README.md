@@ -149,10 +149,13 @@ subagent's title. A todo list shows how many of its steps are done in either mod
 reasoning shows as thinking steps. Other scratchpads get no reasoning steps. While a tool runs, the bot's status
 says what kind it is, such as "Running a command…".
 
-An assistant message followed by more work is posted as a narration step, and the last one is the reply. A message
-that starts with `THREA_UPDATE:` is posted to the scratchpad as soon as it ends, without the prefix, so the agent can
-report progress on longer work. A `THREA_ATTACH: /absolute/path` line in the reply uploads that file, and a reply of
-exactly `THREA_NO_RESPONSE` closes the turn silently. Each new thread's first message tells the agent all three.
+An assistant message followed by more work is posted as a narration step, and the last one is the reply. A message that
+starts with `THREA_UPDATE:` is posted to the scratchpad as soon as it ends, without the prefix, so the agent can report
+progress on longer work. A `THREA_ATTACH: /absolute/path` line in the reply uploads that file, and a reply of exactly
+`THREA_NO_RESPONSE` closes the turn silently. Each new thread's first message tells the agent all three. A markdown
+image outside code that points at a local png, jpg, gif, webp or svg file, such as `![chart](/tmp/chart.png)`, uploads
+too. On plaintext scratchpads it becomes an attachment link where it was written; on encrypted ones it is attached to
+the reply.
 
 A run T3 starts by itself, as when background agents finish, has its updates and final message posted to the
 scratchpad too, or its error if it fails. The connector checks each linked thread for one every 5 seconds, unless the

@@ -28,6 +28,8 @@ import {
   E2eKeyring,
   FileKeyStore,
   e2eKeyAccount,
+  findLocalImageLinks,
+  imageAttachmentLink,
   mintE2eKeyRecord,
   mintStreamKeyWraps,
   openSealedAck,
@@ -40,7 +42,9 @@ import {
   WS_BACKSTOP_POLL_MS,
   scrubSealedError,
   sealReply,
+  redactLocalImageLinks,
   sealStep,
+  uploadLocalImageLinks,
   type AttachmentRef,
   type BotIdentityKey,
   type BotRuntimeHello,
@@ -1553,9 +1557,9 @@ function formatToolResultTrace(
 }
 
 function sanitizeTraceText(text: string): string {
-  return text
-    .replace(/, downloaded to [^)\n]+/g, "")
-    .replace(/^THREA_ATTACH:\s*.+$/gm, "THREA_ATTACH: [local path omitted]")
+  return redactLocalImageLinks(
+    text.replace(/, downloaded to [^)\n]+/g, "").replace(/^THREA_ATTACH:\s*.+$/gm, "THREA_ATTACH: [local path omitted]")
+  )
 }
 
 function formatInvocationTrace(invocation: ClaimedInvocation, context: string): string {
@@ -2280,7 +2284,8 @@ function scheduleRecoveredCompletion(finalText: string, ctx: ExtensionContext, d
           return
         }
         const permanentClientError = error instanceof ThreaApiError && error.status >= 400 && error.status < 500
-        const hasAttachments = extractAttachmentDirectives(finalText).paths.length > 0
+        const hasAttachments =
+          extractAttachmentDirectives(finalText).paths.length > 0 || findLocalImageLinks(finalText).length > 0
         if (permanentClientError || hasAttachments) {
           try {
             await failPending(`Recovered completion failed: ${summarizeError(error)}`, ctx)
@@ -4967,16 +4972,22 @@ async function prepareFinalMarkdown(
   cwd: string
 ): Promise<{ finalMarkdown: string; uploadedAttachments: UploadedAttachment[] }> {
   const extracted = extractAttachmentDirectives(markdown.trim())
-  const uploadedAttachments: UploadedAttachment[] = []
-  const failedUploads: string[] = []
+  const images = await uploadLocalImageLinks(
+    extracted.markdown,
+    cwd,
+    (path) => uploadAttachment(path, cwd),
+    imageAttachmentLink
+  )
+  const listedAttachments: UploadedAttachment[] = []
+  const failedUploads = [...images.failed]
   for (const path of extracted.paths) {
     try {
-      uploadedAttachments.push(await uploadAttachment(path, cwd))
+      listedAttachments.push(await uploadAttachment(path, cwd))
     } catch (error) {
-      failedUploads.push(`${path}: ${String(error)}`)
+      failedUploads.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
-  const attachmentLinks = uploadedAttachments.map(
+  const attachmentLinks = listedAttachments.map(
     (attachment) => `- [${attachment.filename}](attachment:${attachment.id})`
   )
   const uploadFailureNote =
@@ -4985,14 +4996,14 @@ async function prepareFinalMarkdown(
       : ""
   return {
     finalMarkdown: [
-      extracted.markdown,
+      images.markdown.trim(),
       attachmentLinks.length > 0 ? "Attachments:" : "",
       ...attachmentLinks,
       uploadFailureNote,
     ]
       .filter(Boolean)
       .join("\n\n"),
-    uploadedAttachments,
+    uploadedAttachments: [...images.uploaded, ...listedAttachments],
   }
 }
 
@@ -5200,26 +5211,34 @@ async function completeSealedWithMarkdown(
     return
   }
   const refs: AttachmentRef[] = []
-  const failedUploads: string[] = []
   // Server cap on attachmentIds per sealed message (sealedAttachmentIdsSchema
   // .max(16)) — clamp before uploading or the whole completion 400s forever.
-  for (const path of extracted.paths.slice(MAX_SEALED_ATTACHMENTS_PER_MESSAGE)) {
-    failedUploads.push(`${path}: over the ${MAX_SEALED_ATTACHMENTS_PER_MESSAGE}-attachment limit for one message`)
+  const upload = async (path: string): Promise<AttachmentRef> => {
+    if (refs.length >= MAX_SEALED_ATTACHMENTS_PER_MESSAGE) {
+      throw new Error(`over the ${MAX_SEALED_ATTACHMENTS_PER_MESSAGE}-attachment limit for one message`)
+    }
+    const ref = await uploadSealedAttachment(path, cwd)
+    refs.push(ref)
+    return ref
   }
-  for (const path of extracted.paths.slice(0, MAX_SEALED_ATTACHMENTS_PER_MESSAGE)) {
+  // Explicit directives claim the capped slots before embedded images.
+  const failedUploads: string[] = []
+  for (const path of extracted.paths) {
     try {
-      refs.push(await uploadSealedAttachment(path, cwd))
+      await upload(path)
     } catch (error) {
-      failedUploads.push(`${path}: ${String(error)}`)
+      failedUploads.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
+  const images = await uploadLocalImageLinks(extracted.markdown, cwd, upload, () => "")
+  failedUploads.push(...images.failed)
   if (cancelledInvocations.has(invocation) || invocation.sourceRevision !== revision || invocation.sealing !== sealing)
     return
   const uploadFailureNote =
     failedUploads.length > 0
       ? ["Attachment upload failed:", ...failedUploads.map((failure) => `- ${failure}`)].join("\n")
       : ""
-  const finalMarkdown = [extracted.markdown, uploadFailureNote].filter(Boolean).join("\n\n")
+  const finalMarkdown = [images.markdown.trim(), uploadFailureNote].filter(Boolean).join("\n\n")
   const reply = await sealReply(sealing, finalMarkdown, refs.length > 0 ? { attachmentRefs: refs } : undefined)
   if (cancelledInvocations.has(invocation) || invocation.sourceRevision !== revision || invocation.sealing !== sealing)
     return
@@ -5393,6 +5412,8 @@ export const __testing = {
   shouldEmitFullTrace,
   traceModeForInvocation,
   completeSealedWithMarkdown,
+  prepareFinalMarkdown,
+  sanitizeTraceText,
   downloadSealedContextAttachments,
   setConfigForTesting: (value: unknown) => {
     config = value as Config | undefined

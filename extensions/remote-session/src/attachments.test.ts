@@ -39,6 +39,10 @@ describe("redactAttachDirectives", () => {
       "Made it\nTHREA_ATTACH: [local path omitted]\nsee THREA_ATTACH: inline"
     )
   })
+
+  test("hides embedded local image paths", () => {
+    expect(redactAttachDirectives("Look: ![shot](/home/a/shot.png)")).toBe("Look: [image: local path omitted]")
+  })
 })
 
 describe("extractAttachmentDirectives", () => {
@@ -193,6 +197,36 @@ describe("uploadReplyAttachments", () => {
     expect(result).toEqual({ markdown: "plain reply", uploaded: [], failed: [] })
   })
 
+  test("uploads an image embedded from disk and links it in place", async () => {
+    const dir = tempDir()
+    writeFileSync(join(dir, "shot.png"), new Uint8Array([1, 2, 3]))
+    const uploads: string[] = []
+    const client = {
+      async uploadAttachment(form: FormData): Promise<AttachmentSummary> {
+        uploads.push((form.get("file") as Blob & { name?: string }).name ?? "")
+        return summary({ id: "att_img", filename: "shot.png", mimeType: "image/png" })
+      },
+    }
+    const result = await uploadReplyAttachments(
+      client,
+      "Direction 1:\n![First direction](shot.png)\n\nDirection 2:\n![](./missing.png)\n\n`![code](shot.png)`",
+      dir
+    )
+    expect({
+      uploads,
+      ids: result.uploaded.map((a) => a.id),
+      // The rest of the error is the runtime's wording.
+      markdown: result.markdown.replace(/ENOENT.*$/, "ENOENT"),
+    }).toEqual({
+      uploads: ["shot.png"],
+      ids: ["att_img"],
+      markdown:
+        'Direction 1:\n[First direction](attachment:att_img "threa-attachment:filename=shot.png&mimeType=image%2Fpng&sizeBytes=1")\n\n' +
+        "Direction 2:\n\n\n`![code](shot.png)`\n\n" +
+        "Attachment upload failed:\n- ./missing.png: ENOENT",
+    })
+  })
+
   test("leaves the markdown empty when there was nothing to say and nothing to attach", async () => {
     const client = {
       async uploadAttachment(): Promise<AttachmentSummary> {
@@ -255,6 +289,54 @@ describe("uploadSealedReplyAttachments", () => {
     expect(result.attachmentIds).toEqual([])
     expect(result.markdown).toContain("Done")
     expect(result.markdown).toContain("Attachment upload failed:")
+  })
+
+  test("uploads an embedded image as a sealed ref and removes its markup", async () => {
+    const dir = tempDir()
+    writeFileSync(join(dir, "shot.png"), new Uint8Array([9, 9]))
+    const e2eFlags: unknown[] = []
+    const client = {
+      async uploadAttachment(form: FormData): Promise<AttachmentSummary> {
+        e2eFlags.push(form.get("e2e"))
+        return summary({ id: "att_e2e_img", filename: "encrypted" })
+      },
+    }
+    const result = await uploadSealedReplyAttachments(client, "Look:\n![shot](shot.png)", dir)
+    expect({
+      e2eFlags,
+      markdown: result.markdown,
+      ids: result.attachmentIds,
+      filename: result.refs[0]?.filename,
+    }).toEqual({
+      e2eFlags: ["true"],
+      markdown: "Look:",
+      ids: ["att_e2e_img"],
+      filename: "shot.png",
+    })
+  })
+
+  test("directives claim the 16-id cap before embedded images", async () => {
+    const dir = tempDir()
+    const lines = ["Done"]
+    for (let i = 0; i < 16; i++) {
+      writeFileSync(join(dir, `img-${i}.png`), `image ${i}`)
+      lines.push(`![img ${i}](img-${i}.png)`)
+    }
+    writeFileSync(join(dir, "extra.txt"), "extra")
+    lines.push("THREA_ATTACH: extra.txt")
+    let uploadCount = 0
+    const client = {
+      async uploadAttachment(): Promise<AttachmentSummary> {
+        uploadCount += 1
+        return summary({ id: `att_${uploadCount}` })
+      },
+    }
+    const result = await uploadSealedReplyAttachments(client, lines.join("\n"), dir)
+    expect({ uploadCount, ids: result.attachmentIds.length, markdown: result.markdown }).toEqual({
+      uploadCount: 16,
+      ids: 16,
+      markdown: "Done\n\nAttachment upload failed:\n- img-15.png: over the 16-attachment limit for one message",
+    })
   })
 
   test("clamps to the server's 16-id cap: overflow directives become failure notes, not a 400 loop", async () => {

@@ -141,6 +141,8 @@ THREA_ATTACH: ./reports/out.png
 
 The channel uploads the file (one per `THREA_ATTACH:` line; paths resolve against the working directory) and rewrites the line into an `[out.png](attachment:…)` link the reply carries into the scratchpad. An upload that fails is reported inline rather than dropping the reply.
 
+A markdown image outside code that points at a local png, jpg, gif, webp or svg file, such as `![chart](/tmp/chart.png)`, uploads too. On plaintext scratchpads it becomes an attachment link where it was written; on encrypted ones it is attached to the reply. Web URLs are left as written.
+
 ## Delegations
 
 With `THREA_DELEGATIONS=1` (off by default), this channel also runs the workspace delegation queue: when a Threa persona hands off a task (`delegated_tasks`), a `delegation:available` nudge arrives over the already-open `/bot` socket, the channel claims it, and the brief lands in the live Claude session as a `<delegation …>` event — no polling, no copy-paste. Claude posts progress with `send` (each one becomes the card's progress note), and its `reply` is posted to the Threa stream as the delegation's result, completing the card. The claim heartbeats while Claude works; a delegation that goes silent past `THREA_IDLE_TIMEOUT_MS` is failed rather than left stranded, and a graceful shutdown fails an in-flight one the same way.

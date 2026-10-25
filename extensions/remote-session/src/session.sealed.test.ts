@@ -717,6 +717,35 @@ describe("sealed output paths", () => {
     expect(payload.attachmentRefs[0]!.filename).toBe("diff.patch")
   })
 
+  test("reply seals an image embedded from disk as a ref and drops it from the text", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sealed-reply-image-"))
+    tempDirs.push(dir)
+    writeFileSync(join(dir, "chart.png"), new Uint8Array([1, 2, 3]))
+    const { session, calls, uploads, openSealedPayload } = await startSealedTurn()
+
+    const result = await session.reply("binv_sealed", `Done.\n\n![chart](${dir}/chart.png)`)
+
+    const reply = calls.completeSealed[0]!.body.reply as SealedReplyBody & { attachmentIds?: string[] }
+    const payload = await openSealedPayload(reply)
+    expect({
+      ok: result.ok,
+      uploads: uploads.map((upload) => ({ e2e: upload.e2e, filename: upload.filename })),
+      attachmentIds: reply.attachmentIds,
+      markdown: payload.contentMarkdown,
+      refs: payload.attachmentRefs.map(({ attachmentId, filename, mimeType }) => ({
+        attachmentId,
+        filename,
+        mimeType,
+      })),
+    }).toEqual({
+      ok: true,
+      uploads: [{ e2e: "true", filename: "encrypted" }],
+      attachmentIds: ["att_up_1"],
+      markdown: "Done.",
+      refs: [{ attachmentId: "att_up_1", filename: "chart.png", mimeType: "image/png" }],
+    })
+  })
+
   test("an interim retry after a failed POST reuses the sealed body and its uploads", async () => {
     const dir = mkdtempSync(join(tmpdir(), "sealed-retry-"))
     tempDirs.push(dir)

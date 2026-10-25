@@ -104,7 +104,11 @@ history, and downloaded attachments listed in the content.
 
 For the turn's trace, `StepBatcher` buffers frames into ordered
 `recordSteps` calls, and `redactAttachDirectives` hides the local path in
-`THREA_ATTACH:` lines before narration lands there. Tell your agent to reply
+`THREA_ATTACH:` lines and embedded local images before narration lands there.
+The reply uploads both: each `THREA_ATTACH:` file, and each markdown image
+outside code that points at a local png, jpg, gif, webp or svg. On plaintext
+scratchpads that image becomes an attachment link where it was written; on
+encrypted ones it is attached to the reply. Tell your agent to reply
 exactly `THREA_NO_RESPONSE` (exported as `NO_RESPONSE_SENTINEL`) to stay silent, and close a turn whose output
 `isNoResponse` with an empty reply.
 
