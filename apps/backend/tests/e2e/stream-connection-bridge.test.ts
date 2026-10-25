@@ -908,11 +908,28 @@ describe("Stream connection bridge", () => {
     })
     const share = (message: Message) => ({
       type: "sharedMessage",
-      attrs: { messageId: message.id, streamId: message.streamId, authorName: "Host Admin", version: 1, range: null },
+      attrs: {
+        messageId: message.id,
+        streamId: message.streamId,
+        authorName: "Host Admin",
+        authorId: "",
+        actorType: "user",
+        conversationId: null,
+        version: 1,
+        range: null,
+      },
     })
     const fileRef = (file: { id: string; filename: string }) => ({
       type: "attachmentReference",
-      attrs: { id: file.id, filename: file.filename, mimeType: "text/plain", sizeBytes: 6, status: "uploaded" },
+      attrs: {
+        id: file.id,
+        filename: file.filename,
+        mimeType: "text/plain",
+        sizeBytes: 6,
+        status: "uploaded",
+        imageIndex: null,
+        error: null,
+      },
     })
     const inAppLink = (stream: string, name: string, messageId: string | null = null) => ({
       type: "inAppLink",
