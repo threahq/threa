@@ -180,6 +180,8 @@ export const StreamErrorCodes = {
 /** The Y.XmlFragment a doc's ProseMirror content lives in; client and server bind the same one. */
 export const DOC_FRAGMENT = "default"
 
+export const DOC_AWARENESS_MAX_UPDATE_CHARS = 4096
+
 export const DocErrorCodes = {
   HOST_TYPE_INVALID: "DOC_HOST_TYPE_INVALID",
   E2E_HOST_NOT_ALLOWED: "DOC_E2E_HOST_NOT_ALLOWED",

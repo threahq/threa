@@ -49,6 +49,7 @@ export {
   StreamErrorCodes,
   DocErrorCodes,
   DOC_FRAGMENT,
+  DOC_AWARENESS_MAX_UPDATE_CHARS,
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
   STREAM_BRIEF_MAX_CHARS,
   // Stream purpose (system-purpose marker; NULL = ordinary stream)
@@ -803,6 +804,7 @@ export type {
   DocUpdateView,
   DocPostUpdateResult,
   DocUpdatedPayload,
+  DocAwarenessPayload,
   DocUpdatesResponse,
   // AI Usage
   AIUsageSummary,
