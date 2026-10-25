@@ -5,7 +5,8 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { DocRepository, type DocSection } from "../../src/features/docs"
+import type { DocSection } from "@threahq/types"
+import { DocRepository } from "../../src/features/docs"
 import { streamId, workspaceId } from "../../src/lib/id"
 import { setupIsolatedTestDatabase, withTransaction } from "./setup"
 

@@ -109,6 +109,34 @@ describe("SyncLogReconciliationWorker", () => {
     expect(await getLogRow(outboxEventId)).toBeNull()
   })
 
+  test("never rescues doc:updated — doc clients catch up over REST", async () => {
+    const workspaceId = uniqueId("ws")
+    const { worker, emits } = makeWorker()
+
+    const outboxEventId = await insertOutboxEvent(pool, "doc:updated", {
+      workspaceId,
+      streamId: uniqueId("stream"),
+      seq: 1,
+      update: "AQID",
+      touchedBlockIds: [],
+      actorId: "usr_1",
+      actorType: "user",
+    })
+
+    await sweepUntil(worker, async () => {
+      const sweptUntil = await SyncLogRepository.getSweptUntil(pool)
+      const row = await pool.query<{ created_at: Date }>(`SELECT created_at FROM outbox WHERE id = $1`, [
+        outboxEventId.toString(),
+      ])
+      return sweptUntil !== null && sweptUntil > row.rows[0].created_at
+    })
+
+    expect({
+      logRow: await getLogRow(outboxEventId),
+      emitted: emits.filter((e) => e.payload.workspaceId === workspaceId),
+    }).toEqual({ logRow: null, emitted: [] })
+  })
+
   test("does not sweep a window an older transaction could still write into", async () => {
     const { worker } = makeWorker()
     const txnClient = await pool.connect()

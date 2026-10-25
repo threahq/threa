@@ -1,14 +1,5 @@
 import { serializeToMarkdown } from "@threahq/prosemirror"
-import type { JSONContent } from "@threahq/types"
-
-export interface DocSection {
-  blockId: string
-  position: number
-  /** The top-level node type. */
-  kind: string
-  markdown: string
-  contentJson: JSONContent
-}
+import type { DocSection, JSONContent } from "@threahq/types"
 
 export interface DocProjection {
   bodyMarkdown: string

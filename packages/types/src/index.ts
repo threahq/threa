@@ -796,6 +796,11 @@ export type {
   AsideAnchoredEventPayload,
   DocCreatedEventPayload,
   DocEditedEventPayload,
+  DocSection,
+  DocState,
+  DocUpdateView,
+  DocPostUpdateResult,
+  DocUpdatedOutboxPayload,
   // AI Usage
   AIUsageSummary,
   AIUsageOrigin,

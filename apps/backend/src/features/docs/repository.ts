@@ -1,6 +1,5 @@
-import type { AuthorType, JSONContent } from "@threahq/types"
+import type { AuthorType, DocSection, JSONContent } from "@threahq/types"
 import { sql, type Querier } from "../../db"
-import type { DocSection } from "./projection"
 
 interface DocHeadRow {
   workspace_id: string

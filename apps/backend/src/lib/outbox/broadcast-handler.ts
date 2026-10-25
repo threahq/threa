@@ -21,6 +21,7 @@ import {
   type CallTransportTransferChangedOutboxPayload,
   type WorkspaceUserRemovedOutboxPayload,
   type WorkspaceUserUpdatedOutboxPayload,
+  UNLOGGED_EVENT_TYPES,
 } from "./repository"
 import { resolveDeliveryGroups, emitToGroups, syncPermissionRooms } from "./delivery-groups"
 import { logger } from "../logger"
@@ -181,9 +182,9 @@ export class BroadcastHandler implements OutboxHandler {
   /**
    * Resolves every event's delivery groups once and appends client-routed
    * events to their workspace's sync log, in outbox-visibility order.
-   * Bot-scoped events (groups === null) stay off the log; events with no
-   * resolvable audience (groups === []) are logged by the resolver and
-   * dropped.
+   * Bot-scoped events (groups === null) and `UNLOGGED_EVENT_TYPES` stay off
+   * the log; events with no resolvable audience (groups === []) are logged by
+   * the resolver and dropped.
    */
   private async sequenceEvents(events: OutboxEvent[]): Promise<Map<bigint, RoutedEvent>> {
     const routed = new Map<bigint, RoutedEvent>()
@@ -191,7 +192,7 @@ export class BroadcastHandler implements OutboxHandler {
 
     for (const { event, groups } of await resolveAudiences(this.db, events)) {
       routed.set(event.id, { groups })
-      if (groups === null || groups.length === 0) {
+      if (groups === null || groups.length === 0 || UNLOGGED_EVENT_TYPES.has(event.eventType)) {
         continue
       }
       // The log is workspace-sharded; an event without a workspace can't be

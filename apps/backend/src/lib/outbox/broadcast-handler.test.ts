@@ -378,6 +378,37 @@ describe("BroadcastHandler", () => {
     })
   })
 
+  it("should emit doc:updated to the doc room without logging it, while a sibling message is logged", async () => {
+    const message = makeEvent(1n, "message:created", {
+      workspaceId: "ws_1",
+      streamId: "stream_host",
+      event: { id: "evt_1" },
+    })
+    const docUpdate = makeEvent(2n, "doc:updated", {
+      workspaceId: "ws_1",
+      streamId: "stream_doc",
+      seq: 3,
+      update: "AQID",
+      touchedBlockIds: ["blk_1"],
+      actorId: "usr_alice",
+      actorType: "user",
+    })
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([message, docUpdate])
+    const appendSpy = spyOn(SyncLogRepository, "appendForWorkspace").mockResolvedValue(new Map())
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect({
+      logged: appendSpy.mock.calls.flatMap((call) => call[2].map((entry) => entry.eventType)),
+      emitted: emitChains.filter((emitted) => emitted.eventType === "doc:updated"),
+    }).toEqual({
+      logged: ["message:created"],
+      emitted: [{ room: "ws:ws_1:stream:stream_doc", eventType: "doc:updated", payload: docUpdate.payload }],
+    })
+  })
+
   it("should emit stream:updated to the browse room and the stream room", async () => {
     const event = makeEvent(1n, "stream:updated", {
       workspaceId: "ws_1",
