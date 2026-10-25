@@ -1,3 +1,4 @@
+import { DOC_FRAGMENT } from "@threahq/types"
 import { afterEach, describe, expect, it } from "vitest"
 import { Editor, type JSONContent } from "@tiptap/core"
 import * as Y from "yjs"
@@ -42,7 +43,7 @@ afterEach(() => {
 
 describe("YjsCollaboration", () => {
   it("renders the content already in the doc's fragment", () => {
-    const ydoc = prosemirrorJSONToYDoc(getThreaSchema(), paragraphs("Rotation tracker", "Week 1"), "default")
+    const ydoc = prosemirrorJSONToYDoc(getThreaSchema(), paragraphs("Rotation tracker", "Week 1"), DOC_FRAGMENT)
 
     const editor = createEditor(ydoc)
 
@@ -63,7 +64,7 @@ describe("YjsCollaboration", () => {
 
     editor.commands.insertContent("hello")
 
-    expect(ydoc.getXmlFragment("default").toString()).toContain("hello")
+    expect(ydoc.getXmlFragment(DOC_FRAGMENT).toString()).toContain("hello")
     const peerDoc = new Y.Doc()
     for (const update of updates) Y.applyUpdate(peerDoc, update)
     const peer = createEditor(peerDoc)
@@ -110,7 +111,7 @@ describe("YjsCollaboration", () => {
 
   it("detaches every Yjs observer it added once the editor is destroyed", () => {
     const ydoc = new Y.Doc()
-    const fragment = ydoc.getXmlFragment("default")
+    const fragment = ydoc.getXmlFragment(DOC_FRAGMENT)
     const observers = () => ({
       fragment: fragment._dEH.l.length,
       doc: Object.fromEntries([...ydoc._observers].map(([event, handlers]) => [event, handlers.size])),

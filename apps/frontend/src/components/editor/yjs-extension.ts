@@ -1,4 +1,5 @@
 import { Extension } from "@tiptap/core"
+import { DOC_FRAGMENT } from "@threahq/types"
 import { Plugin } from "@tiptap/pm/state"
 import type * as Y from "yjs"
 // The server applies and reads this fragment with the same pinned y-prosemirror
@@ -10,21 +11,20 @@ const HISTORY_INPUT_COMMANDS: Partial<Record<string, typeof undo>> = { historyUn
 
 interface YjsCollaborationOptions {
   ydoc: Y.Doc | null
-  fragment: string
 }
 
 export const YjsCollaboration = Extension.create<YjsCollaborationOptions>({
   name: "yjsCollaboration",
 
   addOptions() {
-    return { ydoc: null, fragment: "default" }
+    return { ydoc: null }
   },
 
   addProseMirrorPlugins() {
-    const { ydoc, fragment } = this.options
+    const { ydoc } = this.options
     if (!ydoc) throw new Error("YjsCollaboration needs the Y.Doc it binds to")
     return [
-      ySyncPlugin(ydoc.getXmlFragment(fragment)),
+      ySyncPlugin(ydoc.getXmlFragment(DOC_FRAGMENT)),
       yUndoPlugin(),
       // Edit-menu, shake and keyboard undo arrive as beforeinput; the browser's own contenteditable undo would bypass Yjs.
       new Plugin({

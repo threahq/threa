@@ -1,3 +1,4 @@
+import { DOC_FRAGMENT } from "@threahq/types"
 import { afterEach, describe, expect, it } from "vitest"
 import { Editor, type JSONContent } from "@tiptap/core"
 import { prosemirrorJSONToYDoc } from "y-prosemirror"
@@ -40,15 +41,15 @@ afterEach(() => {
 
 describe("stampNodeAttrs", () => {
   it("leaves a shared document untouched", () => {
-    const ydoc = prosemirrorJSONToYDoc(getThreaSchema(), LINK_DOC, "default")
+    const ydoc = prosemirrorJSONToYDoc(getThreaSchema(), LINK_DOC, DOC_FRAGMENT)
     const editor = mount(new Editor({ extensions: createDocumentExtensions({ ydoc }) }))
-    const fragmentBefore = ydoc.getXmlFragment("default").toString()
+    const fragmentBefore = ydoc.getXmlFragment(DOC_FRAGMENT).toString()
     const docBefore = editor.state.doc
 
     stampLinkName(editor)
 
     expect({
-      fragment: ydoc.getXmlFragment("default").toString(),
+      fragment: ydoc.getXmlFragment(DOC_FRAGMENT).toString(),
       docUnchanged: editor.state.doc === docBefore,
     }).toEqual({ fragment: fragmentBefore, docUnchanged: true })
   })

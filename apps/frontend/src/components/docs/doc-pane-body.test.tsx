@@ -9,7 +9,7 @@ import * as Y from "yjs"
 import { prosemirrorJSONToYDoc, yDocToProsemirrorJSON } from "y-prosemirror"
 import { getThreaSchema } from "@threahq/prosemirror/schema"
 import { base64ToBytes, bytesToBase64 } from "@threahq/crypto"
-import type { DocState, DocUpdatedPayload, Stream } from "@threahq/types"
+import { DOC_FRAGMENT, type DocState, type DocUpdatedPayload, type Stream } from "@threahq/types"
 import { toast } from "sonner"
 import { ApiError } from "@/api/client"
 import { docsApi } from "@/api/docs"
@@ -50,7 +50,7 @@ describe("DocPaneBody", () => {
   let joinRoom: MockInstance<typeof socketRoomModule.joinRoomWithAck>
 
   beforeEach(() => {
-    serverDoc = prosemirrorJSONToYDoc(getThreaSchema(), paragraphs("Rotation tracker"), "default")
+    serverDoc = prosemirrorJSONToYDoc(getThreaSchema(), paragraphs("Rotation tracker"), DOC_FRAGMENT)
     gate = new SocketEventGate(WORKSPACE_ID)
     const socket = { on: vi.fn(), off: vi.fn(), emit: vi.fn(), connected: true }
     vi.spyOn(contextsModule, "useSocket").mockReturnValue(
@@ -137,7 +137,7 @@ describe("DocPaneBody", () => {
     const before = Y.encodeStateVector(serverDoc)
     const paragraph = new Y.XmlElement("paragraph")
     paragraph.insert(0, [new Y.XmlText(text)])
-    serverDoc.getXmlFragment("default").push([paragraph])
+    serverDoc.getXmlFragment(DOC_FRAGMENT).push([paragraph])
     return {
       workspaceId: WORKSPACE_ID,
       streamId: DOC_ID,
@@ -169,7 +169,7 @@ describe("DocPaneBody", () => {
     Y.applyUpdate(posted, Y.encodeStateAsUpdate(serverDoc))
     const [workspaceId, docId, update] = vi.mocked(docsApi.postUpdate).mock.calls[0]
     Y.applyUpdate(posted, base64ToBytes(update))
-    expect({ workspaceId, docId, text: posted.getXmlFragment("default").toString() }).toEqual({
+    expect({ workspaceId, docId, text: posted.getXmlFragment(DOC_FRAGMENT).toString() }).toEqual({
       workspaceId: WORKSPACE_ID,
       docId: DOC_ID,
       text: expect.stringContaining("Rotation tracker for March"),
@@ -383,7 +383,7 @@ describe("DocPaneBody", () => {
       for (const [, , update] of vi.mocked(docsApi.postUpdate).mock.calls.slice(0, calls)) {
         Y.applyUpdate(replayed, base64ToBytes(update))
       }
-      return JSON.stringify(yDocToProsemirrorJSON(replayed, "default"))
+      return JSON.stringify(yDocToProsemirrorJSON(replayed, DOC_FRAGMENT))
     }
     expect({ whileUploading: replay(1), afterClose: replay(2) }).toEqual({
       whileUploading: expect.stringContaining('"type":"attachmentReference"'),
