@@ -42,6 +42,7 @@ export const AttachmentReferenceNode = Node.create({
         renderHTML: (attrs: Attrs) => (attrs.imageIndex ? { "data-image-index": String(attrs.imageIndex) } : {}),
       },
       error: optionalDataAttr("error", "data-error"),
+      display: dataAttr("display", "data-display", "pill"),
     }
   },
 

@@ -42,6 +42,8 @@ describe("threa schema", () => {
       "tableCell",
       "tableHeader",
       "tableRow",
+      "taskItem",
+      "taskList",
       "text",
     ])
     expect(Object.keys(schema.marks).sort()).toEqual(["bold", "code", "italic", "link", "strike"])
@@ -60,6 +62,10 @@ describe("threa schema", () => {
         { type: "slashCommand", attrs: { name: "invite" } },
         { type: "emoji", attrs: { shortcode: "smile", emoji: "😄" } },
         { type: "attachmentReference", attrs: { id: "attach_1", filename: "a.pdf", status: "uploaded" } },
+        {
+          type: "attachmentReference",
+          attrs: { id: "attach_2", filename: "a.png", mimeType: "image/png", status: "uploaded", display: "inline" },
+        },
         { type: "memoEmbed", attrs: { memoId: "memo_1", title: "Memo" } },
         { type: "inAppLink", attrs: { url: "/w/x", streamId: "stream_1", name: "x" } },
         { type: "giphyEmbed", attrs: { giphyUrl: "https://giphy.com/x", width: 10, height: 10 } },
@@ -67,6 +73,10 @@ describe("threa schema", () => {
       ),
       { type: "bulletList", content: [{ type: "listItem", content: [paragraph(text("a"))] }] },
       { type: "orderedList", content: [{ type: "listItem", content: [paragraph(text("b"))] }] },
+      {
+        type: "taskList",
+        content: [{ type: "taskItem", attrs: { checked: true }, content: [paragraph(text("t"))] }],
+      },
       { type: "blockquote", content: [paragraph(text("q"))] },
       { type: "horizontalRule" },
       { type: "codeBlock", attrs: { language: "ts" }, content: [text("const x = 1")] },
@@ -119,19 +129,57 @@ describe("threa schema", () => {
 
     expect(() => normalizeContentJson(json)).not.toThrow()
     expect(getThreaSchema().nodeFromJSON(json).toJSON()).toEqual(
-      doc(
-        paragraph({
-          type: "attachmentReference",
-          attrs: {
-            id: null,
-            filename: "",
-            mimeType: "application/octet-stream",
-            sizeBytes: null,
-            status: "uploading",
-            imageIndex: null,
-            error: null,
+      doc({
+        type: "paragraph",
+        attrs: { blockId: null },
+        content: [
+          {
+            type: "attachmentReference",
+            attrs: {
+              id: null,
+              filename: "",
+              mimeType: "application/octet-stream",
+              sizeBytes: null,
+              status: "uploading",
+              imageIndex: null,
+              error: null,
+              display: "pill",
+            },
           },
-        })
+        ],
+      })
+    )
+  })
+
+  test("should drop a blockId when it sits on an inline node", () => {
+    const json = doc(paragraph({ type: "mention", attrs: { id: "usr_1", slug: "a", blockId: "blk_1" } }))
+
+    expect(normalizeContentJson(json)).toEqual(
+      doc({
+        type: "paragraph",
+        attrs: { blockId: null },
+        content: [{ type: "mention", attrs: { id: "usr_1", slug: "a", mentionType: "user" } }],
+      })
+    )
+  })
+
+  test("should accept a checked task item when it nests a bullet list", () => {
+    const nested = { type: "bulletList", content: [{ type: "listItem", content: [paragraph(text("b"))] }] }
+    const json = doc({
+      type: "taskList",
+      content: [{ type: "taskItem", attrs: { checked: true }, content: [paragraph(text("a")), nested] }],
+    })
+
+    expect(() => normalizeContentJson(json)).not.toThrow()
+  })
+
+  test("should keep a paragraph blockId and fill null when it is absent", () => {
+    const json = doc({ type: "paragraph", attrs: { blockId: "blk_1" }, content: [text("a")] }, paragraph(text("b")))
+
+    expect(normalizeContentJson(json)).toEqual(
+      doc(
+        { type: "paragraph", attrs: { blockId: "blk_1" }, content: [text("a")] },
+        { type: "paragraph", attrs: { blockId: null }, content: [text("b")] }
       )
     )
   })
@@ -140,13 +188,14 @@ describe("threa schema", () => {
     const json = doc({ type: "codeBlock", content: [text("x")] })
 
     expect(getThreaSchema().nodeFromJSON(json).toJSON()).toEqual(
-      doc({ type: "codeBlock", attrs: { language: "plaintext" }, content: [text("x")] })
+      doc({ type: "codeBlock", attrs: { language: "plaintext", blockId: null }, content: [text("x")] })
     )
   })
 
   test.each([
     "# One\n\n## Two\n\n### Three",
     "- a\n- b\n\n1. one\n2. two",
+    "- [ ] a\n- [x] b",
     "| h1 | h2 |\n| --- | --- |\n| a | b |",
     "```ts\nconst x = 1\n```",
     "see [docs](https://example.com)",

@@ -108,6 +108,7 @@ describe("@threahq/prosemirror markdown attachment metadata", () => {
                 status: "uploaded",
                 imageIndex: null,
                 error: null,
+                display: "pill",
               },
             },
           ],
@@ -137,6 +138,7 @@ describe("@threahq/prosemirror markdown attachment metadata", () => {
                 status: "uploaded",
                 imageIndex: 3,
                 error: null,
+                display: "pill",
               },
             },
           ],
@@ -164,6 +166,7 @@ describe("@threahq/prosemirror markdown attachment metadata", () => {
         status: "uploaded",
         imageIndex: 2,
         error: null,
+        display: "pill",
       },
     })
   })
@@ -183,6 +186,7 @@ describe("@threahq/prosemirror markdown attachment metadata", () => {
         status: "uploaded",
         imageIndex: null,
         error: null,
+        display: "pill",
       },
     })
   })
@@ -200,6 +204,7 @@ describe("@threahq/prosemirror markdown attachment metadata", () => {
         status: "uploaded",
         imageIndex: null,
         error: null,
+        display: "pill",
       },
     })
   })
@@ -221,6 +226,7 @@ describe("@threahq/prosemirror markdown attachment metadata", () => {
                 status: "uploaded",
                 imageIndex: null,
                 error: null,
+                display: "pill",
               },
             },
           ],
@@ -244,6 +250,7 @@ describe("@threahq/prosemirror markdown attachment metadata", () => {
         status: "uploaded",
         imageIndex: null,
         error: null,
+        display: "pill",
       },
     })
   })
@@ -261,6 +268,7 @@ describe("@threahq/prosemirror markdown attachment metadata", () => {
         status: "uploaded",
         imageIndex: null,
         error: null,
+        display: "pill",
       },
     })
   })
@@ -1735,5 +1743,131 @@ describe("@threahq/prosemirror inline mark nesting", () => {
     const doc = paragraph(text(" plain ", [link]), text("bold", [link, { type: "bold" }]), text(" tail ", [link]))
 
     expect(serializeToMarkdown(doc)).toBe(" [plain **bold** tail](https://x.io) ")
+  })
+})
+
+describe("@threahq/prosemirror task lists and inline images", () => {
+  const p = (text: string): JSONContent => ({ type: "paragraph", content: [{ type: "text", text }] })
+  const task = (checked: boolean, ...content: JSONContent[]): JSONContent => ({
+    type: "taskItem",
+    attrs: { checked },
+    content,
+  })
+  const item = (...content: JSONContent[]): JSONContent => ({ type: "listItem", content })
+  const imageMeta = "threa-attachment:filename=a.png&mimeType=image%2Fpng&sizeBytes=10"
+  const imageAttrs = {
+    id: "att_1",
+    filename: "a.png",
+    mimeType: "image/png",
+    sizeBytes: 10,
+    status: "uploaded",
+    imageIndex: null,
+    error: null,
+  }
+
+  it.each<[string, string, JSONContent[]]>([
+    [
+      "a flat task list",
+      "- [ ] a\n- [x] b",
+      [{ type: "taskList", content: [task(false, p("a")), task(true, p("b"))] }],
+    ],
+    [
+      "a task list nested under a bullet",
+      "- a\n  - [x] b",
+      [{ type: "bulletList", content: [item(p("a"), { type: "taskList", content: [task(true, p("b"))] })] }],
+    ],
+    [
+      "a bullet list nested under a task",
+      "- [ ] a\n  - b",
+      [{ type: "taskList", content: [task(false, p("a"), { type: "bulletList", content: [item(p("b"))] })] }],
+    ],
+    [
+      "a task run followed by a bullet run",
+      "- [ ] a\n\n- b",
+      [
+        { type: "taskList", content: [task(false, p("a"))] },
+        { type: "bulletList", content: [item(p("b"))] },
+      ],
+    ],
+    [
+      "an inline image attachment",
+      `[a.png](attachment:att_1 "${imageMeta}&display=inline")`,
+      [{ type: "paragraph", content: [{ type: "attachmentReference", attrs: { ...imageAttrs, display: "inline" } }] }],
+    ],
+    [
+      "a pill attachment",
+      `[a.png](attachment:att_1 "${imageMeta}")`,
+      [{ type: "paragraph", content: [{ type: "attachmentReference", attrs: { ...imageAttrs, display: "pill" } }] }],
+    ],
+    [
+      "an external image",
+      "![alt](https://example.com/x.png)",
+      [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "!" },
+            { type: "text", text: "alt", marks: [{ type: "link", attrs: { href: "https://example.com/x.png" } }] },
+          ],
+        },
+      ],
+    ],
+  ])("should round trip when given %s", (_label, markdown, content) => {
+    const parsed = parseMarkdown(markdown)
+
+    expect({ content: parsed.content, markdown: serializeToMarkdown(parsed) }).toEqual({ content, markdown })
+  })
+
+  it.each([
+    ["an uppercase check", "- [X] a", "- [x] a"],
+    ["inline marks, a link, a mention and an emoji in a task", "- [ ] **b** [l](https://x.io) @alice :smile:", null],
+    [
+      "an inline image whose label escapes a bracket",
+      `[a\\]b.png](attachment:att_1 "${imageMeta.replace("a.png", "a%5Db.png")}&display=inline")`,
+      null,
+    ],
+    ["a paragraph opening with a bang", "!important thing", null],
+    ["an ordered run followed by a task run", "1. a\n- [ ] b", "1. a\n\n- [ ] b"],
+  ])("should serialize %s stably", (_label, markdown, expected) => {
+    expect(serializeToMarkdown(parseMarkdown(markdown))).toBe(expected ?? markdown)
+  })
+
+  it("should end the task list when a plain bullet follows at the same level", () => {
+    expect(parseMarkdown("- [ ] a\n- b").content).toEqual([
+      { type: "taskList", content: [task(false, p("a"))] },
+      { type: "bulletList", content: [item(p("b"))] },
+    ])
+  })
+
+  it("should parse an empty task item when the marker has no text", () => {
+    expect(parseMarkdown("- [ ]").content).toEqual([
+      { type: "taskList", content: [task(false, { type: "paragraph", content: [] })] },
+    ])
+  })
+
+  it("should leave block ids out of markdown when the doc carries them", () => {
+    const markdown = serializeToMarkdown({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          attrs: { blockId: "blk_01ARZ3NDEKTSV4RRFFQ69G5FAV" },
+          content: [{ type: "text", text: "a" }],
+        },
+        {
+          type: "taskList",
+          attrs: { blockId: "blk_01ARZ3NDEKTSV4RRFFQ69G5FAW" },
+          content: [
+            task(true, {
+              type: "paragraph",
+              attrs: { blockId: "blk_01ARZ3NDEKTSV4RRFFQ69G5FAX" },
+              content: [{ type: "text", text: "b" }],
+            }),
+          ],
+        },
+      ],
+    })
+
+    expect(markdown).toBe("a\n\n- [x] b")
   })
 })

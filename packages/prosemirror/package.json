@@ -28,6 +28,7 @@
     "@tiptap/extension-horizontal-rule": "^3.22.3",
     "@tiptap/extension-italic": "^3.22.3",
     "@tiptap/extension-link": "^3.22.3",
+    "@tiptap/extension-list": "^3.22.3",
     "@tiptap/extension-list-item": "^3.22.3",
     "@tiptap/extension-ordered-list": "^3.22.3",
     "@tiptap/extension-paragraph": "^3.22.3",
@@ -37,7 +38,8 @@
     "@tiptap/pm": "^3.22.3",
     "mdast-util-from-markdown": "2.0.3",
     "mdast-util-gfm": "3.1.0",
-    "micromark-extension-gfm": "3.0.0"
+    "micromark-extension-gfm": "3.0.0",
+    "ulid": "^2"
   },
   "peerDependencies": {
     "typescript": "^5"
