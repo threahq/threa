@@ -1181,7 +1181,7 @@ html[data-input="mouse"]
 }
 
 .ProseMirror ul[data-type="taskList"] > li > label {
-  @apply flex-none select-none;
+  @apply flex flex-none select-none;
 }
 
 .ProseMirror ul[data-type="taskList"] > li > label > input[type="checkbox"] {
