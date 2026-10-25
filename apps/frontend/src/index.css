@@ -619,6 +619,28 @@ html[data-input="mouse"] .message-hover-wash:hover {
   content: attr(data-placeholder);
 }
 
+/* A collaborator's caret; y-prosemirror sets the border and label colour inline. */
+.ProseMirror-yjs-cursor {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 2px solid;
+  word-break: normal;
+  pointer-events: none;
+}
+.ProseMirror-yjs-cursor > div {
+  position: absolute;
+  top: -1.3em;
+  left: -2px;
+  padding: 0 4px;
+  border-radius: 3px 3px 3px 0;
+  font-size: 10px;
+  line-height: 1.3;
+  color: white;
+  white-space: nowrap;
+  user-select: none;
+}
+
 /* Live dictation hypothesis shown at the caret while speaking. Muted and
    non-selectable so it reads as provisional and never participates in editing. */
 .dictation-preview-ghost {

@@ -10,10 +10,21 @@ const AVATAR_COLORS = [
   "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300",
 ]
 
-export function getAvatarColor(id: string): string {
+/** Hex `#rrggbb` (y-prosemirror appends an alpha byte for selections), index-aligned with `AVATAR_COLORS`. */
+const PRESENCE_COLORS = ["#d97706", "#2563eb", "#059669", "#7c3aed", "#e11d48", "#0891b2", "#ea580c", "#0d9488"]
+
+function colorIndex(id: string): number {
   let hash = 0
   for (let i = 0; i < id.length; i++) {
     hash = (hash * 31 + id.charCodeAt(i)) | 0
   }
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length]
+  return Math.abs(hash) % AVATAR_COLORS.length
+}
+
+export function getAvatarColor(id: string): string {
+  return AVATAR_COLORS[colorIndex(id)]
+}
+
+export function getPresenceColor(id: string): string {
+  return PRESENCE_COLORS[colorIndex(id)]
 }
