@@ -94,13 +94,14 @@ const commonMessageOptionsSchema = {
 const createMessageJsonToStreamSchema = z.object({
   streamId: z.string().min(1, "streamId is required"),
   contentJson: contentJsonSchema,
+  content: z.never().optional(),
   enqueue: z.literal(true).optional(),
   ...commonMessageOptionsSchema,
 })
 
 // Schema for markdown input to an existing stream (from AI/external). A body
-// that also carries `contentJson` fails both variants instead of silently
-// storing the markdown.
+// carrying both `content` and `contentJson` fails both variants instead of
+// silently storing one of them.
 const createMessageMarkdownToStreamSchema = z.object({
   streamId: z.string().min(1, "streamId is required"),
   content: z.string().min(1, "content is required"),
@@ -115,6 +116,7 @@ const createMessageMarkdownToStreamSchema = z.object({
 const createMessageJsonToDmSchema = z.object({
   dmUserId: z.string().min(1, "dmUserId is required"),
   contentJson: contentJsonSchema,
+  content: z.never().optional(),
   ...commonMessageOptionsSchema,
 })
 
@@ -170,6 +172,7 @@ const createMessageSchema = z.union([
 // accept `contentMarkdown`; the backend derives it from `contentJson`.
 const updateMessageJsonSchema = z.object({
   contentJson: contentJsonSchema,
+  content: z.never().optional(),
   confirmedPrivacyWarning: z.boolean().optional(),
 })
 

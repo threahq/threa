@@ -157,6 +157,12 @@ describe.each(requestCases)("%s through validateRequest", (_name, schema, body) 
     expect(request).toThrow(HttpError)
   })
 
+  it("should throw a 400 instead of dropping the markdown when a valid contentJson arrives beside content", () => {
+    const request = () => validateRequest(schema, { ...body(doc(paragraph(text("x")))), content: "x" })
+
+    expect(request).toThrow(HttpError)
+  })
+
   it("should pass an editor-shaped contentJson through unchanged when it uses every node type", () => {
     const input = body(normalizeContentJson(everyNodeDoc))
 
