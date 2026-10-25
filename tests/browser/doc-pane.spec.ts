@@ -13,7 +13,7 @@ const pane = (page: Page, id: string): Locator => page.locator(`[data-panel-tab=
 const docEditor = (page: Page, docId: string): Locator => pane(page, docId).locator(".ProseMirror")
 const anchorRow = (page: Page, docId: string): Locator => page.locator(`a[data-doc-id="${docId}"]`)
 
-async function createChannel(
+async function createChannelViaApi(
   page: Page,
   workspaceId: string,
   slug: string,
@@ -59,11 +59,45 @@ async function openChannel(page: Page, workspaceId: string, streamId: string): P
   await expect(page.locator(`[data-stream-scroller="${streamId}"]`)).toBeVisible({ timeout: 20000 })
 }
 
-/** Moves the caret to the end of the doc through ProseMirror's own keymap, then types. */
-async function typeAtEnd(page: Page, editor: Locator, text: string): Promise<void> {
+/** Moves the caret to the end of the doc through ProseMirror's own keymap. */
+async function moveCaretToEnd(page: Page, editor: Locator): Promise<void> {
   await editor.click()
   await page.keyboard.press("ControlOrMeta+End")
+}
+
+async function typeAtEnd(page: Page, editor: Locator, text: string): Promise<void> {
+  await moveCaretToEnd(page, editor)
   await page.keyboard.type(text)
+}
+
+async function savedUpdateCount(page: Page, workspaceId: string, docId: string): Promise<number> {
+  const response = await page.request.get(`/api/workspaces/${workspaceId}/docs/${docId}/updates?after=0`)
+  return response.ok() ? ((await response.json()) as { updates: unknown[] }).updates.length : 0
+}
+
+/** `RevealOnReady` hides a pane with opacity 0 on an ancestor, which `toBeVisible` ignores; this multiplies up the tree. */
+async function expectRevealed(editor: Locator): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        editor.evaluate((el) => {
+          let opacity = 1
+          for (let node: Element | null = el; node; node = node.parentElement) {
+            opacity *= Number(getComputedStyle(node).opacity)
+          }
+          return opacity
+        }),
+      { timeout: 1500, message: "the doc pane should reveal without waiting out the reveal cap" }
+    )
+    .toBe(1)
+}
+
+function collectRevealFallbacks(page: Page): string[] {
+  const messages: string[] = []
+  page.on("console", (message) => {
+    if (message.text().includes("[CoordinatedLoading] Revealing without")) messages.push(message.text())
+  })
+  return messages
 }
 
 test.describe("Doc pane", () => {
@@ -72,8 +106,9 @@ test.describe("Doc pane", () => {
     const owner = await ownerContext.newPage()
     const { testId } = await loginAndCreateWorkspace(owner, "doc-owner")
     const workspaceId = workspaceIdFromUrl(owner)
-    const channelId = await createChannel(owner, workspaceId, `docs-${testId}`, "private")
+    const channelId = await createChannelViaApi(owner, workspaceId, `docs-${testId}`, "private")
     const member = await joinWorkspace(browser, workspaceId, "doc-member", testId)
+    const revealFallbacks = [owner, member.page].map(collectRevealFallbacks)
 
     try {
       await expectApiOk(
@@ -109,6 +144,7 @@ test.describe("Doc pane", () => {
       await expect(row).toContainText("Untitled")
       await row.click()
       const memberEditor = docEditor(member.page, docId)
+      await expectRevealed(memberEditor)
       await expect(memberEditor).toContainText("Rotation tracker", { timeout: 15000 })
       await expect(memberEditor).toHaveAttribute("contenteditable", "true")
 
@@ -125,18 +161,14 @@ test.describe("Doc pane", () => {
         )
         .toBe(true)
 
-      // Give the 400 ms debounce time to post before the reload drops the page.
-      await expect
-        .poll(async () => {
-          const response = await owner.request.get(`/api/workspaces/${workspaceId}/docs/${docId}/updates?after=0`)
-          return response.ok() ? ((await response.json()) as { updates: Array<{ actorId: string }> }).updates.length : 0
-        })
-        .toBeGreaterThan(1)
+      // Give the 400 ms debounce time to post before the reload drops the page; > 1 means both members' edits are saved.
+      await expect.poll(() => savedUpdateCount(owner, workspaceId, docId)).toBeGreaterThan(1)
       await owner.reload()
+      await expectRevealed(ownerEditor)
       await expect(ownerEditor).toContainText("Rotation tracker", { timeout: 20000 })
       await expect(ownerEditor).toContainText("AWS key rotated")
 
-      await typeAtEnd(owner, ownerEditor, "")
+      await moveCaretToEnd(owner, ownerEditor)
       await owner.keyboard.press("Enter")
       await owner.keyboard.type("- [ ] revoke old key")
       const ownerTask = ownerEditor.locator("ul[data-type='taskList'] > li")
@@ -148,6 +180,7 @@ test.describe("Doc pane", () => {
       const memberTask = memberEditor.locator("ul[data-type='taskList'] > li")
       await expect(memberTask).toContainText("revoke old key", { timeout: 15000 })
       await expect(memberTask).toHaveAttribute("data-checked", "true", { timeout: 15000 })
+      expect(revealFallbacks.flat()).toEqual([])
     } finally {
       await ownerContext.close()
       await member.context.close()
@@ -161,7 +194,7 @@ test.describe("Doc pane", () => {
     const owner = await ownerContext.newPage()
     const { testId } = await loginAndCreateWorkspace(owner, "doc-public")
     const workspaceId = workspaceIdFromUrl(owner)
-    const channelId = await createChannel(owner, workspaceId, `public-docs-${testId}`, "public")
+    const channelId = await createChannelViaApi(owner, workspaceId, `public-docs-${testId}`, "public")
     const docId = await createDoc(owner, workspaceId, channelId)
     const reader = await joinWorkspace(browser, workspaceId, "doc-reader", testId)
 
@@ -169,12 +202,7 @@ test.describe("Doc pane", () => {
       await openChannel(owner, workspaceId, channelId)
       await anchorRow(owner, docId).click()
       await typeAtEnd(owner, docEditor(owner, docId), "Visible to the whole workspace")
-      await expect
-        .poll(async () => {
-          const response = await reader.page.request.get(`/api/workspaces/${workspaceId}/docs/${docId}/updates?after=0`)
-          return response.ok() ? ((await response.json()) as { updates: unknown[] }).updates.length : 0
-        })
-        .toBeGreaterThan(0)
+      await expect.poll(() => savedUpdateCount(reader.page, workspaceId, docId)).toBeGreaterThan(0)
 
       await openChannel(reader.page, workspaceId, channelId)
       await anchorRow(reader.page, docId).click()
@@ -194,7 +222,7 @@ test.describe("Doc pane", () => {
     test("should open the doc full-screen from the anchor row and go back to the channel", async ({ page }) => {
       const { testId } = await loginAndCreateWorkspace(page, "doc-phone")
       const workspaceId = workspaceIdFromUrl(page)
-      const channelId = await createChannel(page, workspaceId, `phone-docs-${testId}`, "public")
+      const channelId = await createChannelViaApi(page, workspaceId, `phone-docs-${testId}`, "public")
       const docId = await createDoc(page, workspaceId, channelId)
       await page.setViewportSize({ width: 390, height: 780 })
       await openChannel(page, workspaceId, channelId)

@@ -130,6 +130,7 @@ import {
   WORKSPACE_PERMISSION_SCOPES,
   normalizeSidebarConfig,
   isOpenVisibility,
+  streamTypeCapabilities,
 } from "@threahq/types"
 import { workspacesApi } from "@/api/workspaces"
 import { hasPermission } from "@/lib/permissions"
@@ -856,9 +857,11 @@ export function registerWorkspaceSocketHandlers(
       const existingStream = old.streams.find((stream) => stream.id === payload.stream.id)
       cachedStream = existingStream ? mergeStreamByRevision(existingStream, incomingCachedStream) : incomingCachedStream
       const hasMembership = old.streamMemberships.some((m: StreamMember) => m.streamId === payload.stream.id)
-      // A doc has no members row: writing it is granted by membership of its host.
       shouldAddMembership = Boolean(
-        currentUserId && !hasMembership && payload.stream.type !== StreamTypes.DOC && (isCreator || isDmParticipant)
+        currentUserId &&
+        !hasMembership &&
+        streamTypeCapabilities(payload.stream.type).ownMembers &&
+        (isCreator || isDmParticipant)
       )
       shouldAddDmPeer = Boolean(
         dmPeerUserId && !old.dmPeers.some((peer) => peer.streamId === payload.stream.id && peer.userId === dmPeerUserId)

@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { StreamTypes, type StreamEvent } from "@threahq/types"
 import * as hooksModule from "@/hooks"
 import * as workspaceStoreModule from "@/stores/workspace-store"
-import { PanelProvider, usePanel } from "@/contexts"
+import { PanelProvider } from "@/contexts"
 import { createMockStream } from "@/test/fixtures"
 import { DocAnchorEvent } from "./doc-anchor-event"
 
@@ -22,26 +22,12 @@ const event: StreamEvent = {
   createdAt: new Date(Date.now() - 9 * 60_000).toISOString(),
 }
 
-let expectedHref = ""
-function PanelUrlProbe() {
-  expectedHref = usePanel().getPanelUrl(DOC)
-  return null
-}
-
 function renderRow() {
   return render(
     <MemoryRouter initialEntries={["/w/ws_1/s/stream_host"]}>
       <PanelProvider>
         <Routes>
-          <Route
-            path="/w/:workspaceId/s/:streamId"
-            element={
-              <>
-                <PanelUrlProbe />
-                <DocAnchorEvent event={event} workspaceId="ws_1" />
-              </>
-            }
-          />
+          <Route path="/w/:workspaceId/s/:streamId" element={<DocAnchorEvent event={event} workspaceId="ws_1" />} />
         </Routes>
       </PanelProvider>
     </MemoryRouter>
@@ -69,10 +55,9 @@ describe("DocAnchorEvent", () => {
 
     const link = screen.getByRole("link")
     expect({ href: link.getAttribute("href"), text: link.textContent }).toEqual({
-      href: expectedHref,
+      href: "/w/ws_1/s/stream_doc_1?panel=stream_host-stream_doc_1",
       text: expect.stringMatching(/^Kris created a docUntitled/),
     })
-    expect(expectedHref).toContain(DOC)
   })
 
   it("shows Untitled when the doc row is not cached", () => {

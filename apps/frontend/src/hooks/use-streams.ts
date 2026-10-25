@@ -7,7 +7,7 @@ import { db } from "@/db"
 import { joinRoomBestEffort } from "@/lib/socket-room"
 import { applyStreamBootstrap, toCachedStreamBootstrap, type CachedStreamBootstrap } from "@/sync/stream-sync"
 import { deleteStreamSlots } from "@/stores/slot-store"
-import { StreamTypes } from "@threahq/types"
+import { streamTypeCapabilities } from "@threahq/types"
 import type {
   Stream,
   StreamMember,
@@ -153,8 +153,7 @@ export function useCreateStream(workspaceId: string) {
   return useMutation({
     mutationFn: (data: CreateStreamInput) => streamService.create(workspaceId, data),
     onSuccess: async (newStream) => {
-      // A doc has no members row: writing it is granted by membership of its host.
-      const addsMembership = newStream.type !== StreamTypes.DOC
+      const { ownMembers } = streamTypeCapabilities(newStream.type)
       const membership: StreamMember = {
         streamId: newStream.id,
         memberId: newStream.createdBy,
@@ -165,7 +164,7 @@ export function useCreateStream(workspaceId: string) {
       // Register the new stream with the sync engine immediately so the
       // creator gets stream-level realtime before the workspace socket echo
       // or next bootstrap catches up.
-      void syncEngine.subscribeStream(newStream.id)
+      if (ownMembers) void syncEngine.subscribeStream(newStream.id)
 
       // Update workspace bootstrap cache so sidebar shows the new stream immediately
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
@@ -175,16 +174,15 @@ export function useCreateStream(workspaceId: string) {
         return {
           ...old,
           streams: [...old.streams, { ...newStream, lastMessagePreview: null }],
-          streamMemberships: addsMembership ? [...old.streamMemberships, membership] : old.streamMemberships,
+          streamMemberships: ownMembers ? [...old.streamMemberships, membership] : old.streamMemberships,
         }
       })
 
       queryClient.invalidateQueries({ queryKey: streamKeys.lists() })
 
-      const now = Date.now()
-      await Promise.all([
-        persistStreamByRevision(newStream),
-        addsMembership &&
+      const writes: Promise<unknown>[] = [persistStreamByRevision(newStream)]
+      if (ownMembers) {
+        writes.push(
           db.streamMemberships.put({
             id: `${workspaceId}:${newStream.id}`,
             workspaceId,
@@ -192,9 +190,11 @@ export function useCreateStream(workspaceId: string) {
             memberId: newStream.createdBy,
             notificationLevel: null,
             joinedAt: newStream.createdAt,
-            _cachedAt: now,
-          }),
-      ])
+            _cachedAt: Date.now(),
+          })
+        )
+      }
+      await Promise.all(writes)
     },
   })
 }

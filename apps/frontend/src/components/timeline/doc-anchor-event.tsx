@@ -3,7 +3,7 @@ import { StreamTypes, type DocCreatedEventPayload, type StreamEvent } from "@thr
 import { useActors } from "@/hooks"
 import { usePanel } from "@/contexts"
 import { useStreamName } from "@/hooks/use-stream-name"
-import { STREAM_ICONS } from "@/lib/streams"
+import { STREAM_ICONS, streamFallbackLabel } from "@/lib/streams"
 import { formatRelativeTime } from "@/lib/dates"
 
 const DocGlyph = STREAM_ICONS[StreamTypes.DOC]
@@ -18,7 +18,7 @@ export function DocAnchorEvent({ event, workspaceId }: DocAnchorEventProps) {
   const docId = (event.payload as DocCreatedEventPayload | undefined)?.docId ?? ""
   const { getPanelUrl } = usePanel()
   const { getActorName } = useActors(workspaceId)
-  const title = useStreamName(workspaceId, docId) ?? "Untitled"
+  const title = useStreamName(workspaceId, docId) ?? streamFallbackLabel(StreamTypes.DOC, "generic")
   if (!docId) return null
 
   const actorName = getActorName(event.actorId, event.actorType)

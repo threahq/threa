@@ -172,6 +172,8 @@ export function StreamPane({
   const isChannel = stream?.type === StreamTypes.CHANNEL
   const isDm = stream?.type === StreamTypes.DM
   const isDoc = stream?.type === StreamTypes.DOC
+  // A doc's body is its editor: no timeline to search, move, browse or summarize, and no settings of its own.
+  const hasTimeline = !isDoc
   const canWriteDoc = useDocCanWrite(workspaceId, stream)
   const createDoc = useCreateDoc(workspaceId, isDraft ? undefined : stream)
   // Only the stream page sets a list beside its stream; under an aside it would land out of sight.
@@ -259,7 +261,7 @@ export function StreamPane({
   // end since the move endpoints reject the source stream.
   const isSystem = stream?.type === StreamTypes.SYSTEM
   const streamMenuActions: SidebarActionItem[] = []
-  if (!isDoc) {
+  if (hasTimeline) {
     streamMenuActions.push({
       id: "stream-settings",
       label: "Settings",
@@ -287,7 +289,7 @@ export function StreamPane({
       onSelect: createDoc.run,
     })
   }
-  if (!isArchived && !isSystem && !isDoc) {
+  if (!isArchived && !isSystem && hasTimeline) {
     streamMenuActions.push({
       id: "move-messages",
       label: "Move messages…",
@@ -296,7 +298,7 @@ export function StreamPane({
       separatorBefore: true,
     })
   }
-  if (!isDoc) {
+  if (hasTimeline) {
     streamMenuActions.push({
       id: "browse-files",
       label: "Browse files…",
@@ -354,7 +356,7 @@ export function StreamPane({
         onSelect: () => openUserProfile(dmPeerUserId),
       })
     }
-    if (!isDraft && !isDoc && offersContext) {
+    if (!isDraft && hasTimeline && offersContext) {
       sheetViewActions.push({
         id: "stream-context",
         label: "In this stream",
@@ -549,8 +551,8 @@ export function StreamPane({
   const icon = 32 + iconGap
   const offersCall = !!stream && !isDraft && (isChannel || isDm) && callsEnabled
   const offersAside = asideAction !== null
-  const offersSearch = !isDraft && !isDoc
-  const offersContextIcon = !!stream && !isDraft && !isDoc && offersContext
+  const offersSearch = !isDraft && hasTimeline
+  const offersContextIcon = !!stream && !isDraft && hasTimeline && offersContext
   const offersOverlay = (isChannel || isDm) && ownsConversationOverlay
   const foldable = [
     ...(offersAside ? [{ id: "aside-label", width: 60 }] : []),

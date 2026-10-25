@@ -3157,40 +3157,31 @@ describe("registerWorkspaceSocketHandlers", () => {
     cleanup()
   })
 
-  it("caches the creator's new doc without a local membership (writing a doc rides host membership)", async () => {
+  it("caches the creator's new doc without a local membership or a room subscription (both ride the host)", async () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(
       workspaceKeys.bootstrap("ws_1"),
       makeBootstrap({ users: [makeWorkspaceUser()], streams: [], streamMemberships: [] })
     )
 
+    const subscribeStream = vi.fn()
     const { socket, emit } = createTestSocket()
     const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
       getCurrentStreamId: () => undefined,
       getCurrentUser: () => ({ id: "workos_1" }),
-      subscribeStream: vi.fn(),
+      subscribeStream,
     })
 
     emit("stream:created", {
       workspaceId: "ws_1",
       streamId: "stream_doc",
-      stream: {
-        id: "stream_doc",
-        workspaceId: "ws_1",
+      stream: makeStream("stream_doc", {
         type: "doc",
-        displayName: null,
-        slug: null,
-        description: null,
         visibility: "private",
         parentStreamId: "stream_host",
         rootStreamId: "stream_host",
-        companionMode: "off",
-        companionPersonaId: null,
         createdBy: "member_1",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        archivedAt: null,
-      },
+      }),
     })
 
     await vi.waitFor(async () => expect(await db.streams.get(["ws_1", "stream_doc"])).toBeDefined())
@@ -3200,6 +3191,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       memberships: cached?.streamMemberships,
       idbMembership: await db.streamMemberships.get("ws_1:stream_doc"),
     }).toEqual({ cachedIds: ["stream_doc"], memberships: [], idbMembership: undefined })
+    expect(subscribeStream).not.toHaveBeenCalled()
 
     cleanup()
   })
