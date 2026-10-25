@@ -4,7 +4,10 @@ import type { ContentRange } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { useSharedMessageSource } from "@/hooks/use-shared-message-source"
 import { SharedMessageCardBody } from "@/components/shared-messages/card-body"
+import { UnsharedReferencePrompt } from "@/components/shared-messages/unshared-reference-prompt"
+import { useUnsharedReference } from "@/hooks/use-unshared-references"
 import { buildConversationPanelPath } from "@/lib/stream-links"
+import { useMarkdownBlockContext } from "./markdown-block-context"
 
 interface SharedMessagePointerBlockProps {
   streamId: string
@@ -41,6 +44,8 @@ export function SharedMessagePointerBlock({
 }: SharedMessagePointerBlockProps) {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const source = useSharedMessageSource({ workspaceId, messageId, streamId, version, range })
+  const carryingMessageId = useMarkdownBlockContext()?.messageId
+  const unsharedFlavor = useUnsharedReference(workspaceId, carryingMessageId, messageId)
 
   const card = (
     <div
@@ -66,9 +71,23 @@ export function SharedMessagePointerBlock({
     ? buildConversationPanelPath(workspaceId, conversationId, messageId)
     : `/w/${workspaceId}/s/${streamId}?m=${messageId}`
 
-  return (
+  const link = (
     <Link to={target} className="block no-underline">
       {card}
     </Link>
+  )
+  if (!unsharedFlavor || !carryingMessageId) return link
+
+  // The prompt's button sits beside the Link, never inside it (INV-40).
+  return (
+    <div>
+      {link}
+      <UnsharedReferencePrompt
+        workspaceId={workspaceId}
+        messageId={carryingMessageId}
+        flavor={unsharedFlavor}
+        className="mb-1"
+      />
+    </div>
   )
 }

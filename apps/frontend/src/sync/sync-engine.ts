@@ -34,6 +34,7 @@ import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { savedKeys } from "@/hooks/use-saved"
 import { scheduledKeys } from "@/hooks/use-scheduled"
+import { unsharedReferenceKeys } from "@/hooks/use-unshared-references"
 import { activityKeys } from "@/hooks/use-activity"
 import { conversationKeys } from "@/hooks/use-conversations"
 import { isServerStreamId } from "@/lib/stream-ids"
@@ -2058,6 +2059,7 @@ export class SyncEngine {
     const keys: QueryKey[] = [
       savedKeys.all,
       scheduledKeys.all,
+      unsharedReferenceKeys.list(this.workspaceId),
       activityKeys.all,
       conversationKeys.workspaceLists(this.workspaceId),
     ]

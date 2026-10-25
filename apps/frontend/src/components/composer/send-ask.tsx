@@ -112,7 +112,7 @@ export function SendAskRow({
 }
 
 /** A split pane is desktop too narrow for the full sentence; there the row falls back to the short copy. */
-function FitCopy({ compact, copy }: { compact: boolean; copy: { full: string; short: string } }) {
+export function FitCopy({ compact, copy }: { compact: boolean; copy: { full: string; short: string } }) {
   if (compact) return copy.short
   if (copy.full === copy.short) return copy.full
   return (

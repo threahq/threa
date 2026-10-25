@@ -1,8 +1,10 @@
 import { useMemo, useRef, type ReactNode } from "react"
-import { Quote, ChevronDown, ChevronUp } from "lucide-react"
+import { Quote, ChevronDown, ChevronUp, Lock } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
 import { DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD, type AuthorType } from "@threahq/types"
 import { useActors } from "@/hooks"
+import { useUnsharedReference } from "@/hooks/use-unshared-references"
+import { UnsharedReferencePrompt } from "@/components/shared-messages/unshared-reference-prompt"
 import { useUserProfile } from "@/components/user-profile"
 import { PersonaAvatar } from "@/components/persona-avatar"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
@@ -13,6 +15,7 @@ import { useMeasuredLineCount } from "./use-measured-line-count"
 import {
   InsideCollapsibleBlockProvider,
   QuoteNestingDepthProvider,
+  useMarkdownBlockContext,
   useQuoteNestingDepth,
 } from "./markdown-block-context"
 import { extractBlockText } from "./extract-block-text"
@@ -46,6 +49,8 @@ export function QuoteReplyBlock({
   // compound into an unreadable staircase on mobile.
   const depth = useQuoteNestingDepth()
   const isRail = depth > 0
+  const carryingMessageId = useMarkdownBlockContext()?.messageId
+  const unsharedFlavor = useUnsharedReference(workspaceId, isRail ? null : carryingMessageId, messageId)
 
   const quotedText = useMemo(() => extractBlockText(children), [children])
 
@@ -151,14 +156,34 @@ export function QuoteReplyBlock({
 
   return (
     <InsideCollapsibleBlockProvider active={canToggle}>
-      <div className="my-2 flex items-start gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm">
-        <Quote className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          {header}
-          {body}
+      <div className="my-2">
+        <div className="flex items-start gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm">
+          <Quote className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            {header}
+            {body}
+          </div>
         </div>
+        {unsharedFlavor && carryingMessageId && (
+          <UnsharedReferencePrompt
+            workspaceId={workspaceId}
+            messageId={carryingMessageId}
+            flavor={unsharedFlavor}
+            className="mt-1.5"
+          />
+        )}
       </div>
     </InsideCollapsibleBlockProvider>
+  )
+}
+
+/** A quote the author couldn't read when it sent: the message carries no author or content to show. */
+export function PrivateQuoteBlock() {
+  return (
+    <div className="my-2 flex items-center gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm">
+      <Lock className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <span className="text-xs font-medium text-muted-foreground">Private quote</span>
+    </div>
   )
 }
 

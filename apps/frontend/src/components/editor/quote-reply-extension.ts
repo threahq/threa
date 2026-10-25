@@ -191,6 +191,8 @@ export interface QuoteReplyAttrs {
   version: number | null
   /** Span inside the pinned version; null = the whole message */
   range: ContentRange | null
+  /** Server-set: the author couldn't read the source, so only the ids remain */
+  private: boolean
 }
 
 export const QuoteReplyExtension = Node.create({
@@ -231,6 +233,11 @@ export const QuoteReplyExtension = Node.create({
         default: "",
         parseHTML: (element) => element.getAttribute("data-snippet"),
         renderHTML: (attrs) => ({ "data-snippet": attrs.snippet }),
+      },
+      private: {
+        default: false,
+        parseHTML: (element) => element.getAttribute("data-private") === "true",
+        renderHTML: (attrs) => (attrs.private ? { "data-private": "true" } : {}),
       },
       ...referencePinAttributes,
     }

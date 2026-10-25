@@ -1,37 +1,61 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { messagesApi } from "@/api/messages"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { sharedMessageSlotKey } from "@threahq/types"
 import { SlotsProvider } from "@/components/slots/context"
 import { db } from "@/db"
 
-function renderMarkdown(content: string, slotMap: Parameters<typeof SlotsProvider>[0]["map"] = null) {
+function renderMarkdown(
+  content: string,
+  slotMap: Parameters<typeof SlotsProvider>[0]["map"] = null,
+  messageId?: string
+) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <MemoryRouter initialEntries={["/w/ws_1/s/stream_dst"]}>
-      <Routes>
-        <Route
-          path="/w/:workspaceId/s/:streamId"
-          element={
-            <SlotsProvider map={slotMap}>
-              <MarkdownContent content={content} />
-            </SlotsProvider>
-          }
-        />
-      </Routes>
-    </MemoryRouter>
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/w/ws_1/s/stream_dst"]}>
+        <Routes>
+          <Route
+            path="/w/:workspaceId/s/:streamId"
+            element={
+              <SlotsProvider map={slotMap}>
+                <MarkdownContent content={content} messageId={messageId} />
+              </SlotsProvider>
+            }
+          />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
   )
 }
 
 describe("MarkdownContent — sharedMessage paragraph swap", () => {
   beforeEach(async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.spyOn(messagesApi, "listUnsharedReferences").mockResolvedValue({ references: [] })
     await db.events.clear()
   })
 
   afterEach(async () => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
     await db.events.clear()
+  })
+
+  it("should prompt beside the pointer card when the carrying message's share went out unrecorded", async () => {
+    vi.spyOn(messagesApi, "listUnsharedReferences").mockResolvedValue({
+      references: [
+        { messageId: "msg_container", streamId: "stream_dst", sourceMessageId: "msg_abc", flavor: "pointer" },
+      ],
+    })
+    renderMarkdown("Shared a message from [Ariadne](shared-message:stream_src/msg_abc)", null, "msg_container")
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Readers can't see the shared message")
+    const card = document.querySelector('[data-type="shared-message"]')
+    expect(card?.contains(screen.getByRole("button", { name: "Share it" }))).toBe(false)
   })
 
   it("replaces the 'Shared a message from X' paragraph with a pointer card", () => {
@@ -155,6 +179,7 @@ describe("MarkdownContent — sharedMessage paragraph swap", () => {
 
 describe("MarkdownContent — pinned sharedMessage pointers", () => {
   beforeEach(async () => {
+    vi.spyOn(messagesApi, "listUnsharedReferences").mockResolvedValue({ references: [] })
     await db.events.clear()
   })
 

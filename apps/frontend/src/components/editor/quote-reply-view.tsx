@@ -1,5 +1,5 @@
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react"
-import { X, Quote } from "lucide-react"
+import { X, Quote, Lock } from "lucide-react"
 import { useParams } from "react-router-dom"
 import { stripMarkdownToInline, truncateInline } from "@/lib/markdown/strip"
 import { cn } from "@/lib/utils"
@@ -19,9 +19,25 @@ export function QuoteReplyView({ node, deleteNode, selected }: NodeViewProps) {
   const displaySnippet = truncateInline(stripMarkdownToInline(attrs.snippet), 200)
 
   const { workspaceId } = useParams<{ workspaceId: string }>()
-  const exposed = useReferenceExposed(attrs.streamId)
+  // A private quote carries nothing of its source, so it reveals nothing either.
+  const exposed = useReferenceExposed(attrs.streamId) && !attrs.private
   const tone = AUDIENCE_TONE.reveal
-  const Icon = exposed ? tone.icon : Quote
+  const RestingIcon = attrs.private ? Lock : Quote
+  const Icon = exposed ? tone.icon : RestingIcon
+
+  let label = <span className="text-xs font-medium text-muted-foreground">{attrs.authorName}</span>
+  if (attrs.private) {
+    label = <span className="text-xs font-medium text-muted-foreground">Private quote</span>
+  } else if (workspaceId && attrs.authorId) {
+    label = (
+      <QuoteAuthor
+        workspaceId={workspaceId}
+        authorName={attrs.authorName}
+        authorId={attrs.authorId}
+        actorType={attrs.actorType as AuthorType}
+      />
+    )
+  }
 
   return (
     <NodeViewWrapper
@@ -38,17 +54,8 @@ export function QuoteReplyView({ node, deleteNode, selected }: NodeViewProps) {
         aria-hidden="true"
       />
       <div className="min-w-0 flex-1">
-        {workspaceId && attrs.authorId ? (
-          <QuoteAuthor
-            workspaceId={workspaceId}
-            authorName={attrs.authorName}
-            authorId={attrs.authorId}
-            actorType={attrs.actorType as AuthorType}
-          />
-        ) : (
-          <span className="text-xs font-medium text-muted-foreground">{attrs.authorName}</span>
-        )}
-        <p className="mt-0.5 text-muted-foreground">{displaySnippet}</p>
+        {label}
+        {!attrs.private && <p className="mt-0.5 text-muted-foreground">{displaySnippet}</p>}
       </div>
       <button
         type="button"

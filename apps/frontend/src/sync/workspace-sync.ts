@@ -118,6 +118,7 @@ import { memoKeys } from "@/hooks/use-memos"
 import { invitationKeys } from "@/api/invitations"
 import { savedSuggestionKeys } from "@/hooks/use-saved-suggestions"
 import { persistScheduledRows, removeScheduledRow, scheduledKeys } from "@/hooks/use-scheduled"
+import { unsharedReferenceKeys } from "@/hooks/use-unshared-references"
 import { assignmentToCached, assignmentId } from "@/hooks/use-labels"
 import {
   NOTIFICATION_CONFIG,
@@ -2402,6 +2403,7 @@ export function registerWorkspaceSocketHandlers(
     // message:created path so the in-stream timeline updates separately.
     await persistScheduledRows([payload.scheduled])
     queryClient.invalidateQueries({ queryKey: scheduledKeys.all })
+    queryClient.invalidateQueries({ queryKey: unsharedReferenceKeys.list(workspaceId) })
   }
 
   const handleScheduledCancelled = async (payload: ScheduledMessageCancelledPayload) => {

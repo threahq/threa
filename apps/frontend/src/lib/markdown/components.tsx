@@ -30,7 +30,7 @@ import { PointerMentionChip, ProcessedChildren } from "./mention-renderer"
 import { useAttachmentContext } from "./attachment-context"
 import { PENDING_STATE_LABELS } from "@/lib/attachments/pending-state"
 import { useLinkPreviewContext } from "./link-preview-context"
-import { QuoteReplyBlock } from "./quote-reply-block"
+import { PrivateQuoteBlock, QuoteReplyBlock } from "./quote-reply-block"
 import { AgentBlock } from "./agent-block"
 import { BlockquoteBlock } from "./blockquote-block"
 import { SharedMessagePointerBlock } from "./shared-message-block"
@@ -104,6 +104,7 @@ function extractQuoteReplyFromChildren(children: ReactNode): {
   messageId: string
   authorId: string
   actorType: string
+  isPrivate: boolean
   quotedContent: ReactNode[]
 } | null {
   const childArray: ReactNode[] = Children.toArray(children)
@@ -121,6 +122,7 @@ function extractQuoteReplyFromChildren(children: ReactNode): {
         messageId: match.messageId,
         authorId: match.authorId,
         actorType: match.actorType,
+        isPrivate: match.private === true,
         quotedContent: childArray.slice(0, i),
       }
     }
@@ -189,7 +191,7 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
     if (!isIdShaped(messagePointer.streamId, "stream_") || !isIdShaped(messagePointer.messageId, "msg_")) {
       return <span>{label}</span>
     }
-    if (!workspaceId) return <span>{label}</span>
+    if (!workspaceId || quote?.private) return <span>{label}</span>
 
     const target = sharedMessage?.conversationId
       ? buildConversationPanelPath(workspaceId, sharedMessage.conversationId, sharedMessage.messageId)
@@ -526,6 +528,7 @@ export const markdownComponents: Components = {
       )
     }
     const quoteReply = extractQuoteReplyFromChildren(children)
+    if (quoteReply?.isPrivate) return <PrivateQuoteBlock />
     if (quoteReply) {
       return (
         <QuoteReplyBlock

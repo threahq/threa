@@ -478,3 +478,60 @@ test.describe("Composer asks before a reference reaches readers who can't open i
     expect(box?.width ?? 0).toBeGreaterThan(200)
   })
 })
+
+test.describe("A scheduled share that fires after its source went private", () => {
+  test("prompts the author on the sent message and its Scheduled row, and Share it fills the reader's card", async ({
+    browser,
+    page,
+  }) => {
+    const setup = await setupPrivateToPublic(browser, page, "fire")
+    try {
+      const laterSlug = `later-${generateTestId()}`
+      const laterStreamId = await createChannelViaApi(page, setup.workspaceId, laterSlug, "public")
+      const laterText = `public-for-now-${generateTestId()}`
+      const laterMessageId = await postMessageViaApi(page, setup.workspaceId, laterStreamId, laterText)
+      const scheduled = await page.request.post(`/api/workspaces/${setup.workspaceId}/scheduled`, {
+        data: {
+          streamId: setup.pubStreamId,
+          contentJson: {
+            type: "doc",
+            content: [{ type: "sharedMessage", attrs: { messageId: laterMessageId, streamId: laterStreamId } }],
+          },
+          scheduledFor: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        },
+      })
+      await expectApiOk(scheduled, "Schedule a share of a public message")
+      const scheduledId = ((await scheduled.json()) as { scheduled: { id: string } }).scheduled.id
+      await expectApiOk(
+        await page.request.patch(`/api/workspaces/${setup.workspaceId}/streams/${laterStreamId}`, {
+          data: { visibility: "private" },
+        }),
+        "Turn the source private"
+      )
+      await expectApiOk(
+        await page.request.post(`/api/workspaces/${setup.workspaceId}/scheduled/${scheduledId}/send-now`),
+        "Fire the scheduled share"
+      )
+
+      const reader = setup.other.page
+      await reader.goto(`/w/${setup.workspaceId}/s/${setup.pubStreamId}`)
+      const readerCard = reader.getByRole("main").locator("[data-message-id] [data-type='shared-message']")
+      await expect(readerCard).toContainText("Private message", { timeout: 10000 })
+      await expect(reader.getByTestId("unshared-reference-prompt")).toHaveCount(0)
+
+      await page.goto(`/w/${setup.workspaceId}/scheduled/sent`)
+      const row = page.getByTestId("unshared-reference-prompt")
+      await expect(row).toContainText("Readers can't see the shared message", { timeout: 10000 })
+
+      await page.goto(`/w/${setup.workspaceId}/s/${setup.pubStreamId}`)
+      const prompt = page.getByRole("main").getByTestId("unshared-reference-prompt")
+      await expect(prompt).toContainText("Readers can't see the shared message", { timeout: 10000 })
+      await prompt.getByRole("button", { name: "Share it" }).click()
+
+      await expect(prompt).toHaveCount(0, { timeout: 10000 })
+      await expect(readerCard).toContainText(laterText, { timeout: 10000 })
+    } finally {
+      await setup.other.context.close()
+    }
+  })
+})
