@@ -29,7 +29,6 @@ interface DocUpdateRow {
   update: Buffer
   actor_id: string
   actor_type: AuthorType
-  created_at: Date
 }
 
 export interface DocUpdate {
@@ -37,7 +36,6 @@ export interface DocUpdate {
   update: Uint8Array
   actorId: string
   actorType: AuthorType
-  createdAt: Date
 }
 
 export interface DocSnapshot {
@@ -143,7 +141,7 @@ export const DocRepository = {
 
   async listUpdatesAfter(db: Querier, workspaceId: string, docId: string, afterSeq: number): Promise<DocUpdate[]> {
     const result = await db.query<DocUpdateRow>(sql`
-      SELECT seq, update, actor_id, actor_type, created_at FROM doc_updates
+      SELECT seq, update, actor_id, actor_type FROM doc_updates
       WHERE workspace_id = ${workspaceId} AND doc_id = ${docId} AND seq > ${afterSeq}
       ORDER BY seq
     `)
@@ -152,7 +150,6 @@ export const DocRepository = {
       update: new Uint8Array(row.update),
       actorId: row.actor_id,
       actorType: row.actor_type,
-      createdAt: row.created_at,
     }))
   },
 

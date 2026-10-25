@@ -10,7 +10,7 @@ export { StreamService, onboardingStreamUniquenessKey } from "./service"
 export { StreamReadService } from "./read-service"
 export { resolveInboxClearMode } from "./inbox-clear-mode"
 export { releaseInboxHold } from "./inbox-release"
-export type { CreateScratchpadParams, CreateChannelParams, CreateThreadParams, CreateDocParams } from "./service"
+export type { CreateScratchpadParams, CreateChannelParams, CreateThreadParams } from "./service"
 
 export { normalizeStreamDescription } from "./description"
 export type { NormalizedStreamDescription } from "./description"
