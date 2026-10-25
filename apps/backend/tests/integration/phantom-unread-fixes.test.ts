@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test"
 import { Pool } from "pg"
-import { setupTestDatabase, testMessageContent, addTestMember } from "./setup"
+import { deleteAllStreams, setupTestDatabase, testMessageContent, addTestMember } from "./setup"
 import {
   StreamEventRepository,
   StreamMemberRepository,
@@ -34,7 +34,7 @@ describe("Phantom-unread drift fixes", () => {
     await pool.query("DELETE FROM stream_sequences")
     await pool.query("DELETE FROM stream_read_state")
     await pool.query("DELETE FROM stream_members")
-    await pool.query("DELETE FROM streams")
+    await deleteAllStreams(pool)
     await pool.query(
       "DELETE FROM outbox WHERE id > (SELECT COALESCE(MAX(last_processed_id), 0) FROM outbox_listeners WHERE listener_id = 'broadcast')"
     )

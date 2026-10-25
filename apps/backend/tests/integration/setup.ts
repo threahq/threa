@@ -226,6 +226,15 @@ export async function withTestTransaction<T>(pool: Pool, callback: (client: Pool
 }
 
 /**
+ * Deletes every stream. The preloaded server's workers lock stream rows in id
+ * order (`StreamRepository.findByIdsForUpdateBlocking`); a plain table-wide
+ * DELETE locks them in heap order and deadlocks against them.
+ */
+export async function deleteAllStreams(pool: Pool): Promise<void> {
+  await pool.query("DELETE FROM streams WHERE id IN (SELECT id FROM streams ORDER BY id FOR UPDATE)")
+}
+
+/**
  * Creates a minimal ProseMirror JSON document from text.
  * Used in tests to construct contentJson field for messages.
  */

@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test"
 import { Pool } from "pg"
-import { setupTestDatabase } from "./setup"
+import { deleteAllStreams, setupTestDatabase } from "./setup"
 import {
   AgentSessionRepository,
   SessionStatuses,
@@ -171,7 +171,7 @@ describe("an orphaned session's terminal event carries its effects", () => {
     await pool.query("DELETE FROM stream_events")
     await pool.query("DELETE FROM stream_sequences")
     await pool.query("DELETE FROM outbox")
-    await pool.query("DELETE FROM streams")
+    await deleteAllStreams(pool)
   })
 
   test("surfaces a write made before the process died", async () => {
