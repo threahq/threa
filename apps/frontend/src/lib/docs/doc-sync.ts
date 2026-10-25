@@ -42,7 +42,7 @@ export class DocSync {
   private seq: number | null = null
   private highestSeen = 0
   private pending: Uint8Array[] = []
-  private posting = false
+  private posting: Promise<void> | null = null
   private flushTimer: ReturnType<typeof setTimeout> | null = null
   private flushFailures = 0
   private catchUpTimer: ReturnType<typeof setTimeout> | null = null
@@ -74,12 +74,15 @@ export class DocSync {
     return this.load()
   }
 
+  /** Detaches; edits still waiting for the debounce or a retry are sent once more, unobserved. */
   stop(): void {
+    if (this.stopped) return
     this.stopped = true
     this.ydoc.off("update", this.onLocalUpdate)
     if (this.flushTimer) clearTimeout(this.flushTimer)
     if (this.catchUpTimer) clearTimeout(this.catchUpTimer)
     this.listeners.clear()
+    this.flushOnStop()
   }
 
   receive(payload: DocUpdatedOutboxPayload): void {
@@ -180,9 +183,9 @@ export class DocSync {
     if (this.posting || this.pending.length === 0 || this.stopped) return
     const update = Y.mergeUpdates(this.pending)
     this.pending = []
-    this.posting = true
+    this.posting = this.post(update)
     try {
-      await this.post(update)
+      await this.posting
       this.flushFailures = 0
       if (this.status.phase === "rejected") this.setPhase({ phase: "ready" })
     } catch (error) {
@@ -195,10 +198,23 @@ export class DocSync {
         this.scheduleFlush(backoffMs(this.flushFailures))
       }
     } finally {
-      this.posting = false
+      this.posting = null
       this.updateSaving()
     }
     if (this.pending.length > 0 && !this.flushTimer && !this.stopped) this.scheduleFlush(FLUSH_DEBOUNCE_MS)
+  }
+
+  private flushOnStop(): void {
+    if (this.pending.length === 0) return
+    const update = bytesToBase64(Y.mergeUpdates(this.pending))
+    this.pending = []
+    // Queued behind a POST still in flight: these bytes can depend on it.
+    void (this.posting ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => this.api.postUpdate(this.workspaceId, this.docId, update))
+      .catch((error: unknown) =>
+        console.error("Doc edits made before closing were not saved", { docId: this.docId, error })
+      )
   }
 
   private async post(update: Uint8Array): Promise<void> {
@@ -231,7 +247,7 @@ export class DocSync {
   }
 
   private updateSaving(): void {
-    const saving = this.posting || this.pending.length > 0
+    const saving = this.posting !== null || this.pending.length > 0
     if (saving !== this.status.saving) this.setStatus({ ...this.status, saving })
   }
 

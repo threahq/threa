@@ -1,12 +1,12 @@
 import { Extension } from "@tiptap/core"
-import * as Y from "yjs"
+import type * as Y from "yjs"
 // The server applies and reads this fragment with the same pinned y-prosemirror
 // (`apps/backend/src/features/docs/yjs.ts`); keep both on one exact version so
 // the client writes the structure the server parses.
 import { redo, undo, ySyncPlugin, yUndoPlugin } from "y-prosemirror"
 
 interface YjsCollaborationOptions {
-  ydoc: Y.Doc
+  ydoc: Y.Doc | null
   fragment: string
 }
 
@@ -14,11 +14,13 @@ export const YjsCollaboration = Extension.create<YjsCollaborationOptions>({
   name: "yjsCollaboration",
 
   addOptions() {
-    return { ydoc: new Y.Doc(), fragment: "default" }
+    return { ydoc: null, fragment: "default" }
   },
 
   addProseMirrorPlugins() {
-    return [ySyncPlugin(this.options.ydoc.getXmlFragment(this.options.fragment)), yUndoPlugin()]
+    const { ydoc, fragment } = this.options
+    if (!ydoc) throw new Error("YjsCollaboration needs the Y.Doc it binds to")
+    return [ySyncPlugin(ydoc.getXmlFragment(fragment)), yUndoPlugin()]
   },
 
   addKeyboardShortcuts() {

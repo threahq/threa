@@ -38,8 +38,8 @@ import { cn } from "@/lib/utils"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { foldHeaderControls } from "@/lib/pane-header-fold"
 import { tabRowReserve } from "@/lib/panel-tab-fit"
-import { useStreamOrDraft, isDmDraftId, useActiveBotPresence } from "@/hooks"
-import { useWorkspaceDmPeers, useWorkspaceMetadata } from "@/stores/workspace-store"
+import { useStreamOrDraft, isDmDraftId, useActiveBotPresence, useEffectiveArchived, useWorkspaceUserId } from "@/hooks"
+import { useWorkspaceDmPeers, useWorkspaceMetadata, useWorkspaceStreamMembership } from "@/stores/workspace-store"
 import { createConversationsPanelId, useCoordinatedLoading, useCurrentPane, usePanel, useSidebar } from "@/contexts"
 import { StreamLoadingIndicator } from "@/components/loading"
 import { useUserProfile } from "@/components/user-profile"
@@ -48,6 +48,7 @@ import { useExplorerUrlState } from "@/components/attachment-explorer"
 import { useOutcomesUrlState } from "@/components/agent-outcomes"
 import { StreamContent, TimelineSkeleton, AgentActivityHeaderChip } from "@/components/timeline"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
+import { DocPaneBody } from "@/components/docs/doc-pane-body"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { LabelStack } from "@/components/labels/label-stack"
 import { StreamHeaderEncryptionAction } from "@/components/encryption/stream-encryption-affordance"
@@ -167,6 +168,20 @@ export function StreamPane({
   const isThread = stream?.type === StreamTypes.THREAD
   const isChannel = stream?.type === StreamTypes.CHANNEL
   const isDm = stream?.type === StreamTypes.DM
+  const isDoc = stream?.type === StreamTypes.DOC
+  // A doc has no members of its own: whoever is a member of its root may edit it while nothing above it is archived.
+  const viewerUserId = useWorkspaceUserId(workspaceId)
+  const rootMembership = useWorkspaceStreamMembership(
+    workspaceId,
+    stream?.rootStreamId ?? "",
+    isDoc ? viewerUserId : null
+  )
+  const { isArchived: docArchived } = useEffectiveArchived({
+    workspaceId,
+    stream: isDoc ? stream : null,
+    fallbackArchived: null,
+  })
+  const canWriteDoc = isDoc && rootMembership !== undefined && !docArchived
   // Only the stream page sets a list beside its stream; under an aside it would land out of sight.
   const offersList = (isChannel || isDm) && hasTabs && offersContext
   const dmPeerUserId = isDm ? dmPeers.find((p) => p.streamId === streamId)?.userId : null
@@ -252,12 +267,14 @@ export function StreamPane({
   // end since the move endpoints reject the source stream.
   const isSystem = stream?.type === StreamTypes.SYSTEM
   const streamMenuActions: SidebarActionItem[] = []
-  streamMenuActions.push({
-    id: "stream-settings",
-    label: "Settings",
-    icon: Settings,
-    onSelect: () => openStreamSettings(streamId),
-  })
+  if (!isDoc) {
+    streamMenuActions.push({
+      id: "stream-settings",
+      label: "Settings",
+      icon: Settings,
+      onSelect: () => openStreamSettings(streamId),
+    })
+  }
   streamMenuActions.push({
     id: "labels",
     label: "Labels…",
@@ -270,7 +287,7 @@ export function StreamPane({
     icon: Link2,
     onSelect: () => void copyStreamLink(workspaceId, streamId),
   })
-  if (!isArchived && !isSystem) {
+  if (!isArchived && !isSystem && !isDoc) {
     streamMenuActions.push({
       id: "move-messages",
       label: "Move messages…",
@@ -279,18 +296,20 @@ export function StreamPane({
       separatorBefore: true,
     })
   }
-  streamMenuActions.push({
-    id: "browse-files",
-    label: "Browse files…",
-    icon: Paperclip,
-    onSelect: () => openExplorer({ streamIds: [streamId] }),
-  })
-  streamMenuActions.push({
-    id: "view-outcomes",
-    label: "Agent agenda…",
-    icon: ListChecks,
-    onSelect: () => openOutcomes({ streamIds: [streamId] }),
-  })
+  if (!isDoc) {
+    streamMenuActions.push({
+      id: "browse-files",
+      label: "Browse files…",
+      icon: Paperclip,
+      onSelect: () => openExplorer({ streamIds: [streamId] }),
+    })
+    streamMenuActions.push({
+      id: "view-outcomes",
+      label: "Agent agenda…",
+      icon: ListChecks,
+      onSelect: () => openOutcomes({ streamIds: [streamId] }),
+    })
+  }
   if (isScratchpad) {
     // Hide the rename affordance while locked rather than let it fall back to
     // plaintext. Archive/unarchive stay available regardless of lock state.
@@ -335,7 +354,7 @@ export function StreamPane({
         onSelect: () => openUserProfile(dmPeerUserId),
       })
     }
-    if (!isDraft && offersContext) {
+    if (!isDraft && !isDoc && offersContext) {
       sheetViewActions.push({
         id: "stream-context",
         label: "In this stream",
@@ -530,8 +549,8 @@ export function StreamPane({
   const icon = 32 + iconGap
   const offersCall = !!stream && !isDraft && (isChannel || isDm) && callsEnabled
   const offersAside = asideAction !== null
-  const offersSearch = !isDraft
-  const offersContextIcon = !!stream && !isDraft && offersContext
+  const offersSearch = !isDraft && !isDoc
+  const offersContextIcon = !!stream && !isDraft && !isDoc && offersContext
   const offersOverlay = (isChannel || isDm) && ownsConversationOverlay
   const foldable = [
     ...(offersAside ? [{ id: "aside-label", width: 60 }] : []),
@@ -919,15 +938,19 @@ export function StreamPane({
         <StreamErrorBoundary streamId={streamId} queryError={error}>
           <StreamEncryptionGate workspaceId={workspaceId} encrypted={isEncryptedScratchpad && !isDraft}>
             <PaneLanded fallback={<TimelineSkeleton />}>
-              <StreamContent
-                workspaceId={workspaceId}
-                streamId={streamId}
-                highlightMessageId={highlightMessageId}
-                isDraft={isDraft}
-                // Only the pane worked in takes the focus, which would move the route to it. Beside the page's
-                // stream that is only a thread, the reply it was opened to write.
-                autoFocus={autoFocus && isCurrentPane && (isPageStream || isThread)}
-              />
+              {isDoc && stream ? (
+                <DocPaneBody workspaceId={workspaceId} stream={stream} canWrite={canWriteDoc} />
+              ) : (
+                <StreamContent
+                  workspaceId={workspaceId}
+                  streamId={streamId}
+                  highlightMessageId={highlightMessageId}
+                  isDraft={isDraft}
+                  // Only the pane worked in takes the focus, which would move the route to it. Beside the page's
+                  // stream that is only a thread, the reply it was opened to write.
+                  autoFocus={autoFocus && isCurrentPane && (isPageStream || isThread)}
+                />
+              )}
             </PaneLanded>
           </StreamEncryptionGate>
         </StreamErrorBoundary>

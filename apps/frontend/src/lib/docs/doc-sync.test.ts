@@ -364,6 +364,50 @@ describe("DocSync", () => {
     })
   })
 
+  it("sends edits still inside the debounce window when stopped", async () => {
+    const client = connect(server)
+    await client.sync.start()
+
+    type(client.ydoc, "last words")
+    client.sync.stop()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect({
+      posts: server.api.postUpdate.mock.calls.length,
+      serverText: server.text,
+      timers: vi.getTimerCount(),
+    }).toEqual({
+      posts: 1,
+      serverText: "last words",
+      timers: 0,
+    })
+  })
+
+  it("sends what was typed during an in-flight post after it settles when stopped", async () => {
+    const client = connect(server)
+    await client.sync.start()
+    const realPost = server.api.postUpdate.getMockImplementation()!
+    let release!: () => void
+    server.api.postUpdate.mockImplementationOnce(async (...args) => {
+      await new Promise<void>((resolve) => (release = resolve))
+      return realPost(...args)
+    })
+
+    type(client.ydoc, "a")
+    await vi.advanceTimersByTimeAsync(400)
+    type(client.ydoc, "b")
+    client.sync.stop()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(server.api.postUpdate).toHaveBeenCalledTimes(1)
+    release()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect({ posts: server.api.postUpdate.mock.calls.length, serverText: server.text }).toEqual({
+      posts: 2,
+      serverText: "ab",
+    })
+  })
+
   it("adopts the server seq after a 409 reload", async () => {
     const client = connect(server)
     await client.sync.start()

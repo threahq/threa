@@ -71,6 +71,8 @@ export function getStreamTypeLabel(type: StreamType): string {
       return "Thread"
     case StreamTypes.ASIDE:
       return "Aside"
+    case StreamTypes.DOC:
+      return "Doc"
     default:
       return type
   }
@@ -131,6 +133,7 @@ const FALLBACK_LABELS: Record<string, Record<FallbackContext, string>> = {
   dm: { sidebar: "Direct message", activity: "a conversation", breadcrumb: "DM", generic: "DM", noun: "DM" },
   system: { sidebar: "System", activity: "system", breadcrumb: "System", generic: "System", noun: "system stream" },
   aside: { sidebar: "New aside", activity: "an aside", breadcrumb: "Aside", generic: "Aside", noun: "aside" },
+  doc: { sidebar: "Untitled", activity: "a doc", breadcrumb: "Untitled", generic: "Untitled", noun: "doc" },
 }
 
 /** Context-appropriate fallback text for streams that truly have no name yet. */

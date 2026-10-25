@@ -3,6 +3,7 @@ import { SLUG_MAX_LENGTH } from "@threahq/types"
 import {
   collectSealedStreamIds,
   findArchivedAncestor,
+  getStreamTypeLabel,
   resolveDmDisplayName,
   resolveStreamName,
   streamChipSlug,
@@ -24,6 +25,16 @@ describe("streamLabel", () => {
 
   it("defaults the fallback context to generic", () => {
     expect(streamLabel({ type: "thread", slug: null, displayName: null })).toBe("Thread")
+  })
+
+  it("names an unnamed doc Untitled in every titled surface", () => {
+    const doc = { type: "doc", slug: null, displayName: null }
+    expect({
+      generic: streamLabel(doc),
+      breadcrumb: streamLabel(doc, "breadcrumb"),
+      sidebar: streamLabel(doc, "sidebar"),
+      typeLabel: getStreamTypeLabel("doc"),
+    }).toEqual({ generic: "Untitled", breadcrumb: "Untitled", sidebar: "Untitled", typeLabel: "Doc" })
   })
 })
 
