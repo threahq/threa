@@ -37,8 +37,8 @@ import {
 import {
   downloadInboundAttachments,
   downloadSealedInboundAttachments,
-  extractAttachmentDirectives,
   formatInboundAttachmentManifest,
+  hasReplyAttachments,
   selectSealedInboundRefs,
   type DownloadedAttachment,
   uploadReplyAttachments,
@@ -2849,7 +2849,7 @@ export class RemoteSession {
       return
     }
     // The server refuses a plaintext body on an encrypted stream, but only after the files went up unsealed.
-    if (extractAttachmentDirectives(body.content).paths.length && (await this.client.getStream(streamId)).e2eEnabled) {
+    if (hasReplyAttachments(body.content) && (await this.client.getStream(streamId)).e2eEnabled) {
       throw new ThreaApiError(
         `Stream ${streamId} is end-to-end encrypted; a post outside a turn can't be sealed.`,
         400,

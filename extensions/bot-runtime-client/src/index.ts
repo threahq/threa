@@ -14,6 +14,7 @@ export {
   type ArchiveGraceOptions,
 } from "./archive-grace"
 export { attachmentLocalPath, safeAttachmentFilename } from "./attachment-files"
+export { findLocalImageLinks, imageAttachmentLink, uploadLocalImageLinks, type LocalImageLink } from "./local-images"
 export { parseWsHint, buildBotSocketUrl, isObject, type WsHint } from "./ws-hint"
 export type {
   BotWriteAck,

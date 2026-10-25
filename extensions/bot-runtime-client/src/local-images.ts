@@ -1,0 +1,139 @@
+import { fileURLToPath } from "node:url"
+
+/** A markdown image `![alt](target)` whose target is a file on this machine rather than a URL. */
+export interface LocalImageLink {
+  /** Offsets of the whole `![alt](target)` in the scanned markdown. */
+  start: number
+  end: number
+  alt: string
+  path: string
+}
+
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/
+const IMAGE_RE = /(?<!\\)!\[((?:\\.|[^\\\]])*)\]\(\s*(<[^>\n]*>|[^\s)]+)(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g
+const SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i
+const WINDOWS_DRIVE_RE = /^[a-z]:[\\/]/i
+
+function localPath(target: string): string | null {
+  if (target.startsWith("//") || target.startsWith("#")) return null
+  if (WINDOWS_DRIVE_RE.test(target) || !SCHEME_RE.test(target)) return target
+  if (!/^file:/i.test(target)) return null
+  try {
+    return fileURLToPath(target)
+  } catch {
+    return null
+  }
+}
+
+function blank(text: string): string {
+  return " ".repeat(text.length)
+}
+
+function maskCodeSpans(line: string): string {
+  let out = ""
+  let i = 0
+  while (i < line.length) {
+    if (line[i] !== "`") {
+      out += line[i]
+      i++
+      continue
+    }
+    let openEnd = i
+    while (line[openEnd] === "`") openEnd++
+    const ticks = openEnd - i
+    let close = -1
+    for (let j = openEnd; j < line.length && close === -1; ) {
+      if (line[j] !== "`") {
+        j++
+        continue
+      }
+      let runEnd = j
+      while (line[runEnd] === "`") runEnd++
+      if (runEnd - j === ticks) close = j
+      j = runEnd
+    }
+    if (close === -1) {
+      out += line.slice(i, openEnd)
+      i = openEnd
+      continue
+    }
+    out += blank(line.slice(i, close + ticks))
+    i = close + ticks
+  }
+  return out
+}
+
+/** Same-length copy with fenced blocks and inline code spans blanked, so offsets still index the original. */
+function maskCode(markdown: string): string {
+  let fence: string | null = null
+  return markdown
+    .split("\n")
+    .map((line) => {
+      const marker = line.match(FENCE_RE)?.[1]
+      if (fence) {
+        const closes =
+          marker !== undefined && marker[0] === fence[0] && marker.length >= fence.length && line.trim() === marker
+        if (closes) fence = null
+        return blank(line)
+      }
+      if (marker) {
+        fence = marker
+        return blank(line)
+      }
+      return maskCodeSpans(line)
+    })
+    .join("\n")
+}
+
+/** Images outside code whose target is an absolute, relative, or `file:` path. Web URLs are left alone. */
+export function findLocalImageLinks(markdown: string): LocalImageLink[] {
+  const links: LocalImageLink[] = []
+  for (const match of maskCode(markdown).matchAll(IMAGE_RE)) {
+    const start = match.index
+    const end = start + match[0].length
+    // A match that straddles masked code reads differently in the original; it is not a real image.
+    if (markdown.slice(start, end) !== match[0]) continue
+    const raw = match[2]!
+    const path = localPath(raw.startsWith("<") ? raw.slice(1, -1) : raw)
+    if (path) links.push({ start, end, alt: match[1]!, path })
+  }
+  return links
+}
+
+/** An inline `attachment:` link for an uploaded image, labelled by its alt text or else its filename. */
+export function imageAttachmentLink(alt: string, attachment: { id: string; filename: string }): string {
+  const label = alt.trim() || attachment.filename.replace(/[\\[\]]/g, "\\$&")
+  return `[${label}](attachment:${attachment.id})`
+}
+
+/**
+ * Upload every local file the markdown embeds as an image and replace each
+ * `![alt](path)` with `render(uploaded, link)`. A path embedded twice uploads
+ * once. A failed upload removes the image and reports `path: reason`, the
+ * same shape as a failed `THREA_ATTACH:`.
+ */
+export async function uploadLocalImageLinks<T>(
+  markdown: string,
+  upload: (path: string) => Promise<T>,
+  render: (uploaded: T, link: LocalImageLink) => string
+): Promise<{ markdown: string; uploaded: T[]; failed: string[] }> {
+  const links = findLocalImageLinks(markdown)
+  const uploads = new Map<string, T>()
+  const failed: string[] = []
+  for (const path of new Set(links.map((link) => link.path))) {
+    try {
+      uploads.set(path, await upload(path))
+    } catch (error) {
+      failed.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  let rewritten = ""
+  let cursor = 0
+  for (const link of links) {
+    const uploaded = uploads.get(link.path)
+    rewritten += markdown.slice(cursor, link.start) + (uploaded === undefined ? "" : render(uploaded, link))
+    cursor = link.end
+  }
+  rewritten += markdown.slice(cursor)
+  return { markdown: rewritten, uploaded: [...uploads.values()], failed }
+}

@@ -188,6 +188,60 @@ describe("sealed attachments (outbound)", () => {
     expect(payload.contentMarkdown).toContain("Attachment upload failed:")
     expect(payload.attachmentRefs).toEqual([])
   })
+
+  test("an image embedded from disk is sealed as a ref and its markup removed", async () => {
+    __testing.setConfigForTesting(BASE_CONFIG)
+    const dir = tempDir()
+    writeFileSync(join(dir, "shot.png"), new Uint8Array([1, 2, 3]))
+    const completions: Array<Record<string, unknown>> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      const url = String(input)
+      if (url.endsWith("/attachments")) {
+        return jsonResponse({
+          data: { id: "att_img_1", filename: "encrypted", mimeType: "application/octet-stream", sizeBytes: 1 },
+        })
+      }
+      if (url.endsWith("/sealed-complete")) {
+        completions.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return jsonResponse({ data: {} })
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    }) as typeof fetch)
+
+    try {
+      await __testing.completeSealedWithMarkdown(
+        invocation({ sealing: sealingState }) as never,
+        sealingState as never,
+        "Here it is:\n\n![screen](./shot.png)",
+        dir
+      )
+    } finally {
+      fetchSpy.mockRestore()
+    }
+
+    const reply = (
+      completions[0] as { reply: { ciphertext: string; envelope: StreamEnvelope; attachmentIds?: string[] } }
+    ).reply
+    const payload = parseSealedPayload(
+      await openMessageAsString({
+        key: sealingState.replySsk,
+        envelope: reply.envelope,
+        ciphertext: base64ToBytes(reply.ciphertext),
+      })
+    )
+    expect({
+      attachmentIds: reply.attachmentIds,
+      contentMarkdown: payload.contentMarkdown,
+      refs: payload.attachmentRefs.map(({ attachmentId, filename }) => ({ attachmentId, filename })),
+    }).toEqual({
+      attachmentIds: ["att_img_1"],
+      contentMarkdown: "Here it is:",
+      refs: [{ attachmentId: "att_img_1", filename: "shot.png" }],
+    })
+  })
 })
 
 describe("sealed attachments (inbound)", () => {
