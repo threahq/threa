@@ -10,9 +10,23 @@ describe("createFileThreadStore", () => {
     expect(store.load()).toEqual({ threads: {} })
 
     const model = { instanceId: "codex", model: "gpt-5.5", options: [{ id: "reasoningEffort", value: "high" }] }
-    store.save({ threads: { stream_root: "thread_a" }, model })
+    const spawns = { msg_spawn: { title: "helper", model }, stream_thread: { title: "other" } }
+    store.save({ threads: { stream_root: "thread_a" }, model, spawns })
 
-    expect(store.load()).toEqual({ threads: { stream_root: "thread_a" }, model })
+    expect(store.load()).toEqual({ threads: { stream_root: "thread_a" }, model, spawns })
+  })
+
+  test("reads a file written before spawns were kept", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "t3threads-")), "threads.json")
+    writeFileSync(
+      path,
+      JSON.stringify({ threads: { stream_root: "thread_a" }, model: { instanceId: "codex", model: "gpt-5.5" } })
+    )
+
+    expect(createFileThreadStore(path).load()).toEqual({
+      threads: { stream_root: "thread_a" },
+      model: { instanceId: "codex", model: "gpt-5.5" },
+    })
   })
 
   test.each(['{"threads": {"stream_root": "thr', "[]", "null"])(

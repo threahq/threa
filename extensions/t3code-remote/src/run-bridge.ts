@@ -44,10 +44,18 @@ export interface BridgeSession {
   requestDecision(input: DecisionRequestInput, opts?: { signal?: AbortSignal }): Promise<DecisionOutcome>
 }
 
-/** What survives a restart: the T3 thread each Threa stream talks to, and the `/model` new threads launch on. */
+/** A `/spawn`'s fresh thread, waiting for its Threa thread's first turn. */
+export interface PendingSpawn {
+  title: string
+  model?: ModelSelection
+}
+
+/** What survives a restart: the T3 thread each Threa stream talks to, the `/model` new threads launch on, and pending spawns. */
 export interface ThreadState {
   threads: Record<string, string>
   model?: ModelSelection
+  /** Keyed by the `/spawn` message until its thread's first turn arrives, then by that thread's stream. */
+  spawns?: Record<string, PendingSpawn>
 }
 
 export interface ThreadStore {
@@ -374,6 +382,17 @@ export class T3TurnRunner {
     if (seen === key || (seen === undefined && this.state.model)) return
     if (this.state.model?.instanceId === instanceId && this.state.model.model === model) return
     this.saveState({ ...this.state, model: { instanceId, model } })
+  }
+
+  /** The turn answering `sourceMessageId` launches a fresh thread rather than forking the scratchpad's. */
+  queueSpawn(sourceMessageId: string, spawn: PendingSpawn): void {
+    this.requireLaunchModel(spawn.model ?? this.state.model)
+    this.saveState({ ...this.state, spawns: { ...this.state.spawns, [sourceMessageId]: spawn } })
+  }
+
+  dropSpawn(sourceMessageId: string): void {
+    const { [sourceMessageId]: _dropped, ...spawns } = this.state.spawns ?? {}
+    this.saveState({ ...this.state, spawns })
   }
 
   /** The stream's next turn launches a fresh thread. */
@@ -794,12 +813,14 @@ export class T3TurnRunner {
   }
 
   /**
-   * A stream with a thread sends to it; a thread under the scratchpad forks the
+   * A stream with a thread sends to it; a spawned thread launches its own; a thread under the scratchpad forks the
    * scratchpad's thread so it starts with its context; anything else launches.
    */
   private async admit(turn: DeliveredTurn): Promise<{ threadId: string; runId: string }> {
     const existing = this.threadFor(turn.streamId)
     if (existing) return this.send(existing, turn).catch((error) => this.unlessGone(error, turn.streamId, existing))
+    const spawn = this.pendingSpawn(turn)
+    if (spawn) return this.launch(turn, spawn.title, spawn.model ?? this.state.model)
     const root = this.session.rootStreamId
     const rootThread = root ? this.threadFor(root) : undefined
     // Only a thread under the scratchpad inherits; a mention elsewhere starts its own, so scratchpad context never leaks into a channel.
@@ -814,22 +835,49 @@ export class T3TurnRunner {
       this.saveState({ ...this.state, threads: { ...this.state.threads, [turn.streamId]: fork.targetThreadId } })
       return this.send(fork.targetThreadId, turn)
     }
-    const { projectId } = this.options
+    return this.launch(turn, titleFor(turn.content), this.state.model)
+  }
+
+  /**
+   * The spawn the turn's stream launches with. Its first turn moves it from the `/spawn` message to the stream, so a
+   * first launch that fails still launches fresh on the stream's next turn.
+   */
+  private pendingSpawn(turn: DeliveredTurn): PendingSpawn | undefined {
+    const { [turn.sourceMessageId]: anchored, ...spawns } = this.state.spawns ?? {}
+    if (!anchored) return spawns[turn.streamId]
+    this.saveState({ ...this.state, spawns: { ...spawns, [turn.streamId]: anchored } })
+    return anchored
+  }
+
+  private requireLaunchModel(model: ModelSelection | undefined): void {
     // A scratch thread's project is new, so it has no default model to fall back on.
-    if (projectId === undefined && !this.state.model) {
+    if (this.options.projectId === undefined && !model) {
       throw new Error("T3 Code needs a model for new threads: pick one with /model.")
     }
+  }
+
+  private async launch(
+    turn: DeliveredTurn,
+    title: string,
+    model: ModelSelection | undefined
+  ): Promise<{ threadId: string; runId: string }> {
+    this.requireLaunchModel(model)
+    const { projectId } = this.options
     const place = projectId === undefined ? { scratch: true } : { projectId, ...(await this.workspaceFor()) }
     const images = await this.uploadImages(turn.attachments)
     const launched = await this.client.call("t3_thread_launch", {
-      title: titleFor(turn.content),
+      title,
       message: `${PREAMBLE}\n\n${turn.content}`,
       runtimeMode: this.options.access,
       ...place,
-      ...(this.state.model ? { modelSelection: this.state.model } : {}),
+      ...(model ? { modelSelection: model } : {}),
       ...(images.length ? { attachments: images } : {}),
     })
-    this.saveState({ ...this.state, threads: { ...this.state.threads, [turn.streamId]: launched.threadId } })
+    const threads = { ...this.state.threads, [turn.streamId]: launched.threadId }
+    if (this.state.spawns?.[turn.streamId]) {
+      const { [turn.streamId]: _launched, ...spawns } = this.state.spawns
+      this.saveState({ ...this.state, threads, spawns })
+    } else this.saveState({ ...this.state, threads })
     if (!launched.runId) throw new Error("T3 Code created the thread but started no run.")
     return { threadId: launched.threadId, runId: launched.runId }
   }

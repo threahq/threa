@@ -10,16 +10,30 @@ import {
 import { T3Auth, type FetchLike } from "./auth"
 import { readJsonFile, type T3RemoteConfig } from "./config"
 import { DormantLink } from "./dormant-link"
-import { T3CODE_RUNTIME, T3TurnRunner, type ThreadStore } from "./run-bridge"
+import { T3CODE_RUNTIME, T3TurnRunner, type PendingSpawn, type ThreadStore } from "./run-bridge"
 import { createT3SessionControl } from "./session-control"
-import { T3Client, type ModelOption } from "./t3-client"
+import { T3Client, type ModelOption, type ModelSelection } from "./t3-client"
 
 function isModelOption(option: unknown): option is ModelOption {
   const { id, value } = (option ?? {}) as { id?: unknown; value?: unknown }
   return typeof id === "string" && (typeof value === "string" || typeof value === "boolean")
 }
 
-/** Stream → thread links and the `/model` default, swapped in whole so a crash cannot truncate it. */
+function modelSelectionOf(value: unknown): ModelSelection | undefined {
+  const { instanceId, model, options } = (value ?? {}) as { instanceId?: unknown; model?: unknown; options?: unknown }
+  if (typeof instanceId !== "string" || typeof model !== "string") return undefined
+  const kept = Array.isArray(options) ? options.filter(isModelOption) : []
+  return { instanceId, model, ...(kept.length > 0 ? { options: kept } : {}) }
+}
+
+function pendingSpawnOf(value: unknown): PendingSpawn | undefined {
+  const { title, model } = (value ?? {}) as { title?: unknown; model?: unknown }
+  if (typeof title !== "string") return undefined
+  const selection = modelSelectionOf(model)
+  return { title, ...(selection ? { model: selection } : {}) }
+}
+
+/** Stream → thread links, the `/model` default and pending spawns, swapped in whole so a crash cannot truncate it. */
 export function createFileThreadStore(path: string): ThreadStore {
   return {
     load: () => {
@@ -29,14 +43,18 @@ export function createFileThreadStore(path: string): ThreadStore {
           typeof threadId === "string" && threadId.length > 0 ? [[streamId, threadId] as const] : []
         )
       )
-      const { instanceId, model, options } = (parsed.model ?? {}) as {
-        instanceId?: unknown
-        model?: unknown
-        options?: unknown
+      const spawns = Object.fromEntries(
+        Object.entries((parsed.spawns ?? {}) as Record<string, unknown>).flatMap(([key, value]) => {
+          const spawn = pendingSpawnOf(value)
+          return spawn ? [[key, spawn] as const] : []
+        })
+      )
+      const model = modelSelectionOf(parsed.model)
+      return {
+        threads,
+        ...(model ? { model } : {}),
+        ...(Object.keys(spawns).length > 0 ? { spawns } : {}),
       }
-      if (typeof instanceId !== "string" || typeof model !== "string") return { threads }
-      const kept = Array.isArray(options) ? options.filter(isModelOption) : []
-      return { threads, model: { instanceId, model, ...(kept.length > 0 ? { options: kept } : {}) } }
     },
     save: (state) => writeFileAtomic(path, `${JSON.stringify(state, null, 2)}\n`),
   }
@@ -91,11 +109,13 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
     threadStore: createFileThreadStore(join(config.install.workDir, "threads.json")),
     log,
   })
+  const client = new ThreaClient(config)
   const sessionControl = createT3SessionControl(runner, t3, {
     threa: { baseUrl: config.baseUrl, apiKey: config.apiKey },
-    spawnRuntimes: spawnRuntimesResolver((error) => log(`harnessd runtimes: ${error}; /spawn disabled`)),
+    spawnRuntimes: spawnRuntimesResolver((error) => log(`harnessd runtimes: ${error}; /spawn offers T3 Code only`)),
+    brief: (input) =>
+      client.briefSession({ instanceId: config.instanceId, runtimeSessionId: config.runtimeSessionId, ...input }),
   })
-  const client = new ThreaClient(config)
   let presence: RuntimePresenceReport | undefined
 
   // An archived scratchpad, or 90 minutes without a turn, ends the session. The process stays up and links it again

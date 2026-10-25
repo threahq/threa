@@ -27,6 +27,19 @@ export interface RuntimeSessionLink {
   e2eEnabled?: boolean
 }
 
+export interface BriefSessionBody {
+  instanceId: string
+  runtimeSessionId: string
+  content: string
+  thread?: { anchorId: string; displayName: string }
+}
+
+export interface BriefedSession {
+  invocationId: string
+  /** Where the turn answers: the thread the brief opened, else the session's active stream. */
+  streamId: string
+}
+
 export interface ExternalHistoryMessage {
   messageId: string
   role: "user" | "assistant"
@@ -198,6 +211,15 @@ export class ThreaClient {
 
   async createSession(body: Record<string, unknown>): Promise<RuntimeSessionLink> {
     const result = await this.request<{ data: RuntimeSessionLink }>(this.workspacePath("/bot-runtime/sessions"), {
+      method: "POST",
+      body: JSON.stringify(body),
+    })
+    return result.data
+  }
+
+  /** Starts a turn on a linked session; with `thread`, the bot opens a thread on `anchorId` and the turn answers there. */
+  async briefSession(body: BriefSessionBody): Promise<BriefedSession> {
+    const result = await this.request<{ data: BriefedSession }>(this.workspacePath("/bot-runtime/sessions/brief"), {
       method: "POST",
       body: JSON.stringify(body),
     })

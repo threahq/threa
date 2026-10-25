@@ -115,3 +115,29 @@ describe("ThreaClient.sendMessage", () => {
     }
   })
 })
+
+describe("ThreaClient.briefSession", () => {
+  const client = new ThreaClient({ baseUrl: "https://example.test", workspaceId: "ws_1", apiKey: "key" })
+
+  it("posts the brief and returns the invocation and the stream it answers in", async () => {
+    let sent: { url: string; body: unknown } | undefined
+    fetchSpy.mockImplementation((async (input: string | URL | Request, init?: RequestInit) => {
+      sent = { url: String(input), body: JSON.parse(String(init?.body)) }
+      return new Response(JSON.stringify({ data: { invocationId: "binv_1", streamId: "stream_thread" } }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      })
+    }) as unknown as typeof fetch)
+    const body = {
+      instanceId: "inst_1",
+      runtimeSessionId: "sess_1",
+      content: "Fix the flaky test",
+      thread: { anchorId: "msg_spawn", displayName: "helper" },
+    }
+
+    expect({ briefed: await client.briefSession(body), sent }).toEqual({
+      briefed: { invocationId: "binv_1", streamId: "stream_thread" },
+      sent: { url: "https://example.test/api/v1/workspaces/ws_1/bot-runtime/sessions/brief", body },
+    })
+  })
+})

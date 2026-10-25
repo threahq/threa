@@ -130,11 +130,15 @@ A damaged `threads.json` or `token.json` stops the connector at start instead of
 - `/compact` queues T3's own compaction on the T3 thread of the stream it is typed in, the scratchpad or a thread
   under it. Nothing is posted for its run.
 - `/clear` starts a new T3 thread for the stream it is typed in. It is refused while a turn is open there.
-- `/spawn` launches another agent (Claude Code or Pi) in a thread under the `/spawn` message, through harnessd, the
-  same as from a Claude Code scratchpad. Without a runtime named, it launches the first one installed. It works only in the scratchpad itself, and is offered only when harnessd is
-  installed with a runtime to launch. An npm install doesn't ship harnessd, so set `THREA_HARNESSD_ENTRYPOINT` (and
-  `THREA_HARNESSD_BUN_BIN` when bun isn't on the unit's `PATH`) to a Threa checkout's
-  `extensions/harness-daemon/src/index.ts`.
+- `/spawn` starts an agent in a thread under the `/spawn` message, with its name on the `/spawn` line and the prompt
+  on the lines after it. It works only in the scratchpad itself.
+  - `/spawn t3code <name>` launches a new T3 thread for that Threa thread, rather than forking the scratchpad's. It
+    needs a prompt. It runs on the model new threads launch on, or on the one `/model` and `/thinking` pick after
+    `t3code`. A `/spawn` that names no runtime launches T3 Code. It is offered even when harnessd is not installed.
+  - `/spawn claude` and `/spawn pi` launch Claude Code or Pi through harnessd, the same as from a Claude Code
+    scratchpad. They are offered only when harnessd is installed with that runtime. An npm install doesn't ship
+    harnessd, so set `THREA_HARNESSD_ENTRYPOINT` (and `THREA_HARNESSD_BUN_BIN` when bun isn't on the unit's `PATH`)
+    to a Threa checkout's `extensions/harness-daemon/src/index.ts`.
 - `/done`, typed in a thread, archives that thread's T3 thread and unlinks it, so the thread's next message forks the
   scratchpad's T3 thread again. The Threa thread itself stays. It is refused in the scratchpad, while a turn is open in
   the thread, and while T3 runs a turn it started by itself there. A T3 thread already archived in the T3 app is

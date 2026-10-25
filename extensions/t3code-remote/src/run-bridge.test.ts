@@ -413,6 +413,75 @@ describe("T3TurnRunner", () => {
     expect(saved.at(-1)).toEqual({ threads: { stream_root: "thread_root", stream_thread: "thread_1" }, model: MODEL })
   })
 
+  test("a spawned thread launches a fresh T3 thread on the spawn's model instead of forking", async () => {
+    const opus = { instanceId: "claudeAgent", model: "claude-opus-5-5" }
+    const { t3, session, saved, runner } = setup({
+      state: {
+        threads: { stream_root: "thread_root" },
+        model: MODEL,
+        spawns: { msg_spawn: { title: "helper", model: opus } },
+      },
+    })
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "On it" })] }])
+
+    await runner.deliverTurn(turn({ streamId: "stream_thread", sourceMessageId: "msg_spawn" }))
+    await session.settled()
+
+    expect({
+      forks: t3.callsOf("t3_thread_fork"),
+      launches: t3.callsOf("t3_thread_launch"),
+      saved: saved.at(-1),
+    }).toEqual({
+      forks: [],
+      launches: [
+        expect.objectContaining({
+          title: "helper",
+          message: expect.stringMatching(/\n\nFix the flaky test$/),
+          modelSelection: opus,
+          scratch: true,
+        }),
+      ],
+      saved: { threads: { stream_root: "thread_root", stream_thread: "thread_1" }, model: MODEL, spawns: {} },
+    })
+  })
+
+  test("a spawn whose first launch fails still launches fresh on its thread's next turn", async () => {
+    const { t3, session, runner } = setup({
+      state: { threads: { stream_root: "thread_root" }, model: MODEL, spawns: { msg_spawn: { title: "helper" } } },
+    })
+    t3.failNext("t3_thread_launch", new Error("T3 Code is restarting"))
+    await expect(runner.deliverTurn(turn({ streamId: "stream_thread", sourceMessageId: "msg_spawn" }))).rejects.toThrow(
+      "T3 Code is restarting"
+    )
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "On it" })] }])
+
+    await runner.deliverTurn(turn({ invocationId: "binv_2", streamId: "stream_thread", sourceMessageId: "msg_2" }))
+    await session.settled()
+
+    expect({ forks: t3.callsOf("t3_thread_fork"), launches: t3.callsOf("t3_thread_launch") }).toEqual({
+      forks: [],
+      launches: [
+        expect.objectContaining({ title: "helper", modelSelection: MODEL }),
+        expect.objectContaining({ title: "helper", modelSelection: MODEL }),
+      ],
+    })
+  })
+
+  test("queues a spawn only when its thread can launch, and drops it on request", () => {
+    const { saved, runner } = setup({ state: { threads: {} } })
+
+    expect(() => runner.queueSpawn("msg_spawn", { title: "helper" })).toThrow(
+      "T3 Code needs a model for new threads: pick one with /model."
+    )
+    runner.queueSpawn("msg_spawn", { title: "helper", model: MODEL })
+    runner.dropSpawn("msg_spawn")
+
+    expect(saved).toEqual([
+      { threads: {}, spawns: { msg_spawn: { title: "helper", model: MODEL } } },
+      { threads: {}, spawns: {} },
+    ])
+  })
+
   test("a mention outside the scratchpad launches its own thread", async () => {
     const { t3, session, runner } = setup({ state: { threads: { stream_root: "thread_root" }, model: MODEL } })
     t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Hi" })] }])

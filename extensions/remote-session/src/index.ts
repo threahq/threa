@@ -33,6 +33,8 @@ export {
   ThreaClient,
   ThreaApiError,
   type AttachmentSummary,
+  type BriefedSession,
+  type BriefSessionBody,
   type ClaimedInvocation,
   type ExternalHistoryMessage,
   type RuntimeSessionLink,

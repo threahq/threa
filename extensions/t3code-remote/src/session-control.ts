@@ -1,7 +1,6 @@
 import {
   discardCommandClaim,
   discardSpawnBrief,
-  harnessReconnectAvailable,
   installedSpawnRuntimes,
   parseSpawnCommandArgs,
   prepareHarnessSpawn,
@@ -9,10 +8,12 @@ import {
   writeSpawnBrief,
   type SpawnRuntimeOption,
 } from "@threahq/harness-client"
-import type {
-  ModelSuggestionInfo,
-  SessionControlActuator,
-  SessionControlInvocationContext,
+import {
+  ThreaApiError,
+  type BriefSessionBody,
+  type ModelSuggestionInfo,
+  type SessionControlActuator,
+  type SessionControlInvocationContext,
 } from "@threahq/remote-session"
 import { errorText, type T3TurnRunner } from "./run-bridge"
 import type { ModelOptionDescriptor, ModelSelection, ProviderInfo, T3Client } from "./t3-client"
@@ -20,8 +21,8 @@ import type { ModelOptionDescriptor, ModelSelection, ProviderInfo, T3Client } fr
 const MAX_AMBIGUOUS_CANDIDATES = 8
 /** Codex calls its effort setting `reasoningEffort`, Claude `effort`, Pi `thinking`. */
 const EFFORT_OPTION_IDS: ReadonlySet<string> = new Set(["reasoningEffort", "effort", "thinking"])
-/** T3 Code has no runtime of its own, so a bare `/spawn` launches the first installed one, else this. */
-const SPAWN_FALLBACK_RUNTIME = "claude"
+/** `/spawn t3code` launches a T3 thread of its own; every other runtime is harnessd's. */
+const T3_SPAWN_RUNTIME = "t3code"
 
 type CommandResult = Awaited<ReturnType<SessionControlActuator["runCommand"]>>
 
@@ -30,6 +31,8 @@ export interface T3SessionControlOptions {
   threa: { baseUrl: string; apiKey: string }
   spawnRuntimes: () => readonly SpawnRuntimeOption[]
   spawnLauncher?: typeof prepareHarnessSpawn
+  /** Starts the turn that launches a `/spawn t3code`'s thread. */
+  brief: (input: Pick<BriefSessionBody, "content" | "thread">) => Promise<unknown>
 }
 
 export interface T3SessionControl extends SessionControlActuator {
@@ -59,14 +62,19 @@ function choicesOf(providers: readonly ProviderInfo[]): ModelSelection[] {
   )
 }
 
+function effortOption(model: ProviderInfo["models"][number] | undefined): ModelOptionDescriptor | undefined {
+  return model?.options?.find((option) => option.type === "select" && EFFORT_OPTION_IDS.has(option.id))
+}
+
 function effortOptionOf(
   providers: readonly ProviderInfo[],
   selection: ModelSelection
 ): ModelOptionDescriptor | undefined {
-  const model = providers
-    .find((provider) => provider.providerInstanceId === selection.instanceId)
-    ?.models.find((candidate) => candidate.id === selection.model)
-  return model?.options?.find((option) => option.type === "select" && EFFORT_OPTION_IDS.has(option.id))
+  return effortOption(
+    providers
+      .find((provider) => provider.providerInstanceId === selection.instanceId)
+      ?.models.find((candidate) => candidate.id === selection.model)
+  )
 }
 
 function effortOf(selection: ModelSelection | undefined): string | undefined {
@@ -108,7 +116,7 @@ function suggestionsFrom(providers: readonly ProviderInfo[]): ModelSuggestionInf
 export function createT3SessionControl(
   runner: T3TurnRunner,
   client: T3Client,
-  { threa, spawnRuntimes, spawnLauncher = prepareHarnessSpawn }: T3SessionControlOptions
+  { threa, spawnRuntimes, spawnLauncher = prepareHarnessSpawn, brief }: T3SessionControlOptions
 ): T3SessionControl {
   let providers: ProviderInfo[] = []
 
@@ -168,9 +176,8 @@ export function createT3SessionControl(
     return { ok: true, summary }
   }
 
-  async function setModel(arg: string, rootStreamId: string): Promise<CommandResult> {
-    const failure = await refreshProviders()
-    if (failure) return failure
+  /** The one model `arg` names, at the launch model's thinking level when it offers it. Needs fresh providers. */
+  function pickModel(arg: string): { selection: ModelSelection } | CommandResult {
     const matches = matchModel(choicesOf(providers), arg)
     if (matches.length === 0) return { ok: false, message: `No model matches "${arg.trim()}".` }
     if (matches.length > 1) {
@@ -181,9 +188,30 @@ export function createT3SessionControl(
     const choice = matches[0]!
     // The thinking level carries over when the new model offers it; otherwise the model's default applies.
     const effort = effortOf(runner.model)
-    const selection = (effort !== undefined && withEffort(providers, choice, effort)) || choice
+    return { selection: (effort !== undefined && withEffort(providers, choice, effort)) || choice }
+  }
+
+  /** `model` thinking at `arg`, matched case-insensitively. Needs fresh providers. */
+  function pickThinking(
+    model: ModelSelection,
+    arg: string
+  ): { selection: ModelSelection; level: string } | CommandResult {
+    const levels = levelsOf(effortOptionOf(providers, model))
+    if (levels.length === 0) return { ok: false, message: `${label(model)} has no thinking levels.` }
+    const level = levels.find((candidate) => candidate.toLowerCase() === arg.trim().toLowerCase())
+    const selection = level === undefined ? undefined : withEffort(providers, model, level)
+    if (!level || !selection) return { ok: false, message: `${label(model)} thinks at one of: ${levels.join(", ")}.` }
+    return { selection, level }
+  }
+
+  async function setModel(arg: string, rootStreamId: string): Promise<CommandResult> {
+    const failure = await refreshProviders()
+    if (failure) return failure
+    const picked = pickModel(arg)
+    if (!("selection" in picked)) return picked
+    const { selection } = picked
     runner.setModel(selection)
-    return await configureThread(runner.threadFor(rootStreamId), selection, `Set the model to ${label(choice)}`)
+    return await configureThread(runner.threadFor(rootStreamId), selection, `Set the model to ${label(selection)}`)
   }
 
   async function setThinking(arg: string, rootStreamId: string): Promise<CommandResult> {
@@ -191,11 +219,9 @@ export function createT3SessionControl(
     if (!model) return { ok: false, message: "Pick a model with /model first." }
     const failure = await refreshProviders()
     if (failure) return failure
-    const levels = levelsOf(effortOptionOf(providers, model))
-    if (levels.length === 0) return { ok: false, message: `${label(model)} has no thinking levels.` }
-    const level = levels.find((candidate) => candidate.toLowerCase() === arg.trim().toLowerCase())
-    const launch = level === undefined ? undefined : withEffort(providers, model, level)
-    if (!level || !launch) return { ok: false, message: `${label(model)} thinks at one of: ${levels.join(", ")}.` }
+    const picked = pickThinking(model, arg)
+    if (!("selection" in picked)) return picked
+    const { selection: launch, level } = picked
     // A configure replaces the whole selection, and the thread may run another model than new threads launch on, like
     // one switched in T3, so the level goes onto the thread's own selection.
     const threadId = runner.threadFor(rootStreamId)
@@ -237,11 +263,38 @@ export function createT3SessionControl(
     return { ok: true, summary: "Started a new T3 Code thread" }
   }
 
-  function spawn(args: string, context: SessionControlInvocationContext): CommandResult {
-    const parsed = parseSpawnCommandArgs(args, { runtimes: spawnRuntimes(), defaultRuntime: spawnDefaultRuntime() })
+  /**
+   * The picker row for `/spawn t3code`. Its levels span every model, since `/spawn t3code /model … /thinking …` may
+   * pick one other than the launch model; the spawn itself checks the level against the model it launches.
+   */
+  function t3SpawnRuntime(): SpawnRuntimeOption {
+    const levels = new Set(
+      providers.flatMap((provider) => provider.models).flatMap((model) => levelsOf(effortOption(model)))
+    )
+    return {
+      value: T3_SPAWN_RUNTIME,
+      label: "T3 Code",
+      installed: true,
+      thinkingLevels: [...levels],
+      models: suggestionsFrom(providers),
+    }
+  }
+
+  function runtimes(): SpawnRuntimeOption[] {
+    return [t3SpawnRuntime(), ...spawnRuntimes()]
+  }
+
+  async function spawn(args: string, context: SessionControlInvocationContext): Promise<CommandResult> {
+    // The T3 Code row's thinking levels come from the models, so they must be current before the args are checked.
+    const refreshFailure = await refreshProviders()
+    const parsed = parseSpawnCommandArgs(args, { runtimes: runtimes(), defaultRuntime: T3_SPAWN_RUNTIME })
     if ("error" in parsed) return { ok: false, message: parsed.error }
     if (context.streamId !== context.rootStreamId) {
       return { ok: false, message: "Spawn is only available at the scratchpad itself, not inside a thread." }
+    }
+    if (parsed.runtime === T3_SPAWN_RUNTIME) {
+      if (refreshFailure && (parsed.model || parsed.thinking)) return refreshFailure
+      return await spawnT3(parsed, context.sourceMessageId)
     }
     // harnessd launches the agent in a thread under the user's `/spawn` and closes the command there itself.
     return {
@@ -272,6 +325,41 @@ export function createT3SessionControl(
     }
   }
 
+  async function spawnT3(
+    { name, prompt, model: modelArg, thinking }: { name: string; prompt: string; model?: string; thinking?: string },
+    anchorId: string
+  ): Promise<CommandResult> {
+    if (!prompt) return { ok: false, message: "T3 Code needs a prompt to start the thread." }
+    let model = runner.model
+    if (modelArg) {
+      const picked = pickModel(modelArg)
+      if (!("selection" in picked)) return picked
+      model = picked.selection
+    }
+    if (thinking) {
+      if (!model) return { ok: false, message: "Pick a model with /model first." }
+      const picked = pickThinking(model, thinking)
+      if (!("selection" in picked)) return picked
+      model = picked.selection
+    }
+    try {
+      runner.queueSpawn(anchorId, { title: name, ...(model ? { model } : {}) })
+    } catch (error) {
+      return { ok: false, message: errorText(error) }
+    }
+    try {
+      await brief({ content: prompt, thread: { anchorId, displayName: name } })
+    } catch (error) {
+      // A timeout or server error may come after the brief was stored, and its turn still needs the pending spawn.
+      if (!(error instanceof ThreaApiError) || error.status >= 500) {
+        return { ok: false, message: `Could not confirm ${name} started: ${errorText(error)}` }
+      }
+      runner.dropSpawn(anchorId)
+      return { ok: false, message: `Could not start ${name}: ${errorText(error)}` }
+    }
+    return { ok: true, summary: `Spawned ${name} in a new T3 Code thread` }
+  }
+
   async function done(streamId: string, rootStreamId: string): Promise<CommandResult> {
     if (streamId === rootStreamId) return { ok: false, message: "/done is only available inside a thread." }
     const threadId = runner.threadFor(streamId)
@@ -300,21 +388,12 @@ export function createT3SessionControl(
     }
   }
 
-  function spawnDefaultRuntime(): string {
-    return installedSpawnRuntimes(spawnRuntimes())[0]?.value ?? SPAWN_FALLBACK_RUNTIME
-  }
-
   return {
-    get commands() {
-      const spawnable = harnessReconnectAvailable() && installedSpawnRuntimes(spawnRuntimes()).length > 0
-      return ["stop", "status", "model", "thinking", "compact", "clear", ...(spawnable ? ["spawn"] : []), "done"]
-    },
+    commands: ["stop", "status", "model", "thinking", "compact", "clear", "spawn", "done"],
     get spawnRuntimes() {
-      return installedSpawnRuntimes(spawnRuntimes())
+      return installedSpawnRuntimes(runtimes())
     },
-    get spawnDefaultRuntime() {
-      return spawnDefaultRuntime()
-    },
+    spawnDefaultRuntime: T3_SPAWN_RUNTIME,
     get modelSuggestions() {
       return suggestionsFrom(providers)
     },
@@ -337,7 +416,7 @@ export function createT3SessionControl(
         case "compact":
           return await compact(context.streamId)
         case "spawn":
-          return spawn(args, context)
+          return await spawn(args, context)
         case "done":
           return await done(context.streamId, context.rootStreamId)
         // The SDK runs /stop itself and routes only the advertised commands here.
