@@ -71,7 +71,6 @@ interface CreateEditorExtensionsOptions extends ContentExtensionsOptions {
 
 interface CreateDocumentExtensionsOptions extends ContentExtensionsOptions {
   ydoc: Y.Doc
-  fragment?: string
 }
 
 /**
@@ -90,14 +89,9 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
   return buildExtensions(config, true)
 }
 
-/** The nodes, marks and content behaviour every Threa editing surface shares, without history or composer-only tooling. */
-export function createContentExtensions(options: ContentExtensionsOptions) {
-  return buildExtensions(options, false)
-}
-
-/** A collaborative document editor: shared content bound to a Yjs fragment, which also owns undo. */
-export function createDocumentExtensions({ ydoc, fragment = "default", ...options }: CreateDocumentExtensionsOptions) {
-  return [...createContentExtensions(options), YjsCollaboration.configure({ ydoc, fragment })]
+/** A collaborative document editor: the shared content extensions without composer tooling, bound to a Yjs fragment that also owns undo. */
+export function createDocumentExtensions({ ydoc, ...options }: CreateDocumentExtensionsOptions) {
+  return [...buildExtensions(options, false), YjsCollaboration.configure({ ydoc })]
 }
 
 // One list so the composer keeps its extension order (plugin and keymap precedence follow it).

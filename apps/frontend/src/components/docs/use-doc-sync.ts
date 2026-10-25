@@ -13,7 +13,7 @@ interface DocSession {
   sync: DocSync
 }
 
-const NO_SESSION_STATUS: DocSyncStatus = { phase: "loading", saving: false }
+const NO_SESSION_STATUS: DocSyncStatus = { phase: "loading" }
 const noSubscription = () => () => {}
 
 export interface UseDocSyncResult {

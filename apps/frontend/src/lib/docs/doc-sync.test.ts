@@ -119,7 +119,7 @@ describe("DocSync", () => {
 
     expect({ text: client.text(), status: client.sync.getStatus(), origins }).toEqual({
       text: "hello",
-      status: { phase: "ready", saving: false },
+      status: { phase: "ready" },
       origins: [REMOTE_ORIGIN],
     })
   })
@@ -133,7 +133,6 @@ describe("DocSync", () => {
     type(client.ydoc, "b")
     await vi.advanceTimersByTimeAsync(200)
     type(client.ydoc, "c")
-    expect(client.sync.getStatus().saving).toBe(true)
     await vi.advanceTimersByTimeAsync(399)
     expect(server.api.postUpdate).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
@@ -142,7 +141,7 @@ describe("DocSync", () => {
       posts: server.api.postUpdate.mock.calls.length,
       serverText: server.text,
       status: client.sync.getStatus(),
-    }).toEqual({ posts: 1, serverText: "abc", status: { phase: "ready", saving: false } })
+    }).toEqual({ posts: 1, serverText: "abc", status: { phase: "ready" } })
   })
 
   it("applies the next remote update in order without fetching", async () => {
@@ -208,7 +207,7 @@ describe("DocSync", () => {
       fetched: 1,
       clientText: server.text,
       serverText: expect.stringContaining("y"),
-      status: { phase: "ready", saving: false },
+      status: { phase: "ready" },
     })
   })
 
@@ -225,7 +224,7 @@ describe("DocSync", () => {
       posts: server.api.postUpdate.mock.calls.length,
       gets: server.api.get.mock.calls.length,
       status: client.sync.getStatus(),
-    }).toEqual({ posts: 1, gets: 2, status: { phase: "rejected", code: "DOC_UPDATE_INVALID", saving: false } })
+    }).toEqual({ posts: 1, gets: 2, status: { phase: "rejected", code: "DOC_UPDATE_INVALID" } })
   })
 
   it("keeps a failed send and retries it with backoff", async () => {
@@ -299,7 +298,7 @@ describe("DocSync", () => {
     expect({ posted, serverText: server.text, status: client.sync.getStatus() }).toEqual({
       posted: ["a", ""],
       serverText: "ab",
-      status: { phase: "ready", saving: false },
+      status: { phase: "ready" },
     })
   })
 
@@ -435,11 +434,6 @@ describe("DocSync", () => {
     type(client.ydoc, "y")
     await vi.advanceTimersByTimeAsync(400)
 
-    expect(seen).toEqual([
-      { phase: "loading", saving: false },
-      { phase: "ready", saving: false },
-      { phase: "ready", saving: true },
-      { phase: "ready", saving: false },
-    ])
+    expect(seen).toEqual([{ phase: "loading" }, { phase: "ready" }])
   })
 })

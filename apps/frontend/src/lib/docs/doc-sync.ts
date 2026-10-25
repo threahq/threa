@@ -10,13 +10,11 @@ export const REMOTE_ORIGIN = Symbol("doc-sync-remote")
 const FLUSH_DEBOUNCE_MS = 400
 const MAX_BACKOFF_MS = 10_000
 
-type DocSyncPhase =
+export type DocSyncStatus =
   | { phase: "loading" }
   | { phase: "ready" }
   | { phase: "error"; error: unknown }
   | { phase: "rejected"; code: string }
-
-export type DocSyncStatus = DocSyncPhase & { saving: boolean }
 
 type DocsApi = Pick<typeof docsApi, "get" | "listUpdates" | "postUpdate">
 
@@ -25,7 +23,7 @@ function backoffMs(failures: number): number {
 }
 
 function sameStatus(a: DocSyncStatus, b: DocSyncStatus): boolean {
-  if (a.phase !== b.phase || a.saving !== b.saving) return false
+  if (a.phase !== b.phase) return false
   if (a.phase === "error" && b.phase === "error") return a.error === b.error
   if (a.phase === "rejected" && b.phase === "rejected") return a.code === b.code
   return true
@@ -38,7 +36,7 @@ export class DocSync {
   private readonly ydoc: Y.Doc
   private readonly api: DocsApi
   private readonly listeners = new Set<() => void>()
-  private status: DocSyncStatus = { phase: "loading", saving: false }
+  private status: DocSyncStatus = { phase: "loading" }
   private seq: number | null = null
   private highestSeen = 0
   private pending: Uint8Array[] = []
@@ -167,7 +165,6 @@ export class DocSync {
   private onLocalUpdate = (update: Uint8Array, origin: unknown): void => {
     if (origin === REMOTE_ORIGIN) return
     this.pending.push(update)
-    this.updateSaving()
     this.scheduleFlush(FLUSH_DEBOUNCE_MS)
   }
 
@@ -199,7 +196,6 @@ export class DocSync {
       }
     } finally {
       this.posting = null
-      this.updateSaving()
     }
     if (this.pending.length > 0 && !this.flushTimer && !this.stopped) this.scheduleFlush(FLUSH_DEBOUNCE_MS)
   }
@@ -246,16 +242,7 @@ export class DocSync {
     Y.applyUpdate(this.ydoc, base64ToBytes(update), REMOTE_ORIGIN)
   }
 
-  private updateSaving(): void {
-    const saving = this.posting !== null || this.pending.length > 0
-    if (saving !== this.status.saving) this.setStatus({ ...this.status, saving })
-  }
-
-  private setPhase(phase: DocSyncPhase): void {
-    this.setStatus({ ...phase, saving: this.status.saving })
-  }
-
-  private setStatus(status: DocSyncStatus): void {
+  private setPhase(status: DocSyncStatus): void {
     if (sameStatus(status, this.status)) return
     this.status = status
     for (const listener of this.listeners) listener()
