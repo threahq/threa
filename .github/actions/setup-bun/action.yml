@@ -1,0 +1,23 @@
+name: Setup Bun
+description: oven-sh/setup-bun with one delayed retry, since a GitHub releases outage outlasts its built-in ~30s of retries.
+inputs:
+  bun-version:
+    description: Bun version to install
+    required: true
+runs:
+  using: composite
+  steps:
+    - id: first
+      uses: oven-sh/setup-bun@v2
+      continue-on-error: true
+      with:
+        bun-version: ${{ inputs.bun-version }}
+
+    - if: steps.first.outcome == 'failure'
+      shell: bash
+      run: sleep 60
+
+    - if: steps.first.outcome == 'failure'
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: ${{ inputs.bun-version }}
