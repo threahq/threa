@@ -109,6 +109,21 @@ describe("rescore", () => {
     expect(relaxed[0]!.permutations[0]!.cases[0]!.evaluations[0]!.passed).toBe(true)
   })
 
+  test("scores against the registered case's expectation, so a RegExp survives the JSON report", async () => {
+    const path = await writeReport([
+      { caseId: "c1", caseName: "Case one", expectedOutput: { must: {} }, outputs: [{ text: "YES it does" }] },
+    ])
+    const matches = (o: Out, e: { must: RegExp }): EvaluatorResult => {
+      const hit = e.must.test(o.text)
+      return { name: "contains", score: hit ? 1 : 0, passed: hit }
+    }
+    const suite = suiteWith(matches as never)
+    suite.cases = [{ id: "c1", name: "Case one", input: null, expectedOutput: { must: /yes/i } as never }]
+
+    const [result] = await rescoreReport(path, [suite as never], { ai: stubAi, onSuite: () => {} })
+    expect(result!.permutations[0]!.cases[0]!.evaluations[0]).toMatchObject({ passed: true })
+  })
+
   test("reports only what rescoring itself cost, never the original run's generation cost", async () => {
     const path = await writeReport([
       { caseId: "c1", caseName: "Case one", expectedOutput: { must: "yes" }, outputs: [{ text: "yes" }] },

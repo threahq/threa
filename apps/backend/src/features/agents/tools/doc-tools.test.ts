@@ -171,7 +171,7 @@ describe("edit_doc", () => {
       "Doc not found: it is not one of this stream's docs. Call read_doc without a docId to list them. Nothing was written.",
       "Refused (not_a_member): the person who asked may not edit this doc. Nothing was written.",
       "Refused (archived): the doc is archived. Nothing was written.",
-      "Refused (forbidden): the person who asked may not edit this doc. Nothing was written.",
+      "Refused (forbidden): the server refused it (SOME_CODE). Nothing was written.",
       "Refused: the result would not be a valid doc. Nothing was written.",
     ])
   })

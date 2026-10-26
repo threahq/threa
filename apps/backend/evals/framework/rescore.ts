@@ -122,6 +122,9 @@ export async function rescoreReport(
               `cannot be rescored — re-run the suite live.`
           )
         }
+        // JSON cannot carry a RegExp expectation (it serializes as `{}`), so the registered case's own value is used.
+        const expectedOutput =
+          suite.cases.find((item) => item.id === storedCase.caseId)?.expectedOutput ?? storedCase.expectedOutput
         for (const [index, output] of stored.entries()) {
           // A case that errored during the original run has no generation.
           // Scoring that as if it were one produces a real-looking failure for
@@ -136,7 +139,7 @@ export async function rescoreReport(
           const evaluations = await Promise.all(
             suite.evaluators.map(async (evaluator) => {
               try {
-                return await evaluator.evaluate(output, storedCase.expectedOutput, ctx)
+                return await evaluator.evaluate(output, expectedOutput, ctx)
               } catch (error) {
                 return {
                   name: evaluator.name,
@@ -152,7 +155,7 @@ export async function rescoreReport(
             caseName: storedCase.caseName,
             input: null,
             output,
-            expectedOutput: storedCase.expectedOutput,
+            expectedOutput,
             evaluations,
             durationMs: storedCase.durationsMs?.[index] ?? 0,
           })

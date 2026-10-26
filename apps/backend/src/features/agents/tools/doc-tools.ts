@@ -95,12 +95,13 @@ function writtenDoc(verb: "Applied to" | "Retitled" | "Created", docId: string, 
 }
 
 function refusalCause(result: DocAgentAccessRefusal): string {
-  return result.status === "not_found" ? "it is not one of this stream's docs" : REFUSAL_CAUSE[result.code]
+  if (result.status === "not_found") return "it is not one of this stream's docs"
+  return result.detail ? `the server refused it (${result.detail})` : REFUSAL_CAUSE[result.code]
 }
 
 function formatAccessRefusal(result: DocAgentAccessRefusal): string {
   if (result.status === "not_found") return NOT_FOUND
-  return `Refused (${result.code}): ${REFUSAL_CAUSE[result.code]}. Nothing was written.`
+  return `Refused (${result.code}): ${refusalCause(result)}. Nothing was written.`
 }
 
 function formatEditRefusal(refusal: DocAgentEditRefusal): string {

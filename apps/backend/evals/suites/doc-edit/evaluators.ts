@@ -102,6 +102,9 @@ export const scopedChangeEvaluator = writeCaseEvaluator("scoped-change", (output
 })
 
 export const reasonPresentEvaluator = writeCaseEvaluator("reason-present", (output) => {
+  if (output.reasons.length < output.personaUpdateCount) {
+    return `${output.personaUpdateCount} persona updates but ${output.reasons.length} doc:edited events`
+  }
   const blank = output.reasons.filter((reason) => reason.trim() === "").length
   return blank === 0 ? null : `${blank} of ${output.reasons.length} edits had no reason`
 })

@@ -208,8 +208,9 @@ describe("reasonPresentEvaluator", () => {
     expect({
       present: await passed(reasonPresentEvaluator, written(), WRITE),
       blank: await passed(reasonPresentEvaluator, written({ reasons: ["ok", "  "] }), WRITE),
+      missingEvent: await passed(reasonPresentEvaluator, written({ personaUpdateCount: 2, reasons: ["ok"] }), WRITE),
       chitchat: await passed(reasonPresentEvaluator, written({ reasons: [""] }), { shouldWrite: false }),
-    }).toEqual({ present: true, blank: false, chitchat: true })
+    }).toEqual({ present: true, blank: false, missingEvent: false, chitchat: true })
   })
 })
 
