@@ -76,6 +76,18 @@ const DAY_MS = 24 * 60 * 60 * 1000
 // page this reaches ~400 artifacts back, and the user can keep scrolling.
 const MAX_JUMP_PAGES = 10
 
+// Past the start of history — either the stream's, or as far as the page bound
+// reached — a jump travels to the oldest thing there is: asking for a year ago
+// means "as far back as you can go", not "refuse unless you find that exact
+// day". Only a genuinely empty list has nowhere to go, and its empty state
+// already says so.
+function landJumpOn(items: ContextItem[], endOfDayMs: number, land: (index: number) => void): void {
+  const now = new Date()
+  const marker = markerIndexForDate(items, endOfDayMs, now)
+  const index = marker === -1 ? oldestItemIndex(items, now) : marker
+  if (index !== -1) land(index)
+}
+
 export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   const {
     workspaceId,
@@ -243,24 +255,39 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   useEffect(() => {
     jumpGeneration.current += 1
   }, [categories, searchTerms, authorId, before, after])
+  // Paged rows reach the rendered list a render or more later (it is
+  // deferred), and virtua clamps an index past its end to the last row it has.
+  // A paged jump waits until the rendered list holds what paging found, then
+  // resolves its index against that list.
+  const [pendingJump, setPendingJump] = useState<{ generation: number; endOfDayMs: number; rows: number } | null>(null)
+  const landJump = useCallback((index: number) => {
+    listRef.current?.scrollToIndex(index, { align: "start" })
+    // The marker that opened the menu is usually windowed out by the jump, so
+    // Radix's focus-return lands on a removed node and focus falls to <body>.
+    // Park it on the scroller instead: the user stays inside the panel and can
+    // keep tabbing from where they landed.
+    scrollerRef.current?.focus({ preventScroll: true })
+  }, [])
   const jumpToDate = useCallback(
     async (date: Date) => {
       const generation = (jumpGeneration.current += 1)
       const endOfDayMs = localStartOfDayMs(date) + DAY_MS
       const now = new Date()
-      let candidates = items
-      let index = markerIndexForDate(candidates, endOfDayMs, now)
+      const index = markerIndexForDate(items, endOfDayMs, now)
+      if (index !== -1 || !feed.hasNextPage) return landJumpOn(items, endOfDayMs, landJump)
       // Paging to an unloaded date is several round trips; without this the
       // panel just sits there. Only set it when a fetch is actually needed, so
       // the common in-window jump stays instant and flicker-free.
-      if (index === -1 && feed.hasNextPage) setPagingFor(generation)
+      setPagingFor(generation)
       // Not loaded that far back yet: page until it is, bounded so a date older
       // than the whole stream can't spin. Each page widens the IDB-backed list.
       // `more` tracks the FETCH's own result — `feed.hasNextPage` is captured at
       // render and stays true here, so it would keep re-reading IDB for every
       // remaining iteration after history runs out.
-      let more = feed.hasNextPage
-      for (let page = 0; index === -1 && page < MAX_JUMP_PAGES && more; page += 1) {
+      let more: boolean = feed.hasNextPage
+      let found = false
+      let rows = items.length
+      for (let page = 0; !found && page < MAX_JUMP_PAGES && more; page += 1) {
         more = (await feed.fetchNextPage()).hasNextPage
         const fresh = await readStreamContextRows(workspaceId, streamId, rootStreamId, scope)
         const rebuilt = collapseContextRows(
@@ -272,28 +299,37 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
             after,
           })
         )
-        candidates = rebuilt.map(contextItemFromCached).filter((item): item is ContextItem => item !== null)
-        index = markerIndexForDate(candidates, endOfDayMs, now)
+        const candidates = rebuilt.map(contextItemFromCached).filter((item): item is ContextItem => item !== null)
+        rows = candidates.length
+        found = markerIndexForDate(candidates, endOfDayMs, now) !== -1
         if (jumpGeneration.current !== generation) return finishPaging(generation)
       }
       if (jumpGeneration.current !== generation) return finishPaging(generation)
       finishPaging(generation)
-      // Past the start of history — either the stream's, or as far as the page
-      // bound reached. Travel to the oldest thing there is: asking for a year
-      // ago means "as far back as you can go", not "refuse unless you find that
-      // exact day". Only a genuinely empty list has nowhere to go, and its
-      // empty state already says so.
-      if (index === -1) index = oldestItemIndex(candidates, now)
-      if (index === -1) return
-      listRef.current?.scrollToIndex(index, { align: "start" })
-      // The marker that opened the menu is usually windowed out by the jump, so
-      // Radix's focus-return lands on a removed node and focus falls to <body>.
-      // Park it on the scroller instead: the user stays inside the panel and can
-      // keep tabbing from where they landed.
-      scrollerRef.current?.focus({ preventScroll: true })
+      setPendingJump({ generation, endOfDayMs, rows })
     },
-    [items, feed, workspaceId, streamId, rootStreamId, scope, categories, searchTerms, authorId, before, after]
+    [
+      items,
+      feed,
+      workspaceId,
+      streamId,
+      rootStreamId,
+      scope,
+      categories,
+      searchTerms,
+      authorId,
+      before,
+      after,
+      landJump,
+    ]
   )
+  useEffect(() => {
+    if (!pendingJump) return
+    if (jumpGeneration.current !== pendingJump.generation) return setPendingJump(null)
+    if (items.length < pendingJump.rows) return
+    setPendingJump(null)
+    landJumpOn(items, pendingJump.endOfDayMs, landJump)
+  }, [pendingJump, items, landJump])
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = feed
   useEffect(() => {
     const node = sentinelRef.current

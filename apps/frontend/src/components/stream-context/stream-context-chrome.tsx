@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react"
+import { useMemo, useRef, useState, type ReactNode } from "react"
 import type { VirtualizerHandle } from "virtua"
 import { ChevronDown, Sparkles } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -187,6 +187,7 @@ export function TimelineDayMarker({ label }: { label: string }) {
  */
 function DayMarkerJump({ label, day, onJumpToDate }: { label: string; day: Date; onJumpToDate: (date: Date) => void }) {
   const [open, setOpen] = useState(false)
+  const picked = useRef(false)
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -204,10 +205,22 @@ function DayMarkerJump({ label, day, onJumpToDate }: { label: string; day: Date;
           <ChevronDown className="ml-1 size-3 shrink-0 text-muted-foreground opacity-60" aria-hidden />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-64 p-0">
+      <PopoverContent
+        align="start"
+        className="w-64 p-0"
+        // A pick hands focus to the jump, which parks it on the scroller. The
+        // trigger is still mounted until the list re-windows, and returning focus
+        // to it scrolls it back into view — undoing a jump that landed first.
+        onCloseAutoFocus={(event) => {
+          if (!picked.current) return
+          picked.current = false
+          event.preventDefault()
+        }}
+      >
         <DateJumpMenu
           defaultMonth={day}
           onPick={(date) => {
+            picked.current = true
             onJumpToDate(date)
             setOpen(false)
           }}
