@@ -5720,6 +5720,33 @@ describe("stream:member_removed board cleanup", () => {
     cleanup()
   })
 
+  it("drops the cached threads and docs of a private root the viewer was removed from (INV-62)", async () => {
+    const queryClient = seededClient("private")
+    const descendants = [
+      makeStream("thread_t", { type: "thread", parentStreamId: "chan_x", rootStreamId: "chan_x" }),
+      makeStream("doc_d", { type: "doc", parentStreamId: "chan_x", rootStreamId: "chan_x" }),
+      makeStream("thread_other", { type: "thread", parentStreamId: "chan_y", rootStreamId: "chan_y" }),
+    ]
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"), (old) => ({
+      ...old!,
+      streams: [...old!.streams, ...descendants.map((s) => ({ ...s, lastMessagePreview: null }))],
+    }))
+    await db.streams.bulkPut(descendants.map((s) => ({ ...s, _cachedAt: Date.now() })))
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    emit("stream:member_removed", { workspaceId: "ws_1", streamId: "chan_x", memberId: "member_1" })
+
+    await vi.waitFor(async () => {
+      expect(await db.streams.get(["ws_1", "doc_d"])).toBeUndefined()
+    })
+    expect({
+      cached: queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))!.streams.map((s) => s.id),
+      stored: (await db.streams.where("workspaceId").equals("ws_1").toArray()).map((s) => s.id),
+    }).toEqual({ cached: ["thread_other"], stored: ["thread_other"] })
+    cleanup()
+  })
+
   it("keeps the board rows of a PUBLIC stream — a public root grants read without membership (INV-62)", async () => {
     await seedBoardRow("conv_x", "ws_1", "thread_x", "chan_x")
     const { socket, emit } = createTestSocket()
