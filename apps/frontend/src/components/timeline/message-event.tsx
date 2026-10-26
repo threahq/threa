@@ -25,9 +25,8 @@ import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { ModelBadge } from "@/components/message/model-badge"
 import {
   MESSAGE_ROW_CONTINUATION_PADDING,
-  MESSAGE_ROW_CONTINUATION_TOOLBAR_ANCHOR,
   MESSAGE_ROW_HEAD_PADDING,
-  MESSAGE_ROW_HEAD_TOOLBAR_ANCHOR,
+  messageRowToolbarClassName,
 } from "@/components/message/message-row-layout"
 import {
   usePendingMessages,
@@ -849,17 +848,7 @@ function MessageLayout({
         {hoverActions && (
           <div
             className={cn(
-              // Floats above the row's content (over the previous row's tail),
-              // Slack-style, so it never covers the text it belongs to; the
-              // anchor follows the row's top padding so heads and continuations
-              // both keep their first line clear.
-              //
-              // `reveal-actions-hover-only`: revealed on hover/focus for mouse +
-              // keyboard users (keyed on the live input mode, so a mouse on a
-              // touchscreen laptop reveals it too), and kept hidden for touch —
-              // touch users reach these via the long-press action drawer.
-              "reveal-actions-hover-only absolute right-4 z-10 hidden sm:block",
-              renderAsContinuation ? MESSAGE_ROW_CONTINUATION_TOOLBAR_ANCHOR : MESSAGE_ROW_HEAD_TOOLBAR_ANCHOR,
+              messageRowToolbarClassName(renderAsContinuation),
               isEditing && "!opacity-0 !pointer-events-none"
             )}
           >
