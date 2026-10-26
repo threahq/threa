@@ -142,8 +142,31 @@ jobs:
         # unrelated to the browser deps, so remove them before installing.
         run: sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* || true
 
+      # The Azure Ubuntu mirror has served the ~22 MB of browser .debs at
+      # ~30 kB/s, which ate 13 of the job's 25 minutes and cancelled a shard.
+      # Cached .debs leave apt only the package index to fetch.
+      - name: Keep apt downloads in a cacheable directory
+        id: apt-archives
+        run: |
+          echo "key=apt-playwright-deps-$ImageOS-$ImageVersion-${{ steps.playwright-version.outputs.version }}" >> "$GITHUB_OUTPUT"
+          echo "restore-key=apt-playwright-deps-$ImageOS-" >> "$GITHUB_OUTPUT"
+          mkdir -p ~/apt-archives/partial
+          printf 'Dir::Cache::Archives "%s/apt-archives/";\nAPT::Keep-Downloaded-Packages "true";\n' "$HOME" \
+            | sudo tee /etc/apt/apt.conf.d/99-ci-archives
+
+      - name: Cache apt archives
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-archives/*.deb
+          key: ${{ steps.apt-archives.outputs.key }}
+          restore-keys: ${{ steps.apt-archives.outputs.restore-key }}
+
       - name: Install Playwright system dependencies
-        run: bun run --bun playwright install-deps chromium
+        # autoclean drops .debs the mirror has superseded, so the
+        # restore-keys carry-over doesn't grow the cache across image updates.
+        run: |
+          bun run --bun playwright install-deps chromium
+          sudo apt-get autoclean
 
       - name: Derive browser test database name
         run: |
