@@ -102,7 +102,12 @@ test.describe("Bounded timeline read", () => {
     // paging path this test needs (`gotcha_browser_spec_false_pass_shapes`).
     await page.goto(`/w/${workspaceId}/drafts`)
     await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/drafts`))
-    await seedStream(page, workspaceId, streamId, MESSAGE_COUNT, prefix)
+    // The oldest message goes in alone, ahead of the parallel seed batches, so
+    // its row mounting proves the oldest page has landed.
+    await page.request
+      .post(`/api/workspaces/${workspaceId}/messages`, { data: { streamId, content: `${prefix} msg-0000 oldest` } })
+      .then((r) => expectApiOk(r, "seed the oldest message"))
+    await seedStream(page, workspaceId, streamId, MESSAGE_COUNT - 1, prefix)
 
     await armCapture(page)
 
@@ -111,18 +116,22 @@ test.describe("Bounded timeline read", () => {
     await page.reload()
     await expect(page.getByRole("main").locator(".message-item").first()).toBeVisible({ timeout: 30_000 })
 
-    // Page back until a message well below the bootstrap window is mounted: this
-    // is the deep window whose re-materialisation the split read removes.
+    // Page back through the whole history, to a message well below the bootstrap
+    // window: this is the deep window whose re-materialisation the split read
+    // removes. Stopping while older pages remain leaves the reader inside the
+    // prefetch edge, and the arrival's content change then starts the next older
+    // fetch — its skeleton rows shift scrollTop under a still anchor.
     const deepAnchor = messageLocator(page, prefix, 10)
+    const oldest = messageLocator(page, prefix, 0)
     await expect
       .poll(
         async () => {
           await scrollUp(page)
-          return await deepAnchor.count()
+          return (await oldest.count()) > 0 && (await deepAnchor.count()) > 0
         },
-        { timeout: 60_000, message: "should page back to a deep scroll-back window" }
+        { timeout: 60_000, message: "should page back to the start of the history" }
       )
-      .toBeGreaterThan(0)
+      .toBe(true)
 
     await waitForStableViewport(page, deepAnchor)
     const before = await deepAnchor.boundingBox()
