@@ -212,6 +212,29 @@ test.describe("Timeline anchor restore", () => {
     const rowBoxB = await messageLocator(page, prefix, anchorNum!).boundingBox()
     expect(rowBoxB).not.toBeNull()
     expect(Math.abs(rowBoxB!.y - rowBoxA!.y), `metrics during hold: ${JSON.stringify(samples)}`).toBeLessThanOrEqual(3)
+
+    // A scroll no gesture stamped (find-in-page, a screen reader) moves the
+    // reader: the next content resize must not pull them back to the held row.
+    const readerRowTop = await page.evaluate(() => {
+      const el = document.querySelector("[data-suppress-pull-refresh]") as HTMLElement
+      el.scrollTop += 150
+      return new Promise<number>((resolve) =>
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            const rows = el.querySelectorAll<HTMLElement>(".message-item")
+            rows[rows.length - 1].style.paddingBottom = "120px"
+            resolve(el.scrollTop)
+          })
+        )
+      )
+    })
+    await page.waitForTimeout(400)
+    expect(
+      Math.abs(
+        (await page.evaluate(() => document.querySelector("[data-suppress-pull-refresh]")!.scrollTop)) - readerRowTop
+      ),
+      "a content resize should leave the reader where they scrolled"
+    ).toBeLessThanOrEqual(3)
   })
 
   test("reload while at the tail stays at the tail (no stale-anchor restore)", async ({ page }) => {

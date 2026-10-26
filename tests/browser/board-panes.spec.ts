@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
+import { loginAndCreateWorkspace, createChannel, expectApiOk, panesSettled } from "./helpers"
 
 /**
  * The board is a page pane (`page:board`): a card opens its conversation as a
@@ -95,6 +95,7 @@ test("should open a card's conversation where its opener is dragged to", async (
   await expect.poll(() => panelParam(page)).toMatch(/^page:board--conv:[^.-]+$/)
   const pane = page.locator(`[data-panel-tab="${panelParam(page)!.split("--")[1]}"]`)
   await expect(pane).toBeVisible()
+  await panesSettled(page)
   const [boardBox, paneBox] = [await board(page).boundingBox(), await pane.boundingBox()]
   expect(paneBox!.y).toBeGreaterThanOrEqual(boardBox!.y + boardBox!.height - 1)
 })

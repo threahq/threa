@@ -521,6 +521,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   // Ref to access editor instance from callbacks defined before useEditor returns
   const editorRef = useRef<ReturnType<typeof useEditor>>(null)
   const onFocusRef = useRef(onFocusProp)
+  const autoFocusRef = useRef(autoFocus)
 
   // Argument option picker (e.g. `/model` → choose a model, `/spawn pi /model`
   // → choose one of Pi's). It reads the argument region out of the doc, so it
@@ -770,7 +771,12 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     extensions,
     content: editableValue,
     editable: !disabled,
-    autofocus: autoFocus ? "end" : false,
+    // Not TipTap's `autofocus` option: it focuses with the options the editor was configured with, which can be stale
+    // when `create` fires. The ref is refreshed every render, so an editor whose pane the user left meanwhile doesn't
+    // pull the focus, and with it the route, back.
+    onCreate: ({ editor }) => {
+      if (autoFocusRef.current) editor.commands.focus("end")
+    },
     onUpdate: ({ editor }) => {
       if (isInternalUpdate.current) return
       onChange(editor.getJSON())
@@ -1093,6 +1099,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   // Store editor in ref so callbacks defined inside useEditor options can access it
   editorRef.current = editor
   onFocusRef.current = onFocusProp
+  autoFocusRef.current = autoFocus
 
   // Track whether the editor has a non-empty selection (drives toolbar visibility)
   // and whether the cursor is inside a table (keeps the table controls reachable
@@ -1234,11 +1241,6 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     markdownParseOptions,
   ])
 
-  // TipTap's autofocus option handles initial focus.
-  // No additional focus-on-mount effect needed — the redundant focus()
-  // dispatch caused a view update that raced with toolbar rendering,
-  // briefly dropping focus in autoFocus editors (e.g. inline edit).
-
   const focus = useCallback(() => {
     if (editor && !editor.isDestroyed) {
       editor.commands.focus("end")
@@ -1263,7 +1265,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   }, [editor])
 
   // Re-focus when scope changes (e.g., navigating between streams) on desktop.
-  // TipTap's autofocus only fires on mount; without key={scopeId} remounting,
+  // The create-time focus only fires on mount; without key={scopeId} remounting,
   // we need to manually re-focus when the scope changes.
   const prevScopeRef = useRef(scopeId)
   useEffect(() => {
@@ -1277,7 +1279,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
 
   // Re-focus after external disabled transitions (e.g., stream un-archived).
   // Only fires on true→false transitions — mount is excluded so we don't
-  // race with TipTap's autofocus option.
+  // race with the create-time focus.
   const prevDisabledRef = useRef(disabled)
   useEffect(() => {
     const wasDisabled = prevDisabledRef.current

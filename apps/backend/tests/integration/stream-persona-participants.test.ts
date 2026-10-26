@@ -14,7 +14,7 @@ import { StreamPersonaParticipantRepository } from "../../src/features/agents"
 import { SearchRepository } from "../../src/features/search"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { streamId, userId, workspaceId, personaId } from "../../src/lib/id"
-import { addTestMember, setupTestDatabase, testMessageContent } from "./setup"
+import { addTestMember, deleteAllStreams, setupTestDatabase, testMessageContent } from "./setup"
 import { Visibilities } from "@threahq/types"
 
 describe("Stream Persona Participants", () => {
@@ -37,7 +37,7 @@ describe("Stream Persona Participants", () => {
     await pool.query("DELETE FROM stream_events")
     await pool.query("DELETE FROM stream_sequences")
     await pool.query("DELETE FROM stream_members")
-    await pool.query("DELETE FROM streams")
+    await deleteAllStreams(pool)
   })
 
   describe("Participation Recording", () => {

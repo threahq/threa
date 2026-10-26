@@ -11,7 +11,7 @@ import {
 import { EventService } from "../../src/features/messaging"
 import { ActivityRepository, ActivityService } from "../../src/features/activity"
 import { streamId, userId, workspaceId } from "../../src/lib/id"
-import { setupTestDatabase, testMessageContent } from "./setup"
+import { deleteAllStreams, setupTestDatabase, testMessageContent } from "./setup"
 
 describe("Unread Counts", () => {
   let pool: Pool
@@ -38,7 +38,7 @@ describe("Unread Counts", () => {
     await pool.query("DELETE FROM stream_sequences")
     await pool.query("DELETE FROM stream_read_state")
     await pool.query("DELETE FROM stream_members")
-    await pool.query("DELETE FROM streams")
+    await deleteAllStreams(pool)
     await pool.query(
       "DELETE FROM outbox WHERE id > (SELECT COALESCE(MAX(last_processed_id), 0) FROM outbox_listeners WHERE listener_id = 'broadcast')"
     )

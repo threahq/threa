@@ -135,6 +135,9 @@ test("should jump to a stream's permalink to its own message beside its tabs, an
     m: parentA,
   })
 
+  // `?m=` clears seconds after the jump's refine loop ends; a wheel inside that loop can be written back over
+  // by a tick that runs before the wheel event reaches the main thread.
+  await expect.poll(() => new URL(page.url()).searchParams.get("m"), { timeout: 15_000 }).toBeNull()
   // A wheel, not a scrollTop write: the jump holds its message against anything but a gesture.
   await linked.hover()
   await page.mouse.wheel(0, 10_000)

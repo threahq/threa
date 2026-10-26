@@ -58,6 +58,8 @@ async function serverActivityCount(page: Page, workspaceId: string, streamId: st
   return counts[streamId] ?? 0
 }
 
+// "At the tail" means flush: a wheel loop can stop ~60px short, leaving a compact
+// last row hidden behind the composer, so it is never read.
 async function distanceFromBottom(page: Page): Promise<number | null> {
   return page.evaluate(() => {
     const el = document.querySelector("[data-suppress-pull-refresh]")
@@ -156,7 +158,7 @@ test.describe("Timeline auto-read", () => {
         },
         { timeout: 20000, message: "should reach the tail by scrolling" }
       )
-      .toBeLessThan(60)
+      .toBeLessThanOrEqual(1)
 
     // Idle past the auto-mark debounce (500ms) + round trip, then the server
     // must agree the stream is fully read.
@@ -199,7 +201,7 @@ test.describe("Timeline auto-read", () => {
         },
         { timeout: 20000, message: "should reach the tail by scrolling" }
       )
-      .toBeLessThan(60)
+      .toBeLessThanOrEqual(1)
     await expect
       .poll(() => serverUnreadCount(page, workspaceId, streamId), {
         timeout: 15000,
@@ -358,7 +360,7 @@ test.describe("Timeline auto-read", () => {
         },
         { timeout: 20000, message: "should reach the tail by scrolling" }
       )
-      .toBeLessThan(60)
+      .toBeLessThanOrEqual(1)
     await expect.poll(() => serverUnreadCount(page, workspaceId, streamId), { timeout: 15000 }).toBe(0)
 
     // Blur the window (attention formula reads document.hasFocus()).
@@ -452,7 +454,7 @@ test.describe("Timeline auto-read", () => {
         },
         { timeout: 20000, message: "should reach the tail by flinging" }
       )
-      .toBeLessThan(60)
+      .toBeLessThanOrEqual(1)
 
     await expect
       .poll(() => serverUnreadCount(page, workspaceId, streamId), {

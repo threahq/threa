@@ -77,8 +77,9 @@ export const MessageContextMenu = memo(function MessageContextMenu({
       <DropdownMenuContent
         align="end"
         className="min-w-[200px]"
+        // A closing menu still hears Escape until its exit ends: one meant for the inline edit it opened is not ours.
         onEscapeKeyDown={() => {
-          restoreReminderFocus.current = true
+          if (openRef.current) restoreReminderFocus.current = true
         }}
         // Selecting "Edit message" focuses the editor, so prevent Radix from stealing that focus.
         onCloseAutoFocus={(event) => {

@@ -33,7 +33,56 @@ export function snapshotTopVisibleRow(el: HTMLElement): { id: string; offsetPx: 
   return best ? { id: best.id, offsetPx: Math.round(best.top - sr.top) } : null
 }
 
-type DetachedHold = { id: string; offsetPx: number; takenAt: number }
+/** The row `id` with its offset from the viewport top, when it is mounted. */
+function snapshotRow(el: HTMLElement, id: string): { id: string; offsetPx: number } | null {
+  const escaped = CSS.escape(id)
+  const row = el.querySelector<HTMLElement>(`[data-message-id="${escaped}"], [data-event-id="${escaped}"]`)
+  return row ? { id, offsetPx: Math.round(row.getBoundingClientRect().top - el.getBoundingClientRect().top) } : null
+}
+
+/**
+ * `contentTop` is the row's top in scroll-content coordinates when the guard
+ * last saw it (null until then): a scroll leaves it unchanged, a reflow above
+ * the row moves it.
+ */
+type DetachedHold = { id: string; offsetPx: number; takenAt: number; contentTop: number | null }
+
+export function takeHold(el: HTMLElement, row: { id: string; offsetPx: number }): DetachedHold {
+  return { ...row, takenAt: performance.now(), contentTop: row.offsetPx + el.scrollTop }
+}
+
+type HoldReading =
+  | { state: "void" }
+  | { state: "held" | "reflowed"; row: { id: string; offsetPx: number } }
+  | { state: "scrolled" }
+
+/**
+ * `void`: a gesture came after the hold, or its row unmounted. `held`: the row
+ * sits at the held offset. `reflowed`: content above the row moved it, so the
+ * guard re-pins. `scrolled`: a scroll the gesture stamp never sees moved it
+ * (find-in-page, a screen reader, scrollIntoView). Offset alone can't tell the
+ * last two apart: the virtualizer moves scrollTop itself while compensating a
+ * reflow.
+ */
+export function readHold(el: HTMLElement, hold: DetachedHold, userInteractedAt: number): HoldReading {
+  if (userInteractedAt > hold.takenAt) return { state: "void" }
+  const row = snapshotRow(el, hold.id)
+  if (!row) return { state: "void" }
+  if (Math.abs(row.offsetPx - hold.offsetPx) <= 1) return { state: "held", row }
+  const scrolled = hold.contentTop !== null && Math.abs(row.offsetPx + el.scrollTop - hold.contentTop) <= 1
+  return scrolled ? { state: "scrolled" } : { state: "reflowed", row }
+}
+
+/**
+ * Only a current hold may survive a re-snapshot: swapping a landed target for
+ * whichever row sits at the viewport top lets that row's late regrouping (a
+ * header appearing) slide the target down.
+ */
+export function isHoldCurrent(el: HTMLElement, hold: DetachedHold | null, userInteractedAt: number): boolean {
+  if (!hold) return false
+  const { state } = readHold(el, hold, userInteractedAt)
+  return state === "held" || state === "reflowed"
+}
 
 interface ScrollToMessageOptions {
   align?: "center" | "start"
@@ -155,8 +204,10 @@ export function useScrollToMessage({
         const scrollerNow = scrollerRef.current
         const userTookOver = userInteractedAtRef.current > engagedAt
         if (scrollerNow && !isFollowingTailRef.current && (everLanded || userTookOver)) {
-          const snap = snapshotTopVisibleRow(scrollerNow)
-          detachedHoldRef.current = snap ? { ...snap, takenAt: performance.now() } : null
+          const snap =
+            (everLanded && !userTookOver ? snapshotRow(scrollerNow, targetId) : null) ??
+            snapshotTopVisibleRow(scrollerNow)
+          detachedHoldRef.current = snap ? takeHold(scrollerNow, snap) : null
         }
         opts?.onFirstSettle?.()
       }
@@ -296,6 +347,10 @@ export function useScrollToMessage({
         if (elapsed < MAX_MS) {
           scrollRetryTimerRef.current = window.setTimeout(attempt, 60)
         } else {
+          // Corrections after the first settle moved the target off the hold
+          // taken then; a target that left the window keeps that hold.
+          const landed = settleNotified && !isFollowingTailRef.current ? snapshotRow(scroller, targetId) : null
+          if (landed) detachedHoldRef.current = takeHold(scroller, landed)
           abort()
         }
       }

@@ -265,10 +265,7 @@ test.describe("Inbox sidebar section", () => {
     await expect.poll(() => serverUnreadCount(page, workspaceId, streamId), { timeout: 15000 }).toBe(0)
     await expect.poll(() => isDimmed(inboxRow), { timeout: 10000 }).toBe(true)
 
-    const message = page
-      .locator("[data-message-id]")
-      .filter({ hasText: /unread hello/ })
-      .first()
+    const message = page.locator('[data-editor-zone="main"]').getByText(/unread hello/)
     await message.hover()
     await page.getByRole("link", { name: "Reply in thread" }).click()
     const panel = page.getByTestId("panel")
@@ -286,8 +283,12 @@ test.describe("Inbox sidebar section", () => {
     await page.waitForTimeout(1500)
     await expect(inboxRow).toHaveCount(1)
 
+    // Escape settles only a stream alone on the page.
+    await panel.getByRole("button", { name: "Close", exact: true }).click()
+    await expect(panel).toHaveCount(0)
     await pressEscapeFrom(message)
     await expect(inboxRow).toHaveCount(0, { timeout: 10000 })
+    await expect(sidebarRow(sectionByHeading(page, "Channels"), streamId)).toBeVisible({ timeout: 10000 })
 
     await otherContext.close()
   })

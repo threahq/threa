@@ -226,6 +226,18 @@ export async function withTestTransaction<T>(pool: Pool, callback: (client: Pool
 }
 
 /**
+ * Deletes every stream but `exceptId`. The preloaded server's workers lock
+ * stream rows in id order (`StreamRepository.findByIdsForUpdateBlocking`); a
+ * plain table-wide DELETE locks them in heap order and deadlocks against them.
+ */
+export async function deleteAllStreams(db: Querier, exceptId?: string): Promise<void> {
+  await db.query(
+    "DELETE FROM streams WHERE id IN (SELECT id FROM streams WHERE id IS DISTINCT FROM $1 ORDER BY id FOR UPDATE)",
+    [exceptId ?? null]
+  )
+}
+
+/**
  * Creates a minimal ProseMirror JSON document from text.
  * Used in tests to construct contentJson field for messages.
  */

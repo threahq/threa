@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test"
 import { Pool } from "pg"
-import { setupTestDatabase, testMessageContent, withTransaction } from "./setup"
+import { deleteAllStreams, setupTestDatabase, testMessageContent, withTransaction } from "./setup"
 import {
   StreamService,
   StreamReadService,
@@ -49,7 +49,7 @@ describe("inbox hold", () => {
     await pool.query("DELETE FROM stream_events")
     await pool.query("DELETE FROM stream_sequences")
     await pool.query("DELETE FROM stream_members")
-    await pool.query("DELETE FROM streams")
+    await deleteAllStreams(pool)
     await pool.query(
       "DELETE FROM outbox WHERE id > (SELECT COALESCE(MAX(last_processed_id), 0) FROM outbox_listeners WHERE listener_id = 'broadcast')"
     )

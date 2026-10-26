@@ -11,7 +11,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach, mock, spyOn } from "bun:test"
 import { Pool } from "pg"
-import { withTransaction, addTestMember, seedCompletedLinkPreview } from "./setup"
+import { deleteAllStreams, withTransaction, addTestMember, seedCompletedLinkPreview } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository, StreamEventRepository, StreamMemberRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
@@ -118,7 +118,7 @@ describe("BoundaryExtractionService", () => {
       await client.query("DELETE FROM outbox")
       await client.query("DELETE FROM conversations")
       await client.query("DELETE FROM messages")
-      await client.query(`DELETE FROM streams WHERE id != '${testStreamId}'`)
+      await deleteAllStreams(client, testStreamId)
     })
   })
 

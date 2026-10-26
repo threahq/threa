@@ -169,7 +169,14 @@ import { StreamReadTracker } from "./stream-read-tracker"
 import { useReadMessageIds, useStreamInInbox, useUnreadActions } from "@/hooks/use-unread-counts"
 import { deepLinkDebug } from "./deep-link-debug"
 import { VirtualizedScroller, useRenderedContentLatch } from "./virtualized-scroller"
-import { useScrollToMessage, snapshotTopVisibleRow, UNREAD_MARKER_TOP_GAP_PX } from "@/hooks/use-scroll-to-message"
+import {
+  useScrollToMessage,
+  snapshotTopVisibleRow,
+  isHoldCurrent,
+  readHold,
+  takeHold,
+  UNREAD_MARKER_TOP_GAP_PX,
+} from "@/hooks/use-scroll-to-message"
 
 /** Membership events; suppressed in threads (see displayEvents memo). */
 const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joined", "member_added", "member_left"])
@@ -2513,15 +2520,15 @@ export function StreamContent({
     const el = virtualScrollerEl
     if (!el || isFollowingTailRef.current) return
     if (scrollAbortRef.current) return
-    if (userInteractedAtRef.current > hold.takenAt) return
-    const escaped = CSS.escape(hold.id)
-    const row = el.querySelector<HTMLElement>(`[data-message-id="${escaped}"], [data-event-id="${escaped}"]`)
-    if (!row) return
-    const delta = row.getBoundingClientRect().top - (el.getBoundingClientRect().top + hold.offsetPx)
+    const reading = readHold(el, hold, userInteractedAtRef.current)
+    if (reading.state !== "held" && reading.state !== "reflowed") return
+    const { row } = reading
+    const delta = row.offsetPx - hold.offsetPx
     // Position-preserving by definition (re-pins the same row at the same
     // offset), so it does not stamp the programmatic-scroll ref — breaking a
     // user fling's sweep chain over a layout compensation was exactly the
     // false positive the stamp must avoid.
+    hold.contentTop = row.offsetPx + el.scrollTop
     if (Math.abs(delta) > 1) el.scrollTop += delta
   }, [virtualScrollerEl, isFollowingTailRef, userInteractedAtRef])
   useLayoutEffect(() => {
@@ -2610,7 +2617,7 @@ export function StreamContent({
       // Seed the detached-viewport guard: content resizes between engage and
       // the refine loop's first settle must re-target the landing, not slide
       // the viewport.
-      detachedHoldRef.current = { ...target, takenAt: performance.now() }
+      detachedHoldRef.current = { ...target, takenAt: performance.now(), contentTop: null }
     } else {
       releaseDeferredReveal()
       if (landing.kind === "marker") scrollToFirstUnread()
@@ -2663,10 +2670,27 @@ export function StreamContent({
       const best = snapshotTopVisibleRow(el)
       if (best) {
         saveTimelineAnchor(workspaceId, streamId, { targetId: best.id, offsetPx: best.offsetPx })
-        detachedHoldRef.current = { id: best.id, offsetPx: best.offsetPx, takenAt: performance.now() }
+        if (!isHoldCurrent(el, detachedHoldRef.current, userInteractedAtRef.current)) {
+          detachedHoldRef.current = takeHold(el, best)
+        }
       }
     }
     const onScroll = () => {
+      // A scroll the gesture stamp never sees is the reader's: rebase the hold
+      // on where it left them, or the next reflow pulls them back. Track the
+      // held row's content position even mid refine loop, since virtua's
+      // compensation moves scrollTop under it and a stale position reads the
+      // reader's next scroll as a reflow.
+      const hold = detachedHoldRef.current
+      if (hold && !isFollowingTailRef.current) {
+        const reading = readHold(el, hold, userInteractedAtRef.current)
+        if (reading.state === "held") {
+          hold.contentTop = reading.row.offsetPx + el.scrollTop
+        } else if (reading.state === "scrolled" && !scrollAbortRef.current) {
+          const top = snapshotTopVisibleRow(el)
+          detachedHoldRef.current = top ? takeHold(el, top) : null
+        }
+      }
       if (timer) window.clearTimeout(timer)
       timer = window.setTimeout(snapshot, 250)
     }
@@ -2710,8 +2734,9 @@ export function StreamContent({
     if (!isFetchingOlder || !useVirtualized) return
     const el = virtualScrollerEl
     if (!el || isFollowingTailRef.current) return
+    if (isHoldCurrent(el, detachedHoldRef.current, userInteractedAtRef.current)) return
     const snap = snapshotTopVisibleRow(el)
-    if (snap) detachedHoldRef.current = { ...snap, takenAt: performance.now() }
+    if (snap) detachedHoldRef.current = takeHold(el, snap)
   }, [isFetchingOlder, useVirtualized, virtualScrollerEl, isFollowingTailRef])
 
   useLayoutEffect(() => {
