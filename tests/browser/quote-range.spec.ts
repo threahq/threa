@@ -27,7 +27,7 @@ async function sendMessage(page: Page, content: unknown[], contentMarkdown: stri
   const response = await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
     data: { streamId, contentJson: { type: "doc", content }, contentMarkdown },
   })
-  await expectApiOk(response, "Create source message")
+  await expectApiOk(response, "Create message")
   const body = (await response.json()) as { message?: { id: string } }
   return body.message?.id ?? ""
 }
@@ -71,7 +71,7 @@ interface SelectionEnd {
 async function selectAcross(page: Page, from: SelectionEnd, to: SelectionEnd): Promise<void> {
   await page.evaluate(
     ({ from, to }) => {
-      const textNodeWith = ({ messageId, text }: { messageId: string; text: string }): Text => {
+      const textNodeWith = ({ messageId, text }: SelectionEnd): Text => {
         const body = document.querySelector(`[data-message-id="${messageId}"] .message-content .markdown-content`)
         if (!body) throw new Error(`No rendered body for ${messageId}`)
 
@@ -211,6 +211,7 @@ test.describe("Quote by range", () => {
     // Visible first, so hiding is the selection reaching past the body.
     await selectAcross(page, { messageId: sourceId, text: "opening" }, { messageId: sourceId, text: "scene" })
     await expect(quoteButton).toBeVisible()
+
     await selectAcross(page, { messageId: sourceId, text: "opening" }, { messageId: nextId, text: "followup" })
     await expect(quoteButton).toBeHidden()
   })

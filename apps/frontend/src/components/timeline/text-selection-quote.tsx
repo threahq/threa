@@ -50,7 +50,9 @@ function textBeforeSelection(contentEl: Element, range: Range): string {
  * The selection trimmed to the message body, or null when it reaches text
  * outside it. A triple-click on a message's last block ends the range at the
  * start of the next row; that overflow selects nothing visible, so it is
- * trimmed rather than read as a cross-message selection.
+ * trimmed rather than read as a cross-message selection. Rendered selection
+ * text is compared with the clamped range's raw text so hidden nodes past the
+ * body don't count; math, which renders differently from its source, rejects.
  */
 function rangeWithinContent(contentEl: Element, range: Range, selectedText: string): Range | null {
   if (!contentEl.contains(range.startContainer)) return null
