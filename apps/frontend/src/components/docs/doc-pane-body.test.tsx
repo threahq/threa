@@ -569,9 +569,11 @@ describe("DocPaneBody", () => {
     } as unknown as ReturnType<typeof attachmentsModule.useAttachments>)
     await mountLoaded()
     const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
+    const openPicker = vi.spyOn(input, "click").mockImplementation(() => {})
     const file = new File(["png"], "shot.png", { type: "image/png" })
 
-    expect(screen.getByRole("button", { name: "Attach files" })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Attach files" }))
+    expect(openPicker).toHaveBeenCalledTimes(1)
     fireEvent.change(input, { target: { files: [file] } })
 
     await waitFor(() => expect(uploadFile).toHaveBeenCalledWith(file))
