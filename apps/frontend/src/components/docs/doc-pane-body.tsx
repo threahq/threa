@@ -31,6 +31,7 @@ import {
   type AttachmentReferenceAttrs,
 } from "@/components/editor/attachment-reference-extension"
 import { ImageViewerContext, type ImageViewer } from "@/components/editor/image-viewer-context"
+import { HistoryBackClose } from "@/components/ui/history-back-close"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
 import { attachmentContentUrl } from "@/api"
 import { useMediaGallery } from "@/contexts/media-gallery-context"
@@ -40,7 +41,6 @@ import { useMentionables, useMarkdownTriggerLookups } from "@/hooks/use-mentiona
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useAttachments } from "@/hooks/use-attachments"
 import { useIsMobile } from "@/hooks/use-mobile"
-import { useKeyboardOpen } from "@/components/layout/keyboard-open-context"
 import { useLatest } from "@/hooks/use-latest"
 import { getEffectiveEditorBindings } from "@/lib/keyboard-shortcuts"
 import { cn } from "@/lib/utils"
@@ -279,14 +279,18 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
     if (editor && editor.isEditable !== canWrite) editor.setEditable(canWrite)
   }, [editor, canWrite])
 
-  // Dismissing the keyboard leaves the caret behind, so the next tap anywhere in the doc would raise it again.
-  const keyboardOpen = useKeyboardOpen()
-  const keyboardWasOpen = useRef(keyboardOpen)
+  const [focused, setFocused] = useState(false)
   useEffect(() => {
-    const closed = keyboardWasOpen.current && !keyboardOpen
-    keyboardWasOpen.current = keyboardOpen
-    if (closed && editor?.view.hasFocus()) editor.commands.blur()
-  }, [editor, keyboardOpen])
+    if (!editor) return
+    const onFocus = () => setFocused(true)
+    const onBlur = () => setFocused(false)
+    editor.on("focus", onFocus)
+    editor.on("blur", onBlur)
+    return () => {
+      editor.off("focus", onFocus)
+      editor.off("blur", onBlur)
+    }
+  }, [editor])
 
   // Files dropped beside the editor (the spacer, a read-only doc) would otherwise open in place of the app.
   const onDragOver = (event: DragEvent) => {
@@ -317,6 +321,8 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
     <ImageViewerContext.Provider value={imageViewer}>
       <ComposerPillDndProvider editor={editor}>
         <div className="flex h-full flex-col" data-suppress-pull-refresh="true">
+          {/* Back drops the caret before it leaves the doc; while the keyboard is up, Android spends that Back closing it. */}
+          {isMobile && <HistoryBackClose open={focused} onClose={() => editor?.commands.blur()} />}
           {canWrite && (
             <div className={cn(COLUMN_CLASS, "shrink-0")}>
               <EditorToolbar

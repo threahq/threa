@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { MemoryRouter, Route, Routes } from "react-router-dom"
+import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from "react-router-dom"
 import type { Editor, JSONContent } from "@tiptap/core"
 import * as Y from "yjs"
 import { prosemirrorJSONToYDoc, yDocToProsemirrorJSON } from "y-prosemirror"
@@ -23,7 +23,8 @@ import { docsApi } from "@/api/docs"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { RevealOnReady } from "@/contexts/coordinated-loading-context"
 import { MediaGalleryProvider } from "@/contexts/media-gallery-context"
-import { KeyboardOpenContext } from "@/components/layout/keyboard-open-context"
+import { __resetOverlayHistoryForTests, attachOverlayHistoryRouter } from "@/components/ui/history-back-close"
+import * as mobileModule from "@/hooks/use-mobile"
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh"
 import { DocSync, FLUSH_CAP_MS } from "@/lib/docs/doc-sync"
 import { PRESENCE_SEND_WINDOW_MS } from "@/lib/docs/doc-presence"
@@ -650,22 +651,60 @@ describe("DocPaneBody", () => {
     expect(screen.getByTestId("pull-host").dataset.distance).toBe("0")
   })
 
-  it("should drop the caret when the keyboard closes", async () => {
-    let keyboardOpen = true
-    const view = await mountLoaded(true, {
-      wrap: (body) => <KeyboardOpenContext.Provider value={keyboardOpen}>{body}</KeyboardOpenContext.Provider>,
-    })
-    act(() => {
-      proseMirror().editor.commands.focus("end")
-    })
-    await nextFrame()
-    expect(document.activeElement).toBe(proseMirror())
+  it("should drop the caret on Back before leaving the doc on a phone", async () => {
+    vi.spyOn(mobileModule, "useIsMobile").mockReturnValue(true)
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const docPath = `/w/${WORKSPACE_ID}`
+    const router = createMemoryRouter(
+      [
+        {
+          children: [
+            { path: "/other", element: <div>other-page</div> },
+            {
+              path: "/w/:workspaceId",
+              element: (
+                <MediaGalleryProvider>
+                  <DocPane canWrite />
+                </MediaGalleryProvider>
+              ),
+            },
+          ],
+        },
+      ],
+      { initialEntries: ["/other", docPath], initialIndex: 1 }
+    )
+    attachOverlayHistoryRouter(router)
+    try {
+      render(
+        <QueryClientProvider client={queryClient}>
+          <TooltipProvider>
+            <RouterProvider router={router} />
+          </TooltipProvider>
+        </QueryClientProvider>
+      )
+      await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
+      const keyBefore = router.state.location.key
+      act(() => {
+        proseMirror().editor.commands.focus("end")
+      })
+      await waitFor(() => expect(router.state.location.key).not.toBe(keyBefore))
 
-    keyboardOpen = false
-    view.rerender(true)
-    await nextFrame()
+      await act(async () => {
+        await router.navigate(-1)
+      })
+      await nextFrame()
+      const afterFirstBack = { path: router.state.location.pathname, focused: document.activeElement === proseMirror() }
+      await act(async () => {
+        await router.navigate(-1)
+      })
 
-    expect(document.activeElement).not.toBe(proseMirror())
+      expect({ afterFirstBack, afterSecondBack: router.state.location.pathname }).toEqual({
+        afterFirstBack: { path: docPath, focused: false },
+        afterSecondBack: "/other",
+      })
+    } finally {
+      __resetOverlayHistoryForTests()
+    }
   })
 
   it("should check a task without focusing the doc", async () => {

@@ -14,7 +14,6 @@ import { useSyncEngine } from "@/sync/sync-engine"
 import { HistoryBackClose } from "@/components/ui/history-back-close"
 import { TopbarLoadingIndicator } from "./topbar-loading-indicator"
 import { ConnectionStatus } from "./connection-status"
-import { KeyboardOpenContext } from "./keyboard-open-context"
 import { useCommittedSidebarWidth } from "./use-committed-sidebar-width"
 import { cn } from "@/lib/utils"
 
@@ -438,9 +437,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
             }}
           >
             <ConnectionStatus />
-            <ShellCoverContext.Provider value={setCovered}>
-              <KeyboardOpenContext.Provider value={isKeyboardOpen}>{children}</KeyboardOpenContext.Provider>
-            </ShellCoverContext.Provider>
+            <ShellCoverContext.Provider value={setCovered}>{children}</ShellCoverContext.Provider>
           </main>
         </div>
       </div>
