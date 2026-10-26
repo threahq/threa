@@ -137,10 +137,10 @@ async function focusInlineCodeNavigationStart(page: Page) {
     }
 
     editor.commands.focus("start")
+    // Tiptap's focus() calls view.focus() in its next animation frame, which writes the PM
+    // selection back into the DOM; a key pressed before that frame can be reverted by it.
+    return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
   })
-  // Ensure the browser has settled focus before sending keyboard events.
-  // Under CPU contention, editor.commands.focus() may not synchronize
-  // the browser's native focus state immediately.
   await expect(page.locator("[contenteditable='true']")).toBeFocused()
 }
 
@@ -154,8 +154,8 @@ async function focusInlineCodeNavigationEnd(page: Page) {
     }
 
     editor.commands.focus("end")
+    return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
   })
-  // Ensure the browser has settled focus before sending keyboard events.
   await expect(page.locator("[contenteditable='true']")).toBeFocused()
 }
 
