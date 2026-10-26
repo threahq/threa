@@ -296,6 +296,8 @@ jobs:
           pattern: shard-result-*
 
       - name: Summarize results
+        env:
+          SHARD_JOBS_RESULT: ${{ needs.browser-tests.result }}
         run: |
           echo "## Browser Test Results" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -332,6 +334,13 @@ jobs:
           # timeout, cancel) ran an unknown share of its tests, so it can't pass.
           if [[ $missing_count -gt 0 ]]; then
             echo "⛔ $missing_count of $TOTAL_SHARDS shards reported no result — their jobs did not run to completion." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          # Shard jobs succeed even on test failures, so anything else means a
+          # shard died this attempt and its marker may be an earlier attempt's.
+          if [[ "$SHARD_JOBS_RESULT" != "success" ]]; then
+            echo "⛔ A shard job ended $SHARD_JOBS_RESULT — it did not run to completion." >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
 
