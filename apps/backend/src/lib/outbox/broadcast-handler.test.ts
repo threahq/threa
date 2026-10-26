@@ -378,7 +378,7 @@ describe("BroadcastHandler", () => {
     })
   })
 
-  it("should emit doc:updated to the doc room without logging it, while a sibling message is logged", async () => {
+  it("should emit doc:updated to the doc room and its grant-only readers room without logging it, while a sibling message is logged", async () => {
     const message = makeEvent(1n, "message:created", {
       workspaceId: "ws_1",
       streamId: "stream_host",
@@ -405,7 +405,10 @@ describe("BroadcastHandler", () => {
       emitted: emitChains.filter((emitted) => emitted.eventType === "doc:updated"),
     }).toEqual({
       logged: ["message:created"],
-      emitted: [{ room: "ws:ws_1:stream:stream_doc", eventType: "doc:updated", payload: docUpdate.payload }],
+      emitted: [
+        { room: "ws:ws_1:stream:stream_doc", eventType: "doc:updated", payload: docUpdate.payload },
+        { room: "ws:ws_1:doc-readers:stream_doc", eventType: "doc:updated", payload: docUpdate.payload },
+      ],
     })
   })
 

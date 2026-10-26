@@ -39,8 +39,12 @@ export function createStreamBriefHandlers({ pool, streamBriefService }: Dependen
 
       const stream = await checkStreamAccess(pool, streamId, workspaceId, userId)
       if (!stream) throw new StreamNotFoundError()
+      const briefStreamId = resolveBriefStreamId(stream)
+      if (briefStreamId !== stream.id && !(await checkStreamAccess(pool, briefStreamId, workspaceId, userId))) {
+        throw new StreamNotFoundError()
+      }
 
-      const brief = await streamBriefService.get({ workspaceId, streamId: resolveBriefStreamId(stream) })
+      const brief = await streamBriefService.get({ workspaceId, streamId: briefStreamId })
       res.json({ brief })
     },
 

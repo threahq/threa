@@ -338,7 +338,15 @@ export class DocService {
     return withClient(this.pool, async (client) => {
       await this.findReadableDoc(client, params)
       const threads = await StreamRepository.findThreadsWithReplyCounts(client, params.workspaceId, params.docId)
-      return [...threads].map(([blockId, { threadId, replyCount }]) => ({ blockId, threadId, replyCount }))
+      const readable = await listAccessibleStreamIds(
+        client,
+        params.workspaceId,
+        params.userId,
+        [...threads.values()].map((thread) => thread.threadId)
+      )
+      return [...threads].flatMap(([blockId, { threadId, replyCount }]) =>
+        readable.has(threadId) ? [{ blockId, threadId, replyCount }] : []
+      )
     })
   }
 

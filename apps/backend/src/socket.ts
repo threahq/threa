@@ -22,7 +22,7 @@ import {
 import { DOC_AWARENESS_RATE_BURST, DOC_AWARENESS_RATE_REFILL_PER_SEC } from "./features/docs"
 import type { QueueManager } from "./lib/queue"
 import { createTokenBucket } from "./lib/token-bucket"
-import { permissionRoomsFor } from "./lib/outbox"
+import { docReadersGroup, groupToRoom, permissionRoomsFor } from "./lib/outbox"
 import { isValidIanaTimezone } from "./lib/temporal"
 import { HttpError } from "./lib/errors"
 import { logger } from "./lib/logger"
@@ -47,6 +47,10 @@ function normalizeRoomPattern(room: string): string {
 function extractWorkspaceId(room: string): string {
   const match = room.match(/^ws:([^:]+)/)
   return match ? match[1] : "-"
+}
+
+function docReadersRoom(workspaceId: string, docId: string): string {
+  return groupToRoom(workspaceId, docReadersGroup(docId))
 }
 
 function isJoinAccessError(error: unknown): boolean {
@@ -293,17 +297,20 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
 
     const flushStreamJoins = async (wsId: string, joins: PendingStreamJoin[]): Promise<void> => {
       let workspaceUser: Awaited<ReturnType<typeof UserRepository.findByWorkosUserIdInWorkspace>> = null
-      let accessible: Set<string>
+      let accessible = new Set<string>()
+      let grantOnly = new Set<string>()
       try {
         workspaceUser = await UserRepository.findByWorkosUserIdInWorkspace(pool, wsId, workosUserId)
-        accessible = workspaceUser
-          ? await listAccessibleStreamIds(
-              pool,
-              wsId,
-              workspaceUser.id,
-              joins.map((join) => join.streamId)
-            )
-          : new Set()
+        if (workspaceUser) {
+          const requested = joins.map((join) => join.streamId)
+          accessible = await listAccessibleStreamIds(pool, wsId, workspaceUser.id, requested, { docGrants: false })
+          grantOnly = await listAccessibleStreamIds(
+            pool,
+            wsId,
+            workspaceUser.id,
+            requested.filter((streamId) => !accessible.has(streamId))
+          )
+        }
       } catch (error) {
         logger.error({ error, workosUserId, wsId, rooms: joins.length }, "Unexpected error during stream room join")
         for (const join of joins) rejectStreamJoin(wsId, workspaceUser?.id ?? workosUserId, join, "error")
@@ -319,11 +326,13 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
 
       const joinedStreamIds: string[] = []
       for (const join of joins) {
-        if (!accessible.has(join.streamId)) {
+        const viaGrant = grantOnly.has(join.streamId)
+        if (!accessible.has(join.streamId) && !viaGrant) {
           rejectStreamJoin(wsId, workspaceUser.id, join, "denied")
           continue
         }
-        socket.join(join.room)
+        // A grant-only reader cannot read the doc's host, whose thread events ride the stream room.
+        socket.join(viaGrant ? docReadersRoom(wsId, join.streamId) : join.room)
         wsConnectionsActive.inc({ workspace_id: wsId, room_pattern: join.roomPattern })
         trackJoin(join.room, {
           workspaceId: wsId,
@@ -332,7 +341,7 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
           subjects: [{ type: "stream", id: join.streamId }],
         })
         join.callback?.({ ok: true })
-        joinedStreamIds.push(join.streamId)
+        if (!viaGrant) joinedStreamIds.push(join.streamId)
       }
       logger.debug(
         { workosUserId, wsId, joined: joinedStreamIds.length, requested: joins.length },
@@ -562,6 +571,8 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       })
 
       socket.leave(room)
+      const leftStream = room.match(/^ws:([^:]+):stream:(.+)$/)
+      if (leftStream) socket.leave(docReadersRoom(leftStream[1], leftStream[2]))
 
       // Auto-leave user + permission rooms when leaving a workspace room
       const wsMatch = room.match(/^ws:([^:]+)$/)
@@ -728,14 +739,17 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
 
     // Awareness is exempt from INV-4 on purpose: a caret frame has no domain write behind it, nothing replays it, and it is
     // stale by the time an outbox dispatcher would read it, so it is relayed directly and never persisted. A socket holds a
-    // stream room only after an access-checked join, so membership still gates the relay.
+    // doc room only after an access-checked join, so membership still gates the relay.
     const docAwarenessBucket = createTokenBucket(DOC_AWARENESS_RATE_BURST, DOC_AWARENESS_RATE_REFILL_PER_SEC)
     socket.on("doc:awareness", (payload: unknown) => {
       const parsed = docAwarenessPayloadSchema.safeParse(payload)
       if (!parsed.success) return
-      const room = `ws:${parsed.data.workspaceId}:stream:${parsed.data.docId}`
-      if (!socket.rooms.has(room) || !docAwarenessBucket.take()) return
-      socket.to(room).emit("doc:awareness", parsed.data)
+      const rooms = [
+        `ws:${parsed.data.workspaceId}:stream:${parsed.data.docId}`,
+        docReadersRoom(parsed.data.workspaceId, parsed.data.docId),
+      ]
+      if (!rooms.some((room) => socket.rooms.has(room)) || !docAwarenessBucket.take()) return
+      socket.to(rooms).emit("doc:awareness", parsed.data)
     })
 
     // Liveness probe for client-initiated zombie-socket detection on resume.

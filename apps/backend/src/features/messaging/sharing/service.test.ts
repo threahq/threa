@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { JSONContent } from "@threahq/types"
 import { collectShareReferences, ShareService } from "./service"
-import { SharedMessageRepository, UnsharedReferenceRepository } from "./repository"
+import { SharedDocRepository, SharedMessageRepository, UnsharedReferenceRepository } from "./repository"
 import { MessageRepository } from "../repository"
 import { E2eStreamsRepository } from "../../e2e-streams"
 import * as streams from "../../streams"
@@ -121,6 +121,7 @@ describe("ShareService.validateAndRecordShares", () => {
     spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map([[sourceMessage.id, sourceMessage]]))
     spyOn(SharedMessageRepository, "insert").mockResolvedValue({} as any)
     spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(new Set())
+    spyOn(SharedDocRepository, "deleteByShareMessageId").mockResolvedValue(new Set())
     spyOn(UnsharedReferenceRepository, "deleteByShareMessageId").mockResolvedValue()
     spyOn(UnsharedReferenceRepository, "insert").mockResolvedValue()
     spyOn(streams, "findReadersWithoutAccess").mockResolvedValue(new Map())

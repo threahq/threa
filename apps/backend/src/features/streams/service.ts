@@ -3178,6 +3178,39 @@ export class StreamService {
   }
 
   /**
+   * {@link getThreadsWithReplyCounts} and {@link getThreadSummaries} for the timeline `viewerId`
+   * opens. A doc can be read through a grant by someone who cannot read its host, and its threads
+   * inherit the host's access, so a doc's threads are filtered to the ones the viewer reads.
+   */
+  async getViewerThreads(
+    workspaceId: string,
+    stream: Stream,
+    viewerId: string,
+    anchorIds?: string[]
+  ): Promise<{
+    threadDataMap: Map<string, { threadId: string; replyCount: number }>
+    threadSummaryMap: Map<string, ThreadSummary>
+  }> {
+    const [threadDataMap, threadSummaryMap] = await Promise.all([
+      this.getThreadsWithReplyCounts(workspaceId, stream.id, anchorIds),
+      this.getThreadSummaries(workspaceId, stream.id, anchorIds),
+    ])
+    if (stream.type !== StreamTypes.DOC) return { threadDataMap, threadSummaryMap }
+
+    const readable = await listAccessibleStreamIds(
+      this.pool,
+      workspaceId,
+      viewerId,
+      [...threadDataMap.values()].map((thread) => thread.threadId)
+    )
+    const readableThreads = new Map([...threadDataMap].filter(([, thread]) => readable.has(thread.threadId)))
+    return {
+      threadDataMap: readableThreads,
+      threadSummaryMap: new Map([...threadSummaryMap].filter(([anchorId]) => readableThreads.has(anchorId))),
+    }
+  }
+
+  /**
    * Fetches threads and reply counts in a single query, keyed by anchor id
    * (`msg_…` / `event_…`). Pass `anchorIds` to scope the scan to a bootstrap
    * window.

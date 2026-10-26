@@ -51,6 +51,8 @@ import {
  *   "stream:<id>"   — members of one stream
  *   "user:<id>"     — one user
  *
+ *   "doc-readers:<id>" — grant-only readers of one doc
+ *
  * Groups are the single source of truth for routing: the BroadcastHandler
  * persists them to `sync_log` and derives the Socket.io rooms from them, so
  * what the log records and what gets emitted can never drift apart.
@@ -59,6 +61,15 @@ export const WORKSPACE_GROUP = "workspace"
 
 export function streamGroup(streamId: string): string {
   return `stream:${streamId}`
+}
+
+/**
+ * Readers of a doc who reach it only through a `shared_docs` grant. They cannot read its host, so
+ * they sit apart from its stream room (which carries host-scoped thread events) and receive only
+ * the doc's own content and lifecycle events.
+ */
+export function docReadersGroup(docId: string): string {
+  return `doc-readers:${docId}`
 }
 
 export function userGroup(userId: string): string {
@@ -92,6 +103,10 @@ function openAudienceGroups(visibility: string | undefined): string[] {
   if (visibility === Visibilities.GUEST_PUBLIC) return [WORKSPACE_GROUP]
   if (visibility === Visibilities.PUBLIC) return [BROWSE_GROUP]
   return []
+}
+
+function docReaderGroups(stream: { id: string; type: string }): string[] {
+  return stream.type === StreamTypes.DOC ? [docReadersGroup(stream.id)] : []
 }
 
 /**
@@ -284,7 +299,7 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
   if (isOutboxEventType(event, "stream:updated")) {
     const { streamId, stream } = event.payload as StreamUpdatedOutboxPayload
     const openToGuests = stream.visibility === Visibilities.GUEST_PUBLIC && !stream.rootStreamId
-    return [openToGuests ? WORKSPACE_GROUP : BROWSE_GROUP, streamGroup(streamId)]
+    return [openToGuests ? WORKSPACE_GROUP : BROWSE_GROUP, streamGroup(streamId), ...docReaderGroups(stream)]
   }
 
   // stream:member_added — existing members (stream group) AND the added user,
@@ -332,7 +347,11 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
   // avoid leaking DM/scratchpad thread names.
   if (isOutboxEventType(event, "stream:display_name_updated")) {
     const payload = event.payload as StreamDisplayNameUpdatedPayload
-    return [...openAudienceGroups(payload.visibility), streamGroup(payload.streamId)]
+    return [
+      ...openAudienceGroups(payload.visibility),
+      streamGroup(payload.streamId),
+      ...docReaderGroups({ id: payload.streamId, type: payload.streamType }),
+    ]
   }
 
   // Attachment lifecycle — stream-scoped when attached to a message,
@@ -379,11 +398,16 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
   // audience (access is inherited), so there is no cross-audience leak.
   if (isOneOfOutboxEventType(event, ["stream:archived", "stream:unarchived"])) {
     const payload = event.payload as StreamArchivedOutboxPayload | StreamUnarchivedOutboxPayload
-    const groups = [streamGroup(payload.streamId)]
+    const groups = [streamGroup(payload.streamId), ...docReaderGroups(payload.stream)]
     for (const threadId of payload.threadStreamIds ?? []) {
       if (threadId !== payload.streamId) groups.push(streamGroup(threadId))
     }
     return groups
+  }
+
+  if (isOutboxEventType(event, "doc:updated")) {
+    const { streamId } = event.payload
+    return [streamGroup(streamId), docReadersGroup(streamId)]
   }
 
   // Persona config updates for a PERSONAL persona reach only its owner

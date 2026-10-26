@@ -1,12 +1,23 @@
 import type { Querier } from "../../../db"
 import { HttpError } from "../../../lib/errors"
 import { sharedMessageId } from "../../../lib/id"
-import { type JSONContent, ShareFlavors, type ShareFlavor, ShareErrorCodes } from "@threahq/types"
+import { collectDocEmbedIds } from "@threahq/prosemirror"
+import { type JSONContent, ShareFlavors, type ShareFlavor, ShareErrorCodes, StreamTypes } from "@threahq/types"
 import { MessageRepository } from "../repository"
 import type { CanReadStream, FindStreamForSharing } from "./access-check"
-import { SharedMessageRepository, UnsharedReferenceRepository, type UnsharedReference } from "./repository"
+import {
+  SharedDocRepository,
+  SharedMessageRepository,
+  UnsharedReferenceRepository,
+  type UnsharedReference,
+} from "./repository"
 import { E2eStreamsRepository } from "../../e2e-streams"
-import { findReadersWithoutAccess, listAccessibleStreamIds } from "../../streams"
+import {
+  StreamRepository,
+  findReadersWithoutAccess,
+  listAccessibleStreamIds,
+  scopeReadsDocWithoutGrant,
+} from "../../streams"
 
 /**
  * A share-node extracted from a message's contentJson during scanning.
@@ -145,22 +156,30 @@ export const ShareService = {
     listAudiences: (streamIds: string[]) => Promise<{ streamId: string; count: number }[]>
   }): Promise<string[]> {
     const targetStreamId = params.targetStreamId ?? ""
-    const references = collectShareReferences(params.contentJson, targetStreamId)
-    if (references.length === 0) return []
-    const audiences = await params.listAudiences([...new Set(references.map((ref) => ref.sourceStreamId))])
+    const sources = [
+      ...collectShareReferences(params.contentJson, targetStreamId).map((ref) => ({
+        consentId: ref.sourceMessageId,
+        exposureStreamId: ref.sourceStreamId,
+      })),
+      ...collectDocEmbedIds(params.contentJson).map((docId) => ({ consentId: docId, exposureStreamId: docId })),
+    ]
+    if (sources.length === 0) return []
+    const audiences = await params.listAudiences([...new Set(sources.map((source) => source.exposureStreamId))])
     const exposingStreamIds = new Set(audiences.filter((a) => a.count > 0).map((a) => a.streamId))
     const consented = params.consentedShareSourceIds ?? new Set<string>()
-    const exposed = references
-      .filter((ref) => exposingStreamIds.has(ref.sourceStreamId))
-      .map((ref) => ref.sourceMessageId)
+    const exposed = sources
+      .filter((source) => exposingStreamIds.has(source.exposureStreamId))
+      .map((source) => source.consentId)
     if (!params.confirmedPrivacyWarning && exposed.some((id) => !consented.has(id))) {
       throw privacyConfirmationRequired()
     }
-    const stillConsented = references.map((ref) => ref.sourceMessageId).filter((id) => consented.has(id))
+    const stillConsented = sources.map((source) => source.consentId).filter((id) => consented.has(id))
     return [...new Set([...exposed, ...stillConsented])]
   },
 
   async validateAndRecordShares(params: ValidateAndRecordSharesParams): Promise<void> {
+    await recordDocShares(params)
+
     const references = collectShareReferences(params.contentJson, params.targetStreamId)
 
     // Reset the share rows for this message before recording. Covers edits
@@ -258,25 +277,15 @@ export const ShareService = {
         }
         canReadCache.set(ref.sourceStreamId, canRead)
       }
-      if (!canRead && !params.consentedShareSourceIds) {
-        throw new HttpError("You don't have access to the source message", {
-          status: 403,
-          code: ShareErrorCodes.SOURCE_FORBIDDEN,
-        })
-      }
-
-      // A reference this message already recorded was accepted when it was
-      // added, so an edit that keeps it doesn't ask again.
-      const exposes = (exposedReaders.get(ref.sourceStreamId)?.count ?? 0) > 0
-      const consented =
-        params.confirmedPrivacyWarning ||
-        recordedSourceMessageIds.has(ref.sourceMessageId) ||
-        params.consentedShareSourceIds?.has(ref.sourceMessageId)
-      if (!canRead || (exposes && !consented)) {
-        // A scheduled fire has no author to ask, and can't grant a source the
-        // author lost read access to: send without the grant and keep the
-        // reference so the author can share it once they can.
-        if (!params.consentedShareSourceIds) throw privacyConfirmationRequired()
+      const outcome = shareOutcome(params, {
+        consentId: ref.sourceMessageId,
+        canRead,
+        exposes: (exposedReaders.get(ref.sourceStreamId)?.count ?? 0) > 0,
+        alreadyRecorded: recordedSourceMessageIds.has(ref.sourceMessageId),
+        forbiddenMessage: "You don't have access to the source message",
+      })
+      if (outcome === "skip") {
+        // Keep the reference so the author can share it once they can.
         await UnsharedReferenceRepository.insert(params.client, {
           workspaceId: params.workspaceId,
           shareMessageId: params.shareMessageId,
@@ -367,6 +376,80 @@ export const ShareService = {
     )
     return granted
   },
+}
+
+/**
+ * Whether one share source may be granted. The sharer must read the source, and a source that
+ * exposes content to the target's readers needs consent; a source this message already recorded
+ * was consented to when it was added, so an edit that keeps it doesn't ask again. A scheduled
+ * fire has no author to ask and can't grant what the author lost access to, so it skips where a
+ * live send throws 403 or 409.
+ */
+function shareOutcome(
+  params: ValidateAndRecordSharesParams,
+  source: { consentId: string; canRead: boolean; exposes: boolean; alreadyRecorded: boolean; forbiddenMessage: string }
+): "grant" | "skip" {
+  const consented =
+    params.confirmedPrivacyWarning || source.alreadyRecorded || params.consentedShareSourceIds?.has(source.consentId)
+  if (source.canRead && (!source.exposes || consented)) return "grant"
+  if (params.consentedShareSourceIds) return "skip"
+  if (!source.canRead) {
+    throw new HttpError(source.forbiddenMessage, { status: 403, code: ShareErrorCodes.SOURCE_FORBIDDEN })
+  }
+  throw privacyConfirmationRequired()
+}
+
+/**
+ * Records the read grants a message's doc chips carry, under the same `shareOutcome` rule as
+ * message shares. A sharer, user or agent, shares only docs it reads without a grant, so a grant never re-shares.
+ */
+async function recordDocShares(params: ValidateAndRecordSharesParams): Promise<void> {
+  const previouslyGranted = await SharedDocRepository.deleteByShareMessageId(
+    params.client,
+    params.workspaceId,
+    params.shareMessageId
+  )
+  const chipDocIds = collectDocEmbedIds(params.contentJson)
+  if (chipDocIds.length === 0) return
+
+  const docs = await StreamRepository.findByIds(params.client, params.workspaceId, chipDocIds)
+  const docIdsFound = new Set(docs.filter((doc) => doc.type === StreamTypes.DOC).map((doc) => doc.id))
+  // A scheduled fire sends what the author wrote even when a doc has since gone; it just grants nothing for it.
+  if (!params.consentedShareSourceIds && chipDocIds.some((docId) => !docIdsFound.has(docId))) {
+    throw new HttpError("Doc not found", { status: 400, code: ShareErrorCodes.SOURCE_STREAM_NOT_FOUND })
+  }
+  const docIds = chipDocIds.filter((docId) => docIdsFound.has(docId))
+  if (docIds.length === 0) return
+  const scope = params.accessibleStreamIds ? new Set(params.accessibleStreamIds) : null
+  const readable = scope
+    ? new Set(docs.filter((doc) => scopeReadsDocWithoutGrant(scope, doc)).map((doc) => doc.id))
+    : await listAccessibleStreamIds(params.client, params.workspaceId, params.sharerId, docIds, { docGrants: false })
+
+  const exposedReaders = await findReadersWithoutAccess(
+    params.client,
+    params.workspaceId,
+    { streamId: params.targetStreamId },
+    docIds
+  )
+
+  const granted: string[] = []
+  for (const docId of docIds) {
+    const outcome = shareOutcome(params, {
+      consentId: docId,
+      canRead: readable.has(docId),
+      exposes: (exposedReaders.get(docId)?.count ?? 0) > 0,
+      alreadyRecorded: previouslyGranted.has(docId),
+      forbiddenMessage: "You don't have access to the doc",
+    })
+    if (outcome === "grant") granted.push(docId)
+  }
+
+  await SharedDocRepository.insertMany(params.client, {
+    workspaceId: params.workspaceId,
+    shareMessageId: params.shareMessageId,
+    createdBy: params.sharerId,
+    docIds: granted,
+  })
 }
 
 /**

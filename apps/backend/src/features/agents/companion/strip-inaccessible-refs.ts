@@ -1,13 +1,14 @@
 import type { Pool } from "pg"
-import { serializeToMarkdown } from "@threahq/prosemirror"
-import { AttachmentSafetyStatuses, type JSONContent } from "@threahq/types"
+import { collectDocEmbedIds, serializeToMarkdown } from "@threahq/prosemirror"
+import { AttachmentSafetyStatuses, StreamTypes, type JSONContent } from "@threahq/types"
 import { MessageRepository } from "../../messaging"
 import { AttachmentRepository, AttachmentReferenceRepository } from "../../attachments"
 import { MemoRepository } from "../../memos"
+import { StreamRepository, scopeReadsDocWithoutGrant } from "../../streams"
 import { logger } from "../../../lib/logger"
 
 /**
- * Reasons a structural reference (share, quote, attachment) was stripped
+ * Reasons a structural reference (share, quote, attachment, memo, doc) was stripped
  * from an agent's outgoing message. Logged for observability — we never
  * surface them to the model in this turn (no auto-retry today), but they
  * help diagnose access drift between context-formatting and write-time
@@ -22,9 +23,11 @@ export type DroppedRefReason =
   | "attachment-not-clean"
   | "memo-not-found"
   | "memo-not-active"
+  | "doc-not-found"
+  | "doc-out-of-scope"
 
 export interface DroppedRef {
-  type: "sharedMessage" | "quoteReply" | "attachmentReference" | "memoEmbed"
+  type: "sharedMessage" | "quoteReply" | "attachmentReference" | "memoEmbed" | "docEmbed"
   reason: DroppedRefReason
   /** Identifier(s) the agent tried to use; logged only — not echoed to UI. */
   ids: Record<string, string>
@@ -48,8 +51,8 @@ export interface StripParams {
 
 /**
  * Pre-validate `sharedMessage` / `quoteReply` / `attachmentReference` /
- * `memoEmbed` nodes in an agent's outgoing message and drop the ones that
- * shouldn't ship. Returns the cleaned content tree + matching markdown.
+ * `memoEmbed` / `docEmbed` nodes in an agent's outgoing message and drop the
+ * ones that shouldn't ship. Returns the cleaned content tree + matching markdown.
  *
  * Why: event-service rejects the entire message when a share/quote/attachment
  * reference fails the access gate (intentional — strict for users,
@@ -70,6 +73,10 @@ export interface StripParams {
  * pointers that don't resolve to an active memo in the workspace (INV-8).
  * Per-recipient visibility is still enforced at render time by the memo-detail
  * endpoint, so we deliberately don't re-check stream reach here.
+ *
+ * `docEmbed` grants its doc to the target's readers, so event-service rejects
+ * one that is not a doc in the workspace or that the agent can't read; it is
+ * dropped in both cases.
  *
  * Same-stream `quoteReply` is left alone — it's purely presentational, has
  * no DB write path, and writing a same-stream quote with a stale id is
@@ -112,6 +119,15 @@ export async function stripInaccessibleAgentRefs(params: StripParams): Promise<S
     memoIdsToCheck.size > 0
       ? await MemoRepository.findByIdsInWorkspace(pool, workspaceId, [...memoIdsToCheck])
       : new Map()
+
+  const docEmbedIds = collectDocEmbedIds(contentJson)
+  const docs = new Map(
+    docEmbedIds.length > 0
+      ? (await StreamRepository.findByIds(pool, workspaceId, docEmbedIds))
+          .filter((stream) => stream.type === StreamTypes.DOC)
+          .map((stream) => [stream.id, stream])
+      : []
+  )
 
   const attachments =
     attachmentIdsToCheck.size > 0
@@ -249,6 +265,17 @@ export async function stripInaccessibleAgentRefs(params: StripParams): Promise<S
       }
       return node
     },
+    onDocEmbed: (node) => {
+      const docId = (node.attrs?.docId as string | undefined) ?? ""
+      const doc = docs.get(docId)
+      if (!doc) {
+        dropped.push({ type: "docEmbed", reason: "doc-not-found", ids: { docId } })
+        return null
+      }
+      if (scopeReadsDocWithoutGrant(accessibleSet, doc)) return node
+      dropped.push({ type: "docEmbed", reason: "doc-out-of-scope", ids: { docId } })
+      return null
+    },
   })
 
   if (dropped.length > 0) {
@@ -277,6 +304,7 @@ interface RewriteHandlers {
   onQuoteReply: (node: JSONContent) => JSONContent | null
   onAttachmentReference: (node: JSONContent) => JSONContent | null
   onMemoEmbed: (node: JSONContent) => JSONContent | null
+  onDocEmbed: (node: JSONContent) => JSONContent | null
 }
 
 /**
@@ -299,6 +327,10 @@ function rewrite(node: JSONContent, handlers: RewriteHandlers): JSONContent {
   }
   if (node.type === "memoEmbed") {
     const replaced = handlers.onMemoEmbed(node)
+    return replaced ?? { type: "_dropped" }
+  }
+  if (node.type === "docEmbed") {
+    const replaced = handlers.onDocEmbed(node)
     return replaced ?? { type: "_dropped" }
   }
   if (!node.content) return node

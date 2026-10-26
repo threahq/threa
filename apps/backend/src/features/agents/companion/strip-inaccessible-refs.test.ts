@@ -3,6 +3,7 @@ import { AttachmentSafetyStatuses, type JSONContent } from "@threahq/types"
 import { MessageRepository } from "../../messaging"
 import { AttachmentRepository, AttachmentReferenceRepository } from "../../attachments"
 import { MemoRepository } from "../../memos"
+import { StreamRepository } from "../../streams"
 import { stripInaccessibleAgentRefs } from "./strip-inaccessible-refs"
 
 const pool = {} as any
@@ -37,6 +38,10 @@ function attachmentRefNode(id: string, filename = "diagram.png", mimeType = "ima
 
 function memoEmbedNode(memoId: string, title = "Auth rewrite"): JSONContent {
   return { type: "memoEmbed", attrs: { memoId, title } }
+}
+
+function docEmbedNode(docId: string, title = "Roadmap"): JSONContent {
+  return { type: "docEmbed", attrs: { docId, title } }
 }
 
 function paragraph(...children: JSONContent[]): JSONContent {
@@ -349,6 +354,41 @@ describe("stripInaccessibleAgentRefs", () => {
       reason: "memo-not-active",
       ids: { memoId: "memo_archived" },
     })
+  })
+
+  it("should drop docEmbed when the doc is outside the agent's scope, reached only through a grant, or not a doc, and keep it when inside", async () => {
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
+
+    spyOn(StreamRepository, "findByIds").mockResolvedValue([
+      { id: "stream_doc_open", type: "doc", rootStreamId: "stream_target" } as any,
+      { id: "stream_doc_private", type: "doc", rootStreamId: "stream_private" } as any,
+      { id: "stream_doc_granted", type: "doc", rootStreamId: "stream_private" } as any,
+      { id: "stream_target", type: "channel", rootStreamId: null } as any,
+    ])
+
+    const result = await stripInaccessibleAgentRefs({
+      pool,
+      workspaceId: "ws_1",
+      targetStreamId: "stream_target",
+      accessibleStreamIds: ["stream_target", "stream_doc_open", "stream_doc_granted"],
+      contentJson: doc(
+        paragraph(
+          docEmbedNode("stream_doc_open"),
+          docEmbedNode("stream_doc_private"),
+          docEmbedNode("stream_doc_granted"),
+          docEmbedNode("stream_target")
+        )
+      ),
+    })
+
+    expect(result.dropped).toEqual([
+      { type: "docEmbed", reason: "doc-out-of-scope", ids: { docId: "stream_doc_private" } },
+      { type: "docEmbed", reason: "doc-out-of-scope", ids: { docId: "stream_doc_granted" } },
+      { type: "docEmbed", reason: "doc-not-found", ids: { docId: "stream_target" } },
+    ])
+    expect(JSON.stringify(result.contentJson)).toContain("stream_doc_open")
+    expect(JSON.stringify(result.contentJson)).not.toContain("stream_doc_private")
   })
 
   it("re-serializes the cleaned tree to markdown so contentJson and contentMarkdown stay in sync", async () => {

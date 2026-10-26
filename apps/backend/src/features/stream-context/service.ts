@@ -73,11 +73,16 @@ function page(rows: StreamContextFeedRow[], limit: number): { items: StreamConte
  */
 export function createStreamContextService({ pool }: Dependencies) {
   async function resolveScope(params: { workspaceId: string; userId: string; streamId: string }) {
+    const notFound = new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
     const stream = await checkStreamAccess(pool, params.streamId, params.workspaceId, params.userId)
-    if (!stream) {
-      throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
-    }
+    if (!stream) throw notFound
     const rootStreamId = stream.rootStreamId ?? stream.id
+    if (
+      rootStreamId !== stream.id &&
+      !(await checkStreamAccess(pool, rootStreamId, params.workspaceId, params.userId))
+    ) {
+      throw notFound
+    }
     const sealed = await E2eStreamsRepository.isE2eStream(pool, params.workspaceId, rootStreamId)
     return { rootStreamId, sealed }
   }

@@ -12,6 +12,7 @@ export {
   groupToRoom,
   WORKSPACE_GROUP,
   streamGroup,
+  docReadersGroup,
   userGroup,
   permissionGroup,
   permissionGroupsForRole,

@@ -371,6 +371,7 @@ export interface ReactionOutboxPayload extends StreamScopedPayload {
 export interface StreamDisplayNameUpdatedPayload extends StreamScopedPayload {
   displayName: string
   visibility: string
+  streamType: import("@threahq/types").StreamType
   source: import("@threahq/types").TitleSource
   revision: number
 }

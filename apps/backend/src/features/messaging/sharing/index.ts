@@ -6,6 +6,7 @@ export {
 } from "./service"
 export {
   SharedMessageRepository,
+  SharedDocRepository,
   UnsharedReferenceRepository,
   type SharedMessage,
   type InsertSharedMessageParams,
