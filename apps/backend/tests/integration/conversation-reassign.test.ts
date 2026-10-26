@@ -65,7 +65,10 @@ describe("ConversationService.reassignMessage", () => {
       await client.query("DELETE FROM conversation_feedback")
       await client.query("DELETE FROM conversations")
       await client.query("DELETE FROM messages")
-      await client.query(`DELETE FROM streams WHERE id != '${testStreamId}'`)
+      await client.query(
+        "DELETE FROM streams WHERE id IN (SELECT id FROM streams WHERE id != $1 ORDER BY id FOR UPDATE)",
+        [testStreamId]
+      )
     })
   })
 

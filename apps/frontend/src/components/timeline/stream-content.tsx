@@ -173,6 +173,7 @@ import {
   useScrollToMessage,
   snapshotTopVisibleRow,
   isHoldCurrent,
+  locateHoldRow,
   UNREAD_MARKER_TOP_GAP_PX,
 } from "@/hooks/use-scroll-to-message"
 
@@ -2518,11 +2519,9 @@ export function StreamContent({
     const el = virtualScrollerEl
     if (!el || isFollowingTailRef.current) return
     if (scrollAbortRef.current) return
-    if (userInteractedAtRef.current > hold.takenAt) return
-    const escaped = CSS.escape(hold.id)
-    const row = el.querySelector<HTMLElement>(`[data-message-id="${escaped}"], [data-event-id="${escaped}"]`)
+    const row = locateHoldRow(el, hold, userInteractedAtRef.current)
     if (!row) return
-    const delta = row.getBoundingClientRect().top - (el.getBoundingClientRect().top + hold.offsetPx)
+    const delta = row.offsetPx - hold.offsetPx
     // Position-preserving by definition (re-pins the same row at the same
     // offset), so it does not stamp the programmatic-scroll ref — breaking a
     // user fling's sweep chain over a layout compensation was exactly the
