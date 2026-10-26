@@ -280,7 +280,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: shard-result-${{ matrix.shard_index }}
+          name: shard-result-${{ matrix.shard_index }}-attempt-${{ github.run_attempt }}
           path: shard-result.txt
           retention-days: 7
 
@@ -296,6 +296,8 @@ jobs:
           pattern: shard-result-*
 
       - name: Summarize results
+        env:
+          SHARD_JOBS_RESULT: ${{ needs.browser-tests.result }}
         run: |
           echo "## Browser Test Results" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -308,8 +310,9 @@ jobs:
           missing_count=0
 
           for shard_num in $(seq 1 "$TOTAL_SHARDS"); do
-            result_file="shard-results/shard-result-$shard_num/shard-result.txt"
-            if [[ -f "$result_file" ]]; then
+            # A rerun keeps the earlier attempt's marker, so only the newest attempt counts.
+            result_file=$(ls shard-results/shard-result-"$shard_num"-attempt-*/shard-result.txt 2>/dev/null | sort -V | tail -n 1 || true)
+            if [[ -n "$result_file" ]]; then
               result=$(cat "$result_file")
             else
               result="missing"
@@ -331,6 +334,13 @@ jobs:
           # timeout, cancel) ran an unknown share of its tests, so it can't pass.
           if [[ $missing_count -gt 0 ]]; then
             echo "⛔ $missing_count of $TOTAL_SHARDS shards reported no result — their jobs did not run to completion." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          # Shard jobs succeed even on test failures, so anything else means a
+          # shard died this attempt and its marker may be an earlier attempt's.
+          if [[ "$SHARD_JOBS_RESULT" != "success" ]]; then
+            echo "⛔ A shard job ended $SHARD_JOBS_RESULT — it did not run to completion." >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
 
