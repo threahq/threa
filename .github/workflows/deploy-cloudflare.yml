@@ -61,7 +61,7 @@ jobs:
           node-version: 22
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: ./.github/actions/setup-bun
         with:
           bun-version: latest
 
@@ -133,7 +133,7 @@ jobs:
           node-version: 22
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: ./.github/actions/setup-bun
         with:
           bun-version: latest
 
@@ -171,7 +171,7 @@ jobs:
           node-version: 22
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: ./.github/actions/setup-bun
         with:
           bun-version: latest
 
@@ -205,7 +205,7 @@ jobs:
           node-version: 22
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: ./.github/actions/setup-bun
         with:
           bun-version: latest
 
@@ -243,7 +243,7 @@ jobs:
           node-version: 22
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: ./.github/actions/setup-bun
         with:
           bun-version: latest
 
