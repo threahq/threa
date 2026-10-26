@@ -2434,7 +2434,7 @@ export interface DocSection {
 export interface DocState {
   stream: Stream
   seq: number
-  /** Base64 Yjs update holding the full state at `seq`. */
+  /** Base64 Yjs update holding the full state at `seq`, or only what the request's `sv` state vector lacks. */
   state: string
   sections: DocSection[]
 }

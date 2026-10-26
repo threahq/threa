@@ -304,6 +304,83 @@ describe("DocService", () => {
     ).toEqual([{ eventType: "doc:edited", payload: { seq, touchedBlockIds }, actorId: owner, actorType: "user" }])
   })
 
+  test("should store nothing when the same update is posted twice", async () => {
+    const channel = await createChannel("public")
+    const doc = await createDoc(channel.id)
+    const client = await openClient(doc.id, owner)
+    const update = appendBlock(client.ydoc, paragraph("Sent twice", blockId()))
+
+    const first = await post(doc.id, update)
+    const second = await post(doc.id, update)
+
+    const edited = (await StreamEventRepository.list(pool, wsId, doc.id, { viewerId: owner })).filter(
+      (event) => event.eventType === "doc:edited"
+    )
+    expect({
+      second,
+      stored: (await DocRepository.listUpdatesAfter(pool, wsId, doc.id, 0)).map(({ seq, update }) => ({
+        seq,
+        update: encodeUpdateBase64(update),
+      })),
+      edited: edited.map((event) => event.payload),
+      outbox: (await outboxRows("doc:updated", doc.id)).map((row) => (row.payload as { seq: number }).seq),
+    }).toEqual({
+      second: { seq: first.seq, touchedBlockIds: [] },
+      stored: [{ seq: first.seq, update }],
+      edited: [{ seq: first.seq, touchedBlockIds: first.touchedBlockIds }],
+      outbox: [first.seq],
+    })
+  })
+
+  test("should return only what the client lacks when given a state vector", async () => {
+    const channel = await createChannel("public")
+    const doc = await createDoc(channel.id)
+    const writer = await openClient(doc.id, owner)
+    const firstUpdate = appendBlock(writer.ydoc, paragraph("First", blockId()))
+    await post(doc.id, firstUpdate)
+    await post(doc.id, appendBlock(writer.ydoc, paragraph("Second", blockId())))
+
+    const behind = new Y.Doc()
+    Y.applyUpdate(behind, decodeUpdateBase64(firstUpdate))
+    const { state: missing } = await docService.get({
+      workspaceId: wsId,
+      userId: owner,
+      docId: doc.id,
+      stateVector: encodeUpdateBase64(Y.encodeStateVector(behind)),
+    })
+    Y.applyUpdate(behind, decodeUpdateBase64(missing))
+
+    const empty = new Y.Doc()
+    const { state: everything } = await docService.get({
+      workspaceId: wsId,
+      userId: owner,
+      docId: doc.id,
+      stateVector: encodeUpdateBase64(Y.encodeStateVector(empty)),
+    })
+    Y.applyUpdate(empty, decodeUpdateBase64(everything))
+
+    const server = await serverJson(doc.id)
+    expect({ behind: ydocToContentJson(behind), empty: ydocToContentJson(empty) }).toEqual({
+      behind: server,
+      empty: server,
+    })
+    expect(decodeUpdateBase64(missing).length).toBeLessThan(decodeUpdateBase64(everything).length)
+  })
+
+  test("should reject a state vector that does not decode", async () => {
+    const channel = await createChannel("public")
+    const doc = await createDoc(channel.id)
+
+    await expect(
+      docService.get({
+        workspaceId: wsId,
+        userId: owner,
+        docId: doc.id,
+        stateVector: encodeUpdateBase64(new Uint8Array([5, 1])),
+      })
+    ).rejects.toMatchObject({ status: 400, code: "DOC_STATE_VECTOR_INVALID" })
+  })
+
   test("should refuse the update and leave the head when the bytes are not an applicable Yjs update", async () => {
     const channel = await createChannel("public")
     const doc = await createDoc(channel.id)

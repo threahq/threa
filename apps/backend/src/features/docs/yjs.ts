@@ -78,6 +78,7 @@ export function applyClientUpdate(ydoc: Y.Doc, update: Uint8Array): void {
  * block ids are stamped. Those server writes come back merged as
  * `serverUpdate` (the transactions' own updates, not a state-vector diff,
  * which would carry the doc's whole delete set), null when nothing changed.
+ * `applied: false` when the doc already held everything in the update.
  * Throws `DocUpdateNotApplicableError` or `DocUpdateInvalidError`; the doc is
  * left mutated either way.
  */
@@ -85,8 +86,10 @@ export function applyClientWrite(
   ydoc: Y.Doc,
   update: Uint8Array,
   previousBody: JSONContent
-): { content: JSONContent; serverUpdate: Uint8Array | null } {
+): { applied: false } | { applied: true; content: JSONContent; serverUpdate: Uint8Array | null } {
+  const before = Y.snapshot(ydoc)
   applyClientUpdate(ydoc, update)
+  if (Y.equalSnapshots(before, Y.snapshot(ydoc))) return { applied: false }
   const serverWrites: Uint8Array[] = []
   const onUpdate = (written: Uint8Array) => {
     serverWrites.push(written)
@@ -99,7 +102,7 @@ export function applyClientWrite(
       writeContentJson(ydoc, stamped)
       content = readRepairedContent(ydoc)
     }
-    return { content, serverUpdate: serverWrites.length > 0 ? Y.mergeUpdates(serverWrites) : null }
+    return { applied: true, content, serverUpdate: serverWrites.length > 0 ? Y.mergeUpdates(serverWrites) : null }
   } finally {
     ydoc.off("update", onUpdate)
   }
@@ -123,6 +126,15 @@ function readRepairedContent(ydoc: Y.Doc): JSONContent {
 
 export function encodeFullState(ydoc: Y.Doc): Uint8Array {
   return Y.encodeStateAsUpdate(ydoc)
+}
+
+export function isDecodableStateVector(stateVector: Uint8Array): boolean {
+  try {
+    Y.decodeStateVector(stateVector)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** Throws `InvalidContentError` when the fragment holds content the Threa schema rejects. */

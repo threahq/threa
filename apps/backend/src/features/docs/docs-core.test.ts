@@ -7,6 +7,7 @@ import { diffSections, projectDoc } from "./projection"
 import {
   DocUpdateNotApplicableError,
   applyClientUpdate,
+  applyClientWrite,
   contentJsonToYDoc,
   encodeFullState,
   loadDocState,
@@ -123,6 +124,22 @@ describe("doc Yjs state", () => {
     const snapshot = encodeFullState(origin)
     const update = writeContentJson(origin, editText(ydocToContentJson(origin), 0, "Later"))
     expect(ydocToContentJson(loadDocState({ snapshot, updates: [update] }))).toEqual(ydocToContentJson(origin))
+  })
+
+  test("reports an update the doc already holds as not applied and leaves the doc unchanged", () => {
+    const server = contentJsonToYDoc(stampedDoc)
+    const client = loadDocState({ snapshot: encodeFullState(server), updates: [] })
+    const update = writeContentJson(client, editText(ydocToContentJson(client), 0, "Edited once"))
+
+    const first = applyClientWrite(server, update, ydocToContentJson(server))
+    const stateAfterFirst = encodeFullState(server)
+    const second = applyClientWrite(server, update, ydocToContentJson(server))
+
+    expect({ first: first.applied, second, state: encodeFullState(server) }).toEqual({
+      first: true,
+      second: { applied: false },
+      state: stateAfterFirst,
+    })
   })
 
   test("refuses an update whose dependencies the doc does not have", () => {

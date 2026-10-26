@@ -3,8 +3,10 @@ import type { DocPostUpdateResult, DocState, DocUpdatesResponse } from "@threahq
 
 /** Collaborative doc streams: full state, the update log, and Yjs writes (base64). */
 export const docsApi = {
-  get(workspaceId: string, docId: string): Promise<DocState> {
-    return api.get<DocState>(`/api/workspaces/${workspaceId}/docs/${docId}`)
+  /** With `stateVector` (base64), `state` carries only what that vector lacks. */
+  get(workspaceId: string, docId: string, stateVector?: string): Promise<DocState> {
+    const query = stateVector === undefined ? "" : `?sv=${encodeURIComponent(stateVector)}`
+    return api.get<DocState>(`/api/workspaces/${workspaceId}/docs/${docId}${query}`)
   },
 
   listUpdates(workspaceId: string, docId: string, after: number): Promise<DocUpdatesResponse> {
