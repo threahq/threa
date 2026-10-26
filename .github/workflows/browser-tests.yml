@@ -280,7 +280,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: shard-result-${{ matrix.shard_index }}
+          name: shard-result-${{ matrix.shard_index }}-attempt-${{ github.run_attempt }}
           path: shard-result.txt
           retention-days: 7
 
@@ -308,8 +308,9 @@ jobs:
           missing_count=0
 
           for shard_num in $(seq 1 "$TOTAL_SHARDS"); do
-            result_file="shard-results/shard-result-$shard_num/shard-result.txt"
-            if [[ -f "$result_file" ]]; then
+            # A rerun keeps the earlier attempt's marker, so only the newest attempt counts.
+            result_file=$(ls shard-results/shard-result-"$shard_num"-attempt-*/shard-result.txt 2>/dev/null | sort -V | tail -n 1 || true)
+            if [[ -n "$result_file" ]]; then
               result=$(cat "$result_file")
             else
               result="missing"
