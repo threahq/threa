@@ -1115,6 +1115,104 @@ describe("CallManager", () => {
     ])
   })
 
+  it("should drop a same-version snapshot that arrives while its switched acknowledgement is in flight", async () => {
+    const socket = makeSocket()
+    const source = makeTransport()
+    const target = makeTransport()
+    const deps = makeDeps(socket, source)
+    vi.mocked(deps.createTransport).mockReturnValueOnce(source).mockReturnValueOnce(target)
+    const committing = () => {
+      const snapshot = transferSnapshot("committing", 2)
+      snapshot.obligations[0]!.switched = false
+      snapshot.obligations[0]!.expectedPublications = []
+      return snapshot
+    }
+    const acknowledged = transferSnapshot("committing", 3)
+    acknowledged.obligations[0]!.expectedPublications = []
+    let respond: (value: { transfer: CallTransportTransfer }) => void = () => {}
+    const acknowledgeSwitched = vi.fn(
+      () => new Promise<{ transfer: CallTransportTransfer }>((resolve) => (respond = resolve))
+    )
+    const getCallSnapshot = vi.fn(() => new Promise<never>(() => {}))
+    deps.acknowledgeTransferSwitched = acknowledgeSwitched
+    deps.getCallSnapshot = getCallSnapshot
+    const manager = newManager(deps, document.body)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    socket.fire("call:roster", { callId: "call_1", rosterVersion: 1, roster: [], transfer: committing() })
+    await vi.waitFor(() => expect(acknowledgeSwitched).toHaveBeenCalledTimes(1))
+
+    socket.fire("call:roster", { callId: "call_1", rosterVersion: 1, roster: [], transfer: committing() })
+    respond({ transfer: acknowledged })
+    await vi.waitFor(() => expect(target.syncPeers).toHaveBeenCalledTimes(2))
+    socket.fire("call:transport_transfer_changed", { callId: "call_1", transferId: "callxfer_1", version: 3 })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect({
+      switchedAcks: acknowledgeSwitched.mock.calls.length,
+      snapshotRefetches: getCallSnapshot.mock.calls.length,
+    }).toEqual({ switchedAcks: 1, snapshotRefetches: 0 })
+  })
+
+  it("should not acknowledge ready again when the response already records this endpoint as ready", async () => {
+    const socket = makeSocket()
+    const source = makeTransport()
+    const target = makeTransport()
+    const deps = makeDeps(socket, source)
+    vi.mocked(deps.createTransport).mockReturnValueOnce(source).mockReturnValueOnce(target)
+    const preparing = (version: number, ready: boolean) => {
+      const snapshot = transferSnapshot("preparing", version)
+      snapshot.obligations[0]!.expectedPublications = []
+      snapshot.obligations[0]!.ownPublicationsReady = ready
+      return snapshot
+    }
+    let serverVersion = 1
+    const acknowledgeReady = vi.fn(async () => {
+      if (serverVersion < 6) serverVersion++
+      return { transfer: preparing(serverVersion, true) }
+    })
+    deps.acknowledgeTransferReady = acknowledgeReady
+    const manager = newManager(deps, document.body)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+
+    socket.fire("call:roster", { callId: "call_1", rosterVersion: 1, roster: [], transfer: preparing(1, false) })
+    await vi.waitFor(() => expect(target.syncPeers).toHaveBeenCalledTimes(2))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(acknowledgeReady).toHaveBeenCalledTimes(1)
+  })
+
+  it("should re-run a failed transfer step when the same version arrives after retries stop", async () => {
+    const socket = makeSocket()
+    const source = makeTransport()
+    const failedTarget = makeTransport()
+    failedTarget.connect = vi.fn().mockRejectedValueOnce(new Error("credentials unavailable"))
+    const repairedTarget = makeTransport()
+    const deps = makeDeps(socket, source)
+    vi.mocked(deps.createTransport)
+      .mockReturnValueOnce(source)
+      .mockReturnValueOnce(failedTarget)
+      .mockReturnValueOnce(repairedTarget)
+    deps.getCallSnapshot = undefined
+    const manager = newManager(deps, document.body)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    socket.fire("call:roster", {
+      callId: "call_1",
+      rosterVersion: 0,
+      roster: [],
+      transfer: transferSnapshot("preparing", 1),
+    })
+    await vi.waitFor(() => expect(failedTarget.close).toHaveBeenCalledTimes(1))
+
+    socket.fire("call:roster", {
+      callId: "call_1",
+      rosterVersion: 0,
+      roster: [],
+      transfer: transferSnapshot("preparing", 1),
+    })
+
+    await vi.waitFor(() => expect(repairedTarget.connect).toHaveBeenCalledTimes(1))
+  })
+
   it("should rebuild target setup when the authoritative retry has the same version", async () => {
     vi.useFakeTimers()
     const socket = makeSocket()

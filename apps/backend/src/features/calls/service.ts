@@ -16,7 +16,7 @@ import {
   type CallTransferSwitchedAck,
   type CallTransferRestoredAck,
   type CallMediaTransport,
-  type CallExpectedPublication,
+  callPublicationsMatch,
   type CallTransferActor,
   type CallTransferCause,
   type CallTransportPolicyStatus,
@@ -68,6 +68,7 @@ import {
   CallTransferObligationRepository,
   type CallTransportTransferRow,
   type CallTransportSessionRow,
+  type CallTransferObligationRow,
 } from "./transfer-repository"
 import { CallTransportPolicyRepository, type CallTransportPolicyState } from "./policy-repository"
 import { decideCallTransportPolicy } from "./policy"
@@ -621,7 +622,7 @@ export class CallService {
   ): Promise<CallRosterSnapshot> {
     await withTransaction(this.pool, async (client) => {
       const call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
-      const transfer = await CallTransferRepository.findById(client, params.workspaceId, params.transferId)
+      let transfer = await CallTransferRepository.findById(client, params.workspaceId, params.transferId)
       if (
         !call ||
         !transfer ||
@@ -655,8 +656,7 @@ export class CallService {
         endpointId: params.endpointId,
         generation: params.generation,
       })
-      const currentObligations = await CallTransferObligationRepository.list(client, params.workspaceId, transfer.id)
-      const obligation = currentObligations.find((item) => item.endpointId === params.endpointId)
+      const obligation = await this.findObligation(client, transfer, params.endpointId)
       if (
         !targetSession ||
         targetSession.publicationRevision !== params.trackRevision ||
@@ -664,7 +664,7 @@ export class CallService {
       ) {
         throw new HttpError("Target media session is not ready", { status: 409, code: "CALL_TARGET_NOT_READY" })
       }
-      if (!obligation || !this.publicationsMatch(obligation.expectedPublications, params.readyPublications)) {
+      if (!obligation || !callPublicationsMatch(obligation.expectedPublications, params.readyPublications)) {
         throw new HttpError("Transfer acknowledgement is stale", { status: 409, code: "CALL_STALE_TRANSFER" })
       }
       const updated = await CallTransferObligationRepository.acknowledgeReady(client, {
@@ -673,9 +673,14 @@ export class CallService {
       })
       if (!updated)
         throw new HttpError("Transfer acknowledgement is stale", { status: 409, code: "CALL_STALE_TRANSFER" })
+      if (
+        !obligation.ownPublicationsReady ||
+        !callPublicationsMatch(obligation.readyPublications, params.readyPublications)
+      )
+        transfer = await this.touchAcknowledgedTransfer(client, transfer)
       const obligations = await CallTransferObligationRepository.list(client, params.workspaceId, transfer.id)
       const allReady = obligations.every(
-        (item) => item.ownPublicationsReady && this.publicationsMatch(item.expectedPublications, item.readyPublications)
+        (item) => item.ownPublicationsReady && callPublicationsMatch(item.expectedPublications, item.readyPublications)
       )
       if (allReady && transfer.phase === "preparing") {
         const committing = await CallTransferRepository.transition(client, {
@@ -699,7 +704,7 @@ export class CallService {
     const eligibility = await this.resolveP2pEligibility(params.workspaceId)
     const providerSessionIds = await withTransaction(this.pool, async (client) => {
       const call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
-      const transfer = await CallTransferRepository.findById(client, params.workspaceId, params.transferId)
+      let transfer = await CallTransferRepository.findById(client, params.workspaceId, params.transferId)
       if (
         !call ||
         !transfer ||
@@ -727,9 +732,11 @@ export class CallService {
         endpoint.transferCapability !== "transport-transfer-v1"
       )
         throw new HttpError("Transfer endpoint is stale", { status: 409, code: "CALL_STALE_ENDPOINT" })
+      const prior = await this.findObligation(client, transfer, params.endpointId)
       const updated = await CallTransferObligationRepository.acknowledgeSwitched(client, params)
       if (!updated)
         throw new HttpError("Transfer acknowledgement is stale", { status: 409, code: "CALL_STALE_TRANSFER" })
+      if (!prior?.switched) transfer = await this.touchAcknowledgedTransfer(client, transfer)
       const obligations = await CallTransferObligationRepository.list(client, params.workspaceId, transfer.id)
       if (transfer.phase === "committing" && obligations.every((item) => item.switched)) {
         const committed = await CallRepository.commitTransportGeneration(client, {
@@ -807,7 +814,7 @@ export class CallService {
     const eligibility = await this.resolveP2pEligibility(params.workspaceId)
     const providerSessionIds = await withTransaction(this.pool, async (client) => {
       const call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
-      const transfer = await CallTransferRepository.findById(client, params.workspaceId, params.transferId)
+      let transfer = await CallTransferRepository.findById(client, params.workspaceId, params.transferId)
       if (
         !call ||
         !transfer ||
@@ -837,9 +844,11 @@ export class CallService {
       ) {
         throw new HttpError("Transfer endpoint is stale", { status: 409, code: "CALL_STALE_ENDPOINT" })
       }
+      const prior = await this.findObligation(client, transfer, params.endpointId)
       const updated = await CallTransferObligationRepository.acknowledgeRestored(client, params)
       if (!updated)
         throw new HttpError("Transfer acknowledgement is stale", { status: 409, code: "CALL_STALE_TRANSFER" })
+      if (!prior?.restoredToSource) transfer = await this.touchAcknowledgedTransfer(client, transfer)
       const obligations = await CallTransferObligationRepository.list(client, params.workspaceId, transfer.id)
       const liveEndpoints = await CallEndpointRepository.listLiveByCall(client, params.workspaceId, params.callId)
       const allCurrentRestored = liveEndpoints.every((current) =>
@@ -880,9 +889,12 @@ export class CallService {
     for (const candidate of expired) {
       const cleanup = await withTransaction(this.pool, async (client) => {
         const call = await CallRepository.findByIdForUpdate(client, candidate.workspaceId, candidate.callId)
-        const current = await CallTransferRepository.findById(client, candidate.workspaceId, candidate.id)
-        if (!call || !current || current.version !== candidate.version || current.phase !== candidate.phase)
-          return [] as string[]
+        const current = await CallTransferRepository.findExpired(client, {
+          workspaceId: candidate.workspaceId,
+          id: candidate.id,
+          now,
+        })
+        if (!call || !current) return [] as string[]
         if (current.phase === "aborting") {
           const timedOut = await CallTransferRepository.markRecoveryTimedOut(client, {
             workspaceId: current.workspaceId,
@@ -937,6 +949,34 @@ export class CallService {
       })
       for (const sessionId of cleanup) await this.bestEffortCloseSession(sessionId)
     }
+  }
+
+  /**
+   * Every obligation change moves the transfer version so clients can drop snapshots at or below the one they hold.
+   * Replayed acks must not touch: a newer response re-runs the step, which acks again. Settled transfers never move.
+   */
+  private async touchAcknowledgedTransfer(
+    client: PoolClient,
+    transfer: CallTransportTransferRow
+  ): Promise<CallTransportTransferRow> {
+    if (transfer.phase === "completed" || transfer.phase === "failed") return transfer
+    const touched = await CallTransferRepository.touch(client, {
+      workspaceId: transfer.workspaceId,
+      id: transfer.id,
+      generation: transfer.generation,
+      version: transfer.version,
+    })
+    if (!touched) throw new HttpError("Transfer acknowledgement is stale", { status: 409, code: "CALL_STALE_TRANSFER" })
+    return touched
+  }
+
+  private async findObligation(
+    client: PoolClient,
+    transfer: CallTransportTransferRow,
+    endpointId: string
+  ): Promise<CallTransferObligationRow | undefined> {
+    const obligations = await CallTransferObligationRepository.list(client, transfer.workspaceId, transfer.id)
+    return obligations.find((item) => item.endpointId === endpointId)
   }
 
   private async reconcileTransferPublications(
@@ -1150,22 +1190,6 @@ export class CallService {
       }
     }
     await this.emitTransferChanged(client, call.streamId, revised)
-  }
-
-  private publicationsMatch(expected: CallExpectedPublication[], ready: CallExpectedPublication[]): boolean {
-    if (expected.length !== ready.length) return false
-    const publicationKey = (publication: CallExpectedPublication) =>
-      JSON.stringify([
-        publication.endpointId,
-        publication.endpointEpoch,
-        publication.mediaIncarnation,
-        publication.kind,
-        publication.publicationId,
-        publication.publicationRevision,
-        publication.muted ?? null,
-      ])
-    const keys = new Set(ready.map(publicationKey))
-    return expected.every((item) => keys.has(publicationKey(item)))
   }
 
   private async emitTransferChanged(

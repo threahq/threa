@@ -71,6 +71,23 @@ export const callExpectedPublicationSchema = z.object({
 })
 export type CallExpectedPublication = z.infer<typeof callExpectedPublicationSchema>
 
+export function callPublicationsMatch(expected: CallExpectedPublication[], ready: CallExpectedPublication[]): boolean {
+  if (expected.length !== ready.length) return false
+  const publicationKey = (publication: CallExpectedPublication) =>
+    JSON.stringify([
+      publication.endpointId,
+      publication.endpointEpoch,
+      publication.mediaIncarnation,
+      publication.kind,
+      publication.publicationId,
+      publication.publicationRevision,
+      publication.muted ?? null,
+    ])
+  const expectedKeys = expected.map(publicationKey).sort()
+  const readyKeys = ready.map(publicationKey).sort()
+  return expectedKeys.every((key, index) => key === readyKeys[index])
+}
+
 export const callTransportSessionSchema = z.object({
   id: z.string().min(1),
   endpointId: z.string().min(1),
