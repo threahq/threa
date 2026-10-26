@@ -697,6 +697,7 @@ export class SyncEngine {
       connectionGeneration = this.connectionGeneration
     }
     this.schedulePreviewDrain()
+    this.kickOperationQueue()
     void this.runCatchUp("resume")
   }
 

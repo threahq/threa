@@ -3,6 +3,7 @@ import * as Y from "yjs"
 import { base64ToBytes, bytesToBase64 } from "@threahq/crypto"
 import type { DocState, DocUpdatedPayload, DocUpdateView, Stream } from "@threahq/types"
 import { ApiError } from "@/api/client"
+import * as operationQueueModule from "@/sync/operation-queue"
 import { DocSync, FLUSH_CAP_MS, REMOTE_ORIGIN } from "./doc-sync"
 
 const WORKSPACE_ID = "ws_1"
@@ -40,8 +41,9 @@ class FakeDocServer {
       const error = this.postErrors.shift()
       if (error) throw error
       const seq = this.store(update)
+      if (seq === null) return { seq: this.seq, applied: false, touchedBlockIds: [] }
       this.broadcast(seq)
-      return { seq, touchedBlockIds: [] }
+      return { seq, applied: true, touchedBlockIds: [] }
     }),
   }
 
@@ -86,7 +88,7 @@ class FakeDocServer {
     Y.applyUpdate(other, Y.encodeStateAsUpdate(this.doc))
     const before = Y.encodeStateVector(other)
     other.getText("t").insert(other.getText("t").length, text)
-    const seq = this.store(bytesToBase64(Y.encodeStateAsUpdate(other, before)))
+    const seq = this.store(bytesToBase64(Y.encodeStateAsUpdate(other, before)))!
     return this.payload(seq)
   }
 
@@ -94,8 +96,11 @@ class FakeDocServer {
     for (const client of this.clients) client.receive(this.payload(seq))
   }
 
-  private store(update: string): number {
+  /** Stores and logs the update; `null` when the doc already held every byte of it. */
+  private store(update: string): number | null {
+    const before = Y.encodeStateVector(this.doc)
     Y.applyUpdate(this.doc, base64ToBytes(update))
+    if (sameBytes(before, Y.encodeStateVector(this.doc))) return null
     const seq = this.seq + 1
     this.log.push({ seq, update, actorId: "usr_1", actorType: "user" })
     return seq
@@ -115,6 +120,10 @@ class FakeDocServer {
   }
 }
 
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((byte, index) => byte === b[index])
+}
+
 function deferred(): Hold & { promise: Promise<void> } {
   let release!: () => void
   let fail!: (error: unknown) => void
@@ -125,10 +134,13 @@ function deferred(): Hold & { promise: Promise<void> } {
   return { promise, release, fail }
 }
 
+/** What reached the operation queue, as the text each self-contained update produces. */
+let enqueued: { docId: string; text: string }[] = []
+
 function connect(server: FakeDocServer) {
   const ydoc = new Y.Doc()
   const rejections: string[] = []
-  const enqueued: { docId: string; text: string }[] = []
+  const lost: unknown[] = []
   const kicks: string[] = []
   const sync = new DocSync({
     workspaceId: WORKSPACE_ID,
@@ -136,13 +148,11 @@ function connect(server: FakeDocServer) {
     ydoc,
     api: server.api,
     onRejected: (refusal) => rejections.push(refusal.code),
-    enqueue: async ({ docId, update }) => {
-      enqueued.push({ docId, text: textOf(update) })
-    },
+    onLost: (error) => lost.push(error),
     kickOperationQueue: () => kicks.push(`after ${enqueued.length}`),
   })
   server.clients.add(sync)
-  return { ydoc, sync, rejections, enqueued, kicks, text: () => ydoc.getText("t").toString() }
+  return { ydoc, sync, rejections, lost, enqueued, kicks, text: () => ydoc.getText("t").toString() }
 }
 
 function type(ydoc: Y.Doc, text: string): void {
@@ -167,11 +177,16 @@ describe("DocSync", () => {
   beforeEach(() => {
     vi.useFakeTimers()
     server = new FakeDocServer()
+    enqueued = []
+    vi.spyOn(operationQueueModule, "enqueueDocUpdate").mockImplementation(async (_ws, docId, update) => {
+      enqueued.push({ docId, text: textOf(update) })
+    })
   })
 
   afterEach(() => {
     for (const client of server.clients) client.stop()
     vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 
   it("applies the loaded state as a remote update and becomes ready", async () => {
@@ -339,7 +354,75 @@ describe("DocSync", () => {
     expect({ posts: server.api.postUpdate.mock.calls.length, enqueued: client.enqueued, kicks: client.kicks }).toEqual({
       posts: 0,
       enqueued: [{ docId: DOC_ID, text: "offline " }],
-      kicks: ["after 1"],
+      kicks: [],
+    })
+  })
+
+  it("should keep its seq when a re-sent edit the server already held answers with a peer's head", async () => {
+    const client = connect(server)
+    await client.sync.start()
+    server.failNextPost(503, "UNAVAILABLE")
+    type(client.ydoc, "kept ")
+    await vi.advanceTimersByTimeAsync(0)
+    // The queue delivers the handed-off bytes; the server echoes them back as seq 1.
+    await server.api.postUpdate(WORKSPACE_ID, DOC_ID, bytesToBase64(Y.encodeStateAsUpdate(client.ydoc)))
+    server.writeElsewhere("theirs ")
+
+    await client.sync.flush()
+    client.sync.receive(server.writeElsewhere("later"))
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect({ text: client.text(), seqs: server.log.map((entry) => entry.seq) }).toEqual({
+      text: "kept theirs later",
+      seqs: [1, 2, 3],
+    })
+  })
+
+  it.each([0, 1, 2, 3, 4, 5, 6, 7])(
+    "never loses a flush requested %i microtasks after another finishes",
+    async (hops) => {
+      const client = connect(server)
+      await client.sync.start()
+      const post = server.holdNextPost()
+
+      type(client.ydoc, "a ")
+      const running = client.sync.flush()
+      post.release()
+      for (let i = 0; i < hops; i++) await Promise.resolve()
+      type(client.ydoc, "b")
+      const again = client.sync.flush()
+      await running
+      await again
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(server.text).toBe("a b")
+    }
+  )
+
+  it("should report the edits as lost when the queue cannot take them either", async () => {
+    const client = connect(server)
+    await client.sync.start()
+    const quota = new Error("QuotaExceededError")
+    vi.mocked(operationQueueModule.enqueueDocUpdate).mockRejectedValueOnce(quota)
+
+    type(client.ydoc, "gone")
+    client.sync.stop()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect({ lost: client.lost, kicks: client.kicks }).toEqual({ lost: [quota], kicks: [] })
+  })
+
+  it("should hand unsent edits to the queue when asked before the page unloads", async () => {
+    const client = connect(server)
+    await client.sync.start()
+
+    type(client.ydoc, "unsent")
+    client.sync.queueUnsent()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect({ enqueued: client.enqueued, posts: server.api.postUpdate.mock.calls.length }).toEqual({
+      enqueued: [{ docId: DOC_ID, text: "unsent" }],
+      posts: 0,
     })
   })
 

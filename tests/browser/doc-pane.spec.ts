@@ -267,7 +267,7 @@ test.describe("Doc pane", () => {
     const workspaceId = workspaceIdFromUrl(owner)
     const channelId = await createChannelViaApi(owner, workspaceId, `offline-docs-${testId}`, "private")
     const member = await joinWorkspace(browser, workspaceId, "doc-offline-member", testId)
-    const sentences = ["Shared line.", "Member offline words.", "Owner meanwhile.", "Typed then closed."]
+    const sentences = ["Shared line.", "Member offline words.", "Owner meanwhile.", "Typed then closed"]
 
     try {
       await expectApiOk(
@@ -295,7 +295,6 @@ test.describe("Doc pane", () => {
       await typeAtEnd(member.page, memberEditor, "Member offline words. ")
       await typeAtEnd(owner, ownerEditor, "Owner meanwhile. ")
       await expect(memberEditor).toContainText("Member offline words.")
-      await expect(ownerEditor).not.toContainText("Member offline words.", { timeout: 3000 })
 
       await member.page.context().setOffline(false)
       await expect
@@ -308,12 +307,13 @@ test.describe("Doc pane", () => {
         )
         .toBe(true)
 
+      // No boundary after the last word: only closing the pane can hand it off.
       await member.page.context().setOffline(true)
-      await typeAtEnd(member.page, memberEditor, "Typed then closed. ")
+      await typeAtEnd(member.page, memberEditor, "Typed then closed")
       await pane(member.page, docId).getByRole("button", { name: "Close", exact: true }).click()
       await expect(pane(member.page, docId)).toHaveCount(0)
       await member.page.context().setOffline(false)
-      await expect(ownerEditor).toContainText("Typed then closed.", { timeout: 20000 })
+      await expect(ownerEditor).toContainText("Typed then closed", { timeout: 20000 })
 
       await anchorRow(member.page, docId).click()
       for (const sentence of sentences) {

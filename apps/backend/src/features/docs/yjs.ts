@@ -86,10 +86,13 @@ export function applyClientWrite(
   ydoc: Y.Doc,
   update: Uint8Array,
   previousBody: JSONContent
-): { applied: false } | { applied: true; content: JSONContent; serverUpdate: Uint8Array | null } {
+): { applied: false } | { applied: true; stored: Uint8Array; content: JSONContent; serverUpdate: Uint8Array | null } {
   const before = Y.snapshot(ydoc)
+  const heldBefore = Y.encodeStateVector(ydoc)
   applyClientUpdate(ydoc, update)
   if (Y.equalSnapshots(before, Y.snapshot(ydoc))) return { applied: false }
+  // A retry carries every unacked byte; the log keeps only what this write added.
+  const stored = Y.diffUpdate(update, heldBefore)
   const serverWrites: Uint8Array[] = []
   const onUpdate = (written: Uint8Array) => {
     serverWrites.push(written)
@@ -102,7 +105,12 @@ export function applyClientWrite(
       writeContentJson(ydoc, stamped)
       content = readRepairedContent(ydoc)
     }
-    return { applied: true, content, serverUpdate: serverWrites.length > 0 ? Y.mergeUpdates(serverWrites) : null }
+    return {
+      applied: true,
+      stored,
+      content,
+      serverUpdate: serverWrites.length > 0 ? Y.mergeUpdates(serverWrites) : null,
+    }
   } finally {
     ydoc.off("update", onUpdate)
   }

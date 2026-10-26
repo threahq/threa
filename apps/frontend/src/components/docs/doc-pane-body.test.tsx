@@ -113,7 +113,7 @@ describe("DocPaneBody", () => {
     } as unknown as ReturnType<typeof triggersModule.useEmojiSuggestion>)
     vi.spyOn(docsApi, "get").mockImplementation(async () => docState(serverDoc, 1))
     vi.spyOn(docsApi, "listUpdates").mockResolvedValue({ updates: [] })
-    vi.spyOn(docsApi, "postUpdate").mockResolvedValue({ seq: 2, touchedBlockIds: [] })
+    vi.spyOn(docsApi, "postUpdate").mockResolvedValue({ seq: 2, applied: true, touchedBlockIds: [] })
   })
 
   afterEach(() => {
@@ -234,6 +234,36 @@ describe("DocPaneBody", () => {
     Y.applyUpdate(posted, Y.encodeStateAsUpdate(serverDoc))
     Y.applyUpdate(posted, base64ToBytes(vi.mocked(docsApi.postUpdate).mock.calls[0][2]))
     expect(posted.getXmlFragment(DOC_FRAGMENT).toString()).toContain("Rotation tracker draft")
+  })
+
+  it("should queue unsent edits when the page hides", async () => {
+    const enqueue = vi.spyOn(operationQueueModule, "enqueueDocUpdate").mockResolvedValue()
+    await mountLoaded()
+
+    act(() => {
+      proseMirror().editor.chain().focus("end").insertContent(" draft").run()
+    })
+    window.dispatchEvent(new Event("pagehide"))
+
+    await waitFor(() => expect(enqueue).toHaveBeenCalledTimes(1))
+    const queued = new Y.Doc()
+    Y.applyUpdate(queued, Y.encodeStateAsUpdate(serverDoc))
+    Y.applyUpdate(queued, base64ToBytes(enqueue.mock.calls[0]![2]))
+    expect({
+      queued: queued.getXmlFragment(DOC_FRAGMENT).toString(),
+      posts: vi.mocked(docsApi.postUpdate).mock.calls.length,
+    }).toEqual({ queued: expect.stringContaining("Rotation tracker draft"), posts: 0 })
+  })
+
+  it("should send unsent edits when the browser comes back online", async () => {
+    await mountLoaded()
+
+    act(() => {
+      proseMirror().editor.chain().focus("end").insertContent(" draft").run()
+    })
+    window.dispatchEvent(new Event("online"))
+
+    await waitFor(() => expect(docsApi.postUpdate).toHaveBeenCalledTimes(1), { timeout: FLUSH_CAP_MS - 200 })
   })
 
   it("shows a remote update delivered through the live event source", async () => {

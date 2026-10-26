@@ -2,7 +2,6 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import type { DocUpdatesResponse } from "@threahq/types"
 import { validateRequest } from "../../lib/validation"
-import { DOC_STATE_VECTOR_MAX_BASE64 } from "./config"
 import type { DocService } from "./service"
 
 interface Dependencies {
@@ -11,10 +10,12 @@ interface Dependencies {
 
 /** ~3 MB decoded, under the 10 MB JSON body limit with room for a pasted long document. */
 const MAX_UPDATE_BASE64_LENGTH = 4_000_000
+/** A Yjs state vector: two varints per client that ever wrote to the doc. */
+const MAX_STATE_VECTOR_BASE64_LENGTH = 65_536
 
 const paramsSchema = z.object({ docId: z.string().min(1) })
 
-const getQuerySchema = z.object({ sv: z.base64().max(DOC_STATE_VECTOR_MAX_BASE64).optional() })
+const getQuerySchema = z.object({ sv: z.base64().max(MAX_STATE_VECTOR_BASE64_LENGTH).optional() })
 
 const listUpdatesQuerySchema = z.object({
   after: z.coerce.number().int().min(0).max(2_147_483_647),

@@ -203,7 +203,9 @@ export async function processOperationQueue(
         // a committed-but-unacked write reads as drift and splits server-side.
         const claimed = await database.pendingOperations.update(next.id, { startedAt: Date.now() })
         if (claimed === 0) continue
-        await executeOperation(next, messageService, reactionService, scheduledService, draftsService, database)
+        // A doc row accepts merged bytes until it is claimed, so what it holds now may exceed what was read above.
+        const current = next.type === "doc_update" ? ((await database.pendingOperations.get(next.id)) ?? next) : next
+        await executeOperation(current, messageService, reactionService, scheduledService, draftsService, database)
         if (fence.isRetired()) return
         await database.pendingOperations.delete(next.id)
       } catch (error) {

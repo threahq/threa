@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import Dexie from "dexie"
 import * as Y from "yjs"
 import { base64ToBytes, bytesToBase64 } from "@threahq/crypto"
 import { AuthErrorCodes, ShareErrorCodes } from "@threahq/types"
@@ -123,7 +124,9 @@ describe("processOperationQueue edit replay", () => {
 
 describe("doc_update operations", () => {
   it("should post a queued doc update through the docs api when drained", async () => {
-    const postUpdate = vi.spyOn(docsApiModule.docsApi, "postUpdate").mockResolvedValue({ seq: 1, touchedBlockIds: [] })
+    const postUpdate = vi
+      .spyOn(docsApiModule.docsApi, "postUpdate")
+      .mockResolvedValue({ seq: 1, applied: true, touchedBlockIds: [] })
     await enqueueDocUpdate(workspaceId, "stream_doc", "AAE=")
 
     await process(scheduledServiceRejectingWith(new Error("unused")))
@@ -133,6 +136,35 @@ describe("doc_update operations", () => {
       ops: [],
     })
     postUpdate.mockRestore()
+  })
+
+  it("should post what a doc_update row holds after bytes were merged into it between read and claim", async () => {
+    const edit = (text: string) => {
+      const doc = new Y.Doc()
+      doc.getText("t").insert(0, text)
+      return bytesToBase64(Y.encodeStateAsUpdate(doc))
+    }
+    const postUpdate = vi
+      .spyOn(docsApiModule.docsApi, "postUpdate")
+      .mockResolvedValue({ seq: 1, applied: true, touchedBlockIds: [] })
+    const claim = db.pendingOperations.update.bind(db.pendingOperations)
+    vi.spyOn(db.pendingOperations, "update").mockImplementationOnce((key, changes) =>
+      Dexie.Promise.resolve()
+        .then(() => enqueueDocUpdate(workspaceId, "stream_doc", edit("late")))
+        .then(() => claim(key, changes))
+    )
+    await enqueueDocUpdate(workspaceId, "stream_doc", edit("early"))
+
+    await process(scheduledServiceRejectingWith(new Error("unused")))
+
+    const posted = new Y.Doc()
+    Y.applyUpdate(posted, base64ToBytes(postUpdate.mock.calls[0]![2]))
+    expect({
+      texts: postUpdate.mock.calls.length,
+      posted: posted.getText("t").toString(),
+      ops: await db.pendingOperations.toArray(),
+    }).toEqual({ texts: 1, posted: expect.stringMatching(/^(earlylate|lateearly)$/), ops: [] })
+    vi.restoreAllMocks()
   })
 
   it("should merge into a waiting row for the same doc and keep a started one when enqueuing", async () => {

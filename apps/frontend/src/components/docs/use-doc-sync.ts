@@ -51,6 +51,11 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
       docId,
       ydoc,
       kickOperationQueue: () => latestSyncEngine()?.kickOperationQueue(),
+      onLost: () => {
+        toast.error("Your last edits couldn't be kept", {
+          description: "This browser could not store them to send later.",
+        })
+      },
       onRejected: (refusal) => {
         const readOnly = refusal.status === 403 || refusal.code === StreamErrorCodes.READ_ONLY
         toast.error(readOnly ? "You can't edit this doc" : "Your last edit couldn't be saved", {
@@ -65,13 +70,21 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
       docId,
       send: (payload) => latestSocket()?.emit("doc:awareness", payload),
     })
-    // Unload and the back-forward cache never unmount, so peers would keep a ghost caret until the 30 s awareness timeout.
-    window.addEventListener("pagehide", presence.withdraw)
+    // Unload and the back-forward cache never unmount: unsent edits go to the queue, and peers would keep a ghost caret until the 30 s awareness timeout.
+    const onPageHide = () => {
+      sync.queueUnsent()
+      presence.withdraw()
+    }
+    // The socket can outlive an offline spell, so its reconnect flush is not enough.
+    const onOnline = () => void sync.flush()
+    window.addEventListener("pagehide", onPageHide)
     window.addEventListener("pageshow", presence.restore)
+    window.addEventListener("online", onOnline)
     setCreated({ key, ydoc, sync, presence, loaded: sync.start() })
     return () => {
-      window.removeEventListener("pagehide", presence.withdraw)
+      window.removeEventListener("pagehide", onPageHide)
       window.removeEventListener("pageshow", presence.restore)
+      window.removeEventListener("online", onOnline)
       presence.destroy()
       sync.stop()
       ydoc.destroy()

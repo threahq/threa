@@ -325,11 +325,74 @@ describe("DocService", () => {
       edited: edited.map((event) => event.payload),
       outbox: (await outboxRows("doc:updated", doc.id)).map((row) => (row.payload as { seq: number }).seq),
     }).toEqual({
-      second: { seq: first.seq, touchedBlockIds: [] },
+      second: { seq: first.seq, applied: false, touchedBlockIds: [] },
       stored: [{ seq: first.seq, update }],
       edited: [{ seq: first.seq, touchedBlockIds: first.touchedBlockIds }],
       outbox: [first.seq],
     })
+  })
+
+  test("should answer the peer's head seq without storing when a client re-posts bytes the doc already holds", async () => {
+    const channel = await createChannel("public")
+    const doc = await createDoc(channel.id)
+    const client = await openClient(doc.id, owner)
+    const other = await openClient(doc.id, peer)
+    const update = appendBlock(client.ydoc, paragraph("Mine", blockId()))
+    const first = await post(doc.id, update)
+    const peerWrite = await post(doc.id, appendBlock(other.ydoc, paragraph("Theirs", blockId())), peer)
+
+    const again = await post(doc.id, update)
+
+    expect({
+      again,
+      rows: (await DocRepository.listUpdatesAfter(pool, wsId, doc.id, 0)).map(({ seq }) => seq),
+    }).toEqual({
+      again: { seq: peerWrite.seq, applied: false, touchedBlockIds: [] },
+      rows: [first.seq, peerWrite.seq],
+    })
+  })
+
+  test("should store only the new bytes when a retry carries held and unsent edits together", async () => {
+    const channel = await createChannel("public")
+    const doc = await createDoc(channel.id)
+    const client = await openClient(doc.id, owner)
+    const sent = decodeUpdateBase64(appendBlock(client.ydoc, paragraph("Sent", blockId())))
+    const unsent = decodeUpdateBase64(appendBlock(client.ydoc, paragraph("Unsent", blockId())))
+    const first = await post(doc.id, encodeUpdateBase64(sent))
+
+    const retry = await post(doc.id, encodeUpdateBase64(Y.mergeUpdates([sent, unsent])))
+
+    const stored = (await DocRepository.listUpdatesAfter(pool, wsId, doc.id, first.seq)).map((row) => row.update)
+    const replayedOntoSent = new Y.Doc()
+    Y.applyUpdate(replayedOntoSent, sent)
+    for (const update of stored) Y.applyUpdate(replayedOntoSent, update)
+    const replayedAlone = new Y.Doc()
+    for (const update of stored) Y.applyUpdate(replayedAlone, update)
+    expect({
+      retry: { seq: retry.seq, applied: retry.applied },
+      rows: stored.length,
+      ontoSent: ydocToContentJson(replayedOntoSent),
+      alone: ydocToContentJson(replayedAlone).content ?? [],
+    }).toEqual({
+      retry: { seq: first.seq + 1, applied: true },
+      rows: 1,
+      ontoSent: ydocToContentJson(client.ydoc),
+      alone: [],
+    })
+  })
+
+  test("should hide a private doc from a non-member who sends a state vector", async () => {
+    const channel = await createChannel("private")
+    const doc = await createDoc(channel.id)
+
+    await expect(
+      docService.get({
+        workspaceId: wsId,
+        userId: outsider,
+        docId: doc.id,
+        stateVector: encodeUpdateBase64(Y.encodeStateVector(new Y.Doc())),
+      })
+    ).rejects.toMatchObject({ status: 404 })
   })
 
   test("should return only what the client lacks when given a state vector", async () => {

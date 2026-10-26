@@ -104,7 +104,7 @@ export class DocService {
     if (stateVector && !isDecodableStateVector(stateVector)) {
       throw new HttpError("State vector is not a valid Yjs state vector", {
         status: 400,
-        code: "DOC_STATE_VECTOR_INVALID",
+        code: DocErrorCodes.STATE_VECTOR_INVALID,
       })
     }
     return withClient(this.pool, async (client) => {
@@ -160,15 +160,15 @@ export class DocService {
       const { ydoc } = await loadStoredState(client, workspaceId, docId)
       ydoc.clientID = DOC_SERVER_CLIENT_ID
       const write = applyOrRefuse(ydoc, clientUpdate, head.bodyJson)
-      if (!write.applied) return { seq: head.updateSeq, touchedBlockIds: [] }
-      const { content, serverUpdate } = write
+      if (!write.applied) return { seq: head.updateSeq, applied: false, touchedBlockIds: [] }
+      const { stored: clientWrite, content, serverUpdate } = write
 
       const projection = projectDoc(content)
       const previousSections = await DocRepository.listSections(client, workspaceId, docId)
       const touchedBlockIds = diffSections(previousSections, projection.sections)
 
       const writes: Omit<StoredUpdate, "seq">[] = [
-        { update: clientUpdate, actorId: userId, actorType: AuthorTypes.USER, touchedBlockIds },
+        { update: clientWrite, actorId: userId, actorType: AuthorTypes.USER, touchedBlockIds },
       ]
       if (serverUpdate) {
         writes.push({
@@ -224,7 +224,7 @@ export class DocService {
         })
       }
 
-      return { seq, touchedBlockIds }
+      return { seq, applied: true, touchedBlockIds }
     })
   }
 

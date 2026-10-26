@@ -16,7 +16,6 @@ const BOUNDARY_TEXT = /[\s\p{P}]$/u
 export type DocSyncStatus = { phase: "loading" } | { phase: "ready" } | { phase: "error"; error: unknown }
 
 type DocsApi = typeof docsApi
-type EnqueueDocUpdate = (payload: { docId: string; update: string }) => Promise<void>
 
 function backoffMs(failures: number): number {
   return Math.min(1000 * 2 ** (failures - 1), MAX_BACKOFF_MS)
@@ -47,8 +46,8 @@ export class DocSync {
   private readonly ydoc: Y.Doc
   private readonly api: DocsApi
   private readonly onRejected?: (refusal: ApiError) => void
-  private readonly enqueue: EnqueueDocUpdate
-  private readonly kickOperationQueue?: () => void
+  private readonly onLost?: (error: unknown) => void
+  private readonly kickOperationQueue: () => void
   private readonly listeners = new Set<() => void>()
   private status: DocSyncStatus = { phase: "loading" }
   private seq: number | null = null
@@ -71,16 +70,16 @@ export class DocSync {
     api?: DocsApi
     /** Called after the server permanently refused local edits; they were dropped and the doc reloaded. */
     onRejected?: (refusal: ApiError) => void
-    /** Durable hand-off for edits that could not be sent now; defaults to the offline operation queue. */
-    enqueue?: EnqueueDocUpdate
-    kickOperationQueue?: () => void
+    /** Called when unsent edits could not be handed to the operation queue either; they are gone. */
+    onLost?: (error: unknown) => void
+    kickOperationQueue: () => void
   }) {
     this.workspaceId = params.workspaceId
     this.docId = params.docId
     this.ydoc = params.ydoc
     this.api = params.api ?? docsApi
     this.onRejected = params.onRejected
-    this.enqueue = params.enqueue ?? ((payload) => enqueueDocUpdate(params.workspaceId, payload.docId, payload.update))
+    this.onLost = params.onLost
     this.kickOperationQueue = params.kickOperationQueue
   }
 
@@ -120,10 +119,13 @@ export class DocSync {
       return this.flushRun
     }
     if (this.unacked.length === 0) return Promise.resolve()
-    this.flushRun = this.runFlush().finally(() => {
-      this.flushRun = null
-    })
+    this.flushRun = this.runFlush()
     return this.flushRun
+  }
+
+  /** Hands unacked edits to the operation queue without waiting: for a page that is about to unload. */
+  queueUnsent(): void {
+    if (!this.stopped && this.unacked.length > 0) void this.handOff()
   }
 
   receive = (payload: DocUpdatedPayload): void => {
@@ -235,42 +237,52 @@ export class DocSync {
     this.capTimer = null
   }
 
+  /** Entered only with unacked edits, so every pass awaits before it can return. */
   private async runFlush(): Promise<void> {
-    do {
-      this.flushAgain = false
-      if (this.unacked.length === 0) return
-      if (!navigator.onLine) {
-        await this.handOff()
-        return
-      }
-      const carried = new Set(this.unacked)
-      try {
-        await this.post(Y.mergeUpdates([...carried]))
-      } catch (error) {
-        if (this.stopped) return
-        if (isPermanentApiError(error)) await this.discardRefusedEdits(error)
-        else await this.handOff()
-        return
-      }
-      this.unacked = this.unacked.filter((update) => !carried.has(update))
-    } while (this.flushAgain && !this.stopped)
+    try {
+      do {
+        this.flushAgain = false
+        if (!navigator.onLine) {
+          await this.handOff()
+          return
+        }
+        const carried = new Set(this.unacked)
+        try {
+          await this.post(Y.mergeUpdates([...carried]))
+        } catch (error) {
+          if (this.stopped) return
+          if (isPermanentApiError(error)) await this.discardRefusedEdits(error)
+          else await this.handOff()
+          return
+        }
+        this.unacked = this.unacked.filter((update) => !carried.has(update))
+      } while (this.flushAgain && !this.stopped && this.unacked.length > 0)
+    } finally {
+      // Cleared in the same tick as the last `flushAgain` check, so no request can land on a finished run.
+      this.flushRun = null
+    }
   }
 
-  /** Bytes stay in `unacked` too: the next flush re-sends them and the server skips what it already holds. */
+  /**
+   * Bytes stay in `unacked` too: the next flush re-sends them and the server skips what it already holds.
+   * No kick while offline: the queue would burn its retry budget on requests that cannot leave the device.
+   */
   private async handOff(): Promise<void> {
     try {
-      await this.enqueue({ docId: this.docId, update: bytesToBase64(Y.mergeUpdates(this.unacked)) })
+      await enqueueDocUpdate(this.workspaceId, this.docId, bytesToBase64(Y.mergeUpdates(this.unacked)))
     } catch (error) {
       console.error("Doc edits could not be queued for retry", { docId: this.docId, error })
+      this.onLost?.(error)
       return
     }
-    this.kickOperationQueue?.()
+    if (navigator.onLine) this.kickOperationQueue()
   }
 
   private async post(update: Uint8Array): Promise<void> {
     const result = await this.api.postUpdate(this.workspaceId, this.docId, bytesToBase64(update))
-    // Only a single new row is provably ours; a server repair adds a second one this client must still apply.
-    if (this.seq !== null && result.seq === this.seq + 1) this.seq = result.seq
+    // Only a single new row is provably ours: a no-op answers the current head, which may be a peer's row this client
+    // has yet to apply, and a server repair adds a second row this client must still apply.
+    if (result.applied && this.seq !== null && result.seq === this.seq + 1) this.seq = result.seq
   }
 
   private async discardRefusedEdits(error: ApiError): Promise<void> {

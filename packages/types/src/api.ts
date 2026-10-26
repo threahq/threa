@@ -2455,7 +2455,10 @@ export interface DocUpdatesResponse {
 
 /** `POST /workspaces/:ws/docs/:docId/updates`. */
 export interface DocPostUpdateResult {
+  /** The head seq after the write; unchanged when `applied` is false. */
   seq: number
+  /** False when the doc already held every byte: nothing was stored or broadcast. */
+  applied: boolean
   touchedBlockIds: string[]
 }
 
