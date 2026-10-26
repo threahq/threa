@@ -921,12 +921,14 @@ export function useBoardCardMessages(
     // surface (collapsed card, expanded card, panel) instead of vanishing and
     // silently shifting every row below it up.
     const liveReplies: RenderableMessage[] = []
+    const recentById = new Map(post.recentMessages.map((m) => [m.id, m as RenderableMessage]))
     for (const id of replyIds) {
-      // Precedence: rail (authoritative by id) > backfill store > nothing. The
-      // projection never reaches here — it is the whole-card fallback above.
+      // Precedence: rail (authoritative by id) > backfill store > projection. The
+      // projection fills only the beat between the rail reading and the backfill
+      // landing, so a reply the card was already showing never drops out of it.
       const message = rail.seen.has(id)
         ? (rail.messages.get(id) ?? rail.deletedMessages.get(id))
-        : backfillById?.get(id)
+        : (backfillById?.get(id) ?? recentById.get(id))
       if (message) liveReplies.push(message)
     }
     liveReplies.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
