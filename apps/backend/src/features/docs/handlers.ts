@@ -1,6 +1,12 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import type { DocBacklinksResponse, DocSectionResponse, DocThreadsResponse, DocUpdatesResponse } from "@threahq/types"
+import type {
+  DocBacklinksResponse,
+  DocListResponse,
+  DocSectionResponse,
+  DocThreadsResponse,
+  DocUpdatesResponse,
+} from "@threahq/types"
 import { validateRequest } from "../../lib/validation"
 import type { DocService } from "./service"
 
@@ -17,6 +23,8 @@ const paramsSchema = z.object({ docId: z.string().min(1) })
 
 const sectionParamsSchema = paramsSchema.extend({ blockId: z.string().min(1) })
 
+const listQuerySchema = z.object({}).strict()
+
 const getQuerySchema = z.object({ sv: z.base64().max(MAX_STATE_VECTOR_BASE64_LENGTH).optional() })
 
 const listUpdatesQuerySchema = z.object({
@@ -29,6 +37,12 @@ const postUpdateSchema = z.object({
 
 export function createDocHandlers({ docService }: Dependencies) {
   return {
+    async list(req: Request, res: Response) {
+      validateRequest(listQuerySchema, req.query)
+      const docs = await docService.list({ workspaceId: req.workspaceId!, userId: req.user!.id })
+      res.json({ docs } satisfies DocListResponse)
+    },
+
     async get(req: Request, res: Response) {
       const { docId } = validateRequest(paramsSchema, req.params)
       const { sv } = validateRequest(getQuerySchema, req.query)

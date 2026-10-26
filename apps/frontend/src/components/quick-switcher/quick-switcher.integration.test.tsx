@@ -11,7 +11,7 @@ import { PanelProvider } from "@/contexts/panel-context"
 import { SearchPanelProvider, useSearchPanel } from "@/components/search/search-panel-context"
 import { StreamTypes, WORKSPACE_PERMISSION_SCOPES, type GuestDmPolicy, type WorkspaceBootstrap } from "@threahq/types"
 import { createMockStream, mockStreamsList } from "@/test/fixtures"
-import { FILTER_TYPE_OPTIONS } from "@/components/editor/triggers/filter-type-extension"
+import { STREAM_FILTER_TYPE_OPTIONS } from "@/components/editor/triggers/filter-type-extension"
 import { getAsideState, resetAsideStoreCache } from "@/stores/aside-store"
 import { createMockUser, mockUsers, mockUsersList } from "@/test/fixtures/users"
 import { mockSearchResultsList } from "@/test/fixtures/messages"
@@ -446,6 +446,32 @@ describe("QuickSwitcher Integration Tests", () => {
       expect(screen.getByText("Thread · in #general")).toBeInTheDocument()
     })
 
+    it("should find a titled doc by its title and name its host when searching", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      mockWorkspaceBootstrap.data.streams = [
+        ...mockStreamsList,
+        createMockStream({
+          id: "stream_doc_titled",
+          type: StreamTypes.DOC,
+          displayName: "Quarterly launch plan",
+          parentStreamId: "stream_channel1",
+        }),
+        createMockStream({ id: "stream_doc_untitled", type: StreamTypes.DOC, parentStreamId: "stream_channel1" }),
+      ]
+      renderWithProviders(<QuickSwitcher {...defaultProps} open={true} />)
+
+      expect(screen.queryByText("Quarterly launch plan")).not.toBeInTheDocument()
+
+      await user.type(screen.getByLabelText("Quick switcher input"), "launch plan")
+
+      expect(await screen.findByText("Quarterly launch plan")).toBeInTheDocument()
+      expect(screen.getByText("Doc · in #general")).toBeInTheDocument()
+
+      await user.click(screen.getByText("Quarterly launch plan"))
+
+      expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_doc_titled")
+    })
+
     it("never lists an unnamed thread — its placeholder label would match 'thread'", async () => {
       const user = userEvent.setup({ pointerEventsCheck: 0 })
       mockWorkspaceBootstrap.data.streams = [
@@ -513,7 +539,7 @@ describe("QuickSwitcher Integration Tests", () => {
       expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_thread_named")
     })
 
-    it("offers every typeable stream type in the mouse-driven filter picker", async () => {
+    it("offers every typeable stream type, docs included, in the mouse-driven filter picker", async () => {
       const user = userEvent.setup({ pointerEventsCheck: 0 })
       // An empty workspace, so the only rows on screen are the picker's own.
       mockWorkspaceBootstrap.data.streams = []
@@ -525,7 +551,7 @@ describe("QuickSwitcher Integration Tests", () => {
 
       // The typed `is:` trigger and this dropdown read one list; they drifted
       // before, and `thread` was typeable but not pickable.
-      for (const { label } of FILTER_TYPE_OPTIONS) {
+      for (const { label } of STREAM_FILTER_TYPE_OPTIONS) {
         expect(await screen.findByText(label)).toBeInTheDocument()
       }
     })

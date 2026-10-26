@@ -1,5 +1,13 @@
 import { test, expect, type Page, type Locator } from "@playwright/test"
-import { loginAndCreateWorkspace, workspaceIdFromUrl, createChannelViaApi, createDocViaApi } from "./helpers"
+import {
+  loginAndCreateWorkspace,
+  workspaceIdFromUrl,
+  createChannelViaApi,
+  createDocViaApi,
+  pane,
+  docEditor,
+  anchorRow,
+} from "./helpers"
 
 /**
  * A doc's title is its stream's name: a member renames it in the field above
@@ -11,10 +19,7 @@ test.describe.configure({ timeout: 150_000 })
 
 const STUB_DOC_TITLE = "Generated doc title"
 
-const pane = (page: Page, id: string): Locator => page.locator(`[data-panel-tab="${id}"]`)
-const docEditor = (page: Page, docId: string): Locator => pane(page, docId).locator(".ProseMirror")
 const titleInput = (page: Page, docId: string): Locator => pane(page, docId).getByRole("textbox", { name: "Doc title" })
-const anchorRow = (page: Page, docId: string): Locator => page.locator(`a[data-doc-id="${docId}"]`)
 
 async function openDoc(page: Page, workspaceId: string, channelId: string, docId: string): Promise<void> {
   await page.goto(`/w/${workspaceId}/s/${channelId}`)

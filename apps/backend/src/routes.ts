@@ -920,6 +920,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     stream.previewHistory
   )
   app.get("/api/workspaces/:workspaceId/streams/:streamId", ...authed, audit("streams.get", "read"), stream.get)
+  app.get("/api/workspaces/:workspaceId/docs", ...authed, audit("docs.list", "read"), docs.list)
   app.get("/api/workspaces/:workspaceId/docs/:docId", ...authed, audit("docs.get", "read"), docs.get)
   app.get(
     "/api/workspaces/:workspaceId/docs/:docId/updates",

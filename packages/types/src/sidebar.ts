@@ -139,6 +139,7 @@ export const SIDEBAR_QUICK_LINKS = [
   "saved",
   "streams",
   "files",
+  "docs",
   "scheduled",
   "agenda",
   "memory",

@@ -226,6 +226,21 @@ describe("selectLabelStreams", () => {
     expect(selectLabelStreams(assignments, streams, "label_a").map((s) => s.id)).toEqual(["stream_keep"])
   })
 
+  it("should list a labeled doc and a labeled thread on it when both carry the label", () => {
+    const assignments = [cachedAssignment("label_a", "doc_1"), cachedAssignment("label_a", "doc_thread")]
+    const streams = [
+      cachedStream("stream_host"),
+      cachedStream("doc_1", { type: "doc", parentStreamId: "stream_host" }),
+      cachedStream("doc_thread", { type: "thread", parentStreamId: "doc_1", rootStreamId: "stream_host" }),
+    ]
+
+    expect(
+      selectLabelStreams(assignments, streams, "label_a")
+        .map((s) => s.id)
+        .sort()
+    ).toEqual(["doc_1", "doc_thread"])
+  })
+
   it("returns an empty list when nothing carries the label", () => {
     expect(
       selectLabelStreams([cachedAssignment("label_a", "stream_1")], [cachedStream("stream_1")], "label_z")

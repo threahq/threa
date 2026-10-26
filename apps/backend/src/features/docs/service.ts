@@ -8,6 +8,7 @@ import {
   type DocBacklink,
   type DocBlockThread,
   type DocEditedEventPayload,
+  type DocListItem,
   type DocPostUpdateResult,
   type DocSection,
   type DocState,
@@ -27,6 +28,7 @@ import {
   listAccessibleStreamIds,
   principalActorId,
   resolveLockedStreamAuthorities,
+  streamAccessPredicateSql,
   type Stream,
   type StreamWritePrincipal,
 } from "../streams"
@@ -286,6 +288,12 @@ export class DocService {
     for (const update of stored) {
       await DocRepository.insertUpdate(client, { workspaceId, docId, ...update })
     }
+    await DocRepository.upsertEditor(client, {
+      workspaceId,
+      docId,
+      actorId: authored.actorId,
+      actorType: authored.actorType,
+    })
     if (Math.floor(seq / DOC_SNAPSHOT_INTERVAL) > Math.floor(head.updateSeq / DOC_SNAPSHOT_INTERVAL)) {
       await DocRepository.insertSnapshot(client, { workspaceId, docId, seq, state: encodeFullState(params.ydoc) })
     }
@@ -332,6 +340,21 @@ export class DocService {
       })
     }
     return seq
+  }
+
+  async list(params: { workspaceId: string; userId: string }): Promise<DocListItem[]> {
+    const readable = streamAccessPredicateSql(params.workspaceId, params.userId, "s.id")
+    const docs = await DocRepository.listWithEditors(this.pool, params.workspaceId, readable)
+    return docs.map((doc) => {
+      const editors = doc.editors.map((editor) => ({ ...editor, lastEditedAt: editor.lastEditedAt.toISOString() }))
+      return {
+        id: doc.id,
+        displayName: doc.displayName,
+        createdAt: doc.createdAt.toISOString(),
+        lastEditedAt: editors[0]?.lastEditedAt ?? null,
+        editors,
+      }
+    })
   }
 
   async listThreads(params: { workspaceId: string; userId: string; docId: string }): Promise<DocBlockThread[]> {

@@ -25,6 +25,7 @@ interface SidebarQuickLinksProps {
   isActivityPage: boolean
   isMemoryPage: boolean
   isFilesPage: boolean
+  isDocsPage: boolean
   isAgendaPage: boolean
   isLabelsPage: boolean
   isStreamsPage: boolean
@@ -69,6 +70,7 @@ export const SidebarQuickLinks = memo(function SidebarQuickLinks({
   isActivityPage,
   isMemoryPage,
   isFilesPage,
+  isDocsPage,
   isAgendaPage,
   isLabelsPage,
   isStreamsPage,
@@ -96,6 +98,7 @@ export const SidebarQuickLinks = memo(function SidebarQuickLinks({
     },
     streams: { to: `/w/${workspaceId}/streams`, isActive: isStreamsPage, unreadCount: 0, signalSlot: null },
     files: { to: `/w/${workspaceId}/files`, isActive: isFilesPage, unreadCount: 0, signalSlot: null },
+    docs: { to: `/w/${workspaceId}/docs`, isActive: isDocsPage, unreadCount: 0, signalSlot: null },
     agenda: { to: `/w/${workspaceId}/agenda`, isActive: isAgendaPage, unreadCount: 0, signalSlot: null },
     scheduled: {
       to: `/w/${workspaceId}/scheduled`,

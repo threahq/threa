@@ -5,7 +5,7 @@ import { useLabelService } from "@/contexts"
 import { db, type CachedLabel, type CachedLabelAssignment, type CachedStream } from "@/db"
 import { useWorkspaceLabels, useWorkspaceLabelAssignments, useWorkspaceStreams } from "@/stores/workspace-store"
 import { useCurrentWorkspaceUserId } from "./use-current-workspace-user-id"
-import { LabelableResourceTypes } from "@threahq/types"
+import { LabelableResourceTypes, StreamTypes } from "@threahq/types"
 import { hiddenStreamIds } from "@/lib/streams"
 import type {
   CreateLabelInput,
@@ -337,9 +337,13 @@ export function selectLabelStreams(
     if (assignment.labelId === labelId) streamIds.add(assignment.resourceId)
   }
   if (streamIds.size === 0) return []
+  // Docs never list in the sidebar, but a label's page is where a labeled doc is found again.
   const hidden = hiddenStreamIds(streams)
   return streams
-    .filter((stream) => streamIds.has(stream.id) && !stream.archivedAt && !hidden.has(stream.id))
+    .filter(
+      (stream) =>
+        streamIds.has(stream.id) && !stream.archivedAt && (stream.type === StreamTypes.DOC || !hidden.has(stream.id))
+    )
     .sort((a, b) => streamActivityTime(b) - streamActivityTime(a))
 }
 

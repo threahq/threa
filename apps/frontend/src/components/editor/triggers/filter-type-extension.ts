@@ -2,9 +2,9 @@
  * TipTap extension for `is:` filter trigger in search mode.
  * Shows stream type options (scratchpad, channel, dm, thread) when user types `is:`.
  *
- * The one list of stream types a filter can name: the typed `is:` trigger, the
+ * The one owner of the stream types a filter can name: the typed `is:` trigger, the
  * search panel's filter menu and the quick switcher's "Add filter" dropdown all
- * read it. They drifted before — `thread` was typeable but not pickable.
+ * read these lists. They drifted before — `thread` was typeable but not pickable.
  *
  * Unlike mention/channel extensions, this inserts plain text, not a node.
  * Note: `type:` is kept as an alias in the parser but the primary trigger is `is:`.
@@ -30,6 +30,12 @@ export const FILTER_TYPE_OPTIONS: FilterTypeItem[] = [
   { id: "channel", value: "channel", label: "Channel", description: "Public or private team channels" },
   { id: "dm", value: "dm", label: "Direct Message", description: "One-on-one conversations" },
   { id: "thread", value: "thread", label: "Thread", description: "Nested discussions" },
+]
+
+/** The quick switcher's stream list adds docs: a doc holds no messages, so message search never offers it. */
+export const STREAM_FILTER_TYPE_OPTIONS: FilterTypeItem[] = [
+  ...FILTER_TYPE_OPTIONS,
+  { id: "doc", value: "doc", label: "Doc", description: "Collaborative documents" },
 ]
 
 export interface FilterTypeOptions {

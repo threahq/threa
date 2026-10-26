@@ -1,10 +1,16 @@
-import { test, expect, type Page, type Locator } from "@playwright/test"
+import { test, expect, type Page } from "@playwright/test"
 import {
   createChannelViaApi,
   createDocViaApi,
   expectApiOk,
   loginAndCreateWorkspace,
   workspaceIdFromUrl,
+  pane,
+  docEditor,
+  anchorRow,
+  docChip,
+  openChannel,
+  renameDoc,
 } from "./helpers"
 
 /**
@@ -14,23 +20,6 @@ import {
  */
 
 test.describe.configure({ timeout: 120_000 })
-
-const pane = (page: Page, id: string): Locator => page.locator(`[data-panel-tab="${id}"]`)
-const docEditor = (page: Page, docId: string): Locator => pane(page, docId).locator(".ProseMirror")
-const anchorRow = (page: Page, docId: string): Locator => page.locator(`a[data-doc-id="${docId}"]`)
-const docChip = (scope: Locator): Locator => scope.locator('[data-type="doc-chip"]')
-
-async function renameDoc(page: Page, workspaceId: string, docId: string, displayName: string): Promise<void> {
-  await expectApiOk(
-    await page.request.patch(`/api/workspaces/${workspaceId}/streams/${docId}`, { data: { displayName } }),
-    "Rename doc"
-  )
-}
-
-async function openChannel(page: Page, workspaceId: string, streamId: string): Promise<void> {
-  await page.goto(`/w/${workspaceId}/s/${streamId}`)
-  await expect(page.locator(`[data-stream-scroller="${streamId}"]`)).toBeVisible({ timeout: 20000 })
-}
 
 function docUpdatePosted(page: Page, docId: string) {
   return page.waitForResponse(

@@ -1,6 +1,7 @@
 import { api } from "./client"
 import type {
   DocBacklinksResponse,
+  DocListResponse,
   DocPostUpdateResult,
   DocSectionResponse,
   DocState,
@@ -9,6 +10,7 @@ import type {
 } from "@threahq/types"
 
 export const docKeys = {
+  list: (workspaceId: string) => ["docList", workspaceId] as const,
   threads: (workspaceId: string, docId: string) => ["docThreads", workspaceId, docId] as const,
   section: (workspaceId: string, docId: string, blockId: string) =>
     ["docSection", workspaceId, docId, blockId] as const,
@@ -18,6 +20,11 @@ export const docKeys = {
 
 /** Collaborative doc streams: full state, the update log, and Yjs writes (base64). */
 export const docsApi = {
+  /** Every live doc the viewer can read, with who edited it and when, last edited first. */
+  list(workspaceId: string): Promise<DocListResponse> {
+    return api.get<DocListResponse>(`/api/workspaces/${workspaceId}/docs`)
+  },
+
   /** With `stateVector` (base64), `state` carries only what that vector lacks. */
   get(workspaceId: string, docId: string, stateVector?: string): Promise<DocState> {
     const query = stateVector === undefined ? "" : `?sv=${encodeURIComponent(stateVector)}`

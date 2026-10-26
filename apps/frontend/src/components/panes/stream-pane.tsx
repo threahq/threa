@@ -754,7 +754,7 @@ export function StreamPane({
       {!tabbed && companionModeIndicator}
       <AgentActivityHeaderChip workspaceId={workspaceId} streamId={streamId} compact={isMobile || tabbed} />
       {docSync.phase === "ready" && <DocPresenceAvatars workspaceId={workspaceId} presence={docSync.presence} />}
-      {hostedDocs.length > 0 && <DocsHeaderChip docs={hostedDocs} />}
+      {hostedDocs.length > 0 && <DocsHeaderChip workspaceId={workspaceId} hostId={streamId} docs={hostedDocs} />}
     </div>
   )
 

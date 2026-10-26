@@ -43,6 +43,7 @@ function renderQuickLinks(props: Partial<Parameters<typeof SidebarQuickLinks>[0]
         isActivityPage={false}
         isMemoryPage={false}
         isFilesPage={false}
+        isDocsPage={false}
         isAgendaPage={false}
         isLabelsPage={false}
         isStreamsPage={false}
@@ -91,6 +92,17 @@ describe("SidebarQuickLinks", () => {
     expect(preload.mock.calls.map(([panelId]) => panelId)).toEqual(["page:labels", "page:drafts"])
   })
 
+  it("should link Docs to the docs page and mark it current when on the docs page", () => {
+    stubSidebar("open")
+    renderQuickLinks({ isDocsPage: true })
+
+    const link = screen.getByRole("link", { name: "Docs" })
+    expect({ href: link.getAttribute("href"), current: link.getAttribute("aria-current") }).toEqual({
+      href: "/w/workspace_1/docs",
+      current: "page",
+    })
+  })
+
   it("does not render a Threads quick link", () => {
     stubSidebar("open")
     renderQuickLinks()
@@ -137,6 +149,7 @@ describe("SidebarQuickLinks", () => {
           isActivityPage={false}
           isMemoryPage={false}
           isFilesPage={false}
+          isDocsPage={false}
           isAgendaPage={false}
           isLabelsPage={false}
           isStreamsPage={false}

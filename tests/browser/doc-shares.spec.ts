@@ -1,11 +1,16 @@
-import { test, expect, type Browser, type Page, type Locator } from "@playwright/test"
+import { test, expect } from "@playwright/test"
 import {
   createChannelViaApi,
   createDocViaApi,
   expectApiOk,
+  joinWorkspace,
   loginAndCreateWorkspace,
-  loginInNewContext,
   workspaceIdFromUrl,
+  pane,
+  docEditor,
+  anchorRow,
+  docChip,
+  openChannel,
 } from "./helpers"
 
 /**
@@ -14,26 +19,6 @@ import {
  */
 
 test.describe.configure({ timeout: 150_000 })
-
-const pane = (page: Page, id: string): Locator => page.locator(`[data-panel-tab="${id}"]`)
-const docEditor = (page: Page, docId: string): Locator => pane(page, docId).locator(".ProseMirror")
-const anchorRow = (page: Page, docId: string): Locator => page.locator(`a[data-doc-id="${docId}"]`)
-const docChip = (scope: Locator): Locator => scope.locator('[data-type="doc-chip"]')
-
-async function joinWorkspace(browser: Browser, workspaceId: string, testId: string) {
-  const name = `doc-share-reader ${testId}`
-  const { context, page } = await loginInNewContext(browser, `doc-share-reader-${testId}@example.com`, name)
-  await expectApiOk(
-    await page.request.post(`/api/dev/workspaces/${workspaceId}/join`, { data: { role: "member", name } }),
-    "Reader joins workspace"
-  )
-  return { context, page }
-}
-
-async function openChannel(page: Page, workspaceId: string, streamId: string): Promise<void> {
-  await page.goto(`/w/${workspaceId}/s/${streamId}`)
-  await expect(page.locator(`[data-stream-scroller="${streamId}"]`)).toBeVisible({ timeout: 20000 })
-}
 
 test.describe("Doc shares", () => {
   test("should let a reader of the channel open a private channel's doc read-only when its chip is shared there", async ({
@@ -51,7 +36,7 @@ test.describe("Doc shares", () => {
       await owner.request.patch(`/api/workspaces/${workspaceId}/streams/${docId}`, { data: { displayName: title } }),
       "Rename doc"
     )
-    const reader = await joinWorkspace(browser, workspaceId, testId)
+    const reader = await joinWorkspace(browser, workspaceId, "doc-share-reader", testId)
 
     try {
       await openChannel(owner, workspaceId, privateId)

@@ -1,6 +1,8 @@
-import type { AuthorType, DocSection, JSONContent } from "@threahq/types"
+import { StreamTypes, type AuthorType, type DocSection, type JSONContent } from "@threahq/types"
+import type { QueryConfig } from "pg"
 import type { DocReference } from "./projection"
-import { sql, type Querier } from "../../db"
+import { composeSql, sql, type Querier } from "../../db"
+import { effectivelyArchivedSql } from "../../lib/sql-filters"
 
 interface DocHeadRow {
   workspace_id: string
@@ -34,6 +36,21 @@ export interface DocUpdate {
   update: Uint8Array
   actorId: string
   actorType: AuthorType
+}
+
+interface DocWithEditorsRow {
+  id: string
+  display_name: string | null
+  created_at: Date
+  editors: { actorId: string; actorType: AuthorType; lastEditedAt: string }[]
+}
+
+export interface DocWithEditors {
+  id: string
+  displayName: string | null
+  createdAt: Date
+  /** Newest first. */
+  editors: { actorId: string; actorType: AuthorType; lastEditedAt: Date }[]
 }
 
 export interface DocSnapshot {
@@ -136,6 +153,50 @@ export const DocRepository = {
         ${params.actorId}, ${params.actorType}
       )
     `)
+  },
+
+  /** Runs in the transaction storing the actor's update. */
+  async upsertEditor(
+    db: Querier,
+    params: { workspaceId: string; docId: string; actorId: string; actorType: AuthorType }
+  ): Promise<void> {
+    await db.query(sql`
+      INSERT INTO doc_editors (workspace_id, doc_id, actor_id, actor_type, last_edited_at)
+      VALUES (${params.workspaceId}, ${params.docId}, ${params.actorId}, ${params.actorType}, NOW())
+      ON CONFLICT (workspace_id, doc_id, actor_id)
+      DO UPDATE SET last_edited_at = GREATEST(doc_editors.last_edited_at, EXCLUDED.last_edited_at), actor_type = EXCLUDED.actor_type
+    `)
+  },
+
+  /**
+   * Non-archived docs passing `readable` (an access predicate over `s.id`, from
+   * `streamAccessPredicateSql`), most recently edited first.
+   */
+  async listWithEditors(db: Querier, workspaceId: string, readable: QueryConfig): Promise<DocWithEditors[]> {
+    const result = await db.query<DocWithEditorsRow>(composeSql`
+      SELECT s.id, s.display_name, s.created_at,
+        COALESCE(
+          JSON_AGG(
+            JSON_BUILD_OBJECT('actorId', e.actor_id, 'actorType', e.actor_type, 'lastEditedAt', e.last_edited_at)
+            ORDER BY e.last_edited_at DESC, e.actor_id
+          ) FILTER (WHERE e.actor_id IS NOT NULL),
+          '[]'
+        ) AS editors
+      FROM streams s
+      LEFT JOIN doc_editors e ON e.workspace_id = s.workspace_id AND e.doc_id = s.id
+      WHERE s.workspace_id = ${workspaceId}
+        AND s.type = ${StreamTypes.DOC}
+        AND ${sql`NOT ${sql.raw(effectivelyArchivedSql("s"))}`}
+        AND ${readable}
+      GROUP BY s.id, s.display_name, s.created_at
+      ORDER BY MAX(e.last_edited_at) DESC NULLS LAST, s.created_at DESC, s.id
+    `)
+    return result.rows.map((row) => ({
+      id: row.id,
+      displayName: row.display_name,
+      createdAt: row.created_at,
+      editors: row.editors.map((editor) => ({ ...editor, lastEditedAt: new Date(editor.lastEditedAt) })),
+    }))
   },
 
   async listUpdatesAfter(db: Querier, workspaceId: string, docId: string, afterSeq: number): Promise<DocUpdate[]> {

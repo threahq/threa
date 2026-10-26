@@ -12,7 +12,7 @@ import { useWithFilterSuggestion } from "@/components/editor/triggers/use-with-f
 import { useInUserFilterSuggestion } from "@/components/editor/triggers/use-in-user-filter-suggestion"
 import { useInChannelFilterSuggestion } from "@/components/editor/triggers/use-in-channel-filter-suggestion"
 import { useStatusFilterSuggestion } from "@/components/editor/triggers/use-status-filter-suggestion"
-import { FilterTypeExtension } from "@/components/editor/triggers/filter-type-extension"
+import { FilterTypeExtension, type FilterTypeItem } from "@/components/editor/triggers/filter-type-extension"
 import { DateFilterExtension } from "@/components/editor/triggers/date-filter-extension"
 import { FromFilterExtension } from "@/components/editor/triggers/from-filter-extension"
 import { WithFilterExtension } from "@/components/editor/triggers/with-filter-extension"
@@ -64,6 +64,8 @@ export interface RichInputProps {
   onPopoverActiveChange?: (active: boolean) => void
   /** Which triggers to enable. Empty or undefined means no triggers (plain input). */
   triggers?: TriggerType[]
+  /** What the `is:` trigger offers; defaults to the message-search types. */
+  filterTypeOptions?: FilterTypeItem[]
   placeholder?: string
   /** Accessible label for the input (used by screen readers and testing) */
   ariaLabel?: string
@@ -112,6 +114,7 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
     onSubmit,
     onPopoverActiveChange,
     triggers = [],
+    filterTypeOptions,
     placeholder = "Type here...",
     ariaLabel = "Text input",
     className,
@@ -144,7 +147,7 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
     renderFilterTypeList,
     isActive: filterTypeActive,
     close: closeFilterType,
-  } = useFilterTypeSuggestion()
+  } = useFilterTypeSuggestion(filterTypeOptions)
   const {
     suggestionConfig: dateFilterConfig,
     renderDateFilterList,

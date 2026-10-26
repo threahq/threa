@@ -1,10 +1,12 @@
-import { test, expect, type Page, type Locator } from "@playwright/test"
+import { test, expect } from "@playwright/test"
 import {
   loginAndCreateWorkspace,
   workspaceIdFromUrl,
   createChannelViaApi,
   createDocViaApi,
   userIdByEmail,
+  pane,
+  anchorRow,
 } from "./helpers"
 import { runTestSql } from "./global-setup"
 
@@ -14,9 +16,6 @@ import { runTestSql } from "./global-setup"
  */
 
 test.describe.configure({ timeout: 90_000 })
-
-const pane = (page: Page, id: string): Locator => page.locator(`[data-panel-tab="${id}"]`)
-const anchorRow = (page: Page, docId: string): Locator => page.locator(`a[data-doc-id="${docId}"]`)
 
 /** The stored open-doc list in psql's array text form (`{a,b}`), or "" when no device is stored. */
 function storedOpenDocIds(workspaceId: string, userId: string): string {

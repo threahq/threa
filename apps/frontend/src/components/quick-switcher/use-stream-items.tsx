@@ -16,7 +16,7 @@ import { useStreamPick } from "@/components/layout/sidebar/stream-pick"
 import { isToleranceMatch, scoreMatch } from "@/lib/match-score"
 import { useGuestDmOpen } from "@/lib/use-guest-dm-open"
 import { compareStreamEntries, scoreStreamMatch } from "@/lib/stream-sort"
-import { FILTER_TYPE_OPTIONS } from "@/components/editor/triggers/filter-type-extension"
+import { STREAM_FILTER_TYPE_OPTIONS } from "@/components/editor/triggers/filter-type-extension"
 import { FilterSelect } from "./filter-select"
 import {
   parseSearchQuery,
@@ -32,10 +32,12 @@ const FILTER_TYPES: { type: FilterType; label: string; icon: React.ReactNode }[]
   { type: "status", label: "Status", icon: <Archive className="h-4 w-4" /> },
 ]
 
-const STREAM_TYPE_OPTIONS: { value: StreamType; label: string }[] = FILTER_TYPE_OPTIONS.map(({ value, label }) => ({
-  value,
-  label,
-}))
+const STREAM_TYPE_OPTIONS: { value: StreamType; label: string }[] = STREAM_FILTER_TYPE_OPTIONS.map(
+  ({ value, label }) => ({
+    value,
+    label,
+  })
+)
 
 const ARCHIVE_STATUS_OPTIONS: { value: "active" | "archived"; label: string }[] = [
   { value: "active", label: "Active" },
@@ -61,6 +63,8 @@ function getStreamTypeLabel(type: StreamType): string {
       return "Thread"
     case StreamTypes.ASIDE:
       return "Aside"
+    case StreamTypes.DOC:
+      return "Doc"
     default:
       return type
   }
@@ -165,12 +169,15 @@ export function useStreamItems(context: ModeContext): ModeResult {
     // is the streams you navigate BETWEEN. Unnamed ones stay out either way:
     // their label is the placeholder "Thread", which `thre` would match wholesale.
     const wantsThreads = isSearching || typeFilters.includes(StreamTypes.THREAD)
+    const wantsDocs = isSearching || typeFilters.includes(StreamTypes.DOC)
     // A thread rooted in someone else's aside inherits the aside's invisibility.
     const hiddenRootIds = new Set(
       activeStreams.filter((s) => s.type === StreamTypes.ASIDE && s.createdBy !== currentUserId).map((s) => s.id)
     )
     const isSearchableThread = (s: StreamLike) =>
       wantsThreads && getStreamName(s) != null && !hiddenRootIds.has(s.rootStreamId ?? s.id)
+    // Docs never list in the sidebar, so the palette finds them by title the way it finds threads.
+    const isSearchableDoc = (s: StreamLike) => wantsDocs && getStreamName(s) != null
 
     // Own asides are palette-reachable — the one list surface they appear on
     // besides their anchor row (the sidebar and pickers hide them).
@@ -181,14 +188,15 @@ export function useStreamItems(context: ModeContext): ModeResult {
         s.type === StreamTypes.DM ||
         s.type === StreamTypes.SYSTEM ||
         (s.type === StreamTypes.ASIDE && s.createdBy === currentUserId) ||
-        (s.type === StreamTypes.THREAD && isSearchableThread(s))
+        (s.type === StreamTypes.THREAD && isSearchableThread(s)) ||
+        (s.type === StreamTypes.DOC && isSearchableDoc(s))
     )
 
     if (typeFilters.length > 0) {
       filteredStreams = filteredStreams.filter((s) => typeFilters.includes(s.type))
     }
 
-    // A thread title alone is ambiguous out of context; name where it lives.
+    // A thread or doc title alone is ambiguous out of context; name where it lives.
     const streamsById = new Map(allStreams.map((s) => [s.id, s]))
     const parentLabelFor = (stream: StreamLike): string | null => {
       const parent = stream.parentStreamId ? streamsById.get(stream.parentStreamId) : undefined
@@ -224,10 +232,10 @@ export function useStreamItems(context: ModeContext): ModeResult {
       const href = `/w/${workspaceId}/s/${asideHost ?? stream.id}`
       const isArchived = stream.archivedAt != null
       const typeLabel = getStreamTypeLabel(stream.type)
-      // Threads carry no member rows (INV-62), so "Not joined" would be true of all.
-      const isThread = stream.type === StreamTypes.THREAD
-      const notJoined = !isThread && !memberStreamIds.has(stream.id) && isOpenVisibility(stream.visibility)
-      const parentLabel = isThread ? parentLabelFor(stream) : null
+      // Threads and docs carry no member rows (INV-62), so "Not joined" would be true of all.
+      const isNested = stream.type === StreamTypes.THREAD || stream.type === StreamTypes.DOC
+      const notJoined = !isNested && !memberStreamIds.has(stream.id) && isOpenVisibility(stream.visibility)
+      const parentLabel = isNested ? parentLabelFor(stream) : null
       let description = parentLabel ? `${typeLabel} · in ${parentLabel}` : typeLabel
       if (isArchived) description = `${description} · Archived`
       else if (notJoined) description = `${typeLabel} · Not joined`
