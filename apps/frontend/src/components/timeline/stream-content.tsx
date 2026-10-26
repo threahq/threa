@@ -95,6 +95,7 @@ import {
   type CallEndedEventPayload,
   type UnreadOpenPosition,
   isOpenVisibility,
+  BLOCK_ID_PATTERN,
 } from "@threahq/types"
 import {
   EventList,
@@ -146,6 +147,7 @@ import { MessageInput } from "./message-input"
 import { StreamDateHeader } from "./stream-date-header"
 import { JoinChannelBar } from "./join-channel-bar"
 import { ThreadParentEvent } from "../thread/thread-parent-event"
+import { DocBlockQuote } from "../docs/doc-block-quote"
 import { EditLastMessageContext } from "./edit-last-message-context"
 import { QuoteReplyProvider } from "./quote-reply-context"
 import { ConversationReplyProvider } from "./conversation-reply-context"
@@ -803,7 +805,10 @@ export function StreamContent({
   // Legacy IDB rows (cached before anchor unification) carry only
   // `parentMessageId`; read it off the cached row so an offline-first startup
   // resolves the anchor before the next online bootstrap rewrites the row.
-  const anchorId = stream ? (stream.parentAnchorId ?? idbStream?.parentMessageId ?? null) : null
+  const threadAnchorId = stream ? (stream.parentAnchorId ?? idbStream?.parentMessageId ?? null) : null
+  // A doc block is not a timeline item: there is no event to find or fetch for it.
+  const blockAnchorId = threadAnchorId && BLOCK_ID_PATTERN.test(threadAnchorId) ? threadAnchorId : null
+  const anchorId = blockAnchorId ? null : threadAnchorId
   const parentCachedEvents = useStreamEvents(workspaceId, parentStreamId ?? undefined)
   const cachedAnchorEvent = useMemo(() => {
     if (!isThread || !parentStreamId || !anchorId || !parentCachedEvents) return null
@@ -2964,6 +2969,14 @@ export function StreamContent({
                         <div ref={registerPlainContent}>
                           {/* The plain scroller has no settle mask: hold the anchor until the
                               replies' first read lands so both paint in one frame. */}
+                          {isResolved && !isLoading && isThread && blockAnchorId && parentStreamId && (
+                            <DocBlockQuote
+                              workspaceId={workspaceId}
+                              docId={parentStreamId}
+                              blockId={blockAnchorId}
+                              replyCount={threadReplyCount}
+                            />
+                          )}
                           {isResolved && !isLoading && isThread && anchorEvent && parentStreamId && (
                             <ThreadParentEvent
                               event={anchorEvent}

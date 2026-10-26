@@ -36,9 +36,10 @@ import { ComposerEncryptionNotice } from "@/components/encryption/stream-encrypt
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { referenceAudienceTargetFor, useReferenceAudience } from "@/hooks/use-reference-audience"
 import { ThreadParentEvent } from "./thread-parent-event"
+import { DocBlockQuote } from "@/components/docs/doc-block-quote"
 import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
-import { StreamTypes, type JSONContent } from "@threahq/types"
+import { BLOCK_ID_PATTERN, StreamTypes, type JSONContent } from "@threahq/types"
 import { useMentionStreamContext, type MentionStreamContext } from "@/hooks/use-mentionables"
 import { PaneHeader, usePaneCovered } from "@/components/panes"
 import { StreamPane } from "@/components/panes/stream-pane"
@@ -111,6 +112,9 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
   // Nothing to load: the parent message streams in from the cache or the parent's bootstrap.
   useRevealReady(true)
   const draftInfo = parseDraftPanel(panelId)
+  // A doc block is not a timeline item: there is no event to find or fetch for it.
+  const blockAnchorId = draftInfo && BLOCK_ID_PATTERN.test(draftInfo.anchorId) ? draftInfo.anchorId : null
+  const eventAnchorId = blockAnchorId ? null : draftInfo?.anchorId
   const idbStreams = useWorkspaceStreams(workspaceId)
   const currentWorkspaceUserId = useWorkspaceUserId(workspaceId)
 
@@ -130,12 +134,15 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
         : [],
     [hasDraftThreadPendingEvents, draftThreadPendingEvents, currentWorkspaceUserId]
   )
+  const draftReplyCount = hasDraftThreadPendingEvents
+    ? draftThreadPendingEvents!.filter((e) => e.eventType === "message_created").length
+    : 0
   const cachedAnchorEvent = useMemo(() => {
-    if (!draftInfo || !parentCachedEvents) return null
-    return parentCachedEvents.find((event) => matchesDeepLinkTarget(event, draftInfo.anchorId))
-  }, [draftInfo, parentCachedEvents])
+    if (!eventAnchorId || !parentCachedEvents) return null
+    return parentCachedEvents.find((event) => matchesDeepLinkTarget(event, eventAnchorId))
+  }, [eventAnchorId, parentCachedEvents])
   const { data: parentBootstrap } = useStreamBootstrap(workspaceId, draftInfo?.parentStreamId ?? "", {
-    enabled: !!draftInfo && (!idbParentStream || !cachedAnchorEvent),
+    enabled: !!draftInfo && (!idbParentStream || (!blockAnchorId && !cachedAnchorEvent)),
   })
 
   // Fetch the parent stream's ancestors to build the full breadcrumb trail
@@ -149,13 +156,13 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
 
   const localAnchorEvent = useMemo(() => {
     if (cachedAnchorEvent) return cachedAnchorEvent
-    if (!draftInfo) return null
-    return parentBootstrap?.events.find((event) => matchesDeepLinkTarget(event, draftInfo.anchorId)) ?? null
-  }, [cachedAnchorEvent, parentBootstrap?.events, draftInfo])
+    if (!eventAnchorId) return null
+    return parentBootstrap?.events.find((event) => matchesDeepLinkTarget(event, eventAnchorId)) ?? null
+  }, [cachedAnchorEvent, parentBootstrap?.events, eventAnchorId])
   const { event: anchorEvent } = useThreadAnchorEvent(
     workspaceId,
     draftInfo?.parentStreamId,
-    draftInfo?.anchorId,
+    eventAnchorId,
     localAnchorEvent
   )
 
@@ -498,16 +505,20 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
           }
           style={{ paddingBottom: "var(--composer-height, 0px)" }}
         >
+          {blockAnchorId && (
+            <DocBlockQuote
+              workspaceId={workspaceId}
+              docId={draftInfo.parentStreamId}
+              blockId={blockAnchorId}
+              replyCount={draftReplyCount}
+            />
+          )}
           {anchorEvent && (
             <ThreadParentEvent
               event={anchorEvent}
               workspaceId={workspaceId}
               streamId={draftInfo.parentStreamId}
-              replyCount={
-                hasDraftThreadPendingEvents
-                  ? draftThreadPendingEvents!.filter((e) => e.eventType === "message_created").length
-                  : 0
-              }
+              replyCount={draftReplyCount}
             />
           )}
           {hasDraftThreadPendingEvents ? (

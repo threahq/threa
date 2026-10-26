@@ -22,6 +22,7 @@ import * as callModule from "@/components/call"
 import * as timelineModule from "@/components/timeline"
 import * as syncEngineModule from "@/sync/sync-engine"
 import { UserProfileProvider } from "@/components/user-profile"
+import { docsApi } from "@/api/docs"
 import { StreamPanel } from "./stream-panel"
 
 const workspaceId = "ws_1"
@@ -145,5 +146,22 @@ describe("StreamPanel header agent chip", () => {
     renderPanel(`draft:${parentStreamId}:msg_anchor`)
 
     expect(headerChip()).toBeNull()
+  })
+})
+
+describe("StreamPanel draft on a doc block", () => {
+  it("quotes the block instead of looking for a timeline anchor", async () => {
+    const blockId = `blk_${"0".repeat(25)}1`
+    const getSection = vi.spyOn(docsApi, "getSection").mockResolvedValue({
+      section: { blockId, position: 0, kind: "paragraph", markdown: "Week one owners", contentJson: {} },
+    })
+
+    renderPanel(`draft:${parentStreamId}:${blockId}`)
+
+    expect(await screen.findByText("Week one owners")).toBeInTheDocument()
+    expect({ section: getSection.mock.calls[0], startThread: screen.getByText("Start a new thread") }).toEqual({
+      section: [workspaceId, parentStreamId, blockId],
+      startThread: expect.anything(),
+    })
   })
 })

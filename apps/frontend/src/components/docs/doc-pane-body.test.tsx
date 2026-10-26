@@ -37,6 +37,7 @@ import { SocketEventGate } from "@/sync/socket-event-gate"
 import * as triggersModule from "@/components/editor/triggers"
 import { DocPaneBody } from "./doc-pane-body"
 import { useDocSync } from "./use-doc-sync"
+import type { DocBlockThreads } from "./use-doc-block-threads"
 
 const WORKSPACE_ID = "ws_1"
 const DOC_ID = "stream_doc"
@@ -55,9 +56,11 @@ function proseMirror(): HTMLElement & { editor: Editor } {
   return element as HTMLElement & { editor: Editor }
 }
 
+let paneThreads: DocBlockThreads = new Map()
+
 function DocPane({ canWrite }: { canWrite: boolean | null }) {
   const view = useDocSync(WORKSPACE_ID, DOC_ID)
-  return <DocPaneBody workspaceId={WORKSPACE_ID} canWrite={canWrite} view={view} />
+  return <DocPaneBody workspaceId={WORKSPACE_ID} docId={DOC_ID} canWrite={canWrite} view={view} threads={paneThreads} />
 }
 
 describe("DocPaneBody", () => {
@@ -69,6 +72,10 @@ describe("DocPaneBody", () => {
   let socket: { on: MockInstance; off: MockInstance; emit: MockInstance; connected: boolean }
 
   beforeEach(() => {
+    paneThreads = new Map()
+    vi.spyOn(contextsModule, "usePanel").mockReturnValue({
+      getPanelUrl: (panelId: string) => `/w/${WORKSPACE_ID}?panel=${panelId}`,
+    } as unknown as ReturnType<typeof contextsModule.usePanel>)
     serverDoc = prosemirrorJSONToYDoc(getThreaSchema(), paragraphs("Rotation tracker"), DOC_FRAGMENT)
     gate = new SocketEventGate(WORKSPACE_ID)
     socket = { on: vi.fn(), off: vi.fn(), emit: vi.fn(), connected: true }
@@ -566,6 +573,25 @@ describe("DocPaneBody", () => {
       readOnly: true,
       uploads: 1,
     })
+  })
+
+  it("shows a stamped block's comment count beside it, linking to its thread", async () => {
+    const blockId = `blk_${"0".repeat(25)}1`
+    serverDoc = prosemirrorJSONToYDoc(
+      getThreaSchema(),
+      {
+        type: "doc",
+        content: [{ type: "paragraph", attrs: { blockId }, content: [{ type: "text", text: "Rotation tracker" }] }],
+      },
+      DOC_FRAGMENT
+    )
+    paneThreads = new Map([[blockId, { threadId: "stream_thread", replyCount: 1 }]])
+
+    await mountLoaded()
+
+    expect(screen.getByRole("link", { name: "1 comment on this block" }).getAttribute("href")).toBe(
+      `/w/${WORKSPACE_ID}?panel=stream_thread`
+    )
   })
 
   describe("useDocSync", () => {

@@ -1,5 +1,17 @@
 import { api } from "./client"
-import type { DocPostUpdateResult, DocState, DocUpdatesResponse } from "@threahq/types"
+import type {
+  DocPostUpdateResult,
+  DocSectionResponse,
+  DocState,
+  DocThreadsResponse,
+  DocUpdatesResponse,
+} from "@threahq/types"
+
+export const docKeys = {
+  threads: (workspaceId: string, docId: string) => ["docThreads", workspaceId, docId] as const,
+  section: (workspaceId: string, docId: string, blockId: string) =>
+    ["docSection", workspaceId, docId, blockId] as const,
+}
 
 /** Collaborative doc streams: full state, the update log, and Yjs writes (base64). */
 export const docsApi = {
@@ -15,5 +27,14 @@ export const docsApi = {
 
   postUpdate(workspaceId: string, docId: string, update: string): Promise<DocPostUpdateResult> {
     return api.post<DocPostUpdateResult>(`/api/workspaces/${workspaceId}/docs/${docId}/updates`, { update })
+  },
+
+  /** Every section thread on the doc, keyed by the block it hangs on. */
+  listThreads(workspaceId: string, docId: string): Promise<DocThreadsResponse> {
+    return api.get<DocThreadsResponse>(`/api/workspaces/${workspaceId}/docs/${docId}/threads`)
+  },
+
+  getSection(workspaceId: string, docId: string, blockId: string): Promise<DocSectionResponse> {
+    return api.get<DocSectionResponse>(`/api/workspaces/${workspaceId}/docs/${docId}/sections/${blockId}`)
   },
 }

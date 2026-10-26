@@ -21,7 +21,14 @@ interface DocSession {
 export type DocSyncView =
   | { phase: "loading" }
   | { phase: "error"; retry: () => void }
-  | { phase: "ready"; ydoc: Y.Doc; presence: DocPresence; flush: () => void }
+  | {
+      phase: "ready"
+      ydoc: Y.Doc
+      presence: DocPresence
+      flush: () => void
+      /** Acked joins of the doc's room for this session, 0 until the first; a reconnect adds one. */
+      joinCount: number
+    }
 
 const NO_SESSION_STATUS: DocSyncStatus = { phase: "loading" }
 const noSubscription = () => () => {}
@@ -34,6 +41,7 @@ const noSubscription = () => () => {}
 export function useDocSync(workspaceId: string, docId: string | null): DocSyncView {
   const [generation, setGeneration] = useState(0)
   const [created, setCreated] = useState<DocSession | null>(null)
+  const [joinCount, setJoinCount] = useState(0)
   const key = `${workspaceId}:${docId}:${generation}`
   // The previous doc's session stays in state for the render that switches away from it.
   const session = docId && created?.key === key ? created : null
@@ -80,6 +88,7 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
     window.addEventListener("pagehide", onPageHide)
     window.addEventListener("pageshow", presence.restore)
     window.addEventListener("online", onOnline)
+    setJoinCount(0)
     setCreated({ key, ydoc, sync, presence, loaded: sync.start() })
     return () => {
       window.removeEventListener("pagehide", onPageHide)
@@ -128,6 +137,7 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
         void session.sync.catchUp()
         void session.sync.flush()
         session.presence.resend()
+        setJoinCount((count) => count + 1)
       })
       .catch((error: unknown) => {
         if (!abortController.signal.aborted) console.warn("Failed to join the doc room", { docId, error })
@@ -146,5 +156,5 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
 
   if (!session || status.phase === "loading") return { phase: "loading" }
   if (status.phase === "error") return { phase: "error", retry }
-  return { phase: "ready", ydoc: session.ydoc, presence: session.presence, flush }
+  return { phase: "ready", ydoc: session.ydoc, presence: session.presence, flush, joinCount }
 }
