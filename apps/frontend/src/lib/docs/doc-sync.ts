@@ -3,19 +3,35 @@ import { base64ToBytes, bytesToBase64 } from "@threahq/crypto"
 import type { DocUpdatedPayload } from "@threahq/types"
 import { ApiError, isPermanentApiError } from "@/api/client"
 import { docsApi } from "@/api/docs"
+import { enqueueDocUpdate } from "@/sync/operation-queue"
 
 /** Transaction origin of every update that came from the server; anything else is a local edit to send. */
 export const REMOTE_ORIGIN = Symbol("doc-sync-remote")
 
-export const FLUSH_DEBOUNCE_MS = 400
+/** Longest a run of non-boundary edits waits, counted from its first change. */
+export const FLUSH_CAP_MS = 2500
 const MAX_BACKOFF_MS = 10_000
+const BOUNDARY_TEXT = /[\s\p{P}]$/u
 
 export type DocSyncStatus = { phase: "loading" } | { phase: "ready" } | { phase: "error"; error: unknown }
 
 type DocsApi = typeof docsApi
+type EnqueueDocUpdate = (payload: { docId: string; update: string }) => Promise<void>
 
 function backoffMs(failures: number): number {
   return Math.min(1000 * 2 ** (failures - 1), MAX_BACKOFF_MS)
+}
+
+/** A word, block, formatting, or delete boundary: worth saving at once rather than at the cap. */
+function isBoundary(update: Uint8Array): boolean {
+  const { structs, ds } = Y.decodeUpdate(update)
+  if (ds.clients.size > 0) return true
+  return structs.some((struct) => {
+    if (!(struct instanceof Y.Item)) return false
+    const { content } = struct
+    if (content instanceof Y.ContentString) return BOUNDARY_TEXT.test(content.str)
+    return content instanceof Y.ContentType || content instanceof Y.ContentFormat || content instanceof Y.ContentDeleted
+  })
 }
 
 function sameStatus(a: DocSyncStatus, b: DocSyncStatus): boolean {
@@ -31,14 +47,17 @@ export class DocSync {
   private readonly ydoc: Y.Doc
   private readonly api: DocsApi
   private readonly onRejected?: (refusal: ApiError) => void
+  private readonly enqueue: EnqueueDocUpdate
+  private readonly kickOperationQueue?: () => void
   private readonly listeners = new Set<() => void>()
   private status: DocSyncStatus = { phase: "loading" }
   private seq: number | null = null
   private highestSeen = 0
-  private pending: Uint8Array[] = []
-  private inFlight: { update: Uint8Array; request: Promise<void> } | null = null
-  private flushTimer: ReturnType<typeof setTimeout> | null = null
-  private flushFailures = 0
+  // Every local update the server has not acked. A POST always carries all of them: the server refuses bytes whose dependencies it lacks.
+  private unacked: Uint8Array[] = []
+  private capTimer: ReturnType<typeof setTimeout> | null = null
+  private flushRun: Promise<void> | null = null
+  private flushAgain = false
   private catchUpTimer: ReturnType<typeof setTimeout> | null = null
   private catchUpFailures = 0
   private catchUpRun: Promise<void> | null = null
@@ -52,12 +71,17 @@ export class DocSync {
     api?: DocsApi
     /** Called after the server permanently refused local edits; they were dropped and the doc reloaded. */
     onRejected?: (refusal: ApiError) => void
+    /** Durable hand-off for edits that could not be sent now; defaults to the offline operation queue. */
+    enqueue?: EnqueueDocUpdate
+    kickOperationQueue?: () => void
   }) {
     this.workspaceId = params.workspaceId
     this.docId = params.docId
     this.ydoc = params.ydoc
     this.api = params.api ?? docsApi
     this.onRejected = params.onRejected
+    this.enqueue = params.enqueue ?? ((payload) => enqueueDocUpdate(params.workspaceId, payload.docId, payload.update))
+    this.kickOperationQueue = params.kickOperationQueue
   }
 
   getStatus = (): DocSyncStatus => this.status
@@ -76,15 +100,27 @@ export class DocSync {
     return this.load()
   }
 
-  /** Detaches; edits not yet saved (debounced, in flight, or awaiting a retry) are sent once more, unobserved. */
+  /** Detaches; edits the server has not acked go to the operation queue. */
   stop(): void {
     if (this.stopped) return
     this.stopped = true
     this.ydoc.off("update", this.onLocalUpdate)
-    if (this.flushTimer) clearTimeout(this.flushTimer)
+    this.clearCapTimer()
     if (this.catchUpTimer) clearTimeout(this.catchUpTimer)
     this.listeners.clear()
-    this.flushOnStop()
+    if (this.unacked.length > 0) void this.handOff()
+  }
+
+  /** Sends every unacked edit now; one request is in flight at a time, so a call during one runs after it. */
+  flush(): Promise<void> {
+    if (this.stopped) return Promise.resolve()
+    this.clearCapTimer()
+    if (this.flushRun) {
+      this.flushAgain = true
+      return this.flushRun
+    }
+    this.flushRun = this.runFlush()
+    return this.flushRun
   }
 
   receive = (payload: DocUpdatedPayload): void => {
@@ -127,7 +163,8 @@ export class DocSync {
   }
 
   private async reload(): Promise<void> {
-    const doc = await this.api.get(this.workspaceId, this.docId)
+    const stateVector = this.seq === null ? undefined : bytesToBase64(Y.encodeStateVector(this.ydoc))
+    const doc = await this.api.get(this.workspaceId, this.docId, stateVector)
     if (this.stopped) return
     this.applyRemote(doc.state)
     this.seq = Math.max(this.seq ?? 0, doc.seq)
@@ -179,61 +216,56 @@ export class DocSync {
 
   private onLocalUpdate = (update: Uint8Array, origin: unknown): void => {
     if (origin === REMOTE_ORIGIN) return
-    this.pending.push(update)
-    this.scheduleFlush(FLUSH_DEBOUNCE_MS)
-  }
-
-  private scheduleFlush(delayMs: number): void {
-    if (this.flushTimer) clearTimeout(this.flushTimer)
-    this.flushTimer = setTimeout(() => {
-      this.flushTimer = null
+    this.unacked.push(update)
+    if (isBoundary(update)) {
       void this.flush()
-    }, delayMs)
-  }
-
-  private async flush(): Promise<void> {
-    if (this.inFlight || this.pending.length === 0 || this.stopped) return
-    const update = Y.mergeUpdates(this.pending)
-    this.pending = []
-    this.inFlight = { update, request: this.post(update) }
-    try {
-      await this.inFlight.request
-      this.flushFailures = 0
-    } catch (error) {
-      if (this.stopped) return
-      if (isPermanentApiError(error)) {
-        await this.discardRefusedEdits(error)
-      } else {
-        this.pending.unshift(update)
-        this.flushFailures += 1
-        this.scheduleFlush(backoffMs(this.flushFailures))
-      }
-    } finally {
-      this.inFlight = null
+      return
     }
-    if (this.pending.length > 0 && !this.flushTimer && !this.stopped) this.scheduleFlush(FLUSH_DEBOUNCE_MS)
+    this.capTimer ??= setTimeout(() => {
+      this.capTimer = null
+      void this.flush()
+    }, FLUSH_CAP_MS)
   }
 
-  private flushOnStop(): void {
-    const inFlight = this.inFlight
-    const pending = this.pending
-    this.pending = []
-    if (!inFlight && pending.length === 0) return
-    // Queued behind a POST still in flight: these bytes can depend on it, so a transient failure resends it too.
-    const toSend = inFlight
-      ? inFlight.request.then(
-          () => pending,
-          (error: unknown) => (isPermanentApiError(error) ? pending : [inFlight.update, ...pending])
-        )
-      : Promise.resolve(pending)
-    void toSend
-      .then((updates) => {
-        if (updates.length === 0) return
-        return this.api.postUpdate(this.workspaceId, this.docId, bytesToBase64(Y.mergeUpdates(updates)))
-      })
-      .catch((error: unknown) =>
-        console.error("Doc edits made before closing were not saved", { docId: this.docId, error })
-      )
+  private clearCapTimer(): void {
+    if (this.capTimer) clearTimeout(this.capTimer)
+    this.capTimer = null
+  }
+
+  private async runFlush(): Promise<void> {
+    try {
+      do {
+        this.flushAgain = false
+        if (this.unacked.length === 0) return
+        if (!navigator.onLine) {
+          await this.handOff()
+          return
+        }
+        const carried = new Set(this.unacked)
+        try {
+          await this.post(Y.mergeUpdates([...carried]))
+        } catch (error) {
+          if (this.stopped) return
+          if (isPermanentApiError(error)) await this.discardRefusedEdits(error)
+          else await this.handOff()
+          return
+        }
+        this.unacked = this.unacked.filter((update) => !carried.has(update))
+      } while (this.flushAgain && !this.stopped)
+    } finally {
+      this.flushRun = null
+    }
+  }
+
+  /** Bytes stay in `unacked` too: the next flush re-sends them and the server skips what it already holds. */
+  private async handOff(): Promise<void> {
+    try {
+      await this.enqueue({ docId: this.docId, update: bytesToBase64(Y.mergeUpdates(this.unacked)) })
+    } catch (error) {
+      console.error("Doc edits could not be queued for retry", { docId: this.docId, error })
+      return
+    }
+    this.kickOperationQueue?.()
   }
 
   private async post(update: Uint8Array): Promise<void> {
@@ -243,7 +275,7 @@ export class DocSync {
   }
 
   private async discardRefusedEdits(error: ApiError): Promise<void> {
-    this.pending = []
+    this.unacked = []
     try {
       await this.reload()
     } catch {

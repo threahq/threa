@@ -1,8 +1,11 @@
+import * as Y from "yjs"
+import { base64ToBytes, bytesToBase64 } from "@threahq/crypto"
 import { db, getActiveDb, sequenceToNum, type ThreaDatabase } from "@/db"
 import { runAccountOwnedWork, type AccountWorkFence } from "./account-fence"
 import type { CachedEvent, PendingOperation } from "@/db/database"
 import type { CommandFailedPayload, ScheduleMessageInput, ScheduledMessageView } from "@threahq/types"
 import { ApiError, commandsApi, isPermanentApiError } from "@/api"
+import { docsApi } from "@/api/docs"
 import { persistScheduledRows, removeScheduledRow, replaceLocalScheduledRow } from "@/hooks/use-scheduled"
 import { executeDraftDelete, executeDraftResolve, executeDraftUpsert, type DraftsServiceLike } from "./draft-sync"
 import { bumpLaterOptimisticAnchors } from "./stream-sync"
@@ -51,6 +54,9 @@ async function reconcileRejectedOperation(op: PendingOperation, database: ThreaD
     case "send_scheduled_now":
     case "cancel_scheduled_message":
       await removeScheduledRow(op.payload.id as string, database)
+      break
+    case "doc_update":
+      console.warn("doc update rejected", { docId: op.payload.docId })
       break
   }
 }
@@ -126,6 +132,34 @@ export async function enqueueOperation(
     payload,
     createdAt: Date.now(),
     retryCount: 0,
+  })
+}
+
+/**
+ * Queue a doc's unsent Yjs bytes (base64). A waiting row for the same doc absorbs
+ * them, merged, since it may hold bytes from an earlier session this one never had;
+ * a started row may already be on the wire, so it stays and a new row is added.
+ */
+export async function enqueueDocUpdate(workspaceId: string, docId: string, update: string): Promise<void> {
+  await db.transaction("rw", db.pendingOperations, async () => {
+    const waiting = await db.pendingOperations
+      .where("workspaceId")
+      .equals(workspaceId)
+      .filter((op) => op.type === "doc_update" && op.payload.docId === docId && op.startedAt === undefined)
+      .first()
+    if (waiting) {
+      const merged = Y.mergeUpdates([base64ToBytes(waiting.payload.update as string), base64ToBytes(update)])
+      await db.pendingOperations.update(waiting.id, { payload: { docId, update: bytesToBase64(merged) } })
+      return
+    }
+    await db.pendingOperations.add({
+      id: generateId(),
+      workspaceId,
+      type: "doc_update",
+      payload: { docId, update },
+      createdAt: Date.now(),
+      retryCount: 0,
+    })
   })
 }
 
@@ -317,6 +351,10 @@ async function executeOperation(
       }
       break
     }
+
+    case "doc_update":
+      await docsApi.postUpdate(workspaceId, payload.docId as string, payload.update as string)
+      break
 
     case "upsert_draft": {
       // Silent retry, no error surface (a failed draft save is invisible — the

@@ -1,13 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import * as Y from "yjs"
+import { base64ToBytes, bytesToBase64 } from "@threahq/crypto"
 import { AuthErrorCodes, ShareErrorCodes } from "@threahq/types"
 import { db, getActiveDb, ThreaDatabase, accountDbName, type CachedScheduledMessage } from "@/db"
 import { setActiveDb } from "@/db/database"
 import * as apiModule from "@/api"
+import * as docsApiModule from "@/api/docs"
 import { ApiError } from "@/api"
 import * as privacyToastModule from "@/lib/share-privacy-toast"
 import * as streamSyncModule from "./stream-sync"
 import { retireAccountWork } from "./account-fence"
-import { enqueueOperation, processOperationQueue } from "./operation-queue"
+import { enqueueDocUpdate, enqueueOperation, processOperationQueue } from "./operation-queue"
 
 const workspaceId = "ws_1"
 const schedId = "sched_01TESTROW00000000000000000"
@@ -115,6 +118,61 @@ describe("processOperationQueue edit replay", () => {
       [workspaceId, "msg_1", { contentJson, confirmedPrivacyWarning: true }],
       [workspaceId, "msg_2", { contentJson }],
     ])
+  })
+})
+
+describe("doc_update operations", () => {
+  it("should post a queued doc update through the docs api when drained", async () => {
+    const postUpdate = vi.spyOn(docsApiModule.docsApi, "postUpdate").mockResolvedValue({ seq: 1, touchedBlockIds: [] })
+    await enqueueDocUpdate(workspaceId, "stream_doc", "AAE=")
+
+    await process(scheduledServiceRejectingWith(new Error("unused")))
+
+    expect({ calls: postUpdate.mock.calls, ops: await db.pendingOperations.toArray() }).toEqual({
+      calls: [[workspaceId, "stream_doc", "AAE="]],
+      ops: [],
+    })
+    postUpdate.mockRestore()
+  })
+
+  it("should merge into a waiting row for the same doc and keep a started one when enqueuing", async () => {
+    const edit = (text: string) => {
+      const doc = new Y.Doc()
+      doc.getText("t").insert(0, text)
+      return Y.encodeStateAsUpdate(doc)
+    }
+    const earlierSession = edit("earlier")
+    const laterSession = edit("later")
+    const started = {
+      id: "op_started",
+      workspaceId,
+      type: "doc_update" as const,
+      payload: { docId: "stream_doc", update: "c3RhcnRlZA==" },
+      createdAt: 1,
+      retryCount: 1,
+      startedAt: 2,
+    }
+    const notStarted = { id: "op_other", workspaceId, type: "doc_update" as const, createdAt: 3, retryCount: 0 }
+    const otherDoc = { ...notStarted, payload: { docId: "stream_other", update: "b3RoZXI=" } }
+    const waiting = {
+      ...notStarted,
+      id: "op_waiting",
+      payload: { docId: "stream_doc", update: bytesToBase64(earlierSession) },
+    }
+    await db.pendingOperations.bulkAdd([started, otherDoc, waiting])
+
+    await enqueueDocUpdate(workspaceId, "stream_doc", bytesToBase64(laterSession))
+
+    const rows = await db.pendingOperations.orderBy("createdAt").toArray()
+    const replayed = new Y.Doc()
+    Y.applyUpdate(replayed, base64ToBytes(rows[2]!.payload.update as string))
+    const expected = new Y.Doc()
+    Y.applyUpdate(expected, earlierSession)
+    Y.applyUpdate(expected, laterSession)
+    expect({ rows, state: Y.encodeStateAsUpdate(replayed) }).toEqual({
+      rows: [started, otherDoc, { ...waiting, payload: { docId: "stream_doc", update: expect.any(String) } }],
+      state: Y.encodeStateAsUpdate(expected),
+    })
   })
 })
 

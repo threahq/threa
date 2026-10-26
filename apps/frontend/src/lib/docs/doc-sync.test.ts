@@ -3,11 +3,10 @@ import * as Y from "yjs"
 import { base64ToBytes, bytesToBase64 } from "@threahq/crypto"
 import type { DocState, DocUpdatedPayload, DocUpdateView, Stream } from "@threahq/types"
 import { ApiError } from "@/api/client"
-import { DocSync, FLUSH_DEBOUNCE_MS, REMOTE_ORIGIN } from "./doc-sync"
+import { DocSync, FLUSH_CAP_MS, REMOTE_ORIGIN } from "./doc-sync"
 
 const WORKSPACE_ID = "ws_1"
 const DOC_ID = "stream_doc"
-const DEBOUNCE_MS = FLUSH_DEBOUNCE_MS
 const LONGEST_BACKOFF_MS = 10_000
 
 interface Hold {
@@ -24,10 +23,12 @@ class FakeDocServer {
 
   readonly api = {
     get: vi.fn(
-      async (): Promise<DocState> => ({
+      async (_ws: string, _doc: string, stateVector?: string): Promise<DocState> => ({
         stream: { id: DOC_ID } as Stream,
         seq: this.seq,
-        state: bytesToBase64(Y.encodeStateAsUpdate(this.doc)),
+        state: bytesToBase64(
+          Y.encodeStateAsUpdate(this.doc, stateVector === undefined ? undefined : base64ToBytes(stateVector))
+        ),
         sections: [],
       })
     ),
@@ -127,20 +128,37 @@ function deferred(): Hold & { promise: Promise<void> } {
 function connect(server: FakeDocServer) {
   const ydoc = new Y.Doc()
   const rejections: string[] = []
+  const enqueued: { docId: string; text: string }[] = []
+  const kicks: string[] = []
   const sync = new DocSync({
     workspaceId: WORKSPACE_ID,
     docId: DOC_ID,
     ydoc,
     api: server.api,
     onRejected: (refusal) => rejections.push(refusal.code),
+    enqueue: async ({ docId, update }) => {
+      enqueued.push({ docId, text: textOf(update) })
+    },
+    kickOperationQueue: () => kicks.push(`after ${enqueued.length}`),
   })
   server.clients.add(sync)
-  return { ydoc, sync, rejections, text: () => ydoc.getText("t").toString() }
+  return { ydoc, sync, rejections, enqueued, kicks, text: () => ydoc.getText("t").toString() }
 }
 
 function type(ydoc: Y.Doc, text: string): void {
   const ytext = ydoc.getText("t")
   ytext.insert(ytext.length, text)
+}
+
+/** The text a self-contained update produces on an empty doc. */
+function textOf(update: string): string {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, base64ToBytes(update))
+  return doc.getText("t").toString()
+}
+
+function postedTexts(server: FakeDocServer): string[] {
+  return server.api.postUpdate.mock.calls.map((call) => textOf(call[2]))
 }
 
 describe("DocSync", () => {
@@ -171,24 +189,47 @@ describe("DocSync", () => {
     })
   })
 
-  it("posts local edits as one merged update after the debounce", async () => {
+  it("should post at once when a space ends a word", async () => {
+    const client = connect(server)
+    await client.sync.start()
+
+    type(client.ydoc, "hi ")
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect({ posted: postedTexts(server), serverText: server.text }).toEqual({ posted: ["hi "], serverText: "hi " })
+  })
+
+  it("should hold letters until the cap after the first change when no boundary is typed", async () => {
     const client = connect(server)
     await client.sync.start()
 
     type(client.ydoc, "a")
-    await vi.advanceTimersByTimeAsync(200)
+    await vi.advanceTimersByTimeAsync(1000)
     type(client.ydoc, "b")
-    await vi.advanceTimersByTimeAsync(200)
-    type(client.ydoc, "c")
-    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS - 1)
+    await vi.advanceTimersByTimeAsync(FLUSH_CAP_MS - 1000 - 1)
     expect(server.api.postUpdate).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
 
-    expect({
-      posts: server.api.postUpdate.mock.calls.length,
-      serverText: server.text,
-      status: client.sync.getStatus(),
-    }).toEqual({ posts: 1, serverText: "abc", status: { phase: "ready" } })
+    expect({ posted: postedTexts(server), serverText: server.text, timers: vi.getTimerCount() }).toEqual({
+      posted: ["ab"],
+      serverText: "ab",
+      timers: 0,
+    })
+  })
+
+  it.each<[string, (ydoc: Y.Doc) => void]>([
+    ["a block is inserted", (ydoc) => ydoc.getXmlFragment("f").insert(0, [new Y.XmlElement("paragraph")])],
+    ["text is formatted", (ydoc) => ydoc.getText("t").format(0, 2, { bold: true })],
+    ["text is deleted", (ydoc) => ydoc.getText("t").delete(0, 1)],
+  ])("should post at once when %s", async (_label, edit) => {
+    const client = connect(server)
+    await client.sync.start()
+
+    type(client.ydoc, "ab")
+    edit(client.ydoc)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(Y.encodeStateAsUpdate(server.doc)).toEqual(Y.encodeStateAsUpdate(client.ydoc))
   })
 
   it("applies the next remote update in order without fetching", async () => {
@@ -242,35 +283,63 @@ describe("DocSync", () => {
       server.failNextPost(400, code)
 
       type(client.ydoc, "bad")
-      await vi.advanceTimersByTimeAsync(DEBOUNCE_MS)
-      await vi.advanceTimersByTimeAsync(LONGEST_BACKOFF_MS)
+      await vi.advanceTimersByTimeAsync(FLUSH_CAP_MS)
+      await client.sync.flush()
+      client.sync.stop()
 
       expect({
         posts: server.api.postUpdate.mock.calls.length,
         gets: server.api.get.mock.calls.length,
         status: client.sync.getStatus(),
         rejections: client.rejections,
-      }).toEqual({ posts: 1, gets: 2, status: { phase: "ready" }, rejections: [code] })
+        enqueued: client.enqueued,
+      }).toEqual({ posts: 1, gets: 2, status: { phase: "ready" }, rejections: [code], enqueued: [] })
     }
   )
 
-  it("keeps a failed send and retries it with backoff", async () => {
+  it.each([
+    ["a network error", new TypeError("Failed to fetch")],
+    ["a 503", new ApiError(503, "UNAVAILABLE", "unavailable")],
+  ])(
+    "should queue the unacked edits once and resend them with newer ones when a post fails with %s",
+    async (_label, error) => {
+      const client = connect(server)
+      await client.sync.start()
+      server.api.postUpdate.mockRejectedValueOnce(error)
+
+      type(client.ydoc, "kept")
+      type(client.ydoc, " ")
+      await vi.advanceTimersByTimeAsync(LONGEST_BACKOFF_MS)
+      type(client.ydoc, "more ")
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect({
+        enqueued: client.enqueued,
+        kicks: client.kicks,
+        posted: postedTexts(server),
+        server: Y.encodeStateAsUpdate(server.doc),
+      }).toEqual({
+        enqueued: [{ docId: DOC_ID, text: "kept " }],
+        kicks: ["after 1"],
+        posted: ["kept ", "kept more "],
+        server: Y.encodeStateAsUpdate(client.ydoc),
+      })
+    }
+  )
+
+  it("should queue instead of posting when the browser is offline at flush time", async () => {
     const client = connect(server)
     await client.sync.start()
-    server.api.postUpdate.mockRejectedValueOnce(new TypeError("Failed to fetch"))
-    server.failNextPost(503, "UNAVAILABLE")
+    const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)
 
-    type(client.ydoc, "kept")
-    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS)
-    await vi.advanceTimersByTimeAsync(999)
-    expect(server.api.postUpdate).toHaveBeenCalledTimes(1)
-    await vi.advanceTimersByTimeAsync(1)
-    expect(server.api.postUpdate).toHaveBeenCalledTimes(2)
-    await vi.advanceTimersByTimeAsync(2000)
+    type(client.ydoc, "offline ")
+    await vi.advanceTimersByTimeAsync(0)
+    online.mockRestore()
 
-    expect({ posts: server.api.postUpdate.mock.calls.length, serverText: server.text }).toEqual({
-      posts: 3,
-      serverText: "kept",
+    expect({ posts: server.api.postUpdate.mock.calls.length, enqueued: client.enqueued, kicks: client.kicks }).toEqual({
+      posts: 0,
+      enqueued: [{ docId: DOC_ID, text: "offline " }],
+      kicks: ["after 1"],
     })
   })
 
@@ -282,9 +351,9 @@ describe("DocSync", () => {
 
     type(alice.ydoc, "Rotation tracker")
     type(bob.ydoc, "Second paragraph")
-    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS)
+    await vi.advanceTimersByTimeAsync(FLUSH_CAP_MS)
     type(bob.ydoc, "!")
-    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS)
+    await vi.advanceTimersByTimeAsync(0)
 
     expect({
       alice: Y.encodeStateAsUpdate(alice.ydoc),
@@ -301,27 +370,28 @@ describe("DocSync", () => {
     })
   })
 
-  it("sends an edit made while a post is in flight exactly once, after the post settles", async () => {
+  it("should drop only the carried edits when a post acks after a mid-flight edit", async () => {
     const client = connect(server)
     await client.sync.start()
+    const local: Uint8Array[] = []
+    client.ydoc.on("update", (update: Uint8Array) => local.push(update))
     const post = server.holdNextPost()
 
-    type(client.ydoc, "a")
-    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS)
-    type(client.ydoc, "b")
-    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS)
+    type(client.ydoc, "a ")
+    await vi.advanceTimersByTimeAsync(0)
+    type(client.ydoc, "b ")
+    await vi.advanceTimersByTimeAsync(0)
     expect(server.api.postUpdate).toHaveBeenCalledTimes(1)
     post.release()
-    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS)
+    await vi.advanceTimersByTimeAsync(0)
 
-    const posted = server.api.postUpdate.mock.calls.map((call) => {
-      const doc = new Y.Doc()
-      Y.applyUpdate(doc, base64ToBytes(call[2]))
-      return doc.getText("t").toString()
-    })
-    expect({ posted, serverText: server.text, status: client.sync.getStatus() }).toEqual({
-      posted: ["a", ""],
-      serverText: "ab",
+    expect({
+      posted: server.api.postUpdate.mock.calls.map((call) => call[2]),
+      serverText: server.text,
+      status: client.sync.getStatus(),
+    }).toEqual({
+      posted: [bytesToBase64(Y.mergeUpdates([local[0]!])), bytesToBase64(Y.mergeUpdates([local[1]!]))],
+      serverText: "a b ",
       status: { phase: "ready" },
     })
   })
@@ -331,7 +401,7 @@ describe("DocSync", () => {
     await client.sync.start()
 
     type(client.ydoc, "mine")
-    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS)
+    await vi.advanceTimersByTimeAsync(FLUSH_CAP_MS)
     client.sync.receive(server.writeElsewhere(" theirs"))
 
     expect({ text: client.text(), fetched: server.api.listUpdates.mock.calls.length }).toEqual({
@@ -362,78 +432,51 @@ describe("DocSync", () => {
     }
   )
 
-  it("leaves no timers and sends nothing more when stopped mid-post", async () => {
+  it("should queue the unacked edits and send nothing more when stopped mid-post", async () => {
     const client = connect(server)
     await client.sync.start()
     const post = server.holdNextPost()
 
-    type(client.ydoc, "x")
-    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS)
+    type(client.ydoc, "x ")
+    await vi.advanceTimersByTimeAsync(0)
+    type(client.ydoc, "y")
     client.sync.stop()
-    post.fail(new ApiError(400, "DOC_UPDATE_NOT_APPLICABLE", "missing deps"))
+    post.fail(new TypeError("Failed to fetch"))
     await vi.advanceTimersByTimeAsync(0)
 
-    expect({ timers: vi.getTimerCount(), posts: server.api.postUpdate.mock.calls.length }).toEqual({
-      timers: 0,
-      posts: 1,
-    })
+    expect({
+      timers: vi.getTimerCount(),
+      posts: server.api.postUpdate.mock.calls.length,
+      enqueued: client.enqueued,
+      kicks: client.kicks,
+    }).toEqual({ timers: 0, posts: 1, enqueued: [{ docId: DOC_ID, text: "x y" }], kicks: ["after 1"] })
   })
 
-  it("sends edits still inside the debounce window when stopped", async () => {
+  it("should queue the unacked edits without posting when stopped", async () => {
     const client = connect(server)
     await client.sync.start()
 
     type(client.ydoc, "last words")
     client.sync.stop()
-    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(FLUSH_CAP_MS)
 
     expect({
       posts: server.api.postUpdate.mock.calls.length,
-      serverText: server.text,
+      enqueued: client.enqueued,
+      kicks: client.kicks,
       timers: vi.getTimerCount(),
-    }).toEqual({
-      posts: 1,
-      serverText: "last words",
-      timers: 0,
-    })
+    }).toEqual({ posts: 0, enqueued: [{ docId: DOC_ID, text: "last words" }], kicks: ["after 1"], timers: 0 })
   })
 
-  it("sends what was typed during an in-flight post after it settles when stopped", async () => {
+  it("should queue nothing when stopped with every edit acked", async () => {
     const client = connect(server)
     await client.sync.start()
-    const post = server.holdNextPost()
 
-    type(client.ydoc, "a")
-    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS)
-    type(client.ydoc, "b")
+    type(client.ydoc, "saved ")
+    await vi.advanceTimersByTimeAsync(0)
     client.sync.stop()
-    await vi.advanceTimersByTimeAsync(0)
-    expect(server.api.postUpdate).toHaveBeenCalledTimes(1)
-    post.release()
-    await vi.advanceTimersByTimeAsync(0)
 
-    expect({ posts: server.api.postUpdate.mock.calls.length, serverText: server.text }).toEqual({
-      posts: 2,
-      serverText: "ab",
-    })
-  })
-
-  it("resends an in-flight post that fails transiently after stop, with what was typed after it", async () => {
-    const client = connect(server)
-    await client.sync.start()
-    const post = server.holdNextPost()
-
-    type(client.ydoc, "first")
-    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS)
-    type(client.ydoc, " second")
-    client.sync.stop()
-    post.fail(new TypeError("Failed to fetch"))
-    await vi.advanceTimersByTimeAsync(0)
-
-    expect({ posts: server.api.postUpdate.mock.calls.length, serverText: server.text }).toEqual({
-      posts: 2,
-      serverText: "first second",
-    })
+    expect({ posted: postedTexts(server), enqueued: client.enqueued }).toEqual({ posted: ["saved "], enqueued: [] })
   })
 
   it("stops catching up and reports an error when access to the doc is gone", async () => {
@@ -466,6 +509,22 @@ describe("DocSync", () => {
     })
   })
 
+  it("should send its state vector when reloading after the first load", async () => {
+    server.writeElsewhere("base")
+    const client = connect(server)
+    await client.sync.start()
+    const stateVector = bytesToBase64(Y.encodeStateVector(client.ydoc))
+    server.writeElsewhere(" compacted")
+    server.snapshotSeq = 2
+
+    await client.sync.catchUp()
+
+    expect({ text: client.text(), stateVectors: server.api.get.mock.calls.map((call) => call[2]) }).toEqual({
+      text: "base compacted",
+      stateVectors: [undefined, stateVector],
+    })
+  })
+
   it("adopts the server seq after a 409 reload", async () => {
     const client = connect(server)
     await client.sync.start()
@@ -491,7 +550,7 @@ describe("DocSync", () => {
     await client.sync.catchUp()
     type(client.ydoc, "x")
     type(client.ydoc, "y")
-    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS)
+    await vi.advanceTimersByTimeAsync(FLUSH_CAP_MS)
 
     expect(seen).toEqual([{ phase: "loading" }, { phase: "ready" }])
   })
