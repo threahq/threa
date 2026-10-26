@@ -50,6 +50,18 @@ interface DocSectionRow {
 
 const HEAD_COLUMNS = "workspace_id, stream_id, update_seq, body_markdown, body_json, created_at, updated_at"
 
+const SECTION_COLUMNS = "block_id, position, kind, markdown, content_json"
+
+function mapSection(row: DocSectionRow): DocSection {
+  return {
+    blockId: row.block_id,
+    position: row.position,
+    kind: row.kind,
+    markdown: row.markdown,
+    contentJson: row.content_json,
+  }
+}
+
 function mapHead(row: DocHeadRow): DocHead {
   return {
     workspaceId: row.workspace_id,
@@ -188,16 +200,18 @@ export const DocRepository = {
 
   async listSections(db: Querier, workspaceId: string, docId: string): Promise<DocSection[]> {
     const result = await db.query<DocSectionRow>(sql`
-      SELECT block_id, position, kind, markdown, content_json FROM doc_sections
+      SELECT ${sql.raw(SECTION_COLUMNS)} FROM doc_sections
       WHERE workspace_id = ${workspaceId} AND doc_id = ${docId}
       ORDER BY position
     `)
-    return result.rows.map((row) => ({
-      blockId: row.block_id,
-      position: row.position,
-      kind: row.kind,
-      markdown: row.markdown,
-      contentJson: row.content_json,
-    }))
+    return result.rows.map(mapSection)
+  },
+
+  async findSection(db: Querier, workspaceId: string, docId: string, blockId: string): Promise<DocSection | null> {
+    const result = await db.query<DocSectionRow>(sql`
+      SELECT ${sql.raw(SECTION_COLUMNS)} FROM doc_sections
+      WHERE workspace_id = ${workspaceId} AND doc_id = ${docId} AND block_id = ${blockId}
+    `)
+    return result.rows[0] ? mapSection(result.rows[0]) : null
   },
 }

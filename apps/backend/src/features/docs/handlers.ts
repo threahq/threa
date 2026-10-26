@@ -1,6 +1,6 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import type { DocUpdatesResponse } from "@threahq/types"
+import type { DocSectionResponse, DocThreadsResponse, DocUpdatesResponse } from "@threahq/types"
 import { validateRequest } from "../../lib/validation"
 import type { DocService } from "./service"
 
@@ -14,6 +14,8 @@ const MAX_UPDATE_BASE64_LENGTH = 4_000_000
 const MAX_STATE_VECTOR_BASE64_LENGTH = 65_536
 
 const paramsSchema = z.object({ docId: z.string().min(1) })
+
+const sectionParamsSchema = paramsSchema.extend({ blockId: z.string().min(1) })
 
 const getQuerySchema = z.object({ sv: z.base64().max(MAX_STATE_VECTOR_BASE64_LENGTH).optional() })
 
@@ -49,6 +51,23 @@ export function createDocHandlers({ docService }: Dependencies) {
         after,
       })
       res.json({ updates } satisfies DocUpdatesResponse)
+    },
+
+    async listThreads(req: Request, res: Response) {
+      const { docId } = validateRequest(paramsSchema, req.params)
+      const threads = await docService.listThreads({ workspaceId: req.workspaceId!, userId: req.user!.id, docId })
+      res.json({ threads } satisfies DocThreadsResponse)
+    },
+
+    async getSection(req: Request, res: Response) {
+      const { docId, blockId } = validateRequest(sectionParamsSchema, req.params)
+      const section = await docService.getSection({
+        workspaceId: req.workspaceId!,
+        userId: req.user!.id,
+        docId,
+        blockId,
+      })
+      res.json({ section } satisfies DocSectionResponse)
     },
 
     async postUpdate(req: Request, res: Response) {

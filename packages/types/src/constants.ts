@@ -68,7 +68,7 @@ export const StreamReadOnlyReasons = {
 } as const satisfies Record<string, StreamReadOnlyReason>
 
 const THREAD_ANCHOR_PREFIXES = ["msg_", "event_"] as const
-type ThreadAnchorPrefix = (typeof THREAD_ANCHOR_PREFIXES)[number]
+type ThreadAnchorPrefix = (typeof THREAD_ANCHOR_PREFIXES)[number] | "blk_"
 
 /** Per-type behavior: adding a stream type means adding a row here, not a branch at every call site. */
 export interface StreamTypeCapabilities {
@@ -144,7 +144,7 @@ export const STREAM_TYPE_CAPABILITIES = {
     messagesReadOnly: StreamReadOnlyReasons.DOC_STREAM,
     listed: false,
     sidebarSection: null,
-    threadAnchorPrefixes: [],
+    threadAnchorPrefixes: ["blk_"],
     hostsAsides: false,
     hostsDocs: false,
     ownMembers: false,
@@ -186,6 +186,7 @@ export const DocErrorCodes = {
   UPDATE_NOT_APPLICABLE: "DOC_UPDATE_NOT_APPLICABLE",
   UPDATE_INVALID: "DOC_UPDATE_INVALID",
   STATE_VECTOR_INVALID: "DOC_STATE_VECTOR_INVALID",
+  SECTION_NOT_FOUND: "DOC_SECTION_NOT_FOUND",
 } as const
 
 // A stream's system purpose, when it exists to power a feature rather than to be

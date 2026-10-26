@@ -29,7 +29,7 @@ describe("stream read-only mutation source shape", () => {
       [
         "service.ts",
         {
-          createThread: "assertStreamWritable",
+          createThread: "assertViewerStreamWritable",
           updateCompanionMode: "assertStreamWritable",
           setStreamToolPolicy: "assertStreamWritable",
           updateStream: "assertStreamWritable",
