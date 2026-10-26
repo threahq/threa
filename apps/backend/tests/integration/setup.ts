@@ -226,12 +226,15 @@ export async function withTestTransaction<T>(pool: Pool, callback: (client: Pool
 }
 
 /**
- * Deletes every stream. The preloaded server's workers lock stream rows in id
- * order (`StreamRepository.findByIdsForUpdateBlocking`); a plain table-wide
- * DELETE locks them in heap order and deadlocks against them.
+ * Deletes every stream but `exceptId`. The preloaded server's workers lock
+ * stream rows in id order (`StreamRepository.findByIdsForUpdateBlocking`); a
+ * plain table-wide DELETE locks them in heap order and deadlocks against them.
  */
-export async function deleteAllStreams(pool: Pool): Promise<void> {
-  await pool.query("DELETE FROM streams WHERE id IN (SELECT id FROM streams ORDER BY id FOR UPDATE)")
+export async function deleteAllStreams(db: Querier, exceptId?: string): Promise<void> {
+  await db.query(
+    "DELETE FROM streams WHERE id IN (SELECT id FROM streams WHERE id IS DISTINCT FROM $1 ORDER BY id FOR UPDATE)",
+    [exceptId ?? null]
+  )
 }
 
 /**

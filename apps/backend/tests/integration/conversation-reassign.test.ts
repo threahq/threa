@@ -9,7 +9,13 @@
 
 import { describe, test, expect, beforeAll, afterAll, afterEach } from "bun:test"
 import { Pool } from "pg"
-import { withTransaction, addTestMember, setupIsolatedTestDatabase, testMessageContent } from "./setup"
+import {
+  deleteAllStreams,
+  withTransaction,
+  addTestMember,
+  setupIsolatedTestDatabase,
+  testMessageContent,
+} from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
@@ -65,10 +71,7 @@ describe("ConversationService.reassignMessage", () => {
       await client.query("DELETE FROM conversation_feedback")
       await client.query("DELETE FROM conversations")
       await client.query("DELETE FROM messages")
-      await client.query(
-        "DELETE FROM streams WHERE id IN (SELECT id FROM streams WHERE id != $1 ORDER BY id FOR UPDATE)",
-        [testStreamId]
-      )
+      await deleteAllStreams(client, testStreamId)
     })
   })
 
