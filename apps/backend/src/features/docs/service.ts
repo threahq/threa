@@ -14,7 +14,7 @@ import {
 import { collectAttachmentReferenceIds } from "@threahq/prosemirror"
 import { withClient, withTransaction, type Querier } from "../../db"
 import { HttpError, StreamNotFoundError } from "../../lib/errors"
-import { eventId } from "../../lib/id"
+import { blockId, eventId } from "../../lib/id"
 import { OutboxRepository } from "../../lib/outbox"
 import { AttachmentRepository } from "../attachments"
 import {
@@ -25,13 +25,16 @@ import {
   resolveLockedStreamAuthorities,
   type Stream,
 } from "../streams"
-import { diffSections, projectDoc } from "./projection"
+import { buildContent, type DocRewrite } from "./agent-markdown"
+import type { DocAgentEditRefusal } from "./agent-types"
+import { diffSections, projectDoc, type DocProjection } from "./projection"
 import { DocRepository, type DocHead, type DocUpdate } from "./repository"
 import {
   DOC_SERVER_CLIENT_ID,
   DocUpdateInvalidError,
   DocUpdateNotApplicableError,
   applyClientWrite,
+  applyServerContent,
   decodeUpdateBase64,
   encodeFullState,
   encodeUpdateBase64,
@@ -42,6 +45,8 @@ import {
 export const DOC_SNAPSHOT_INTERVAL = 200
 
 type StoredUpdate = DocUpdate & { touchedBlockIds: string[] }
+
+type AuthoredWrite = Omit<StoredUpdate, "seq">
 
 async function loadStoredState(db: Querier, workspaceId: string, docId: string) {
   const snapshot = await DocRepository.findLatestSnapshot(db, workspaceId, docId)
@@ -54,7 +59,7 @@ async function loadStoredState(db: Querier, workspaceId: string, docId: string) 
 async function lockWritableDoc(
   db: Querier,
   params: { workspaceId: string; docId: string; userId: string }
-): Promise<DocHead> {
+): Promise<{ doc: Stream; head: DocHead }> {
   const [authority] = await resolveLockedStreamAuthorities(db, {
     workspaceId: params.workspaceId,
     streamIds: [params.docId],
@@ -66,7 +71,7 @@ async function lockWritableDoc(
 
   const head = await DocRepository.findHeadForUpdate(db, params.workspaceId, params.docId)
   if (!head) throw new Error(`Doc ${params.docId} has no head row`)
-  return head
+  return { doc: authority.target, head }
 }
 
 function applyOrRefuse(...args: Parameters<typeof applyClientWrite>): ReturnType<typeof applyClientWrite> {
@@ -85,6 +90,13 @@ function applyOrRefuse(...args: Parameters<typeof applyClientWrite>): ReturnType
     throw error
   }
 }
+
+/** `title` is the doc's display name as read under the lock. */
+export type DocAgentRewriteResult =
+  | { status: "applied"; title: string | null; seq: number; touchedBlockIds: string[]; sections: DocSection[] }
+  | { status: "unchanged"; title: string | null; seq: number }
+  | { status: "edit_refused"; refusal: DocAgentEditRefusal }
+  | { status: "invalid" }
 
 /** `DocState` before serialization: the stream still carries `Date`s. */
 type LoadedDocState = Omit<DocState, "stream"> & { stream: Stream }
@@ -159,7 +171,7 @@ export class DocService {
     const clientUpdate = decodeUpdateBase64(params.update)
 
     return withTransaction(this.pool, async (client) => {
-      const head = await lockWritableDoc(client, { workspaceId, docId, userId })
+      const { head } = await lockWritableDoc(client, { workspaceId, docId, userId })
       const { ydoc } = await loadStoredState(client, workspaceId, docId)
       ydoc.clientID = DOC_SERVER_CLIENT_ID
       const write = applyOrRefuse(ydoc, clientUpdate, head.bodyJson)
@@ -170,65 +182,150 @@ export class DocService {
       const previousSections = await DocRepository.listSections(client, workspaceId, docId)
       const touchedBlockIds = diffSections(previousSections, projection.sections)
 
-      const writes: Omit<StoredUpdate, "seq">[] = [
-        { update: clientWrite, actorId: userId, actorType: AuthorTypes.USER, touchedBlockIds },
-      ]
-      if (serverUpdate) {
-        writes.push({
-          update: serverUpdate,
-          actorId: AuthorTypes.SYSTEM,
-          actorType: AuthorTypes.SYSTEM,
-          touchedBlockIds: [],
-        })
-      }
-      const stored = writes.map((write, index): StoredUpdate => ({ ...write, seq: head.updateSeq + index + 1 }))
-      const seq = stored.at(-1)!.seq
-
-      for (const update of stored) {
-        await DocRepository.insertUpdate(client, { workspaceId, docId, ...update })
-      }
-      if (Math.floor(seq / DOC_SNAPSHOT_INTERVAL) > Math.floor(head.updateSeq / DOC_SNAPSHOT_INTERVAL)) {
-        await DocRepository.insertSnapshot(client, { workspaceId, docId, seq, state: encodeFullState(ydoc) })
-      }
-      await DocRepository.replaceSections(client, workspaceId, docId, projection.sections)
-      await DocRepository.bumpHead(client, {
-        workspaceId,
-        streamId: docId,
-        seq,
-        bodyMarkdown: projection.bodyMarkdown,
-        bodyJson: projection.bodyJson,
+      const seq = await this.commitWrite(client, {
+        head,
+        ydoc,
+        projection,
+        authored: { update: clientWrite, actorId: userId, actorType: AuthorTypes.USER, touchedBlockIds },
+        repair: serverUpdate,
+        attachedBy: userId,
       })
-      await AttachmentRepository.attachToStream(
-        client,
-        workspaceId,
-        collectAttachmentReferenceIds(content),
-        docId,
-        userId
-      )
-
-      await StreamEventRepository.insert(client, {
-        id: eventId(),
-        workspaceId,
-        streamId: docId,
-        eventType: "doc:edited",
-        payload: { seq, touchedBlockIds } satisfies DocEditedEventPayload,
-        actorId: userId,
-        actorType: AuthorTypes.USER,
-      })
-      for (const update of stored) {
-        await OutboxRepository.insert(client, "doc:updated", {
-          workspaceId,
-          streamId: docId,
-          seq: update.seq,
-          update: encodeUpdateBase64(update.update),
-          touchedBlockIds: update.touchedBlockIds,
-          actorId: update.actorId,
-          actorType: update.actorType,
-        })
-      }
 
       return { seq, applied: true, touchedBlockIds }
     })
+  }
+
+  /**
+   * Rewrites the doc as the server on an agent's behalf, under the same lock
+   * and log as `postUpdate`: authorized as `invokingUserId`, stored as one
+   * update attributed to `actor`. `rewrite` receives the current sections, read
+   * under the lock; when it refuses, nothing is written.
+   */
+  async applyAgentRewrite(params: {
+    workspaceId: string
+    docId: string
+    invokingUserId: string
+    actor: { actorId: string; actorType: typeof AuthorTypes.PERSONA }
+    reason: string
+    rewrite: (sections: DocSection[]) => DocRewrite
+  }): Promise<DocAgentRewriteResult> {
+    const { workspaceId, docId, invokingUserId, actor, reason } = params
+    try {
+      return await withTransaction(this.pool, async (client) => {
+        const { doc, head } = await lockWritableDoc(client, { workspaceId, docId, userId: invokingUserId })
+        const title = doc.displayName ?? null
+        const previousSections = await DocRepository.listSections(client, workspaceId, docId)
+        const next = params.rewrite(previousSections)
+        if (!next.ok) return { status: "edit_refused", refusal: next.refusal }
+
+        const { ydoc } = await loadStoredState(client, workspaceId, docId)
+        ydoc.clientID = DOC_SERVER_CLIENT_ID
+        const json = buildContent(next.sections, head.bodyJson, blockId)
+        const staging =
+          next.reinserted === undefined
+            ? undefined
+            : { ...json, content: json.content?.filter((node) => node.attrs?.blockId !== next.reinserted) }
+        const { update, content } = applyServerContent(ydoc, json, { staging })
+        if (!update) return { status: "unchanged", title, seq: head.updateSeq }
+
+        const projection = projectDoc(content)
+        const touchedBlockIds = diffSections(previousSections, projection.sections)
+        const seq = await this.commitWrite(client, {
+          head,
+          ydoc,
+          projection,
+          authored: { update, ...actor, touchedBlockIds },
+          repair: null,
+          attachedBy: invokingUserId,
+          reason,
+        })
+        return { status: "applied", title, seq, touchedBlockIds, sections: projection.sections }
+      })
+    } catch (error) {
+      if (error instanceof DocUpdateInvalidError) return { status: "invalid" }
+      throw error
+    }
+  }
+
+  /**
+   * Persists a write already applied to `ydoc` (the doc's next head after
+   * `head`) and returns the new seq. `repair`, the server's read-time fix-up,
+   * is stored after it as the system's, touching no blocks.
+   */
+  private async commitWrite(
+    client: Querier,
+    params: {
+      head: DocHead
+      ydoc: Y.Doc
+      projection: DocProjection
+      authored: AuthoredWrite
+      repair: Uint8Array | null
+      attachedBy: string
+      reason?: string
+    }
+  ): Promise<number> {
+    const { head, projection, authored } = params
+    const { workspaceId, streamId: docId } = head
+    const writes: AuthoredWrite[] = [authored]
+    if (params.repair) {
+      writes.push({
+        update: params.repair,
+        actorId: AuthorTypes.SYSTEM,
+        actorType: AuthorTypes.SYSTEM,
+        touchedBlockIds: [],
+      })
+    }
+    const stored = writes.map((write, index): StoredUpdate => ({ ...write, seq: head.updateSeq + index + 1 }))
+    const seq = stored.at(-1)!.seq
+
+    for (const update of stored) {
+      await DocRepository.insertUpdate(client, { workspaceId, docId, ...update })
+    }
+    if (Math.floor(seq / DOC_SNAPSHOT_INTERVAL) > Math.floor(head.updateSeq / DOC_SNAPSHOT_INTERVAL)) {
+      await DocRepository.insertSnapshot(client, { workspaceId, docId, seq, state: encodeFullState(params.ydoc) })
+    }
+    await DocRepository.replaceSections(client, workspaceId, docId, projection.sections)
+    await DocRepository.bumpHead(client, {
+      workspaceId,
+      streamId: docId,
+      seq,
+      bodyMarkdown: projection.bodyMarkdown,
+      bodyJson: projection.bodyJson,
+    })
+    await AttachmentRepository.attachToStream(
+      client,
+      workspaceId,
+      collectAttachmentReferenceIds(projection.bodyJson),
+      docId,
+      params.attachedBy
+    )
+
+    const payload: DocEditedEventPayload = {
+      seq,
+      touchedBlockIds: authored.touchedBlockIds,
+      ...(params.reason === undefined ? {} : { reason: params.reason }),
+    }
+    await StreamEventRepository.insert(client, {
+      id: eventId(),
+      workspaceId,
+      streamId: docId,
+      eventType: "doc:edited",
+      payload,
+      actorId: authored.actorId,
+      actorType: authored.actorType,
+    })
+    for (const update of stored) {
+      await OutboxRepository.insert(client, "doc:updated", {
+        workspaceId,
+        streamId: docId,
+        seq: update.seq,
+        update: encodeUpdateBase64(update.update),
+        touchedBlockIds: update.touchedBlockIds,
+        actorId: update.actorId,
+        actorType: update.actorType,
+      })
+    }
+    return seq
   }
 
   async listThreads(params: { workspaceId: string; userId: string; docId: string }): Promise<DocBlockThread[]> {

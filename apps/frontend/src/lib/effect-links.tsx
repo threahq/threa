@@ -11,6 +11,7 @@ import {
 import {
   Bot,
   Clock,
+  File,
   FileText,
   PenLine,
   SlidersHorizontal,
@@ -29,6 +30,7 @@ const EFFECT_KIND_NOUNS = {
   memo: "Memo",
   follow_up: "Follow-up",
   brief: "Brief",
+  doc: "Doc",
   subagent: "Subagent",
   other: "Change",
 } as const satisfies Record<ToolEffectKind, string>
@@ -48,6 +50,7 @@ const EFFECT_KIND_ICONS = {
   memo: Sparkles,
   follow_up: Clock,
   brief: FileText,
+  doc: File,
   subagent: Bot,
   other: PenLine,
 } as const satisfies Record<ToolEffectKind, LucideIcon>
@@ -114,6 +117,7 @@ const EFFECT_ROUTE_RESOLVERS = {
   },
   follow_up: () => null,
   brief: () => null,
+  doc: (target, workspaceId) => `/w/${workspaceId}/s/${encodeURIComponent(target)}`,
   // Routeless: the effect's target is the run id, which names no route — the
   // destination thread is known only to the card event's own payload.
   subagent: () => null,

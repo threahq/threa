@@ -24,6 +24,13 @@ const TOOL_HELP: Partial<Record<AgentToolName, string>> = {
   [AgentToolNames.WEB_SEARCH]: "Searches the public web for current information beyond the workspace.",
   [AgentToolNames.THREA_GUIDE]:
     "Reads Threa's public user guide to answer how-to questions about the app. Reads no workspace data.",
+  [AgentToolNames.READ_DOC]: "Lists and reads the docs hosted on the stream it is working in.",
+  [AgentToolNames.EDIT_DOC]: "Changes existing text in a doc on this stream, as the person who asked.",
+  [AgentToolNames.INSERT_BLOCK]: "Adds new paragraphs, lists or tables to a doc on this stream.",
+  [AgentToolNames.MOVE_BLOCK]: "Reorders the blocks of a doc on this stream.",
+  [AgentToolNames.DELETE_BLOCK]: "Removes a block from a doc on this stream.",
+  [AgentToolNames.SET_DOC_TITLE]: "Renames a doc on this stream.",
+  [AgentToolNames.CREATE_DOC]: "Creates a new doc on this stream.",
 }
 
 /**

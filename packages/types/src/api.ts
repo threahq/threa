@@ -2418,6 +2418,8 @@ export interface DocCreatedEventPayload {
 export interface DocEditedEventPayload {
   seq: number
   touchedBlockIds: string[]
+  /** An agent write's one-line reason. */
+  reason?: string
 }
 
 /** A block a `doc:activity` row names; `markdown` is only the block's first line. */
@@ -2439,6 +2441,8 @@ export interface DocActivityEventPayload {
   /** Touched blocks the doc no longer holds. */
   removedBlockIds: string[]
   editCount: number
+  /** Agent writes' distinct reasons, each placed at its latest use so the newest is last, capped to the most recent few; absent on rows folded before agent edits shipped. */
+  reasons?: string[]
   fromSequence: string
   toSequence: string
 }

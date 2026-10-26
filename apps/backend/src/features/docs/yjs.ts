@@ -38,6 +38,21 @@ function emptyDocJson(): JSONContent {
   return { type: "doc", content: [] }
 }
 
+/** Runs `fn` and returns it with the merged updates its transactions emitted, null when none. */
+function captureUpdates<T>(ydoc: Y.Doc, fn: () => T): { result: T; update: Uint8Array | null } {
+  const writes: Uint8Array[] = []
+  const onUpdate = (written: Uint8Array) => {
+    writes.push(written)
+  }
+  ydoc.on("update", onUpdate)
+  try {
+    const result = fn()
+    return { result, update: writes.length > 0 ? Y.mergeUpdates(writes) : null }
+  } finally {
+    ydoc.off("update", onUpdate)
+  }
+}
+
 /** Updates are applied in the order given (seq order); Yjs converges regardless, the order keeps replay deterministic. */
 export function loadDocState({
   snapshot,
@@ -93,27 +108,43 @@ export function applyClientWrite(
   if (Y.equalSnapshots(before, Y.snapshot(ydoc))) return { applied: false }
   // A retry carries every unacked byte; the log keeps only what this write added.
   const stored = Y.diffUpdate(update, heldBefore)
-  const serverWrites: Uint8Array[] = []
-  const onUpdate = (written: Uint8Array) => {
-    serverWrites.push(written)
-  }
-  ydoc.on("update", onUpdate)
-  try {
-    let content = readRepairedContent(ydoc)
-    const stamped = ensureBlockIds(content, blockId, previousBody)
-    if (stamped !== content) {
-      writeContentJson(ydoc, stamped)
-      content = readRepairedContent(ydoc)
+  const { result: content, update: serverUpdate } = captureUpdates(ydoc, () => {
+    const repaired = readRepairedContent(ydoc)
+    const stamped = ensureBlockIds(repaired, blockId, previousBody)
+    if (stamped === repaired) return repaired
+    writeContentJson(ydoc, stamped)
+    return readRepairedContent(ydoc)
+  })
+  return { applied: true, stored, content, serverUpdate }
+}
+
+/**
+ * Rewrites the doc to `json` as a server write (the caller sets
+ * `DOC_SERVER_CLIENT_ID`). `staging`, written first in the same transaction,
+ * lets a caller force fresh Y elements: the minimal diff updates an element in
+ * place whenever position and node type line up, so a reorder would otherwise
+ * rewrite neighbours and misroute their concurrent edits. `update` merges the
+ * transactions' own updates, repair included, never a state-vector diff; null
+ * when the doc already held `json`. Throws `DocUpdateInvalidError`; the doc is
+ * left mutated either way.
+ */
+export function applyServerContent(
+  ydoc: Y.Doc,
+  json: JSONContent,
+  options: { staging?: JSONContent } = {}
+): { update: Uint8Array | null; content: JSONContent } {
+  const { result: content, update } = captureUpdates(ydoc, () => {
+    try {
+      ydoc.transact(() => {
+        if (options.staging) writeContentJson(ydoc, options.staging)
+        writeContentJson(ydoc, json)
+      })
+    } catch (error) {
+      throw new DocUpdateInvalidError({ cause: error })
     }
-    return {
-      applied: true,
-      stored,
-      content,
-      serverUpdate: serverWrites.length > 0 ? Y.mergeUpdates(serverWrites) : null,
-    }
-  } finally {
-    ydoc.off("update", onUpdate)
-  }
+    return readRepairedContent(ydoc)
+  })
+  return { update, content }
 }
 
 /** Deletes schema-invalid elements from the fragment (y-prosemirror's repair) and returns the valid remainder. */

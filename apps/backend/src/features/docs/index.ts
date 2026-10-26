@@ -7,3 +7,16 @@ export { DOC_ACTIVITY_QUIET_MS, DOC_AWARENESS_RATE_BURST, DOC_AWARENESS_RATE_REF
 export { DocActivityService } from "./activity-service"
 export { DocActivityOutboxHandler } from "./activity-outbox-handler"
 export { createDocActivityWorker } from "./activity-worker"
+export { DocAgentService, type DocAgentContext } from "./agent-service"
+export type { DocAgentEdit } from "./agent-markdown"
+export type {
+  DocAgentAccessRefusal,
+  DocAgentCreateResult,
+  DocAgentDocSummary,
+  DocAgentEditRefusal,
+  DocAgentReadResult,
+  DocAgentRefusalCode,
+  DocAgentRewriteFailure,
+  DocAgentTitleResult,
+  DocAgentWriteResult,
+} from "./agent-types"

@@ -21,6 +21,7 @@ import { imageCaptionSuite } from "./suites/image-caption/suite"
 import { memoClassifierSuite } from "./suites/memo-classifier/suite"
 import { memorizerSuite } from "./suites/memorizer/suite"
 import { briefCorrectionSuite } from "./suites/brief-correction/suite"
+import { docEditSuite } from "./suites/doc-edit/suite"
 import { personaStyleSuite } from "./suites/persona-style/suite"
 import { voicePolishSuite } from "./suites/voice-polish/suite"
 import { toolGuardianSuite } from "./suites/tool-guardian/suite"
@@ -40,6 +41,7 @@ const defaultSuites = [
   memoClassifierSuite,
   memorizerSuite,
   briefCorrectionSuite,
+  docEditSuite,
   personaStyleSuite,
   voicePolishSuite,
   toolGuardianSuite,

@@ -55,6 +55,16 @@ export const TOOL_TIERS_BY_NAME = {
   cancel_follow_up: 1,
   update_follow_up: 1,
   update_stream_brief: 1,
+  // Docs hosted on this stream, written as the invoking user and attributed to
+  // the persona; body writes roll up into an activity row on this stream's
+  // timeline, a rename shows only as the doc's new title.
+  read_doc: 1,
+  edit_doc: 1,
+  insert_block: 1,
+  move_block: 1,
+  delete_block: 1,
+  set_doc_title: 1,
+  create_doc: 1,
 
   // Reads — no durable effect at all.
   web_search: 1,

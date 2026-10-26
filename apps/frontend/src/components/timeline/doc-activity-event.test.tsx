@@ -23,6 +23,7 @@ function activity(id: string, payload: Partial<DocActivityEventPayload>): Stream
       sections: [],
       removedBlockIds: [],
       editCount: 1,
+      reasons: [],
       fromSequence: "1",
       toSequence: "2",
       ...payload,
@@ -110,5 +111,26 @@ describe("DocActivityEvent", () => {
       activity("e2", { removedBlockIds: ["b8", "b2"] }),
     ])
     expect(screen.getByRole("link")).toHaveTextContent("edited Rotation tracker · Goals · 2 blocks removed")
+  })
+
+  it("ends with the group's latest agent reason, stripped of markdown", () => {
+    renderRow([
+      activity("e1", { actors: users("usr_a"), reasons: ["marked the AWS key revoked", "noted the **date**"] }),
+      activity("e2", { actors: users("usr_a"), reasons: [] }),
+    ])
+
+    expect(screen.getByRole("link")).toHaveTextContent(/^Ann edited Rotation tracker — noted the date/)
+  })
+
+  it("renders no reason when no write in the group gave one", () => {
+    renderRow([activity("e1", { actors: users("usr_a"), reasons: [] })])
+
+    expect(screen.getByRole("link").textContent).not.toContain("—")
+  })
+
+  it("should render no reason for rows folded before reasons existed", () => {
+    renderRow([activity("e1", { actors: users("usr_a"), reasons: undefined })])
+
+    expect(screen.getByRole("link").textContent).not.toContain("—")
   })
 })

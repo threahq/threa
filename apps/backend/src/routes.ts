@@ -113,7 +113,7 @@ import { createApiVersionGate } from "./middleware/api-version"
 import { WORKSPACE_PERMISSION_SCOPES, isPushRequestPath } from "@threahq/types"
 import type { WorkspaceService } from "./features/workspaces"
 import type { StreamService } from "./features/streams"
-import { DocService, createDocHandlers } from "./features/docs"
+import { createDocHandlers, type DocService } from "./features/docs"
 import type { EventService } from "./features/messaging"
 import type { AttachmentService } from "./features/attachments"
 import type { SearchService, SearchQueryLogService } from "./features/search"
@@ -198,6 +198,7 @@ interface Dependencies {
   agentFollowUpService: AgentFollowUpService
   personaConfigService: PersonaConfigService
   delegationService: DelegationService
+  docService: DocService
   decisionService: DecisionService
   subagentService: SubagentService
   draftsService: DraftsService
@@ -285,6 +286,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     agentFollowUpService,
     personaConfigService,
     delegationService,
+    docService,
     decisionService,
     subagentService,
     draftsService,
@@ -385,7 +387,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     pool,
     analytics: posthog ? { posthogToken: posthog.projectToken, posthogHost: posthog.host } : null,
   })
-  const docs = createDocHandlers({ docService: new DocService({ pool }) })
+  const docs = createDocHandlers({ docService })
   const streamBriefService = new StreamBriefService({ pool })
   const streamBrief = createStreamBriefHandlers({ pool, streamBriefService })
   const stream = createStreamHandlers({

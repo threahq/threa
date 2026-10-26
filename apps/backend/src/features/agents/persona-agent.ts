@@ -5,6 +5,7 @@ import {
   AgentStepTypes,
   AuthorTypes,
   ConversationIntents,
+  STREAM_TYPE_CAPABILITIES,
   StreamTypes,
   SubagentFailureReasons,
   type AgentSessionRerunContext,
@@ -40,6 +41,7 @@ import type { TraceEmitter } from "./trace-emitter"
 import type { SessionAbortRegistry } from "./session-abort-registry"
 import type { AI, CostContext, PageBrowser, WebSearchEngine } from "@threahq/agent-runtime"
 import type { SearchService } from "../search"
+import type { DocAgentService } from "../docs"
 import type { ConversationSummaryService } from "./conversation-summary-service"
 import type { AttachmentService } from "../attachments"
 import { audienceBrowses, type MemoAudience, type MemoExplorerService } from "../memos"
@@ -302,6 +304,8 @@ export interface PersonaAgentDeps {
     reason: string
     expectedVersion: number
   }) => Promise<import("./tools/tool-deps").UpdateStreamBriefToolResult>
+  /** Agent reads and writes on the host stream's docs. Absent in harnesses that don't wire docs, disabling the doc tools. */
+  docAgent?: DocAgentService
   /**
    * Compile a delegation hand-off (roadmap 5.1), bound to the
    * `DelegationService` in server.ts. The turn supplies identity, the
@@ -518,6 +522,7 @@ export class PersonaAgent {
       updateFollowUp,
       loadFollowUp,
       updateBrief,
+      docAgent,
       delegateTask,
       loadActiveSubagentRun,
       loadSubagentModels,
@@ -1277,6 +1282,18 @@ export class PersonaAgent {
             }
           : undefined
 
+        // Docs resolve against the same effective root as the brief: a thread's turn edits its root's docs.
+        // Offered only where that root can host docs and the stream is not sealed (a doc is server-side plaintext).
+        const docDeps =
+          rootStreamType && STREAM_TYPE_CAPABILITIES[rootStreamType].hostsDocs && !stream.e2eEnabled
+            ? docAgent?.forTurn({
+                workspaceId,
+                hostStreamId: briefStreamId,
+                invokingUserId: input.initiatingUserId,
+                personaId: persona.id,
+              })
+            : undefined
+
         // Delegation hand-off for the delegate_task tool (roadmap 5.1), bound to
         // this persona/session/stream and the invoking user. Deliberately absent
         // — disabling the tool — on sealed streams (a server-built plaintext
@@ -1539,6 +1556,7 @@ export class PersonaAgent {
             followUps: followUpDeps,
             brief: briefDeps,
             briefVersion: agentContext.streamBrief?.version ?? 0,
+            docs: docDeps,
             delegation: delegateDeps,
             subagentDelegation: subagentDelegationDeps,
             reportBack: reportBackDeps,

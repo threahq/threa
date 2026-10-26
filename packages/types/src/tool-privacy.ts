@@ -81,6 +81,16 @@ export const TOOL_CATEGORIES_BY_NAME = {
   // keep the brief current, and the write is bounded by the 4k content cap and
   // the stream's own membership, not a privacy grant.
   update_stream_brief: ["messaging"],
+  // Docs hosted on this stream are its working documents, like the brief: the
+  // tools reach only the host's docs, authorized as the invoking user, so
+  // nothing leaves the stream's own membership.
+  read_doc: ["messaging"],
+  edit_doc: ["messaging"],
+  insert_block: ["messaging"],
+  move_block: ["messaging"],
+  delete_block: ["messaging"],
+  set_doc_title: ["messaging"],
+  create_doc: ["messaging"],
   // Delegating a task posts a hand-off card into this stream for the invoking
   // user's own local agent — in-product participation, like a reply that asks a
   // person to do something. The brief is compiled from context the turn already
