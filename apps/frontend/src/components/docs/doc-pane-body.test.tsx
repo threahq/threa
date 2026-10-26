@@ -25,6 +25,7 @@ import { RevealOnReady } from "@/contexts/coordinated-loading-context"
 import { MediaGalleryProvider } from "@/contexts/media-gallery-context"
 import { __resetOverlayHistoryForTests, attachOverlayHistoryRouter } from "@/components/ui/history-back-close"
 import * as mobileModule from "@/hooks/use-mobile"
+import * as inputModeModule from "@/hooks/use-input-mode"
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh"
 import { DocSync, FLUSH_CAP_MS } from "@/lib/docs/doc-sync"
 import { PRESENCE_SEND_WINDOW_MS } from "@/lib/docs/doc-presence"
@@ -705,6 +706,22 @@ describe("DocPaneBody", () => {
     } finally {
       __resetOverlayHistoryForTests()
     }
+  })
+
+  it("should format on tap, not on touch, when a wide screen is driven by touch", async () => {
+    vi.spyOn(mobileModule, "useIsMobile").mockReturnValue(false)
+    vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("touch")
+    await mountLoaded()
+    act(() => {
+      proseMirror().editor.commands.focus("end")
+    })
+    const bold = screen.getByRole("button", { name: "Bold" })
+
+    fireEvent.pointerDown(bold)
+    const onTouch = proseMirror().editor.isActive("bold")
+    fireEvent.click(bold)
+
+    expect({ onTouch, onTap: proseMirror().editor.isActive("bold") }).toEqual({ onTouch: false, onTap: true })
   })
 
   it("should check a task without focusing the doc", async () => {

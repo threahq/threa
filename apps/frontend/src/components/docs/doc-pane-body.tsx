@@ -41,6 +41,7 @@ import { useMentionables, useMarkdownTriggerLookups } from "@/hooks/use-mentiona
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useAttachments } from "@/hooks/use-attachments"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { useLatest } from "@/hooks/use-latest"
 import { getEffectiveEditorBindings } from "@/lib/keyboard-shortcuts"
 import { cn } from "@/lib/utils"
@@ -129,6 +130,7 @@ interface DocEditorProps {
 
 function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, onBlur }: DocEditorProps) {
   const isMobile = useIsMobile()
+  const isTouch = useInputMode() === "touch"
   const { openMedia } = useMediaGallery()
   const imageViewer = useMemo<ImageViewer>(() => ({ open: openMedia, readOnly: !canWrite }), [openMedia, canWrite])
   const threads = useDocBlockThreads(workspaceId, docId, joinCount)
@@ -333,8 +335,8 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
                 linkPopoverOpen={linkPopoverOpen}
                 onLinkPopoverOpenChange={setLinkPopoverOpen}
                 showSpecialInputControls={isMobile}
-                touch={isMobile}
-                trailingContent={<AttachButton touch={isMobile} onAttach={() => fileInputRef.current?.click()} />}
+                touch={isTouch}
+                trailingContent={<AttachButton touch={isTouch} onAttach={() => fileInputRef.current?.click()} />}
               />
               <input ref={fileInputRef} type="file" multiple className="hidden" onChange={onFilesPicked} />
             </div>
