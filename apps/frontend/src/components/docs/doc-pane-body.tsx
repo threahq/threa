@@ -40,6 +40,7 @@ import { useMentionables, useMarkdownTriggerLookups } from "@/hooks/use-mentiona
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useAttachments } from "@/hooks/use-attachments"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useKeyboardOpen } from "@/components/layout/keyboard-open-context"
 import { useLatest } from "@/hooks/use-latest"
 import { getEffectiveEditorBindings } from "@/lib/keyboard-shortcuts"
 import { cn } from "@/lib/utils"
@@ -277,6 +278,15 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
   useEffect(() => {
     if (editor && editor.isEditable !== canWrite) editor.setEditable(canWrite)
   }, [editor, canWrite])
+
+  // Dismissing the keyboard leaves the caret behind, so the next tap anywhere in the doc would raise it again.
+  const keyboardOpen = useKeyboardOpen()
+  const keyboardWasOpen = useRef(keyboardOpen)
+  useEffect(() => {
+    const closed = keyboardWasOpen.current && !keyboardOpen
+    keyboardWasOpen.current = keyboardOpen
+    if (closed && editor?.view.hasFocus()) editor.commands.blur()
+  }, [editor, keyboardOpen])
 
   // Files dropped beside the editor (the spacer, a read-only doc) would otherwise open in place of the app.
   const onDragOver = (event: DragEvent) => {

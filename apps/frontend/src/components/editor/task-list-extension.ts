@@ -58,4 +58,29 @@ export const TaskItemExtension = ThreaTaskItem.extend({
   addInputRules() {
     return [...(this.parent?.() ?? []), bulletItemToTaskItemRule]
   },
+
+  // tiptap's toggle focuses the editor, which on a phone raises the keyboard for a tap that only meant to check a box.
+  addNodeView() {
+    const render = this.parent?.()
+    if (!render) return null
+    return (props) => {
+      const view = render(props)
+      const item = view.dom as HTMLElement
+      const checkbox = item.querySelector<HTMLInputElement>(":scope > label > input[type=checkbox]")
+      // Capturing on the item runs ahead of tiptap's listener on the checkbox, which stopPropagation then skips.
+      item.addEventListener(
+        "change",
+        (event) => {
+          const pos = props.getPos()
+          if (event.target !== checkbox || !checkbox || !props.editor.isEditable || typeof pos !== "number") return
+          event.stopPropagation()
+          const { tr } = props.editor.state
+          tr.setNodeAttribute(pos, "checked", checkbox.checked)
+          props.editor.view.dispatch(tr)
+        },
+        { capture: true }
+      )
+      return view
+    }
+  },
 })

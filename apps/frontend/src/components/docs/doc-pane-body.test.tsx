@@ -23,6 +23,7 @@ import { docsApi } from "@/api/docs"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { RevealOnReady } from "@/contexts/coordinated-loading-context"
 import { MediaGalleryProvider } from "@/contexts/media-gallery-context"
+import { KeyboardOpenContext } from "@/components/layout/keyboard-open-context"
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh"
 import { DocSync, FLUSH_CAP_MS } from "@/lib/docs/doc-sync"
 import { PRESENCE_SEND_WINDOW_MS } from "@/lib/docs/doc-presence"
@@ -61,6 +62,9 @@ function proseMirror(): HTMLElement & { editor: Editor } {
   if (!element) throw new Error("editor not mounted")
   return element as HTMLElement & { editor: Editor }
 }
+
+/** tiptap's focus command lands on the next animation frame. */
+const nextFrame = () => act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
 
 function PullToRefreshHost({ children }: { children: ReactNode }) {
   const { ref, distance } = usePullToRefresh({ enabled: true })
@@ -644,6 +648,50 @@ describe("DocPaneBody", () => {
     fireEvent.touchMove(editor, { touches: [{ clientY: 400 }] })
 
     expect(screen.getByTestId("pull-host").dataset.distance).toBe("0")
+  })
+
+  it("should drop the caret when the keyboard closes", async () => {
+    let keyboardOpen = true
+    const view = await mountLoaded(true, {
+      wrap: (body) => <KeyboardOpenContext.Provider value={keyboardOpen}>{body}</KeyboardOpenContext.Provider>,
+    })
+    act(() => {
+      proseMirror().editor.commands.focus("end")
+    })
+    await nextFrame()
+    expect(document.activeElement).toBe(proseMirror())
+
+    keyboardOpen = false
+    view.rerender(true)
+    await nextFrame()
+
+    expect(document.activeElement).not.toBe(proseMirror())
+  })
+
+  it("should check a task without focusing the doc", async () => {
+    serverDoc = prosemirrorJSONToYDoc(
+      getThreaSchema(),
+      {
+        type: "doc",
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: "Rotation tracker" }] },
+          {
+            type: "taskList",
+            content: [{ type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph" }] }],
+          },
+        ],
+      },
+      DOC_FRAGMENT
+    )
+    mount(true)
+
+    fireEvent.click(await screen.findByRole("checkbox"))
+    await nextFrame()
+
+    expect({
+      checked: proseMirror().editor.state.doc.lastChild?.firstChild?.attrs.checked,
+      focused: document.activeElement === proseMirror(),
+    }).toEqual({ checked: true, focused: false })
   })
 
   it("keeps a file dropped beside the editor from opening in place of the app", async () => {
