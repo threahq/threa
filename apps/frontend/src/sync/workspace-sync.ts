@@ -1953,7 +1953,7 @@ export function registerWorkspaceSocketHandlers(
 
     const removedStream = old.streams?.find((s) => s.id === payload.streamId)
     const shouldRemoveFromSidebar = removedStream?.visibility === "private"
-    // Threads and docs carry no access of their own (INV-62): a private root's revocation takes them along.
+    // Threads carry no access of their own (INV-62): a private root's revocation takes them along.
     const unreadableIds = new Set(
       shouldRemoveFromSidebar
         ? (old.streams ?? [])
