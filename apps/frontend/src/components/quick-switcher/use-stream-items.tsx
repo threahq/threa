@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Hash, Plus, X, Archive } from "lucide-react"
 import { StreamTypes, draftStreamScope, getAvatarUrl, isOpenVisibility } from "@threahq/types"
 import type { Stream, StreamType } from "@threahq/types"
-import { getStreamName, streamLabel, STREAM_ICONS } from "@/lib/streams"
+import { collectSealedStreamIds, getStreamName, resolveDmDisplayName, streamLabel, STREAM_ICONS } from "@/lib/streams"
 import { streamsApi } from "@/api"
 import { createDmDraftId, useUnreadCounts, useActivityCounts } from "@/hooks"
 import { isPickableUser, useWorkspaceUnreadState, type CachedUnreadState } from "@/stores/workspace-store"
@@ -177,7 +177,10 @@ export function useStreamItems(context: ModeContext): ModeResult {
     const isSearchableThread = (s: StreamLike) =>
       wantsThreads && getStreamName(s) != null && !hiddenRootIds.has(s.rootStreamId ?? s.id)
     // Docs never list in the sidebar, so the palette finds them by title the way it finds threads.
-    const isSearchableDoc = (s: StreamLike) => wantsDocs && getStreamName(s) != null
+    // A live doc under an archived host is sealed with it, as on the docs page; archived ones list as archived.
+    const sealedIds = wantsDocs ? collectSealedStreamIds(activeStreams) : new Set<string>()
+    const isSearchableDoc = (s: StreamLike) =>
+      wantsDocs && getStreamName(s) != null && (s.archivedAt != null || !sealedIds.has(s.id))
 
     // Own asides are palette-reachable — the one list surface they appear on
     // besides their anchor row (the sidebar and pickers hide them).
@@ -200,7 +203,8 @@ export function useStreamItems(context: ModeContext): ModeResult {
     const streamsById = new Map(allStreams.map((s) => [s.id, s]))
     const parentLabelFor = (stream: StreamLike): string | null => {
       const parent = stream.parentStreamId ? streamsById.get(stream.parentStreamId) : undefined
-      return parent ? streamLabel(parent) : null
+      if (!parent) return null
+      return resolveDmDisplayName(parent.id, users ?? [], dmPeers ?? []) ?? streamLabel(parent)
     }
 
     // Score first, enrich the survivors only (sort and item builder both read

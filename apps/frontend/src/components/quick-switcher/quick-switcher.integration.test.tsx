@@ -472,6 +472,40 @@ describe("QuickSwitcher Integration Tests", () => {
       expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_doc_titled")
     })
 
+    it("should name a DM host by its peer and leave out a doc under an archived host when searching", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      mockWorkspaceBootstrap.data.dmPeers = [{ userId: "member_2", streamId: "stream_dm_kate" }]
+      mockWorkspaceBootstrap.data.streams = [
+        ...mockStreamsList,
+        createMockStream({ id: "stream_dm_kate", type: StreamTypes.DM, displayName: null }),
+        createMockStream({
+          id: "stream_doc_in_dm",
+          type: StreamTypes.DOC,
+          displayName: "Launch notes with Kate",
+          parentStreamId: "stream_dm_kate",
+        }),
+        createMockStream({
+          id: "stream_channel_archived",
+          type: StreamTypes.CHANNEL,
+          slug: "old-launch",
+          archivedAt: "2026-03-01T00:00:00.000Z",
+        }),
+        createMockStream({
+          id: "stream_doc_sealed",
+          type: StreamTypes.DOC,
+          displayName: "Launch notes from the old channel",
+          parentStreamId: "stream_channel_archived",
+        }),
+      ]
+      renderWithProviders(<QuickSwitcher {...defaultProps} open={true} />)
+
+      await user.type(screen.getByLabelText("Quick switcher input"), "launch notes")
+
+      expect(await screen.findByText("Launch notes with Kate")).toBeInTheDocument()
+      expect(screen.getByText("Doc · in Kate")).toBeInTheDocument()
+      expect(screen.queryByText("Launch notes from the old channel")).not.toBeInTheDocument()
+    })
+
     it("never lists an unnamed thread — its placeholder label would match 'thread'", async () => {
       const user = userEvent.setup({ pointerEventsCheck: 0 })
       mockWorkspaceBootstrap.data.streams = [

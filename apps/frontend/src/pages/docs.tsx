@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react"
+import { memo, useCallback, useMemo } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 import { AlertCircle, Check, ChevronDown, Filter, Search } from "lucide-react"
 import { StreamTypes, type DocEditor } from "@threahq/types"
@@ -28,12 +28,18 @@ import {
 } from "@/components/docs/doc-list"
 import { useDocList } from "@/components/docs/use-doc-list"
 import { usePanel } from "@/contexts"
-import { useActors } from "@/hooks"
+import { useActors, type ActorLookup } from "@/hooks"
 import { useDebouncedUrlText } from "@/hooks/use-debounced-url-text"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
-import { STREAM_ICONS, streamLabel } from "@/lib/streams"
+import { STREAM_ICONS, resolveDmDisplayName, streamLabel } from "@/lib/streams"
 import { cn } from "@/lib/utils"
-import { useWorkspaceLabelAssignments, useWorkspaceLabels, useWorkspaceStreams } from "@/stores/workspace-store"
+import {
+  useWorkspaceDmPeers,
+  useWorkspaceLabelAssignments,
+  useWorkspaceLabels,
+  useWorkspaceStreams,
+  useWorkspaceUsers,
+} from "@/stores/workspace-store"
 
 const DocGlyph = STREAM_ICONS[StreamTypes.DOC]
 const MAX_AVATARS = 3
@@ -54,7 +60,19 @@ export function DocsPage() {
 function DocsPageInner({ workspaceId }: { workspaceId: string }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const filters = useMemo(() => readDocListFilters(searchParams), [searchParams])
-  const streams = useWorkspaceStreams(workspaceId)
+  const cachedStreams = useWorkspaceStreams(workspaceId)
+  const users = useWorkspaceUsers(workspaceId)
+  const dmPeers = useWorkspaceDmPeers(workspaceId)
+  // A cached DM's displayName can be the raw row's null; its name is the peer's.
+  const streams = useMemo(
+    () =>
+      cachedStreams.map((stream) =>
+        stream.type === StreamTypes.DM
+          ? { ...stream, displayName: resolveDmDisplayName(stream.id, users, dmPeers) ?? stream.displayName }
+          : stream
+      ),
+    [cachedStreams, users, dmPeers]
+  )
   const labels = useWorkspaceLabels(workspaceId)
   const assignments = useWorkspaceLabelAssignments(workspaceId)
   const docList = useDocList(workspaceId)
@@ -164,6 +182,7 @@ function DocsPageInner({ workspaceId }: { workspaceId: string }) {
               state={state}
               listed={rows.length}
               shown={shown}
+              getActorName={getActorName}
               clearHref={docListHref(workspaceId, searchParams, { query: "", host: null, label: null, editor: null })}
             />
           </SidebarLabelsProvider>
@@ -185,12 +204,14 @@ function DocsBody({
   state,
   listed,
   shown,
+  getActorName,
   clearHref,
 }: {
   workspaceId: string
   state: DocsBodyState
   listed: number
   shown: DocRow[]
+  getActorName: ActorLookup["getActorName"]
   clearHref: string
 }) {
   if (state === "loading") return null
@@ -200,7 +221,7 @@ function DocsBody({
   return (
     <ul>
       {shown.map((row) => (
-        <DocListRow key={row.doc.id} workspaceId={workspaceId} row={row} />
+        <DocListRow key={row.doc.id} workspaceId={workspaceId} row={row} getActorName={getActorName} />
       ))}
     </ul>
   )
@@ -268,7 +289,15 @@ function FilterMenu({
   )
 }
 
-function DocListRow({ workspaceId, row }: { workspaceId: string; row: DocRow }) {
+const DocListRow = memo(function DocListRow({
+  workspaceId,
+  row,
+  getActorName,
+}: {
+  workspaceId: string
+  row: DocRow
+  getActorName: ActorLookup["getActorName"]
+}) {
   const { getPanelUrl } = usePanel()
   const { formatRelative, formatFull } = useFormattedDate()
   const activityAt = new Date(row.activityAt)
@@ -294,15 +323,22 @@ function DocListRow({ workspaceId, row }: { workspaceId: string; row: DocRow }) 
           >
             {when}
           </span>
-          <EditorStack workspaceId={workspaceId} editors={row.editors} />
+          <EditorStack workspaceId={workspaceId} editors={row.editors} getActorName={getActorName} />
         </div>
       </Link>
     </li>
   )
-}
+})
 
-function EditorStack({ workspaceId, editors }: { workspaceId: string; editors: DocEditor[] }) {
-  const { getActorName } = useActors(workspaceId)
+function EditorStack({
+  workspaceId,
+  editors,
+  getActorName,
+}: {
+  workspaceId: string
+  editors: DocEditor[]
+  getActorName: ActorLookup["getActorName"]
+}) {
   if (editors.length === 0) return null
   const names = editors.map((editor) => getActorName(editor.actorId, editor.actorType))
   const extra = editors.length - MAX_AVATARS
