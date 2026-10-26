@@ -16,6 +16,7 @@ import {
   type RemoteSessionConfig,
 } from "@threahq/remote-session"
 import {
+  CHANNEL_SOURCE,
   ChannelServer,
   buildInstructions,
   channelTools,
@@ -155,7 +156,7 @@ const flush = () => new Promise((r) => setTimeout(r, 20))
 async function startDelegatingServer(id: string) {
   const config = { ...makeConfig(), delegations: true }
   const { client, calls } = stubDelegationClient(id)
-  const server = new ChannelServer(config, new ThreaClient(config), makeFakeTransport(), true, client)
+  const server = new ChannelServer(config, new ThreaClient(config), makeFakeTransport(), CHANNEL_SOURCE, client)
   spyOn(server.session, "start").mockResolvedValue()
   spyOn(server.session, "shutdown").mockResolvedValue()
   await server.start()
@@ -308,7 +309,14 @@ describe("ChannelServer delegations", () => {
 /** A relay-enabled server with the MCP wire and Threa session stubbed for direct permission-path calls. */
 /** A channel server whose session is stubbed to hold delivered turns in flight until a closing call. */
 function stubbedTurnServer(config: RemoteSessionConfig, stopHooks?: StopHookListener) {
-  const server = new ChannelServer(config, new ThreaClient(config), makeFakeTransport(), true, undefined, stopHooks)
+  const server = new ChannelServer(
+    config,
+    new ThreaClient(config),
+    makeFakeTransport(),
+    CHANNEL_SOURCE,
+    undefined,
+    stopHooks
+  )
   const internals = server as unknown as {
     mcp: { notification: (msg: { method: string; params: Record<string, unknown> }) => Promise<void> }
     deliverToClaude: (turn: DeliveredTurn) => Promise<void>

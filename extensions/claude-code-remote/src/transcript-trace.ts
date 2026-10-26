@@ -86,6 +86,8 @@ export interface MapContext {
    * skipped (the channel's own send/reply tools).
    */
   toolCalls: Map<string, PendingToolCall | null>
+  /** The channel's own send/reply tool names — their payloads land in the stream as real messages, so trace rows would be noise. */
+  ownTools: ReadonlySet<string>
 }
 
 /** Claude Code's project-dir encoding: every non-alphanumeric character becomes '-'. */
@@ -264,14 +266,11 @@ function withheldThinking(length: number): string {
   return `Thinking content omitted for safety. Captured locally: ${length} characters.`
 }
 
-/** The channel's own MCP tools — their payloads land in the stream as real messages, so trace rows would be noise. */
-const OWN_TOOL_RE = /^mcp__threa__(send|reply)$/i
-
 function toolUseStep(part: Record<string, unknown>, ctx: MapContext, timestamp?: number): MappedStep | null {
   const name = typeof part.name === "string" ? part.name : ""
   const id = typeof part.id === "string" ? part.id : ""
   if (!name) return null
-  if (OWN_TOOL_RE.test(name)) {
+  if (ctx.ownTools.has(name)) {
     if (id) ctx.toolCalls.set(id, null)
     return null
   }
@@ -446,6 +445,8 @@ export interface TranscriptTracerOptions {
    * quota detection must not die with trace truncation.
    */
   onApiError?: (invocationId: string, text: string) => void
+  /** This server's MCP registration key; Claude Code names its tools `mcp__<key>__<tool>`. */
+  channelServerKey?: string
   log?: (message: string) => void
 }
 
@@ -469,6 +470,7 @@ export class TranscriptTracer {
   private readonly maxFramesPerTurn: number
   private readonly emit: TranscriptTracerOptions["emit"]
   private readonly onApiError: TranscriptTracerOptions["onApiError"]
+  private readonly ownTools: ReadonlySet<string>
   private readonly log: (message: string) => void
 
   private bound: Candidate | undefined
@@ -496,6 +498,8 @@ export class TranscriptTracer {
     this.maxFramesPerTurn = options.maxFramesPerTurn ?? DEFAULT_MAX_FRAMES_PER_TURN
     this.emit = options.emit
     this.onApiError = options.onApiError
+    const key = options.channelServerKey
+    this.ownTools = new Set(key ? [`mcp__${key}__send`, `mcp__${key}__reply`] : [])
     this.log = options.log ?? (() => undefined)
   }
 
@@ -619,7 +623,7 @@ export class TranscriptTracer {
   private async emitLines(lines: string[]): Promise<void> {
     const turn = this.turn
     if (!turn) return
-    const ctx: MapContext = { mode: turn.mode ?? this.mode, toolCalls: this.toolCalls }
+    const ctx: MapContext = { mode: turn.mode ?? this.mode, toolCalls: this.toolCalls, ownTools: this.ownTools }
     let frames: TraceFrame[] = []
     let statusText: string | undefined
     for (const line of lines) {

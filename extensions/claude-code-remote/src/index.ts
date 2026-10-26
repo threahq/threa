@@ -53,7 +53,14 @@ async function main(): Promise<void> {
   const client = new ThreaClient(result.config)
   // MCP instructions are fixed when stdio connects, so hook mode is settled before the server exists.
   const stopHooks = activation.active ? await openStopHooks(parentCommand) : undefined
-  const server = new ChannelServer(result.config, client, undefined, activation.active, undefined, stopHooks)
+  const server = new ChannelServer(
+    result.config,
+    client,
+    undefined,
+    activation.active ? serverKey : undefined,
+    undefined,
+    stopHooks
+  )
 
   // Connect stdio first so Claude Code registers the channel and discovers the
   // reply tool even while the Threa bridge is still spinning up. This also puts

@@ -13,7 +13,7 @@ import {
 } from "./transcript-trace"
 
 function ctx(mode: "headline" | "commands" | "full" = "headline"): MapContext {
-  return { mode, toolCalls: new Map() }
+  return { mode, toolCalls: new Map(), ownTools: new Set(["mcp__threa-channel__send", "mcp__threa-channel__reply"]) }
 }
 
 function assistantLine(parts: unknown[], timestamp?: string): string {
@@ -146,7 +146,12 @@ describe("mapTranscriptLine redaction (headline mode)", () => {
     const context = ctx()
     const callSteps = mapTranscriptLine(
       assistantLine([
-        { type: "tool_use", id: "toolu_6", name: "mcp__threa__send", input: { invocation_id: "binv_1", text: "hi" } },
+        {
+          type: "tool_use",
+          id: "toolu_6",
+          name: "mcp__threa-channel__send",
+          input: { invocation_id: "binv_1", text: "hi" },
+        },
       ]),
       context
     )
@@ -378,7 +383,7 @@ describe("mapTranscriptLine tool lifecycle", () => {
     const context = ctx()
     const call = mapTranscriptLine(
       assistantLine(
-        [{ type: "tool_use", id: "toolu_l4", name: "mcp__threa__reply", input: { text: "hi" } }],
+        [{ type: "tool_use", id: "toolu_l4", name: "mcp__threa-channel__reply", input: { text: "hi" } }],
         "2026-09-16T10:00:00.000Z"
       ),
       context
@@ -443,6 +448,50 @@ describe("TranscriptTracer", () => {
     expect(all).not.toContain("decoy work")
     expect(all).not.toContain("make secret")
     expect(batches.every((batch) => batch.invocationId === "binv_trace_test")).toBe(true)
+  }, 10_000)
+
+  test("skips the send/reply tools of its own registration key, not another server's", async () => {
+    const root = mkdtempSync(join(tmpdir(), "trace-projects-"))
+    const cwd = "/tmp/fake-worktree-own-tools"
+    const projectDir = join(root, encodeProjectDir(cwd))
+    mkdirSync(projectDir, { recursive: true })
+    const file = join(projectDir, "dddd-own.jsonl")
+    writeFileSync(file, `${JSON.stringify({ type: "system", note: "session" })}\n`)
+
+    const batches: TraceFrame[][] = []
+    const tracer = new TranscriptTracer({
+      projectsRoot: root,
+      cwd,
+      pollMs: 20,
+      channelServerKey: "threa-dev",
+      emit: async (_invocationId, frames) => {
+        batches.push(frames)
+        return true
+      },
+    })
+
+    tracer.beginTurn("binv_own_tools")
+    appendFileSync(
+      file,
+      `${JSON.stringify({ type: "user", message: { role: "user", content: 'invocation_id="binv_own_tools"' } })}\n`
+    )
+    appendFileSync(
+      file,
+      `${assistantLine([
+        { type: "tool_use", id: "t_own", name: "mcp__threa-dev__reply", input: { text: "hi" } },
+        { type: "tool_use", id: "t_other", name: "mcp__mailer__send", input: { text: "hi" } },
+      ])}\n`
+    )
+
+    const deadline = Date.now() + 3_000
+    while (batches.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    tracer.stop()
+
+    const all = JSON.stringify(batches)
+    expect(all).toContain("mailer:send")
+    expect(all).not.toContain("threa-dev")
   }, 10_000)
 
   test("a sealed turn's per-turn full mode ships real content, and does NOT outlive the turn", async () => {
