@@ -863,6 +863,7 @@ function ConversationPanelBody({
   // The cold-load settle parks its reveal behind the mask while it is set, so a
   // marker that resolves a frame late can't jump the viewer off a revealed tail.
   const landingPendingRef = useRef(true)
+  const landingTargetMissingRef = useRef(false)
   const rows = injectUnreadDivider(baseRows, markerMessageId, isDimmed)
   // "Move to sub-topic" re-file — same gesture as the board card (membership move
   // within one root; the hook hides the action when a row has nowhere to go).
@@ -998,6 +999,7 @@ function ConversationPanelBody({
     getLastKey: () => rows.at(-1)?.key ?? null,
     resetKey: conversation.id,
     landingPendingRef,
+    landingTargetMissingRef,
     userInteractedAtRef,
     programmaticScrollAtRef,
     // The panel reserves its floating pill under a different variable than the
@@ -1100,6 +1102,11 @@ function ConversationPanelBody({
   }
   landingIntentRef.current = highlightMessageId
   markerHeldRef.current = markerMessageId != null
+  landingTargetMissingRef.current =
+    landingTargetId != null &&
+    !backfillFailed &&
+    conversation.messageIds.includes(landingTargetId) &&
+    findRowIndex(landingTargetId) < 0
 
   // Unkeyed: it re-attempts every render until `scrollToMessage` engages, so a
   // render where the target is not a row yet (older replies still backfilling)

@@ -459,6 +459,37 @@ describe("useBoardCardMessages", () => {
     expect(result.current.replies[0]?.contentMarkdown).toBe("projection r1")
   })
 
+  it("keeps the projection's newest reply on screen while the rail has seen the conversation but not that reply", async () => {
+    // The rail syncs the conversation a beat before its newest reply: switching
+    // to the rail must not drop the row the projection was already showing.
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1), msgEvent("r1", "first reply", 2)])
+    const post = makePost({
+      messageIds: ["m1", "r1", "r2"],
+      openingId: "m1",
+      recentMessages: [projectionMessage("r1"), { ...projectionMessage("r2"), createdAt: new Date(3).toISOString() }],
+    })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.source).toBe("events"))
+    expect({
+      replies: result.current.replies.map((m) => ({ id: m.id, content: m.contentMarkdown })),
+      totalReplies: result.current.totalReplies,
+      trailingUnseen: result.current.trailingUnseen,
+    }).toEqual({
+      replies: [
+        { id: "r1", content: "first reply" },
+        { id: "r2", content: "projection r2" },
+      ],
+      totalReplies: 2,
+      trailingUnseen: 0,
+    })
+
+    await db.events.put(msgEvent("r2", "second reply", 3))
+    await waitFor(() =>
+      expect(result.current.replies.map((m) => m.contentMarkdown)).toEqual(["first reply", "second reply"])
+    )
+  })
+
   it("trusts the server reply count when a flat conversation's opening was deleted", async () => {
     // The opening (messageIds[0]) was deleted, so post.openingMessage is null and
     // openingId is unknown. The server already excluded it (totalReplies = 1); the

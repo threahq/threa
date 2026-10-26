@@ -15,6 +15,10 @@ const SETTLE_STABLE_FRAMES = 3
  *  decision before dropping the mask anyway — a resolver stuck at "wait"
  *  (read state that never hydrates) must not skeleton the stream forever. */
 const SETTLE_DEFER_FAILSAFE_MS = 1500
+/** Longest the failsafe keeps re-arming while the landing target is missing —
+ *  a backfill paused offline, or a target that never becomes a row, must not
+ *  skeleton the panel indefinitely. */
+const SETTLE_AWAIT_TARGET_MAX_MS = 10_000
 /** Finger travel (px) from the last recorded anchor before a touchmove records
  *  a gesture direction. The final touchmove before lift-off commonly reverses
  *  2–3px as the finger peels off the glass; recording that flipped a long
@@ -68,6 +72,9 @@ interface UseTimelineScrollOptions {
    * regardless.
    */
   landingPendingRef?: React.RefObject<boolean>
+  /** True while the pending landing's target is not a row yet; the parked
+   *  reveal's failsafe re-arms instead of revealing the tail it will jump off. */
+  landingTargetMissingRef?: React.RefObject<boolean>
   /**
    * True while reading a deep-linked / searched history window. Reaching the
    * live tail in this mode must NOT re-arm auto-follow — the user is anchored
@@ -152,8 +159,9 @@ interface UseTimelineScrollReturn {
    * position the viewport off-screen and reveal at the restored spot via
    * `revealSettle`. Without this the settle reveals at the tail first and the
    * restore's scroll lands a frame later — a visible tail-flash-then-jump on
-   * every reload of a stream with a saved reading position. No-op when no
-   * settle is in flight.
+   * every reload of a stream with a saved reading position. A parked reveal's
+   * failsafe is disarmed too, so it can't drop the mask mid-positioning. The
+   * caller must reveal.
    */
   holdSettleForRestore: () => void
   /** Drop the cold-load settle mask. Idempotent; pairs with holdSettleForRestore. */
@@ -198,6 +206,7 @@ export function useTimelineScroll({
   isJumpMode = false,
   userInteractedAtRef,
   landingPendingRef,
+  landingTargetMissingRef,
   programmaticScrollAtRef,
   composerHeightVar = DEFAULT_COMPOSER_HEIGHT_VAR,
 }: UseTimelineScrollOptions): UseTimelineScrollReturn {
@@ -443,6 +452,10 @@ export function useTimelineScroll({
 
   const holdSettleForRestore = useCallback(() => {
     initialSettleCleanupRef.current?.(false)
+    if (deferFailsafeTimerRef.current) {
+      window.clearTimeout(deferFailsafeTimerRef.current)
+      deferFailsafeTimerRef.current = 0
+    }
   }, [])
 
   const clearDeferredReveal = useCallback(() => {
@@ -505,11 +518,21 @@ export function useTimelineScroll({
           // failsafe drops the mask if the decision never resolves.
           deferredRevealRef.current = true
           if (deferFailsafeTimerRef.current) window.clearTimeout(deferFailsafeTimerRef.current)
-          deferFailsafeTimerRef.current = window.setTimeout(() => {
-            deferredRevealRef.current = false
-            deferGestureCleanupRef.current?.()
-            setIsInitialSettling(false)
-          }, SETTLE_DEFER_FAILSAFE_MS)
+          let waitedMs = 0
+          const armFailsafe = () => {
+            deferFailsafeTimerRef.current = window.setTimeout(() => {
+              waitedMs += SETTLE_DEFER_FAILSAFE_MS
+              if (landingTargetMissingRef?.current && waitedMs < SETTLE_AWAIT_TARGET_MAX_MS) {
+                armFailsafe()
+                return
+              }
+              deferFailsafeTimerRef.current = 0
+              deferredRevealRef.current = false
+              deferGestureCleanupRef.current?.()
+              setIsInitialSettling(false)
+            }, SETTLE_DEFER_FAILSAFE_MS)
+          }
+          armFailsafe()
           // The settle's own gesture listeners die with cleanup() below, so
           // arm fresh ones for the deferred window: a user scrolling under a
           // parked mask must not stay masked.
@@ -933,11 +956,17 @@ export function useTimelineScroll({
     }
   }, [scrollerEl, userInteractedAtRef])
 
-  // Abort an in-flight cold-load settle when the hook unmounts. Kept separate
-  // from the ResizeObserver effect above so that effect can re-run when the
-  // scroller attaches or remounts without tearing down a settle that the
-  // initial-scroll layout effect just started.
-  useEffect(() => () => initialSettleCleanupRef.current?.(), [])
+  // Abort an in-flight cold-load settle, or a parked reveal's failsafe, when
+  // the hook unmounts. Kept separate from the ResizeObserver effect above so
+  // that effect can re-run when the scroller attaches or remounts without
+  // tearing down a settle that the initial-scroll layout effect just started.
+  useEffect(
+    () => () => {
+      initialSettleCleanupRef.current?.()
+      clearDeferredReveal()
+    },
+    [clearDeferredReveal]
+  )
 
   return {
     listRef,
