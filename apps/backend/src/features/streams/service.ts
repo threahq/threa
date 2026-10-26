@@ -1019,8 +1019,8 @@ export class StreamService {
           code: DocErrorCodes.HOST_TYPE_INVALID,
         })
       }
-      // The doc body is projected server-side as plaintext.
-      if (host.e2eEnabled === true) {
+      // The doc body is projected server-side as plaintext; the locked row carries no E2E join.
+      if (await E2eStreamsRepository.isE2eStream(client, params.workspaceId, host.id)) {
         throw new HttpError("Docs cannot be created on an end-to-end encrypted stream", {
           status: 400,
           code: DocErrorCodes.E2E_HOST_NOT_ALLOWED,
