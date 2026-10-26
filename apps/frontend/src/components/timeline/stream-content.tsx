@@ -169,7 +169,12 @@ import { StreamReadTracker } from "./stream-read-tracker"
 import { useReadMessageIds, useStreamInInbox, useUnreadActions } from "@/hooks/use-unread-counts"
 import { deepLinkDebug } from "./deep-link-debug"
 import { VirtualizedScroller, useRenderedContentLatch } from "./virtualized-scroller"
-import { useScrollToMessage, snapshotTopVisibleRow, UNREAD_MARKER_TOP_GAP_PX } from "@/hooks/use-scroll-to-message"
+import {
+  useScrollToMessage,
+  snapshotTopVisibleRow,
+  isHoldCurrent,
+  UNREAD_MARKER_TOP_GAP_PX,
+} from "@/hooks/use-scroll-to-message"
 
 /** Membership events; suppressed in threads (see displayEvents memo). */
 const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joined", "member_added", "member_left"])
@@ -2663,7 +2668,9 @@ export function StreamContent({
       const best = snapshotTopVisibleRow(el)
       if (best) {
         saveTimelineAnchor(workspaceId, streamId, { targetId: best.id, offsetPx: best.offsetPx })
-        detachedHoldRef.current = { id: best.id, offsetPx: best.offsetPx, takenAt: performance.now() }
+        if (!isHoldCurrent(el, detachedHoldRef.current, userInteractedAtRef.current)) {
+          detachedHoldRef.current = { id: best.id, offsetPx: best.offsetPx, takenAt: performance.now() }
+        }
       }
     }
     const onScroll = () => {
@@ -2710,6 +2717,7 @@ export function StreamContent({
     if (!isFetchingOlder || !useVirtualized) return
     const el = virtualScrollerEl
     if (!el || isFollowingTailRef.current) return
+    if (isHoldCurrent(el, detachedHoldRef.current, userInteractedAtRef.current)) return
     const snap = snapshotTopVisibleRow(el)
     if (snap) detachedHoldRef.current = { ...snap, takenAt: performance.now() }
   }, [isFetchingOlder, useVirtualized, virtualScrollerEl, isFollowingTailRef])

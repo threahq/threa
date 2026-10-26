@@ -33,7 +33,24 @@ export function snapshotTopVisibleRow(el: HTMLElement): { id: string; offsetPx: 
   return best ? { id: best.id, offsetPx: Math.round(best.top - sr.top) } : null
 }
 
+/** The row `id` with its offset from the viewport top, when it is mounted. */
+function snapshotRow(el: HTMLElement, id: string): { id: string; offsetPx: number } | null {
+  const escaped = CSS.escape(id)
+  const row = el.querySelector<HTMLElement>(`[data-message-id="${escaped}"], [data-event-id="${escaped}"]`)
+  return row ? { id, offsetPx: Math.round(row.getBoundingClientRect().top - el.getBoundingClientRect().top) } : null
+}
+
 type DetachedHold = { id: string; offsetPx: number; takenAt: number }
+
+/**
+ * Whether the detached hold still names the reader's position: no gesture since
+ * it was taken and its row still mounted. Only then may a re-snapshot keep it —
+ * swapping a landed target for whichever row sits at the viewport top lets that
+ * row's late regrouping (a header appearing) slide the target down.
+ */
+export function isHoldCurrent(el: HTMLElement, hold: DetachedHold | null, userInteractedAt: number): boolean {
+  return hold !== null && userInteractedAt <= hold.takenAt && snapshotRow(el, hold.id) !== null
+}
 
 interface ScrollToMessageOptions {
   align?: "center" | "start"
@@ -155,7 +172,9 @@ export function useScrollToMessage({
         const scrollerNow = scrollerRef.current
         const userTookOver = userInteractedAtRef.current > engagedAt
         if (scrollerNow && !isFollowingTailRef.current && (everLanded || userTookOver)) {
-          const snap = snapshotTopVisibleRow(scrollerNow)
+          const snap =
+            (everLanded && !userTookOver ? snapshotRow(scrollerNow, targetId) : null) ??
+            snapshotTopVisibleRow(scrollerNow)
           detachedHoldRef.current = snap ? { ...snap, takenAt: performance.now() } : null
         }
         opts?.onFirstSettle?.()
