@@ -95,6 +95,8 @@ async function process(scheduledService: ReturnType<typeof scheduledServiceRejec
   )
 }
 
+afterEach(() => vi.restoreAllMocks())
+
 beforeEach(async () => {
   vi.clearAllMocks()
   await db.pendingOperations.clear()
@@ -164,7 +166,6 @@ describe("doc_update operations", () => {
       posted: posted.getText("t").toString(),
       ops: await db.pendingOperations.toArray(),
     }).toEqual({ texts: 1, posted: expect.stringMatching(/^(earlylate|lateearly)$/), ops: [] })
-    vi.restoreAllMocks()
   })
 
   it("should merge into a waiting row for the same doc and keep a started one when enqueuing", async () => {

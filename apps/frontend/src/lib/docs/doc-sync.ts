@@ -237,14 +237,17 @@ export class DocSync {
     this.capTimer = null
   }
 
-  /** Entered only with unacked edits, so every pass awaits before it can return. */
+  /**
+   * Entered only with unacked edits, so every pass awaits before it can return. A hand-off or reload is a pass
+   * too: an edit typed while one waits sets `flushAgain` and gets its own pass instead of waiting for the next trigger.
+   */
   private async runFlush(): Promise<void> {
     try {
       do {
         this.flushAgain = false
         if (!navigator.onLine) {
           await this.handOff()
-          return
+          continue
         }
         const carried = new Set(this.unacked)
         try {
@@ -253,7 +256,7 @@ export class DocSync {
           if (this.stopped) return
           if (isPermanentApiError(error)) await this.discardRefusedEdits(error)
           else await this.handOff()
-          return
+          continue
         }
         this.unacked = this.unacked.filter((update) => !carried.has(update))
       } while (this.flushAgain && !this.stopped && this.unacked.length > 0)
@@ -272,7 +275,8 @@ export class DocSync {
       await enqueueDocUpdate(this.workspaceId, this.docId, bytesToBase64(Y.mergeUpdates(this.unacked)))
     } catch (error) {
       console.error("Doc edits could not be queued for retry", { docId: this.docId, error })
-      this.onLost?.(error)
+      // A live sync still holds the bytes and re-sends them; only a stopped one has nowhere left to keep them.
+      if (this.stopped) this.onLost?.(error)
       return
     }
     if (navigator.onLine) this.kickOperationQueue()

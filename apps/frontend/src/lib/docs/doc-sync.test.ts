@@ -358,6 +358,47 @@ describe("DocSync", () => {
     })
   })
 
+  it("should queue a word typed while an offline hand-off is still being stored", async () => {
+    const client = connect(server)
+    await client.sync.start()
+    const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)
+    let release!: () => void
+    const stored = new Promise<void>((resolve) => (release = resolve))
+    vi.mocked(operationQueueModule.enqueueDocUpdate).mockImplementationOnce(async (_ws, docId, update) => {
+      await stored
+      enqueued.push({ docId, text: textOf(update) })
+    })
+
+    type(client.ydoc, "first ")
+    await vi.advanceTimersByTimeAsync(0)
+    type(client.ydoc, "second ")
+    release()
+    await vi.advanceTimersByTimeAsync(0)
+    online.mockRestore()
+
+    expect({ posts: server.api.postUpdate.mock.calls.length, enqueued: client.enqueued }).toEqual({
+      posts: 0,
+      enqueued: [
+        { docId: DOC_ID, text: "first " },
+        { docId: DOC_ID, text: "first second " },
+      ],
+    })
+  })
+
+  it("should keep a live sync's edits for the next flush when the queue cannot store them", async () => {
+    const client = connect(server)
+    await client.sync.start()
+    const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)
+    vi.mocked(operationQueueModule.enqueueDocUpdate).mockRejectedValueOnce(new Error("QuotaExceededError"))
+
+    type(client.ydoc, "kept ")
+    await vi.advanceTimersByTimeAsync(0)
+    online.mockRestore()
+    await client.sync.flush()
+
+    expect({ lost: client.lost, server: server.text }).toEqual({ lost: [], server: "kept " })
+  })
+
   it("should keep its seq when a re-sent edit the server already held answers with a peer's head", async () => {
     const client = connect(server)
     await client.sync.start()
