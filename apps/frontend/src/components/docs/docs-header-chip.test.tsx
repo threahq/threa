@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import * as contextsModule from "@/contexts"
 import * as workspaceStoreModule from "@/stores/workspace-store"
-import { DocsHeaderChip } from "./docs-header-chip"
+import { DocsHeaderChip, useHostedDocs } from "./docs-header-chip"
 
 const WORKSPACE_ID = "ws_1"
 const HOST_ID = "stream_host"
@@ -58,15 +58,21 @@ describe("DocsHeaderChip", () => {
       }))
   }
 
+  // The pane's wiring: the chip mounts only while the host has docs.
+  function HostHeader() {
+    const docs = useHostedDocs(WORKSPACE_ID, HOST_ID)
+    return docs.length > 0 ? <DocsHeaderChip docs={docs} /> : null
+  }
+
   function mount() {
     return render(
       <MemoryRouter>
-        <DocsHeaderChip workspaceId={WORKSPACE_ID} hostId={HOST_ID} />
+        <HostHeader />
       </MemoryRouter>
     )
   }
 
-  it("should render nothing when the host has no live docs", () => {
+  it("should mount nothing when the host has no live docs", () => {
     streams = [
       doc("stream_archived", "2026-10-01T10:00:00.000Z", { archivedAt: "2026-10-02T10:00:00.000Z" }),
       doc("stream_elsewhere", "2026-10-01T10:00:00.000Z", { parentStreamId: "stream_other" }),

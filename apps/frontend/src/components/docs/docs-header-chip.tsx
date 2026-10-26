@@ -1,4 +1,4 @@
-import { useCallback } from "react"
+import { memo, useCallback } from "react"
 import { Link } from "react-router-dom"
 import { StreamTypes } from "@threahq/types"
 import { Button } from "@/components/ui/button"
@@ -11,11 +11,30 @@ import { useWorkspaceStreamsSelect, type CachedStream } from "@/stores/workspace
 const DocGlyph = STREAM_ICONS[StreamTypes.DOC]
 
 /** Narrow on purpose: the selector's result keeps its identity only while these fields stay equal. */
-type HostedDoc = Pick<CachedStream, "id" | "type" | "slug" | "displayName" | "createdAt">
+export type HostedDoc = Pick<CachedStream, "id" | "type" | "slug" | "displayName" | "createdAt">
+
+/**
+ * The host stream's live docs, newest first. The pane reads this itself and mounts the chip only
+ * while there are docs: a docless channel's header then costs no render on a stream switch.
+ */
+export function useHostedDocs(workspaceId: string, hostId: string | null): HostedDoc[] {
+  const selectDocs = useCallback(
+    (streams: CachedStream[]): HostedDoc[] =>
+      hostId === null
+        ? []
+        : streams
+            .filter(
+              (stream) => stream.type === StreamTypes.DOC && stream.parentStreamId === hostId && !stream.archivedAt
+            )
+            .map(({ id, type, slug, displayName, createdAt }) => ({ id, type, slug, displayName, createdAt }))
+            .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)),
+    [hostId]
+  )
+  return useWorkspaceStreamsSelect(workspaceId, selectDocs)
+}
 
 interface DocsHeaderChipProps {
-  workspaceId: string
-  hostId: string
+  docs: HostedDoc[]
 }
 
 interface HostedDocItemsProps {
@@ -38,20 +57,9 @@ function HostedDocItems({ docs, getPanelUrl }: HostedDocItemsProps) {
   ))
 }
 
-/** The host stream's live docs, newest first, each opening in a pane. Renders nothing while the host has none. */
-export function DocsHeaderChip({ workspaceId, hostId }: DocsHeaderChipProps) {
-  const selectDocs = useCallback(
-    (streams: CachedStream[]): HostedDoc[] =>
-      streams
-        .filter((stream) => stream.type === StreamTypes.DOC && stream.parentStreamId === hostId && !stream.archivedAt)
-        .map(({ id, type, slug, displayName, createdAt }) => ({ id, type, slug, displayName, createdAt }))
-        .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)),
-    [hostId]
-  )
-  const docs = useWorkspaceStreamsSelect(workspaceId, selectDocs)
+/** A count of the host's docs that opens a menu of them, each opening in a pane. */
+export const DocsHeaderChip = memo(function DocsHeaderChip({ docs }: DocsHeaderChipProps) {
   const { getPanelUrl } = usePanel()
-  if (docs.length === 0) return null
-
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -70,4 +78,4 @@ export function DocsHeaderChip({ workspaceId, hostId }: DocsHeaderChipProps) {
       </DropdownMenuContent>
     </DropdownMenu>
   )
-}
+})

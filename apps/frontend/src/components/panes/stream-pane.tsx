@@ -53,7 +53,7 @@ import { DocPaneBody } from "@/components/docs/doc-pane-body"
 import { useDocCanWrite } from "@/components/docs/use-doc-can-write"
 import { useDocSync } from "@/components/docs/use-doc-sync"
 import { DocPresenceAvatars } from "@/components/docs/doc-presence-avatars"
-import { DocsHeaderChip } from "@/components/docs/docs-header-chip"
+import { DocsHeaderChip, useHostedDocs } from "@/components/docs/docs-header-chip"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { LabelStack } from "@/components/labels/label-stack"
 import { StreamHeaderEncryptionAction } from "@/components/encryption/stream-encryption-affordance"
@@ -185,6 +185,10 @@ export function StreamPane({
   const hasTimeline = !isDoc
   const canWriteDoc = useDocCanWrite(workspaceId, stream)
   const docSync = useDocSync(workspaceId, isDoc ? streamId : null)
+  const hostedDocs = useHostedDocs(
+    workspaceId,
+    stream && !isDraft && streamTypeCapabilities(stream.type).hostsDocs ? stream.id : null
+  )
   const createDoc = useCreateDoc(workspaceId, isDraft ? undefined : stream)
   // Only the stream page sets a list beside its stream; under an aside it would land out of sight.
   const offersList = (isChannel || isDm) && hasTabs && offersContext
@@ -750,9 +754,7 @@ export function StreamPane({
       {!tabbed && companionModeIndicator}
       <AgentActivityHeaderChip workspaceId={workspaceId} streamId={streamId} compact={isMobile || tabbed} />
       {docSync.phase === "ready" && <DocPresenceAvatars workspaceId={workspaceId} presence={docSync.presence} />}
-      {stream && !isDraft && streamTypeCapabilities(stream.type).hostsDocs && (
-        <DocsHeaderChip workspaceId={workspaceId} hostId={stream.id} />
-      )}
+      {hostedDocs.length > 0 && <DocsHeaderChip docs={hostedDocs} />}
     </div>
   )
 
