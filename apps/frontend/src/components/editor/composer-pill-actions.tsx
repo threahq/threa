@@ -28,7 +28,7 @@ interface ActionBarAnchor {
   top: number
   below: boolean
   imageDisplay: AttachmentDisplay | null
-  openableImageId: string | null
+  canOpenImage: boolean
 }
 
 function pillRect(editor: Editor, pos: number): DOMRect | null {
@@ -67,8 +67,8 @@ function actionBarAnchor(editor: Editor, viewer: ImageViewer | null): ActionBarA
   if (!rect || rect.bottom < 0 || rect.top > window.innerHeight) return null
   const node = editor.state.doc.nodeAt(pos)
   const imageDisplay = node ? imageReferenceDisplay(node) : null
-  const openableImageId = viewer && imageDisplay && node?.attrs.status === "uploaded" ? (node.attrs.id as string) : null
-  const buttonCount = 1 + (imageDisplay ? 1 : 0) + (openableImageId ? 1 : 0)
+  const canOpenImage = !!viewer && !!imageDisplay && node?.attrs.status === "uploaded"
+  const buttonCount = 1 + (imageDisplay ? 1 : 0) + (canOpenImage ? 1 : 0)
   const barWidth = buttonCount * ACTION_BUTTON_SIZE_PX + (buttonCount - 1) * ACTION_BUTTON_GAP_PX
   const half = barWidth / 2
   const left = Math.min(Math.max(rect.left + rect.width / 2, half), Math.max(half, window.innerWidth - half))
@@ -79,7 +79,7 @@ function actionBarAnchor(editor: Editor, viewer: ImageViewer | null): ActionBarA
     top: below ? rect.bottom + ACTION_BAR_OFFSET_PX : rect.top - ACTION_BAR_OFFSET_PX,
     below,
     imageDisplay,
-    openableImageId,
+    canOpenImage,
   }
 }
 
@@ -92,7 +92,7 @@ function sameAnchor(left: ActionBarAnchor | null, right: ActionBarAnchor | null)
     left.top === right.top &&
     left.below === right.below &&
     left.imageDisplay === right.imageDisplay &&
-    left.openableImageId === right.openableImageId
+    left.canOpenImage === right.canOpenImage
   )
 }
 
@@ -180,6 +180,16 @@ export function ComposerPillActions({ editor }: { editor: Editor | null }) {
     editor.view.dispatch(tr.setSelection(NodeSelection.create(tr.doc, pos)))
   }, [editor])
 
+  const openImage = useCallback(() => {
+    if (!editor || editor.isDestroyed || !viewer) return
+    const pos = selectedPillPos(editor)
+    const node = pos === null ? null : editor.state.doc.nodeAt(pos)
+    if (pos === null || !node) return
+    // The bar sits above every overlay; moving the caret past the pill takes it down under the gallery.
+    editor.commands.setTextSelection(pos + node.nodeSize)
+    viewer.open(node.attrs.id as string)
+  }, [editor, viewer])
+
   // A parent re-render can land between the editor's teardown and this effect's
   // cleanup, and `view` throws once unmounted while `isDestroyed` stays safe.
   if (!anchor || !editor || editor.isDestroyed) return null
@@ -187,7 +197,6 @@ export function ComposerPillActions({ editor }: { editor: Editor | null }) {
   // Keeping the press off the document leaves the pill's NodeSelection and
   // the soft keyboard in place; Chrome for Android still delivers the click.
   const keepSelection = (event: PointerEvent) => event.preventDefault()
-  const { openableImageId } = anchor
   const buttonClass = "rounded-full border-primary/40 bg-popover/95 shadow-lg active:scale-[0.97]"
 
   return createPortal(
@@ -206,14 +215,14 @@ export function ComposerPillActions({ editor }: { editor: Editor | null }) {
       >
         {copied ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
       </Button>
-      {openableImageId && viewer && (
+      {anchor.canOpenImage && (
         <Button
           type="button"
           variant="outline"
           size="icon"
           className={buttonClass}
           onPointerDown={keepSelection}
-          onClick={() => viewer.open(openableImageId)}
+          onClick={openImage}
           aria-label="Open image"
         >
           <Maximize2 className="size-4" />
