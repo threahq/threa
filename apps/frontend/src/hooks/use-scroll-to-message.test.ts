@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { isHoldCurrent } from "./use-scroll-to-message"
+import { readHold } from "./use-scroll-to-message"
 
 function scrollerWithRowAt(rowTop: number, scrollTop = 800): HTMLElement {
   const el = document.createElement("div")
@@ -12,32 +12,30 @@ function scrollerWithRowAt(rowTop: number, scrollTop = 800): HTMLElement {
   return el
 }
 
-describe("isHoldCurrent", () => {
+describe("readHold", () => {
   const hold = { id: "msg_held", offsetPx: 120, takenAt: 1000, contentTop: 920 }
+  const row = (offsetPx: number) => ({ id: "msg_held", offsetPx })
 
-  it("holds while the row sits at its held offset and no gesture came after", () => {
-    expect(isHoldCurrent(scrollerWithRowAt(120), hold, 500)).toBe(true)
-  })
-
-  it("holds through a reflow above the row, even when the virtualizer moved scrollTop with it", () => {
+  it("tells a held row, a reflow above it, and an unstamped scroll apart", () => {
     expect({
-      reflow: isHoldCurrent(scrollerWithRowAt(260), hold, 500),
-      compensated: isHoldCurrent(scrollerWithRowAt(520, 272), hold, 500),
-    }).toEqual({ reflow: true, compensated: true })
+      held: readHold(scrollerWithRowAt(120), hold, 500),
+      reflow: readHold(scrollerWithRowAt(260), hold, 500),
+      reflowWithVirtualizerShift: readHold(scrollerWithRowAt(520, 272), hold, 500),
+      scrolled: readHold(scrollerWithRowAt(-340, 1260), hold, 500),
+      unlandedSeed: readHold(scrollerWithRowAt(-340, 1260), { ...hold, contentTop: null }, 500),
+    }).toEqual({
+      held: { state: "held", row: row(120) },
+      reflow: { state: "reflowed", row: row(260) },
+      reflowWithVirtualizerShift: { state: "reflowed", row: row(520) },
+      scrolled: { state: "scrolled" },
+      unlandedSeed: { state: "reflowed", row: row(-340) },
+    })
   })
 
-  it("lets go once a scroll the gesture stamp never sees moved the row", () => {
-    expect(isHoldCurrent(scrollerWithRowAt(-340, 1260), hold, 500)).toBe(false)
-  })
-
-  it("keeps an unlanded seed, which has no content position to compare", () => {
-    expect(isHoldCurrent(scrollerWithRowAt(-340, 1260), { ...hold, contentTop: null }, 500)).toBe(true)
-  })
-
-  it("lets go after a gesture, and when the row unmounts", () => {
+  it("voids the hold after a gesture, and when the row unmounts", () => {
     expect({
-      gesture: isHoldCurrent(scrollerWithRowAt(120), hold, 1500),
-      unmounted: isHoldCurrent(document.createElement("div"), hold, 500),
-    }).toEqual({ gesture: false, unmounted: false })
+      gesture: readHold(scrollerWithRowAt(120), hold, 1500),
+      unmounted: readHold(document.createElement("div"), hold, 500),
+    }).toEqual({ gesture: { state: "void" }, unmounted: { state: "void" } })
   })
 })

@@ -173,7 +173,7 @@ import {
   useScrollToMessage,
   snapshotTopVisibleRow,
   isHoldCurrent,
-  currentHoldRow,
+  readHold,
   takeHold,
   UNREAD_MARKER_TOP_GAP_PX,
 } from "@/hooks/use-scroll-to-message"
@@ -2520,8 +2520,9 @@ export function StreamContent({
     const el = virtualScrollerEl
     if (!el || isFollowingTailRef.current) return
     if (scrollAbortRef.current) return
-    const row = currentHoldRow(el, hold, userInteractedAtRef.current)
-    if (!row) return
+    const reading = readHold(el, hold, userInteractedAtRef.current)
+    if (reading.state !== "held" && reading.state !== "reflowed") return
+    const { row } = reading
     const delta = row.offsetPx - hold.offsetPx
     // Position-preserving by definition (re-pins the same row at the same
     // offset), so it does not stamp the programmatic-scroll ref — breaking a
@@ -2675,15 +2676,20 @@ export function StreamContent({
       }
     }
     const onScroll = () => {
-      // Classify every scroll as it lands: a scroll that moved the held row
-      // without a reflow is the reader's, so the hold yields at once rather
-      // than pulling them back on the next resize. A refine loop owns its own
-      // scrolls and refreshes the hold when it settles.
+      // A scroll the gesture stamp never sees is the reader's: rebase the hold
+      // on where it left them, or the next reflow pulls them back. Track the
+      // held row's content position even mid refine loop, since virtua's
+      // compensation moves scrollTop under it and a stale position reads the
+      // reader's next scroll as a reflow.
       const hold = detachedHoldRef.current
-      if (hold && !scrollAbortRef.current && !isFollowingTailRef.current) {
-        const row = currentHoldRow(el, hold, userInteractedAtRef.current)
-        if (!row) detachedHoldRef.current = null
-        else if (Math.abs(row.offsetPx - hold.offsetPx) <= 1) hold.contentTop = row.offsetPx + el.scrollTop
+      if (hold && !isFollowingTailRef.current) {
+        const reading = readHold(el, hold, userInteractedAtRef.current)
+        if (reading.state === "held") {
+          hold.contentTop = reading.row.offsetPx + el.scrollTop
+        } else if (reading.state === "scrolled" && !scrollAbortRef.current) {
+          const top = snapshotTopVisibleRow(el)
+          detachedHoldRef.current = top ? takeHold(el, top) : null
+        }
       }
       if (timer) window.clearTimeout(timer)
       timer = window.setTimeout(snapshot, 250)
