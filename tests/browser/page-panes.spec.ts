@@ -240,6 +240,18 @@ async function sendFile(page: Page, workspaceId: string, streamId: string) {
   // The button, not Enter: Enter races the paste's async insertion and can no-op.
   await pane(page, streamId).getByRole("button", { name: "Send", exact: true }).click()
   await expect(reference).toHaveCount(0, { timeout: 15_000 })
+  // The composer clears before the upload and send land, and navigating away aborts them. Wait until the file is
+  // message-bound and scanned CLEAN — the gate the explorer's search enforces — before the caller moves on.
+  await expect
+    .poll(
+      async () => {
+        const res = await page.request.post(`/api/workspaces/${workspaceId}/attachments/search`, { data: {} })
+        if (!res.ok()) return 0
+        return ((await res.json()) as { items: unknown[] }).items.length
+      },
+      { timeout: 40_000, intervals: [500, 1000, 2000] }
+    )
+    .toBeGreaterThan(0)
 }
 
 test("should stack the file explorer in a pane too narrow for its list and preview side by side", async ({ page }) => {
@@ -253,11 +265,7 @@ test("should stack the file explorer in a pane too narrow for its list and previ
   const back = files.getByRole("button", { name: "Back to file list" })
   const resize = files.getByRole("separator", { name: "Resize preview pane" })
   const download = files.getByRole("link", { name: "Download" })
-  // The search index takes the file a moment after its message lands.
-  await expect(async () => {
-    await page.reload()
-    await expect(row).toBeVisible({ timeout: 15_000 })
-  }).toPass({ timeout: 90_000 })
+  await expect(row).toBeVisible({ timeout: 15_000 })
   expect((await files.boundingBox())!.width).toBeLessThan(560)
   await expect(resize).toHaveCount(0)
   await expect(download).toBeHidden()

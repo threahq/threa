@@ -129,6 +129,8 @@ test("phone: the overview is a drawer over the stream; a jump closes it and Back
   await expect(page.locator('[data-editor-zone="main"]')).toBeVisible()
   await expect(drawer(page).getByRole("button", { name: "Back" })).toHaveCount(0)
 
+  // The thread's link row loads after the stream's and lands above it; clicking before it does can hit it instead.
+  await expect(drawer(page).getByText("example.org", { exact: true })).toBeVisible()
   await drawer(page).getByRole("button", { name: "Go to message" }).last().click()
   await expect(drawer(page)).toHaveCount(0)
   await expect(page.locator(`[data-event-id][data-message-id="${anchorId}"]`)).toBeInViewport()

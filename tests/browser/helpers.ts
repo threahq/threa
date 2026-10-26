@@ -344,6 +344,26 @@ export async function panesSettled(page: Page): Promise<void> {
 }
 
 /**
+ * Runs `act` and expects it to flash the pane. The flash is a 0.7s class that can start and end between two
+ * polls of `toHaveClass` on a slow runner, so an observer installed before `act` records it instead.
+ */
+export async function expectPaneFlash(page: Page, paneId: string, act: () => Promise<unknown>): Promise<void> {
+  const seen = await page.evaluateHandle((id) => {
+    const state = { flashed: false }
+    const pane = document.querySelector(`[data-panel-tab="${CSS.escape(id)}"]`)!
+    const observer = new MutationObserver(() => {
+      if (!pane.classList.contains("pane-flash")) return
+      state.flashed = true
+      observer.disconnect()
+    })
+    observer.observe(pane, { attributes: true, attributeFilter: ["class"] })
+    return state
+  }, paneId)
+  await act()
+  await expect.poll(() => seen.evaluate((state) => state.flashed)).toBe(true)
+}
+
+/**
  * The panel pane in front: the one last opened or used. Tabs behind it stay
  * mounted but inert, and a split shows panes beside it, so text in those still
  * matches locators scoped only to the panel.

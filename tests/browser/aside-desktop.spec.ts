@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk, panesSettled } from "./helpers"
+import { loginAndCreateWorkspace, createChannel, expectApiOk, expectPaneFlash, panesSettled } from "./helpers"
 
 /**
  * The desktop aside surface end to end: open from a message beside the host
@@ -156,10 +156,14 @@ test.describe("Aside — desktop surface", () => {
         { timeout: 15000 }
       )
       .toBeGreaterThan(200)
-    const anchorNum = (await settledScrollMetrics(page, streamId)).topNum
-    expect(anchorNum).not.toBeNull()
+    const topNum = (await settledScrollMetrics(page, streamId)).topNum
+    expect(topNum).not.toBeNull()
 
-    await openMessageActions(page, streamId, prefix, anchorNum! + 1)
+    // A row clear of the scroller's top edge, and the baseline once the menu is open: Playwright scrolls a row
+    // whose actions sit clipped at that edge into the middle before it hovers, which is the driver moving the
+    // host, not the aside.
+    await openMessageActions(page, streamId, prefix, topNum! + 2)
+    const anchorNum = (await settledScrollMetrics(page, streamId)).topNum
     await page.getByRole("menuitem", { name: "Open an aside here" }).click()
 
     await expect(asidePane(page)).toBeVisible({ timeout: 15000 })
@@ -195,10 +199,11 @@ test.describe("Aside — desktop surface", () => {
     ).toBeVisible({ timeout: AGENT_REPLY_TIMEOUT })
     // "What you saw in …" names the host, already on show beside the aside: it flashes, and nothing moves.
     const at = page.url()
-    await asideChat(page)
-      .getByRole("link", { name: /What you saw in/ })
-      .click()
-    await expect(page.locator(`[data-panel-tab="${streamId}"]`)).toHaveClass(/pane-flash/)
+    await expectPaneFlash(page, streamId, () =>
+      asideChat(page)
+        .getByRole("link", { name: /What you saw in/ })
+        .click()
+    )
     expect(page.url()).toBe(at)
     await expect(asidePane(page)).toBeVisible()
     // The host timeline never receives the aside's turns, and the anchored
