@@ -1657,8 +1657,12 @@ export class StreamService {
           workspaceId: authority.workspaceId,
           streamId,
           principal: authority.principal,
+          typeReadOnly: "settings",
         })
         await assertPrincipalMayManageChannel(client, authority.workspaceId, target, authority.principal)
+        if (target.type === StreamTypes.DOC && normalizedDescription !== undefined) {
+          throw new HttpError("Docs have no description", { status: 400, code: "DOC_HAS_NO_DESCRIPTION" })
+        }
         // Snapshot the pre-update markdown so we only emit when it really changes
         // (a no-op re-save shouldn't spam the timeline).
         let previousDescription: string | null = null
@@ -2283,12 +2287,16 @@ export class StreamService {
     sealedName?: { ciphertext: string; envelope: unknown }
   ): Promise<{ stream: Stream; deferred: boolean }> {
     return withTransaction(this.pool, async (client) => {
-      await assertStreamWritable(client, { workspaceId, streamId, principal })
+      await assertStreamWritable(client, { workspaceId, streamId, principal, typeReadOnly: "settings" })
       const locked = await StreamRepository.findByIdForUpdateBlocking(client, workspaceId, streamId)
       if (!locked) {
         throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
       }
-      if (locked.type !== StreamTypes.SCRATCHPAD && locked.type !== StreamTypes.THREAD) {
+      if (
+        locked.type !== StreamTypes.SCRATCHPAD &&
+        locked.type !== StreamTypes.THREAD &&
+        locked.type !== StreamTypes.DOC
+      ) {
         throw new HttpError("Stream type cannot regenerate a title", { status: 400, code: "STREAM_TYPE_INVALID" })
       }
       const source = locked.displayNameSource ?? (locked.displayName ? TitleSources.LEGACY : null)
@@ -2343,14 +2351,15 @@ export class StreamService {
         expectedSource: source,
       })
       if (!updated) throw new Error("Regeneration title CAS failed under stream lock")
+      const targetKind = locked.type === StreamTypes.DOC ? "doc" : "stream"
       const state = await DynamicNamingStateRepository.ensure(client, {
         workspaceId,
-        targetKind: "stream",
+        targetKind,
         targetId: streamId,
       })
       const reset = await DynamicNamingStateRepository.resetForRegeneration(client, {
         workspaceId,
-        targetKind: "stream",
+        targetKind,
         targetId: streamId,
         expectedVersion: state.version,
       })
@@ -2364,12 +2373,12 @@ export class StreamService {
       })
       await OutboxRepository.insert(client, "dynamic_naming:requested", {
         workspaceId,
-        targetKind: "stream",
+        targetKind,
         targetId: streamId,
         deferred: e2e,
         ...(principal.kind === "user" ? { initiatingUserId: principal.userId } : {}),
       })
-      logger.info({ workspaceId, targetKind: "stream", source, e2e }, "Dynamic title regeneration requested")
+      logger.info({ workspaceId, targetKind, source, e2e }, "Dynamic title regeneration requested")
       return { stream: projected, deferred: e2e }
     })
   }

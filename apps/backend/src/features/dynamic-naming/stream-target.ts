@@ -18,12 +18,13 @@ import type {
   DynamicNamingTargetSnapshot,
 } from "./types"
 
-interface StreamTargetSnapshot extends DynamicNamingTargetSnapshot {
+/** A target whose title lives on a stream row: scratchpads, threads, asides, docs. */
+export interface StreamBackedTargetSnapshot extends DynamicNamingTargetSnapshot {
   stream: Stream
 }
 
-function isStreamTargetSnapshot(target: DynamicNamingTargetSnapshot): target is StreamTargetSnapshot {
-  return "stream" in target
+function isStreamTargetSnapshot(target: DynamicNamingTargetSnapshot): target is StreamBackedTargetSnapshot {
+  return target.targetKind === "stream" && "stream" in target
 }
 
 export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
@@ -39,7 +40,7 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
   async lockAndValidate(
     client: PoolClient,
     params: DynamicNamingTargetLockParams
-  ): Promise<StreamTargetSnapshot | null> {
+  ): Promise<StreamBackedTargetSnapshot | null> {
     if (params.targetKind !== "stream") return null
     // A contended title row is delayed work, not a protected/missing target.
     // Block inside this short DB-only claim/apply phase so SKIP LOCKED cannot
@@ -154,29 +155,37 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
 
   async applyRename(client: PoolClient, target: DynamicNamingTargetSnapshot, title: string): Promise<number | null> {
     if (!isStreamTargetSnapshot(target)) return null
-    const named = await StreamRepository.updateDisplayName(client, {
-      workspaceId: target.workspaceId,
-      streamId: target.targetId,
-      displayName: title,
-      source: TitleSources.GENERATED,
-      expectedRevision: target.titleRevision,
-      expectedSource: target.titleSource,
-    })
-    if (!named) return null
-
-    const effective = await resolveEffectiveAccessStream(client, target.stream)
-    const visibility =
-      target.stream.rootStreamId && effective.id !== target.stream.rootStreamId
-        ? Visibilities.PRIVATE
-        : effective.visibility
-    await OutboxRepository.insert(client, "stream:display_name_updated", {
-      workspaceId: target.workspaceId,
-      streamId: target.targetId,
-      displayName: title,
-      visibility,
-      source: TitleSources.GENERATED,
-      revision: named.displayNameRevision!,
-    })
-    return named.displayNameRevision ?? null
+    return applyStreamDisplayNameRename(client, target, title)
   }
+}
+
+export async function applyStreamDisplayNameRename(
+  client: PoolClient,
+  target: StreamBackedTargetSnapshot,
+  title: string
+): Promise<number | null> {
+  const named = await StreamRepository.updateDisplayName(client, {
+    workspaceId: target.workspaceId,
+    streamId: target.targetId,
+    displayName: title,
+    source: TitleSources.GENERATED,
+    expectedRevision: target.titleRevision,
+    expectedSource: target.titleSource,
+  })
+  if (!named) return null
+
+  const effective = await resolveEffectiveAccessStream(client, target.stream)
+  const visibility =
+    target.stream.rootStreamId && effective.id !== target.stream.rootStreamId
+      ? Visibilities.PRIVATE
+      : effective.visibility
+  await OutboxRepository.insert(client, "stream:display_name_updated", {
+    workspaceId: target.workspaceId,
+    streamId: target.targetId,
+    displayName: title,
+    visibility,
+    source: TitleSources.GENERATED,
+    revision: named.displayNameRevision!,
+  })
+  return named.displayNameRevision ?? null
 }

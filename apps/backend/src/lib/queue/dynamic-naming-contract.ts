@@ -1,6 +1,6 @@
 import { z } from "zod"
 
-export const DynamicNamingTargetKinds = ["stream", "conversation"] as const
+export const DynamicNamingTargetKinds = ["stream", "conversation", "doc"] as const
 export const DynamicNamingTargetKindSchema = z.enum(DynamicNamingTargetKinds)
 export type DynamicNamingTargetKind = z.infer<typeof DynamicNamingTargetKindSchema>
 

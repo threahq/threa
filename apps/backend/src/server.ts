@@ -85,6 +85,7 @@ import {
 } from "./features/messaging"
 import {
   DynamicNamingConversationTarget,
+  DynamicNamingDocTarget,
   DynamicNamingEvaluator,
   DynamicNamingOutboxHandler,
   DynamicNamingService,
@@ -512,6 +513,7 @@ export async function startServer(): Promise<ServerInstance> {
     new Map<DynamicNamingTargetKind, DynamicNamingTargetAdapter>([
       ["stream", dynamicNamingTarget],
       ["conversation", dynamicConversationNamingTarget],
+      ["doc", new DynamicNamingDocTarget(pool)],
     ]),
     dynamicNamingEvaluator,
     dynamicNamingScheduler

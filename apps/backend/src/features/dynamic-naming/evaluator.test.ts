@@ -65,6 +65,22 @@ describe("dynamic naming evaluator", () => {
     expect(JSON.stringify(request?.messages)).toContain("Old title")
   })
 
+  test("should tell the model the target kind when the target is a doc", async () => {
+    let request: { messages: Array<{ role: string; content: string }> } | undefined
+    const evaluator = new DynamicNamingEvaluator(
+      {
+        generateObject: async (value: typeof request) => {
+          request = value
+          return { value: { action: "rename", title: "Launch plan" } }
+        },
+      } as never,
+      { resolve: async () => ({ modelId: "test", temperature: 0 }) } as never
+    )
+    await evaluator.decide({ ...input, targetKind: "doc", context: "# Launch plan" }, new AbortController().signal)
+    const user = request?.messages.find((message) => message.role === "user")?.content ?? ""
+    expect(JSON.parse(user.split("\n\n")[0]!)).toMatchObject({ targetKind: "doc", checkpoint: 3 })
+  })
+
   test("stub decisions are deterministic and obey forced checkpoints", async () => {
     const evaluator = new StubDynamicNamingEvaluator()
     expect(await evaluator.decide({ ...input, checkpoint: 1, forced: false, currentTitle: null })).toEqual({
@@ -75,5 +91,19 @@ describe("dynamic naming evaluator", () => {
       title: "Untitled conversation",
     })
     expect(await evaluator.decide(input)).toEqual({ action: "keep" })
+  })
+
+  test("should rename a doc to the stub doc title until it holds that title", async () => {
+    const evaluator = new StubDynamicNamingEvaluator()
+    const doc = { ...input, targetKind: "doc" as const }
+    expect(await evaluator.decide({ ...doc, checkpoint: 1, forced: false, currentTitle: null })).toEqual({
+      action: "rename",
+      title: "Generated doc title",
+    })
+    expect(await evaluator.decide({ ...doc, currentTitle: "Launch plan" })).toEqual({
+      action: "rename",
+      title: "Generated doc title",
+    })
+    expect(await evaluator.decide({ ...doc, currentTitle: "Generated doc title" })).toEqual({ action: "keep" })
   })
 })

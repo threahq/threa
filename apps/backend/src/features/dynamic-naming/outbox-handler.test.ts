@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { AuthorTypes, StreamTypes } from "@threahq/types"
 import { ConversationRepository } from "../conversations"
+import { DocRepository } from "../docs"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { StreamRepository } from "../streams"
 import { MessageRepository } from "../messaging"
@@ -50,7 +51,7 @@ describe("dynamic naming outbox handler", () => {
     async (
       _data: {
         workspaceId: string
-        targetKind: "stream" | "conversation"
+        targetKind: "stream" | "conversation" | "doc"
         targetId: string
         initiatingUserId?: string
       },
@@ -226,5 +227,122 @@ describe("dynamic naming outbox handler", () => {
     })
     await handler.process(event)
     expect(schedule).not.toHaveBeenCalled()
+  })
+
+  describe("doc edits", () => {
+    const doc = { ...stream, id: "stream_doc", type: StreamTypes.DOC, parentStreamId: "stream_host" }
+    const docUpdated = (id: bigint, overrides: Record<string, unknown> = {}) =>
+      ({
+        id,
+        eventType: "doc:updated",
+        payload: {
+          workspaceId: "ws_1",
+          streamId: "stream_doc",
+          seq: Number(id),
+          update: "AA==",
+          touchedBlockIds: [],
+          actorId: "usr_1",
+          actorType: AuthorTypes.USER,
+          ...overrides,
+        },
+        createdAt,
+      }) as unknown as OutboxEvent
+
+    const blocks = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({ blockId: `blk_${index}`, markdown: `Block ${index}` }))
+
+    beforeEach(() => {
+      ;(StreamRepository.findById as ReturnType<typeof mock>).mockResolvedValue(doc)
+      spyOn(DocRepository, "listSections").mockResolvedValue(blocks(1) as never)
+    })
+
+    test("should schedule doc naming at the quiet deadline when a user edits an untitled doc", async () => {
+      const handler = new TestHandler({} as never, { schedule })
+      await handler.process(docUpdated(30n))
+      expect(schedule.mock.calls).toEqual([
+        [
+          { workspaceId: "ws_1", targetKind: "doc", targetId: "stream_doc", initiatingUserId: "usr_1" },
+          new Date(createdAt.getTime() + DYNAMIC_NAMING_QUIET_MS),
+        ],
+      ])
+    })
+
+    test("should not schedule when the edit is the server's own update", async () => {
+      const handler = new TestHandler({} as never, { schedule })
+      await handler.process(docUpdated(31n, { actorId: AuthorTypes.SYSTEM, actorType: AuthorTypes.SYSTEM }))
+      expect(schedule).not.toHaveBeenCalled()
+    })
+
+    test("should not schedule when a human named the doc", async () => {
+      ;(StreamRepository.findById as ReturnType<typeof mock>).mockResolvedValue({
+        ...doc,
+        displayName: "Launch plan",
+        displayNameSource: "explicit",
+      })
+      const handler = new TestHandler({} as never, { schedule })
+      await handler.process(docUpdated(32n))
+      expect(schedule).not.toHaveBeenCalled()
+    })
+
+    test("should not schedule when the doc's naming lifecycle has settled", async () => {
+      ;(DynamicNamingStateRepository.find as ReturnType<typeof mock>).mockResolvedValue({
+        lastEvaluatedMessageCount: 10,
+        consecutiveKeeps: 2,
+        completedAt: new Date(),
+        structureVersion: 0,
+        lastEvaluatedStructureVersion: 0,
+      })
+      const handler = new TestHandler({} as never, { schedule })
+      await handler.process(docUpdated(33n))
+      expect(schedule).not.toHaveBeenCalled()
+    })
+
+    test("should not schedule when the doc's block count has crossed no new checkpoint since the last evaluation", async () => {
+      ;(DynamicNamingStateRepository.find as ReturnType<typeof mock>).mockResolvedValue({
+        lastEvaluatedMessageCount: 3,
+        consecutiveKeeps: 0,
+        completedAt: null,
+        structureVersion: 0,
+        lastEvaluatedStructureVersion: 0,
+      })
+      ;(DocRepository.listSections as ReturnType<typeof mock>).mockResolvedValue(blocks(4) as never)
+      const handler = new TestHandler({} as never, { schedule })
+      await handler.process(docUpdated(37n))
+      expect(schedule).not.toHaveBeenCalled()
+    })
+
+    test("should schedule when the doc's block count reaches the next checkpoint", async () => {
+      ;(DynamicNamingStateRepository.find as ReturnType<typeof mock>).mockResolvedValue({
+        lastEvaluatedMessageCount: 3,
+        consecutiveKeeps: 0,
+        completedAt: null,
+        structureVersion: 0,
+        lastEvaluatedStructureVersion: 0,
+      })
+      ;(DocRepository.listSections as ReturnType<typeof mock>).mockResolvedValue(blocks(6) as never)
+      const handler = new TestHandler({} as never, { schedule })
+      await handler.process(docUpdated(38n))
+      expect(schedule.mock.calls).toEqual([
+        [
+          { workspaceId: "ws_1", targetKind: "doc", targetId: "stream_doc", initiatingUserId: "usr_1" },
+          new Date(createdAt.getTime() + DYNAMIC_NAMING_QUIET_MS),
+        ],
+      ])
+    })
+
+    test("should schedule once when a batch holds several edits to one doc", async () => {
+      const handler = new TestHandler({} as never, { schedule })
+      await handler.processAll([
+        docUpdated(34n),
+        docUpdated(35n),
+        docUpdated(36n, { actorId: AuthorTypes.SYSTEM, actorType: AuthorTypes.SYSTEM }),
+      ])
+      expect(schedule.mock.calls).toEqual([
+        [
+          { workspaceId: "ws_1", targetKind: "doc", targetId: "stream_doc", initiatingUserId: "usr_1" },
+          new Date(createdAt.getTime() + DYNAMIC_NAMING_QUIET_MS),
+        ],
+      ])
+    })
   })
 })

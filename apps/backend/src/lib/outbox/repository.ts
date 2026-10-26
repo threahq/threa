@@ -7,6 +7,7 @@ import type { User } from "../../features/workspaces"
 import type { ConversationWithStaleness } from "../../features/conversations"
 import type { HydratedSharedMessage } from "../../features/messaging/sharing"
 import { e2eEnvelopeV2Schema } from "../../features/messaging/e2e-schema"
+import type { DynamicNamingTargetKind } from "../queue/dynamic-naming-contract"
 import type {
   MemoEmbedSummary,
   StreamEvent as WireStreamEvent,
@@ -1436,7 +1437,7 @@ export interface BudgetAlertOutboxPayload extends WorkspaceScopedPayload {
  */
 export interface DynamicNamingRequestedOutboxPayload {
   workspaceId: string
-  targetKind: "stream" | "conversation"
+  targetKind: DynamicNamingTargetKind
   targetId: string
   deferred: boolean
   initiatingUserId?: string

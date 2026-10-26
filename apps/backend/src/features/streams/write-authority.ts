@@ -51,8 +51,8 @@ export async function assertPrincipalMayManageChannel(
   await assertUserMayManageChannels(db, workspaceId, principal.userId)
 }
 
-/** Which of the type's read-only reasons a write answers to: message writes, thread creation, or neither (a doc's Yjs updates). */
-export type TypeReadOnlyRule = "messages" | "threads" | "none"
+/** Which of the type's read-only reasons a write answers to: message writes, thread creation, stream settings, or neither (a doc's Yjs updates). */
+export type TypeReadOnlyRule = "messages" | "threads" | "settings" | "none"
 
 function typeReadOnlyReasonFor(
   type: AuthorityStream["type"],
@@ -60,7 +60,9 @@ function typeReadOnlyReasonFor(
 ): StreamReadOnlyReason | null {
   if (rule === "none") return null
   const capabilities = STREAM_TYPE_CAPABILITIES[type]
-  return rule === "threads" ? capabilities.threadsReadOnly : capabilities.messagesReadOnly
+  if (rule === "threads") return capabilities.threadsReadOnly
+  if (rule === "settings") return capabilities.settingsReadOnly
+  return capabilities.messagesReadOnly
 }
 
 export function deriveStreamViewerState(params: {

@@ -27,6 +27,8 @@ import { PRESENCE_SEND_WINDOW_MS } from "@/lib/docs/doc-presence"
 import { getPresenceColor } from "@/lib/avatar-color"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
+import * as renameModule from "@/hooks/use-rename-stream"
+import * as regenerateModule from "@/hooks/use-regenerate-title"
 import * as attachmentsModule from "@/hooks/use-attachments"
 import * as mentionablesModule from "@/hooks/use-mentionables"
 import * as workspaceEmojiModule from "@/hooks/use-workspace-emoji"
@@ -83,6 +85,17 @@ describe("DocPaneBody", () => {
       preferences: { keyboardShortcuts: {} },
       isLoading: false,
     } as unknown as ReturnType<typeof contextsModule.usePreferences>)
+    vi.spyOn(renameModule, "useRenameStream").mockReturnValue({
+      rename: vi.fn<(name: string) => Promise<void>>().mockResolvedValue(undefined),
+      canRename: true,
+      isPending: false,
+      error: null,
+    })
+    vi.spyOn(regenerateModule, "useRegenerateTitle").mockReturnValue({
+      regenerate: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      isPending: false,
+      error: null,
+    })
     vi.spyOn(hooksModule, "useCurrentWorkspaceUser").mockReturnValue({
       id: "usr_viewer",
       name: "Viewer",

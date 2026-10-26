@@ -77,6 +77,8 @@ export interface StreamTypeCapabilities {
   messagesReadOnly: StreamReadOnlyReason | null
   /** Thread creation on this type is refused with this reason; null = threads open wherever the viewer may write. */
   threadsReadOnly: StreamReadOnlyReason | null
+  /** Settings writes (rename, visibility, memory mode, title regeneration) are refused with this reason; null = writable. */
+  settingsReadOnly: StreamReadOnlyReason | null
   /** Rows in the sidebar and unread badges; false = reached only from its host. */
   listed: boolean
   /** Sidebar section of a root stream of this type; "root" = inherits its root's section. */
@@ -92,6 +94,7 @@ export const STREAM_TYPE_CAPABILITIES = {
   scratchpad: {
     messagesReadOnly: null,
     threadsReadOnly: null,
+    settingsReadOnly: null,
     listed: true,
     sidebarSection: "scratchpad",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
@@ -102,6 +105,7 @@ export const STREAM_TYPE_CAPABILITIES = {
   channel: {
     messagesReadOnly: null,
     threadsReadOnly: null,
+    settingsReadOnly: null,
     listed: true,
     sidebarSection: "channel",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
@@ -112,6 +116,7 @@ export const STREAM_TYPE_CAPABILITIES = {
   dm: {
     messagesReadOnly: null,
     threadsReadOnly: null,
+    settingsReadOnly: null,
     listed: true,
     sidebarSection: "dm",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
@@ -122,6 +127,7 @@ export const STREAM_TYPE_CAPABILITIES = {
   thread: {
     messagesReadOnly: null,
     threadsReadOnly: null,
+    settingsReadOnly: null,
     listed: true,
     sidebarSection: "root",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
@@ -132,6 +138,7 @@ export const STREAM_TYPE_CAPABILITIES = {
   system: {
     messagesReadOnly: StreamReadOnlyReasons.SYSTEM_STREAM,
     threadsReadOnly: StreamReadOnlyReasons.SYSTEM_STREAM,
+    settingsReadOnly: StreamReadOnlyReasons.SYSTEM_STREAM,
     listed: true,
     sidebarSection: "dm",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
@@ -142,6 +149,7 @@ export const STREAM_TYPE_CAPABILITIES = {
   aside: {
     messagesReadOnly: null,
     threadsReadOnly: null,
+    settingsReadOnly: null,
     listed: false,
     sidebarSection: null,
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
@@ -152,6 +160,7 @@ export const STREAM_TYPE_CAPABILITIES = {
   doc: {
     messagesReadOnly: StreamReadOnlyReasons.DOC_STREAM,
     threadsReadOnly: null,
+    settingsReadOnly: null,
     listed: false,
     sidebarSection: null,
     threadAnchorPrefixes: DOC_THREAD_ANCHOR_PREFIXES,
@@ -165,6 +174,7 @@ export const STREAM_TYPE_CAPABILITIES = {
 const UNKNOWN_STREAM_TYPE_CAPABILITIES: StreamTypeCapabilities = {
   messagesReadOnly: null,
   threadsReadOnly: null,
+  settingsReadOnly: null,
   listed: true,
   sidebarSection: null,
   threadAnchorPrefixes: [],

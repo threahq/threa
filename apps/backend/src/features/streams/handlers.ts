@@ -443,7 +443,11 @@ const disallowedUpdateFields: Record<StreamType, Record<string, string> | null> 
     visibility: "Asides are always private",
     memoryMode: "Asides never extract memory",
   },
-  [StreamTypes.DOC]: null,
+  [StreamTypes.DOC]: {
+    slug: "Docs do not have slugs",
+    visibility: "Docs inherit visibility from their host",
+    memoryMode: "Docs inherit memory settings from their host",
+  },
 }
 
 function updateSchemaForType(streamType: StreamType) {

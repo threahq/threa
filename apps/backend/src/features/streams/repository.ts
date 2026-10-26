@@ -850,14 +850,14 @@ export const StreamRepository = {
     const archiveCondition = sql.raw(archiveStatusSql("s", archiveStatus))
 
     if (parentStreamId) {
-      const result = await db.query<StreamRow>(
-        sql`SELECT ${sql.raw(SELECT_FIELDS_ALIASED)} FROM streams s
+      const children = sql`SELECT ${sql.raw(SELECT_FIELDS_ALIASED)} FROM streams s
             WHERE s.workspace_id = ${workspaceId}
-              AND s.parent_stream_id = ${parentStreamId}
-              AND ${archiveCondition}
+              AND s.parent_stream_id = ${parentStreamId}`
+      const typeCondition = types && types.length > 0 ? sql`AND s.type = ANY(${types})` : composeSql``
+      const rest = sql`AND ${archiveCondition}
               AND ${sql.raw(purposeIsNull("s"))}
             ORDER BY s.created_at DESC`
-      )
+      const result = await db.query<StreamRow>(composeSql`${children} ${typeCondition} ${rest}`)
       return result.rows.map(mapRowToStream)
     }
 
