@@ -78,4 +78,13 @@ test("the hover toolbar sits above the text of heads and grouped continuations",
   const continuationToolbar = await hoverRow(page, continuation)
   await expectToolbarClearOfContent(continuation, continuationToolbar)
   await expect(continuation.locator("xpath=..")).toHaveAttribute("data-group-continuation", "true")
+
+  // A diagonal reach from the text up to the chip passes over the previous row
+  // just left of the chip; that stretch must keep this row's toolbar up.
+  const chip = await box(continuationToolbar.locator("> div"))
+  const rowTop = (await box(continuation)).y
+  await page.mouse.move(chip.x - 40, rowTop + 10, { steps: 4 })
+  await page.mouse.move(chip.x - 16, chip.y + chip.height / 2, { steps: 4 })
+  await page.waitForTimeout(400)
+  await expect(continuationToolbar).toHaveCSS("opacity", "1")
 })

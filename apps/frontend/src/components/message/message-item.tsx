@@ -18,6 +18,7 @@ import {
   MESSAGE_ROW_CONTINUATION_TOOLBAR_ANCHOR,
   MESSAGE_ROW_HEAD_PADDING,
   MESSAGE_ROW_HEAD_TOOLBAR_ANCHOR,
+  MESSAGE_ROW_TOOLBAR_GRACE,
 } from "@/components/message/message-row-layout"
 import { RelativeTime } from "@/components/relative-time"
 import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-content"
@@ -513,7 +514,8 @@ export function MessageItem({
   const overflowMenu = (
     <div
       className={cn(
-        "reveal-actions-hover-only absolute right-4 z-10 hidden sm:block",
+        "reveal-actions-hover-only absolute z-10 hidden sm:block",
+        MESSAGE_ROW_TOOLBAR_GRACE,
         continuation ? MESSAGE_ROW_CONTINUATION_TOOLBAR_ANCHOR : MESSAGE_ROW_HEAD_TOOLBAR_ANCHOR
       )}
     >

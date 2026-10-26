@@ -24,3 +24,11 @@ export const MESSAGE_ROW_CONTINUATION_PADDING = "py-0.5"
  */
 export const MESSAGE_ROW_HEAD_TOOLBAR_ANCHOR = "bottom-[calc(100%-12px)]"
 export const MESSAGE_ROW_CONTINUATION_TOOLBAR_ANCHOR = "bottom-[calc(100%-2px)]"
+
+/**
+ * Hover grace around the toolbar chip: transparent padding that belongs to this
+ * row, so a diagonal move from the text up to the chip crosses it instead of the
+ * previous row, which would take the hover and hide the toolbar mid-reach. The
+ * chip itself stays 16px from the row's right edge.
+ */
+export const MESSAGE_ROW_TOOLBAR_GRACE = "right-0 pl-8 pr-4"

@@ -28,6 +28,7 @@ import {
   MESSAGE_ROW_CONTINUATION_TOOLBAR_ANCHOR,
   MESSAGE_ROW_HEAD_PADDING,
   MESSAGE_ROW_HEAD_TOOLBAR_ANCHOR,
+  MESSAGE_ROW_TOOLBAR_GRACE,
 } from "@/components/message/message-row-layout"
 import {
   usePendingMessages,
@@ -858,7 +859,8 @@ function MessageLayout({
               // keyboard users (keyed on the live input mode, so a mouse on a
               // touchscreen laptop reveals it too), and kept hidden for touch —
               // touch users reach these via the long-press action drawer.
-              "reveal-actions-hover-only absolute right-4 z-10 hidden sm:block",
+              "reveal-actions-hover-only absolute z-10 hidden sm:block",
+              MESSAGE_ROW_TOOLBAR_GRACE,
               renderAsContinuation ? MESSAGE_ROW_CONTINUATION_TOOLBAR_ANCHOR : MESSAGE_ROW_HEAD_TOOLBAR_ANCHOR,
               isEditing && "!opacity-0 !pointer-events-none"
             )}
