@@ -52,6 +52,23 @@ async function sendBoldMessage(page: Page, prefix: string, bold: string, suffix:
   return body.message?.id ?? ""
 }
 
+async function sendParagraphs(page: Page, paragraphs: string[]): Promise<string> {
+  const { workspaceId, streamId } = workspaceAndStream(page)
+  const response = await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
+    data: {
+      streamId,
+      contentJson: {
+        type: "doc",
+        content: paragraphs.map((text) => ({ type: "paragraph", content: [{ type: "text", text }] })),
+      },
+      contentMarkdown: paragraphs.join("\n\n"),
+    },
+  })
+  await expectApiOk(response, "Create paragraph message")
+  const body = (await response.json()) as { message?: { id: string } }
+  return body.message?.id ?? ""
+}
+
 function mainMessageRow(page: Page, text: string): Locator {
   return page.getByRole("main").locator("[data-message-id]").filter({ hasText: text }).first()
 }
@@ -173,6 +190,57 @@ test.describe("Quote by range", () => {
     // Rendered back into the timeline as a quote card carrying the bold word.
     const quotedRow = mainMessageRow(page, marker)
     await expect(quotedRow.locator("strong").filter({ hasText: "blocked" })).toBeVisible()
+  })
+
+  test("triple-clicking a message's last paragraph offers the quote, a drag into the next message does not", async ({
+    page,
+  }) => {
+    const { testId } = await loginAndCreateWorkspace(page, "quote-triple")
+    await createChannel(page, `qt-${testId}`, { switchToAll: false })
+
+    const opening = `opening-${testId} sets the scene.`
+    const closing = `closing-${testId} is the question to quote.`
+    const followUp = `followup-${testId} arrives next.`
+    const sourceId = await sendParagraphs(page, [opening, closing])
+    const nextId = await sendParagraphs(page, [followUp])
+    await expect(mainMessageRow(page, followUp)).toBeVisible({ timeout: 10000 })
+
+    // Chromium ends a triple-click on a body's last block at the start of the
+    // next row, outside the body.
+    await page.locator(`[data-message-id="${sourceId}"] p`).filter({ hasText: closing }).click({ clickCount: 3 })
+    const quoteButton = page.getByRole("button", { name: /^quote$/i })
+    await expect(quoteButton).toBeVisible({ timeout: 10000 })
+    await quoteButton.click()
+
+    const chip = page.locator("[contenteditable='true']").first().locator("[data-type='quote-reply']")
+    await expect(chip).toHaveCount(1, { timeout: 10000 })
+    await expect(chip).toContainText(closing)
+    await expect(chip).not.toContainText(opening)
+
+    // Visible first, so hiding is the selection reaching past the body.
+    const selectFromSourceInto = (endId: string) =>
+      page.evaluate(
+        ({ sourceId, endId }) => {
+          const textIn = (id: string) => {
+            const body = document.querySelector(`[data-message-id="${id}"] .message-content .markdown-content`)
+            const node = body && document.createTreeWalker(body, NodeFilter.SHOW_TEXT).nextNode()
+            if (!node) throw new Error(`No rendered text for ${id}`)
+            return node
+          }
+          const range = document.createRange()
+          range.setStart(textIn(sourceId), 0)
+          range.setEnd(textIn(endId), 5)
+          const selection = window.getSelection()
+          selection?.removeAllRanges()
+          selection?.addRange(range)
+          document.dispatchEvent(new Event("selectionchange"))
+        },
+        { sourceId, endId }
+      )
+    await selectFromSourceInto(sourceId)
+    await expect(quoteButton).toBeVisible()
+    await selectFromSourceInto(nextId)
+    await expect(quoteButton).toBeHidden()
   })
 
   test("still renders a legacy quote sent without a version or range", async ({ page }) => {

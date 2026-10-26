@@ -47,6 +47,21 @@ function textBeforeSelection(contentEl: Element, range: Range): string {
 }
 
 /**
+ * The selection trimmed to the message body, or null when it reaches text
+ * outside it. A triple-click on a message's last block ends the range at the
+ * start of the next row; that overflow selects nothing visible, so it is
+ * trimmed rather than read as a cross-message selection.
+ */
+function rangeWithinContent(contentEl: Element, sel: Selection, range: Range): Range | null {
+  if (!contentEl.contains(range.startContainer)) return null
+  if (contentEl.contains(range.endContainer)) return range
+  const clamped = range.cloneRange()
+  clamped.setEnd(contentEl, contentEl.childNodes.length)
+  const visible = (text: string) => text.replace(/\s+/g, "")
+  return visible(sel.toString()) === visible(clamped.toString()) ? clamped : null
+}
+
+/**
  * Extract author metadata from a message DOM element via data attributes.
  */
 function getAuthorFromDom(messageEl: HTMLElement): { authorName: string; authorId: string; actorType: string } {
@@ -127,22 +142,16 @@ export const TextSelectionQuote = memo(function TextSelectionQuote({
       return
     }
 
-    // Both ends of the selection must be within the same message
+    // Must be within one message's content area (not author name, timestamp, etc.)
     const startCtx = getMessageContext(range.startContainer)
-    const endCtx = getMessageContext(range.endContainer)
-    if (!startCtx || !endCtx || startCtx.messageId !== endCtx.messageId) {
+    const contentEl = startCtx?.element.querySelector(".message-content .markdown-content")
+    const contentRange = contentEl ? rangeWithinContent(contentEl, sel, range) : null
+    if (!startCtx || !contentEl || !contentRange) {
       setSelection(null)
       return
     }
 
-    // Must be within the message content area (not author name, timestamp, etc.)
-    const contentEl = startCtx.element.querySelector(".message-content .markdown-content")
-    if (!contentEl || !contentEl.contains(range.startContainer) || !contentEl.contains(range.endContainer)) {
-      setSelection(null)
-      return
-    }
-
-    const rect = range.getBoundingClientRect()
+    const rect = contentRange.getBoundingClientRect()
     const { authorName, authorId, actorType } = getAuthorFromDom(startCtx.element)
     // A conversation row carries its own stream (one root, many threads), so the
     // quote points at where the message actually lives; fall back to the anchor.
