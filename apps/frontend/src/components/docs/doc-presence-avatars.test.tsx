@@ -27,14 +27,14 @@ function cssColor(hex: string): string {
 describe("DocPresenceAvatars", () => {
   const disposables: Array<{ destroy: () => void }> = []
   let presence: DocPresence
-  let openUserProfile: ReturnType<typeof vi.fn>
+  let openUserProfile: ReturnType<typeof vi.fn<(userId: string) => void>>
 
   beforeEach(() => {
     const ydoc = new Y.Doc()
     presence = new DocPresence({ ydoc, workspaceId: WORKSPACE_ID, docId: DOC_ID, send: () => {} })
     disposables.push(ydoc, presence)
     presence.setLocalUser(user("usr_viewer", "Viewer"))
-    openUserProfile = vi.fn()
+    openUserProfile = vi.fn<(userId: string) => void>()
     vi.spyOn(userProfileModule, "useUserProfile").mockReturnValue({ openUserProfile, openBotProfile: vi.fn() })
     vi.spyOn(hooksModule, "useActors").mockReturnValue({
       getActorAvatar: () => ({ fallback: "AB" }),

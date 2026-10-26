@@ -3752,23 +3752,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     async (_verb, _host, visibility, invalidated) => {
       const queryClient = new QueryClient()
       const cached = visibility === "public"
-      const host = {
-        id: "stream_host",
-        workspaceId: "ws_1",
-        type: "channel",
-        displayName: "Host",
-        slug: "host",
-        description: null,
-        visibility,
-        parentStreamId: null,
-        rootStreamId: null,
-        companionMode: "off",
-        companionPersonaId: null,
-        createdBy: "member_2",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        archivedAt: null,
-      }
+      const host = makeStream("stream_host", { visibility: visibility as Stream["visibility"], createdBy: "member_2" })
       queryClient.setQueryData(
         workspaceKeys.bootstrap("ws_1"),
         makeBootstrap({
