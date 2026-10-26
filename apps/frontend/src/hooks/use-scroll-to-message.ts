@@ -196,17 +196,19 @@ export function useScrollToMessage({
       const notifySettled = () => {
         if (settleNotified) return
         settleNotified = true
-        // A genuine landing (or a user takeover) is the reader's new owned
-        // position: refresh the detached-viewport snapshot so the guard
-        // protects the landed spot instead of a stale pre-jump one. A timeout
+        // A genuine landing is the reader's new owned position: refresh the
+        // detached-viewport snapshot so the guard protects the landed spot
+        // instead of a stale pre-jump one. A user takeover clears it: the
+        // gesture (or its momentum) is still moving, so a snapshot now would pin
+        // the row being left; the caller's scroll snapshot takes the rest. A timeout
         // that never landed must NOT overwrite it — the caller-seeded target
         // stays, and the guard keeps pulling toward it on later reflows.
         const scrollerNow = scrollerRef.current
         const userTookOver = userInteractedAtRef.current > engagedAt
-        if (scrollerNow && !isFollowingTailRef.current && (everLanded || userTookOver)) {
-          const snap =
-            (everLanded && !userTookOver ? snapshotRow(scrollerNow, targetId) : null) ??
-            snapshotTopVisibleRow(scrollerNow)
+        if (userTookOver) {
+          detachedHoldRef.current = null
+        } else if (scrollerNow && !isFollowingTailRef.current && everLanded) {
+          const snap = snapshotRow(scrollerNow, targetId) ?? snapshotTopVisibleRow(scrollerNow)
           detachedHoldRef.current = snap ? takeHold(scrollerNow, snap) : null
         }
         opts?.onFirstSettle?.()

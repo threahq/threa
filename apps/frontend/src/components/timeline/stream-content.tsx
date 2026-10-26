@@ -1852,9 +1852,14 @@ export function StreamContent({
         // scrolled up to read history isn't yanked back to the tail. The
         // initial force also yields to a positioned reader: a scrollToMessage
         // refine loop in flight (anchor restore, unread-marker open, deep
-        // link) or an already-landed detached position owns the viewport — a
-        // late-mounting composer must not stomp it back to the tail.
-        if (opts.initial && (scrollAbortRef.current || (!isFollowingTailRef.current && detachedHoldRef.current))) {
+        // link), an already-landed detached position, or a user who scrolled
+        // away (their hold lands with the debounced snapshot) owns the
+        // viewport — a late-mounting composer must not stomp it back to the tail.
+        if (
+          opts.initial &&
+          (scrollAbortRef.current ||
+            (!isFollowingTailRef.current && (detachedHoldRef.current || userInteractedAtRef.current > 0)))
+        ) {
           return
         }
         if (useVirtualized) {

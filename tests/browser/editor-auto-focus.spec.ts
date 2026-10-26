@@ -17,8 +17,11 @@ async function sendMessage(page: Page, text: string) {
   await editor.click()
   await page.keyboard.type(text)
   await page.keyboard.press("Meta+Enter")
-  // Scope to .message-item to avoid matching sidebar preview text
-  await expect(page.getByRole("main").locator(".message-item").getByText(text).first()).toBeVisible({ timeout: 5000 })
+  // The optimistic row is remounted under its server id once the echo lands, closing any menu
+  // opened on it; wait for the msg_ row before interacting.
+  await expect(
+    page.getByRole("main").locator('[data-message-id^="msg_"]').filter({ hasText: text }).first()
+  ).toBeVisible({ timeout: 5000 })
 }
 
 test.describe("Editor Auto-Focus", () => {

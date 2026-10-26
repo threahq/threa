@@ -3,6 +3,7 @@ import {
   clickReplyInThread,
   createChannel,
   expandCollapsedSidebarSections,
+  expectPaneFlash,
   generateTestId,
   getActivePanel,
   loginAndCreateWorkspace,
@@ -85,11 +86,12 @@ test.describe("Thread Breadcrumbs", () => {
 
     // The channel crumb names the channel already on show beside the thread: it flashes, and nothing moves.
     const at = page.url()
-    await breadcrumbNav
-      .getByRole("link", { name: `#${channelName}` })
-      .first()
-      .click()
-    await expect(page.locator(`[data-panel-tab="${channelId}"]`)).toHaveClass(/pane-flash/)
+    await expectPaneFlash(page, channelId, () =>
+      breadcrumbNav
+        .getByRole("link", { name: `#${channelName}` })
+        .first()
+        .click()
+    )
     expect(page.url()).toBe(at)
     await expect(page.getByRole("main").getByText(channelMessage).first()).toBeVisible({ timeout: 3000 })
   })

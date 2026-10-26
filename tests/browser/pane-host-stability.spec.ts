@@ -42,6 +42,9 @@ async function seedStreamWithThread(page: Page) {
   await page.reload()
   // A cold load of a 40-message stream can take a while on a busy runner.
   await expect(scroller(page, streamId)).toBeVisible({ timeout: 30_000 })
+  // The cold-load settle pins the timeline to its tail every frame behind this mask; a scroll or click before it
+  // lifts is undone.
+  await expect(page.getByTestId("settle-mask")).toHaveCount(0, { timeout: 30_000 })
   return { streamId, threadId, parentId }
 }
 const parentRow = (page: Page, parentId: string) =>

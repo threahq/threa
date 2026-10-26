@@ -2,6 +2,7 @@ import { test, expect, type Locator, type Page } from "@playwright/test"
 import {
   clickReplyInThread,
   createChannel,
+  expectPaneFlash,
   loginAndCreateWorkspace,
   sendPanelReply,
   waitForRealThreadPanel,
@@ -12,8 +13,7 @@ import {
 async function crumbToOpenChannel(page: Page, crumb: Locator) {
   const channelId = (await crumb.getAttribute("href"))!.match(/\/s\/([^/?]+)/)![1]
   const threadId = await crumb.locator("xpath=ancestor::*[@data-panel-tab][1]").getAttribute("data-panel-tab")
-  await crumb.click()
-  await expect(page.locator(`[data-panel-tab="${channelId}"]`)).toHaveClass(/pane-flash/)
+  await expectPaneFlash(page, channelId, () => crumb.click())
   await expect(page.locator(`[data-panel-tab="${threadId}"]`)).toBeVisible()
   return page.locator(`[data-panel-tab="${channelId}"]`)
 }
