@@ -57,35 +57,35 @@ function getContainerNames(): { postgres: string; minio: string } {
 }
 
 /**
- * Run SQL against the browser-test database from a spec.
+ * Run SQL against the browser-test database from a spec. Returns the rows in
+ * psql's unaligned, header-less form (`a|b` per line, NULL as empty), trimmed.
  *
  * CI runs specs inside the Playwright image, which has no psql and no docker,
  * so it goes over TCP with Bun's built-in client. Locally psql runs inside the
  * compose postgres container.
  */
-export function runTestSql(sql: string): void {
+export function runTestSql(sql: string): string {
   const db = deriveTestDatabaseName()
   if (isCI) {
-    execFileSync(
+    return execFileSync(
       "bun",
       [
         "-e",
-        "const sql = new Bun.SQL(process.env.TEST_SQL_URL); try { await sql.unsafe(process.env.TEST_SQL) } finally { await sql.close() }",
+        "const sql = new Bun.SQL(process.env.TEST_SQL_URL); try { const rows = await sql.unsafe(process.env.TEST_SQL); process.stdout.write(rows.map((row) => Object.values(row).map((value) => value ?? '').join('|')).join('\\n')) } finally { await sql.close() }",
       ],
       {
         encoding: "utf-8",
         env: { ...process.env, TEST_SQL_URL: `postgres://threa:threa@localhost:${DB_PORT}/${db}`, TEST_SQL: sql },
       }
-    )
-    return
+    ).trim()
   }
   // argv, never a shell string: multi-line SQL through a shell reaches psql
   // with its newlines still escaped, and psql reads `\n` as a meta-command.
-  execFileSync(
+  return execFileSync(
     "docker",
-    ["exec", getContainerNames().postgres, "psql", "-U", "threa", "-d", db, "-v", "ON_ERROR_STOP=1", "-c", sql],
+    ["exec", getContainerNames().postgres, "psql", "-U", "threa", "-d", db, "-v", "ON_ERROR_STOP=1", "-tA", "-c", sql],
     { encoding: "utf-8" }
-  )
+  ).trim()
 }
 
 /**

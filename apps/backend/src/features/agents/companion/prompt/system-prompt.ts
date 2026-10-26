@@ -9,6 +9,7 @@ import {
 } from "@threahq/types"
 import { buildTemporalPromptSection } from "../../../../lib/temporal"
 import { buildDeviceContextSection } from "./device-context"
+import { buildHostDocsSection } from "./host-docs"
 import type { Persona } from "../../persona-repository"
 import type { PersonaAttachmentContentItem } from "../../persona-attachment-repository"
 import type { StreamContext } from "../../context-builder"
@@ -141,8 +142,9 @@ export interface SystemPromptInputs {
  * not how it reads. The only end-to-end check is measured cache hit rate.
  *
  * `context` is the one input that legitimately carries both (stream metadata is
- * conversation-scoped, `context.temporal` is per-turn), so it is classified
- * `mixed` and covered by its own dedicated assertions in that test.
+ * conversation-scoped, `context.temporal` and `context.docs` are per-turn), so
+ * it is classified `mixed` and covered by its own dedicated assertions in that
+ * test.
  */
 export const SYSTEM_PROMPT_INPUT_STABILITY = {
   persona: "conversation",
@@ -400,6 +402,10 @@ ${spawnedFromContext.trim()}`
 
   if (context.temporal) {
     volatile += buildTemporalPromptSection(context.temporal, context.participantTimezones)
+  }
+
+  if (context.docs) {
+    volatile += buildHostDocsSection(context.docs)
   }
 
   if (deviceContext) {

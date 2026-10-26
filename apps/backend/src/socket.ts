@@ -660,6 +660,9 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
     )
 
     let lastHeartbeatAt = 0
+    // Reports from one connection store in arrival order: a doc-open report must not lose to the
+    // opening click's earlier report finishing later.
+    let deviceStore = Promise.resolve()
     // Interaction-driven heartbeats bypass the throttle: the client only emits
     // them on the first interaction after a quiet stretch, and we want the
     // backend to learn about renewed activity within seconds, not up to 30s.
@@ -677,11 +680,8 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       }
 
       const interacted = payload?.interacted === true
-      storeHeartbeatDevice(
-        pool,
-        { device: payload?.device, interacted },
-        Array.from(userRooms, ([workspaceId, entry]) => ({ workspaceId, userId: entry.userId }))
-      )
+      const targets = Array.from(userRooms, ([workspaceId, entry]) => ({ workspaceId, userId: entry.userId }))
+      deviceStore = deviceStore.then(() => storeHeartbeatDevice(pool, { device: payload?.device, interacted }, targets))
 
       if (!pushService.isEnabled()) return
       const now = Date.now()

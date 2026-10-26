@@ -207,6 +207,17 @@ export const DocRepository = {
     return result.rows.map(mapSection)
   },
 
+  /** Each doc's first section that has text, keyed by doc id; docs with none are absent. */
+  async listFirstSections(db: Querier, workspaceId: string, docIds: string[]): Promise<Map<string, string>> {
+    if (docIds.length === 0) return new Map()
+    const result = await db.query<{ doc_id: string; markdown: string }>(sql`
+      SELECT DISTINCT ON (doc_id) doc_id, markdown FROM doc_sections
+      WHERE workspace_id = ${workspaceId} AND doc_id = ANY(${docIds}::text[]) AND markdown ~ '\\S'
+      ORDER BY doc_id, position
+    `)
+    return new Map(result.rows.map((row) => [row.doc_id, row.markdown]))
+  },
+
   async findSection(db: Querier, workspaceId: string, docId: string, blockId: string): Promise<DocSection | null> {
     const result = await db.query<DocSectionRow>(sql`
       SELECT ${sql.raw(SECTION_COLUMNS)} FROM doc_sections

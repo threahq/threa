@@ -39,17 +39,37 @@ describe("describeDevice", () => {
 })
 
 describe("buildHeartbeatPayload", () => {
-  it("should carry the device when sharing is on", () => {
-    const payload = buildHeartbeatPayload({ focused: true, interacted: true, shareDeviceWithAgents: true })
+  it("should carry the device and its open docs when sharing is on", () => {
+    const payload = buildHeartbeatPayload({
+      focused: true,
+      interacted: true,
+      shareDeviceWithAgents: true,
+      openDocIds: ["stream_tracker"],
+    })
     expect(payload).toMatchObject({
       focused: true,
       interacted: true,
-      device: { layout: expect.stringMatching(/^(mobile|desktop)$/), installed: false },
+      device: {
+        layout: expect.stringMatching(/^(mobile|desktop)$/),
+        installed: false,
+        openDocIds: ["stream_tracker"],
+      },
     })
   })
 
+  it("should report only the eight most recently opened docs so the server keeps the report", () => {
+    const openDocIds = Array.from({ length: 10 }, (_, i) => `stream_doc${i}`)
+    const payload = buildHeartbeatPayload({ focused: true, interacted: true, shareDeviceWithAgents: true, openDocIds })
+    expect(payload.device?.openDocIds).toEqual(openDocIds.slice(2))
+  })
+
   it("should leave the device out entirely when sharing is off", () => {
-    const payload = buildHeartbeatPayload({ focused: true, interacted: true, shareDeviceWithAgents: false })
+    const payload = buildHeartbeatPayload({
+      focused: true,
+      interacted: true,
+      shareDeviceWithAgents: false,
+      openDocIds: ["stream_tracker"],
+    })
     expect(Object.keys(payload).sort()).toEqual(["focused", "interacted", "timezone"])
   })
 })

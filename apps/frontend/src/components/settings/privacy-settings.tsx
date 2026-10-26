@@ -71,9 +71,9 @@ export function PrivacySettings() {
           <div className="space-y-1">
             <Label htmlFor="share-device-with-agents">Tell agents which device I&apos;m on</Label>
             <p className="text-sm text-muted-foreground">
-              Agents see whether you&apos;re on the mobile or desktop layout, your operating system, and whether Threa
-              is installed, so their directions match your screen. Only the latest is kept, and turning this off deletes
-              it.
+              Agents see whether you&apos;re on the mobile or desktop layout, your operating system, whether Threa is
+              installed, and which docs you have open, so their directions match your screen and &quot;the doc&quot;
+              means the one in front of you. Only the latest is kept, and turning this off deletes it.
             </p>
           </div>
           <Switch

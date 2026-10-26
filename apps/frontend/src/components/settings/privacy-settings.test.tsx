@@ -104,7 +104,7 @@ describe("PrivacySettings", () => {
       mount("unset")
       expect(
         screen.getByText(
-          /mobile or desktop layout, your operating system, and whether Threa is installed.*Only the latest is kept, and turning this off deletes it/
+          /mobile or desktop layout, your operating system, whether Threa is installed, and which docs you have open.*Only the latest is kept, and turning this off deletes it/
         )
       ).toBeTruthy()
     })

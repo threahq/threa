@@ -710,6 +710,33 @@ describe("buildSystemPrompt", () => {
   })
 })
 
+describe("buildSystemPrompt host docs", () => {
+  test("places the docs section in the volatile tail, after temporal context and before the device", () => {
+    const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
+      persona,
+      context: {
+        ...scratchpadContext,
+        docs: [{ docId: "stream_tracker", title: "Tracker", firstLine: null, open: true }],
+      },
+      deviceContext: { layout: "mobile", os: "ios", installed: true, openDocIds: ["stream_tracker"] },
+    })
+
+    expect(prompt.indexOf("## Docs on this stream")).toBeLessThan(prompt.indexOf("## Device"))
+    expect(prompt).toContain('- "Tracker" (`stream_tracker`) — open on their screen when last seen')
+  })
+
+  test("renders no docs section when the turn has no doc host", () => {
+    const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
+      persona,
+      context: { ...scratchpadContext, docs: undefined },
+    })
+
+    expect(prompt).not.toContain("## Docs on this stream")
+  })
+})
+
 describe("buildResponseStyleSection", () => {
   const DEFAULT_BREVITY =
     "Be brief. Default to 1–3 sentences. Match the depth to what was asked — a simple question gets a simple answer. Only go longer when the topic genuinely requires it (step-by-step instructions, complex analysis the user requested, etc.). Avoid preamble, filler, and restating what the user said."

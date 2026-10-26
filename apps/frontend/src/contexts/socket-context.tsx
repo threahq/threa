@@ -7,6 +7,7 @@ import { getAssertedAccount, reportAccountMismatch } from "@/api/account-asserti
 import { getCachedWsConfig, setCachedWsConfig } from "@/lib/cached-ws-config"
 import { setPreviewVisibilityEmitter } from "@/lib/preview-visibility"
 import { buildHeartbeatPayload } from "@/lib/device"
+import { getOpenDocIds, subscribeOpenDocs } from "@/lib/docs/open-docs"
 import { useWorkspaceUserPreferences } from "@/stores/workspace-store"
 import { usePageActivity } from "@/hooks/use-page-activity"
 import { usePageInteraction } from "@/hooks/use-page-interaction"
@@ -25,6 +26,8 @@ import {
 
 /** Periodic heartbeat tick for session liveness — must be < ACTIVE_SESSION_WINDOW_MS on the backend (60s). */
 const PERIODIC_HEARTBEAT_INTERVAL_MS = 30_000
+/** How soon after a gesture a doc opening or closing still counts as that gesture. */
+const OPEN_DOC_GESTURE_MS = 5_000
 
 /** Throttle for focus-change-driven heartbeats so a flicker of blur/focus events doesn't flood the socket. */
 const FOCUS_CHANGE_HEARTBEAT_THROTTLE_MS = 10_000
@@ -303,23 +306,28 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
   useEffect(() => {
     if (!socket || status !== "connected") return
 
-    const emitHeartbeat = () => {
+    const emitHeartbeat = ({ docsChanged = false } = {}) => {
       const lastInteractionAt = pageInteraction.getLastInteractionAt()
-      const interacted = lastInteractionAt > lastSentInteractionAtRef.current
-      if (interacted) lastSentInteractionAtRef.current = lastInteractionAt
+      const freshInteraction = lastInteractionAt > lastSentInteractionAtRef.current
+      lastSentInteractionAtRef.current = Math.max(lastSentInteractionAtRef.current, lastInteractionAt)
+      // The backend stores a device only from an interacted heartbeat. A doc opened or closed by a
+      // gesture just now is this device in use, even when the click's own heartbeat already went
+      // out; a pane restored on load or closed from elsewhere is not.
+      const docsGesture = docsChanged && Date.now() - lastInteractionAt < OPEN_DOC_GESTURE_MS
       socket.emit(
         "heartbeat",
         buildHeartbeatPayload({
           focused: pageFocusedRef.current,
-          interacted,
+          interacted: freshInteraction || docsGesture,
           shareDeviceWithAgents: shareDeviceWithAgentsRef.current,
+          openDocIds: getOpenDocIds(),
         })
       )
     }
 
     // Emit immediately so the backend knows this tab is active right away
     emitHeartbeat()
-    const heartbeatInterval = setInterval(emitHeartbeat, PERIODIC_HEARTBEAT_INTERVAL_MS)
+    const heartbeatInterval = setInterval(() => emitHeartbeat(), PERIODIC_HEARTBEAT_INTERVAL_MS)
 
     // Fire an immediate heartbeat on the first interaction after a quiet
     // stretch so the backend learns about renewed activity within seconds,
@@ -331,9 +339,13 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
       emitHeartbeat()
     })
 
+    // Unthrottled: the change has to land before the message it gives meaning to.
+    const unsubscribeOpenDocs = subscribeOpenDocs(() => emitHeartbeat({ docsChanged: true }))
+
     return () => {
       clearInterval(heartbeatInterval)
       unsubscribe()
+      unsubscribeOpenDocs()
     }
   }, [socket, status, pageInteraction])
 
@@ -366,6 +378,7 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
           focused: pageActivity.isFocused,
           interacted: false,
           shareDeviceWithAgents: shareDeviceWithAgentsRef.current,
+          openDocIds: getOpenDocIds(),
         })
       )
     }

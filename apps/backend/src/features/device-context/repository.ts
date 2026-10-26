@@ -10,6 +10,7 @@ interface UserDeviceContextRow {
   layout: string
   os: string
   installed: boolean
+  open_doc_ids: string[]
 }
 
 export const UserDeviceContextRepository = {
@@ -43,8 +44,8 @@ export const UserDeviceContextRepository = {
   async upsert(db: Querier, targets: DeviceTarget[], device: DeviceContext): Promise<void> {
     if (targets.length === 0) return
     await db.query(sql`
-      INSERT INTO user_device_contexts (workspace_id, user_id, layout, os, installed)
-      SELECT t.workspace_id, t.user_id, ${device.layout}, ${device.os}, ${device.installed}
+      INSERT INTO user_device_contexts (workspace_id, user_id, layout, os, installed, open_doc_ids)
+      SELECT t.workspace_id, t.user_id, ${device.layout}, ${device.os}, ${device.installed}, ${device.openDocIds}::text[]
       FROM unnest(${targets.map((t) => t.workspaceId)}::text[], ${targets.map((t) => t.userId)}::text[])
         AS t(workspace_id, user_id)
       WHERE NOT EXISTS (
@@ -54,20 +55,24 @@ export const UserDeviceContextRepository = {
       ON CONFLICT (workspace_id, user_id) DO UPDATE SET
         layout = EXCLUDED.layout,
         os = EXCLUDED.os,
-        installed = EXCLUDED.installed
-      WHERE (user_device_contexts.layout, user_device_contexts.os, user_device_contexts.installed)
-        IS DISTINCT FROM (EXCLUDED.layout, EXCLUDED.os, EXCLUDED.installed)
+        installed = EXCLUDED.installed,
+        open_doc_ids = EXCLUDED.open_doc_ids
+      WHERE (user_device_contexts.layout, user_device_contexts.os, user_device_contexts.installed, user_device_contexts.open_doc_ids)
+        IS DISTINCT FROM (EXCLUDED.layout, EXCLUDED.os, EXCLUDED.installed, EXCLUDED.open_doc_ids)
     `)
   },
 
   async find(db: Querier, workspaceId: string, userId: string): Promise<DeviceContext | null> {
     const result = await db.query<UserDeviceContextRow>(sql`
-      SELECT layout, os, installed
+      SELECT layout, os, installed, open_doc_ids
       FROM user_device_contexts
       WHERE workspace_id = ${workspaceId} AND user_id = ${userId}
     `)
     // A row written by a newer deploy with a value this build doesn't know reads as absent, not as a guess.
-    return parseDeviceContext(result.rows[0])
+    const row = result.rows[0]
+    return parseDeviceContext(
+      row && { layout: row.layout, os: row.os, installed: row.installed, openDocIds: row.open_doc_ids }
+    )
   },
 
   async delete(db: Querier, workspaceId: string, userId: string): Promise<void> {

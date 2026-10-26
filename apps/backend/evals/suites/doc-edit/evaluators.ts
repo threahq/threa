@@ -65,6 +65,7 @@ export const singleWriteEvaluator = writeCaseEvaluator("single-write", (output) 
   if (output.writeCount === 1) return null
   const kinds = [
     `${output.personaUpdateCount} doc updates`,
+    ...(output.input.decoyDoc ? [`${output.decoyPersonaUpdateCount} decoy doc updates`] : []),
     `${output.createdDocCount} created docs`,
     `title ${output.titleChanged ? "changed" : "unchanged"}`,
   ]
@@ -98,12 +99,20 @@ export const scopedChangeEvaluator = writeCaseEvaluator("scoped-change", (output
   if (pattern && !touched.some((section) => pattern.test(section.after))) {
     failures.push(`no changed or added section matches ${pattern}`)
   }
+  const decoy = expected.decoy
+  if (decoy === "untouched" && output.decoyPersonaUpdateCount > 0) {
+    failures.push(`decoy doc got ${output.decoyPersonaUpdateCount} updates (expected none)`)
+  }
+  if (decoy instanceof RegExp && !output.decoyTouchedSections.some((section) => decoy.test(section.after))) {
+    failures.push(`no changed or added decoy section matches ${decoy}`)
+  }
   return failures.length > 0 ? failures.join("; ") : null
 })
 
 export const reasonPresentEvaluator = writeCaseEvaluator("reason-present", (output) => {
-  if (output.reasons.length < output.personaUpdateCount) {
-    return `${output.personaUpdateCount} persona updates but ${output.reasons.length} doc:edited events`
+  const updates = output.personaUpdateCount + output.decoyPersonaUpdateCount
+  if (output.reasons.length < updates) {
+    return `${updates} persona updates but ${output.reasons.length} doc:edited events`
   }
   const blank = output.reasons.filter((reason) => reason.trim() === "").length
   return blank === 0 ? null : `${blank} of ${output.reasons.length} edits had no reason`

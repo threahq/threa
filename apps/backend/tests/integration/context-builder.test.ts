@@ -14,10 +14,17 @@ import { addTestMember, withTestTransaction } from "./setup"
 import { WorkspaceRepository, UserRepository } from "../../src/features/workspaces"
 import { StreamRepository, StreamMemberRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
+import { DocRepository } from "../../src/features/docs"
 import { buildStreamContext } from "../../src/features/agents"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { userId, workspaceId, streamId, messageId } from "../../src/lib/id"
-import { StreamTypes, Visibilities, DEFAULT_USER_PREFERENCES, type UserPreferences } from "@threahq/types"
+import {
+  StreamTypes,
+  Visibilities,
+  DEFAULT_USER_PREFERENCES,
+  type DocSection,
+  type UserPreferences,
+} from "@threahq/types"
 
 describe("Context Builder", () => {
   let pool: Pool
@@ -639,6 +646,87 @@ describe("Context Builder", () => {
         expect(trimmed.conversationHistory.at(-1)?.contentMarkdown).toContain("-3")
         // Anchor + the single newest thread reply that fits the budget.
         expect(trimmed.conversationHistory).toHaveLength(2)
+      })
+    })
+  })
+
+  describe("Host docs", () => {
+    const section = (blockId: string, position: number, markdown: string): DocSection => ({
+      blockId,
+      position,
+      kind: "paragraph",
+      markdown,
+      contentJson: { type: "paragraph", attrs: { blockId }, content: [] },
+    })
+
+    test("lists the host's active docs newest first with the open ones ahead, each with its first line of text", async () => {
+      await withTestTransaction(pool, async (client) => {
+        const workosUserId = userId()
+        const wsId = workspaceId()
+        await WorkspaceRepository.insert(client, {
+          id: wsId,
+          name: "Docs Context Workspace",
+          slug: `docs-ctx-ws-${wsId}`,
+          createdBy: workosUserId,
+        })
+        const ownerUserId = (await addTestMember(client, wsId, workosUserId)).id
+        const channel = await StreamRepository.insert(client, {
+          id: streamId(),
+          workspaceId: wsId,
+          type: StreamTypes.CHANNEL,
+          displayName: "Launch",
+          slug: `launch-${wsId}`,
+          visibility: Visibilities.PUBLIC,
+          createdBy: ownerUserId,
+        })
+        const insertDoc = async (minutesAgo: number, displayName?: string) => {
+          const doc = await StreamRepository.insert(client, {
+            id: streamId(),
+            workspaceId: wsId,
+            type: StreamTypes.DOC,
+            displayName,
+            parentStreamId: channel.id,
+            rootStreamId: channel.id,
+            visibility: Visibilities.PUBLIC,
+            createdBy: ownerUserId,
+          })
+          await client.query("UPDATE streams SET created_at = NOW() - make_interval(mins => $2) WHERE id = $1", [
+            doc.id,
+            minutesAgo,
+          ])
+          return doc
+        }
+        const tracker = await insertDoc(3, "Tracker")
+        const untitled = await insertDoc(2)
+        const archived = await insertDoc(1, "Old plan")
+        await StreamRepository.update(client, wsId, archived.id, { archivedAt: new Date() })
+        await DocRepository.replaceSections(client, wsId, tracker.id, [
+          section("b3", 3, "Second section"),
+          section("b0", 0, "  "),
+          section("b1", 1, "\n"),
+          section("b2", 2, "\n  - [ ] Revoke the old AWS access key  \nmore detail"),
+        ])
+        await DocRepository.replaceSections(client, wsId, archived.id, [section("b0", 0, "Archived body")])
+
+        const trackerDoc = { docId: tracker.id, title: "Tracker", firstLine: "- [ ] Revoke the old AWS access key" }
+        const untitledDoc = { docId: untitled.id, title: null, firstLine: null }
+        const options = { docHostId: channel.id, openDocIds: [tracker.id, "stream_not_hosted_here"] }
+
+        expect({
+          trackerOpen: (await buildStreamContext(client, channel, options)).docs,
+          nothingOpen: (await buildStreamContext(client, channel, { docHostId: channel.id })).docs,
+          noHost: (await buildStreamContext(client, channel)).docs,
+        }).toEqual({
+          trackerOpen: [
+            { ...trackerDoc, open: true },
+            { ...untitledDoc, open: false },
+          ],
+          nothingOpen: [
+            { ...untitledDoc, open: false },
+            { ...trackerDoc, open: false },
+          ],
+          noHost: undefined,
+        })
       })
     })
   })

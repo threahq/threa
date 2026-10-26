@@ -96,6 +96,8 @@ export interface ContextParams {
   invokingUserOverride?: string
   /** The delegated model of the live subagent run this stream is the thread of, when there is one. */
   subagentModel?: string
+  /** The stream whose docs this turn reads and edits (`docHostFor`); absent or null when it has none. */
+  docHostId?: string | null
 }
 
 export interface AgentContext {
@@ -193,6 +195,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     subagentBrief,
     invokingUserOverride,
     subagentModel,
+    docHostId,
   } = params
 
   const triggerMessage = await MessageRepository.findById(db, workspaceId, messageId)
@@ -289,6 +292,8 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       triggerMessageId: messageId,
       includeAttachments: true,
       includeLinkPreviews: true,
+      docHostId,
+      openDocIds: deviceContext?.openDocIds,
     }),
     invokingUserId && accessibleStreamIds && memoAudience && triggerMessage
       ? preparedRecall.recall({

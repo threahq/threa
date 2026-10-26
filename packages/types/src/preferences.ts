@@ -512,8 +512,8 @@ export interface UserPreferences {
   sessionReplayOptIn: boolean
   /**
    * Whether agents may know which layout, OS and install state the user's
-   * current device has. On by default; turning it off stops the client
-   * reporting it and deletes the stored value.
+   * current device has, and which docs they have open. On by default; turning
+   * it off stops the client reporting it and deletes the stored value.
    */
   shareDeviceWithAgents: boolean
   createdAt: string

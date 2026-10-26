@@ -3,9 +3,9 @@ import { z } from "zod"
 import { withClient, withTransaction, type Querier } from "../../db"
 import {
   AgentStepTypes,
+  AgentToolNames,
   AuthorTypes,
   ConversationIntents,
-  STREAM_TYPE_CAPABILITIES,
   StreamTypes,
   SubagentFailureReasons,
   type AgentSessionRerunContext,
@@ -41,7 +41,7 @@ import type { TraceEmitter } from "./trace-emitter"
 import type { SessionAbortRegistry } from "./session-abort-registry"
 import type { AI, CostContext, PageBrowser, WebSearchEngine } from "@threahq/agent-runtime"
 import type { SearchService } from "../search"
-import type { DocAgentService } from "../docs"
+import { docHostFor, type DocAgentService } from "../docs"
 import type { ConversationSummaryService } from "./conversation-summary-service"
 import type { AttachmentService } from "../attachments"
 import { audienceBrowses, type MemoAudience, type MemoExplorerService } from "../memos"
@@ -74,6 +74,7 @@ import {
   bindStreamSandbox,
   createMemoizedGithubClient,
   createMemoizedLinearClient,
+  isToolEnabled,
   type RunGeneralResearchOptions,
   type StreamSandboxDeps,
 } from "./tools"
@@ -644,6 +645,9 @@ export class PersonaAgent {
       rootStreamCreatedBy,
       isOnboardingTour,
     } = precheck
+    const docHostId = docHostFor(stream, rootStreamType)
+    // Listed docs come with read_doc's rules for them; a persona without that tool is told nothing.
+    const listedDocHostId = docAgent && isToolEnabled(persona.enabledTools, AgentToolNames.READ_DOC) ? docHostId : null
 
     // The live subagent run this stream is the thread of, if any. One query,
     // and only for threads — every other stream kind is one by construction.
@@ -901,6 +905,7 @@ export class PersonaAgent {
             subagentBrief: subagentKickoffBrief ? { title: subagentKickoffBrief.title } : undefined,
             invokingUserOverride,
             subagentModel: activeSubagentRun?.model,
+            docHostId: listedDocHostId,
           }
         )
 
@@ -1282,17 +1287,14 @@ export class PersonaAgent {
             }
           : undefined
 
-        // Docs resolve against the same effective root as the brief: a thread's turn edits its root's docs.
-        // Offered only where that root can host docs and the stream is not sealed (a doc is server-side plaintext).
-        const docDeps =
-          rootStreamType && STREAM_TYPE_CAPABILITIES[rootStreamType].hostsDocs && !stream.e2eEnabled
-            ? docAgent?.forTurn({
-                workspaceId,
-                hostStreamId: briefStreamId,
-                invokingUserId: input.initiatingUserId,
-                personaId: persona.id,
-              })
-            : undefined
+        const docDeps = docHostId
+          ? docAgent?.forTurn({
+              workspaceId,
+              hostStreamId: docHostId,
+              invokingUserId: input.initiatingUserId,
+              personaId: persona.id,
+            })
+          : undefined
 
         // Delegation hand-off for the delegate_task tool (roadmap 5.1), bound to
         // this persona/session/stream and the invoking user. Deliberately absent

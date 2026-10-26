@@ -99,7 +99,7 @@ const PER_TURN_SENTINEL_VALUES: Record<string, Partial<SystemPromptInputs>> = {
     } satisfies UserPreferences,
   },
   // Layout is the one free-text slot in the rendered line, so it carries the sentinel.
-  deviceContext: { deviceContext: { layout: SENTINEL as never, os: "android", installed: true } },
+  deviceContext: { deviceContext: { layout: SENTINEL as never, os: "android", installed: true, openDocIds: [] } },
   followUp: {
     purpose: { kind: "follow_up", followUpId: "fup_1" },
     followUp: { note: SENTINEL, scheduledFor: new Date("2026-07-04T09:00:00.000Z") },
@@ -143,6 +143,16 @@ describe("system prompt cache stability", () => {
     expect(built.volatile).toContain("## Current Time")
   })
 
+  test("host docs inside `context` never reach the cached half", () => {
+    const built = buildSystemPrompt({
+      ...BASE,
+      context: { ...context, docs: [{ docId: "stream_doc", title: SENTINEL, firstLine: SENTINEL, open: true }] },
+    })
+
+    expect(built.stable).not.toContain(SENTINEL)
+    expect(built.volatile).toContain(SENTINEL)
+  })
+
   test("the How You Work card stays in the cached half", () => {
     const built = buildSystemPrompt(BASE)
 
@@ -168,7 +178,7 @@ describe("system prompt cache stability", () => {
       spawnedFromContext: "parent one",
       previousSessions: "## Previous Sessions\n\nsession one",
       currentSettings: { ...BASE_PREFERENCES, timezone: "Europe/Stockholm" },
-      deviceContext: { layout: "mobile", os: "android", installed: true },
+      deviceContext: { layout: "mobile", os: "android", installed: true, openDocIds: [] },
     })
     const turnTwo = buildSystemPrompt({
       ...BASE,
@@ -179,7 +189,7 @@ describe("system prompt cache stability", () => {
       spawnedFromContext: "parent two",
       previousSessions: "## Previous Sessions\n\nsession two",
       currentSettings: { ...BASE_PREFERENCES, timezone: "America/New_York" },
-      deviceContext: { layout: "desktop", os: "linux", installed: false },
+      deviceContext: { layout: "desktop", os: "linux", installed: false, openDocIds: [] },
     })
 
     expect(turnOne.stable).toBe(turnTwo.stable)

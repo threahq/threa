@@ -7,6 +7,7 @@ import { useCurrentWorkspaceUser } from "@/hooks"
 import { useLatest } from "@/hooks/use-latest"
 import { DocPresence } from "@/lib/docs/doc-presence"
 import { DocSync, type DocSyncStatus } from "@/lib/docs/doc-sync"
+import { registerOpenDoc } from "@/lib/docs/open-docs"
 import { joinRoomWithAck } from "@/lib/socket-room"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 
@@ -50,6 +51,9 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
   const latestSocket = useLatest(socket)
   const syncEngine = useOptionalSyncEngine()
   const latestSyncEngine = useLatest(syncEngine)
+
+  // Keyed on the doc alone: a rejected edit's new generation is the same open doc.
+  useEffect(() => (docId ? registerOpenDoc(docId) : undefined), [docId])
 
   useEffect(() => {
     if (!docId) return

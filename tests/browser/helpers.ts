@@ -689,3 +689,36 @@ export async function drag(
   await hovering?.()
   await page.mouse.up()
 }
+
+/** Creates a channel through the API and returns its stream id. */
+export async function createChannelViaApi(
+  page: Page,
+  workspaceId: string,
+  slug: string,
+  visibility: "private" | "public" = "private"
+): Promise<string> {
+  const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
+    data: { type: "channel", slug, visibility },
+  })
+  await expectApiOk(response, `Create ${visibility} channel`)
+  return ((await response.json()) as { stream: { id: string } }).stream.id
+}
+
+/** Hosts a new doc on the given stream through the API and returns the doc's stream id. */
+export async function createDocViaApi(page: Page, workspaceId: string, hostId: string): Promise<string> {
+  const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
+    data: { type: "doc", parentStreamId: hostId },
+  })
+  await expectApiOk(response, "Create doc")
+  return ((await response.json()) as { stream: { id: string } }).stream.id
+}
+
+/** The workspace user id behind an email, read from the bootstrap payload. */
+export async function userIdByEmail(page: Page, workspaceId: string, email: string): Promise<string> {
+  const response = await page.request.get(`/api/workspaces/${workspaceId}/bootstrap`)
+  await expectApiOk(response, "Get workspace bootstrap")
+  const body = (await response.json()) as { data: { users: Array<{ id: string; email: string }> } }
+  const user = body.data.users.find((candidate) => candidate.email === email)
+  if (!user) throw new Error(`No workspace user for ${email}`)
+  return user.id
+}

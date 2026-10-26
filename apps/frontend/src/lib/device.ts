@@ -1,4 +1,4 @@
-import type { DeviceContext, DeviceOs } from "@threahq/types"
+import { MAX_OPEN_DOC_IDS, type DeviceContext, type DeviceOs } from "@threahq/types"
 import { isMobileViewport } from "@/hooks/use-mobile"
 
 export interface DeviceSignals {
@@ -40,7 +40,7 @@ function osFromSignals({ platform, userAgent, maxTouchPoints }: DeviceSignals): 
 }
 
 /** What the agent is told about the device in use: the layout Threa renders, the OS, and whether Threa is installed. */
-export function describeDevice(signals: DeviceSignals): DeviceContext {
+export function describeDevice(signals: DeviceSignals): Omit<DeviceContext, "openDocIds"> {
   return {
     layout: signals.mobileLayout ? "mobile" : "desktop",
     os: osFromSignals(signals),
@@ -52,10 +52,11 @@ interface HeartbeatInput {
   focused: boolean
   interacted: boolean
   shareDeviceWithAgents: boolean
+  openDocIds: string[]
 }
 
 /** The socket heartbeat payload; `device` is left out entirely when the user has turned sharing off. */
-export function buildHeartbeatPayload({ focused, interacted, shareDeviceWithAgents }: HeartbeatInput) {
+export function buildHeartbeatPayload({ focused, interacted, shareDeviceWithAgents, openDocIds }: HeartbeatInput) {
   return {
     focused,
     interacted,
@@ -63,6 +64,13 @@ export function buildHeartbeatPayload({ focused, interacted, shareDeviceWithAgen
     // on the next beat — it keeps users.timezone matching the device, which
     // grounds agent runs in the user's actual local time.
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    ...(shareDeviceWithAgents ? { device: describeDevice(readDeviceSignals()) } : {}),
+    ...(shareDeviceWithAgents
+      ? {
+          device: {
+            ...describeDevice(readDeviceSignals()),
+            openDocIds: openDocIds.slice(-MAX_OPEN_DOC_IDS),
+          } satisfies DeviceContext,
+        }
+      : {}),
   }
 }
