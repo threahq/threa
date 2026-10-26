@@ -4,6 +4,7 @@ import {
   AuthorTypes,
   DocErrorCodes,
   StreamTypes,
+  type AuthorType,
   type DocBlockThread,
   type DocEditedEventPayload,
   type DocPostUpdateResult,
@@ -22,8 +23,10 @@ import {
   StreamRepository,
   assertViewerStreamWritable,
   checkStreamAccess,
+  principalActorId,
   resolveLockedStreamAuthorities,
   type Stream,
+  type StreamWritePrincipal,
 } from "../streams"
 import { buildContent, type DocRewrite } from "./agent-markdown"
 import type { DocAgentEditRefusal } from "./agent-types"
@@ -58,12 +61,12 @@ async function loadStoredState(db: Querier, workspaceId: string, docId: string) 
 /** Takes the stream-chain lock, then the doc head's row lock. */
 async function lockWritableDoc(
   db: Querier,
-  params: { workspaceId: string; docId: string; userId: string }
+  params: { workspaceId: string; docId: string; principal: StreamWritePrincipal }
 ): Promise<{ doc: Stream; head: DocHead }> {
   const [authority] = await resolveLockedStreamAuthorities(db, {
     workspaceId: params.workspaceId,
     streamIds: [params.docId],
-    principal: { kind: "user", userId: params.userId },
+    principal: params.principal,
     typeReadOnly: "none",
   })
   if (authority?.target.type !== StreamTypes.DOC) throw new StreamNotFoundError()
@@ -171,7 +174,7 @@ export class DocService {
     const clientUpdate = decodeUpdateBase64(params.update)
 
     return withTransaction(this.pool, async (client) => {
-      const { head } = await lockWritableDoc(client, { workspaceId, docId, userId })
+      const { head } = await lockWritableDoc(client, { workspaceId, docId, principal: { kind: "user", userId } })
       const { ydoc } = await loadStoredState(client, workspaceId, docId)
       ydoc.clientID = DOC_SERVER_CLIENT_ID
       const write = applyOrRefuse(ydoc, clientUpdate, head.bodyJson)
@@ -197,22 +200,22 @@ export class DocService {
 
   /**
    * Rewrites the doc as the server on an agent's behalf, under the same lock
-   * and log as `postUpdate`: authorized as `invokingUserId`, stored as one
+   * and log as `postUpdate`: authorized as `principal`, stored as one
    * update attributed to `actor`. `rewrite` receives the current sections, read
    * under the lock; when it refuses, nothing is written.
    */
   async applyAgentRewrite(params: {
     workspaceId: string
     docId: string
-    invokingUserId: string
-    actor: { actorId: string; actorType: typeof AuthorTypes.PERSONA }
+    principal: StreamWritePrincipal
+    actor: { actorId: string; actorType: AuthorType }
     reason: string
     rewrite: (sections: DocSection[]) => DocRewrite
   }): Promise<DocAgentRewriteResult> {
-    const { workspaceId, docId, invokingUserId, actor, reason } = params
+    const { workspaceId, docId, principal, actor, reason } = params
     try {
       return await withTransaction(this.pool, async (client) => {
-        const { doc, head } = await lockWritableDoc(client, { workspaceId, docId, userId: invokingUserId })
+        const { doc, head } = await lockWritableDoc(client, { workspaceId, docId, principal })
         const title = doc.displayName ?? null
         const previousSections = await DocRepository.listSections(client, workspaceId, docId)
         const next = params.rewrite(previousSections)
@@ -236,7 +239,7 @@ export class DocService {
           projection,
           authored: { update, ...actor, touchedBlockIds },
           repair: null,
-          attachedBy: invokingUserId,
+          attachedBy: principalActorId(principal),
           reason,
         })
         return { status: "applied", title, seq, touchedBlockIds, sections: projection.sections }

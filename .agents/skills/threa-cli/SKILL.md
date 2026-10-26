@@ -37,7 +37,7 @@ Run `whoami` (tool `whoami`) before anything else. It confirms the key works, te
 
 ## Refer to streams and users by slug
 
-You rarely need to look up an id first. Any stream argument takes a `stream_…` id or a `#channel-slug`: the `streams read` positional, `messages send`/`labels add`/`labels remove` stream refs, `search --stream`, `conversations list --stream`, `messages find-by-metadata --stream` (tools `read_stream`, `send_message`, `apply_label`, `remove_label`, `search.stream_ids`, `list_conversations.stream_id`, `find_messages_by_metadata.stream_id`). Any user argument takes a `usr_`/`bot_` id or an `@user-slug`. A ref that matches nothing or is ambiguous fails before any API call with `code: "UNRESOLVED_REF"`, listing the candidates or pointing you at `streams list`/`users list`.
+You rarely need to look up an id first. Any stream argument takes a `stream_…` id or a `#channel-slug`: the `streams read` positional, `messages send`/`labels add`/`labels remove`/`docs list`/`docs create` stream refs, `search --stream`, `conversations list --stream`, `messages find-by-metadata --stream` (tools `read_stream`, `send_message`, `apply_label`, `remove_label`, `list_docs.stream_id`, `create_doc.stream_id`, `search.stream_ids`, `list_conversations.stream_id`, `find_messages_by_metadata.stream_id`). Any user argument takes a `usr_`/`bot_` id or an `@user-slug`. A ref that matches nothing or is ambiguous fails before any API call with `code: "UNRESOLVED_REF"`, listing the candidates or pointing you at `streams list`/`users list`.
 
 Two things you cannot do this way, by design of the API: an `@user-slug` will not stand in for your DM with that user (DM streams hide their counterpart on the wire), and bots and personas are not queryable by slug. For a DM, find its `stream_…` id with `threa streams list --type dm` and `threa streams read <id> --members`; for a bot or persona, pass its id.
 
@@ -60,6 +60,16 @@ Read results already carry author identity, so you seldom need a second call to 
 - Narrow with `--stream`, `--knowledge-type`, `--memo-type`, `--tag`, `--scope`, and `--before`/`--after`.
 - When you are answering a specific message, `threa memos recall "<message>"` (tool `recall_memos`) returns only the memos a model judged relevant to it, at most 5, or `(nothing relevant)`. It runs a model per call, so recall once per message and use search to explore.
 - Follow a hit with `threa memos get <id>` (tool `get_memo`) to see the source messages it was extracted from, so you can cite or verify the origin.
+
+## Docs
+
+A doc is a markdown document hosted by a stream. `threa docs list <stream-ref>` (tool `list_docs`) shows a stream's docs; `threa docs read <doc-id>` (tool `read_doc`) prints the whole doc with a `<!-- blk_… -->` marker line before each block.
+
+- Read before you edit. Copy each `--old` verbatim from one block of the read output (never across a marker line); `--block blk_…` (tool `block_id`) confines the edit to that block.
+- `--old`/`--new` repeat and pair by position (tool `edits: [{ block_id?, old, new }]`). Every edit in a call applies together, or nothing is written. A value that starts with a dash, such as a list item, needs the `=` form: `--old="- AWS key is live"`.
+- `--reason` is one line shown to people on the stream's timeline: what changed and why.
+- A 409 (`DOC_EDIT_TEXT_NOT_FOUND`, `DOC_EDIT_TEXT_AMBIGUOUS`, `DOC_SECTION_NOT_FOUND`) means the text moved or matched twice. Re-read the doc (`details.scope.markdown` holds the current text) and retry with a tighter anchor.
+- `threa docs create <stream-ref> --title t --body - --reason r` (tool `create_doc`) starts one; `--reason` is required with a body.
 
 ## Conversation create and resume
 

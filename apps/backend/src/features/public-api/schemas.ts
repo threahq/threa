@@ -6,6 +6,7 @@
  * handlers.ts and routes.ts.
  */
 import { z } from "zod"
+import { DOC_PUBLIC_MARKDOWN_MAX_CHARS, DOC_REASON_MAX_CHARS } from "../docs/config"
 import { DECISION_OPTION_TONES, PHASED_STEP_TYPES, STEP_FRAME_PHASES } from "@threahq/types"
 import {
   DECISION_BODY_MAX_CHARS,
@@ -119,6 +120,10 @@ export const updateLabelSchema = z
       message: "At least one field must be provided",
     }
   )
+
+export const docIdParamSchema = z.object({
+  docId: z.string().min(1).max(64),
+})
 
 export const labelIdParamSchema = z.object({
   labelId: z.string().min(1).max(64),
@@ -679,3 +684,37 @@ export const createDecisionSchema = z
     message: "A sealed decision carries the decisionId its ciphertext is bound to",
     path: ["decisionId"],
   })
+
+const docHostStreamId = z.string().min(1).max(64)
+const docReason = z.string().trim().min(1).max(DOC_REASON_MAX_CHARS)
+const docMarkdown = z.string().max(DOC_PUBLIC_MARKDOWN_MAX_CHARS)
+
+export const listDocsQuerySchema = z.object({ streamId: docHostStreamId })
+
+// A body is a first write, so it carries the reason the timeline shows for it.
+export const createDocSchema = z
+  .object({
+    streamId: docHostStreamId,
+    title: z.string().trim().min(1).max(100).optional(),
+    markdown: docMarkdown.min(1).optional(),
+    reason: docReason.optional(),
+  })
+  .refine((body) => body.markdown === undefined || body.reason !== undefined, {
+    message: "reason is required when markdown is sent",
+    path: ["reason"],
+  })
+
+// Edits apply together: if one fails to match, nothing is written.
+export const editDocSchema = z.object({
+  reason: docReason,
+  edits: z
+    .array(
+      z.object({
+        blockId: z.string().min(1).max(64).optional(),
+        old: docMarkdown.min(1),
+        new: docMarkdown,
+      })
+    )
+    .min(1)
+    .max(100),
+})

@@ -270,6 +270,7 @@ test("top-level --help lists every command, exit 0", async () => {
     "memos",
     "attachments",
     "labels",
+    "docs",
     "delegations",
     "search",
     "skill",

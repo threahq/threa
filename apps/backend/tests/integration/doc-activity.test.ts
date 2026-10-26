@@ -15,6 +15,7 @@ import {
 } from "../../src/features/docs"
 import { docActivityRollupJobId } from "../../src/features/docs/activity-service"
 import { StreamEventRepository, StreamService } from "../../src/features/streams"
+import { BotChannelService } from "../../src/features/api-keys"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { JobQueues } from "../../src/lib/queue"
 import { blockId, eventId, personaId, userId, workspaceId } from "../../src/lib/id"
@@ -254,8 +255,18 @@ describe("doc activity roll-up", () => {
     const doc = await createDocWithBody([row])
     const { service } = buildService()
     await service.rollUp({ workspaceId: wsId, docId: doc.id })
-    const agent = new DocAgentService({ pool, docService, streamService })
-    const ctx = { workspaceId: wsId, hostStreamId: doc.parentStreamId, invokingUserId: owner, personaId: personaId() }
+    const agent = new DocAgentService({
+      pool,
+      docService,
+      streamService,
+      botChannelService: new BotChannelService({ pool }),
+    })
+    const ctx = {
+      workspaceId: wsId,
+      hostStreamId: doc.parentStreamId,
+      principal: { kind: "user" as const, userId: owner },
+      actor: { actorId: personaId(), actorType: AuthorTypes.PERSONA },
+    }
     const edit = (reason: string, from: string, to: string) =>
       agent.editDoc(ctx, { docId: doc.id, reason, edits: [{ old: from, new: to }] })
     const outcomes = [
@@ -274,7 +285,7 @@ describe("doc activity roll-up", () => {
       reasons: payload.reasons,
     }).toEqual({
       statuses: ["applied", "applied", "applied"],
-      actors: [{ actorId: ctx.personaId, actorType: AuthorTypes.PERSONA }],
+      actors: [{ actorId: ctx.actor.actorId, actorType: AuthorTypes.PERSONA }],
       reasons: ["noted the rotation date", "marked the AWS key revoked"],
     })
   })

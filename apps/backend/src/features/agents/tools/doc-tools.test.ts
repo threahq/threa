@@ -14,6 +14,7 @@ import type { DocToolDeps } from "./tool-deps"
 const EXEC_OPTS = { toolCallId: "call_1" }
 const DOC = "stream_doc1"
 const BLK = "blk_01JZ0000000000000000000000"
+const SUMMARY = { hostStreamId: "stream_host", seq: 3, createdAt: new Date("2026-10-26T08:00:00Z") }
 
 function deps(overrides: Partial<DocToolDeps> = {}): DocToolDeps {
   const unexpected = async (): Promise<never> => {
@@ -45,10 +46,13 @@ describe("read_doc", () => {
   it("lists the host's docs when called without a docId", async () => {
     const tool = createReadDocTool(
       deps({
-        listDocs: async () => [
-          { docId: DOC, title: "Rotation tracker" },
-          { docId: "stream_doc2", title: null },
-        ],
+        listDocs: async () => ({
+          status: "ok",
+          docs: [
+            { ...SUMMARY, docId: DOC, title: "Rotation tracker" },
+            { ...SUMMARY, docId: "stream_doc2", title: null },
+          ],
+        }),
       })
     )
     const result = await tool.config.execute({}, EXEC_OPTS)
@@ -56,13 +60,19 @@ describe("read_doc", () => {
   })
 
   it("says so when the host has no docs", async () => {
-    const tool = createReadDocTool(deps({ listDocs: async () => [] }))
+    const tool = createReadDocTool(deps({ listDocs: async () => ({ status: "ok", docs: [] }) }))
     expect((await tool.config.execute({}, EXEC_OPTS)).output).toBe("This stream hosts no docs.")
+  })
+
+  it("says so when the host is out of the turn's reach", async () => {
+    const tool = createReadDocTool(deps({ listDocs: async () => ({ status: "not_found" }) }))
+    expect((await tool.config.execute({}, EXEC_OPTS)).output).toBe("This stream's docs are not available to you.")
   })
 
   it("returns title, seq and marker-annotated markdown for one doc", async () => {
     const readDoc = mock(async () => ({
       status: "ok" as const,
+      ...SUMMARY,
       docId: DOC,
       title: "Rotation tracker",
       seq: 3,
@@ -292,6 +302,7 @@ describe("create_doc", () => {
   it("shows the created body and declares the new doc", async () => {
     const createDoc = mock(async () => ({
       status: "created" as const,
+      ...SUMMARY,
       docId: "stream_new",
       title: "Plan",
       seq: 1,
@@ -322,6 +333,7 @@ describe("create_doc", () => {
         deps({
           createDoc: async () => ({
             status: "created",
+            ...SUMMARY,
             docId: "stream_new",
             title: "Plan",
             seq: 0,
@@ -341,28 +353,6 @@ describe("create_doc", () => {
       'Created doc stream_new "Plan" (seq 0), but the body was not applied: the person who asked may not edit this doc.',
       'Created doc stream_new "Plan" (seq 0), but the body was not applied: saving it failed.',
     ])
-  })
-
-  it("reports a title that was not set alongside the created doc", async () => {
-    const tool = createCreateDocTool(
-      deps({
-        createDoc: async () => ({
-          status: "created",
-          docId: "stream_new",
-          title: null,
-          seq: 0,
-          markdown: "",
-          titleFailure: { status: "error" },
-        }),
-      })
-    )
-    const input = { reason: "started the plan", title: "Plan" }
-    const result = await tool.config.execute(input, EXEC_OPTS)
-
-    expect({ output: result.output, effects: tool.config.trace.effects?.(input, result) }).toEqual({
-      output: "Created doc stream_new (seq 0), but the title was not set: saving it failed.",
-      effects: [{ kind: "doc", target: "stream_new" }],
-    })
   })
 
   it("declares nothing when the host refuses, naming the real cause", async () => {

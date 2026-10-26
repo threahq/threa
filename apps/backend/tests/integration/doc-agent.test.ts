@@ -10,8 +10,9 @@ import {
   encodeUpdateBase64,
   writeContentJson,
   ydocToContentJson,
-  type DocAgentContext,
+  type HostedDocAgentContext,
 } from "../../src/features/docs"
+import { BotChannelService } from "../../src/features/api-keys"
 import { StreamEventRepository, StreamService } from "../../src/features/streams"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { blockId, personaId, userId, workspaceId } from "../../src/lib/id"
@@ -33,7 +34,7 @@ beforeAll(async () => {
   cleanup = db.cleanup
   streamService = new StreamService(pool)
   docService = new DocService({ pool })
-  agent = new DocAgentService({ pool, docService, streamService })
+  agent = new DocAgentService({ pool, docService, streamService, botChannelService: new BotChannelService({ pool }) })
   wsId = workspaceId()
   await withTransaction(pool, async (client) => {
     owner = (await addTestMember(client, wsId, userId())).id
@@ -74,7 +75,7 @@ let slugCounter = 0
 async function createHostedDoc(
   blocks: JSONContent[],
   visibility: "public" | "private" = "public"
-): Promise<{ host: Stream; doc: Stream; ctx: DocAgentContext }> {
+): Promise<{ host: Stream; doc: Stream; ctx: HostedDocAgentContext }> {
   const host = await streamService.createChannel({
     workspaceId: wsId,
     slug: `doc-agent-${++slugCounter}`,
@@ -86,11 +87,16 @@ async function createHostedDoc(
   return {
     host,
     doc,
-    ctx: { workspaceId: wsId, hostStreamId: host.id, invokingUserId: owner, personaId: persona },
+    ctx: {
+      workspaceId: wsId,
+      hostStreamId: host.id,
+      principal: { kind: "user", userId: owner },
+      actor: { actorId: persona, actorType: AuthorTypes.PERSONA },
+    },
   }
 }
 
-async function readOk(ctx: DocAgentContext, docId: string) {
+async function readOk(ctx: HostedDocAgentContext, docId: string) {
   const read = await agent.readDoc(ctx, { docId })
   if (read.status !== "ok") throw new Error(`Expected doc ${docId} to be readable, got ${read.status}`)
   return read
@@ -211,25 +217,28 @@ describe("doc agent service", () => {
     const edit = { reason: "Edit", edits: [{ old: "e", new: "E" }] }
 
     expect({
-      privateRead: await agent.readDoc({ ...privateDoc.ctx, invokingUserId: outsider }, { docId: privateDoc.doc.id }),
+      privateRead: await agent.readDoc(
+        { ...privateDoc.ctx, principal: { kind: "user", userId: outsider } },
+        { docId: privateDoc.doc.id }
+      ),
       privateWrite: await agent.editDoc(
-        { ...privateDoc.ctx, invokingUserId: outsider },
+        { ...privateDoc.ctx, principal: { kind: "user", userId: outsider } },
         { docId: privateDoc.doc.id, ...edit }
       ),
       publicWrite: await agent.editDoc(
-        { ...publicDoc.ctx, invokingUserId: outsider },
+        { ...publicDoc.ctx, principal: { kind: "user", userId: outsider } },
         { docId: publicDoc.doc.id, reason: "Edit", edits: [{ old: "Open", new: "Closed" }] }
       ),
       otherHost: await agent.readDoc(publicDoc.ctx, { docId: other.doc.id }),
       otherHostWrite: await agent.editDoc(publicDoc.ctx, { docId: other.doc.id, ...edit }),
-      listed: await agent.listDocs({ ...privateDoc.ctx, invokingUserId: outsider }),
+      listed: await agent.listDocs({ ...privateDoc.ctx, principal: { kind: "user", userId: outsider } }),
     }).toEqual({
       privateRead: { status: "not_found" },
       privateWrite: { status: "not_found" },
-      publicWrite: { status: "refused", code: "not_a_member" },
+      publicWrite: { status: "refused", code: "not_a_member", reason: "not_a_member" },
       otherHost: { status: "not_found" },
       otherHostWrite: { status: "not_found" },
-      listed: [],
+      listed: { status: "not_found" },
     })
   })
 
@@ -357,7 +366,7 @@ describe("doc agent service", () => {
     const titled = await agent.setTitle(ctx, { docId: doc.id, title: "  Rotation tracker " })
     const emptyTitle = await agent.setTitle(ctx, { docId: doc.id, title: "  " })
 
-    expect({ titled, emptyTitle, listed: (await agent.listDocs(ctx)).map((summary) => summary.title) }).toEqual({
+    expect({ titled, emptyTitle, listed: (await agent.listDocs(ctx)).docs?.map((summary) => summary.title) }).toEqual({
       titled: { status: "applied", docId: doc.id, title: "Rotation tracker" },
       emptyTitle: { status: "refused", code: "title_empty" },
       listed: ["Rotation tracker"],
@@ -365,7 +374,7 @@ describe("doc agent service", () => {
   })
 
   test("should create a titled doc with a body and read it back", async () => {
-    const { ctx } = await createHostedDoc([])
+    const { host, ctx } = await createHostedDoc([])
 
     const created = await agent.createDoc(ctx, {
       reason: "Start a checklist",
@@ -382,22 +391,26 @@ describe("doc agent service", () => {
       created: {
         status: "created",
         docId: created.docId,
+        hostStreamId: host.id,
         title: "Checklist",
         seq: 1,
+        createdAt: expect.any(Date),
         markdown: "<!-- blk -->\n## Steps\n\n<!-- blk -->\n1. Rotate",
       },
       read: {
         status: "ok",
         docId: created.docId,
+        hostStreamId: host.id,
         title: "Checklist",
         seq: 1,
+        createdAt: expect.any(Date),
         markdown: "<!-- blk -->\n## Steps\n\n<!-- blk -->\n1. Rotate",
       },
     })
   })
 
   test("should leave a blank title untitled and keep the doc id when the body write throws", async () => {
-    const { ctx } = await createHostedDoc([])
+    const { host, ctx } = await createHostedDoc([])
     const rewrite = spyOn(docService, "applyAgentRewrite").mockRejectedValueOnce(new Error("db down"))
 
     const created = await agent.createDoc(ctx, { reason: "Start a checklist", title: "   ", markdown: "1. Rotate" })
@@ -408,12 +421,19 @@ describe("doc agent service", () => {
       created: {
         status: "created",
         docId: created.docId,
+        hostStreamId: host.id,
         title: null,
         seq: 0,
+        createdAt: expect.any(Date),
         markdown: "",
         body: { status: "error" },
       },
-      docs: expect.arrayContaining([{ docId: created.docId, title: null }]),
+      docs: {
+        status: "ok",
+        docs: expect.arrayContaining([
+          { docId: created.docId, hostStreamId: host.id, title: null, seq: 0, createdAt: expect.any(Date) },
+        ]),
+      },
     })
   })
 

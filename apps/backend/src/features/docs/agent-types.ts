@@ -1,3 +1,5 @@
+import type { StreamReadOnlyReason } from "@threahq/types"
+
 /**
  * Why an agent's doc write resolved nothing. `scope.markdown` is the current
  * marker-annotated markdown of the named block, or of the whole doc when the
@@ -19,10 +21,13 @@ export type DocAgentRefusalCode =
   | "title_empty"
   | "forbidden"
 
-/** An agent op on a doc it cannot reach, or a write its invoking user may not make. `detail` carries an unmapped error code. */
+/**
+ * An op on a doc the principal cannot reach, or a write it may not make. `reason` is
+ * the stream's read-only reason when that is what refused it; `detail` carries an unmapped error code.
+ */
 export type DocAgentAccessRefusal =
   | { status: "not_found" }
-  | { status: "refused"; code: DocAgentRefusalCode; detail?: string }
+  | { status: "refused"; code: DocAgentRefusalCode; reason?: StreamReadOnlyReason; detail?: string }
 
 /** `markdown` is the changed blocks, marker-annotated. */
 export type DocAgentWriteResult =
@@ -46,29 +51,21 @@ export type DocAgentRewriteFailure =
 
 export interface DocAgentDocSummary {
   docId: string
+  hostStreamId: string
   title: string | null
+  seq: number
+  createdAt: Date
 }
 
+/** `not_found` when the principal cannot read the host. */
+export type DocAgentListResult = { status: "ok"; docs: DocAgentDocSummary[] } | { status: "not_found" }
+
 /** `markdown` is the whole doc, marker-annotated. */
-export type DocAgentReadResult =
-  | { status: "ok"; docId: string; title: string | null; seq: number; markdown: string }
-  | { status: "not_found" }
+export type DocAgentReadResult = ({ status: "ok"; markdown: string } & DocAgentDocSummary) | { status: "not_found" }
 
 export type DocAgentTitleResult = { status: "applied"; docId: string; title: string } | DocAgentAccessRefusal
 
-/**
- * Once the doc row exists every outcome is `created` with its id. `body` is set
- * only when a requested body was not applied; `titleFailure` only when a
- * requested title was not set.
- */
+/** Once the doc row exists every outcome is `created` with its id; `body` is set only when a requested body was not applied. */
 export type DocAgentCreateResult =
-  | {
-      status: "created"
-      docId: string
-      title: string | null
-      seq: number
-      markdown: string
-      body?: DocAgentRewriteFailure
-      titleFailure?: DocAgentAccessRefusal | { status: "error" }
-    }
+  | ({ status: "created"; markdown: string; body?: DocAgentRewriteFailure } & DocAgentDocSummary)
   | DocAgentAccessRefusal

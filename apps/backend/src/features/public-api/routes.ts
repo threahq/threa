@@ -81,6 +81,9 @@ import {
   failDelegationSchema,
   createDecisionSchema,
   requestDelegationAccessSchema,
+  listDocsQuerySchema,
+  createDocSchema,
+  editDocSchema,
 } from "./schemas"
 
 // Response schemas — the single source of truth for public API wire shapes.
@@ -844,6 +847,27 @@ function paginated(itemSchema: z.ZodType) {
   })
 }
 
+// A doc is a stream of type "doc" hosted by a channel, scratchpad or DM; `seq` counts its writes.
+const docSchema = z.object({
+  id: z.string(),
+  hostStreamId: z.string(),
+  title: z.string().nullable(),
+  seq: z.number().int(),
+  createdAt: z.string().datetime(),
+})
+
+// The whole doc as markdown, with a `<!-- blk_… -->` marker line before each block.
+const docBodySchema = docSchema.extend({ markdown: z.string() })
+
+// After an edit: the touched blocks only, marker-annotated; empty when nothing changed.
+const docEditSchema = z.object({
+  id: z.string(),
+  title: z.string().nullable(),
+  seq: z.number().int(),
+  touchedBlockIds: z.array(z.string()),
+  markdown: z.string(),
+})
+
 function dataEnvelope(itemSchema: z.ZodType) {
   return z.object({ data: itemSchema })
 }
@@ -858,6 +882,14 @@ const workspaceIdParam = {
   required: true,
   schema: { type: "string" as const },
   description: "Workspace ID (prefixed ULID)",
+}
+
+const docIdParam = {
+  name: "docId",
+  in: "path" as const,
+  required: true,
+  schema: { type: "string" as const },
+  description: "Doc ID (a stream_ ULID of type doc)",
 }
 
 const streamIdParam = {
@@ -1003,6 +1035,10 @@ export type OperationId =
   | "unassignLabel"
   | "updateLabel"
   | "deleteLabel"
+  | "listDocs"
+  | "getDoc"
+  | "createDoc"
+  | "editDoc"
   | "getMe"
   | "listMyBots"
   | "getMyE2eKey"
@@ -1872,6 +1908,73 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     responseSchema: paginated(userSchema),
   },
 
+  {
+    method: "get",
+    path: "/api/v1/workspaces/{workspaceId}/docs",
+    operationId: "listDocs",
+    summary: "List a stream's docs",
+    description:
+      "The active docs hosted by `streamId`, newest first. 404 when the stream is missing or the key cannot read it.",
+    tags: ["Docs"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DOCS_READ],
+    parameters: [workspaceIdParam],
+    requestSchema: listDocsQuerySchema,
+    requestIn: "query",
+    responseSchema: dataArrayEnvelope(docSchema),
+    canReturn404: true,
+  },
+  {
+    method: "get",
+    path: "/api/v1/workspaces/{workspaceId}/docs/{docId}",
+    operationId: "getDoc",
+    summary: "Read a doc",
+    description:
+      "The doc as markdown with a `<!-- blk_… -->` marker line before each block; block ids anchor edits. " +
+      "404 when the doc is missing, archived, or out of the key's reach.",
+    tags: ["Docs"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DOCS_READ],
+    parameters: [workspaceIdParam, docIdParam],
+    responseSchema: dataEnvelope(docBodySchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/docs",
+    operationId: "createDoc",
+    summary: "Create a doc",
+    description:
+      "Create a doc under `streamId` as the key's actor (user keys as the owner, workspace keys as the bot). " +
+      "An optional `markdown` body is the first write and needs a `reason`; the host must accept writes from " +
+      "the key (403 STREAM_READ_ONLY otherwise). 400 DOC_HOST_TYPE_INVALID when the stream type cannot host docs. " +
+      "When the body cannot be applied after the doc exists, DOC_CREATE_INCOMPLETE carries the new doc's id.",
+    tags: ["Docs"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DOCS_WRITE],
+    parameters: [workspaceIdParam],
+    requestSchema: createDocSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(docBodySchema),
+    successStatus: 201,
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/docs/{docId}/edits",
+    operationId: "editDoc",
+    summary: "Edit a doc by text anchors",
+    description:
+      "Replace exact text inside blocks: each edit's `old` must match once, within `blockId` when given or " +
+      "anywhere in the doc otherwise. All edits apply together or none do; a miss is 409 " +
+      "(DOC_EDIT_TEXT_NOT_FOUND, DOC_EDIT_TEXT_AMBIGUOUS or DOC_SECTION_NOT_FOUND) whose `details.scope.markdown` " +
+      "is the current text to retry against. `reason` is shown on the host's timeline.",
+    tags: ["Docs"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DOCS_WRITE],
+    parameters: [workspaceIdParam, docIdParam],
+    requestSchema: editDocSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(docEditSchema),
+    canReturn404: true,
+    canReturn409: true,
+  },
   {
     method: "get",
     path: "/api/v1/workspaces/{workspaceId}/labels",
