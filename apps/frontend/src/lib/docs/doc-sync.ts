@@ -119,7 +119,10 @@ export class DocSync {
       this.flushAgain = true
       return this.flushRun
     }
-    this.flushRun = this.runFlush()
+    if (this.unacked.length === 0) return Promise.resolve()
+    this.flushRun = this.runFlush().finally(() => {
+      this.flushRun = null
+    })
     return this.flushRun
   }
 
@@ -233,28 +236,24 @@ export class DocSync {
   }
 
   private async runFlush(): Promise<void> {
-    try {
-      do {
-        this.flushAgain = false
-        if (this.unacked.length === 0) return
-        if (!navigator.onLine) {
-          await this.handOff()
-          return
-        }
-        const carried = new Set(this.unacked)
-        try {
-          await this.post(Y.mergeUpdates([...carried]))
-        } catch (error) {
-          if (this.stopped) return
-          if (isPermanentApiError(error)) await this.discardRefusedEdits(error)
-          else await this.handOff()
-          return
-        }
-        this.unacked = this.unacked.filter((update) => !carried.has(update))
-      } while (this.flushAgain && !this.stopped)
-    } finally {
-      this.flushRun = null
-    }
+    do {
+      this.flushAgain = false
+      if (this.unacked.length === 0) return
+      if (!navigator.onLine) {
+        await this.handOff()
+        return
+      }
+      const carried = new Set(this.unacked)
+      try {
+        await this.post(Y.mergeUpdates([...carried]))
+      } catch (error) {
+        if (this.stopped) return
+        if (isPermanentApiError(error)) await this.discardRefusedEdits(error)
+        else await this.handOff()
+        return
+      }
+      this.unacked = this.unacked.filter((update) => !carried.has(update))
+    } while (this.flushAgain && !this.stopped)
   }
 
   /** Bytes stay in `unacked` too: the next flush re-sends them and the server skips what it already holds. */

@@ -21,7 +21,7 @@ interface DocSession {
 export type DocSyncView =
   | { phase: "loading" }
   | { phase: "error"; retry: () => void }
-  | { phase: "ready"; ydoc: Y.Doc; presence: DocPresence }
+  | { phase: "ready"; ydoc: Y.Doc; presence: DocPresence; flush: () => void }
 
 const NO_SESSION_STATUS: DocSyncStatus = { phase: "loading" }
 const noSubscription = () => () => {}
@@ -40,6 +40,8 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
 
   const socket = useSocket()
   const latestSocket = useLatest(socket)
+  const syncEngine = useOptionalSyncEngine()
+  const latestSyncEngine = useLatest(syncEngine)
 
   useEffect(() => {
     if (!docId) return
@@ -48,6 +50,7 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
       workspaceId,
       docId,
       ydoc,
+      kickOperationQueue: () => latestSyncEngine()?.kickOperationQueue(),
       onRejected: (refusal) => {
         const readOnly = refusal.status === 403 || refusal.code === StreamErrorCodes.READ_ONLY
         toast.error(readOnly ? "You can't edit this doc" : "Your last edit couldn't be saved", {
@@ -73,7 +76,7 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
       sync.stop()
       ydoc.destroy()
     }
-  }, [workspaceId, docId, key, latestSocket])
+  }, [workspaceId, docId, key, latestSocket, latestSyncEngine])
 
   const viewer = useCurrentWorkspaceUser(workspaceId)
   const viewerId = viewer?.id
@@ -91,7 +94,6 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
     }
   }, [session, socket])
 
-  const syncEngine = useOptionalSyncEngine()
   useEffect(() => {
     const eventSource = syncEngine?.getLiveEventSource() ?? socket
     if (!session || !eventSource) return
@@ -111,6 +113,7 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
       .then(() => {
         if (abortController.signal.aborted) return
         void session.sync.catchUp()
+        void session.sync.flush()
         session.presence.resend()
       })
       .catch((error: unknown) => {
@@ -126,8 +129,9 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
   )
 
   const retry = useCallback(() => void session?.sync.retry(), [session])
+  const flush = useCallback(() => void session?.sync.flush(), [session])
 
   if (!session || status.phase === "loading") return { phase: "loading" }
   if (status.phase === "error") return { phase: "error", retry }
-  return { phase: "ready", ydoc: session.ydoc, presence: session.presence }
+  return { phase: "ready", ydoc: session.ydoc, presence: session.presence, flush }
 }

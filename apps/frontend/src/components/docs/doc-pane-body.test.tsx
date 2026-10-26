@@ -65,6 +65,7 @@ describe("DocPaneBody", () => {
   let serverDoc: Y.Doc
   let queryClient: QueryClient
   let joinRoom: MockInstance<typeof socketRoomModule.joinRoomWithAck>
+  let kickOperationQueue: ReturnType<typeof vi.fn>
   let socket: { on: MockInstance; off: MockInstance; emit: MockInstance; connected: boolean }
 
   beforeEach(() => {
@@ -84,9 +85,11 @@ describe("DocPaneBody", () => {
       name: "Viewer",
     } as unknown as ReturnType<typeof hooksModule.useCurrentWorkspaceUser>)
     joinRoom = vi.spyOn(socketRoomModule, "joinRoomWithAck").mockResolvedValue(undefined)
+    kickOperationQueue = vi.fn()
     vi.spyOn(syncEngineModule, "useOptionalSyncEngine").mockReturnValue({
       getLiveEventSource: () => gate,
       backfillStreamGap: vi.fn(),
+      kickOperationQueue,
     } as unknown as ReturnType<typeof syncEngineModule.useOptionalSyncEngine>)
     vi.spyOn(mentionablesModule, "useMentionables").mockReturnValue({
       mentionables: [],
@@ -216,6 +219,21 @@ describe("DocPaneBody", () => {
       docId: DOC_ID,
       text: expect.stringContaining("Rotation tracker for March"),
     })
+  })
+
+  it("should save unsent edits when the editor loses focus", async () => {
+    await mountLoaded()
+
+    act(() => {
+      proseMirror().editor.chain().focus("end").insertContent(" draft").run()
+    })
+    fireEvent.blur(proseMirror())
+
+    await waitFor(() => expect(docsApi.postUpdate).toHaveBeenCalledTimes(1), { timeout: FLUSH_CAP_MS - 200 })
+    const posted = new Y.Doc()
+    Y.applyUpdate(posted, Y.encodeStateAsUpdate(serverDoc))
+    Y.applyUpdate(posted, base64ToBytes(vi.mocked(docsApi.postUpdate).mock.calls[0][2]))
+    expect(posted.getXmlFragment(DOC_FRAGMENT).toString()).toContain("Rotation tracker draft")
   })
 
   it("shows a remote update delivered through the live event source", async () => {
@@ -398,14 +416,16 @@ describe("DocPaneBody", () => {
     })
     view.unmount()
 
-    await waitFor(() => expect(enqueue).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(kickOperationQueue).toHaveBeenCalledTimes(1))
     const [workspaceId, docId] = enqueue.mock.calls[0]
     expect({
       queued: { workspaceId, docId },
+      enqueues: enqueue.mock.calls.length,
       posts: vi.mocked(docsApi.postUpdate).mock.calls.length,
       listening: off.mock.calls.map(([event]) => event),
     }).toEqual({
       queued: { workspaceId: WORKSPACE_ID, docId: DOC_ID },
+      enqueues: 1,
       posts: 0,
       listening: expect.arrayContaining(["doc:updated"]),
     })
