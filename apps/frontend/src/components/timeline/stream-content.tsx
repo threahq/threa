@@ -173,7 +173,8 @@ import {
   useScrollToMessage,
   snapshotTopVisibleRow,
   isHoldCurrent,
-  locateHoldRow,
+  currentHoldRow,
+  takeHold,
   UNREAD_MARKER_TOP_GAP_PX,
 } from "@/hooks/use-scroll-to-message"
 
@@ -2519,13 +2520,14 @@ export function StreamContent({
     const el = virtualScrollerEl
     if (!el || isFollowingTailRef.current) return
     if (scrollAbortRef.current) return
-    const row = locateHoldRow(el, hold, userInteractedAtRef.current)
+    const row = currentHoldRow(el, hold, userInteractedAtRef.current)
     if (!row) return
     const delta = row.offsetPx - hold.offsetPx
     // Position-preserving by definition (re-pins the same row at the same
     // offset), so it does not stamp the programmatic-scroll ref — breaking a
     // user fling's sweep chain over a layout compensation was exactly the
     // false positive the stamp must avoid.
+    hold.contentTop = row.offsetPx + el.scrollTop
     if (Math.abs(delta) > 1) el.scrollTop += delta
   }, [virtualScrollerEl, isFollowingTailRef, userInteractedAtRef])
   useLayoutEffect(() => {
@@ -2614,7 +2616,7 @@ export function StreamContent({
       // Seed the detached-viewport guard: content resizes between engage and
       // the refine loop's first settle must re-target the landing, not slide
       // the viewport.
-      detachedHoldRef.current = { ...target, takenAt: performance.now() }
+      detachedHoldRef.current = { ...target, takenAt: performance.now(), contentTop: null }
     } else {
       releaseDeferredReveal()
       if (landing.kind === "marker") scrollToFirstUnread()
@@ -2668,11 +2670,21 @@ export function StreamContent({
       if (best) {
         saveTimelineAnchor(workspaceId, streamId, { targetId: best.id, offsetPx: best.offsetPx })
         if (!isHoldCurrent(el, detachedHoldRef.current, userInteractedAtRef.current)) {
-          detachedHoldRef.current = { id: best.id, offsetPx: best.offsetPx, takenAt: performance.now() }
+          detachedHoldRef.current = takeHold(el, best)
         }
       }
     }
     const onScroll = () => {
+      // Classify every scroll as it lands: a scroll that moved the held row
+      // without a reflow is the reader's, so the hold yields at once rather
+      // than pulling them back on the next resize. A refine loop owns its own
+      // scrolls and refreshes the hold when it settles.
+      const hold = detachedHoldRef.current
+      if (hold && !scrollAbortRef.current && !isFollowingTailRef.current) {
+        const row = currentHoldRow(el, hold, userInteractedAtRef.current)
+        if (!row) detachedHoldRef.current = null
+        else if (Math.abs(row.offsetPx - hold.offsetPx) <= 1) hold.contentTop = row.offsetPx + el.scrollTop
+      }
       if (timer) window.clearTimeout(timer)
       timer = window.setTimeout(snapshot, 250)
     }
@@ -2718,7 +2730,7 @@ export function StreamContent({
     if (!el || isFollowingTailRef.current) return
     if (isHoldCurrent(el, detachedHoldRef.current, userInteractedAtRef.current)) return
     const snap = snapshotTopVisibleRow(el)
-    if (snap) detachedHoldRef.current = { ...snap, takenAt: performance.now() }
+    if (snap) detachedHoldRef.current = takeHold(el, snap)
   }, [isFetchingOlder, useVirtualized, virtualScrollerEl, isFollowingTailRef])
 
   useLayoutEffect(() => {

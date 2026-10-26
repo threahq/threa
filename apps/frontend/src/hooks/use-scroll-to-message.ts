@@ -40,28 +40,42 @@ function snapshotRow(el: HTMLElement, id: string): { id: string; offsetPx: numbe
   return row ? { id, offsetPx: Math.round(row.getBoundingClientRect().top - el.getBoundingClientRect().top) } : null
 }
 
-type DetachedHold = { id: string; offsetPx: number; takenAt: number }
+/**
+ * `contentTop` is the row's top in scroll-content coordinates when the guard
+ * last saw it (null until then): a scroll leaves it unchanged, a reflow above
+ * the row moves it.
+ */
+type DetachedHold = { id: string; offsetPx: number; takenAt: number; contentTop: number | null }
 
-/** The hold's row where it sits now, while no gesture has superseded the hold. */
-export function locateHoldRow(
+export function takeHold(el: HTMLElement, row: { id: string; offsetPx: number }): DetachedHold {
+  return { ...row, takenAt: performance.now(), contentTop: row.offsetPx + el.scrollTop }
+}
+
+/**
+ * The hold's row where it sits now, while the hold still names the reader's
+ * position: no gesture since it was taken, its row mounted, and any drift from
+ * the held offset caused by a reflow above the row (the guard re-pins it), not
+ * by a scroll the gesture stamp never sees (find-in-page, a screen reader,
+ * scrollIntoView) — position alone can't tell them apart, since the virtualizer
+ * moves scrollTop itself while compensating a reflow. Only a current hold may
+ * survive a re-snapshot — swapping a landed target for whichever row sits at the
+ * viewport top lets that row's late regrouping (a header appearing) slide the
+ * target down.
+ */
+export function currentHoldRow(
   el: HTMLElement,
   hold: DetachedHold | null,
   userInteractedAt: number
 ): { id: string; offsetPx: number } | null {
-  return hold && userInteractedAt <= hold.takenAt ? snapshotRow(el, hold.id) : null
+  if (!hold || userInteractedAt > hold.takenAt) return null
+  const row = snapshotRow(el, hold.id)
+  if (!row || Math.abs(row.offsetPx - hold.offsetPx) <= 1) return row
+  const scrolledOnly = hold.contentTop !== null && Math.abs(row.offsetPx + el.scrollTop - hold.contentTop) <= 1
+  return scrolledOnly ? null : row
 }
 
-/**
- * Whether the detached hold still names the reader's position: no gesture since
- * it was taken and its row still at the held offset. Only then may a re-snapshot
- * keep it — swapping a landed target for whichever row sits at the viewport top
- * lets that row's late regrouping (a header appearing) slide the target down.
- * Offset drift means a scroll the gesture stamp never sees (find-in-page, a
- * screen reader, scrollIntoView) moved the reader, so the hold is stale.
- */
 export function isHoldCurrent(el: HTMLElement, hold: DetachedHold | null, userInteractedAt: number): boolean {
-  const row = locateHoldRow(el, hold, userInteractedAt)
-  return row !== null && hold !== null && Math.abs(row.offsetPx - hold.offsetPx) <= 1
+  return currentHoldRow(el, hold, userInteractedAt) !== null
 }
 
 interface ScrollToMessageOptions {
@@ -187,7 +201,7 @@ export function useScrollToMessage({
           const snap =
             (everLanded && !userTookOver ? snapshotRow(scrollerNow, targetId) : null) ??
             snapshotTopVisibleRow(scrollerNow)
-          detachedHoldRef.current = snap ? { ...snap, takenAt: performance.now() } : null
+          detachedHoldRef.current = snap ? takeHold(scrollerNow, snap) : null
         }
         opts?.onFirstSettle?.()
       }
