@@ -1154,21 +1154,12 @@ export class StreamService {
 
   async createThread(params: CreateThreadParams & { principal: StreamWritePrincipal }): Promise<Stream> {
     return withTransaction(this.pool, async (client) => {
-      const [{ target, state }] = await resolveLockedStreamAuthorities(client, {
+      await assertStreamWritable(client, {
         workspaceId: params.workspaceId,
-        streamIds: [params.parentStreamId],
+        streamId: params.parentStreamId,
         principal: params.principal,
-        ignoreTypeReadOnly: true,
+        typeReadOnly: "threads",
       })
-      // A doc refuses messages, not discussion; every other type's reason still ranks right after archived.
-      const typeReason = STREAM_TYPE_CAPABILITIES[target.type].messagesReadOnly
-      assertViewerStreamWritable(
-        !typeReason ||
-          typeReason === StreamReadOnlyReasons.DOC_STREAM ||
-          state.readOnlyReason === StreamReadOnlyReasons.ARCHIVED
-          ? state
-          : { readOnly: true, readOnlyReason: typeReason }
-      )
       return this.createThreadOn(client, params)
     })
   }
@@ -1182,6 +1173,7 @@ export class StreamService {
       workspaceId: params.workspaceId,
       streamId: params.parentStreamId,
       principal,
+      typeReadOnly: "threads",
     })
     return this.createThreadOn(client, params)
   }

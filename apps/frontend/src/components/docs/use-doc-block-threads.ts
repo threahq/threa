@@ -6,12 +6,8 @@ import { useSocket } from "@/contexts"
 import type { StreamCreatedPayload, ThreadUpdatedPayload } from "@/sync/stream-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 
-export interface DocBlockThreadState {
-  threadId: string
-  replyCount: number
-}
+export type DocBlockThreadState = Omit<DocBlockThread, "blockId">
 
-/** A doc's section threads, keyed by the block id each hangs on. */
 export type DocBlockThreads = ReadonlyMap<string, DocBlockThreadState>
 
 const NO_THREADS: DocBlockThreads = new Map()
@@ -36,43 +32,47 @@ function upsertThread(
  * threads' creation and their reply counts, so the list is read once that join is acked and again on every
  * later ack (INV-53): an event the room carried before the join is only in the next read.
  */
-export function useDocBlockThreads(workspaceId: string, docId: string | null, joinCount: number): DocBlockThreads {
+export function useDocBlockThreads(workspaceId: string, docId: string, joinCount: number): DocBlockThreads {
   const queryClient = useQueryClient()
   const socket = useSocket()
   const syncEngine = useOptionalSyncEngine()
-  const queryKey = docKeys.threads(workspaceId, docId ?? "")
 
   const { data } = useQuery({
-    queryKey,
-    queryFn: () => docsApi.listThreads(workspaceId, docId!),
-    enabled: docId !== null && joinCount > 0,
+    queryKey: docKeys.threads(workspaceId, docId),
+    queryFn: () => docsApi.listThreads(workspaceId, docId),
+    enabled: joinCount > 0,
   })
 
   useEffect(() => {
     const eventSource = syncEngine?.getLiveEventSource() ?? socket
-    if (!docId || !eventSource) return
+    if (!eventSource) return
     const key = docKeys.threads(workspaceId, docId)
+    // Before the first answer, or while an older one is in flight, a patch would be dropped or overwritten: read again.
+    const apply = (blockId: string, patch: (existing: DocBlockThread | undefined) => DocBlockThread) => {
+      if (queryClient.getQueryData(key) === undefined || queryClient.isFetching({ queryKey: key }) > 0) {
+        // A first read in flight is joined, not replaced, by an invalidate alone.
+        void queryClient.cancelQueries({ queryKey: key }).then(() => queryClient.invalidateQueries({ queryKey: key }))
+        return
+      }
+      queryClient.setQueryData<DocThreadsResponse>(key, (old) => upsertThread(old, blockId, patch))
+    }
     const onThreadUpdated = (payload: ThreadUpdatedPayload) => {
       if (payload.workspaceId !== workspaceId || payload.parentStreamId !== docId) return
-      queryClient.setQueryData<DocThreadsResponse>(key, (old) =>
-        upsertThread(old, payload.anchorId, (existing) => ({
-          blockId: payload.anchorId,
-          threadId: payload.threadId,
-          replyCount: payload.replyCount ?? existing?.replyCount ?? 0,
-        }))
-      )
+      apply(payload.anchorId, (existing) => ({
+        blockId: payload.anchorId,
+        threadId: payload.threadId,
+        replyCount: payload.replyCount ?? existing?.replyCount ?? 0,
+      }))
     }
     const onStreamCreated = ({ workspaceId: eventWorkspaceId, stream }: StreamCreatedPayload) => {
       if (eventWorkspaceId !== workspaceId || stream.type !== StreamTypes.THREAD) return
       if (stream.parentStreamId !== docId || !stream.parentAnchorId) return
       const blockId = stream.parentAnchorId
-      queryClient.setQueryData<DocThreadsResponse>(key, (old) =>
-        upsertThread(old, blockId, (existing) => ({
-          blockId,
-          threadId: stream.id,
-          replyCount: existing?.replyCount ?? stream.replyCount ?? 0,
-        }))
-      )
+      apply(blockId, (existing) => ({
+        blockId,
+        threadId: stream.id,
+        replyCount: existing?.replyCount ?? stream.replyCount ?? 0,
+      }))
     }
     eventSource.on("thread:updated", onThreadUpdated)
     eventSource.on("stream:created", onStreamCreated)
@@ -83,7 +83,7 @@ export function useDocBlockThreads(workspaceId: string, docId: string | null, jo
   }, [workspaceId, docId, socket, syncEngine, queryClient])
 
   useEffect(() => {
-    if (joinCount < 2 || !docId) return
+    if (joinCount < 2) return
     void queryClient.invalidateQueries({ queryKey: docKeys.threads(workspaceId, docId) })
   }, [joinCount, workspaceId, docId, queryClient])
 

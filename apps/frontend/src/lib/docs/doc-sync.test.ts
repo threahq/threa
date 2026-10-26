@@ -520,6 +520,28 @@ describe("DocSync", () => {
     })
   })
 
+  it("should apply the server's follow-up row when its own row's broadcast arrives before the post answers", async () => {
+    const client = connect(server)
+    await client.sync.start()
+    const real = server.api.postUpdate.getMockImplementation()!
+    let stamp: DocUpdatedPayload | null = null
+    server.api.postUpdate.mockImplementationOnce(async (...args) => {
+      const own = await real(...args)
+      stamp = server.writeElsewhere(" [stamped]")
+      return { ...own, seq: stamp.seq }
+    })
+
+    type(client.ydoc, "mine ")
+    await vi.advanceTimersByTimeAsync(0)
+    client.sync.receive(stamp!)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect({ text: client.text(), status: client.sync.getStatus() }).toEqual({
+      text: "mine  [stamped]",
+      status: { phase: "ready" },
+    })
+  })
+
   it("keeps its seq when its own echo lands before the post result", async () => {
     const client = connect(server)
     await client.sync.start()

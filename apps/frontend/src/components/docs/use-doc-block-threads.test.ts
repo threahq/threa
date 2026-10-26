@@ -91,8 +91,34 @@ describe("useDocBlockThreads", () => {
       await gate.dispatch("thread:updated", threadUpdated())
     })
 
-    await waitFor(() => expect(result.current.get(BLOCK_ID)?.replyCount).toBe(2))
-    expect(result.current.has(OTHER_BLOCK_ID)).toBe(false)
+    await waitFor(() =>
+      expect(Object.fromEntries(result.current)).toEqual({ [BLOCK_ID]: { threadId: "stream_thread", replyCount: 2 } })
+    )
+  })
+
+  it("should read again when a thread event lands during a read", async () => {
+    let answerStale!: () => void
+    vi.mocked(docsApi.listThreads)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            answerStale = () => resolve({ threads: [{ blockId: BLOCK_ID, threadId: "stream_thread", replyCount: 1 }] })
+          })
+      )
+      .mockResolvedValueOnce({ threads: [{ blockId: BLOCK_ID, threadId: "stream_thread", replyCount: 2 }] })
+    const view = await mountLoaded(0)
+    view.rerender({ joinCount: 1 })
+    await waitFor(() => expect(docsApi.listThreads).toHaveBeenCalledTimes(1))
+
+    await act(() => gate.dispatch("thread:updated", threadUpdated()))
+    await act(async () => answerStale())
+
+    await waitFor(() =>
+      expect({
+        threads: Object.fromEntries(view.result.current),
+        reads: vi.mocked(docsApi.listThreads).mock.calls.length,
+      }).toEqual({ threads: { [BLOCK_ID]: { threadId: "stream_thread", replyCount: 2 } }, reads: 2 })
+    )
   })
 
   it("should add a thread created on another block of this doc", async () => {

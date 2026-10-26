@@ -29,7 +29,6 @@ export const docsApi = {
     return api.post<DocPostUpdateResult>(`/api/workspaces/${workspaceId}/docs/${docId}/updates`, { update })
   },
 
-  /** Every section thread on the doc, keyed by the block it hangs on. */
   listThreads(workspaceId: string, docId: string): Promise<DocThreadsResponse> {
     return api.get<DocThreadsResponse>(`/api/workspaces/${workspaceId}/docs/${docId}/threads`)
   },

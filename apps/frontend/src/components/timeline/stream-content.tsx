@@ -1,4 +1,4 @@
-import { matchesDeepLinkTarget } from "@/lib/stream-links"
+import { matchesDeepLinkTarget, splitThreadAnchor } from "@/lib/stream-links"
 import { getDraftPromotionEvents } from "@/lib/draft-promotions"
 import { memo, useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState, useSyncExternalStore } from "react"
 import { createPortal } from "react-dom"
@@ -95,7 +95,6 @@ import {
   type CallEndedEventPayload,
   type UnreadOpenPosition,
   isOpenVisibility,
-  BLOCK_ID_PATTERN,
 } from "@threahq/types"
 import {
   EventList,
@@ -806,9 +805,7 @@ export function StreamContent({
   // `parentMessageId`; read it off the cached row so an offline-first startup
   // resolves the anchor before the next online bootstrap rewrites the row.
   const threadAnchorId = stream ? (stream.parentAnchorId ?? idbStream?.parentMessageId ?? null) : null
-  // A doc block is not a timeline item: there is no event to find or fetch for it.
-  const blockAnchorId = threadAnchorId && BLOCK_ID_PATTERN.test(threadAnchorId) ? threadAnchorId : null
-  const anchorId = blockAnchorId ? null : threadAnchorId
+  const { blockId: blockAnchorId, eventAnchorId: anchorId } = splitThreadAnchor(threadAnchorId)
   const parentCachedEvents = useStreamEvents(workspaceId, parentStreamId ?? undefined)
   const cachedAnchorEvent = useMemo(() => {
     if (!isThread || !parentStreamId || !anchorId || !parentCachedEvents) return null
@@ -2969,14 +2966,6 @@ export function StreamContent({
                         <div ref={registerPlainContent}>
                           {/* The plain scroller has no settle mask: hold the anchor until the
                               replies' first read lands so both paint in one frame. */}
-                          {isResolved && !isLoading && isThread && blockAnchorId && parentStreamId && (
-                            <DocBlockQuote
-                              workspaceId={workspaceId}
-                              docId={parentStreamId}
-                              blockId={blockAnchorId}
-                              replyCount={threadReplyCount}
-                            />
-                          )}
                           {isResolved && !isLoading && isThread && anchorEvent && parentStreamId && (
                             <ThreadParentEvent
                               event={anchorEvent}
@@ -2985,6 +2974,14 @@ export function StreamContent({
                               replyCount={threadReplyCount}
                               subagentStatusPatches={subagentThreadParentPatches}
                               subagentRunFallback={subagentRunFallback}
+                            />
+                          )}
+                          {isResolved && !isLoading && isThread && blockAnchorId && parentStreamId && (
+                            <DocBlockQuote
+                              workspaceId={workspaceId}
+                              docId={parentStreamId}
+                              blockId={blockAnchorId}
+                              replyCount={threadReplyCount}
                             />
                           )}
                           {isFetchingOlder && (

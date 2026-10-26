@@ -6,6 +6,7 @@ import {
   buildConversationLink,
   buildConversationPanelPath,
   copyConversationLink,
+  splitThreadAnchor,
 } from "./stream-links"
 
 describe("buildStreamLink", () => {
@@ -87,5 +88,24 @@ describe("copyConversationLink", () => {
     await copyConversationLink("ws_1", "conv_1")
 
     expect(error).toHaveBeenCalledWith("Failed to copy link")
+  })
+})
+
+describe("splitThreadAnchor", () => {
+  it("routes a doc block id to blockId and any other anchor to eventAnchorId", () => {
+    const block = "blk_01HZY3K8W5Q9V7XG2M4N6P8R0T"
+    expect({
+      block: splitThreadAnchor(block),
+      message: splitThreadAnchor("msg_01HZY3K8W5Q9V7XG2M4N6P8R0T"),
+      card: splitThreadAnchor("event_01HZY3K8W5Q9V7XG2M4N6P8R0T"),
+      malformedBlock: splitThreadAnchor("blk_not-a-ulid"),
+      none: splitThreadAnchor(undefined),
+    }).toEqual({
+      block: { blockId: block, eventAnchorId: null },
+      message: { blockId: null, eventAnchorId: "msg_01HZY3K8W5Q9V7XG2M4N6P8R0T" },
+      card: { blockId: null, eventAnchorId: "event_01HZY3K8W5Q9V7XG2M4N6P8R0T" },
+      malformedBlock: { blockId: null, eventAnchorId: "blk_not-a-ulid" },
+      none: { blockId: null, eventAnchorId: null },
+    })
   })
 })

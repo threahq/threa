@@ -37,7 +37,6 @@ import { SocketEventGate } from "@/sync/socket-event-gate"
 import * as triggersModule from "@/components/editor/triggers"
 import { DocPaneBody } from "./doc-pane-body"
 import { useDocSync } from "./use-doc-sync"
-import type { DocBlockThreads } from "./use-doc-block-threads"
 
 const WORKSPACE_ID = "ws_1"
 const DOC_ID = "stream_doc"
@@ -56,11 +55,9 @@ function proseMirror(): HTMLElement & { editor: Editor } {
   return element as HTMLElement & { editor: Editor }
 }
 
-let paneThreads: DocBlockThreads = new Map()
-
 function DocPane({ canWrite }: { canWrite: boolean | null }) {
   const view = useDocSync(WORKSPACE_ID, DOC_ID)
-  return <DocPaneBody workspaceId={WORKSPACE_ID} docId={DOC_ID} canWrite={canWrite} view={view} threads={paneThreads} />
+  return <DocPaneBody workspaceId={WORKSPACE_ID} docId={DOC_ID} canWrite={canWrite} view={view} />
 }
 
 describe("DocPaneBody", () => {
@@ -72,7 +69,6 @@ describe("DocPaneBody", () => {
   let socket: { on: MockInstance; off: MockInstance; emit: MockInstance; connected: boolean }
 
   beforeEach(() => {
-    paneThreads = new Map()
     vi.spyOn(contextsModule, "usePanel").mockReturnValue({
       getPanelUrl: (panelId: string) => `/w/${WORKSPACE_ID}?panel=${panelId}`,
     } as unknown as ReturnType<typeof contextsModule.usePanel>)
@@ -120,6 +116,7 @@ describe("DocPaneBody", () => {
     } as unknown as ReturnType<typeof triggersModule.useEmojiSuggestion>)
     vi.spyOn(docsApi, "get").mockImplementation(async () => docState(serverDoc, 1))
     vi.spyOn(docsApi, "listUpdates").mockResolvedValue({ updates: [] })
+    vi.spyOn(docsApi, "listThreads").mockResolvedValue({ threads: [] })
     vi.spyOn(docsApi, "postUpdate").mockResolvedValue({ seq: 2, applied: true, touchedBlockIds: [] })
   })
 
@@ -585,11 +582,13 @@ describe("DocPaneBody", () => {
       },
       DOC_FRAGMENT
     )
-    paneThreads = new Map([[blockId, { threadId: "stream_thread", replyCount: 1 }]])
+    vi.mocked(docsApi.listThreads).mockResolvedValue({
+      threads: [{ blockId, threadId: "stream_thread", replyCount: 1 }],
+    })
 
     await mountLoaded()
 
-    expect(screen.getByRole("link", { name: "1 comment on this block" }).getAttribute("href")).toBe(
+    expect((await screen.findByRole("link", { name: "1 comment on this block" })).getAttribute("href")).toBe(
       `/w/${WORKSPACE_ID}?panel=stream_thread`
     )
   })

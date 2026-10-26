@@ -52,7 +52,6 @@ import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { DocPaneBody } from "@/components/docs/doc-pane-body"
 import { useDocCanWrite } from "@/components/docs/use-doc-can-write"
 import { useDocSync } from "@/components/docs/use-doc-sync"
-import { useDocBlockThreads } from "@/components/docs/use-doc-block-threads"
 import { DocPresenceAvatars } from "@/components/docs/doc-presence-avatars"
 import { DocsHeaderChip, useHostedDocs } from "@/components/docs/docs-header-chip"
 import { LabelPicker } from "@/components/labels/label-picker"
@@ -186,11 +185,6 @@ export function StreamPane({
   const hasTimeline = !isDoc
   const canWriteDoc = useDocCanWrite(workspaceId, stream)
   const docSync = useDocSync(workspaceId, isDoc ? streamId : null)
-  const docThreads = useDocBlockThreads(
-    workspaceId,
-    isDoc ? streamId : null,
-    docSync.phase === "ready" ? docSync.joinCount : 0
-  )
   const hostedDocs = useHostedDocs(
     workspaceId,
     stream && !isDraft && streamTypeCapabilities(stream.type).hostsDocs ? stream.id : null
@@ -963,13 +957,7 @@ export function StreamPane({
           <StreamEncryptionGate workspaceId={workspaceId} encrypted={isEncryptedScratchpad && !isDraft}>
             <PaneLanded fallback={<TimelineSkeleton />}>
               {isDoc && stream ? (
-                <DocPaneBody
-                  workspaceId={workspaceId}
-                  docId={streamId}
-                  canWrite={canWriteDoc}
-                  view={docSync}
-                  threads={docThreads}
-                />
+                <DocPaneBody workspaceId={workspaceId} docId={streamId} canWrite={canWriteDoc} view={docSync} />
               ) : (
                 <StreamContent
                   workspaceId={workspaceId}

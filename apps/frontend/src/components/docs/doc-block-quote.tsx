@@ -20,7 +20,7 @@ interface DocBlockQuoteProps {
   replyCount: number
 }
 
-/** A section thread's anchor: the doc block it hangs on, as the block read when the thread opened. */
+/** The doc block a section thread hangs on, as it reads now. */
 export function DocBlockQuote({ workspaceId, docId, blockId, replyCount }: DocBlockQuoteProps) {
   const { getPanelUrl } = usePanel()
   const docName = useStreamName(workspaceId, docId) ?? "Doc"

@@ -90,6 +90,24 @@ describe("BlockIdClipboard", () => {
     expect(blocks(editor).at(-1)).toEqual({ text: "Second block", blockId: null })
   })
 
+  it.each([
+    { drag: "move", move: true, blockId: SECOND_ID },
+    { drag: "copy", move: false, blockId: null },
+  ])("should keep the dragged block's id only on a $drag drag", ({ move, blockId }) => {
+    const editor = createEditor()
+    selectSecondBlock(editor)
+    const slice = editor.state.selection.content()
+    editor.view.serializeForClipboard(slice)
+    editor.view.dragging = { slice, move }
+
+    let dropped = slice
+    editor.view.someProp("transformPasted", (transform) => {
+      dropped = transform(dropped, editor.view, false)
+    })
+
+    expect(dropped.content.lastChild?.attrs.blockId).toBe(blockId)
+  })
+
   it("should not restore ids into a paste that differs from what was copied", () => {
     const editor = createEditor()
     selectSecondBlock(editor)

@@ -283,10 +283,12 @@ export class DocSync {
   }
 
   private async post(update: Uint8Array): Promise<void> {
+    const before = this.seq
     const result = await this.api.postUpdate(this.workspaceId, this.docId, bytesToBase64(update))
-    // Only a single new row is provably ours: a no-op answers the current head, which may be a peer's row this client
-    // has yet to apply, and a server repair adds a second row this client must still apply.
-    if (result.applied && this.seq !== null && result.seq === this.seq + 1) this.seq = result.seq
+    // Advance only past our own row, and only when the head did not move during the request: a no-op answers a head
+    // that may be a peer's row, a server stamp adds a row after ours, and any head that moved meanwhile belongs to
+    // the broadcasts, which apply each row in order.
+    if (result.applied && before !== null && this.seq === before && result.seq === before + 1) this.seq = result.seq
   }
 
   private async discardRefusedEdits(error: ApiError): Promise<void> {

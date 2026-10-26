@@ -4,6 +4,7 @@ import type { Editor } from "@tiptap/react"
 import { MessageSquare, MessageSquarePlus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { createDraftPanelId, usePanel } from "@/contexts"
+import { useLatest } from "@/hooks/use-latest"
 import type { DocBlockThreads } from "./use-doc-block-threads"
 
 interface MeasuredBlock {
@@ -49,34 +50,32 @@ function blockAt(blocks: MeasuredBlock[], y: number): number | null {
   return null
 }
 
+const MAX_SHOWN_COUNT = 99
+
 function commentsLabel(count: number): string {
   return count === 1 ? "1 comment on this block" : `${count} comments on this block`
 }
 
 interface DocBlockGutterProps {
   editor: Editor | null
+  /** The positioned editor column the overlay sits in; blocks are measured from its top. */
+  container: HTMLElement | null
   docId: string
   threads: DocBlockThreads
   canComment: boolean
 }
 
-/**
- * Comment counts beside the doc's top-level blocks, and a Comment link on the active one:
- * the hovered block, else the block holding the caret (the touch and keyboard path).
- * An overlay in the editor column's right padding, so it never moves the text.
- */
-export function DocBlockGutter({ editor, docId, threads, canComment }: DocBlockGutterProps) {
+/** Comment counts beside the doc's top-level blocks, and Comment on the hovered block, else the caret's. */
+export function DocBlockGutter({ editor, container, docId, threads, canComment }: DocBlockGutterProps) {
   const { getPanelUrl } = usePanel()
   const overlayRef = useRef<HTMLDivElement>(null)
   const [blocks, setBlocks] = useState<MeasuredBlock[]>([])
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const [caretIndex, setCaretIndex] = useState<number | null>(null)
-  const blocksRef = useRef(blocks)
-  blocksRef.current = blocks
+  const latestBlocks = useLatest(blocks)
 
   useLayoutEffect(() => {
     const overlay = overlayRef.current
-    const container = overlay?.parentElement
     if (!editor || editor.isDestroyed || !overlay || !container) return
 
     const measure = () => {
@@ -95,9 +94,17 @@ export function DocBlockGutter({ editor, docId, threads, canComment }: DocBlockG
       focused = false
       trackCaret()
     }
-    const onPointerMove = (event: MouseEvent) => {
+    const onOverlayFocusOut = (event: FocusEvent) => {
+      const next = event.relatedTarget
+      if (next instanceof Node && (overlay.contains(next) || editor.view.dom.contains(next))) return
+      focused = false
+      trackCaret()
+    }
+    // A tap must not leave a hover behind that outranks the caret.
+    const onPointerMove = (event: PointerEvent) => {
+      if (event.pointerType !== "mouse") return
       const y = event.clientY - container.getBoundingClientRect().top
-      setHoveredIndex(blockAt(blocksRef.current, y))
+      setHoveredIndex(blockAt(latestBlocks(), y))
     }
     const onPointerLeave = () => setHoveredIndex(null)
 
@@ -107,8 +114,9 @@ export function DocBlockGutter({ editor, docId, threads, canComment }: DocBlockG
     editor.on("selectionUpdate", trackCaret)
     editor.on("focus", onFocus)
     editor.on("blur", onBlur)
-    container.addEventListener("mousemove", onPointerMove)
-    container.addEventListener("mouseleave", onPointerLeave)
+    overlay.addEventListener("focusout", onOverlayFocusOut)
+    container.addEventListener("pointermove", onPointerMove)
+    container.addEventListener("pointerleave", onPointerLeave)
     window.addEventListener("resize", measure)
     const resizeObserver = new ResizeObserver(measure)
     resizeObserver.observe(editor.view.dom)
@@ -117,12 +125,13 @@ export function DocBlockGutter({ editor, docId, threads, canComment }: DocBlockG
       editor.off("selectionUpdate", trackCaret)
       editor.off("focus", onFocus)
       editor.off("blur", onBlur)
-      container.removeEventListener("mousemove", onPointerMove)
-      container.removeEventListener("mouseleave", onPointerLeave)
+      overlay.removeEventListener("focusout", onOverlayFocusOut)
+      container.removeEventListener("pointermove", onPointerMove)
+      container.removeEventListener("pointerleave", onPointerLeave)
       window.removeEventListener("resize", measure)
       resizeObserver.disconnect()
     }
-  }, [editor])
+  }, [editor, container, latestBlocks])
 
   const activeIndex = hoveredIndex ?? caretIndex
 
@@ -134,7 +143,7 @@ export function DocBlockGutter({ editor, docId, threads, canComment }: DocBlockG
         if (thread) {
           return (
             <Button
-              key={blockId}
+              key={index}
               asChild
               variant="ghost"
               size="sm"
@@ -143,7 +152,9 @@ export function DocBlockGutter({ editor, docId, threads, canComment }: DocBlockG
             >
               <Link to={getPanelUrl(thread.threadId)} aria-label={commentsLabel(thread.replyCount)}>
                 <MessageSquare className="h-3 w-3" aria-hidden />
-                <span className="tabular-nums">{thread.replyCount}</span>
+                <span className="tabular-nums">
+                  {thread.replyCount > MAX_SHOWN_COUNT ? `${MAX_SHOWN_COUNT}+` : thread.replyCount}
+                </span>
               </Link>
             </Button>
           )
@@ -151,7 +162,7 @@ export function DocBlockGutter({ editor, docId, threads, canComment }: DocBlockG
         if (!canComment || index !== activeIndex) return null
         return (
           <Button
-            key={blockId}
+            key={index}
             asChild
             variant="ghost"
             size="icon"

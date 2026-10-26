@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
@@ -34,11 +35,12 @@ function Harness({ threads, canComment }: { threads: DocBlockThreads; canComment
       awareness: null,
     }),
   })
+  const [column, setColumn] = useState<HTMLDivElement | null>(null)
   currentEditor = editor
   return (
-    <div data-testid="column" className="relative">
+    <div ref={setColumn} data-testid="column" className="relative">
       <EditorContent editor={editor} />
-      <DocBlockGutter editor={editor} docId={DOC_ID} threads={threads} canComment={canComment} />
+      <DocBlockGutter editor={editor} container={column} docId={DOC_ID} threads={threads} canComment={canComment} />
     </div>
   )
 }
@@ -91,14 +93,28 @@ describe("DocBlockGutter", () => {
     expect({
       chips: hrefs(/comments? on this block/),
       comment: hrefs("Comment on this block"),
-    }).toEqual({ chips: ["/w/ws_1?panel=stream_thread"], comment: [] })
-    expect(screen.getByRole("link", { name: "3 comments on this block" })).toHaveTextContent("3")
+      text: screen.getByRole("link", { name: "3 comments on this block" }).textContent,
+    }).toEqual({ chips: ["/w/ws_1?panel=stream_thread"], comment: [], text: "3" })
+  })
+
+  it("should cap the shown count at 99+ and keep the real number in the label", async () => {
+    await mount(new Map([[SECOND_ID, { threadId: "stream_thread", replyCount: 120 }]]))
+
+    expect(screen.getByRole("link", { name: "120 comments on this block" }).textContent).toBe("99+")
+  })
+
+  it("should not treat a touch as hover", async () => {
+    await mount(new Map())
+
+    fireEvent.pointerMove(screen.getByTestId("column"), { clientY: 10, pointerType: "touch" })
+
+    expect(hrefs("Comment on this block")).toEqual([])
   })
 
   it("should offer Comment on the hovered block, opening a draft thread anchored on it", async () => {
     await mount(threadOnSecond)
 
-    fireEvent.mouseMove(screen.getByTestId("column"), { clientY: 10 })
+    fireEvent.pointerMove(screen.getByTestId("column"), { clientY: 10, pointerType: "mouse" })
 
     expect(hrefs("Comment on this block")).toEqual([
       `/w/ws_1?panel=${encodeURIComponent(`draft:${DOC_ID}:${FIRST_ID}`)}`,
@@ -108,7 +124,7 @@ describe("DocBlockGutter", () => {
   it("should offer nothing on a block the server has not stamped yet", async () => {
     await mount(threadOnSecond)
 
-    fireEvent.mouseMove(screen.getByTestId("column"), { clientY: 70 })
+    fireEvent.pointerMove(screen.getByTestId("column"), { clientY: 70, pointerType: "mouse" })
 
     expect(hrefs("Comment on this block")).toEqual([])
   })
@@ -129,7 +145,7 @@ describe("DocBlockGutter", () => {
   it("should keep the count chip but hide Comment from a viewer who cannot comment", async () => {
     await mount(threadOnSecond, false)
 
-    fireEvent.mouseMove(screen.getByTestId("column"), { clientY: 10 })
+    fireEvent.pointerMove(screen.getByTestId("column"), { clientY: 10, pointerType: "mouse" })
 
     expect({
       chips: hrefs(/comments? on this block/),

@@ -42,11 +42,12 @@ describe("DocBlockQuote", () => {
     })
     mount()
 
-    expect(await screen.findByText("one")).toHaveProperty("tagName", "STRONG")
+    const bold = await screen.findByText("one")
     expect({
+      boldTag: bold.tagName,
       request: getSection.mock.calls[0],
       docLink: screen.getByRole("link", { name: "Rotation plan" }).getAttribute("href"),
-    }).toEqual({ request: ["ws_1", DOC_ID, BLOCK_ID], docLink: `/w/ws_1?panel=${DOC_ID}` })
+    }).toEqual({ boldTag: "STRONG", request: ["ws_1", DOC_ID, BLOCK_ID], docLink: `/w/ws_1?panel=${DOC_ID}` })
   })
 
   it("should say the block was removed when its section is gone", async () => {
@@ -55,7 +56,10 @@ describe("DocBlockQuote", () => {
     )
     mount()
 
-    expect(await screen.findByText("This block was removed")).toBeInTheDocument()
-    expect(screen.getByRole("link", { name: "Rotation plan" })).toBeInTheDocument()
+    const removed = await screen.findByText("This block was removed")
+    expect({
+      removed: removed.textContent,
+      docLink: screen.getByRole("link", { name: "Rotation plan" }).getAttribute("href"),
+    }).toEqual({ removed: "This block was removed", docLink: `/w/ws_1?panel=${DOC_ID}` })
   })
 })

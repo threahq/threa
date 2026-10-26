@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import * as Y from "yjs"
 import type { DocSection, JSONContent, Stream } from "@threahq/types"
+import { BotChannelAccessRepository } from "../../src/features/api-keys"
 import { DocService, decodeUpdateBase64, encodeUpdateBase64, writeContentJson } from "../../src/features/docs"
 import {
   StreamEventRepository,
@@ -18,7 +19,7 @@ import {
 } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging/event-service"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import { blockId, eventId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
+import { blockId, botChannelAccessId, eventId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { addTestMember, setupIsolatedTestDatabase, testMessageContent, withTransaction } from "./setup"
 
 let pool: Pool
@@ -121,7 +122,7 @@ describe("doc section threads", () => {
       },
       againId: again.id,
       creatorIsMember: await StreamMemberRepository.isMember(pool, wsId, thread.id, owner),
-      created: (await outboxPayloads("stream:created", "streamId", thread.id)).length,
+      created: await outboxPayloads("stream:created", "streamId", thread.id),
       landmarks: landmarks.rows,
     }).toEqual({
       thread: {
@@ -133,7 +134,7 @@ describe("doc section threads", () => {
       },
       againId: thread.id,
       creatorIsMember: true,
-      created: 1,
+      created: [expect.objectContaining({ streamId: thread.id })],
       landmarks: [],
     })
   })
@@ -143,6 +144,12 @@ describe("doc section threads", () => {
     const open = await seedDoc("public")
 
     await expect(threadOn(hidden.doc.id, hidden.block, outsider)).rejects.toMatchObject({ status: 404 })
+    await expect(
+      docService.listThreads({ workspaceId: wsId, userId: outsider, docId: hidden.doc.id })
+    ).rejects.toMatchObject({ status: 404, code: "STREAM_NOT_FOUND" })
+    await expect(
+      docService.getSection({ workspaceId: wsId, userId: outsider, docId: hidden.doc.id, blockId: hidden.block })
+    ).rejects.toMatchObject({ status: 404, code: "STREAM_NOT_FOUND" })
     await expect(threadOn(open.doc.id, open.block, outsider)).rejects.toMatchObject({
       status: 403,
       code: "STREAM_READ_ONLY",
@@ -191,6 +198,36 @@ describe("doc section threads", () => {
       status: 403,
       code: "STREAM_READ_ONLY",
       details: { reason: "archived" },
+    })
+  })
+
+  test("should let a bot granted the public host open a block thread on its doc", async () => {
+    const { channel, doc, block } = await seedDoc("public")
+    const botId = `bot_docs_threads_${crypto.randomUUID()}`
+    await pool.query("INSERT INTO bots (id, workspace_id, api_key_id, name) VALUES ($1, $2, $3, 'Docs bot')", [
+      botId,
+      wsId,
+      `key_${crypto.randomUUID()}`,
+    ])
+    await BotChannelAccessRepository.grantAccess(pool, {
+      id: botChannelAccessId(),
+      workspaceId: wsId,
+      botId,
+      streamId: channel.id,
+      grantedBy: owner,
+    })
+
+    const thread = await withTransaction(pool, (client) =>
+      streamService.createThreadForPrincipalOn(
+        client,
+        { kind: "bot", botId },
+        { workspaceId: wsId, parentStreamId: doc.id, parentAnchorId: block, createdBy: botId, createdByType: "bot" }
+      )
+    )
+
+    expect({ parentStreamId: thread.parentStreamId, parentAnchorId: thread.parentAnchorId }).toEqual({
+      parentStreamId: doc.id,
+      parentAnchorId: block,
     })
   })
 
@@ -245,6 +282,6 @@ describe("doc section threads", () => {
     ).rejects.toMatchObject({ status: 404, code: "DOC_SECTION_NOT_FOUND" })
     await expect(
       docService.getSection({ workspaceId: wsId, userId: owner, docId: streamId(), blockId: block })
-    ).rejects.toMatchObject({ status: 404 })
+    ).rejects.toMatchObject({ status: 404, code: "STREAM_NOT_FOUND" })
   })
 })

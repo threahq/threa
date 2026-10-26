@@ -68,12 +68,15 @@ export const StreamReadOnlyReasons = {
 } as const satisfies Record<string, StreamReadOnlyReason>
 
 const THREAD_ANCHOR_PREFIXES = ["msg_", "event_"] as const
-type ThreadAnchorPrefix = (typeof THREAD_ANCHOR_PREFIXES)[number] | "blk_"
+const DOC_THREAD_ANCHOR_PREFIXES = ["blk_"] as const
+type ThreadAnchorPrefix = (typeof THREAD_ANCHOR_PREFIXES)[number] | (typeof DOC_THREAD_ANCHOR_PREFIXES)[number]
 
 /** Per-type behavior: adding a stream type means adding a row here, not a branch at every call site. */
 export interface StreamTypeCapabilities {
   /** Message writes are refused with this reason; null = writable. */
   messagesReadOnly: StreamReadOnlyReason | null
+  /** Thread creation on this type is refused with this reason; null = threads open wherever the viewer may write. */
+  threadsReadOnly: StreamReadOnlyReason | null
   /** Rows in the sidebar and unread badges; false = reached only from its host. */
   listed: boolean
   /** Sidebar section of a root stream of this type; "root" = inherits its root's section. */
@@ -88,6 +91,7 @@ export interface StreamTypeCapabilities {
 export const STREAM_TYPE_CAPABILITIES = {
   scratchpad: {
     messagesReadOnly: null,
+    threadsReadOnly: null,
     listed: true,
     sidebarSection: "scratchpad",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
@@ -97,6 +101,7 @@ export const STREAM_TYPE_CAPABILITIES = {
   },
   channel: {
     messagesReadOnly: null,
+    threadsReadOnly: null,
     listed: true,
     sidebarSection: "channel",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
@@ -106,6 +111,7 @@ export const STREAM_TYPE_CAPABILITIES = {
   },
   dm: {
     messagesReadOnly: null,
+    threadsReadOnly: null,
     listed: true,
     sidebarSection: "dm",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
@@ -115,6 +121,7 @@ export const STREAM_TYPE_CAPABILITIES = {
   },
   thread: {
     messagesReadOnly: null,
+    threadsReadOnly: null,
     listed: true,
     sidebarSection: "root",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
@@ -124,6 +131,7 @@ export const STREAM_TYPE_CAPABILITIES = {
   },
   system: {
     messagesReadOnly: StreamReadOnlyReasons.SYSTEM_STREAM,
+    threadsReadOnly: StreamReadOnlyReasons.SYSTEM_STREAM,
     listed: true,
     sidebarSection: "dm",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
@@ -133,6 +141,7 @@ export const STREAM_TYPE_CAPABILITIES = {
   },
   aside: {
     messagesReadOnly: null,
+    threadsReadOnly: null,
     listed: false,
     sidebarSection: null,
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
@@ -142,9 +151,10 @@ export const STREAM_TYPE_CAPABILITIES = {
   },
   doc: {
     messagesReadOnly: StreamReadOnlyReasons.DOC_STREAM,
+    threadsReadOnly: null,
     listed: false,
     sidebarSection: null,
-    threadAnchorPrefixes: ["blk_"],
+    threadAnchorPrefixes: DOC_THREAD_ANCHOR_PREFIXES,
     hostsAsides: false,
     hostsDocs: false,
     ownMembers: false,
@@ -154,6 +164,7 @@ export const STREAM_TYPE_CAPABILITIES = {
 /** A newer backend can send a type this build has no row for (deploy skew); the open tab degrades instead of crashing. */
 const UNKNOWN_STREAM_TYPE_CAPABILITIES: StreamTypeCapabilities = {
   messagesReadOnly: null,
+  threadsReadOnly: null,
   listed: true,
   sidebarSection: null,
   threadAnchorPrefixes: [],

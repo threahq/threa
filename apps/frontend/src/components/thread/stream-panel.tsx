@@ -1,6 +1,7 @@
 import { useSearchParams } from "react-router-dom"
 import { useContext, useMemo, useCallback, useEffect, useState, useRef } from "react"
 import { createPortal } from "react-dom"
+import { useQuery } from "@tanstack/react-query"
 import { MessageSquare } from "lucide-react"
 import { SidePanel, SidePanelTitle, SidePanelContent } from "@/components/ui/side-panel"
 import {
@@ -37,9 +38,10 @@ import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { referenceAudienceTargetFor, useReferenceAudience } from "@/hooks/use-reference-audience"
 import { ThreadParentEvent } from "./thread-parent-event"
 import { DocBlockQuote } from "@/components/docs/doc-block-quote"
-import { matchesDeepLinkTarget } from "@/lib/stream-links"
+import { docKeys, docsApi } from "@/api/docs"
+import { matchesDeepLinkTarget, splitThreadAnchor } from "@/lib/stream-links"
 import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
-import { BLOCK_ID_PATTERN, StreamTypes, type JSONContent } from "@threahq/types"
+import { StreamTypes, type JSONContent } from "@threahq/types"
 import { useMentionStreamContext, type MentionStreamContext } from "@/hooks/use-mentionables"
 import { PaneHeader, usePaneCovered } from "@/components/panes"
 import { StreamPane } from "@/components/panes/stream-pane"
@@ -112,9 +114,7 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
   // Nothing to load: the parent message streams in from the cache or the parent's bootstrap.
   useRevealReady(true)
   const draftInfo = parseDraftPanel(panelId)
-  // A doc block is not a timeline item: there is no event to find or fetch for it.
-  const blockAnchorId = draftInfo && BLOCK_ID_PATTERN.test(draftInfo.anchorId) ? draftInfo.anchorId : null
-  const eventAnchorId = blockAnchorId ? null : draftInfo?.anchorId
+  const { blockId: blockAnchorId, eventAnchorId } = splitThreadAnchor(draftInfo?.anchorId)
   const idbStreams = useWorkspaceStreams(workspaceId)
   const currentWorkspaceUserId = useWorkspaceUserId(workspaceId)
 
@@ -168,7 +168,8 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
 
   // Auto-convert draft to real thread when created externally (e.g., agent eager
   // thread creation). The healed threadId lands on the anchor's payload for both
-  // message and card anchors (chunk-2 healing) — one accessor covers both.
+  // message and card anchors (chunk-2 healing) — one accessor covers both. A
+  // doc block has no payload; its thread is in the doc's thread list.
   //
   // This panel's own send writes the same slot: the draft panel id at queue
   // time, the real id on promotion. Neither is external — the queue's
@@ -176,11 +177,18 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
   // alongside it relocates the just-sent draft out from under `resolveDraft`
   // and re-opens the panel from a late callback after the user closed it.
   const [ownReplyQueued, setOwnReplyQueued] = useState(false)
+  const { data: docThreads } = useQuery({
+    queryKey: docKeys.threads(workspaceId, draftInfo?.parentStreamId ?? ""),
+    queryFn: () => docsApi.listThreads(workspaceId, draftInfo!.parentStreamId),
+    enabled: !!blockAnchorId,
+  })
   const externalThreadId = useMemo(() => {
-    if (!anchorEvent || ownReplyQueued) return null
+    if (ownReplyQueued) return null
+    if (blockAnchorId) return docThreads?.threads.find((thread) => thread.blockId === blockAnchorId)?.threadId ?? null
+    if (!anchorEvent) return null
     const threadId = (anchorEvent.payload as { threadId?: string }).threadId ?? null
     return threadId && !isDraftPanel(threadId) ? threadId : null
-  }, [anchorEvent, ownReplyQueued])
+  }, [anchorEvent, blockAnchorId, docThreads, ownReplyQueued])
 
   // Draft composer
   const draftKey = draftInfo ? getDraftMessageKey({ type: "thread", anchorId: draftInfo.anchorId }) : ""

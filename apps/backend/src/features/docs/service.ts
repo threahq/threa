@@ -59,7 +59,7 @@ async function lockWritableDoc(
     workspaceId: params.workspaceId,
     streamIds: [params.docId],
     principal: { kind: "user", userId: params.userId },
-    ignoreTypeReadOnly: true,
+    typeReadOnly: "none",
   })
   if (authority?.target.type !== StreamTypes.DOC) throw new StreamNotFoundError()
   assertViewerStreamWritable(authority.state)

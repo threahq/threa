@@ -39,6 +39,7 @@ function blockIdsIn(doc: ProseMirrorNode): Set<string> {
  * this editor last copied gets the copied slice back with the ids of blocks no longer in the doc,
  * so a block cut and pasted elsewhere keeps its id, and the threads anchored on it follow it.
  * Ids still held in the doc (a copy, or a second paste) stay off, so no id is ever on two blocks.
+ * A drag that moves within the editor keeps its ids: the drop runs this before deleting the source.
  */
 export const BlockIdClipboard = Extension.create({
   name: "blockIdClipboard",
@@ -55,6 +56,7 @@ export const BlockIdClipboard = Extension.create({
             return slice
           },
           transformPasted: (slice, view, plain) => {
+            if (view.dragging?.move && view.dragging.slice === slice) return slice
             if (plain || !copied || withoutBlockIds((slice.toJSON() ?? {}) as SliceJSON) !== copied.key) return slice
             const held = blockIdsIn(view.state.doc)
             const restored = {
