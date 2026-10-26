@@ -110,7 +110,9 @@ test("conversation overlay shows in-view groups without layout shift and applies
   // entry — the same action list the mobile long-press drawer renders, so
   // this covers the touch path's plumbing (action visibility + picker sheet).
   // Hover→click is retried: the toolbar is hover-revealed and can race
-  // layout in CI (same pattern as editor-auto-focus.spec.ts).
+  // layout in CI (same pattern as editor-auto-focus.spec.ts). The expanded
+  // panel floats over the top rows' toolbars, so collapse it first.
+  await panel.getByRole("button", { name: "Collapse conversations panel" }).click()
   const moveOption = page.getByRole("menuitem", { name: "Move to conversation…" })
   for (let attempt = 0; attempt < 3; attempt++) {
     await overlayRowB.locator(".message-item").hover()
@@ -128,6 +130,7 @@ test("conversation overlay shows in-view groups without layout shift and applies
   await expect(picker).toBeVisible()
   await page.screenshot({ path: test.info().outputPath("overlay-picker.png") })
   await picker.getByRole("button", { name: new RegExp(topicB) }).click()
+  await panel.getByRole("button", { name: "Show conversations in view" }).click()
 
   // Conversation B regains the message: back in the in-view panel with its
   // chip in the timeline, and conversation A's count drops back to 1.
