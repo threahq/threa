@@ -129,9 +129,10 @@ interface UseTimelineScrollReturn {
   /** Ref for the inner content wrapper (sized to the full scroll height). */
   contentRef: React.RefObject<HTMLDivElement | null>
   /**
-   * virtua `shift` value for the current render. True only when an older page
-   * was prepended while reading history, so virtua maintains position from the
-   * end and the viewport does not move — including mid-scroll.
+   * virtua `shift` value for the current render. True when rows landed above an
+   * unchanged edge — the first row while reading history, the last row while
+   * following — so virtua maintains position from the end and the viewport does
+   * not move, including mid-scroll.
    */
   shift: boolean
   /** True when scrolled far enough from the bottom to show "Jump to latest". */
@@ -195,7 +196,7 @@ interface UseTimelineScrollReturn {
  *     scrollbar drag, wheel, touch, PageUp), guarded against content shrink.
  *
  * The one thing delegated to virtua is the hard part it does well: holding the
- * viewport when an older page is prepended, via its `shift` prop.
+ * viewport when rows land above it, via its `shift` prop.
  */
 export function useTimelineScroll({
   itemCount,
@@ -330,16 +331,20 @@ export function useTimelineScroll({
     setIsInitialSettling(!skipInitialScroll)
   }
 
-  // Compute `shift` for this render. Only while reading history (not following
-  // the tail): if the first row's identity changed since last render, content
-  // was added/removed at the start, so maintain from the end. Appends at the
-  // bottom (live messages, newer pagination) leave the first key untouched ->
-  // shift stays false, which is what virtua wants for end-side growth.
+  // Compute `shift` for this render: true tells virtua to maintain from the end.
+  // While reading history, that is when the first row's identity changed (an
+  // older page prepended); appends leave the first key untouched, and virtua
+  // wants end-side growth unshifted. While following, it is rows landing above
+  // an unchanged last row: unshifted, virtua lays out from the old offset,
+  // unmounts the tail, and the pin remounts it hidden-until-measured for a frame.
   const firstKey = itemCount > 0 ? getFirstKey() : null
+  const lastKey = itemCount > 0 ? getLastKey() : null
   let shift = false
-  if (itemCount > 0 && prevCountRef.current > 0 && !isFollowingTailRef.current) {
-    if (prevFirstKeyRef.current !== null && firstKey !== prevFirstKeyRef.current) {
-      shift = true
+  if (itemCount > 0 && prevCountRef.current > 0) {
+    if (!isFollowingTailRef.current) {
+      shift = prevFirstKeyRef.current !== null && firstKey !== prevFirstKeyRef.current
+    } else {
+      shift = itemCount > prevCountRef.current && prevLastKeyRef.current !== null && lastKey === prevLastKeyRef.current
     }
   }
   // While following the tail, a window whose row count or last row changed —
@@ -358,7 +363,6 @@ export function useTimelineScroll({
   // virtua's deferred scroll after our pin, a few px above the true bottom. An
   // append always moves the last key, so requiring that here keeps a ONE-row
   // insert in the middle — a single-slot hole backfill — on the re-take path.
-  const lastKey = itemCount > 0 ? getLastKey() : null
   const windowStartHeld = firstKey === prevFirstKeyRef.current
   const tailMoved = lastKey !== prevLastKeyRef.current
   const appendedOneRow = itemCount === prevCountRef.current + 1 && windowStartHeld && tailMoved

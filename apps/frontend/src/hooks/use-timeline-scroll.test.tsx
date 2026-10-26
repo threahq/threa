@@ -108,13 +108,36 @@ describe("useTimelineScroll — shift (prepend) detection", () => {
     expect(harness.current.shift).toBe(false)
   })
 
-  it("never shifts while following the live tail", () => {
+  it("does not shift while following when the tail moves", () => {
     const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
-    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10" }))
-    // Still following (default). A sliding tail window can change the first row,
-    // but shift must stay false — we scroll to the bottom anyway.
-    harness.rerender(opts({ itemCount: 60, getFirstKey: () => "e0" }))
+    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10", getLastKey: () => "e59" }))
+    // Still following (default). New rows below the old last row are end-side
+    // growth — we scroll to the bottom anyway.
+    harness.rerender(opts({ itemCount: 60, getFirstKey: () => "e10", getLastKey: () => "e69" }))
     expect(harness.current.shift).toBe(false)
+  })
+
+  it("shifts while following when an older page is prepended", () => {
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10", getLastKey: () => "e59" }))
+    harness.rerender(opts({ itemCount: 60, getFirstKey: () => "e0", getLastKey: () => "e59" }))
+    expect(harness.current.shift).toBe(true)
+  })
+
+  it("does not shift while following when rows leave above an unchanged last row", () => {
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    harness.rerender(opts({ itemCount: 40, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    harness.rerender(opts({ itemCount: 39, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    expect(harness.current.shift).toBe(false)
+  })
+
+  it("shifts while following when rows land above an unchanged last row", () => {
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    // The panel's cached rail: the opening row plus the newest few.
+    harness.rerender(opts({ itemCount: 6, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    // The server page fills the 34 rows between them; first and last rows hold.
+    harness.rerender(opts({ itemCount: 40, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    expect(harness.current.shift).toBe(true)
   })
 
   it("resets the prepend baseline on stream switch", () => {
@@ -183,6 +206,7 @@ describe("useTimelineScroll — tail replace", () => {
     scrollToIndex.mockClear()
 
     harness.rerender(opts({ itemCount: 41, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    expect(harness.current.shift).toBe(true)
     expect(scrollToIndex).toHaveBeenCalledWith(40, expect.objectContaining({ align: "end" }))
   })
 
