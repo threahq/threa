@@ -29,12 +29,14 @@ import {
   useCommandSuggestion,
   useEmojiSuggestion,
   useMemoSuggestion,
+  useDocSuggestion,
   useCommandArgPicker,
   useAttachmentPicker,
 } from "./triggers"
 import { parseMemoUrl } from "@/lib/memo-url"
+import { tryInsertDocChip, tryInsertInAppLinkChip } from "./in-app-link-chip"
+import { useStableCallback } from "@/hooks/use-stable-callback"
 import { getPerfCapture } from "@/lib/perf/capture"
-import { classifyDraftLink } from "@/lib/in-app-links"
 import { readDroppedUrl } from "@/lib/stream-drag"
 import { MentionPluginKey } from "./triggers/mention-extension"
 import { CommandPluginKey } from "./triggers/command-extension"
@@ -209,6 +211,8 @@ interface RichEditorProps {
   enableEmoji?: boolean
   /** Whether `/memo` inline search and pasted memo links embed memo cards. */
   enableMemoEmbed?: boolean
+  /** Whether `/doc` inline search and pasted doc links embed doc chips. Defaults to `enableMemoEmbed`. */
+  enableDocEmbed?: boolean
   /**
    * The composer's current attachment tray. `/attachment` lists these, so a file
    * already attached can be placed at the caret without a pointer.
@@ -285,31 +289,6 @@ function emojiAtomToEditableText(node: JSONContent, toEmoji?: (shortcode: string
   }
 }
 
-/**
- * Convert a bare in-app stream/message/conversation URL into an inline chip,
- * replacing the link text. Shared by the clipboard `paste` path, the
- * Gboard/SwiftKey `beforeinput` path, and the drop path so mobile clipboard-bar
- * pastes and dragged links chip the same as a desktop paste. Returns whether a
- * chip was inserted. A conversation link carries no streamId — the node-view
- * resolves it by URL. `at` places the chip at a document position (the drop
- * point) instead of the caret.
- */
-function tryInsertInAppLinkChip(editor: import("@tiptap/react").Editor, text: string, at?: number): boolean {
-  const ref = classifyDraftLink(text.trim())
-  if (!ref || (ref.kind !== "stream" && ref.kind !== "message" && ref.kind !== "conversation")) return false
-  // Separate commands, not one chain: `insertInAppLink` reads the caret off the
-  // state it was handed, so the move has to commit before it runs. Position 0 is
-  // before the doc's first node and reads as "no position" to `focus`, so clamp
-  // to the first one inside it.
-  if (at !== undefined) editor.commands.focus(Math.max(at, 1))
-  editor.commands.insertInAppLink({
-    url: ref.url,
-    streamId: ref.kind === "conversation" ? null : ref.streamId,
-    messageId: ref.kind === "message" ? ref.messageId : null,
-  })
-  return true
-}
-
 export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function RichEditor(
   {
     value,
@@ -344,6 +323,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     enableCommands = true,
     enableEmoji = true,
     enableMemoEmbed = true,
+    enableDocEmbed = enableMemoEmbed,
     trayAttachments,
     onRequestFileUpload,
   },
@@ -438,6 +418,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     commandArgsFor,
   } = useCommandSuggestion({
     includeMemoSearch: enableMemoEmbed,
+    includeDocSearch: enableDocEmbed,
     includeGiphy: giphyEnabled,
     includeSnippet: snippetEnabled,
     includeAttachment: attachmentCommandEnabled,
@@ -448,6 +429,12 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     includeStreamCommands,
   })
   const { suggestionConfig: memoConfig, renderMemoList } = useMemoSuggestion(memoAnchorStreamId)
+  const { suggestionConfig: docConfig, renderDocList } = useDocSuggestion(memoAnchorStreamId)
+  const insertLinkChip = useStableCallback(
+    (editor: import("@tiptap/react").Editor, text: string, at?: number) =>
+      (enableDocEmbed && workspaceId !== undefined && tryInsertDocChip(editor, text, { workspaceId }, at)) ||
+      tryInsertInAppLinkChip(editor, text, at)
+  )
 
   const { emojis, emojiWeights, toEmoji } = useWorkspaceEmoji(workspaceId ?? "")
   const { suggestionConfig: emojiConfig, renderEmojiGrid } = useEmojiSuggestion({ emojis, emojiWeights })
@@ -572,6 +559,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         commandArgsFor: enableCommands ? commandArgsFor : undefined,
         emojiSuggestion: enableEmoji ? emojiConfig : undefined,
         memoSearchSuggestion: enableMemoEmbed ? memoConfig : undefined,
+        docSearchSuggestion: enableDocEmbed ? docConfig : undefined,
         toEmoji: enableEmoji ? toEmoji : undefined,
       }),
       EditorBehaviors.configure({
@@ -588,12 +576,14 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       commandArgsFor,
       emojiConfig,
       memoConfig,
+      docConfig,
       toEmoji,
       enableMentions,
       enableChannels,
       enableCommands,
       enableEmoji,
       enableMemoEmbed,
+      enableDocEmbed,
     ]
   )
 
@@ -657,15 +647,18 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     [handleFilesInsert]
   )
 
-  const insertDroppedLink = useCallback((data: DataTransfer) => {
-    const current = editorRef.current
-    const url = readDroppedUrl(data)
-    if (!current?.isEditable || !url) return
-    const { to, $to } = current.state.selection
-    if ($to.parent.type.spec.code || !tryInsertInAppLinkChip(current, url, to)) {
-      current.chain().focus(to).insertContent({ type: "text", text: url }).run()
-    }
-  }, [])
+  const insertDroppedLink = useCallback(
+    (data: DataTransfer) => {
+      const current = editorRef.current
+      const url = readDroppedUrl(data)
+      if (!current?.isEditable || !url) return
+      const { to, $to } = current.state.selection
+      if ($to.parent.type.spec.code || !insertLinkChip(current, url, to)) {
+        current.chain().focus(to).insertContent({ type: "text", text: url }).run()
+      }
+    },
+    [insertLinkChip]
+  )
 
   const cancelPendingInlineUpload = useCallback(() => {
     pendingUploadInsertPosRef.current = null
@@ -825,7 +818,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
 
         // A bare in-app stream/message link pastes as an inline chip rather than
         // a raw URL, replacing the link text in the composer.
-        if (!pasteAsPlainText && tryInsertInAppLinkChip(editorRef.current, text)) {
+        if (!pasteAsPlainText && insertLinkChip(editorRef.current, text)) {
           event.preventDefault()
           return true
         }
@@ -888,7 +881,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
             inputEvent.inputType === "insertText" &&
             !editor.view.composing &&
             typeof inputEvent.data === "string" &&
-            tryInsertInAppLinkChip(editor, inputEvent.data)
+            insertLinkChip(editor, inputEvent.data)
           ) {
             event.preventDefault()
             return true
@@ -938,7 +931,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
           // one there splits the block and strands half the code in a paragraph.
           // Fall through and let ProseMirror drop the URL as text instead.
           if (at && !view.state.doc.resolve(at.pos).parent.type.spec.code) {
-            if (tryInsertInAppLinkChip(editorRef.current, droppedUrl, at.pos)) {
+            if (insertLinkChip(editorRef.current, droppedUrl, at.pos)) {
               event.preventDefault()
               return true
             }
@@ -1432,6 +1425,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         {enableCommands ? renderAttachmentPicker() : null}
         {enableEmoji ? renderEmojiGrid() : null}
         {enableMemoEmbed ? renderMemoList() : null}
+        {enableDocEmbed ? renderDocList() : null}
         {giphyEnabled && workspaceId ? (
           <GiphyPickerDialog
             open={giphyOpen}

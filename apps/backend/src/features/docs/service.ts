@@ -5,6 +5,7 @@ import {
   DocErrorCodes,
   StreamTypes,
   type AuthorType,
+  type DocBacklink,
   type DocBlockThread,
   type DocEditedEventPayload,
   type DocPostUpdateResult,
@@ -23,6 +24,7 @@ import {
   StreamRepository,
   assertViewerStreamWritable,
   checkStreamAccess,
+  listAccessibleStreamIds,
   principalActorId,
   resolveLockedStreamAuthorities,
   type Stream,
@@ -181,7 +183,7 @@ export class DocService {
       if (!write.applied) return { seq: head.updateSeq, applied: false, touchedBlockIds: [] }
       const { stored: clientWrite, content, serverUpdate } = write
 
-      const projection = projectDoc(content)
+      const projection = projectDoc(content, docId)
       const previousSections = await DocRepository.listSections(client, workspaceId, docId)
       const touchedBlockIds = diffSections(previousSections, projection.sections)
 
@@ -231,7 +233,7 @@ export class DocService {
         const { update, content } = applyServerContent(ydoc, json, { staging })
         if (!update) return { status: "unchanged", title, seq: head.updateSeq }
 
-        const projection = projectDoc(content)
+        const projection = projectDoc(content, docId)
         const touchedBlockIds = diffSections(previousSections, projection.sections)
         const seq = await this.commitWrite(client, {
           head,
@@ -288,6 +290,7 @@ export class DocService {
       await DocRepository.insertSnapshot(client, { workspaceId, docId, seq, state: encodeFullState(params.ydoc) })
     }
     await DocRepository.replaceSections(client, workspaceId, docId, projection.sections)
+    await DocRepository.replaceReferences(client, workspaceId, docId, projection.references)
     await DocRepository.bumpHead(client, {
       workspaceId,
       streamId: docId,
@@ -336,6 +339,32 @@ export class DocService {
       await this.findReadableDoc(client, params)
       const threads = await StreamRepository.findThreadsWithReplyCounts(client, params.workspaceId, params.docId)
       return [...threads].map(([blockId, { threadId, replyCount }]) => ({ blockId, threadId, replyCount }))
+    })
+  }
+
+  async listBacklinks(params: { workspaceId: string; userId: string; docId: string }): Promise<DocBacklink[]> {
+    const { workspaceId, userId, docId } = params
+    return withClient(this.pool, async (client) => {
+      await this.findReadableDoc(client, params)
+      const rows = await DocRepository.listBacklinks(client, workspaceId, docId)
+      const blockIdsByDoc = new Map(rows.map((row) => [row.docId, row.blockIds]))
+      const accessible = await listAccessibleStreamIds(client, workspaceId, userId, [...blockIdsByDoc.keys()])
+      const active = await StreamRepository.filterEffectivelyActiveIds(client, workspaceId, [...accessible])
+      const docs = await StreamRepository.findByIds(client, workspaceId, active)
+      return docs
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .flatMap((doc) =>
+          doc.type === StreamTypes.DOC && doc.parentStreamId
+            ? [
+                {
+                  docId: doc.id,
+                  title: doc.displayName ?? null,
+                  hostStreamId: doc.parentStreamId,
+                  blockIds: blockIdsByDoc.get(doc.id)!,
+                },
+              ]
+            : []
+        )
     })
   }
 

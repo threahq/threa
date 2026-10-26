@@ -21,6 +21,7 @@
  *     link title; see `attachment-markdown.ts`).
  *   - `memo:memoId` — the pointer link a `memoEmbed` block serialises
  *     to. Single segment; the memo card body is hydrated at read time.
+ *   - `doc:docId` / `doc:docId#blockId` — the pointer a `docEmbed` chip serialises to.
  *   - `agent:authorId` — the attribution link on the first line of an
  *     `agentBlock`. `authorId` is a `persona_`/`bot_` actor id (INV-64).
  *     Nothing else rides here: the aside the text came from is private, so
@@ -235,6 +236,21 @@ export function parseMemoHref(href: string): MemoHref | null {
   // `memo:memo_123/extra` don't slip through as a valid pointer.
   if (!/^[\w-]+$/.test(memoId)) return null
   return { memoId }
+}
+
+export interface DocHref {
+  docId: string
+  blockId?: string | null
+}
+
+export function buildDocHref(params: DocHref): string {
+  return params.blockId ? `doc:${params.docId}#${params.blockId}` : `doc:${params.docId}`
+}
+
+export function parseDocHref(href: string): DocHref | null {
+  const match = href.match(/^doc:([\w-]+)(?:#([\w-]+))?$/)
+  if (!match) return null
+  return { docId: match[1], blockId: match[2] ?? null }
 }
 
 export interface AgentBlockHref {

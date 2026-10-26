@@ -803,6 +803,8 @@ export type {
   DocBlockThread,
   DocSection,
   DocSectionResponse,
+  DocBacklink,
+  DocBacklinksResponse,
   DocState,
   DocThreadsResponse,
   DocUpdateView,

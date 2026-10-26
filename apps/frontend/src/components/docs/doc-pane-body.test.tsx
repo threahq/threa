@@ -25,6 +25,7 @@ import { RevealOnReady } from "@/contexts/coordinated-loading-context"
 import { DocSync, FLUSH_CAP_MS } from "@/lib/docs/doc-sync"
 import { PRESENCE_SEND_WINDOW_MS } from "@/lib/docs/doc-presence"
 import { getOpenDocIds } from "@/lib/docs/open-docs"
+import { requestBlockFocus, takeBlockFocus } from "@/lib/docs/block-focus"
 import { getPresenceColor } from "@/lib/avatar-color"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
@@ -40,6 +41,7 @@ import { SocketEventGate } from "@/sync/socket-event-gate"
 import * as triggersModule from "@/components/editor/triggers"
 import { DocPaneBody } from "./doc-pane-body"
 import { useDocSync } from "./use-doc-sync"
+import { BLOCK_HIGHLIGHT_MS } from "@/components/editor/doc-block-landing-extension"
 
 const WORKSPACE_ID = "ws_1"
 const DOC_ID = "stream_doc"
@@ -131,6 +133,7 @@ describe("DocPaneBody", () => {
     vi.spyOn(docsApi, "get").mockImplementation(async () => docState(serverDoc, 1))
     vi.spyOn(docsApi, "listUpdates").mockResolvedValue({ updates: [] })
     vi.spyOn(docsApi, "listThreads").mockResolvedValue({ threads: [] })
+    vi.spyOn(docsApi, "listBacklinks").mockResolvedValue({ backlinks: [] })
     vi.spyOn(docsApi, "postUpdate").mockResolvedValue({ seq: 2, applied: true, touchedBlockIds: [] })
   })
 
@@ -608,8 +611,17 @@ describe("DocPaneBody", () => {
   })
 
   describe("useDocSync", () => {
+    beforeEach(() => {
+      queryClient = new QueryClient()
+    })
+
+    const withQueryClient = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+
     it("marks the doc open on this device while mounted, across a doc change", async () => {
       const { rerender, unmount } = renderHook(({ docId }) => useDocSync(WORKSPACE_ID, docId), {
+        wrapper: withQueryClient,
         initialProps: { docId: DOC_ID as string | null },
       })
       expect(getOpenDocIds()).toEqual([DOC_ID])
@@ -622,7 +634,7 @@ describe("DocPaneBody", () => {
     })
 
     it("opens no session and touches no socket when the doc id is null", async () => {
-      const { result } = renderHook(() => useDocSync(WORKSPACE_ID, null))
+      const { result } = renderHook(() => useDocSync(WORKSPACE_ID, null), { wrapper: withQueryClient })
       await act(async () => {})
 
       expect({
@@ -645,6 +657,7 @@ describe("DocPaneBody", () => {
         stop.call(this)
       })
       const { result, rerender } = renderHook(({ docId }) => useDocSync(WORKSPACE_ID, docId), {
+        wrapper: withQueryClient,
         initialProps: { docId: DOC_ID },
       })
       await waitFor(() => expect(result.current.phase).toBe("ready"))
@@ -661,7 +674,7 @@ describe("DocPaneBody", () => {
 
     it("re-sends the viewer's presence when the room join is acked after a reconnect", async () => {
       const reconnects = vi.spyOn(contextsModule, "useSocketReconnectCount").mockReturnValue(0)
-      const { rerender } = renderHook(() => useDocSync(WORKSPACE_ID, DOC_ID))
+      const { rerender } = renderHook(() => useDocSync(WORKSPACE_ID, DOC_ID), { wrapper: withQueryClient })
       await waitFor(() => expect(usersSeenByPeer()).toEqual([VIEWER_PRESENCE]))
       await new Promise((resolve) => setTimeout(resolve, PRESENCE_SEND_WINDOW_MS * 2))
       const before = awarenessFrames().length
@@ -674,7 +687,7 @@ describe("DocPaneBody", () => {
     })
 
     it("withdraws the viewer on pagehide and announces them again on pageshow", async () => {
-      renderHook(() => useDocSync(WORKSPACE_ID, DOC_ID))
+      renderHook(() => useDocSync(WORKSPACE_ID, DOC_ID), { wrapper: withQueryClient })
       await waitFor(() => expect(usersSeenByPeer()).toEqual([VIEWER_PRESENCE]))
 
       act(() => {
@@ -688,6 +701,106 @@ describe("DocPaneBody", () => {
       await waitFor(() =>
         expect({ afterHide, afterShow: usersSeenByPeer() }).toEqual({ afterHide: [], afterShow: [VIEWER_PRESENCE] })
       )
+    })
+  })
+  describe("block landing", () => {
+    let scrolled: Element[]
+    const originalScrollIntoView = Element.prototype.scrollIntoView
+
+    beforeEach(() => {
+      scrolled = []
+      serverDoc = prosemirrorJSONToYDoc(
+        getThreaSchema(),
+        {
+          type: "doc",
+          content: [
+            { type: "paragraph", attrs: { blockId: "blk_intro" }, content: [{ type: "text", text: "Intro" }] },
+            { type: "paragraph", attrs: { blockId: "blk_rota" }, content: [{ type: "text", text: "Rota" }] },
+          ],
+        },
+        DOC_FRAGMENT
+      )
+      Element.prototype.scrollIntoView = function (this: Element) {
+        scrolled.push(this)
+      }
+    })
+
+    afterEach(() => {
+      Element.prototype.scrollIntoView = originalScrollIntoView
+      vi.useRealTimers()
+      takeBlockFocus(DOC_ID)
+    })
+
+    async function mountBlocks() {
+      mount()
+      await waitFor(() => expect(proseMirror().textContent).toBe("IntroRota"))
+    }
+
+    const rota = () => screen.getByText("Rota")
+    const highlighted = () =>
+      [...document.querySelectorAll(".ProseMirror > *")].filter((el) => el.classList.contains("bg-primary/10"))
+
+    it("should scroll to and briefly highlight the requested block when the doc opens with a request pending", async () => {
+      requestBlockFocus(DOC_ID, "blk_rota")
+      await mountBlocks()
+
+      await waitFor(() => expect(scrolled).toEqual([rota()]))
+      expect(highlighted()).toEqual([rota()])
+      await waitFor(() => expect(highlighted()).toEqual([]), {
+        timeout: BLOCK_HIGHLIGHT_MS + 1000,
+      })
+    })
+
+    it("should land a request that arrives while the doc is already open", async () => {
+      await mountBlocks()
+      vi.useFakeTimers()
+
+      act(() => requestBlockFocus(DOC_ID, "blk_rota"))
+      const during = { scrolled: [...scrolled], highlighted: highlighted() }
+      act(() => vi.advanceTimersByTime(BLOCK_HIGHLIGHT_MS))
+
+      expect({ ...during, after: highlighted() }).toEqual({
+        scrolled: [rota()],
+        highlighted: [rota()],
+        after: [],
+      })
+    })
+
+    it("should do nothing when the requested block is not in the doc", async () => {
+      await mountBlocks()
+      act(() => requestBlockFocus(DOC_ID, "blk_missing"))
+
+      expect({ scrolled, highlighted: highlighted() }).toEqual({
+        scrolled: [],
+        highlighted: [],
+      })
+    })
+
+    it("should list the docs linking here below the doc when the API returns backlinks", async () => {
+      vi.spyOn(docsApi, "listBacklinks").mockResolvedValue({
+        backlinks: [{ docId: "stream_plan", title: "Launch plan", hostStreamId: "stream_eng", blockIds: ["blk_a"] }],
+      })
+      await mountBlocks()
+
+      const link = await screen.findByRole("link", { name: /Launch plan/ })
+      expect({
+        heading: screen.getByRole("heading", { name: "Linked from" }) !== null,
+        href: link.getAttribute("href"),
+      }).toEqual({ heading: true, href: `/w/${WORKSPACE_ID}?panel=stream_plan` })
+    })
+
+    it("should refetch open backlink lists once the server applies a local edit", async () => {
+      await mountBlocks()
+      await waitFor(() => expect(docsApi.listBacklinks).toHaveBeenCalledTimes(1))
+      vi.spyOn(docsApi, "listBacklinks").mockResolvedValue({
+        backlinks: [{ docId: "stream_plan", title: "Launch plan", hostStreamId: "stream_eng", blockIds: ["blk_a"] }],
+      })
+
+      act(() => {
+        proseMirror().editor.chain().focus("end").insertContent(" done ").run()
+      })
+
+      expect(await screen.findByRole("link", { name: /Launch plan/ }, { timeout: 2000 })).not.toBeNull()
     })
   })
 })

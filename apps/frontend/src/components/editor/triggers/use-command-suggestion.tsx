@@ -6,6 +6,7 @@ import type { CommandItem } from "./types"
 import { CommandList } from "./command-list"
 import {
   MEMO_SEARCH_SLASH_ACTION,
+  DOC_SEARCH_SLASH_ACTION,
   GIPHY_SLASH_ACTION,
   SNIPPET_SLASH_ACTION,
   ATTACHMENT_SLASH_ACTION,
@@ -73,6 +74,14 @@ const MEMO_SLASH_ITEM: CommandItem = {
   placement: "inline",
 }
 
+/** Discovery shortcut into the `/doc` trigger, the doc counterpart of the memo entry. */
+const DOC_SLASH_ITEM: CommandItem = {
+  name: "doc",
+  description: "Link a doc",
+  clientActionId: DOC_SEARCH_SLASH_ACTION,
+  placement: "inline",
+}
+
 /**
  * Discovery shortcut for the GIF picker. Like the memo entry it inserts no chip;
  * selecting it opens the picker (see the `command` wrapper in `renderList`) and
@@ -121,6 +130,7 @@ const ATTACHMENT_SLASH_ITEM: CommandItem = {
  */
 export function useCommandSuggestion({
   includeMemoSearch = false,
+  includeDocSearch = false,
   includeGiphy = false,
   includeSnippet = false,
   includeAttachment = false,
@@ -131,6 +141,7 @@ export function useCommandSuggestion({
   includeStreamCommands = true,
 }: {
   includeMemoSearch?: boolean
+  includeDocSearch?: boolean
   includeGiphy?: boolean
   includeSnippet?: boolean
   includeAttachment?: boolean
@@ -184,12 +195,21 @@ export function useCommandSuggestion({
       }))
     return [
       ...(includeMemoSearch ? [MEMO_SLASH_ITEM] : []),
+      ...(includeDocSearch ? [DOC_SLASH_ITEM] : []),
       ...(includeGiphy ? [GIPHY_SLASH_ITEM] : []),
       ...(includeSnippet ? [SNIPPET_SLASH_ITEM] : []),
       ...(includeAttachment ? [ATTACHMENT_SLASH_ITEM] : []),
       ...serverCommands,
     ]
-  }, [effectiveCommands, streamId, includeMemoSearch, includeGiphy, includeSnippet, includeAttachment])
+  }, [
+    effectiveCommands,
+    streamId,
+    includeMemoSearch,
+    includeDocSearch,
+    includeGiphy,
+    includeSnippet,
+    includeAttachment,
+  ])
 
   const renderList = useCallback(
     (props: {

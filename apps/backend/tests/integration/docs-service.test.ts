@@ -185,7 +185,7 @@ describe("DocService", () => {
     await bob.sync()
 
     const server = await serverJson(doc.id)
-    const projection = projectDoc(server)
+    const projection = projectDoc(server, doc.id)
     expect({
       alice: ydocToContentJson(alice.ydoc),
       bob: ydocToContentJson(bob.ydoc),
@@ -521,7 +521,7 @@ describe("DocService", () => {
       bob: server,
       projected: {
         bodyJson: server,
-        sections: projectDoc(server).sections.map(({ blockId, markdown }) => ({ blockId, markdown })),
+        sections: projectDoc(server, doc.id).sections.map(({ blockId, markdown }) => ({ blockId, markdown })),
       },
     })
   })
@@ -586,7 +586,8 @@ describe("DocService", () => {
 
     const updates = await DocRepository.listUpdatesAfter(pool, wsId, doc.id, 0)
     const replayed = projectDoc(
-      ydocToContentJson(loadDocState({ snapshot: null, updates: updates.map((update) => update.update) }))
+      ydocToContentJson(loadDocState({ snapshot: null, updates: updates.map((update) => update.update) })),
+      doc.id
     )
     const read = await docService.get({ workspaceId: wsId, userId: owner, docId: doc.id })
     const head = await DocRepository.findHead(pool, wsId, doc.id)
@@ -598,7 +599,10 @@ describe("DocService", () => {
       snapshotSeq: (await DocRepository.findLatestSnapshot(pool, wsId, doc.id))?.seq,
       tailSeqs: tail.map((update) => update.seq),
       seq: read.seq,
-      state: projectDoc(ydocToContentJson(loadDocState({ snapshot: decodeUpdateBase64(read.state), updates: [] }))),
+      state: projectDoc(
+        ydocToContentJson(loadDocState({ snapshot: decodeUpdateBase64(read.state), updates: [] })),
+        doc.id
+      ),
       body: head?.bodyMarkdown,
       sections: read.sections,
     }).toEqual({
@@ -749,5 +753,77 @@ describe("DocService", () => {
         },
       ],
     })
+  })
+})
+
+describe("DocService.listBacklinks", () => {
+  const docEmbed = (docId: string): JSONContent => ({ type: "docEmbed", attrs: { docId, blockId: null, title: "B" } })
+  const embedParagraph = (docId: string, id: string): JSONContent => ({
+    type: "paragraph",
+    attrs: { blockId: id },
+    content: [{ type: "text", text: "See " }, docEmbed(docId)],
+  })
+
+  test("should list readable referencing docs with their blocks when a doc embeds another", async () => {
+    const privateHost = await createChannel("private")
+    const publicHost = await createChannel("public")
+    const docA = await createDoc(privateHost.id)
+    const docB = await createDoc(publicHost.id)
+    const client = await openClient(docA.id, owner)
+    const [first, second] = [blockId(), blockId()].sort()
+    const json = ydocToContentJson(client.ydoc)
+    await post(
+      docA.id,
+      encodeUpdateBase64(
+        writeContentJson(client.ydoc, {
+          ...json,
+          content: [...(json.content ?? []), embedParagraph(docB.id, first!), embedParagraph(docB.id, second!)],
+        })
+      )
+    )
+
+    const backlinks = (userIdForRead: string) =>
+      docService.listBacklinks({ workspaceId: wsId, userId: userIdForRead, docId: docB.id })
+    expect({ owner: await backlinks(owner), outsider: await backlinks(outsider) }).toEqual({
+      owner: [{ docId: docA.id, title: docA.displayName, hostStreamId: privateHost.id, blockIds: [first, second] }],
+      outsider: [],
+    })
+  })
+
+  test("should drop the backlink when a later write removes the embeds", async () => {
+    const host = await createChannel("private")
+    const docA = await createDoc(host.id)
+    const docB = await createDoc(host.id)
+    const client = await openClient(docA.id, owner)
+    const json = ydocToContentJson(client.ydoc)
+    const embedded = { ...json, content: [...(json.content ?? []), embedParagraph(docB.id, blockId())] }
+    await post(docA.id, encodeUpdateBase64(writeContentJson(client.ydoc, embedded)))
+    const before = await docService.listBacklinks({ workspaceId: wsId, userId: owner, docId: docB.id })
+
+    await post(docA.id, encodeUpdateBase64(writeContentJson(client.ydoc, { ...embedded, content: json.content ?? [] })))
+
+    expect({
+      before: before.map((backlink) => backlink.docId),
+      after: await docService.listBacklinks({ workspaceId: wsId, userId: owner, docId: docB.id }),
+    }).toEqual({ before: [docA.id], after: [] })
+  })
+
+  test("should hide a referencing doc when its host is archived", async () => {
+    const hostA = await createChannel("private")
+    const hostB = await createChannel("private")
+    const docA = await createDoc(hostA.id)
+    const docB = await createDoc(hostB.id)
+    const client = await openClient(docA.id, owner)
+    const json = ydocToContentJson(client.ydoc)
+    const embedded = { ...json, content: [...(json.content ?? []), embedParagraph(docB.id, blockId())] }
+    await post(docA.id, encodeUpdateBase64(writeContentJson(client.ydoc, embedded)))
+    const before = await docService.listBacklinks({ workspaceId: wsId, userId: owner, docId: docB.id })
+
+    await streamService.archiveStream(hostA.id, wsId, owner)
+
+    expect({
+      before: before.map((backlink) => backlink.docId),
+      after: await docService.listBacklinks({ workspaceId: wsId, userId: owner, docId: docB.id }),
+    }).toEqual({ before: [docA.id], after: [] })
   })
 })

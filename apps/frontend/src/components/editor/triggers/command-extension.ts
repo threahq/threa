@@ -17,6 +17,9 @@ export const commandNodeTextSize = "text-sm"
  */
 export const MEMO_SEARCH_SLASH_ACTION = "memo-search"
 
+/** Client-action id for the synthetic "doc" slash entry: like the memo entry, it types `/doc ` to hand off to the doc-search trigger. */
+export const DOC_SEARCH_SLASH_ACTION = "doc-search"
+
 /**
  * Client-action id for the synthetic "giphy" slash entry. Like the memo entry it
  * inserts no command chip — selecting it removes the typed `/giphy` and the
@@ -83,6 +86,10 @@ export const CommandExtension = createTriggerExtension<CommandItem, CommandNodeA
     // replace the typed `/memo` with `/memo ` so MemoSearchExtension activates.
     if (item.clientActionId === MEMO_SEARCH_SLASH_ACTION) {
       editor.chain().focus().deleteRange(range).insertContent("/memo ").run()
+      return true
+    }
+    if (item.clientActionId === DOC_SEARCH_SLASH_ACTION) {
+      editor.chain().focus().deleteRange(range).insertContent("/doc ").run()
       return true
     }
     // The "giphy", "snippet" and "attachment" entries insert no chip — drop the

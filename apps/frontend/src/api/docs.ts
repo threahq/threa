@@ -1,5 +1,6 @@
 import { api } from "./client"
 import type {
+  DocBacklinksResponse,
   DocPostUpdateResult,
   DocSectionResponse,
   DocState,
@@ -11,6 +12,8 @@ export const docKeys = {
   threads: (workspaceId: string, docId: string) => ["docThreads", workspaceId, docId] as const,
   section: (workspaceId: string, docId: string, blockId: string) =>
     ["docSection", workspaceId, docId, blockId] as const,
+  allBacklinks: (workspaceId: string) => ["docBacklinks", workspaceId] as const,
+  backlinks: (workspaceId: string, docId: string) => [...docKeys.allBacklinks(workspaceId), docId] as const,
 }
 
 /** Collaborative doc streams: full state, the update log, and Yjs writes (base64). */
@@ -35,5 +38,9 @@ export const docsApi = {
 
   getSection(workspaceId: string, docId: string, blockId: string): Promise<DocSectionResponse> {
     return api.get<DocSectionResponse>(`/api/workspaces/${workspaceId}/docs/${docId}/sections/${blockId}`)
+  },
+
+  listBacklinks(workspaceId: string, docId: string): Promise<DocBacklinksResponse> {
+    return api.get<DocBacklinksResponse>(`/api/workspaces/${workspaceId}/docs/${docId}/backlinks`)
   },
 }

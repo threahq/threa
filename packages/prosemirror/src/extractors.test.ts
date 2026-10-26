@@ -4,6 +4,7 @@ import {
   collectAttachmentReferenceIds,
   collectInlineAttachmentIds,
   collectChannelStreamIds,
+  collectDocEmbedIds,
   collectGiphyEmbeds,
   collectLinkUrls,
   collectMemoEmbedIds,
@@ -897,5 +898,22 @@ describe("unresolvedTriggersToText", () => {
     }
 
     expect(unresolvedTriggersToText(doc)).toEqual({ changed: false, contentJson: doc })
+  })
+})
+
+describe("collectDocEmbedIds", () => {
+  it("dedupes doc ids in first-seen order, ignoring block pointers and empty ids", () => {
+    const docEmbed = (docId: string, blockId?: string): JSONContent => ({
+      type: "docEmbed",
+      attrs: { docId, blockId: blockId ?? null, title: "T" },
+    })
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [docEmbed("stream_a"), docEmbed("stream_a", "blk_1"), docEmbed("stream_b")] },
+        { type: "paragraph", content: [docEmbed("stream_a"), docEmbed("stream_a", "blk_1"), docEmbed("")] },
+      ],
+    }
+    expect(collectDocEmbedIds(doc)).toEqual(["stream_a", "stream_b"])
   })
 })

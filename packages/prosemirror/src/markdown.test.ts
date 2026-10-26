@@ -1871,3 +1871,41 @@ describe("@threahq/prosemirror task lists and inline images", () => {
     expect(markdown).toBe("a\n\n- [x] b")
   })
 })
+
+describe("@threahq/prosemirror doc embed round-trip", () => {
+  const paragraph = (content: JSONContent[]): JSONContent => ({
+    type: "doc",
+    content: [{ type: "paragraph", content }],
+  })
+
+  it("round-trips with and without a block id", () => {
+    const doc = paragraph([
+      { type: "docEmbed", attrs: { docId: "stream_a", blockId: null, title: "Plan" } },
+      { type: "text", text: " and " },
+      { type: "docEmbed", attrs: { docId: "stream_b", blockId: "blk_1", title: "Spec" } },
+    ])
+    const markdown = serializeToMarkdown(doc)
+    expect(markdown).toBe("[Plan](doc:stream_a) and [Spec](doc:stream_b#blk_1)")
+    expect(parseMarkdown(markdown)).toEqual(doc)
+  })
+
+  it("escapes the title and falls back to Doc", () => {
+    const doc = paragraph([{ type: "docEmbed", attrs: { docId: "stream_a", blockId: null, title: "A [v2]\\b" } }])
+    const markdown = serializeToMarkdown(doc)
+    expect(markdown).toBe("[A [v2\\]\\\\b](doc:stream_a)")
+    expect(parseMarkdown(markdown)).toEqual(doc)
+    expect(serializeToMarkdown(paragraph([{ type: "docEmbed", attrs: { docId: "stream_a" } }]))).toBe(
+      "[Doc](doc:stream_a)"
+    )
+  })
+
+  it("parses a doc: link mid-sentence", () => {
+    expect(parseMarkdown("See [Plan](doc:stream_a#blk_1) now")).toEqual(
+      paragraph([
+        { type: "text", text: "See " },
+        { type: "docEmbed", attrs: { docId: "stream_a", blockId: "blk_1", title: "Plan" } },
+        { type: "text", text: " now" },
+      ])
+    )
+  })
+})

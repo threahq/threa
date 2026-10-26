@@ -13,7 +13,13 @@ import { serializeClipboardSlice } from "@/components/editor/clipboard-copy"
 import { insertPlainText, isPlainTextPaste } from "@/components/editor/plain-text-paste"
 import { insertFilesIntoEditor, namePastedImages } from "@/components/editor/insert-files"
 import { insertPastedText } from "@/components/editor/multiline-blocks"
-import { useMentionSuggestion, useChannelSuggestion, useEmojiSuggestion } from "@/components/editor/triggers"
+import {
+  useMentionSuggestion,
+  useChannelSuggestion,
+  useEmojiSuggestion,
+  useDocSuggestion,
+} from "@/components/editor/triggers"
+import { tryInsertDocChip } from "@/components/editor/in-app-link-chip"
 import { EditorToolbar } from "@/components/editor/editor-toolbar"
 import { usePreferences } from "@/contexts"
 import { useRevealReady } from "@/contexts/coordinated-loading-context"
@@ -24,10 +30,13 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { useLatest } from "@/hooks/use-latest"
 import { getEffectiveEditorBindings } from "@/lib/keyboard-shortcuts"
 import { cn } from "@/lib/utils"
+import { useWorkspaceStream, type CachedStream } from "@/stores/workspace-store"
 import type { DocSyncView } from "./use-doc-sync"
 import { useDocBlockThreads } from "./use-doc-block-threads"
 import { DocBlockGutter } from "./doc-block-gutter"
 import { DocTitle } from "./doc-title"
+import { DocBacklinks } from "./doc-backlinks"
+import { useDocBlockLanding } from "./use-doc-block-landing"
 
 const COLUMN_CLASS = "mx-auto w-full max-w-3xl px-4 sm:px-6"
 
@@ -39,6 +48,12 @@ const DROPPABLE_TEXT_TYPES = ["text/plain", "text/uri-list", "text/html"]
 // A doc has nothing to send: Enter is text and Mod+Enter is inert.
 const DOC_SEND_MODE = { current: "cmdEnter" as const }
 const NO_SUBMIT = { current: () => {} }
+
+const pickDocHost = (row: CachedStream) => ({
+  id: row.id,
+  displayName: row.displayName,
+  parentStreamId: row.parentStreamId,
+})
 
 interface DocPaneBodyProps {
   workspaceId: string
@@ -110,6 +125,8 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
   const { suggestionConfig: channelConfig, renderChannelList } = useChannelSuggestion()
   const { emojis, emojiWeights, toEmoji } = useWorkspaceEmoji(workspaceId)
   const { suggestionConfig: emojiConfig, renderEmojiGrid } = useEmojiSuggestion({ emojis, emojiWeights })
+  const docHost = useWorkspaceStream(workspaceId, docId, pickDocHost)?.parentStreamId ?? undefined
+  const { suggestionConfig: docConfig, renderDocList } = useDocSuggestion(docHost, docId)
   const { uploadFile, imageCount } = useAttachments(workspaceId, { e2eEnabled: false })
 
   const markdownParseOptions = useMemo(() => ({ emojiAsText: true, isKnownChannel }), [isKnownChannel])
@@ -173,11 +190,12 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
         mentionSuggestion: mentionConfig,
         channelSuggestion: channelConfig,
         emojiSuggestion: emojiConfig,
+        docSearchSuggestion: docConfig,
         toEmoji,
       }),
       EditorBehaviors.configure({ sendModeRef: DOC_SEND_MODE, onSubmitRef: NO_SUBMIT, keyBindingsRef }),
     ],
-    [ydoc, awareness, mentionConfig, channelConfig, emojiConfig, toEmoji]
+    [ydoc, awareness, mentionConfig, channelConfig, emojiConfig, docConfig, toEmoji]
   )
 
   const editor = useEditor({
@@ -200,6 +218,10 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
 
         const text = event.clipboardData?.getData("text/plain")
         if (!text || !editorRef.current) return false
+        if (!pasteAsPlainText && tryInsertDocChip(editorRef.current, text, { workspaceId, selfDocId: docId })) {
+          event.preventDefault()
+          return true
+        }
         const insert = pasteAsPlainText ? insertPlainText : insertPastedText
         const { getMentionType, toEmoji, parseOptions } = latestLookups()
         const handled = insert(editorRef.current, text, getMentionType, toEmoji, parseOptions)
@@ -218,12 +240,24 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
         beforeinput: (_view, event) => {
           const current = editorRef.current
           if (!current) return false
-          return handleBeforeInput(current, event as InputEvent, latestLookups())
+          const inputEvent = event as InputEvent
+          // Gboard / SwiftKey clipboard-bar pastes arrive as insertText, not paste.
+          if (
+            inputEvent.inputType === "insertText" &&
+            !current.view.composing &&
+            typeof inputEvent.data === "string" &&
+            tryInsertDocChip(current, inputEvent.data, { workspaceId, selfDocId: docId })
+          ) {
+            event.preventDefault()
+            return true
+          }
+          return handleBeforeInput(current, inputEvent, latestLookups())
         },
       },
     },
   })
   editorRef.current = editor
+  useDocBlockLanding(editor, docId)
 
   useEffect(() => {
     if (editor && editor.isEditable !== canWrite) editor.setEditable(canWrite)
@@ -271,9 +305,11 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
           />
           <EditorContent editor={editor} />
           <DocBlockGutter editor={editor} container={column} docId={docId} threads={threads} canComment={canWrite} />
+          <DocBacklinks workspaceId={workspaceId} docId={docId} />
           {renderMentionList()}
           {renderChannelList()}
           {renderEmojiGrid()}
+          {renderDocList()}
           {canWrite && (
             <div
               className="min-h-24 flex-1 cursor-text"

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "bun:test"
 import {
   buildAgentBlockHref,
+  buildDocHref,
   buildMemoHref,
   buildQuoteHref,
   buildSharedMessageHref,
   parseAgentBlockHref,
+  parseDocHref,
   parseMemoHref,
   parseMentionPointerHref,
   parseQuoteHref,
@@ -257,5 +259,20 @@ describe("parseAgentBlockHref", () => {
     // would name it is rejected outright, never carried.
     expect(parseAgentBlockHref("agent:persona_1/stream_1")).toBeNull()
     expect(parseAgentBlockHref("agent:persona_1 x")).toBeNull()
+  })
+})
+
+describe("doc hrefs", () => {
+  it("builds and parses with and without a block id", () => {
+    expect(buildDocHref({ docId: "stream_a" })).toBe("doc:stream_a")
+    expect(buildDocHref({ docId: "stream_a", blockId: "blk_1" })).toBe("doc:stream_a#blk_1")
+    expect(parseDocHref("doc:stream_a")).toEqual({ docId: "stream_a", blockId: null })
+    expect(parseDocHref("doc:stream_a#blk_1")).toEqual({ docId: "stream_a", blockId: "blk_1" })
+  })
+
+  it("rejects malformed pointers", () => {
+    expect(
+      ["doc:stream_x/extra", "doc:stream_x#", "doc:", "doc:stream_x?a=1", "memo:stream_x"].map(parseDocHref)
+    ).toEqual([null, null, null, null, null])
   })
 })

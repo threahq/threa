@@ -1,4 +1,5 @@
 import type { AuthorType, DocSection, JSONContent } from "@threahq/types"
+import type { DocReference } from "./projection"
 import { sql, type Querier } from "../../db"
 
 interface DocHeadRow {
@@ -204,6 +205,45 @@ export const DocRepository = {
       WHERE (doc_sections.position, doc_sections.kind, doc_sections.markdown, doc_sections.content_json)
         IS DISTINCT FROM (EXCLUDED.position, EXCLUDED.kind, EXCLUDED.markdown, EXCLUDED.content_json)
     `)
+  },
+
+  async replaceReferences(
+    db: Querier,
+    workspaceId: string,
+    docId: string,
+    references: readonly DocReference[]
+  ): Promise<void> {
+    const blockIds = references.map((ref) => ref.blockId)
+    const refTypes = references.map((ref) => ref.refType)
+    const refIds = references.map((ref) => ref.refId)
+    await db.query(sql`
+      DELETE FROM doc_references
+      WHERE workspace_id = ${workspaceId} AND doc_id = ${docId}
+        AND (block_id, ref_type, ref_id) NOT IN (
+          SELECT * FROM unnest(${blockIds}::text[], ${refTypes}::text[], ${refIds}::text[])
+        )
+    `)
+    if (references.length === 0) return
+    await db.query(sql`
+      INSERT INTO doc_references (workspace_id, doc_id, block_id, ref_type, ref_id)
+      SELECT ${workspaceId}, ${docId}, r.block_id, r.ref_type, r.ref_id
+      FROM unnest(${blockIds}::text[], ${refTypes}::text[], ${refIds}::text[]) AS r(block_id, ref_type, ref_id)
+      ON CONFLICT (workspace_id, doc_id, block_id, ref_type, ref_id) DO NOTHING
+    `)
+  },
+
+  /** Docs that embed `docId`, each with the blocks holding the embed. */
+  async listBacklinks(
+    db: Querier,
+    workspaceId: string,
+    docId: string
+  ): Promise<{ docId: string; blockIds: string[] }[]> {
+    const result = await db.query<{ doc_id: string; block_ids: string[] }>(sql`
+      SELECT doc_id, array_agg(block_id ORDER BY block_id) AS block_ids FROM doc_references
+      WHERE workspace_id = ${workspaceId} AND ref_type = 'doc' AND ref_id = ${docId}
+      GROUP BY doc_id
+    `)
+    return result.rows.map((row) => ({ docId: row.doc_id, blockIds: row.block_ids }))
   },
 
   async listSections(db: Querier, workspaceId: string, docId: string): Promise<DocSection[]> {

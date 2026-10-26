@@ -28,6 +28,7 @@ export const LEAF_NODE_TYPES: ReadonlySet<string> = new Set([
   "math",
   "attachmentReference",
   "memoEmbed",
+  "docEmbed",
   "giphyEmbed",
   "inAppLink",
   "quoteReply",

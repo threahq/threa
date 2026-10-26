@@ -2492,6 +2492,19 @@ export interface DocThreadsResponse {
   threads: DocBlockThread[]
 }
 
+/** A readable doc that embeds the requested doc, with the blocks holding the embeds. */
+export interface DocBacklink {
+  docId: string
+  title: string | null
+  hostStreamId: string
+  blockIds: string[]
+}
+
+/** `GET /workspaces/:ws/docs/:docId/backlinks`. */
+export interface DocBacklinksResponse {
+  backlinks: DocBacklink[]
+}
+
 /** `GET /workspaces/:ws/docs/:docId/sections/:blockId`. */
 export interface DocSectionResponse {
   section: DocSection

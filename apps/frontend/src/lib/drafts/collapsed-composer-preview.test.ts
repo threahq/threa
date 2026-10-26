@@ -119,6 +119,10 @@ const NODE_CASES: Record<string, { content: JSONContent; expected: string }> = {
     content: doc(paragraph({ type: "memoEmbed", attrs: { memoId: "memo_1", title: "Auth plan" } })),
     expected: "Memo: Auth plan",
   },
+  docEmbed: {
+    content: doc(paragraph({ type: "docEmbed", attrs: { docId: "stream_doc", blockId: null, title: "Launch plan" } })),
+    expected: "Doc: Launch plan",
+  },
   inAppLink: {
     content: doc(paragraph({ type: "inAppLink", attrs: { name: "Design", url: "/w/ws/s/stream_1" } })),
     expected: "Design",

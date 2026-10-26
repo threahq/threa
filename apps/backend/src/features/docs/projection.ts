@@ -1,14 +1,22 @@
-import { serializeToMarkdown } from "@threahq/prosemirror"
+import { collectDocEmbedIds, serializeToMarkdown } from "@threahq/prosemirror"
 import type { DocSection, JSONContent } from "@threahq/types"
+
+/** A block of a doc embedding another doc, projected on every write. */
+export interface DocReference {
+  blockId: string
+  refType: "doc"
+  refId: string
+}
 
 export interface DocProjection {
   bodyMarkdown: string
   bodyJson: JSONContent
   sections: DocSection[]
+  references: DocReference[]
 }
 
 /** Expects a doc already stamped by `ensureBlockIds`; an id-less top-level block is a caller bug. */
-export function projectDoc(json: JSONContent): DocProjection {
+export function projectDoc(json: JSONContent, docId: string): DocProjection {
   const sections = (json.content ?? []).map((block, position): DocSection => {
     const blockId = block.attrs?.blockId
     if (typeof blockId !== "string") {
@@ -23,7 +31,12 @@ export function projectDoc(json: JSONContent): DocProjection {
       contentJson: block,
     }
   })
-  return { bodyMarkdown: serializeToMarkdown(json), bodyJson: json, sections }
+  const references = sections.flatMap((section) =>
+    collectDocEmbedIds(section.contentJson)
+      .filter((refId) => refId !== docId)
+      .map((refId): DocReference => ({ blockId: section.blockId, refType: "doc", refId }))
+  )
+  return { bodyMarkdown: serializeToMarkdown(json), bodyJson: json, sections, references }
 }
 
 type SectionText = Pick<DocSection, "blockId" | "markdown">

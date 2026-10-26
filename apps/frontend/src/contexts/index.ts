@@ -42,6 +42,7 @@ export {
 export {
   PanelProvider,
   usePanel,
+  useOptionalPanel,
   usePanelId,
   useLatestPanel,
   useLatestRoute,
