@@ -561,6 +561,23 @@ describe("DocPaneBody", () => {
     }).toEqual({ withPlaceholder: true, afterFailure: false, toasts: ["Couldn't upload the file"] })
   })
 
+  it("should upload files picked from the attach button into the doc", async () => {
+    const uploadFile = vi.fn(() => new Promise<never>(() => {}))
+    vi.spyOn(attachmentsModule, "useAttachments").mockReturnValue({
+      uploadFile,
+      imageCount: 0,
+    } as unknown as ReturnType<typeof attachmentsModule.useAttachments>)
+    await mountLoaded()
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
+    const file = new File(["png"], "shot.png", { type: "image/png" })
+
+    expect(screen.getByRole("button", { name: "Attach files" })).toBeInTheDocument()
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => expect(uploadFile).toHaveBeenCalledWith(file))
+    expect(JSON.stringify(proseMirror().editor.getJSON())).toContain('"type":"attachmentReference"')
+  })
+
   it("keeps a file dropped beside the editor from opening in place of the app", async () => {
     const uploadFile = vi.fn(() => new Promise<never>(() => {}))
     vi.spyOn(attachmentsModule, "useAttachments").mockReturnValue({

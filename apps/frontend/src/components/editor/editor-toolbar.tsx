@@ -53,6 +53,9 @@ interface EditorToolbarProps {
   trailingContent?: React.ReactNode
   /** Show mobile-only editing controls like indent/dedent in a separate section. */
   showSpecialInputControls?: boolean
+  /** Touch layout: roomy buttons that act on tap, so scrolling the bar never formats, and no
+   *  tooltips or edge fade. Defaults to on for every inline position except "above". */
+  touch?: boolean
 }
 
 interface LinkEditorSnapshot {
@@ -74,6 +77,7 @@ export function EditorToolbar({
   inlinePosition = "above",
   trailingContent,
   showSpecialInputControls = false,
+  touch,
 }: EditorToolbarProps) {
   const { refs, floatingStyles, update } = useFloating({
     placement: "top",
@@ -168,7 +172,7 @@ export function EditorToolbar({
   if (!editor || !isVisible) return null
 
   const isLinkActive = editor.isActive("link")
-  const isMobileInlineToolbar = inline && inlinePosition !== "above"
+  const isMobileInlineToolbar = inline && (touch ?? inlinePosition !== "above")
   const separatorClassName = cn("mx-1 h-6 shrink-0", isMobileInlineToolbar && "mx-1.5")
   const handleLinkButtonAction = () => {
     const { from, to } = editor.state.selection

@@ -297,6 +297,20 @@ describe("EditorToolbar", () => {
     expect(onLinkPopoverOpenChange).toHaveBeenCalledWith(false)
   })
 
+  it("should format on tap, not on touch, when a toolbar above the editor uses the touch layout", () => {
+    const editor = createEditorStub() as Editor & {
+      __chainState: { toggleBold: ReturnType<typeof vi.fn> }
+    }
+    render(<EditorToolbar editor={editor} isVisible inline inlinePosition="above" touch />)
+    const bold = screen.getByRole("button", { name: "Bold" })
+
+    fireEvent.pointerDown(bold)
+    const onTouch = editor.__chainState.toggleBold.mock.calls.length
+    fireEvent.click(bold)
+
+    expect({ onTouch, onTap: editor.__chainState.toggleBold.mock.calls.length }).toEqual({ onTouch: 0, onTap: 1 })
+  })
+
   it("renders indent and dedent controls only when special input controls are enabled", () => {
     const editor = createEditorStub()
     const { rerender } = render(<EditorToolbar editor={editor} isVisible inline inlinePosition="below" />)

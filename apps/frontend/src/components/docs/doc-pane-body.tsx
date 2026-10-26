@@ -1,9 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react"
 import { EditorContent, useEditor, type Editor } from "@tiptap/react"
 import type * as Y from "yjs"
 import type { Awareness } from "y-protocols/awareness"
 import { toast } from "sonner"
+import { Paperclip } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Skeleton } from "@/components/ui/skeleton"
 import { createDocumentExtensions } from "@/components/editor/editor-extensions"
 import { EDITOR_CONTENT_CLASS } from "@/components/editor/editor-content-class"
@@ -267,6 +269,15 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
   const onDragOver = (event: DragEvent) => {
     if (event.dataTransfer.types.includes("Files")) event.preventDefault()
   }
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const onFilesPicked = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? [])
+    event.target.value = ""
+    if (files.length === 0 || !editor) return
+    editor.commands.focus()
+    insertFiles(files)
+  }
+
   const onDrop = (event: DragEvent) => {
     if (event.defaultPrevented || event.dataTransfer.files.length === 0) return
     if (canWrite && editor) {
@@ -291,7 +302,10 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
             linkPopoverOpen={linkPopoverOpen}
             onLinkPopoverOpenChange={setLinkPopoverOpen}
             showSpecialInputControls={isMobile}
+            touch={isMobile}
+            trailingContent={<AttachButton touch={isMobile} onAttach={() => fileInputRef.current?.click()} />}
           />
+          <input ref={fileInputRef} type="file" multiple className="hidden" onChange={onFilesPicked} />
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto" onDragOver={onDragOver} onDrop={onDrop}>
@@ -323,5 +337,31 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
         </div>
       </div>
     </div>
+  )
+}
+
+/** The doc's file picker, pinned after the formatting buttons so it never scrolls out of reach. */
+function AttachButton({ touch, onAttach }: { touch: boolean; onAttach: () => void }) {
+  const button = (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      aria-label="Attach files"
+      className={cn("shrink-0 p-0", touch ? "h-9 w-9" : "h-8 w-8")}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onAttach}
+    >
+      <Paperclip className="h-4 w-4" />
+    </Button>
+  )
+  if (touch) return button
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipContent side="bottom" className="text-xs">
+        Attach files
+      </TooltipContent>
+    </Tooltip>
   )
 }
