@@ -22,6 +22,8 @@ import { ApiError } from "@/api/client"
 import { docsApi } from "@/api/docs"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { RevealOnReady } from "@/contexts/coordinated-loading-context"
+import { MediaGalleryProvider } from "@/contexts/media-gallery-context"
+import { usePullToRefresh } from "@/hooks/use-pull-to-refresh"
 import { DocSync, FLUSH_CAP_MS } from "@/lib/docs/doc-sync"
 import { PRESENCE_SEND_WINDOW_MS } from "@/lib/docs/doc-presence"
 import { getOpenDocIds } from "@/lib/docs/open-docs"
@@ -58,6 +60,38 @@ function proseMirror(): HTMLElement & { editor: Editor } {
   const element = document.querySelector(".ProseMirror")
   if (!element) throw new Error("editor not mounted")
   return element as HTMLElement & { editor: Editor }
+}
+
+function PullToRefreshHost({ children }: { children: ReactNode }) {
+  const { ref, distance } = usePullToRefresh({ enabled: true })
+  return (
+    <div ref={ref} data-testid="pull-host" data-distance={distance}>
+      {children}
+    </div>
+  )
+}
+
+const IMAGE_DOC: JSONContent = {
+  type: "doc",
+  content: [
+    { type: "paragraph", content: [{ type: "text", text: "Rotation tracker" }] },
+    {
+      type: "paragraph",
+      content: [
+        {
+          type: "attachmentReference",
+          attrs: {
+            id: "attach_shot",
+            filename: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+            status: "uploaded",
+            display: "inline",
+          },
+        },
+      ],
+    },
+  ],
 }
 
 function DocPane({ canWrite }: { canWrite: boolean | null }) {
@@ -147,9 +181,11 @@ describe("DocPaneBody", () => {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <MemoryRouter initialEntries={[`/w/${WORKSPACE_ID}`]}>
-            <Routes>
-              <Route path="/w/:workspaceId" element={wrap(<DocPane canWrite={canWrite} />)} />
-            </Routes>
+            <MediaGalleryProvider>
+              <Routes>
+                <Route path="/w/:workspaceId" element={wrap(<DocPane canWrite={canWrite} />)} />
+              </Routes>
+            </MediaGalleryProvider>
           </MemoryRouter>
         </TooltipProvider>
       </QueryClientProvider>
@@ -578,6 +614,36 @@ describe("DocPaneBody", () => {
 
     await waitFor(() => expect(uploadFile).toHaveBeenCalledWith(file))
     expect(JSON.stringify(proseMirror().editor.getJSON())).toContain('"type":"attachmentReference"')
+  })
+
+  it("should open an image in the gallery on tap when the doc is read-only", async () => {
+    serverDoc = prosemirrorJSONToYDoc(getThreaSchema(), IMAGE_DOC, DOC_FRAGMENT)
+    mount(false)
+
+    fireEvent.click(await screen.findByRole("button", { name: "shot.png" }))
+
+    expect(await screen.findByRole("dialog", { name: "shot.png" })).toBeTruthy()
+    expect(screen.queryByRole("button", { name: "Show as link" })).toBeNull()
+  })
+
+  it("should open an image in the gallery from its menu when the doc is editable", async () => {
+    serverDoc = prosemirrorJSONToYDoc(getThreaSchema(), IMAGE_DOC, DOC_FRAGMENT)
+    mount(true)
+
+    fireEvent.click(await screen.findByRole("button", { name: "shot.png" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Open" }))
+
+    expect(await screen.findByRole("dialog", { name: "shot.png" })).toBeTruthy()
+  })
+
+  it("should leave a downward swipe in a short doc to the doc instead of pulling to refresh", async () => {
+    await mountLoaded(true, { wrap: (body) => <PullToRefreshHost>{body}</PullToRefreshHost> })
+    const editor = proseMirror()
+
+    fireEvent.touchStart(editor, { touches: [{ clientY: 100 }] })
+    fireEvent.touchMove(editor, { touches: [{ clientY: 400 }] })
+
+    expect(screen.getByTestId("pull-host").dataset.distance).toBe("0")
   })
 
   it("keeps a file dropped beside the editor from opening in place of the app", async () => {
