@@ -726,7 +726,9 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       })
     })
 
-    // A socket holds a stream room only after an access-checked join, so membership gates the relay. Frames are never persisted.
+    // Awareness is exempt from INV-4 on purpose: a caret frame has no domain write behind it, nothing replays it, and it is
+    // stale by the time an outbox dispatcher would read it, so it is relayed directly and never persisted. A socket holds a
+    // stream room only after an access-checked join, so membership still gates the relay.
     const docAwarenessBucket = createTokenBucket(DOC_AWARENESS_RATE_BURST, DOC_AWARENESS_RATE_REFILL_PER_SEC)
     socket.on("doc:awareness", (payload: unknown) => {
       const parsed = docAwarenessPayloadSchema.safeParse(payload)
