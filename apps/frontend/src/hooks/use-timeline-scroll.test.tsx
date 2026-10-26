@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest"
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest"
 import { StrictMode, type ReactNode } from "react"
 import type { VirtualizerHandle } from "virtua"
 import { act, render } from "@testing-library/react"
@@ -10,7 +10,7 @@ type HookApi = ReturnType<typeof useTimelineScroll>
 function renderScrollHookWith(
   initialOptions: Options,
   wrap: (node: ReactNode) => ReactNode = (node) => node
-): { current: HookApi; rerender: (options: Options) => void } {
+): { current: HookApi; rerender: (options: Options) => void; unmount: () => void } {
   const ref: { current: HookApi | undefined } = { current: undefined }
   function Probe({ options }: { options: Options }) {
     ref.current = useTimelineScroll(options)
@@ -18,6 +18,7 @@ function renderScrollHookWith(
   }
   const utils = render(wrap(<Probe options={initialOptions} />))
   return {
+    unmount: utils.unmount,
     get current(): HookApi {
       if (!ref.current) throw new Error("Probe did not capture the hook return value")
       return ref.current
@@ -995,6 +996,81 @@ describe("useTimelineScroll — cold-load settle across a stream switch", () => 
       raf.mockRestore()
       caf.mockRestore()
     }
+  })
+})
+
+describe("useTimelineScroll — parked reveal while the landing target is missing", () => {
+  // A ?m= target still backfilling: dropping the mask on the failsafe paints
+  // the tail a beat before the landing jumps away from it.
+  function parkAwaitingTarget() {
+    const rafCallbacks: FrameRequestCallback[] = []
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      rafCallbacks.push(cb)
+      return rafCallbacks.length
+    })
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {})
+    const landingPendingRef = { current: true }
+    const landingTargetMissingRef = { current: true }
+    const settled = (itemCount: number) =>
+      opts({
+        itemCount,
+        getFirstKey: () => (itemCount ? "a1" : null),
+        resetKey: "stream_a",
+        landingPendingRef,
+        landingTargetMissingRef,
+      })
+    const harness = renderScrollHook(settled(0))
+    harness.current.contentRef.current = document.createElement("div")
+    act(() => harness.current.registerScroller(makeScrollerDiv({ scrollHeight: 1000, clientHeight: 800 })))
+    harness.rerender(settled(10))
+    for (let i = 0; i < 4; i++) act(() => rafCallbacks.shift()?.(performance.now()))
+    return { harness, landingTargetMissingRef }
+  }
+
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it("waits out the load, and a restore handoff disarms the failsafe", () => {
+    const { harness, landingTargetMissingRef } = parkAwaitingTarget()
+    act(() => vi.advanceTimersByTime(5000))
+    expect(harness.current.isInitialSettling).toBe(true)
+
+    // The target arrived and the refine loop engaged: the loop owns the
+    // reveal now, so the failsafe must not fire mid-positioning.
+    landingTargetMissingRef.current = false
+    act(() => harness.current.holdSettleForRestore())
+    act(() => vi.advanceTimersByTime(5000))
+    expect(harness.current.isInitialSettling).toBe(true)
+
+    act(() => harness.current.revealSettle())
+    expect(harness.current.isInitialSettling).toBe(false)
+  })
+
+  it("drops the mask on the next failsafe tick once the target is a row", () => {
+    const { harness, landingTargetMissingRef } = parkAwaitingTarget()
+    act(() => vi.advanceTimersByTime(3000))
+    expect(harness.current.isInitialSettling).toBe(true)
+
+    landingTargetMissingRef.current = false
+    act(() => vi.advanceTimersByTime(1500))
+    expect(harness.current.isInitialSettling).toBe(false)
+  })
+
+  it("stops waiting after the cap, so a fetch paused offline can't hold the mask", () => {
+    const { harness } = parkAwaitingTarget()
+    act(() => vi.advanceTimersByTime(9000))
+    expect(harness.current.isInitialSettling).toBe(true)
+    act(() => vi.advanceTimersByTime(3000))
+    expect(harness.current.isInitialSettling).toBe(false)
+  })
+
+  it("clears the failsafe on unmount", () => {
+    const { harness } = parkAwaitingTarget()
+    harness.unmount()
+    expect(vi.getTimerCount()).toBe(0)
   })
 })
 
