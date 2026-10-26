@@ -13,7 +13,12 @@ import {
 } from "@threahq/types"
 import { ActorAvatar } from "@/components/actor-avatar"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
-import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
+import {
+  MESSAGE_ROW_CONTINUATION_PADDING,
+  MESSAGE_ROW_CONTINUATION_TOOLBAR_ANCHOR,
+  MESSAGE_ROW_HEAD_PADDING,
+  MESSAGE_ROW_HEAD_TOOLBAR_ANCHOR,
+} from "@/components/message/message-row-layout"
 import { RelativeTime } from "@/components/relative-time"
 import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-content"
 import { Button } from "@/components/ui/button"
@@ -498,14 +503,20 @@ export function MessageItem({
   // opacity-0 + pointer-events-none for touch (so a tap can't trigger the
   // invisible button — it passes through), revealing it on mouse hover / focus.
   // Desktop hover toolbar, mirroring the stream timeline (`MessageEvent`): the same
-  // quick actions (react · save · quote reply · overflow) in a chip that floats just
-  // above the row (`bottom-[calc(100%-20px)]`) rather than inline, so it needs no
-  // content-padding reserve and holds the full set without crowding. `hidden sm:block`
+  // quick actions (react · save · quote reply · overflow) in a chip that floats
+  // above the row's content rather than inline, so it needs no content-padding
+  // reserve, holds the full set without crowding and never covers the text it
+  // belongs to (the anchor follows the row's top padding). `hidden sm:block`
   // keeps it off phones entirely; touch reaches these via the long-press drawer.
   // Reply-in-thread is timeline-only — a board/conversation row is already inside its
   // conversation, and its branch gesture ("New sub-topic") lives in the overflow menu.
   const overflowMenu = (
-    <div className="reveal-actions-hover-only absolute right-4 bottom-[calc(100%-20px)] z-10 hidden sm:block">
+    <div
+      className={cn(
+        "reveal-actions-hover-only absolute right-4 z-10 hidden sm:block",
+        continuation ? MESSAGE_ROW_CONTINUATION_TOOLBAR_ANCHOR : MESSAGE_ROW_HEAD_TOOLBAR_ANCHOR
+      )}
+    >
       <div className="flex items-center gap-0.5 rounded-md border border-border/60 bg-popover/95 px-1 py-1 shadow-md backdrop-blur-sm">
         {/* The settling pair, leftmost. The toolbar is right-anchored, so this
             grows leftward and displaces nothing (INV-21); a settled row renders
