@@ -52,13 +52,13 @@ function textBeforeSelection(contentEl: Element, range: Range): string {
  * start of the next row; that overflow selects nothing visible, so it is
  * trimmed rather than read as a cross-message selection.
  */
-function rangeWithinContent(contentEl: Element, sel: Selection, range: Range): Range | null {
+function rangeWithinContent(contentEl: Element, range: Range, selectedText: string): Range | null {
   if (!contentEl.contains(range.startContainer)) return null
   if (contentEl.contains(range.endContainer)) return range
   const clamped = range.cloneRange()
   clamped.setEnd(contentEl, contentEl.childNodes.length)
   const visible = (text: string) => text.replace(/\s+/g, "")
-  return visible(sel.toString()) === visible(clamped.toString()) ? clamped : null
+  return visible(selectedText) === visible(clamped.toString()) ? clamped : null
 }
 
 /**
@@ -145,7 +145,7 @@ export const TextSelectionQuote = memo(function TextSelectionQuote({
     // Must be within one message's content area (not author name, timestamp, etc.)
     const startCtx = getMessageContext(range.startContainer)
     const contentEl = startCtx?.element.querySelector(".message-content .markdown-content")
-    const contentRange = contentEl ? rangeWithinContent(contentEl, sel, range) : null
+    const contentRange = contentEl ? rangeWithinContent(contentEl, range, text) : null
     if (!startCtx || !contentEl || !contentRange) {
       setSelection(null)
       return
@@ -159,7 +159,7 @@ export const TextSelectionQuote = memo(function TextSelectionQuote({
 
     setSelection({
       text,
-      prefixText: textBeforeSelection(contentEl, range),
+      prefixText: textBeforeSelection(contentEl, contentRange),
       messageId: startCtx.messageId,
       streamId: messageStreamId,
       authorName,

@@ -22,87 +22,78 @@ function workspaceAndStream(page: Page): { workspaceId: string; streamId: string
   return { workspaceId: match![1], streamId: match![2] }
 }
 
-/**
- * Send a message whose body carries a bold run, so a selection that starts
- * inside the mark and ends outside it exercises a real slice.
- */
-async function sendBoldMessage(page: Page, prefix: string, bold: string, suffix: string): Promise<string> {
+async function sendMessage(page: Page, content: unknown[], contentMarkdown: string): Promise<string> {
   const { workspaceId, streamId } = workspaceAndStream(page)
   const response = await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
-    data: {
-      streamId,
-      contentJson: {
-        type: "doc",
-        content: [
-          {
-            type: "paragraph",
-            content: [
-              { type: "text", text: prefix },
-              { type: "text", text: bold, marks: [{ type: "bold" }] },
-              { type: "text", text: suffix },
-            ],
-          },
-        ],
-      },
-      contentMarkdown: `${prefix}**${bold}**${suffix}`,
-    },
+    data: { streamId, contentJson: { type: "doc", content }, contentMarkdown },
   })
-  await expectApiOk(response, "Create bold source message")
+  await expectApiOk(response, "Create source message")
   const body = (await response.json()) as { message?: { id: string } }
   return body.message?.id ?? ""
 }
 
-async function sendParagraphs(page: Page, paragraphs: string[]): Promise<string> {
-  const { workspaceId, streamId } = workspaceAndStream(page)
-  const response = await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
-    data: {
-      streamId,
-      contentJson: {
-        type: "doc",
-        content: paragraphs.map((text) => ({ type: "paragraph", content: [{ type: "text", text }] })),
-      },
-      contentMarkdown: paragraphs.join("\n\n"),
-    },
-  })
-  await expectApiOk(response, "Create paragraph message")
-  const body = (await response.json()) as { message?: { id: string } }
-  return body.message?.id ?? ""
+/**
+ * Send a message whose body carries a bold run, so a selection that starts
+ * inside the mark and ends outside it exercises a real slice.
+ */
+function sendBoldMessage(page: Page, prefix: string, bold: string, suffix: string): Promise<string> {
+  const paragraph = {
+    type: "paragraph",
+    content: [
+      { type: "text", text: prefix },
+      { type: "text", text: bold, marks: [{ type: "bold" }] },
+      { type: "text", text: suffix },
+    ],
+  }
+  return sendMessage(page, [paragraph], `${prefix}**${bold}**${suffix}`)
+}
+
+function sendParagraphs(page: Page, paragraphs: string[]): Promise<string> {
+  const content = paragraphs.map((text) => ({ type: "paragraph", content: [{ type: "text", text }] }))
+  return sendMessage(page, content, paragraphs.join("\n\n"))
 }
 
 function mainMessageRow(page: Page, text: string): Locator {
   return page.getByRole("main").locator("[data-message-id]").filter({ hasText: text }).first()
 }
 
+interface SelectionEnd {
+  messageId: string
+  text: string
+}
+
 /**
- * Put the browser's selection across a message body, from the start of `from`
- * through `to`'s first characters. Driven in the page because the quote toolbar
- * reads `window.getSelection()`, which Playwright's own APIs cannot set.
+ * Put the browser's selection from the start of `from.text` through the end of
+ * `to.text`, each found in its message's rendered body. Driven in the page
+ * because the quote toolbar reads `window.getSelection()`, which Playwright's
+ * own APIs cannot set.
  */
-async function selectAcross(page: Page, messageId: string, from: string, to: string): Promise<void> {
+async function selectAcross(page: Page, from: SelectionEnd, to: SelectionEnd): Promise<void> {
   await page.evaluate(
-    ({ messageId, from, to }) => {
-      const row = document.querySelector(`[data-message-id="${messageId}"]`)
-      const body = row?.querySelector(".message-content .markdown-content")
-      if (!body) throw new Error(`No rendered body for ${messageId}`)
+    ({ from, to }) => {
+      const textNodeWith = ({ messageId, text }: { messageId: string; text: string }): Text => {
+        const body = document.querySelector(`[data-message-id="${messageId}"] .message-content .markdown-content`)
+        if (!body) throw new Error(`No rendered body for ${messageId}`)
 
-      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT)
-      const textNodes: Text[] = []
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) textNodes.push(node as Text)
+        const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT)
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          if ((node as Text).data.includes(text)) return node as Text
+        }
+        throw new Error(`Could not locate "${text}" in ${messageId}`)
+      }
 
-      const startNode = textNodes.find((node) => node.data.includes(from))
-      const endNode = textNodes.find((node) => node.data.includes(to))
-      if (!startNode || !endNode) throw new Error(`Could not locate "${from}" / "${to}" in the rendered body`)
-
+      const startNode = textNodeWith(from)
+      const endNode = textNodeWith(to)
       const range = document.createRange()
-      range.setStart(startNode, startNode.data.indexOf(from))
-      range.setEnd(endNode, endNode.data.indexOf(to) + to.length)
+      range.setStart(startNode, startNode.data.indexOf(from.text))
+      range.setEnd(endNode, endNode.data.indexOf(to.text) + to.text.length)
 
       const selection = window.getSelection()
       selection?.removeAllRanges()
       selection?.addRange(range)
       document.dispatchEvent(new Event("selectionchange"))
     },
-    { messageId, from, to }
+    { from, to }
   )
 }
 
@@ -158,7 +149,7 @@ test.describe("Quote by range", () => {
 
     // Keep the app in mouse mode — the floating quote button is mouse-only.
     await page.mouse.move(10, 10)
-    await selectAcross(page, sourceId, "blocked", " until")
+    await selectAcross(page, { messageId: sourceId, text: "blocked" }, { messageId: sourceId, text: " until" })
 
     const quoteButton = page.getByRole("button", { name: /^quote$/i })
     await expect(quoteButton).toBeVisible({ timeout: 10000 })
@@ -192,7 +183,7 @@ test.describe("Quote by range", () => {
     await expect(quotedRow.locator("strong").filter({ hasText: "blocked" })).toBeVisible()
   })
 
-  test("triple-clicking a message's last paragraph offers the quote, a drag into the next message does not", async ({
+  test("triple-clicking a message's last paragraph offers the quote; a selection reaching the next message does not", async ({
     page,
   }) => {
     const { testId } = await loginAndCreateWorkspace(page, "quote-triple")
@@ -218,28 +209,9 @@ test.describe("Quote by range", () => {
     await expect(chip).not.toContainText(opening)
 
     // Visible first, so hiding is the selection reaching past the body.
-    const selectFromSourceInto = (endId: string) =>
-      page.evaluate(
-        ({ sourceId, endId }) => {
-          const textIn = (id: string) => {
-            const body = document.querySelector(`[data-message-id="${id}"] .message-content .markdown-content`)
-            const node = body && document.createTreeWalker(body, NodeFilter.SHOW_TEXT).nextNode()
-            if (!node) throw new Error(`No rendered text for ${id}`)
-            return node
-          }
-          const range = document.createRange()
-          range.setStart(textIn(sourceId), 0)
-          range.setEnd(textIn(endId), 5)
-          const selection = window.getSelection()
-          selection?.removeAllRanges()
-          selection?.addRange(range)
-          document.dispatchEvent(new Event("selectionchange"))
-        },
-        { sourceId, endId }
-      )
-    await selectFromSourceInto(sourceId)
+    await selectAcross(page, { messageId: sourceId, text: "opening" }, { messageId: sourceId, text: "scene" })
     await expect(quoteButton).toBeVisible()
-    await selectFromSourceInto(nextId)
+    await selectAcross(page, { messageId: sourceId, text: "opening" }, { messageId: nextId, text: "followup" })
     await expect(quoteButton).toBeHidden()
   })
 
