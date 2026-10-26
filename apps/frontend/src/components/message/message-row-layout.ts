@@ -14,3 +14,13 @@
  */
 export const MESSAGE_ROW_HEAD_PADDING = "pt-3 pb-0.5"
 export const MESSAGE_ROW_CONTINUATION_PADDING = "py-0.5"
+
+/**
+ * Desktop hover toolbar anchor: its bottom edge sits exactly where the row's
+ * top padding ends, so the chip floats over the previous row's tail and never
+ * covers this row's own text — the last line of a grouped or multi-line message
+ * stays selectable while the toolbar is up. The offsets mirror the paddings
+ * above (pt-3 → 12px, py-0.5 → 2px).
+ */
+export const MESSAGE_ROW_HEAD_TOOLBAR_ANCHOR = "bottom-[calc(100%-12px)]"
+export const MESSAGE_ROW_CONTINUATION_TOOLBAR_ANCHOR = "bottom-[calc(100%-2px)]"

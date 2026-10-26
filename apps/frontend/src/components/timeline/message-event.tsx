@@ -23,7 +23,12 @@ import { RelativeTime } from "@/components/relative-time"
 import { ActorAvatar } from "@/components/actor-avatar"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { ModelBadge } from "@/components/message/model-badge"
-import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
+import {
+  MESSAGE_ROW_CONTINUATION_PADDING,
+  MESSAGE_ROW_CONTINUATION_TOOLBAR_ANCHOR,
+  MESSAGE_ROW_HEAD_PADDING,
+  MESSAGE_ROW_HEAD_TOOLBAR_ANCHOR,
+} from "@/components/message/message-row-layout"
 import {
   usePendingMessages,
   usePendingMessageStatus,
@@ -760,10 +765,9 @@ function MessageLayout({
       data-group-continuation={rowDataGroupContinuation}
       // `overflow-hidden` contains the mobile swipe-to-quote translate so the
       // message doesn't bleed out of its bounds. On desktop swipe is disabled
-      // and the hover toolbar floats above the row via `bottom-[calc(100%-20px)]`
-      // — clipping there would cut the toolbar in half (it has nowhere else to
-      // sit on tight continuations). `sm:overflow-visible` releases the clip
-      // at the desktop breakpoint.
+      // and the hover toolbar floats above the row's content, mostly outside
+      // the row's own box — clipping there would hide it. `sm:overflow-visible`
+      // releases the clip at the desktop breakpoint.
       className={cn("relative overflow-hidden sm:overflow-visible", swipePulled && "z-10", containerClassName)}
       // The L's downward leg moves the whole row (clip box included) so the
       // pulled message rides over the next one rather than out of its own clip.
@@ -845,17 +849,17 @@ function MessageLayout({
         {hoverActions && (
           <div
             className={cn(
-              // Floats at the top of the row so hover interactions on heads and
-              // continuations share the same toolbar. The 20px upward overlap keeps
-              // the toolbar readable on py-0.5 continuations without pushing past
-              // the viewport — on heads (pt-3 pb-0.5) it sits just above the
-              // header row.
+              // Floats above the row's content (over the previous row's tail),
+              // Slack-style, so it never covers the text it belongs to; the
+              // anchor follows the row's top padding so heads and continuations
+              // both keep their first line clear.
               //
               // `reveal-actions-hover-only`: revealed on hover/focus for mouse +
               // keyboard users (keyed on the live input mode, so a mouse on a
               // touchscreen laptop reveals it too), and kept hidden for touch —
               // touch users reach these via the long-press action drawer.
-              "reveal-actions-hover-only absolute right-4 z-10 hidden sm:block bottom-[calc(100%-20px)]",
+              "reveal-actions-hover-only absolute right-4 z-10 hidden sm:block",
+              renderAsContinuation ? MESSAGE_ROW_CONTINUATION_TOOLBAR_ANCHOR : MESSAGE_ROW_HEAD_TOOLBAR_ANCHOR,
               isEditing && "!opacity-0 !pointer-events-none"
             )}
           >
