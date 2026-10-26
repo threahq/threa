@@ -15,7 +15,7 @@ const BOUNDARY_TEXT = /[\s\p{P}]$/u
 
 export type DocSyncStatus = { phase: "loading" } | { phase: "ready" } | { phase: "error"; error: unknown }
 
-type DocsApi = typeof docsApi
+type DocsApi = Pick<typeof docsApi, "get" | "listUpdates" | "postUpdate">
 
 function backoffMs(failures: number): number {
   return Math.min(1000 * 2 ** (failures - 1), MAX_BACKOFF_MS)
