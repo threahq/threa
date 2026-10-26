@@ -154,8 +154,9 @@ jobs:
           printf 'Dir::Cache::Archives "%s/apt-archives/";\nAPT::Keep-Downloaded-Packages "true";\n' "$HOME" \
             | sudo tee /etc/apt/apt.conf.d/99-ci-archives
 
-      - name: Cache apt archives
-        uses: actions/cache@v4
+      - name: Restore apt archives
+        id: apt-cache
+        uses: actions/cache/restore@v4
         with:
           path: ~/apt-archives/*.deb
           key: ${{ steps.apt-archives.outputs.key }}
@@ -167,6 +168,14 @@ jobs:
         run: |
           bun run --bun playwright install-deps chromium
           sudo apt-get autoclean
+
+      # Saved here rather than post-job, which is skipped when tests fail.
+      - name: Save apt archives
+        if: steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/apt-archives/*.deb
+          key: ${{ steps.apt-archives.outputs.key }}
 
       - name: Derive browser test database name
         run: |
