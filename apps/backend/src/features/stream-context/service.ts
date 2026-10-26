@@ -6,6 +6,7 @@ import {
   type ListStreamContextResponse,
   type StreamContextItem,
   type StreamContextScope,
+  StreamTypes,
 } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import { decodeKeysetCursor, encodeKeysetCursor } from "../../lib/keyset-cursor"
@@ -77,8 +78,9 @@ export function createStreamContextService({ pool }: Dependencies) {
     const stream = await checkStreamAccess(pool, params.streamId, params.workspaceId, params.userId)
     if (!stream) throw notFound
     const rootStreamId = stream.rootStreamId ?? stream.id
+    // Only a doc can be read without its root: a share grant reads the doc, not its host's index.
     if (
-      rootStreamId !== stream.id &&
+      stream.type === StreamTypes.DOC &&
       !(await checkStreamAccess(pool, rootStreamId, params.workspaceId, params.userId))
     ) {
       throw notFound
