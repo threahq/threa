@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { homedir, hostname, platform, tmpdir } from "node:os"
-import { basename, dirname, join, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import {
   attachmentLocalPath,
   BotKeyring,
@@ -22,14 +22,11 @@ import {
   base64ToBytes,
   bytesToBase64,
   decryptAttachmentBytes,
-  encryptAttachmentBytes,
   E2E_KEY_SCOPES,
   E2E_KEY_STORE_KINDS,
   E2eKeyring,
   FileKeyStore,
   e2eKeyAccount,
-  findLocalImageLinks,
-  imageAttachmentLink,
   mintE2eKeyRecord,
   mintStreamKeyWraps,
   openSealedAck,
@@ -42,10 +39,15 @@ import {
   WS_BACKSTOP_POLL_MS,
   scrubSealedError,
   sealReply,
-  redactLocalImageLinks,
   sealStep,
-  uploadLocalImageLinks,
+  extractAttachmentDirectives,
+  hasReplyAttachments,
+  redactAttachDirectives,
+  uploadReplyAttachments,
+  uploadSealedReplyAttachments,
   type AttachmentRef,
+  type AttachmentUploader,
+  type UploadedAttachment,
   type BotIdentityKey,
   type BotRuntimeHello,
   type E2eKeyScope,
@@ -119,8 +121,6 @@ const E2E_KEY_STORE_DEFAULT: E2eKeyStoreKind | undefined = isTestEntrypoint() ? 
 let PENDING_SNAPSHOT_DIRECTORY = DEFAULT_STORAGE_DIRECTORY
 const STATUS_KEY = "threa-remote"
 const NO_RESPONSE_MARKER = "THREA_NO_RESPONSE"
-/** Server cap on `attachmentIds` per sealed message (`sealedAttachmentIdsSchema` caps at 16). */
-const MAX_SEALED_ATTACHMENTS_PER_MESSAGE = 16
 const FETCH_TIMEOUT_MS = 30_000
 const ATTACHMENT_DOWNLOAD_TIMEOUT_MS = 60_000
 const MAX_FAILURE_POLL_MS = 60_000
@@ -335,13 +335,6 @@ interface StreamMessage {
   content: string
   createdAt: string
   attachments?: AttachmentSummary[]
-}
-
-interface UploadedAttachment {
-  id: string
-  filename: string
-  mimeType: string
-  sizeBytes: number
 }
 
 interface BotPrincipal {
@@ -1557,9 +1550,7 @@ function formatToolResultTrace(
 }
 
 function sanitizeTraceText(text: string): string {
-  return redactLocalImageLinks(
-    text.replace(/, downloaded to [^)\n]+/g, "").replace(/^THREA_ATTACH:\s*.+$/gm, "THREA_ATTACH: [local path omitted]")
-  )
+  return redactAttachDirectives(text.replace(/, downloaded to [^)\n]+/g, ""))
 }
 
 function formatInvocationTrace(invocation: ClaimedInvocation, context: string): string {
@@ -2284,9 +2275,7 @@ function scheduleRecoveredCompletion(finalText: string, ctx: ExtensionContext, d
           return
         }
         const permanentClientError = error instanceof ThreaApiError && error.status >= 400 && error.status < 500
-        const hasAttachments =
-          extractAttachmentDirectives(finalText).paths.length > 0 || findLocalImageLinks(finalText).length > 0
-        if (permanentClientError || hasAttachments) {
+        if (permanentClientError || hasReplyAttachments(finalText)) {
           try {
             await failPending(`Recovered completion failed: ${summarizeError(error)}`, ctx)
           } catch {
@@ -4926,85 +4915,15 @@ function advanceStreamCursor(invocation: ClaimedInvocation, ctx: ExtensionContex
   saveConfig()
 }
 
-function extractAttachmentDirectives(markdown: string): { markdown: string; paths: string[] } {
-  const paths: string[] = []
-  const lines = markdown.split("\n").filter((line) => {
-    const match = line.match(/^THREA_ATTACH:\s*(.+?)\s*$/)
-    if (!match) return true
-    paths.push(match[1])
-    return false
-  })
-  return { markdown: lines.join("\n").trim(), paths }
-}
-
-function guessMimeType(path: string): string {
-  const lower = path.toLowerCase()
-  if (lower.endsWith(".png")) return "image/png"
-  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg"
-  if (lower.endsWith(".gif")) return "image/gif"
-  if (lower.endsWith(".webp")) return "image/webp"
-  if (lower.endsWith(".svg")) return "image/svg+xml"
-  if (lower.endsWith(".html")) return "text/html"
-  if (lower.endsWith(".md")) return "text/markdown"
-  if (lower.endsWith(".txt")) return "text/plain"
-  if (lower.endsWith(".csv")) return "text/csv"
-  if (lower.endsWith(".pdf")) return "application/pdf"
-  return "application/octet-stream"
-}
-
-async function uploadAttachment(path: string, cwd: string): Promise<UploadedAttachment> {
-  if (!config) throw new Error("Threa remote config not loaded")
-  const absolutePath = resolve(cwd, path)
-  const stats = statSync(absolutePath)
-  if (!stats.isFile()) throw new Error(`${path} is not a file`)
-  const form = new FormData()
-  const bytes = readFileSync(absolutePath)
-  form.append("file", new Blob([bytes], { type: guessMimeType(absolutePath) }), basename(absolutePath))
-  const body = await request<{ data: UploadedAttachment }>(`/api/v1/workspaces/${config.workspaceId}/attachments`, {
-    method: "POST",
-    body: form,
-  })
-  return body.data
-}
-
-async function prepareFinalMarkdown(
-  markdown: string,
-  cwd: string
-): Promise<{ finalMarkdown: string; uploadedAttachments: UploadedAttachment[] }> {
-  const extracted = extractAttachmentDirectives(markdown.trim())
-  const images = await uploadLocalImageLinks(
-    extracted.markdown,
-    cwd,
-    (path) => uploadAttachment(path, cwd),
-    imageAttachmentLink
-  )
-  const listedAttachments: UploadedAttachment[] = []
-  const failedUploads = [...images.failed]
-  for (const path of extracted.paths) {
-    try {
-      listedAttachments.push(await uploadAttachment(path, cwd))
-    } catch (error) {
-      failedUploads.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
-  const attachmentLinks = listedAttachments.map(
-    (attachment) => `- [${attachment.filename}](attachment:${attachment.id})`
-  )
-  const uploadFailureNote =
-    failedUploads.length > 0
-      ? ["Attachment upload failed:", ...failedUploads.map((failure) => `- ${failure}`)].join("\n")
-      : ""
-  return {
-    finalMarkdown: [
-      images.markdown.trim(),
-      attachmentLinks.length > 0 ? "Attachments:" : "",
-      ...attachmentLinks,
-      uploadFailureNote,
-    ]
-      .filter(Boolean)
-      .join("\n\n"),
-    uploadedAttachments: [...images.uploaded, ...listedAttachments],
-  }
+const attachmentUploader: AttachmentUploader = {
+  async uploadAttachment(form) {
+    if (!config) throw new Error("Threa remote config not loaded")
+    const body = await request<{ data: UploadedAttachment }>(`/api/v1/workspaces/${config.workspaceId}/attachments`, {
+      method: "POST",
+      body: form,
+    })
+    return body.data
+  },
 }
 
 function isAuthoritativeInvocationTerminalError(error: unknown): boolean {
@@ -5156,36 +5075,6 @@ async function failInvocation(invocation: ClaimedInvocation, error: unknown): Pr
 }
 
 /**
- * The sealed sibling of {@link uploadAttachment}: encrypt the file under a
- * fresh single-use key and upload ONLY the ciphertext (`e2e=true`, placeholder
- * name/mime). The returned ref carries the key/iv + real metadata, which seal
- * into the reply payload — plaintext file bytes never leave the machine.
- */
-async function uploadSealedAttachment(path: string, cwd: string): Promise<AttachmentRef> {
-  if (!config) throw new Error("Threa remote config not loaded")
-  const absolutePath = resolve(cwd, path)
-  const stats = statSync(absolutePath)
-  if (!stats.isFile()) throw new Error(`${path} is not a file`)
-  const bytes = readFileSync(absolutePath)
-  const encrypted = await encryptAttachmentBytes(bytes)
-  const form = new FormData()
-  form.append("e2e", "true")
-  form.append("file", new Blob([encrypted.ciphertext], { type: "application/octet-stream" }), "encrypted")
-  const body = await request<{ data: UploadedAttachment }>(`/api/v1/workspaces/${config.workspaceId}/attachments`, {
-    method: "POST",
-    body: form,
-  })
-  return {
-    attachmentId: body.data.id,
-    key: encrypted.key,
-    iv: encrypted.iv,
-    filename: basename(absolutePath),
-    mimeType: guessMimeType(absolutePath),
-    sizeBytes: bytes.length,
-  }
-}
-
-/**
  * Sealed sibling of the plaintext complete: encrypt + upload any local
  * attachment directives (ciphertext only; the per-file keys seal into the
  * payload's `attachmentRefs`), seal the final markdown under the stream key,
@@ -5210,35 +5099,13 @@ async function completeSealedWithMarkdown(
     })
     return
   }
-  const refs: AttachmentRef[] = []
-  // Server cap on attachmentIds per sealed message (sealedAttachmentIdsSchema
-  // .max(16)) — clamp before uploading or the whole completion 400s forever.
-  const upload = async (path: string): Promise<AttachmentRef> => {
-    if (refs.length >= MAX_SEALED_ATTACHMENTS_PER_MESSAGE) {
-      throw new Error(`over the ${MAX_SEALED_ATTACHMENTS_PER_MESSAGE}-attachment limit for one message`)
-    }
-    const ref = await uploadSealedAttachment(path, cwd)
-    refs.push(ref)
-    return ref
-  }
-  // Explicit directives claim the capped slots before embedded images.
-  const failedUploads: string[] = []
-  for (const path of extracted.paths) {
-    try {
-      await upload(path)
-    } catch (error) {
-      failedUploads.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
-  const images = await uploadLocalImageLinks(extracted.markdown, cwd, upload, () => "")
-  failedUploads.push(...images.failed)
+  const {
+    markdown: finalMarkdown,
+    refs,
+    attachmentIds,
+  } = await uploadSealedReplyAttachments(attachmentUploader, markdown, cwd)
   if (cancelledInvocations.has(invocation) || invocation.sourceRevision !== revision || invocation.sealing !== sealing)
     return
-  const uploadFailureNote =
-    failedUploads.length > 0
-      ? ["Attachment upload failed:", ...failedUploads.map((failure) => `- ${failure}`)].join("\n")
-      : ""
-  const finalMarkdown = [images.markdown.trim(), uploadFailureNote].filter(Boolean).join("\n\n")
   const reply = await sealReply(sealing, finalMarkdown, refs.length > 0 ? { attachmentRefs: refs } : undefined)
   if (cancelledInvocations.has(invocation) || invocation.sourceRevision !== revision || invocation.sealing !== sealing)
     return
@@ -5249,7 +5116,7 @@ async function completeSealedWithMarkdown(
       sourceRevision: invocation.sourceRevision,
       reply: {
         ...reply,
-        ...(refs.length > 0 && { attachmentIds: refs.map((ref) => ref.attachmentId) }),
+        ...(attachmentIds.length > 0 && { attachmentIds }),
       },
     }),
   })
@@ -5295,7 +5162,7 @@ async function completePending(
     if (invocation.sealing) {
       await completeSealedWithMarkdown(invocation, invocation.sealing, markdown, ctx.cwd)
     } else {
-      const { finalMarkdown, uploadedAttachments } = await prepareFinalMarkdown(markdown, ctx.cwd)
+      const { markdown: finalMarkdown, uploaded } = await uploadReplyAttachments(attachmentUploader, markdown, ctx.cwd)
       if (
         !isInvocationWriteCurrent(invocation, revision, observed) ||
         observed?.updateInProgress ||
@@ -5314,8 +5181,8 @@ async function completePending(
             "pi.remote.invocationId": invocation.id,
             "pi.remote.instanceId": getInvocationInstanceId(invocation),
             ...(noResponse && { "pi.remote.noResponse": "true" }),
-            ...(uploadedAttachments.length > 0 && {
-              "pi.remote.attachmentIds": uploadedAttachments.map((attachment) => attachment.id).join(","),
+            ...(uploaded.length > 0 && {
+              "pi.remote.attachmentIds": uploaded.map((attachment) => attachment.id).join(","),
             }),
           },
         }),
@@ -5412,7 +5279,6 @@ export const __testing = {
   shouldEmitFullTrace,
   traceModeForInvocation,
   completeSealedWithMarkdown,
-  prepareFinalMarkdown,
   sanitizeTraceText,
   downloadSealedContextAttachments,
   setConfigForTesting: (value: unknown) => {

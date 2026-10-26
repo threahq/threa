@@ -59,11 +59,6 @@ export { readConfigFile, writeFileAtomic } from "./config-file"
 export {
   downloadInboundAttachments,
   formatInboundAttachmentManifest,
-  uploadReplyAttachments,
-  extractAttachmentDirectives,
-  redactAttachDirectives,
-  guessMimeType,
-  ATTACH_DIRECTIVE_RE,
   ATTACHMENT_DIR,
   type DownloadedAttachment,
   type SelectedAttachment,
@@ -86,4 +81,4 @@ export {
   type DelegationExecutorContext,
 } from "./delegation-runner"
 export { toolTraceContent, type ToolTraceSection, type ToolTraceSectionLabel } from "./tool-trace"
-export type { DecisionRequest, StepFrame } from "@threahq/bot-runtime-client"
+export { redactAttachDirectives, type DecisionRequest, type StepFrame } from "@threahq/bot-runtime-client"

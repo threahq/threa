@@ -15,12 +15,14 @@ export {
 } from "./archive-grace"
 export { attachmentLocalPath, safeAttachmentFilename } from "./attachment-files"
 export {
-  findLocalImageLinks,
-  imageAttachmentLink,
-  redactLocalImageLinks,
-  uploadLocalImageLinks,
-  type LocalImageLink,
-} from "./local-images"
+  extractAttachmentDirectives,
+  hasReplyAttachments,
+  redactAttachDirectives,
+  uploadReplyAttachments,
+  uploadSealedReplyAttachments,
+  type AttachmentUploader,
+  type UploadedAttachment,
+} from "./reply-files"
 export { parseWsHint, buildBotSocketUrl, isObject, type WsHint } from "./ws-hint"
 export type {
   BotWriteAck,

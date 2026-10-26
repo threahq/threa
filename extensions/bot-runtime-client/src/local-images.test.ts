@@ -84,8 +84,32 @@ describe("findLocalImageLinks", () => {
     ])
   })
 
-  test("reads one level of parentheses in a path", () => {
-    expect(paths("![copy](/tmp/a(1).png)")).toEqual(["/tmp/a(1).png"])
+  test("reads nested parentheses, non-ASCII spaces, line breaks and every title form", () => {
+    expect(
+      paths(
+        [
+          "![a](/tmp/a(1).png)",
+          "![b](/tmp/b((1)).png)",
+          "![c](/tmp/Shot\u202FAM.png)",
+          '![d](/tmp/d.png "say \\"hi\\"")',
+          "![e](/tmp/e.png 'title')",
+          "![f](/tmp/f.png (title))",
+          "![g](\r\n/tmp/g.png\r\n)",
+        ].join("\n\n")
+      )
+    ).toEqual([
+      "/tmp/a(1).png",
+      "/tmp/b((1)).png",
+      "/tmp/Shot\u202FAM.png",
+      "/tmp/d.png",
+      "/tmp/e.png",
+      "/tmp/f.png",
+      "/tmp/g.png",
+    ])
+  })
+
+  test("reads an image the scan misses once another image triggers the parse", () => {
+    expect(paths("![two\nlines](/tmp/m.png) ![s](/tmp/s.png)")).toEqual(["/tmp/m.png", "/tmp/s.png"])
   })
 
   test("skips an image that is a link's text", () => {
@@ -101,7 +125,7 @@ describe("findLocalImageLinks", () => {
       paths("Range [0, 10) ![plot](/tmp/plot.png) see [docs](https://d.test)"),
       paths("[ ![a](/tmp/a.png) | ![b](/tmp/b.png) ]"),
       paths("[see ![x](/tmp/x.png)][ref] and [y]: ![z](/tmp/z.png)"),
-    ]).toEqual([["/tmp/plot.png"], ["/tmp/a.png", "/tmp/b.png"], ["/tmp/z.png"]])
+    ]).toEqual([["/tmp/plot.png"], ["/tmp/a.png", "/tmp/b.png"], ["/tmp/x.png", "/tmp/z.png"]])
   })
 
   test("brackets in an image's path or title, an escaped `!`, or an outer image don't hide the enclosing link", () => {
@@ -114,11 +138,20 @@ describe("findLocalImageLinks", () => {
     ]).toEqual([[], [], [], [], []])
   })
 
-  test("scans many images and links on one line in linear time", () => {
-    const line = "[l](https://e.test) ![i](/tmp/i.png) ".repeat(5_000)
-    const started = performance.now()
-    expect(paths(line)).toHaveLength(5_000)
-    expect(performance.now() - started).toBeLessThan(500)
+  test("parses many images and links on one line in linear time", () => {
+    const line = (n: number) => "[l](https://e.test) ![i](/tmp/i.png) ".repeat(n)
+    const fastest = (n: number) => {
+      let best = Infinity
+      for (let run = 0; run < 3; run++) {
+        const started = performance.now()
+        expect(paths(line(n))).toHaveLength(n)
+        best = Math.min(best, performance.now() - started)
+      }
+      return best
+    }
+    fastest(200)
+    // Linear work grows 4x; a quadratic scan would grow 16x.
+    expect(fastest(1_600) / fastest(400)).toBeLessThan(8)
   })
 
   test("a stray `![` never swallows the prose before a later image", () => {
@@ -132,6 +165,16 @@ describe("findLocalImageLinks", () => {
     const started = performance.now()
     expect(paths("![ x ".repeat(20_000))).toEqual([])
     expect(performance.now() - started).toBeLessThan(500)
+  })
+
+  test("keeps offsets past a leading byte-order mark", () => {
+    const markdown = "\uFEFFSee ![shot](/tmp/shot.png)"
+    const [link] = findLocalImageLinks(markdown)
+    expect(markdown.slice(link!.start, link!.end)).toBe("![shot](/tmp/shot.png)")
+  })
+
+  test("keeps backslashes in a Windows path", () => {
+    expect(paths("![w](C:\\tmp\\_a.png)")).toEqual(["C:\\tmp\\_a.png"])
   })
 
   test("keeps offsets into the original text", () => {
@@ -148,20 +191,57 @@ describe("imageAttachmentLink", () => {
     expect([
       imageAttachmentLink({ ...image, id: "attach_1", filename: "a.png" }, { alt: "Direction\n1" }),
       imageAttachmentLink({ ...image, id: "attach_2", filename: "[draft].png" }, { alt: " " }),
-      imageAttachmentLink({ ...image, id: "attach_3", filename: "c.png" }, { alt: "a [b \\] c" }),
+      imageAttachmentLink({ ...image, id: "attach_3", filename: "c.png" }, { alt: "a [b ] c\\d `e`" }),
     ]).toEqual([
       '[Direction 1](attachment:attach_1 "threa-attachment:filename=a.png&mimeType=image%2Fpng&sizeBytes=12")',
       '[\\[draft\\].png](attachment:attach_2 "threa-attachment:filename=%5Bdraft%5D.png&mimeType=image%2Fpng&sizeBytes=12")',
-      '[a \\[b \\] c](attachment:attach_3 "threa-attachment:filename=c.png&mimeType=image%2Fpng&sizeBytes=12")',
+      '[a \\[b \\] c\\\\d \\`e\\`](attachment:attach_3 "threa-attachment:filename=c.png&mimeType=image%2Fpng&sizeBytes=12")',
     ])
   })
 })
 
 describe("redactLocalImageLinks", () => {
-  test("hides local image paths and leaves web images and code alone", () => {
+  test("hides every local image path, in code, HTML blocks and footnotes too, and leaves web images alone", () => {
     expect(
-      redactLocalImageLinks("See ![shot](/home/u/shot.png), ![web](https://x.test/w.png) and `![c](/tmp/c.png)`")
-    ).toBe("See [image: local path omitted], ![web](https://x.test/w.png) and `![c](/tmp/c.png)`")
+      redactLocalImageLinks(
+        [
+          "See ![shot](/home/u/shot.png), ![web](https://x.test/w.png) and `![c](/tmp/c.png)`",
+          "<details>",
+          "![d](/tmp/d.png)",
+          "</details>",
+          "[^1]: ![f](./f.png)",
+        ].join("\n")
+      )
+    ).toBe(
+      [
+        "See [image: local path omitted], ![web](https://x.test/w.png) and `[image: local path omitted]`",
+        "<details>",
+        "[image: local path omitted]",
+        "</details>",
+        "[^1]: [image: local path omitted]",
+      ].join("\n")
+    )
+  })
+
+  test("scans a large trace in a few milliseconds", () => {
+    const trace = "const x = a[i] ![ (b) `c` ".repeat(10_000) + "![shot](/tmp/s.png)"
+    const started = performance.now()
+    expect(redactLocalImageLinks(trace).endsWith("[image: local path omitted]")).toBe(true)
+    expect(performance.now() - started).toBeLessThan(200)
+  })
+
+  test("hides escaped and nested-parenthesis paths", () => {
+    expect(redactLocalImageLinks("![a](/tmp/a\\).png) ![b](/tmp/b((1)).png)")).toBe(
+      "[image: local path omitted] [image: local path omitted]"
+    )
+  })
+
+  test("scans many unclosed parenthesized titles in linear time", () => {
+    const trace = "![a](b (".repeat(20_000)
+    const started = performance.now()
+    expect(redactLocalImageLinks(trace)).toBe(trace)
+    expect(findLocalImageLinks(trace)).toEqual([])
+    expect(performance.now() - started).toBeLessThan(200)
   })
 })
 

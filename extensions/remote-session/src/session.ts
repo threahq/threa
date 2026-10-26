@@ -22,6 +22,9 @@ import {
   sealDecision,
   sealReply,
   sealStep,
+  hasReplyAttachments,
+  uploadReplyAttachments,
+  uploadSealedReplyAttachments,
   type BotDecisionPayload,
   type BotRuntimeHello,
   type CreateDecisionRequestBody,
@@ -38,11 +41,8 @@ import {
   downloadInboundAttachments,
   downloadSealedInboundAttachments,
   formatInboundAttachmentManifest,
-  hasReplyAttachments,
   selectSealedInboundRefs,
   type DownloadedAttachment,
-  uploadReplyAttachments,
-  uploadSealedReplyAttachments,
 } from "./attachments"
 import { sanitizeId, type RemoteSessionConfig } from "./identity"
 import {
