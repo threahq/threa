@@ -1,4 +1,5 @@
 import { AgentTriggers, type AgentSessionRerunContext, type JSONContent } from "@threahq/types"
+import { z } from "zod"
 import type { DynamicNamingEvaluateJobData } from "./dynamic-naming-contract"
 import type { QueueClaim } from "./repository"
 export type { DynamicNamingEvaluateJobData } from "./dynamic-naming-contract"
@@ -63,6 +64,7 @@ export const JobQueues = {
   STREAM_CONNECTION_SWEEP: "stream_connection.sweep",
   STREAM_CONNECTION_COPY_ATTACHMENT: "stream_connection.copy_attachment",
   STREAM_CONNECTION_PROFILES: "stream_connection.profiles",
+  DOC_ACTIVITY_ROLLUP: "doc.activity-rollup",
 } as const
 
 export type JobQueueName = (typeof JobQueues)[keyof typeof JobQueues]
@@ -470,6 +472,20 @@ export interface LinkPreviewVisibleRefreshJobData {
   previewId: string
 }
 
+/**
+ * Folds a doc's edits since the last roll-up into one `doc:activity` row on its
+ * host. Senders key the queue-message id on a quiet-window time bucket so a burst
+ * of flushes collapses into one job per doc per window. `hop` counts the worker's
+ * own reschedules while the doc is still being edited, like
+ * {@link GithubPreviewRefreshJobData.hop}.
+ */
+export const DocActivityRollupJobSchema = z.object({
+  workspaceId: z.string().min(1),
+  docId: z.string().min(1),
+  hop: z.number().int().nonnegative().optional(),
+})
+export type DocActivityRollupJobData = z.infer<typeof DocActivityRollupJobSchema>
+
 export interface JobDataMap {
   [JobQueues.PERSONA_AGENT]: PersonaAgentJobData
   [JobQueues.DYNAMIC_NAMING_EVALUATE]: DynamicNamingEvaluateJobData
@@ -511,6 +527,7 @@ export interface JobDataMap {
   [JobQueues.STREAM_CONNECTION_SWEEP]: StreamConnectionSweepJobData
   [JobQueues.STREAM_CONNECTION_COPY_ATTACHMENT]: StreamConnectionCopyAttachmentJobData
   [JobQueues.STREAM_CONNECTION_PROFILES]: StreamConnectionProfilesJobData
+  [JobQueues.DOC_ACTIVITY_ROLLUP]: DocActivityRollupJobData
 }
 
 /** Returns void on success, throws on error. */

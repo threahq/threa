@@ -119,6 +119,7 @@ import {
   findTimelineTargetIndex,
   getTimelineItemKey,
   filterVisibleItems,
+  mergeDocActivityRuns,
   collectDividerAnchorIds,
   OLDER_SKELETON_ITEMS,
   type TimelineItem,
@@ -1480,7 +1481,9 @@ export function StreamContent({
   const visibleItems = useMemo(
     () =>
       timeDerive(() => {
-        const filtered = useVirtualized ? filterVisibleItems(timelineItems, isChannel) : timelineItems
+        const filtered = mergeDocActivityRuns(
+          useVirtualized ? filterVisibleItems(timelineItems, isChannel) : timelineItems
+        )
         const folded = foldRuns
           ? foldAuthorRuns(filtered, {
               store: runFoldStore,

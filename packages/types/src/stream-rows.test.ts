@@ -118,9 +118,14 @@ describe("STREAM_ROW_SPEC", () => {
     for (const type of BOARD_EVENT_ROW_TYPES) expect(STREAM_ROW_SPEC[type].authorGroupable).toBe(false)
   })
 
-  test("doc:created renders like member_joined; doc:edited has no row", () => {
-    expect([STREAM_ROW_SPEC["doc:created"], STREAM_ROW_SPEC["doc:edited"].rendersAsOwnRow]).toEqual([
+  test("doc:created renders like member_joined, doc:activity takes its slot but groups by doc; doc:edited has no row", () => {
+    expect([
+      STREAM_ROW_SPEC["doc:created"],
+      STREAM_ROW_SPEC["doc:activity"],
+      STREAM_ROW_SPEC["doc:edited"].rendersAsOwnRow,
+    ]).toEqual([
       STREAM_ROW_SPEC.member_joined,
+      { ...STREAM_ROW_SPEC.member_joined, rendersAsOwnRow: false, grouping: "doc" },
       false,
     ])
   })

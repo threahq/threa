@@ -798,6 +798,8 @@ export type {
   AsideAnchoredEventPayload,
   DocCreatedEventPayload,
   DocEditedEventPayload,
+  DocActivityEventPayload,
+  DocActivitySection,
   DocBlockThread,
   DocSection,
   DocSectionResponse,

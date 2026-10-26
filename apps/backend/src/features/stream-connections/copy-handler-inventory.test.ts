@@ -53,6 +53,10 @@ const COPY_TREATMENT: Record<string, { treatment: Treatment; why: string }> = {
     treatment: "inert",
     why: "conversations come from boundary extraction, which skips copies",
   },
+  "features/docs/activity-outbox-handler.ts": {
+    treatment: "inert",
+    why: "the bridge withholds docs, and a copy's write authority refuses creating one under it",
+  },
   "features/dynamic-naming/outbox-handler.ts": { treatment: "skips", why: "a copy takes its name from the host" },
   "features/emoji/usage-outbox-handler.ts": {
     treatment: "skips",

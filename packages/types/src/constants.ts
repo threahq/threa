@@ -357,6 +357,7 @@ export const EVENT_TYPES = [
   "aside:anchored",
   "doc:created",
   "doc:edited",
+  "doc:activity",
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 
@@ -446,8 +447,10 @@ export const TIMELINE_BROADCAST_EVENT_TYPES = [
   // summary), like the delegation status change below.
   "call_started",
   // A doc was created under this stream: every member sees the doc row.
-  // `doc:edited` is deliberately NOT here — it lives in the doc stream's own log.
+  // `doc:edited` is deliberately NOT here — it lives in the doc stream's own log;
+  // `doc:activity` is its per-quiet-window roll-up into the host's timeline.
   "doc:created",
+  "doc:activity",
   // `agent:follow_up_cancelled` and `delegation:status_changed` are deliberately
   // NOT here: each is a patch on its originating card (cancel flips the
   // scheduled card; a delegation status change flips the created card), not a

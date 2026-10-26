@@ -1,5 +1,6 @@
 import type { JSONContent, ReferenceAudience } from "@threahq/types"
 import { classifyDraftLink } from "@/lib/in-app-links"
+import { joinNames } from "@/lib/join-names"
 
 export interface ComposerReference {
   kind: "share" | "link"
@@ -119,11 +120,6 @@ export function resolveSendWarning(
   const convertibleStreamIds =
     tone === "reveal" ? exposed.reveal : exposedWhere((ref) => ref.kind === "link" && ref.messageId !== null)
   return { tone, lead, exposed, convertibleStreamIds }
-}
-
-function joinNames(names: string[]): string {
-  if (names.length === 1) return names[0]
-  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
 }
 
 function fullAudience(count: number, names: string[]): string {

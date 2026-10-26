@@ -2420,6 +2420,29 @@ export interface DocEditedEventPayload {
   touchedBlockIds: string[]
 }
 
+/** A block a `doc:activity` row names; `markdown` is only the block's first line. */
+export interface DocActivitySection {
+  blockId: string
+  kind: string
+  markdown: string
+}
+
+/**
+ * Payload for `doc:activity` in the host stream (broadcast, INV-61): the doc's
+ * non-system `doc:edited` rows in `fromSequence..toSequence`, folded over one quiet window.
+ * `sections` are the touched blocks still present, in document order.
+ */
+export interface DocActivityEventPayload {
+  docId: string
+  actors: { actorId: string; actorType: AuthorType }[]
+  sections: DocActivitySection[]
+  /** Touched blocks the doc no longer holds. */
+  removedBlockIds: string[]
+  editCount: number
+  fromSequence: string
+  toSequence: string
+}
+
 /** One top-level block of a doc, projected for search and section threads. */
 export interface DocSection {
   blockId: string

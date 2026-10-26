@@ -17,6 +17,7 @@ import {
   findTimelineTargetIndex,
   getTimelineItemKey,
   groupTimelineItems,
+  mergeDocActivityRuns,
   injectGapItems,
   injectDayDividers,
   timelineItemEqual,
@@ -1576,5 +1577,88 @@ describe("doc anchor rows", () => {
       toEventItem(docRow(new Date(2026, 5, 16, 9).toISOString())),
     ]
     expect(injectDayDividers(items).map((item) => item.type)).toEqual(["event", "day_divider", "event"])
+  })
+})
+
+describe("groupTimelineItems doc activity", () => {
+  function activity(id: string, sequence: string, docId: string): StreamEvent {
+    return createEvent({
+      id,
+      sequence,
+      eventType: "doc:activity",
+      payload: { docId, actors: [], sections: [], removedBlockIds: [], editCount: 1 },
+    })
+  }
+  function message(id: string, sequence: string): StreamEvent {
+    return createEvent({ id, sequence, eventType: "message_created", payload: { messageId: `msg_${id}` } })
+  }
+  function shape(items: TimelineItem[]) {
+    return items.map((item) =>
+      item.type === "doc_activity_group"
+        ? { docId: item.docId, ids: item.events.map((event) => event.id) }
+        : { type: item.type }
+    )
+  }
+
+  it("merges adjacent same-doc rows and splits at any rendered row between them", () => {
+    const items = mergeDocActivityRuns(
+      groupTimelineItems(
+        [
+          activity("a1", "1", "doc_a"),
+          activity("a2", "2", "doc_a"),
+          activity("a3", "3", "doc_a"),
+          message("m1", "4"),
+          activity("a4", "5", "doc_a"),
+        ],
+        "usr_1"
+      )
+    )
+    expect(shape(items)).toEqual([
+      { docId: "doc_a", ids: ["a1", "a2", "a3"] },
+      { type: "event" },
+      { docId: "doc_a", ids: ["a4"] },
+    ])
+  })
+
+  it("never merges interleaved rows of different docs, and a single row is a group of one", () => {
+    const items = mergeDocActivityRuns(
+      groupTimelineItems(
+        [activity("a1", "1", "doc_a"), activity("b1", "2", "doc_b"), activity("a2", "3", "doc_a")],
+        "usr_1"
+      )
+    )
+    expect(shape(items)).toEqual([
+      { docId: "doc_a", ids: ["a1"] },
+      { docId: "doc_b", ids: ["b1"] },
+      { docId: "doc_a", ids: ["a2"] },
+    ])
+  })
+
+  it("merges across a session card the channel hides", () => {
+    const items = mergeDocActivityRuns(
+      filterVisibleItems(
+        groupTimelineItems(
+          [
+            activity("a1", "1", "doc_a"),
+            createSessionStartedEvent("s1", "2", "session_1", "msg_0"),
+            activity("a2", "3", "doc_a"),
+          ],
+          "usr_1"
+        ),
+        true
+      )
+    )
+    expect(shape(items)).toEqual([{ docId: "doc_a", ids: ["a1", "a2"] }])
+  })
+
+  it("addresses the group by any of its events for index and divider lookups", () => {
+    const items = mergeDocActivityRuns(
+      groupTimelineItems([activity("a1", "1", "doc_a"), activity("a2", "2", "doc_a")], "usr_1")
+    )
+    expect({
+      first: findEventItemIndex(items, "a1"),
+      second: findEventItemIndex(items, "a2"),
+      dividers: [...collectDividerAnchorIds(items)],
+    }).toEqual({ first: 0, second: 0, dividers: ["a1", "a2"] })
   })
 })
