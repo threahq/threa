@@ -15,10 +15,8 @@ import { ActorAvatar } from "@/components/actor-avatar"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
 import {
   MESSAGE_ROW_CONTINUATION_PADDING,
-  MESSAGE_ROW_CONTINUATION_TOOLBAR_ANCHOR,
   MESSAGE_ROW_HEAD_PADDING,
-  MESSAGE_ROW_HEAD_TOOLBAR_ANCHOR,
-  MESSAGE_ROW_TOOLBAR_GRACE,
+  messageRowToolbarClassName,
 } from "@/components/message/message-row-layout"
 import { RelativeTime } from "@/components/relative-time"
 import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-content"
@@ -499,26 +497,13 @@ export function MessageItem({
     onMarkUnread: conversationRead && rowRead !== "unread" ? () => conversationRead.markUnread(message.id) : undefined,
   }
 
-  // Desktop/keyboard only via the shared input-mode reveal model: the row is the
-  // `reveal-host`, and `reveal-actions-hover-only` keeps this cluster
-  // opacity-0 + pointer-events-none for touch (so a tap can't trigger the
-  // invisible button — it passes through), revealing it on mouse hover / focus.
   // Desktop hover toolbar, mirroring the stream timeline (`MessageEvent`): the same
-  // quick actions (react · save · quote reply · overflow) in a chip that floats
-  // above the row's content rather than inline, so it needs no content-padding
-  // reserve, holds the full set without crowding and never covers the text it
-  // belongs to (the anchor follows the row's top padding). `hidden sm:block`
-  // keeps it off phones entirely; touch reaches these via the long-press drawer.
+  // quick actions (react · save · quote reply · overflow) in a chip floating above
+  // the row's content, so it needs no content-padding reserve.
   // Reply-in-thread is timeline-only — a board/conversation row is already inside its
   // conversation, and its branch gesture ("New sub-topic") lives in the overflow menu.
   const overflowMenu = (
-    <div
-      className={cn(
-        "reveal-actions-hover-only absolute z-10 hidden sm:block",
-        MESSAGE_ROW_TOOLBAR_GRACE,
-        continuation ? MESSAGE_ROW_CONTINUATION_TOOLBAR_ANCHOR : MESSAGE_ROW_HEAD_TOOLBAR_ANCHOR
-      )}
-    >
+    <div className={messageRowToolbarClassName(continuation)}>
       <div className="flex items-center gap-0.5 rounded-md border border-border/60 bg-popover/95 px-1 py-1 shadow-md backdrop-blur-sm">
         {/* The settling pair, leftmost. The toolbar is right-anchored, so this
             grows leftward and displaces nothing (INV-21); a settled row renders

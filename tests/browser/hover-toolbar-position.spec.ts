@@ -41,7 +41,9 @@ async function expectToolbarClearOfContent(row: Locator, toolbar: Locator) {
   expect(toolbarBox.y + toolbarBox.height).toBeLessThanOrEqual(contentBox.y + 1)
 }
 
-test("the hover toolbar sits above the text of heads and grouped continuations", async ({ page }) => {
+test("the hover toolbar sits above the text of heads and grouped continuations and survives a diagonal reach", async ({
+  page,
+}) => {
   const { testId } = await loginAndCreateWorkspace(page, "hover-toolbar")
   await createChannel(page, `hover-toolbar-${testId}`)
   const editor = page.locator("[contenteditable='true']").first()
@@ -80,11 +82,12 @@ test("the hover toolbar sits above the text of heads and grouped continuations",
   await expect(continuation.locator("xpath=..")).toHaveAttribute("data-group-continuation", "true")
 
   // A diagonal reach from the text up to the chip passes over the previous row
-  // just left of the chip; that stretch must keep this row's toolbar up.
+  // just left of the chip; that stretch must stay inside this row's hover
+  // subtree, or the previous row takes the hover and the toolbar fades out.
   const chip = await box(continuationToolbar.locator("> div"))
   const rowTop = (await box(continuation)).y
   await page.mouse.move(chip.x - 40, rowTop + 10, { steps: 4 })
   await page.mouse.move(chip.x - 16, chip.y + chip.height / 2, { steps: 4 })
-  await page.waitForTimeout(400)
+  expect(await continuationToolbar.evaluate((el) => el.matches(":hover"))).toBe(true)
   await expect(continuationToolbar).toHaveCSS("opacity", "1")
 })
