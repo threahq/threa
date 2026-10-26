@@ -53,6 +53,7 @@ export interface ErrorShape {
   code: string
   message: string
   hint?: string
+  details?: Record<string, unknown>
 }
 
 export function toErrorShape(error: unknown): ErrorShape {
@@ -61,6 +62,7 @@ export function toErrorShape(error: unknown): ErrorShape {
   if (error instanceof ThreaApiError) {
     const shape: ErrorShape = { code: error.code ?? `HTTP_${error.status}`, message: error.message }
     if (error.hint) shape.hint = error.hint
+    if (error.details) shape.details = error.details
     return shape
   }
   return { code: "ERROR", message: error instanceof Error ? error.message : String(error) }

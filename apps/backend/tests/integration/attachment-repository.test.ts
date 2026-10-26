@@ -449,4 +449,37 @@ describe("AttachmentRepository", () => {
       })
     })
   })
+
+  describe("deleteIfUnbound", () => {
+    const insertUpload = (client: Parameters<typeof AttachmentRepository.insert>[0], id: string) =>
+      AttachmentRepository.insert(client, {
+        id,
+        workspaceId: testWorkspaceId,
+        uploadedBy: testUserId,
+        filename: "diagram.png",
+        mimeType: "image/png",
+        sizeBytes: 512,
+        storagePath: `/test/${id}`,
+        safetyStatus: "clean",
+      })
+
+    test("should keep a file a doc holds and delete one nothing holds", async () => {
+      const held = attachmentId()
+      const free = attachmentId()
+
+      const result = await withTestTransaction(pool, async (client) => {
+        await insertUpload(client, held)
+        await insertUpload(client, free)
+        await AttachmentRepository.attachToStream(client, testWorkspaceId, [held], testStreamId, testUserId)
+        return {
+          held: await AttachmentRepository.deleteIfUnbound(client, testWorkspaceId, held),
+          free: await AttachmentRepository.deleteIfUnbound(client, testWorkspaceId, free),
+          heldRow: (await AttachmentRepository.findById(client, testWorkspaceId, held))?.streamId,
+          freeRow: await AttachmentRepository.findById(client, testWorkspaceId, free),
+        }
+      })
+
+      expect(result).toEqual({ held: null, free: `/test/${free}`, heldRow: testStreamId, freeRow: null })
+    })
+  })
 })

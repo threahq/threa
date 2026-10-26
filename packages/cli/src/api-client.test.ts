@@ -1,6 +1,7 @@
 import { afterEach, expect, spyOn, test } from "bun:test"
 import { ThreaApiClient, ThreaApiError } from "./api-client"
 import { jsonResponse } from "./test-support"
+import { toErrorShape } from "./tools/result"
 
 const fetchSpy = spyOn(globalThis, "fetch")
 
@@ -51,6 +52,25 @@ test("error body maps into ThreaApiError status/code/message", async () => {
   expect(error.status).toBe(400)
   expect(error.code).toBe("VALIDATION_ERROR")
   expect(error.message).toBe("bad input")
+})
+
+test("should keep the details an error body carries so a caller can recover", async () => {
+  fetchSpy.mockResolvedValue(
+    jsonResponse(500, {
+      error: "doc created, body not applied",
+      code: "DOC_CREATE_INCOMPLETE",
+      details: { docId: "stream_doc" },
+    })
+  )
+  const client = makeClient()
+
+  const error = await client.post("/docs", { streamId: "stream_host", title: "Plan" }).catch((e) => e)
+
+  expect(toErrorShape(error)).toEqual({
+    code: "DOC_CREATE_INCOMPLETE",
+    message: "doc created, body not applied",
+    details: { docId: "stream_doc" },
+  })
 })
 
 test("404 carries the missing-scope hint", async () => {

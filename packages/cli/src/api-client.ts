@@ -18,12 +18,14 @@ export class ThreaApiError extends Error {
   readonly status: number
   readonly code?: string
   readonly hint?: string
+  readonly details?: Record<string, unknown>
 
-  constructor(args: { status: number; code?: string; message: string }) {
+  constructor(args: { status: number; code?: string; message: string; details?: Record<string, unknown> }) {
     super(args.message)
     this.name = "ThreaApiError"
     this.status = args.status
     this.code = args.code
+    this.details = args.details
     this.hint = deriveHint(args.status)
   }
 }
@@ -143,14 +145,19 @@ export class ThreaApiClient {
   private async toError(response: Response): Promise<ThreaApiError> {
     let code: string | undefined
     let message: string | undefined
+    let details: Record<string, unknown> | undefined
     if (response.headers.get("content-type")?.includes("application/json")) {
       try {
         const parsed = JSON.parse((await response.text()).slice(0, 4_000)) as {
           error?: unknown
           code?: unknown
+          details?: unknown
         }
         if (typeof parsed.error === "string") message = parsed.error
         if (typeof parsed.code === "string") code = parsed.code
+        if (parsed.details && typeof parsed.details === "object" && !Array.isArray(parsed.details)) {
+          details = parsed.details as Record<string, unknown>
+        }
       } catch {
         // Non-JSON or malformed body: fall through to the status-line message.
       }
@@ -159,6 +166,7 @@ export class ThreaApiClient {
       status: response.status,
       code,
       message: message ?? `Threa API ${response.status} ${response.statusText}`,
+      details,
     })
   }
 }

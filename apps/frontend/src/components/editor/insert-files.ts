@@ -60,6 +60,9 @@ export function insertFilesIntoEditor(
       try {
         const result = await uploadFile(file)
         if (!stillTargets()) return
+        if (result.attachment.status === "error" && onUploadFailed) {
+          return onUploadFailed(tempId, new Error(result.attachment.error || "Upload failed"))
+        }
         // uploadFile resolves once the id is RESERVED — the bytes may still be
         // streaming in the background. The node is a reference marker, so it
         // settles to "uploaded" here; live transfer state is the uploader's,

@@ -37,6 +37,17 @@ describe("normalizeStreamDescription", () => {
     expect(result?.description).toBe("kept")
   })
 
+  test("should keep a doc link in a markdown description as a doc chip", () => {
+    const result = normalizeStreamDescription({ description: "See [Rotation plan](doc:stream_01DOC#blk_01ROW)" })
+    expect({
+      description: result?.description,
+      chip: result?.descriptionJson?.content?.[0]?.content?.find((node) => node.type === "docEmbed")?.attrs,
+    }).toEqual({
+      description: "See [Rotation plan](doc:stream_01DOC#blk_01ROW)",
+      chip: expect.objectContaining({ docId: "stream_01DOC", blockId: "blk_01ROW", title: "Rotation plan" }),
+    })
+  })
+
   test("empty markdown clears the description", () => {
     expect(normalizeStreamDescription({ description: "   " })).toEqual({ description: null, descriptionJson: null })
   })

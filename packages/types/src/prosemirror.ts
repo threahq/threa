@@ -254,6 +254,7 @@ export type ThreaInlineNode =
   | ThreaEmoji
   | ThreaAttachmentReference
   | ThreaMemoEmbed
+  | ThreaDocEmbed
   | ThreaGiphyEmbed
   | ThreaMath
   | ThreaHardBreak
@@ -330,6 +331,17 @@ export interface ThreaMemoEmbed {
     /** The ID of the referenced memo */
     memoId: string
     /** Memo title cached at insert time so the chip can render before hydration */
+    title?: string
+  }
+}
+
+/** Doc embed (pointer) - an inline chip for a doc, optionally one of its blocks. Serializes to `[Title](doc:id#blk_x)`. */
+export interface ThreaDocEmbed {
+  type: "docEmbed"
+  attrs: {
+    docId: string
+    blockId?: string | null
+    /** Doc title cached at insert time, shown until the live title loads */
     title?: string
   }
 }
@@ -499,6 +511,15 @@ const memoEmbedNodeSchema = z.object({
   }),
 })
 
+const docEmbedNodeSchema = z.object({
+  type: z.literal("docEmbed"),
+  attrs: z.object({
+    docId: z.string(),
+    blockId: z.string().nullish(),
+    title: z.string().optional(),
+  }),
+})
+
 // Embeds may only point at Giphy's own CDN — the node renders an <img> from this
 // URL, so an arbitrary origin would be an open image-embed surface. Enforced at
 // the persistence boundary too, not just at parse/render time.
@@ -537,6 +558,7 @@ const inlineNodeSchema: z.ZodType<ThreaInlineNode> = z.union([
   emojiNodeSchema,
   attachmentReferenceNodeSchema,
   memoEmbedNodeSchema,
+  docEmbedNodeSchema,
   giphyEmbedNodeSchema,
   mathNodeSchema,
   hardBreakNodeSchema,
