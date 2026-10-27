@@ -120,62 +120,34 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Get Playwright version
-        id: playwright-version
-        run: echo "version=$(bun run --bun playwright --version)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Playwright browsers
-        id: playwright-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-browsers-${{ steps.playwright-version.outputs.version }}-chromium
-
-      - name: Install Playwright browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: bun run --bun playwright install chromium
-
-      - name: Drop flaky Microsoft apt repos
-        # The Azure-hosted runner ships Microsoft apt repos (azure-cli, prod)
-        # whose signature check intermittently fails ("NOSPLIT"), which aborts
-        # the apt-get run inside `playwright install-deps` with exit 100. They're
-        # unrelated to the browser deps, so remove them before installing.
-        run: sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* || true
-
-      # The Azure Ubuntu mirror has served the ~22 MB of browser .debs at
-      # ~30 kB/s, which ate 13 of the job's 25 minutes and cancelled a shard.
-      # Cached .debs leave apt only the package index to fetch.
-      - name: Keep apt downloads in a cacheable directory
-        id: apt-archives
+      # Browsers and their OS libraries come preinstalled in Microsoft's image,
+      # replacing a `playwright install-deps` that spent 9-16 minutes on apt.
+      # The tag is derived from the locked version: a mismatch means Playwright
+      # can't find its browsers. Postgres/MinIO stay on the host and the tests
+      # reach them on localhost through --network host.
+      - name: Pull Playwright image
         run: |
-          echo "key=apt-playwright-deps-$ImageOS-$ImageVersion-${{ steps.playwright-version.outputs.version }}" >> "$GITHUB_OUTPUT"
-          echo "restore-key=apt-playwright-deps-$ImageOS-" >> "$GITHUB_OUTPUT"
-          mkdir -p ~/apt-archives/partial
-          printf 'Dir::Cache::Archives "%s/apt-archives/";\nAPT::Keep-Downloaded-Packages "true";\n' "$HOME" \
-            | sudo tee /etc/apt/apt.conf.d/99-ci-archives
-
-      - name: Restore apt archives
-        id: apt-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/apt-archives/*.deb
-          key: ${{ steps.apt-archives.outputs.key }}
-          restore-keys: ${{ steps.apt-archives.outputs.restore-key }}
-
-      - name: Install Playwright system dependencies
-        # autoclean drops .debs the mirror has superseded, so the
-        # restore-keys carry-over doesn't grow the cache across image updates.
-        run: |
-          bun run --bun playwright install-deps chromium
-          sudo apt-get autoclean
-
-      # Saved here rather than post-job, which is skipped when tests fail.
-      - name: Save apt archives
-        if: steps.apt-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ~/apt-archives/*.deb
-          key: ${{ steps.apt-archives.outputs.key }}
+          version="$(bun -p 'require("@playwright/test/package.json").version')"
+          image="mcr.microsoft.com/playwright:v${version}-noble"
+          for attempt in 1 2 3 4 5; do
+            if docker pull "$image"; then
+              break
+            fi
+            echo "docker pull playwright failed (attempt $attempt/5) — retrying in $((attempt * 5))s"
+            sleep $((attempt * 5))
+          done
+          bun_bin="$(readlink -f "$(command -v bun)")"
+          cat > "$RUNNER_TEMP/in-playwright" <<EOF
+          #!/usr/bin/env bash
+          exec docker run --rm --init --ipc=host --network host \\
+            --user "\$(id -u):\$(id -g)" -e HOME=/tmp \\
+            -e CI -e PLAYWRIGHT_TEST_DB_NAME -e PLAYWRIGHT_FRONTEND_PREBUILT \\
+            -e PATH=/opt/bun:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \\
+            -v "$bun_bin:/opt/bun/bun:ro" -v "$bun_bin:/opt/bun/bunx:ro" \\
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" -w "$GITHUB_WORKSPACE" \\
+            "$image" "\$@"
+          EOF
+          chmod +x "$RUNNER_TEMP/in-playwright"
 
       - name: Derive browser test database name
         run: |
@@ -214,7 +186,8 @@ jobs:
       - name: Run browser tests
         id: initial-run
         continue-on-error: true
-        run: bun run test:browser -- --reporter=line,blob --shard=${{ matrix.shard_index }}/${{ env.TOTAL_SHARDS }}
+        run: |
+          "$RUNNER_TEMP/in-playwright" bun run test:browser -- --reporter=line,blob --shard=${{ matrix.shard_index }}/${{ env.TOTAL_SHARDS }}
         env:
           CI: true
           PLAYWRIGHT_TEST_DB_NAME: ${{ env.PLAYWRIGHT_TEST_DB_NAME }}
@@ -239,7 +212,7 @@ jobs:
             echo "::warning::No failed-test IDs found — retrying the shard after the infrastructure failure"
             retry_target=(--shard=${{ matrix.shard_index }}/${{ env.TOTAL_SHARDS }})
           fi
-          bun run test:browser -- --reporter=line,blob "${retry_target[@]}" --retries=0
+          "$RUNNER_TEMP/in-playwright" bun run test:browser -- --reporter=line,blob "${retry_target[@]}" --retries=0
         env:
           CI: true
           PLAYWRIGHT_TEST_DB_NAME: ${{ env.PLAYWRIGHT_TEST_DB_NAME }}

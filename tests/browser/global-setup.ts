@@ -59,25 +59,33 @@ function getContainerNames(): { postgres: string; minio: string } {
 /**
  * Run SQL against the browser-test database from a spec.
  *
- * The two environments are reached differently and there is no name that works
- * in both: CI's postgres is a GitHub Actions *service* container, addressable
- * over TCP on the runner but carrying a generated docker name, while the local
- * one is a compose container on a port the dev stack doesn't use.
+ * CI runs specs inside the Playwright image, which has no psql and no docker,
+ * so it goes over TCP with Bun's built-in client. Locally psql runs inside the
+ * compose postgres container.
  */
 export function runTestSql(sql: string): void {
   const db = deriveTestDatabaseName()
+  if (isCI) {
+    execFileSync(
+      "bun",
+      [
+        "-e",
+        "const sql = new Bun.SQL(process.env.TEST_SQL_URL); try { await sql.unsafe(process.env.TEST_SQL) } finally { await sql.close() }",
+      ],
+      {
+        encoding: "utf-8",
+        env: { ...process.env, TEST_SQL_URL: `postgres://threa:threa@localhost:${DB_PORT}/${db}`, TEST_SQL: sql },
+      }
+    )
+    return
+  }
   // argv, never a shell string: multi-line SQL through a shell reaches psql
   // with its newlines still escaped, and psql reads `\n` as a meta-command.
-  const psql = ["psql", "-U", "threa", "-d", db, "-v", "ON_ERROR_STOP=1", "-c", sql]
-  const [command, args, env] = isCI
-    ? ([
-        psql[0]!,
-        ["-h", "localhost", "-p", String(DB_PORT), ...psql.slice(1)],
-        { ...process.env, PGPASSWORD: "threa" },
-      ] as const)
-    : (["docker", ["exec", getContainerNames().postgres, ...psql], process.env] as const)
-
-  execFileSync(command, args, { encoding: "utf-8", env })
+  execFileSync(
+    "docker",
+    ["exec", getContainerNames().postgres, "psql", "-U", "threa", "-d", db, "-v", "ON_ERROR_STOP=1", "-c", sql],
+    { encoding: "utf-8" }
+  )
 }
 
 /**
