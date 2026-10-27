@@ -31,20 +31,15 @@ async function seedMessages(
   count: number,
   prefix: string
 ): Promise<void> {
-  const BATCH_SIZE = 5
-  for (let start = 1; start <= count; start += BATCH_SIZE) {
-    const end = Math.min(start + BATCH_SIZE - 1, count)
-    const promises: Promise<void>[] = []
-    for (let i = start; i <= end; i++) {
-      promises.push(
-        page.request
-          .post(`/api/workspaces/${workspaceId}/messages`, {
-            data: { streamId, content: `${prefix} msg-${String(i).padStart(3, "0")}` },
-          })
-          .then((r) => expectApiOk(r, `Send message ${i}`))
-      )
-    }
-    await Promise.all(promises)
+  // Sequential, so a row's msg number is its position: parallel posts land out of label order, and the
+  // ±1-row tolerances below would then admit (or reject) a jump of several rows.
+  for (let i = 1; i <= count; i++) {
+    await expectApiOk(
+      await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
+        data: { streamId, content: `${prefix} msg-${String(i).padStart(3, "0")}` },
+      }),
+      `Send message ${i}`
+    )
   }
 }
 
@@ -169,6 +164,9 @@ test.describe("Timeline anchor restore", () => {
 
     await page.reload()
     await expect(page.getByRole("main").locator(".message-item").first()).toBeVisible({ timeout: 20000 })
+    // Rows are in the DOM behind the settle mask while the landing positions them (INV-70); what must
+    // hold is the revealed frame.
+    await expect(page.getByTestId("settle-mask")).toHaveCount(0, { timeout: 20000 })
 
     // The restore lands the same row back at the top of the viewport. ±1 row:
     // the offset round-trip is pixel-faithful, but "topmost visible" is a
