@@ -3331,8 +3331,8 @@ const TimelineMessageList = memo(function TimelineMessageList({
   isJumpMode: boolean
   /** Last genuine user scroll gesture on the scroller. */
   userInteractedAtRef: React.MutableRefObject<number>
-  /** virtua `shift`: maintain scroll from the end on this render (older page
-   *  prepended) so the viewport doesn't move. */
+  /** virtua `shift`: maintain scroll from the end on this render (rows landed
+   *  above the viewport) so it doesn't move. */
   shift: boolean
   /** True during the cold-load settle: mask the list with a skeleton overlay so
    *  the measurement bounce stays off-screen until the height stabilises. */
