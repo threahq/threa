@@ -2058,6 +2058,19 @@ describe("@threahq/prosemirror hard break round-trip", () => {
     })
   })
 
+  it("should write a newline inside text as the text has it, not as a break", () => {
+    const pasted = "Shared a message from [Author](shared-message:stream_x/msg_y)\n\ncard"
+    const doc: JSONContent = { type: "doc", content: [{ type: "paragraph", content: [text(pasted)] }] }
+
+    expect(serializeToMarkdown(doc)).toBe(pasted)
+  })
+
+  it("should not write a literal break token in text as a break", () => {
+    const doc: JSONContent = { type: "doc", content: [{ type: "paragraph", content: [text("ab")] }] }
+
+    expect(serializeToMarkdown(doc)).toBe("ab")
+  })
+
   it("should write a break in a table cell as a cell line break", () => {
     const doc: JSONContent = {
       type: "doc",

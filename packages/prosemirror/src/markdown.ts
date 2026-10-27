@@ -304,7 +304,11 @@ function serializeTableCell(cell: JSONContent): string {
   // Escape pipes so they don't terminate the cell, and collapse hard-break
   // newlines into `<br>` for the same reason. Leading/trailing whitespace
   // inside a cell is meaningless in GFM, so trim.
-  return joined.replace(/\|/g, "\\|").replaceAll(HARD_BREAK_MARKDOWN, "<br>").replace(/\n/g, "<br>").trim()
+  return joined
+    .replace(/\|/g, "\\|")
+    .replaceAll(HARD_BREAK_TOKEN + "\n", "<br>")
+    .replace(/\n/g, "<br>")
+    .trim()
 }
 
 /**
@@ -326,7 +330,8 @@ export function attachmentReferenceLabel(attrs: { filename?: unknown; imageIndex
 }
 
 function getNodeText(node: JSONContent): string {
-  if (node.type === "hardBreak") return HARD_BREAK_MARKDOWN
+  // A token, not the backslash: a newline in the text itself is no break.
+  if (node.type === "hardBreak") return HARD_BREAK_TOKEN + "\n"
   if (node.type === "mention") {
     const slug = node.attrs?.slug as string
     if (!slug) return ""
@@ -406,7 +411,7 @@ function getNodeText(node: JSONContent): string {
     const height = node.attrs?.height as number | undefined
     return `[${safeTitle}](${buildGiphyHref({ giphyUrl, width, height })})`
   }
-  if (node.type === "text") return node.text ?? ""
+  if (node.type === "text") return (node.text ?? "").replaceAll(HARD_BREAK_TOKEN, "")
   return ""
 }
 
@@ -599,10 +604,15 @@ function serializeMath(node: JSONContent, before: string, after: string): string
 
 /** {@link serializeInline} with each line-ending backslash of the text escaped, for blocks written as lines. */
 function serializeInlineLines(nodes: JSONContent[] | undefined): string {
-  const lines = serializeInline(nodes).split("\n")
   const escape = (text: string) => text.replace(/\\+$/, (run) => run + run)
-  return lines
-    .map((line, index) => (index < lines.length - 1 ? escape(line.slice(0, -1)) + "\\" : escape(line)))
+  return serializeInline(nodes)
+    .split("\n")
+    .map((line) => {
+      const breakAt = line.indexOf(HARD_BREAK_TOKEN)
+      if (breakAt === -1) return escape(line)
+      // Mark closers may follow the break's token on its line; the backslash goes after them.
+      return escape(line.slice(0, breakAt)) + line.slice(breakAt + 1) + "\\"
+    })
     .join("\n")
 }
 
