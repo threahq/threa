@@ -114,6 +114,9 @@ test.describe("Unread marker open", () => {
       .filter({ hasText: `${prefix}-unread msg-001` })
       .first()
     await expect(firstUnread).toBeVisible({ timeout: 20000 })
+    // Visible behind the settle mask while the landing positions it (INV-70); the hold below is about the
+    // revealed frame.
+    await expect(page.getByTestId("settle-mask")).toHaveCount(0, { timeout: 20000 })
 
     const scroller = page.locator("[data-suppress-pull-refresh]")
     const scrollerBox = await scroller.boundingBox()
