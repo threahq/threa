@@ -1110,6 +1110,26 @@ describe("collectCallEndedPatches", () => {
   })
 })
 
+describe("getTimelineItemKey", () => {
+  it("keys an own send's echo like the optimistic row it replaces", () => {
+    const optimistic = createEvent({
+      id: "temp_123",
+      sequence: "999",
+      eventType: "message_created",
+      payload: { messageId: "temp_123" },
+    })
+    const echo = createEvent({
+      id: "evt_1",
+      sequence: "5",
+      eventType: "message_created",
+      payload: { messageId: "msg_1", clientMessageId: "temp_123" },
+    })
+    expect(getTimelineItemKey({ type: "event", event: echo })).toBe(
+      getTimelineItemKey({ type: "event", event: optimistic })
+    )
+  })
+})
+
 describe("OLDER_SKELETON_ITEMS (older-page skeleton rows)", () => {
   it("provides the configured number of skeleton items with stable, distinct keys", () => {
     expect(OLDER_SKELETON_ITEMS).toHaveLength(OLDER_SKELETON_COUNT)

@@ -358,8 +358,8 @@ export function useTimelineScroll({
   // unchanged — the pin then came from the ResizeObserver a frame or two late,
   // after the off-tail position had already painted (INV-70), or not at all.
   // Neither one appended row nor a same-size window whose last key changed in
-  // place (an own send's echo swapping the client id for the event id) leaves
-  // an unmeasured row, and re-requesting the last index for either lands
+  // place (an own send's echo sequenced above a row that landed while it was
+  // in flight) leaves an unmeasured row, and re-requesting the last index for either lands
   // virtua's deferred scroll after our pin, a few px above the true bottom. An
   // append always moves the last key, so requiring that here keeps a ONE-row
   // insert in the middle — a single-slot hole backfill — on the re-take path.
