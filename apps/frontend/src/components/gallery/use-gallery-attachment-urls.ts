@@ -10,7 +10,9 @@ export type GalleryUrlKind = "video" | "document" | null
 
 /**
  * Lazily resolve the presigned URL for the *currently selected* gallery item,
- * memoized per attachment id so re-selecting never refetches.
+ * memoized per attachment id while the gallery stays open. Closing it (no
+ * selection) drops them: presigned URLs expire, and `getDownloadUrl` owns that
+ * expiry, answering a reopen from its cache while the URL is still good.
  *
  * Videos request the `processed` variant and fall back to raw bytes when a
  * transcode was skipped; documents (pdf/markdown/html/text) request the raw
@@ -23,6 +25,7 @@ export function useGalleryAttachmentUrls(
   kind: GalleryUrlKind
 ): Map<string, string> {
   const [urls, setUrls] = useState<Map<string, string>>(new Map())
+  if (!selectedId && urls.size > 0) setUrls(new Map())
 
   useEffect(() => {
     if (!selectedId || !kind || urls.has(selectedId)) return

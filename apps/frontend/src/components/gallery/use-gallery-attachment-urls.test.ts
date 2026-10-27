@@ -44,7 +44,7 @@ describe("useGalleryAttachmentUrls", () => {
     expect(spy).not.toHaveBeenCalled()
   })
 
-  it("memoizes per id — re-rendering the same selection does not refetch", async () => {
+  it("memoizes per id while open — re-rendering the same selection does not refetch", async () => {
     const spy = vi.spyOn(api.attachmentsApi, "getDownloadUrl").mockResolvedValue("https://cdn/doc.pdf")
     const { result, rerender } = renderHook(({ id }) => useGalleryAttachmentUrls("ws_1", id, "document"), {
       initialProps: { id: "att_d" as string | null },
@@ -52,9 +52,24 @@ describe("useGalleryAttachmentUrls", () => {
 
     await waitFor(() => expect(result.current.get("att_d")).toBe("https://cdn/doc.pdf"))
     rerender({ id: "att_d" })
+
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it("should resolve the URL again when the gallery reopens, so an expired presigned URL is never reused", async () => {
+    const spy = vi
+      .spyOn(api.attachmentsApi, "getDownloadUrl")
+      .mockResolvedValueOnce("https://cdn/doc.pdf?sig=first")
+      .mockResolvedValueOnce("https://cdn/doc.pdf?sig=second")
+    const { result, rerender } = renderHook(({ id }) => useGalleryAttachmentUrls("ws_1", id, "document"), {
+      initialProps: { id: "att_d" as string | null },
+    })
+
+    await waitFor(() => expect(result.current.get("att_d")).toBe("https://cdn/doc.pdf?sig=first"))
     rerender({ id: null })
     rerender({ id: "att_d" })
 
-    expect(spy).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(result.current.get("att_d")).toBe("https://cdn/doc.pdf?sig=second"))
+    expect(spy).toHaveBeenCalledTimes(2)
   })
 })
