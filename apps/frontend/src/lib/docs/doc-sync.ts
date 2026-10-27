@@ -11,6 +11,10 @@ import { dexieDocLocalCopies, docLockName, type DocLocalCopies } from "./doc-loc
 
 /** Transaction origin of every update that came from the server; anything else is a local edit to send. */
 export const REMOTE_ORIGIN = Symbol("doc-sync-remote")
+/** What the leading tab relays to a following one: its doc, which it sends on itself. */
+const LEADER_ORIGIN = Symbol("doc-sync-leader")
+/** An edit another tab made, applied by the leading tab, which sends it. */
+const TAB_ORIGIN = Symbol("doc-sync-tab")
 
 /** Longest a run of non-boundary edits waits, counted from its first change. */
 export const FLUSH_CAP_MS = 2500
@@ -22,6 +26,27 @@ const BOUNDARY_TEXT = /[\s\p{P}]$/u
 export type DocSyncStatus = { phase: "loading" } | { phase: "ready" } | { phase: "error"; error: unknown }
 
 export type DocsApi = Pick<typeof docsApi, "get" | "listUpdates" | "postUpdate">
+
+/**
+ * Between the tabs that hold one doc open. Followers send their edits to the leader;
+ * the leader relays every change to its doc, theirs included, so each follower knows
+ * what the leader holds. A follower answers a `state` with what the leader lacks.
+ */
+type TabMessage =
+  | { kind: "hello" }
+  | { kind: "edit"; update: Uint8Array }
+  | { kind: "retry" }
+  | { kind: "state"; update: Uint8Array }
+  | { kind: "update"; update: Uint8Array }
+  | { kind: "status"; phase: DocSyncStatus["phase"] }
+  | { kind: "saved" }
+  | { kind: "rejected"; status: number; code: string; message: string }
+  | { kind: "base"; state: Uint8Array; seq: number }
+
+/** Account-scoped: two accounts signed in to one browser must never relay edits between them. */
+function tabsName(scope: string, workspaceId: string, docId: string): string {
+  return `threa-doc-tabs:${scope}:${workspaceId}:${docId}`
+}
 
 function backoffMs(failures: number): number {
   return Math.min(1000 * 2 ** (failures - 1), MAX_BACKOFF_MS)
@@ -51,6 +76,12 @@ function isAccessGone(error: unknown): boolean {
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   return a.length === b.length && a.every((byte, index) => byte === b[index])
+}
+
+/** What `doc` holds that `base` lacks, deletions included, or null when nothing. */
+function unsentSince(doc: Y.Doc, base: Y.Doc): Uint8Array | null {
+  if (Y.equalSnapshots(Y.snapshot(doc), Y.snapshot(base))) return null
+  return Y.encodeStateAsUpdate(doc, Y.encodeStateVector(base))
 }
 
 function sameStatus(a: DocSyncStatus, b: DocSyncStatus): boolean {
@@ -94,6 +125,17 @@ export class DocSync {
   private refused = false
   private releaseDocLock: () => void = () => {}
   private stopped = false
+  private readonly tabScope: string
+  private role: "electing" | "leader" | "follower" = "electing"
+  // Off until this tab leads and has loaded: `unacked` lacks what it edited before, so a POST of it would be refused.
+  private sending = false
+  private tabs: BroadcastChannel | null = null
+  // What the leader holds, as a follower knows it: the base its own edits are rescued against.
+  private leaderDoc: Y.Doc | null = null
+  private relayed: Uint8Array[] = []
+  // The leader's server doc as of its last save: its own copy may not have landed when this tab takes over. Any base the server holds will do; the rows after it replay in order.
+  private leaderBase: { state: Uint8Array; seq: number } | null = null
+  private readonly stopLeading = new AbortController()
 
   constructor(params: {
     workspaceId: string
@@ -108,6 +150,8 @@ export class DocSync {
     /** Called each time the server applies a flush of local edits. */
     onSaved?: () => void
     kickOperationQueue: () => void
+    /** Which signed-in account this tab holds the doc for; defaults to the active database's. */
+    tabScope?: string
   }) {
     this.workspaceId = params.workspaceId
     this.docId = params.docId
@@ -118,6 +162,7 @@ export class DocSync {
     this.onLost = params.onLost
     this.onSaved = params.onSaved
     this.kickOperationQueue = params.kickOperationQueue
+    this.tabScope = params.tabScope ?? getActiveDb().name
   }
 
   getStatus = (): DocSyncStatus => this.status
@@ -129,10 +174,14 @@ export class DocSync {
 
   start(): Promise<void> {
     this.ydoc.on("update", this.onUpdate)
-    return this.holdDocLock().then(() => this.load())
+    return this.holdDocLock().then(() => this.elect())
   }
 
   retry(): Promise<void> {
+    if (this.role !== "leader") {
+      this.tell({ kind: "retry" })
+      return Promise.resolve()
+    }
     return this.load()
   }
 
@@ -145,9 +194,130 @@ export class DocSync {
     this.clearCapTimer()
     if (this.catchUpTimer) clearTimeout(this.catchUpTimer)
     this.listeners.clear()
-    if (this.unacked.length > 0) void this.handOff()
+    this.handOffUnsent()
+    this.sendRelayed()
     this.serverDoc.destroy()
+    this.leaderDoc?.destroy()
+    this.stopLeading.abort()
+    this.tabs?.close()
+    this.tabs = null
     this.releaseDocLock()
+  }
+
+  /**
+   * One tab leads the doc: it alone talks to the server, rescues edits, and saves the
+   * local copy, so two tabs never rescue the same edit twice. The rest follow it over a
+   * channel and stay in step offline, and the first in line takes over when it closes.
+   */
+  private async elect(): Promise<void> {
+    if (this.stopped) return
+    if (!navigator.locks || typeof BroadcastChannel === "undefined") return this.lead()
+    const name = tabsName(this.tabScope, this.workspaceId, this.docId)
+    this.tabs = new BroadcastChannel(name)
+    this.tabs.onmessage = (event: MessageEvent<TabMessage>) => this.onTabMessage(event.data)
+    const leading = new Promise<void>((resolve) => this.stopLeading.signal.addEventListener("abort", () => resolve()))
+    const leadsNow = await new Promise<boolean>((resolve) => {
+      void navigator.locks.request(name, { ifAvailable: true }, (lock) => {
+        resolve(lock !== null)
+        return lock ? leading : undefined
+      })
+    })
+    if (this.stopped) return
+    if (leadsNow) return this.lead()
+    this.role = "follower"
+    this.leaderDoc = new Y.Doc()
+    this.tell({ kind: "hello" })
+    navigator.locks
+      .request(name, { signal: this.stopLeading.signal }, () => {
+        // A refused follower is about to be replaced; leading would resend the refused edits.
+        if (this.stopped || this.refused) return
+        void this.takeOver()
+        return leading
+      })
+      .catch(() => {})
+  }
+
+  private takeOver(): Promise<void> {
+    this.leaderDoc?.destroy()
+    this.leaderDoc = null
+    this.tell({ kind: "state", update: Y.encodeStateAsUpdate(this.ydoc) })
+    this.tell({ kind: "status", phase: this.status.phase })
+    return this.lead()
+  }
+
+  /**
+   * Sends nothing until loaded, then everything the server's doc lacks: a closed leader may not have sent what this
+   * tab shows, and an edit typed meanwhile builds on it. The server skips what it already holds.
+   */
+  private async lead(): Promise<void> {
+    this.role = "leader"
+    try {
+      await this.load()
+    } finally {
+      if (!this.stopped) {
+        this.sending = true
+        const unsent = unsentSince(this.ydoc, this.serverDoc)
+        this.unacked = unsent ? [unsent] : []
+        void this.flush()
+      }
+    }
+  }
+
+  private tell(message: TabMessage): void {
+    this.tabs?.postMessage(message)
+  }
+
+  private onTabMessage(message: TabMessage): void {
+    // A refused tab's doc holds bytes the server will never take; anything built on them would be refused too.
+    if (this.stopped || this.refused || this.role === "electing") return
+    if (this.role === "leader") {
+      if (message.kind === "hello") {
+        this.tell({ kind: "state", update: Y.encodeStateAsUpdate(this.ydoc) })
+        this.tell({ kind: "status", phase: this.status.phase })
+        if (this.seq !== null) this.tell({ kind: "base", state: Y.encodeStateAsUpdate(this.serverDoc), seq: this.seq })
+      } else if (message.kind === "retry") {
+        void this.retry()
+      } else if (message.kind === "edit" || message.kind === "update" || message.kind === "state") {
+        // An update or state can only be a closed leader's, landing after this tab took over.
+        Y.applyUpdate(this.ydoc, message.update, TAB_ORIGIN)
+      }
+      return
+    }
+    if (message.kind === "state" || message.kind === "update") {
+      applyServerUpdate(this.ydoc, this.leaderDoc!, message.update, LEADER_ORIGIN, true)
+      if (message.kind === "state") {
+        this.tell({
+          kind: "edit",
+          update: Y.encodeStateAsUpdate(this.ydoc, Y.encodeStateVectorFromUpdate(message.update)),
+        })
+      }
+    } else if (message.kind === "base") {
+      this.leaderBase = { state: message.state, seq: message.seq }
+    } else if (message.kind === "status") {
+      this.setStatus(
+        message.phase === "error"
+          ? { phase: "error", error: new Error("The tab leading this doc could not load it") }
+          : { phase: message.phase }
+      )
+    } else if (message.kind === "saved") {
+      this.onSaved?.()
+    } else if (message.kind === "rejected") {
+      this.refused = true
+      this.onRejected?.(new ApiError(message.status, message.code, message.message))
+    }
+  }
+
+  /** Batched to a microtask, so a server row and the rescue it caused reach a follower as one change. */
+  private relay(update: Uint8Array): void {
+    if (!this.tabs) return
+    this.relayed.push(update)
+    if (this.relayed.length === 1) queueMicrotask(() => this.sendRelayed())
+  }
+
+  private sendRelayed(): void {
+    if (this.relayed.length === 0) return
+    this.tell({ kind: "update", update: Y.mergeUpdates(this.relayed) })
+    this.relayed = []
   }
 
   /** Shared with other tabs holding the doc open; the queue delivers this doc's rows only while nobody does. */
@@ -164,7 +334,7 @@ export class DocSync {
 
   /** Sends every unacked edit now; one request is in flight at a time, so a call during one runs after it. */
   flush(): Promise<void> {
-    if (this.stopped) return Promise.resolve()
+    if (this.stopped || !this.sending) return Promise.resolve()
     this.clearCapTimer()
     if (this.flushRun) {
       this.flushAgain = true
@@ -179,7 +349,20 @@ export class DocSync {
   queueUnsent(): void {
     if (this.stopped) return
     void this.saveLocalCopy()
-    if (this.unacked.length > 0) void this.handOff()
+    this.handOffUnsent()
+  }
+
+  /**
+   * A sending leader's edits are `unacked`. Any other tab's are what its base lacks: a follower's, what the leader
+   * has not relayed back, since a closing leader may never apply them; an unloaded leader's, all it shows.
+   */
+  private handOffUnsent(): void {
+    if (this.refused) return
+    let unsent: Uint8Array | null
+    if (this.role === "follower") unsent = unsentSince(this.ydoc, this.leaderDoc!)
+    else if (!this.sending) unsent = unsentSince(this.ydoc, this.serverDoc)
+    else unsent = this.unacked.length > 0 ? Y.mergeUpdates(this.unacked) : null
+    if (unsent) void this.handOff(unsent)
   }
 
   receive = (payload: DocUpdatedPayload): void => {
@@ -244,6 +427,8 @@ export class DocSync {
       console.warn("Doc local copy could not be read", { docId: this.docId, error })
       return false
     }
+    const base = this.leaderBase
+    if (base && (!copy || copy.seq < base.seq)) copy = { unsent: [], queuedIds: [], ...copy, ...base }
     if (!copy || this.stopped || this.seq !== null) return false
     Y.applyUpdate(this.serverDoc, copy.state, REMOTE_ORIGIN)
     Y.applyUpdate(this.ydoc, Y.mergeUpdates([copy.state, ...copy.unsent]), REMOTE_ORIGIN)
@@ -300,6 +485,13 @@ export class DocSync {
   }
 
   private onUpdate = (update: Uint8Array, origin: unknown): void => {
+    if (this.role === "electing") return
+    if (this.role === "follower") {
+      if (this.refused) return
+      if (origin !== LEADER_ORIGIN) this.tell({ kind: "edit", update })
+      return
+    }
+    if (!this.refused) this.relay(update)
     if (this.seq !== null) this.scheduleSave()
     if (origin === REMOTE_ORIGIN) return
     this.unacked.push(update)
@@ -326,6 +518,7 @@ export class DocSync {
       seq: this.seq,
       unsent: this.hasLocalEdits ? Y.encodeStateAsUpdate(this.ydoc, Y.encodeStateVector(this.serverDoc)) : null,
     }
+    this.tell({ kind: "base", state: copy.state, seq: copy.seq })
     try {
       await this.localCopies.write(this.workspaceId, this.docId, copy)
     } catch (error) {
@@ -362,7 +555,7 @@ export class DocSync {
       do {
         this.flushAgain = false
         if (!navigator.onLine) {
-          await this.handOff()
+          await this.handOff(Y.mergeUpdates(this.unacked))
           continue
         }
         const carried = new Set(this.unacked)
@@ -371,7 +564,7 @@ export class DocSync {
         } catch (error) {
           if (this.stopped) return
           if (isRefusal(error)) await this.discardRefusedEdits(error)
-          else await this.handOff()
+          else await this.handOff(Y.mergeUpdates(this.unacked))
           continue
         }
         this.unacked = this.unacked.filter((update) => !carried.has(update))
@@ -386,9 +579,9 @@ export class DocSync {
    * Bytes stay in `unacked` too: the next flush re-sends them and the server skips what it already holds.
    * No kick while offline: the queue would burn its retry budget on requests that cannot leave the device.
    */
-  private async handOff(): Promise<void> {
+  private async handOff(update: Uint8Array): Promise<void> {
     try {
-      await enqueueDocUpdate(this.workspaceId, this.docId, bytesToBase64(Y.mergeUpdates(this.unacked)))
+      await enqueueDocUpdate(this.workspaceId, this.docId, bytesToBase64(update))
     } catch (error) {
       console.error("Doc edits could not be queued for retry", { docId: this.docId, error })
       // A live sync still holds the bytes and re-sends them; only a stopped one has nowhere left to keep them.
@@ -411,10 +604,12 @@ export class DocSync {
     if (!result.applied) return
     this.scheduleSave()
     this.onSaved?.()
+    this.tell({ kind: "saved" })
   }
 
   private async discardRefusedEdits(error: ApiError): Promise<void> {
     this.refused = true
+    this.tell({ kind: "rejected", status: error.status, code: error.code, message: error.message })
     this.unacked = []
     await this.dropLocalCopy(this.restoredQueueIds)
     try {
@@ -422,7 +617,8 @@ export class DocSync {
     } catch {
       void this.catchUp()
     }
-    if (!this.stopped) this.onRejected?.(error)
+    if (this.stopped) return
+    this.onRejected?.(error)
   }
 
   private applyRemote(update: string): void {
@@ -433,6 +629,7 @@ export class DocSync {
   private setStatus(status: DocSyncStatus): void {
     if (sameStatus(status, this.status)) return
     this.status = status
+    if (this.role === "leader") this.tell({ kind: "status", phase: status.phase })
     for (const listener of this.listeners) listener()
   }
 }

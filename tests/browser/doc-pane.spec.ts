@@ -288,6 +288,43 @@ test.describe("Doc pane", () => {
     }
   })
 
+  test("should keep two tabs of one doc in step offline and send both tabs' edits once, after the leading tab closes", async ({
+    page,
+  }) => {
+    const { testId } = await loginAndCreateWorkspace(page, "doc-tabs")
+    const workspaceId = workspaceIdFromUrl(page)
+    const channelId = await createChannelViaApi(page, workspaceId, `tab-docs-${testId}`, "private")
+    const docId = await createDocViaApi(page, workspaceId, channelId)
+    const second = await page.context().newPage()
+    const [firstEditor, secondEditor] = [docEditor(page, docId), docEditor(second, docId)]
+    for (const tab of [page, second]) {
+      await openChannel(tab, workspaceId, channelId)
+      await anchorRow(tab, docId).click()
+    }
+    await expect(firstEditor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+    await expect(secondEditor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+
+    await page.context().setOffline(true)
+    await typeAtEnd(page, firstEditor, "First tab. ")
+    await expect(secondEditor).toContainText("First tab.")
+    await typeAtEnd(second, secondEditor, "Second tab. ")
+    await expect(firstEditor).toContainText("First tab. Second tab.")
+
+    await page.close()
+    await second.context().setOffline(false)
+    await expect
+      .poll(
+        async () => {
+          const response = await second.request.get(`/api/workspaces/${workspaceId}/docs/${docId}`)
+          if (!response.ok()) return ""
+          const { sections } = (await response.json()) as { sections: { markdown: string }[] }
+          return sections.map((section) => section.markdown).join("\n")
+        },
+        { timeout: 20000, message: "the server should hold both tabs' edits, each once" }
+      )
+      .toBe("First tab. Second tab. ")
+  })
+
   test("should reopen a doc offline with its offline edits and send them once back online", async ({ page }) => {
     const { testId } = await loginAndCreateWorkspace(page, "doc-reopen")
     const workspaceId = workspaceIdFromUrl(page)
