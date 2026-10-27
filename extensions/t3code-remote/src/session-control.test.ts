@@ -150,7 +150,7 @@ describe("T3 session control", () => {
     expect(await control.runCommand("status", "", CONTEXT)).toEqual({
       ok: true,
       message: [
-        "- Thread: Fake thread (`thread_1`, idle)",
+        "- Thread: Fake thread (`thread_1`, waiting, latest run `run_1`)",
         "- Model: `codex::gpt-5.5`, thinking high",
         "- Access: full-access",
         "- Open runs: `run_1` (waiting on 1 answer)",

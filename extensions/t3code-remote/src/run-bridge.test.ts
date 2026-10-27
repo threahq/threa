@@ -1409,7 +1409,7 @@ describe("runs T3 starts by itself", () => {
     const { t3, session, runner } = setup({ state: LINKED })
     t3.startInT3("thread_1")
     t3.addItems("thread_1", [item(1, "assistant_message", { runId: "run_1", text: "Before the restart." })])
-    t3.script("run_1", [{ status: "completed" }])
+    t3.endInT3("run_1")
 
     await runner.compact("stream_root", "thread_1")
     t3.script("run_2", [{ status: "completed" }])
@@ -1535,34 +1535,121 @@ describe("runs T3 starts by itself", () => {
     })
   })
 
-  test("posts nothing to a stream until a plaintext message reaches it, as after a restart or on a sealed scratchpad", async () => {
+  test("posts the reply of a run a restart cut off from its turn, but not the updates the turn already posted", async () => {
     const { t3, session, runner } = setup({ state: LINKED })
     t3.startInT3("thread_1")
+    t3.addItems("thread_1", [
+      item(1, "assistant_message", { text: "THREA_UPDATE: Posted by the turn." }),
+      item(2, "command_execution", { title: "bun test" }),
+    ])
+    t3.script("run_1", [{ status: "running" }])
     await runner.watch()
+    await idle()
+    t3.script("run_1", [
+      {
+        status: "completed",
+        items: [
+          item(3, "assistant_message", { text: "THREA_UPDATE: Tests pass." }),
+          item(4, "command_execution", { title: "git push" }),
+          item(5, "assistant_message", { text: "Pushed." }),
+        ],
+      },
+    ])
+    await until(() => !runner.busy)
+
+    expect(session.posts).toEqual([
+      { streamId: "stream_root", text: "Tests pass.", clientMessageId: "t3upd-turn-item:3" },
+      { streamId: "stream_root", text: "Pushed.", clientMessageId: "t3run-run_1" },
+    ])
+  })
+
+  test("follows the images of the first message after a restart into the cut-off run without reposting its updates", async () => {
+    const { t3, session, runner } = setup({ state: LINKED })
     t3.startInT3("thread_1")
-    t3.script("run_2", [
-      { status: "completed", items: [item(1, "assistant_message", { runId: "run_2", text: "After the restart." })] },
+    t3.addItems("thread_1", [
+      item(1, "assistant_message", { text: "THREA_UPDATE: Posted by the turn." }),
+      item(2, "command_execution", { title: "bun test" }),
+    ])
+    t3.script("run_1", [{ status: "completed", items: [item(3, "assistant_message", { text: "Done." })] }])
+    await runner.deliverTurn(turn({ attachments: [downloaded("cat.png", "image/png", "png-bytes")] }))
+    await session.settled()
+
+    expect({ interims: session.interims, reply: session.replies.at(-1), posts: session.posts }).toEqual({
+      interims: [],
+      reply: { invocationId: "binv_1", text: "Done." },
+      posts: [],
+    })
+  })
+
+  test("posts an update the cut-off run finished after the first look", async () => {
+    const { t3, session, runner } = setup({ state: LINKED })
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(1, "command_execution", { title: "bun test" })])
+    const release = t3.holdNext("t3_thread_wait")
+    await runner.watch()
+    await idle()
+    t3.addItems("thread_1", [
+      item(2, "assistant_message", { text: "THREA_UPDATE: Tests pass." }),
+      item(3, "command_execution", { title: "git push" }),
+    ])
+    t3.script("run_1", [{ status: "completed", items: [item(4, "assistant_message", { text: "Pushed." })] }])
+    release()
+    await until(() => !runner.busy)
+
+    expect(session.posts).toEqual([
+      { streamId: "stream_root", text: "Tests pass.", clientMessageId: "t3upd-turn-item:2" },
+      { streamId: "stream_root", text: "Pushed.", clientMessageId: "t3run-run_1" },
+    ])
+  })
+
+  test("leaves a run waiting on a question the cut-off turn asked", async () => {
+    const { t3, session, runner } = setup({ state: LINKED })
+    t3.startInT3("thread_1")
+    t3.script("run_1", [{ status: "waiting" }])
+    await t3.client.call("t3_thread_wait", { threadId: "thread_1", runId: "run_1", timeoutMs: 0 })
+    await runner.watch()
+    await idle()
+
+    expect({ busy: runner.busy, posts: session.posts }).toEqual({ busy: false, posts: [] })
+  })
+
+  test("posts nothing for runs that ended before the first look", async () => {
+    const { t3, session, runner } = setup({ state: LINKED })
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(1, "assistant_message", { text: "Before the restart." })])
+    t3.endInT3("run_1")
+    await runner.watch()
+    await idle()
+
+    expect({ busy: runner.busy, posts: session.posts }).toEqual({ busy: false, posts: [] })
+  })
+
+  test("posts nothing outside a turn to a stream Threa says is end-to-end encrypted", async () => {
+    const { t3, session, runner } = setup({ state: LINKED })
+    session.encrypted.add("stream_root")
+    t3.startInT3("thread_1")
+    t3.script("run_1", [
+      { status: "completed", items: [item(1, "assistant_message", { text: "Cut off before the restart." })] },
     ])
     await runner.watch()
     await idle()
-    const afterRestart = { busy: runner.busy, posts: [...session.posts] }
 
-    t3.script("run_3", [
-      { status: "completed", items: [item(2, "assistant_message", { runId: "run_3", text: "Sealed reply." })] },
-    ])
+    expect({ busy: runner.busy, posts: session.posts }).toEqual({ busy: false, posts: [] })
+  })
+
+  test("posts nothing outside a turn to a stream a sealed message came from", async () => {
+    const { t3, session, runner } = setup({ state: LINKED })
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Sealed reply." })] }])
     await runner.deliverTurn(turn({ sealed: true }))
     await session.settled()
     t3.startInT3("thread_1")
-    t3.script("run_4", [
-      { status: "completed", items: [item(3, "assistant_message", { runId: "run_4", text: "Secret findings." })] },
+    t3.script("run_2", [
+      { status: "completed", items: [item(2, "assistant_message", { runId: "run_2", text: "Secret findings." })] },
     ])
     await runner.watch()
     await idle()
 
-    expect({ afterRestart, afterSealed: { busy: runner.busy, posts: session.posts } }).toEqual({
-      afterRestart: { busy: false, posts: [] },
-      afterSealed: { busy: false, posts: [] },
-    })
+    expect({ busy: runner.busy, posts: session.posts }).toEqual({ busy: false, posts: [] })
   })
 
   test("stays busy while the run goes, and posts nothing for a silent reply", async () => {

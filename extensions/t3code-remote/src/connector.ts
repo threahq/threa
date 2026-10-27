@@ -86,6 +86,7 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
   })
   const t3 = new T3Client(config.t3.url, auth, options.fetch)
 
+  const client = new ThreaClient(config)
   let session: RemoteSession
   const runner = new T3TurnRunner({
     client: t3,
@@ -99,6 +100,7 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
       sendInterim: (id, text) => session.sendInterim(id, text),
       postToStream: (streamId, content, clientMessageId) =>
         session.postToStream(streamId, { content, clientMessageId }),
+      isEncrypted: async (streamId) => (await client.getStream(streamId)).e2eEnabled,
       failTurn: (id, message) => session.failTurn(id, message),
       requestDecision: (input, opts) => session.requestDecision(input, opts),
     },
@@ -109,7 +111,6 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
     threadStore: createFileThreadStore(join(config.install.workDir, "threads.json")),
     log,
   })
-  const client = new ThreaClient(config)
   const sessionControl = createT3SessionControl(runner, t3, {
     threa: { baseUrl: config.baseUrl, apiKey: config.apiKey },
     spawnRuntimes: spawnRuntimesResolver((error) => log(`harnessd runtimes: ${error}; /spawn offers T3 Code only`)),

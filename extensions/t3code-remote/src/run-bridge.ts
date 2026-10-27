@@ -40,6 +40,8 @@ export interface BridgeSession {
   sendInterim(invocationId: string, text: string): Promise<SendResult>
   /** Posts outside any turn; the same `clientMessageId` posts once. */
   postToStream(streamId: string, text: string, clientMessageId: string): Promise<void>
+  /** Whether the stream is end-to-end encrypted, so only a turn can post to it. */
+  isEncrypted(streamId: string): Promise<boolean>
   failTurn(invocationId: string, errorMessage: string): Promise<boolean>
   requestDecision(input: DecisionRequestInput, opts?: { signal?: AbortSignal }): Promise<DecisionOutcome>
 }
@@ -86,6 +88,8 @@ const IMAGE_MIME_TYPES = new Set(["image/gif", "image/jpeg", "image/png", "image
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024
 const MAX_IMAGES_PER_MESSAGE = 8
 export const TERMINAL_RUN_STATUSES = new Set<string>(["completed", "failed", "cancelled", "interrupted", "rolled_back"])
+// A waiting run isn't among them: its question went with the cut-off turn, so nothing in Threa can answer it.
+const GOING_RUN_STATUSES = new Set<string>(["preparing", "queued", "starting", "running"])
 const UNANSWERED_MESSAGE = "T3 Code asked a question that went unanswered."
 const OPEN_ITEM_STATUSES = new Set<string>(["idle", "pending", "running", "waiting"])
 // Chips are fixed text per item type: a chip is shown to everyone in the stream, whatever the trace mode.
@@ -210,9 +214,14 @@ export class RunTrace {
   /** The chips of tools still running, by item id, in the order they started. */
   private readonly runningTools = new Map<string, string>()
 
+  /**
+   * @param postedThrough for a run picked up mid-flight, the last position its cut-off turn could have read; that turn
+   * already posted the updates superseded by then.
+   */
   constructor(
     runId: string,
-    private readonly mode: RunTraceMode
+    private readonly mode: RunTraceMode,
+    private readonly postedThrough = -1
   ) {
     this.runIds = new Set([runId])
   }
@@ -231,8 +240,9 @@ export class RunTrace {
     if (this.emitted.get(item.itemId) === "final") return []
     const frames: StepFrame[] = []
     if (this.held && item.position > this.held.position) {
-      if (isUpdate(this.held.text)) this.updates.push(this.held)
-      else frames.push({ stepType: "thinking", content: redactAttachDirectives(this.held.text ?? "") })
+      if (isUpdate(this.held.text)) {
+        if (item.position > this.postedThrough) this.updates.push(this.held)
+      } else frames.push({ stepType: "thinking", content: redactAttachDirectives(this.held.text ?? "") })
       this.emitted.set(this.held.itemId, "final")
       this.held = undefined
     }
@@ -338,12 +348,15 @@ export class T3TurnRunner {
   // Turns inside admission: an interrupt that lands meanwhile stops the run once T3 returns its id.
   private readonly admitting = new Map<string, { abort: AbortController; streamId: string }>()
   readonly runs = new Map<string, OpenRun>()
-  // Per thread, the runs a turn or relay already accounts for, or that ran before the first look; any other was started in T3 itself.
+  // Per thread, the runs a turn or relay already accounts for, or that ended before the first look; any other was started in T3 itself.
   private readonly accounted = new Map<string, Set<string>>()
   // Per thread, the runs T3 started on their own that are being followed until they end.
   private readonly unprompted = new Map<string, Relay>()
-  // Streams whose latest Threa message arrived in plaintext. A post outside a turn can't be sealed, so only these get one.
-  private readonly plaintextStreams = new Set<string>()
+  // Per stream, whether it is end-to-end encrypted. A post outside a turn can't be sealed, so those never get one.
+  private readonly encrypted = new Map<string, boolean>()
+  // Runs still going at the connector's first look at their thread, as one a restart cut off from its turn, with the
+  // last position that look read.
+  private readonly cutOff = new Map<string, number>()
   // Per thread, the last watch failure logged, so a T3 outage logs once rather than every poll.
   private readonly watchErrors = new Map<string, string>()
   private watching = false
@@ -548,16 +561,17 @@ export class T3TurnRunner {
     const generation = this.generation
     try {
       for (const [streamId, threadId] of Object.entries(this.state.threads)) {
-        if (!this.plaintextStreams.has(streamId) || this.unprompted.has(threadId) || this.hasOpenTurns(streamId))
-          continue
+        if (this.unprompted.has(threadId) || this.hasOpenTurns(streamId)) continue
         let runs: string[]
         try {
+          if (await this.isEncrypted(streamId)) continue
           runs = await this.unaccountedRuns(threadId)
           this.watchErrors.delete(threadId)
         } catch (error) {
           if (this.forgetIfGone(error, streamId, threadId)) continue
           const text = errorText(error)
-          if (this.watchErrors.get(threadId) !== text) this.log(`watching thread ${threadId} failed: ${text}`)
+          if (this.watchErrors.get(threadId) !== text)
+            this.log(`watching ${streamId} (thread ${threadId}) failed: ${text}`)
           this.watchErrors.set(threadId, text)
           continue
         }
@@ -569,6 +583,15 @@ export class T3TurnRunner {
     } finally {
       this.watching = false
     }
+  }
+
+  private async isEncrypted(streamId: string): Promise<boolean> {
+    let encrypted = this.encrypted.get(streamId)
+    if (encrypted === undefined) {
+      encrypted = await this.session.isEncrypted(streamId)
+      this.encrypted.set(streamId, encrypted)
+    }
+    return encrypted
   }
 
   /** Marks runs accounted for and returns the ones that weren't. */
@@ -591,11 +614,12 @@ export class T3TurnRunner {
 
   /**
    * The thread's runs no turn or relay accounts for, oldest first. The first look at a thread accounts for every run
-   * it finds, so a run from before the connector started is never posted.
+   * that ended before the connector started, so only a run still going then is posted.
    */
   private async unaccountedRuns(threadId: string): Promise<string[]> {
     const items: ThreadItem[] = []
     let latest: string | null = null
+    let status: ThreadSummary["status"] = "idle"
     let after = this.cursors.get(threadId)
     for (;;) {
       const page = await this.client.call("t3_thread_read", {
@@ -606,6 +630,7 @@ export class T3TurnRunner {
         ...(after === undefined ? {} : { afterPosition: after }),
       })
       latest = page.thread.latestRunId
+      status = page.thread.status
       items.push(...page.items)
       if (!page.hasMore || page.nextPosition === null) break
       after = page.nextPosition
@@ -614,7 +639,14 @@ export class T3TurnRunner {
       items.flatMap((item) => (item.runId !== null && item.visibility === "local" ? [item.runId] : []))
     )
     if (latest) runIds.add(latest)
-    if (!this.accounted.has(threadId)) this.account(threadId, runIds)
+    if (!this.accounted.has(threadId)) {
+      const going = latest !== null && GOING_RUN_STATUSES.has(status) ? latest : undefined
+      if (going) this.cutOff.set(going, items.at(-1)?.position ?? -1)
+      this.account(
+        threadId,
+        [...runIds].filter((runId) => runId !== going)
+      )
+    }
     let cursor: number | undefined
     for (const item of items) {
       if (!this.passable(threadId, item)) break
@@ -640,12 +672,18 @@ export class T3TurnRunner {
       queue,
       from,
       abort: new AbortController(),
-      read: { threadId, trace: new RunTrace(runId, this.options.traceMode), cursor: from },
+      read: { threadId, trace: this.traceFor(runId, this.options.traceMode), cursor: from },
     }
     this.unprompted.set(threadId, relay)
     void this.relayRuns(streamId, relay)
       .catch((error) => this.log(`run ${relay.runId} relay failed: ${errorText(error)}`))
       .finally(() => this.release(relay))
+  }
+
+  private traceFor(runId: string, mode: RunTraceMode): RunTrace {
+    const postedThrough = this.cutOff.get(runId)
+    this.cutOff.delete(runId)
+    return new RunTrace(runId, mode, postedThrough)
   }
 
   private relaying(threadId: string, runId: string): boolean {
@@ -668,7 +706,7 @@ export class T3TurnRunner {
       relay.runId = next
       relay.read = {
         threadId: relay.read.threadId,
-        trace: new RunTrace(next, this.options.traceMode),
+        trace: this.traceFor(next, this.options.traceMode),
         cursor: relay.from,
       }
     }
@@ -754,8 +792,7 @@ export class T3TurnRunner {
     let started: { threadId: string; runId: string }
     let stale: string[] = []
     let ahead: string[] = []
-    if (turn.sealed) this.plaintextStreams.delete(turn.streamId)
-    else this.plaintextStreams.add(turn.streamId)
+    this.encrypted.set(turn.streamId, turn.sealed)
     try {
       // A question an earlier turn left open belongs to that turn, not this one.
       const existing = this.threadFor(turn.streamId)
@@ -794,7 +831,7 @@ export class T3TurnRunner {
       ...started,
       streamId: turn.streamId,
       // Taking a relayed run over continues its trace, so the updates it already posted aren't posted again.
-      trace: takenOver?.read.trace ?? new RunTrace(started.runId, mode),
+      trace: takenOver?.read.trace ?? this.traceFor(started.runId, mode),
       abort: new AbortController(),
       steers: new Set(),
       asked: new Set(stale),
