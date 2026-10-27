@@ -168,6 +168,45 @@ describe("doc_update operations", () => {
     }).toEqual({ texts: 1, posted: expect.stringMatching(/^(earlylate|lateearly)$/), ops: [] })
   })
 
+  it("should remove the doc's local copy when the server refuses a queued update", async () => {
+    const copy = { state: new Uint8Array([0, 0]), seq: 1, unsent: null, _cachedAt: 1 }
+    await db.docStates.bulkPut([
+      { workspaceId, docId: "stream_doc", ...copy },
+      { workspaceId, docId: "stream_other", ...copy },
+    ])
+    vi.spyOn(docsApiModule.docsApi, "postUpdate").mockRejectedValue(new ApiError(403, "FORBIDDEN", "no access"))
+    await enqueueDocUpdate(workspaceId, "stream_doc", "AAE=")
+
+    await process(scheduledServiceRejectingWith(new Error("unused")))
+
+    expect({
+      ops: await db.pendingOperations.toArray(),
+      copies: (await db.docStates.toArray()).map((row) => row.docId),
+    }).toEqual({ ops: [], copies: ["stream_other"] })
+    await db.docStates.clear()
+  })
+
+  it("should keep a queued doc update and the doc's local copy when the session has expired", async () => {
+    await db.docStates.put({
+      workspaceId,
+      docId: "stream_doc",
+      state: new Uint8Array([0, 0]),
+      seq: 1,
+      unsent: null,
+      _cachedAt: 1,
+    })
+    vi.spyOn(docsApiModule.docsApi, "postUpdate").mockRejectedValue(new ApiError(401, "UNAUTHORIZED", "signed out"))
+    await enqueueDocUpdate(workspaceId, "stream_doc", "AAE=")
+
+    await process(scheduledServiceRejectingWith(new Error("unused")))
+
+    expect({
+      ops: (await db.pendingOperations.toArray()).map((op) => ({ payload: op.payload, retryCount: op.retryCount })),
+      copies: (await db.docStates.toArray()).map((row) => row.docId),
+    }).toEqual({ ops: [{ payload: { docId: "stream_doc", update: "AAE=" }, retryCount: 1 }], copies: ["stream_doc"] })
+    await db.docStates.clear()
+  })
+
   it("should merge into a waiting row for the same doc and keep a started one when enqueuing", async () => {
     const edit = (text: string) => {
       const doc = new Y.Doc()

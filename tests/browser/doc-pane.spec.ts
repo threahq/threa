@@ -288,6 +288,45 @@ test.describe("Doc pane", () => {
     }
   })
 
+  test("should reopen a doc offline with its offline edits and send them once back online", async ({ page }) => {
+    const { testId } = await loginAndCreateWorkspace(page, "doc-reopen")
+    const workspaceId = workspaceIdFromUrl(page)
+    const channelId = await createChannelViaApi(page, workspaceId, `reopen-docs-${testId}`, "private")
+    const docId = await createDocViaApi(page, workspaceId, channelId)
+    const editor = docEditor(page, docId)
+    const closePane = async () => {
+      await pane(page, docId).getByRole("button", { name: "Close", exact: true }).click()
+      await expect(pane(page, docId)).toHaveCount(0)
+    }
+
+    await openChannel(page, workspaceId, channelId)
+    await anchorRow(page, docId).click()
+    await expect(editor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+    await typeAtEnd(page, editor, "Saved online. ")
+
+    await page.context().setOffline(true)
+    await typeAtEnd(page, editor, "Typed offline")
+    await closePane()
+    await anchorRow(page, docId).click()
+    await expect(editor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+    await expect(editor).toContainText("Saved online. Typed offline")
+    await typeAtEnd(page, editor, " and after reopening.")
+    await closePane()
+
+    await page.context().setOffline(false)
+    await expect
+      .poll(
+        async () => {
+          const response = await page.request.get(`/api/workspaces/${workspaceId}/docs/${docId}`)
+          if (!response.ok()) return ""
+          const { sections } = (await response.json()) as { sections: { markdown: string }[] }
+          return sections.map((section) => section.markdown).join("\n")
+        },
+        { timeout: 20000, message: "the server should hold every edit made offline" }
+      )
+      .toContain("Saved online. Typed offline and after reopening.")
+  })
+
   test.describe("phone", () => {
     test.use({ hasTouch: true })
 
