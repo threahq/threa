@@ -1652,6 +1652,30 @@ describe("runs T3 starts by itself", () => {
     expect({ posts: session.posts, saved }).toEqual({ posts: [], saved: [] })
   })
 
+  test("moves the delivered mark past a run whose relay gave up once a later run posts", async () => {
+    const { t3, session, saved, runner } = setup({ state: { ...LINKED, delivered: { thread_1: "run_1" } } })
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(1, "assistant_message", { text: "Posted before the restart." })])
+    t3.endInT3("run_1")
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(2, "assistant_message", { runId: "run_2", text: "Pushed." })])
+    t3.endInT3("run_2")
+    t3.failNext("t3_thread_wait", new T3AuthError("Run `threa-t3code login`"))
+    await runner.watch()
+    await until(() => !runner.busy)
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(3, "assistant_message", { runId: "run_3", text: "Deployed." })])
+    t3.endInT3("run_3")
+    await runner.watch()
+    await until(() => !runner.busy)
+    await runner.watch()
+
+    expect({ posts: session.posts, delivered: saved.at(-1)?.delivered }).toEqual({
+      posts: [{ streamId: "stream_root", text: "Deployed.", clientMessageId: "t3run-run_3" }],
+      delivered: { thread_1: "run_3" },
+    })
+  })
+
   test("records a turn's run delivered once it replies", async () => {
     const { t3, session, saved, runner } = setup()
     await settledTurn(t3, session, runner)

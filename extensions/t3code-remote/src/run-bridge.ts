@@ -364,8 +364,9 @@ export class T3TurnRunner {
   private readonly cutOff = new Map<string, number>()
   // Turns whose run ended but whose reply may not have posted yet, so a look at the thread can't record it delivered.
   private readonly settling = new Set<OpenRun>()
-  // Threads with a relay that gave up before posting its run, so their mark stays put and a restart posts the run.
-  private readonly undelivered = new Set<string>()
+  // Per thread, the last run a relay that gave up still owed. The mark stays put while that run is the thread's latest,
+  // so a restart posts the owed runs; a later run's delivery moves the mark past them rather than repost every run.
+  private readonly undelivered = new Map<string, string>()
   // Per thread, the last watch failure logged, so a T3 outage logs once rather than every poll.
   private readonly watchErrors = new Map<string, string>()
   private watching = false
@@ -628,10 +629,12 @@ export class T3TurnRunner {
 
   /**
    * Records that `runId`'s outcome, and every earlier run's, reached Threa, so a restart posts only the runs after it.
-   * Skipped while a relay still posts the thread's runs, after one gave up, or once no stream links the thread.
+   * Skipped while a relay still posts the thread's runs, for the run a relay gave up on, or once no stream links the
+   * thread.
    */
   private markDelivered(threadId: string, runId: string): void {
-    if (this.unprompted.has(threadId) || this.undelivered.has(threadId)) return
+    if (this.unprompted.has(threadId) || this.undelivered.get(threadId) === runId) return
+    this.undelivered.delete(threadId)
     if (this.state.delivered?.[threadId] === runId) return
     if (!Object.values(this.state.threads).includes(threadId)) return
     this.saveState({ ...this.state, delivered: { ...this.state.delivered, [threadId]: runId } })
@@ -713,7 +716,7 @@ export class T3TurnRunner {
     this.unprompted.set(threadId, relay)
     void this.relayRuns(streamId, relay)
       .catch((error) => {
-        this.undelivered.add(threadId)
+        this.undelivered.set(threadId, relay.queue.at(-1) ?? relay.runId)
         this.log(`run ${relay.runId} relay failed: ${errorText(error)}`)
       })
       .finally(() => this.release(relay))
