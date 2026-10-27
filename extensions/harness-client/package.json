@@ -1,6 +1,6 @@
 {
   "name": "@threahq/harness-client",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Helpers shared by the Threa harness daemon and the tmux-driven runtimes it supervises: harness link records, harnessd kick/reconnect, allowlisted tmux keys, and the supervisor socket. The public bot protocol lives in @threahq/bot-runtime-client.",
   "keywords": [
     "threa",

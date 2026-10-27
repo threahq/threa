@@ -1,6 +1,6 @@
 {
   "name": "@threahq/bot",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Run any command as a Threa bot: `threa-bot run -- <command>` links a scratchpad (or answers mentions) and pipes each turn into the command, posting its output as the reply.",
   "keywords": [
     "threa",

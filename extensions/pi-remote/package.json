@@ -1,6 +1,6 @@
 {
   "name": "@threahq/pi-remote",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A Pi extension that links a local Pi session to a Threa scratchpad, so you can drive Pi from Threa.",
   "keywords": [
     "pi-package",
