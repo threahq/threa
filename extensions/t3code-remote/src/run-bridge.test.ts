@@ -1078,13 +1078,15 @@ describe("T3TurnRunner", () => {
   })
 
   test("a thread deleted in T3 is forgotten so the next message launches a new one", async () => {
-    const { t3, saved, runner } = setup({ state: { threads: { stream_root: "thread_gone" }, model: MODEL } })
+    const { t3, saved, runner } = setup({
+      state: { threads: { stream_root: "thread_gone" }, model: MODEL, delivered: { thread_gone: "run_0" } },
+    })
     t3.failNext("t3_thread_send", new T3ToolError("t3_thread_send", "thread_not_found", "not found"))
 
     await expect(runner.deliverTurn(turn())).rejects.toThrow(
       "`thread_gone` is gone; the next message starts a new one."
     )
-    expect(saved.at(-1)).toEqual({ threads: {}, model: MODEL })
+    expect(saved.at(-1)).toEqual({ threads: {}, model: MODEL, delivered: {} })
   })
 
   test("a thread deleted mid-run fails the turn and is forgotten", async () => {
@@ -1096,7 +1098,7 @@ describe("T3TurnRunner", () => {
 
     expect({ fails: session.fails, state: saved.at(-1) }).toEqual({
       fails: [{ invocationId: "binv_1", errorMessage: expect.stringContaining("`thread_1` is gone") }],
-      state: { threads: {}, model: MODEL },
+      state: { threads: {}, model: MODEL, delivered: {} },
     })
   })
 
@@ -1607,6 +1609,96 @@ describe("runs T3 starts by itself", () => {
     t3.startInT3("thread_1")
     t3.script("run_1", [{ status: "waiting" }])
     await t3.client.call("t3_thread_wait", { threadId: "thread_1", runId: "run_1", timeoutMs: 0 })
+    await runner.watch()
+    await idle()
+
+    expect({ busy: runner.busy, posts: session.posts }).toEqual({ busy: false, posts: [] })
+  })
+
+  test("posts the final message of a run that ended while the connector was down, and records it delivered", async () => {
+    const { t3, session, saved, runner } = setup({ state: { ...LINKED, delivered: { thread_1: "run_1" } } })
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(1, "assistant_message", { text: "Posted before the restart." })])
+    t3.endInT3("run_1")
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [
+      item(2, "assistant_message", { runId: "run_2", text: "THREA_UPDATE: Tests pass." }),
+      item(3, "assistant_message", { runId: "run_2", text: "Pushed." }),
+    ])
+    t3.endInT3("run_2")
+    await runner.watch()
+    await until(() => !runner.busy)
+    await runner.watch()
+
+    expect({ posts: session.posts, delivered: saved.at(-1)?.delivered }).toEqual({
+      posts: [{ streamId: "stream_root", text: "Pushed.", clientMessageId: "t3run-run_2" }],
+      delivered: { thread_1: "run_2" },
+    })
+  })
+
+  test("records a turn's run delivered once it replies", async () => {
+    const { t3, session, saved, runner } = setup()
+    await settledTurn(t3, session, runner)
+    await idle()
+
+    expect(saved.at(-1)).toEqual({
+      threads: { stream_root: "thread_1" },
+      model: MODEL,
+      delivered: { thread_1: "run_1" },
+    })
+  })
+
+  test("records nothing delivered while a turn's reply is still posting", async () => {
+    const { t3, session, saved, runner } = setup()
+    const { reply } = session.session
+    let release = () => {}
+    const held = new Promise<void>((resolve) => (release = resolve))
+    session.session.reply = async (...args) => {
+      await held
+      return reply(...args)
+    }
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Done." })] }])
+    await runner.deliverTurn(turn())
+    await until(() => !runner.hasOpenTurns())
+    await runner.watch()
+    const whilePosting = saved.at(-1)?.delivered
+    release()
+    await session.settled()
+    await idle()
+
+    expect({ whilePosting, after: saved.at(-1)?.delivered }).toEqual({
+      whilePosting: undefined,
+      after: { thread_1: "run_1" },
+    })
+  })
+
+  test("a /clear while the reply posts leaves no delivered run for the thread", async () => {
+    const { t3, session, saved, runner } = setup()
+    const { reply } = session.session
+    let release = () => {}
+    const held = new Promise<void>((resolve) => (release = resolve))
+    session.session.reply = async (...args) => {
+      await held
+      return reply(...args)
+    }
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Done." })] }])
+    await runner.deliverTurn(turn())
+    await until(() => !runner.hasOpenTurns())
+    runner.forgetThread("stream_root")
+    release()
+    await session.settled()
+    await idle()
+
+    expect(saved.at(-1)).toEqual({ threads: {}, model: MODEL, delivered: {} })
+  })
+
+  test("leaves a run waiting on a question after the last one delivered", async () => {
+    const { t3, session, runner } = setup({ state: { ...LINKED, delivered: { thread_1: "run_1" } } })
+    t3.startInT3("thread_1")
+    t3.endInT3("run_1")
+    t3.startInT3("thread_1")
+    t3.script("run_2", [{ status: "waiting" }])
+    await t3.client.call("t3_thread_wait", { threadId: "thread_1", runId: "run_2", timeoutMs: 0 })
     await runner.watch()
     await idle()
 
