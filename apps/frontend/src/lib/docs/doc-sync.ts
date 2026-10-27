@@ -6,6 +6,7 @@ import { docsApi } from "@/api/docs"
 import { getActiveDb } from "@/db"
 import { enqueueDocUpdate } from "@/sync/operation-queue"
 import { applyServerUpdate } from "./block-rescue"
+import { rowsAfter } from "./doc-delivery"
 import { dexieDocLocalCopies, docLockName, type DocLocalCopies } from "./doc-local-copy"
 
 /** Transaction origin of every update that came from the server; anything else is a local edit to send. */
@@ -290,19 +291,11 @@ export class DocSync {
   }
 
   private async fetchMissed(after: number): Promise<void> {
-    try {
-      const { updates } = await this.api.listUpdates(this.workspaceId, this.docId, after)
+    for await (const row of rowsAfter(this.api, this.workspaceId, this.docId, after)) {
       if (this.stopped) return
-      let seq = this.seq ?? after
-      for (const update of updates) {
-        if (update.seq <= seq) continue
-        this.applyRemote(update.update)
-        seq = update.seq
-      }
-      this.seq = seq
-    } catch (error) {
-      if (ApiError.isApiError(error) && error.status === 409) return this.reload()
-      throw error
+      if (row.seq <= (this.seq ?? after)) continue
+      this.applyRemote(row.update)
+      this.seq = row.seq
     }
   }
 

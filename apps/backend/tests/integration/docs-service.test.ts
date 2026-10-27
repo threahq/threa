@@ -106,7 +106,12 @@ async function openClient(docId: string, userIdForClient: string) {
   return {
     ydoc,
     async sync() {
-      const updates = await docService.listUpdates({ workspaceId: wsId, userId: userIdForClient, docId, after: seen })
+      const { updates } = await docService.listUpdates({
+        workspaceId: wsId,
+        userId: userIdForClient,
+        docId,
+        after: seen,
+      })
       for (const update of updates) Y.applyUpdate(ydoc, decodeUpdateBase64(update.update))
       seen = updates.at(-1)?.seq ?? seen
     },
@@ -212,7 +217,7 @@ describe("DocService", () => {
     const unstamped = await post(doc.id, appendBlock(client.ydoc, paragraph("No id")))
     await client.sync()
 
-    const updates = await docService.listUpdates({ workspaceId: wsId, userId: owner, docId: doc.id, after: 0 })
+    const { updates } = await docService.listUpdates({ workspaceId: wsId, userId: owner, docId: doc.id, after: 0 })
     const ids = (await serverJson(doc.id)).content?.map((block) => block.attrs?.blockId)
     expect({
       seqs: [result.seq, unstamped.seq],
@@ -495,7 +500,7 @@ describe("DocService", () => {
     const later = await post(doc.id, appendBlock(bob.ydoc, paragraph("Bob later", blockId())), peer)
     await bob.sync()
 
-    const updates = await docService.listUpdates({ workspaceId: wsId, userId: owner, docId: doc.id, after: 2 })
+    const { updates } = await docService.listUpdates({ workspaceId: wsId, userId: owner, docId: doc.id, after: 2 })
     const server = await serverJson(doc.id)
     const head = await DocRepository.findHead(pool, wsId, doc.id)
     const { sections } = await docService.get({ workspaceId: wsId, userId: owner, docId: doc.id })
@@ -576,7 +581,7 @@ describe("DocService", () => {
     await expect(createDoc(system.id)).rejects.toMatchObject({ status: 400, code: "DOC_HOST_TYPE_INVALID" })
   })
 
-  test("should reproduce body and sections from a snapshot and refuse updates behind it when more than 200 updates were posted", async () => {
+  test("should reproduce body and sections from a snapshot and page the log behind it when more than 200 updates were posted", async () => {
     const channel = await createChannel("public")
     const doc = await createDoc(channel.id)
     const client = await openClient(doc.id, owner)
@@ -591,13 +596,20 @@ describe("DocService", () => {
     )
     const read = await docService.get({ workspaceId: wsId, userId: owner, docId: doc.id })
     const head = await DocRepository.findHead(pool, wsId, doc.id)
-    const tail = await docService.listUpdates({ workspaceId: wsId, userId: owner, docId: doc.id, after: 200 })
-    await expect(
-      docService.listUpdates({ workspaceId: wsId, userId: owner, docId: doc.id, after: 199 })
-    ).rejects.toMatchObject({ status: 409, code: "DOC_UPDATES_BEHIND_SNAPSHOT" })
+    const page = async (after: number) => {
+      const { updates: rows, hasMore } = await docService.listUpdates({
+        workspaceId: wsId,
+        userId: owner,
+        docId: doc.id,
+        after,
+      })
+      return { seqs: rows.map((update) => update.seq), hasMore }
+    }
+    const first = await page(0)
     expect({
       snapshotSeq: (await DocRepository.findLatestSnapshot(pool, wsId, doc.id))?.seq,
-      tailSeqs: tail.map((update) => update.seq),
+      first: { count: first.seqs.length, from: first.seqs[0], to: first.seqs.at(-1), hasMore: first.hasMore },
+      behindSnapshot: await page(199),
       seq: read.seq,
       state: projectDoc(
         ydocToContentJson(loadDocState({ snapshot: decodeUpdateBase64(read.state), updates: [] })),
@@ -607,7 +619,8 @@ describe("DocService", () => {
       sections: read.sections,
     }).toEqual({
       snapshotSeq: 200,
-      tailSeqs: [201],
+      first: { count: 200, from: 1, to: 200, hasMore: true },
+      behindSnapshot: { seqs: [200, 201], hasMore: false },
       seq: 201,
       state: replayed,
       body: replayed.bodyMarkdown,

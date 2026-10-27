@@ -12,7 +12,7 @@ import {
   type DocPostUpdateResult,
   type DocSection,
   type DocState,
-  type DocUpdateView,
+  type DocUpdatesResponse,
 } from "@threahq/types"
 import { collectAttachmentReferenceIds } from "@threahq/prosemirror"
 import { withClient, withTransaction, type Querier } from "../../db"
@@ -52,6 +52,8 @@ import {
 } from "./yjs"
 
 export const DOC_SNAPSHOT_INTERVAL = 200
+
+export const DOC_UPDATES_PAGE_SIZE = 200
 
 type StoredUpdate = DocUpdate & { touchedBlockIds: string[] }
 
@@ -139,28 +141,30 @@ export class DocService {
     })
   }
 
+  /**
+   * Pages of the log after `after`, so a client far behind still replays row by row: one merged
+   * diff would hide which of its local edits the server already holds.
+   */
   async listUpdates(params: {
     workspaceId: string
     userId: string
     docId: string
     after: number
-  }): Promise<DocUpdateView[]> {
+  }): Promise<DocUpdatesResponse> {
     return withClient(this.pool, async (client) => {
       await this.findReadableDoc(client, params)
-      const snapshot = await DocRepository.findLatestSnapshot(client, params.workspaceId, params.docId)
-      if (snapshot && params.after < snapshot.seq) {
-        throw new HttpError("Updates before the latest snapshot are not served; fetch the doc state instead", {
-          status: 409,
-          code: "DOC_UPDATES_BEHIND_SNAPSHOT",
-        })
+      const rows = await DocRepository.listUpdatesAfter(client, params.workspaceId, params.docId, params.after, {
+        limit: DOC_UPDATES_PAGE_SIZE + 1,
+      })
+      return {
+        updates: rows.slice(0, DOC_UPDATES_PAGE_SIZE).map(({ seq, update, actorId, actorType }) => ({
+          seq,
+          update: encodeUpdateBase64(update),
+          actorId,
+          actorType,
+        })),
+        hasMore: rows.length > DOC_UPDATES_PAGE_SIZE,
       }
-      const updates = await DocRepository.listUpdatesAfter(client, params.workspaceId, params.docId, params.after)
-      return updates.map(({ seq, update, actorId, actorType }) => ({
-        seq,
-        update: encodeUpdateBase64(update),
-        actorId,
-        actorType,
-      }))
     })
   }
 

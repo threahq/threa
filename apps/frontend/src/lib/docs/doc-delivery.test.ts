@@ -41,11 +41,11 @@ class FakeServer {
   }
 
   readonly api = {
-    get: vi.fn(),
     listUpdates: vi.fn(async (_ws: string, _doc: string, after: number) => ({
       updates: this.rows
         .filter((row) => row.seq > after)
         .map((row) => ({ ...row, actorId: "usr_1", actorType: "user" as const })),
+      hasMore: false,
     })),
     postUpdate: vi.fn(async (_ws: string, _doc: string, update: string) => {
       const before = Y.snapshot(this.doc)
@@ -60,11 +60,11 @@ class FakeServer {
 }
 
 function localCopies(copy: Omit<DocLocalCopy, "queuedIds"> | null) {
-  const store = { copy, written: null as { state: Uint8Array; seq: number; unsent: Uint8Array | null } | null }
+  const store = { copy }
   const copies: DocLocalCopies = {
     read: async () => (store.copy ? { ...store.copy, queuedIds: [] } : null),
-    write: async (_ws, _doc, written) => {
-      store.written = written
+    write: async (_ws, _doc, { state, seq, unsent }) => {
+      store.copy = { state, seq, unsent: unsent ? [unsent] : [] }
     },
     remove: async () => {
       store.copy = null
@@ -108,14 +108,43 @@ describe("deliverQueuedDocUpdate", () => {
     })
 
     const saved = new Y.Doc()
-    Y.applyUpdate(saved, store.written!.state)
+    Y.applyUpdate(saved, store.copy!.state)
     expect({
       server: blocksOf(server.doc),
-      copy: { blocks: blocksOf(saved), seq: store.written!.seq, unsent: store.written!.unsent },
+      copy: { blocks: blocksOf(saved), seq: store.copy!.seq, unsent: store.copy!.unsent },
     }).toEqual({
       server: ["beta mine", "alpha", "gamma"],
-      copy: { blocks: ["beta mine", "alpha", "gamma"], seq: 3, unsent: null },
+      copy: { blocks: ["beta mine", "alpha", "gamma"], seq: 3, unsent: [] },
     })
+  })
+
+  it("should not add the rescued edit twice when the retry follows a lost response", async () => {
+    const server = new FakeServer()
+    server.write((ydoc) => writeDoc(ydoc, alpha, beta, gamma))
+    const { copy, update } = deviceWithOfflineEdit(server)
+    server.write((ydoc) => {
+      writeDoc(ydoc, alpha, gamma)
+      writeDoc(ydoc, beta, alpha, gamma)
+    })
+    const { copies } = localCopies(copy)
+    const stored = server.api.postUpdate.getMockImplementation()!
+    server.api.postUpdate.mockImplementationOnce(async (...args) => {
+      await stored(...args)
+      throw new TypeError("Failed to fetch")
+    })
+    const deliver = () =>
+      deliverQueuedDocUpdate({
+        workspaceId: WORKSPACE_ID,
+        docId: DOC_ID,
+        update,
+        api: server.api as unknown as DocsApi,
+        localCopies: copies,
+      })
+
+    await expect(deliver()).rejects.toBeInstanceOf(TypeError)
+    await deliver()
+
+    expect(blocksOf(server.doc)).toEqual(["beta mine", "alpha", "gamma"])
   })
 
   it("should post the queued bytes as they are when the device holds no copy of the doc", async () => {
@@ -132,9 +161,9 @@ describe("deliverQueuedDocUpdate", () => {
       localCopies: copies,
     })
 
-    expect({ posted: server.api.postUpdate.mock.calls, written: store.written }).toEqual({
+    expect({ posted: server.api.postUpdate.mock.calls, copy: store.copy }).toEqual({
       posted: [[WORKSPACE_ID, DOC_ID, update]],
-      written: null,
+      copy: null,
     })
   })
 

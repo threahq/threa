@@ -180,7 +180,7 @@ describe("doc_update operations", () => {
       { workspaceId, docId: "stream_doc", ...copy },
       { workspaceId, docId: "stream_other", ...copy },
     ])
-    vi.spyOn(docsApiModule.docsApi, "listUpdates").mockResolvedValue({ updates: [] })
+    vi.spyOn(docsApiModule.docsApi, "listUpdates").mockResolvedValue({ updates: [], hasMore: false })
     vi.spyOn(docsApiModule.docsApi, "postUpdate").mockRejectedValue(new ApiError(403, "FORBIDDEN", "no access"))
     await enqueueDocUpdate(workspaceId, "stream_doc", typedEdit)
 
@@ -202,7 +202,7 @@ describe("doc_update operations", () => {
       unsent: null,
       _cachedAt: 1,
     })
-    vi.spyOn(docsApiModule.docsApi, "listUpdates").mockResolvedValue({ updates: [] })
+    vi.spyOn(docsApiModule.docsApi, "listUpdates").mockResolvedValue({ updates: [], hasMore: false })
     vi.spyOn(docsApiModule.docsApi, "postUpdate").mockRejectedValue(new ApiError(401, "UNAUTHORIZED", "signed out"))
     await enqueueDocUpdate(workspaceId, "stream_doc", typedEdit)
 

@@ -199,11 +199,18 @@ export const DocRepository = {
     }))
   },
 
-  async listUpdatesAfter(db: Querier, workspaceId: string, docId: string, afterSeq: number): Promise<DocUpdate[]> {
+  async listUpdatesAfter(
+    db: Querier,
+    workspaceId: string,
+    docId: string,
+    afterSeq: number,
+    options: { limit?: number } = {}
+  ): Promise<DocUpdate[]> {
     const result = await db.query<DocUpdateRow>(sql`
       SELECT seq, update, actor_id, actor_type FROM doc_updates
       WHERE workspace_id = ${workspaceId} AND doc_id = ${docId} AND seq > ${afterSeq}
       ORDER BY seq
+      LIMIT ${options.limit ?? null}
     `)
     return result.rows.map((row) => ({
       seq: row.seq,

@@ -1,11 +1,11 @@
 import * as Y from "yjs"
 import { base64ToBytes, bytesToBase64 } from "@threahq/crypto"
-import { ApiError } from "@/api/client"
+import type { DocUpdateView } from "@threahq/types"
 import { applyServerUpdate } from "./block-rescue"
 import { docLockName, type DocLocalCopies } from "./doc-local-copy"
 import type { DocsApi } from "./doc-sync"
 
-/** Thrown while a tab holds the doc open: that tab's `DocSync` sends the edits, and the row waits for it to close. */
+/** Thrown while a tab holds the doc open: delivering beside it could rescue the same edits twice, so the row waits until no tab does. */
 export class DocOpenElsewhereError extends Error {
   constructor() {
     super("The doc is open in a tab, which sends its edits")
@@ -18,6 +18,22 @@ function withDocLock<T>(workspaceId: string, docId: string, fn: () => Promise<T>
     if (!lock) throw new DocOpenElsewhereError()
     return fn()
   }) as Promise<T>
+}
+
+/** Every row of the doc's log after `after`, in seq order, a page at a time. */
+export async function* rowsAfter(
+  api: DocsApi,
+  workspaceId: string,
+  docId: string,
+  after: number
+): AsyncGenerator<DocUpdateView> {
+  for (let cursor = after; ; ) {
+    const { updates, hasMore } = await api.listUpdates(workspaceId, docId, cursor)
+    yield* updates
+    const last = updates.at(-1)
+    if (!hasMore || !last) return
+    cursor = last.seq
+  }
 }
 
 /**
@@ -45,31 +61,24 @@ export function deliverQueuedDocUpdate(params: {
       Y.applyUpdate(server, copy.state)
       Y.applyUpdate(local, Y.mergeUpdates([copy.state, ...copy.unsent, base64ToBytes(update)]))
       let seq = copy.seq
-      try {
-        const { updates } = await api.listUpdates(workspaceId, docId, seq)
-        for (const row of updates) {
-          applyServerUpdate(local, server, base64ToBytes(row.update), null, true)
-          seq = row.seq
-        }
-      } catch (error) {
-        if (!ApiError.isApiError(error) || error.status !== 409) throw error
-        const doc = await api.get(workspaceId, docId, bytesToBase64(Y.encodeStateVector(server)))
-        applyServerUpdate(local, server, base64ToBytes(doc.state), null, true)
-        seq = doc.seq
+      for await (const row of rowsAfter(api, workspaceId, docId, seq)) {
+        applyServerUpdate(local, server, base64ToBytes(row.update), null, true)
+        seq = row.seq
       }
       const edits = Y.encodeStateAsUpdate(local, Y.encodeStateVector(server))
+      // Saved before the POST: a retry after a lost response starts from here, not from the copy's old base, which
+      // would see the edit's own row as a change to rescue against and add it twice.
+      await localCopies.write(workspaceId, docId, { state: Y.encodeStateAsUpdate(server), seq, unsent: edits })
       const result = await api.postUpdate(workspaceId, docId, bytesToBase64(edits))
       // Any other answer leaves the edits unplaced in the server's log; kept as unsent, the next open re-sends them as a no-op.
-      const nextRow = result.applied && result.seq === seq + 1
-      if (nextRow) {
+      if (result.applied && result.seq === seq + 1) {
         Y.applyUpdate(server, edits)
-        seq = result.seq
+        await localCopies.write(workspaceId, docId, {
+          state: Y.encodeStateAsUpdate(server),
+          seq: result.seq,
+          unsent: null,
+        })
       }
-      await localCopies.write(workspaceId, docId, {
-        state: Y.encodeStateAsUpdate(server),
-        seq,
-        unsent: nextRow ? null : edits,
-      })
     } finally {
       server.destroy()
       local.destroy()

@@ -28,7 +28,7 @@ interface Hold {
 class FakeDocServer {
   readonly doc = new Y.Doc()
   readonly log: DocUpdateView[] = []
-  snapshotSeq = 0
+  pageSize = Infinity
   readonly clients = new Set<DocSync>()
   private readonly postErrors: ApiError[] = []
 
@@ -44,8 +44,8 @@ class FakeDocServer {
       })
     ),
     listUpdates: vi.fn(async (_ws: string, _doc: string, after: number) => {
-      if (after < this.snapshotSeq) throw new ApiError(409, "DOC_UPDATES_BEHIND_SNAPSHOT", "behind snapshot")
-      return { updates: this.log.filter((entry) => entry.seq > after) }
+      const rows = this.log.filter((entry) => entry.seq > after)
+      return { updates: rows.slice(0, this.pageSize), hasMore: rows.length > this.pageSize }
     }),
     postUpdate: vi.fn(async (_ws: string, _doc: string, update: string) => {
       const error = this.postErrors.shift()
@@ -336,18 +336,19 @@ describe("DocSync", () => {
     })
   })
 
-  it("reloads the full state when the log behind its seq was compacted", async () => {
+  it("should replay the log a page at a time and take the next broadcast at once when it is longer than a page", async () => {
     const client = connect(server)
     await client.sync.start()
+    server.pageSize = 1
 
-    server.writeElsewhere("compacted")
-    server.writeElsewhere(" away")
-    server.snapshotSeq = 2
+    server.writeElsewhere("paged")
+    server.writeElsewhere(" in")
     await client.sync.catchUp()
+    client.sync.receive(server.writeElsewhere(" order"))
 
-    expect({ text: client.text(), gets: server.api.get.mock.calls.length }).toEqual({
-      text: "compacted away",
-      gets: 2,
+    expect({ text: client.text(), afters: server.api.listUpdates.mock.calls.map((call) => call[2]) }).toEqual({
+      text: "paged in order",
+      afters: [0, 1],
     })
   })
 
@@ -716,36 +717,18 @@ describe("DocSync", () => {
     })
   })
 
-  it("should send its state vector when reloading after the first load", async () => {
+  it("should send the server doc's state vector when it reloads after a refusal", async () => {
     server.writeElsewhere("base")
     const client = connect(server)
     await client.sync.start()
     const stateVector = bytesToBase64(Y.encodeStateVector(client.ydoc))
-    server.writeElsewhere(" compacted")
-    server.snapshotSeq = 2
+    server.failNextPost(400, "DOC_UPDATE_INVALID")
 
-    await client.sync.catchUp()
+    type(client.ydoc, "bad")
+    await vi.advanceTimersByTimeAsync(FLUSH_CAP_MS)
+    await client.sync.flush()
 
-    expect({ text: client.text(), stateVectors: server.api.get.mock.calls.map((call) => call[2]) }).toEqual({
-      text: "base compacted",
-      stateVectors: [undefined, stateVector],
-    })
-  })
-
-  it("adopts the server seq after a 409 reload", async () => {
-    const client = connect(server)
-    await client.sync.start()
-    server.writeElsewhere("a")
-    server.writeElsewhere("b")
-    server.snapshotSeq = 2
-    await client.sync.catchUp()
-
-    client.sync.receive(server.writeElsewhere("c"))
-
-    expect({ text: client.text(), fetched: server.api.listUpdates.mock.calls.length }).toEqual({
-      text: "abc",
-      fetched: 1,
-    })
+    expect(server.api.get.mock.calls.map((call) => call[2])).toEqual([undefined, stateVector])
   })
 
   it("notifies subscribers only when the status changes", async () => {
@@ -820,17 +803,18 @@ describe("DocSync", () => {
       })
     })
 
-    it("should ask with the server doc's state vector when the copy is behind the server's snapshot", async () => {
+    it("should replay row by row when the copy is more than a page behind", async () => {
       await closeAfterTyping("mine ", { online: true })
       server.writeElsewhere("theirs")
-      server.api.listUpdates.mockRejectedValueOnce(new ApiError(409, "DOC_UPDATES_BEHIND_SNAPSHOT", "behind snapshot"))
+      server.writeElsewhere(" again")
+      server.pageSize = 1
 
       const client = connect(server)
       await client.sync.start()
 
-      expect({ text: client.text(), stateVectorSent: server.api.get.mock.calls.at(-1)?.[2] !== undefined }).toEqual({
-        text: "mine theirs",
-        stateVectorSent: true,
+      expect({ text: client.text(), after: server.api.listUpdates.mock.calls.map((call) => call[2]) }).toEqual({
+        text: "mine theirs again",
+        after: [1, 2],
       })
     })
 

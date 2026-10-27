@@ -2475,9 +2475,11 @@ export interface DocUpdateView {
   actorType: AuthorType
 }
 
-/** `GET /workspaces/:ws/docs/:docId/updates?after=`. */
+/** `GET /workspaces/:ws/docs/:docId/updates?after=`: one page, in seq order. */
 export interface DocUpdatesResponse {
   updates: DocUpdateView[]
+  /** More rows follow the last one; ask again after its seq. */
+  hasMore: boolean
 }
 
 /** One section thread: the thread anchored on a doc block and its reply count. */
