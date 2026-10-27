@@ -76,48 +76,6 @@ function jsonResponse(body: unknown): Response {
 }
 
 describe("plaintext attachments (outbound)", () => {
-  test("prepareFinalMarkdown links an embedded image in place and lists directive files", async () => {
-    __testing.setConfigForTesting(BASE_CONFIG)
-    const dir = tempDir()
-    writeFileSync(join(dir, "chart.png"), new Uint8Array([1, 2, 3]))
-    writeFileSync(join(dir, "notes.txt"), "notes")
-    const uploaded: string[] = []
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
-      input: string | URL | Request,
-      init?: RequestInit
-    ) => {
-      if (!String(input).endsWith("/attachments")) throw new Error(`unexpected fetch: ${String(input)}`)
-      const file = (init?.body as FormData).get("file") as Blob & { name?: string }
-      uploaded.push(file.name ?? "")
-      const id = `att_${uploaded.length}`
-      return jsonResponse({ data: { id, filename: file.name, mimeType: file.type, sizeBytes: file.size } })
-    }) as typeof fetch)
-
-    let result: Awaited<ReturnType<typeof __testing.prepareFinalMarkdown>>
-    try {
-      result = await __testing.prepareFinalMarkdown(
-        "See ![the chart](chart.png) and ![gone](gone.png).\nTHREA_ATTACH: notes.txt",
-        dir
-      )
-    } finally {
-      fetchSpy.mockRestore()
-    }
-
-    expect({ uploaded, markdown: result.finalMarkdown.replace(/ENOENT.*$/m, "ENOENT") }).toEqual({
-      uploaded: ["chart.png", "notes.txt"],
-      markdown: [
-        'See [the chart](attachment:att_1 "threa-attachment:filename=chart.png&mimeType=image%2Fpng&sizeBytes=3") and .',
-        "",
-        "Attachments:",
-        "",
-        "- [notes.txt](attachment:att_2)",
-        "",
-        "Attachment upload failed:",
-        "- gone.png: ENOENT",
-      ].join("\n"),
-    })
-  })
-
   test("trace text hides embedded image and directive paths", () => {
     expect(__testing.sanitizeTraceText("![shot](/home/u/shot.png)\nTHREA_ATTACH: /home/u/notes.txt")).toBe(
       "[image: local path omitted]\nTHREA_ATTACH: [local path omitted]"

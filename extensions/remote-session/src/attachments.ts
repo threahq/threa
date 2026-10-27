@@ -1,19 +1,8 @@
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
-import { basename, dirname, join, resolve } from "node:path"
-import {
-  attachmentLocalPath,
-  decryptAttachmentBytes,
-  encryptAttachmentBytes,
-  findLocalImageLinks,
-  imageAttachmentLink,
-  redactLocalImageLinks,
-  uploadLocalImageLinks,
-  type AttachmentRef,
-} from "@threahq/bot-runtime-client"
+import { mkdirSync, writeFileSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { attachmentLocalPath, decryptAttachmentBytes, type AttachmentRef } from "@threahq/bot-runtime-client"
 import type { AttachmentSummary, StreamMessageSummary, ThreaClient } from "./client"
 
-/** A reply line `THREA_ATTACH: ./out.png` tells the channel to upload that file and attach it to the reply. */
-export const ATTACH_DIRECTIVE_RE = /^THREA_ATTACH:\s*(.+?)\s*$/
 /** Inbound attachments land under `<cwd>/.threa-attachments/<invocationId>/<attachmentId>/`, fresh per turn. */
 export const ATTACHMENT_DIR = ".threa-attachments"
 
@@ -29,44 +18,6 @@ export interface DownloadedAttachment extends SelectedAttachment {
 }
 
 // --- Pure helpers ---------------------------------------------------------
-
-/** Strip `THREA_ATTACH:` directive lines out of a reply, returning the remaining text and the paths. */
-export function extractAttachmentDirectives(markdown: string): { markdown: string; paths: string[] } {
-  const paths: string[] = []
-  const lines = markdown.split("\n").filter((line) => {
-    const match = line.match(ATTACH_DIRECTIVE_RE)
-    if (!match) return true
-    paths.push(match[1]!)
-    return false
-  })
-  return { markdown: lines.join("\n").trim(), paths }
-}
-
-/** True when sending the reply would upload local files: `THREA_ATTACH:` lines or images embedded from disk. */
-export function hasReplyAttachments(markdown: string): boolean {
-  return extractAttachmentDirectives(markdown).paths.length > 0 || findLocalImageLinks(markdown).length > 0
-}
-
-/** Directive lines and embedded images name local paths; trace text shows that a file was attached, never where it lives. */
-export function redactAttachDirectives(text: string): string {
-  return redactLocalImageLinks(text.replace(/^THREA_ATTACH:\s*.+$/gm, "THREA_ATTACH: [local path omitted]"))
-}
-
-export function guessMimeType(path: string): string {
-  const lower = path.toLowerCase()
-  if (lower.endsWith(".png")) return "image/png"
-  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg"
-  if (lower.endsWith(".gif")) return "image/gif"
-  if (lower.endsWith(".webp")) return "image/webp"
-  if (lower.endsWith(".svg")) return "image/svg+xml"
-  if (lower.endsWith(".html")) return "text/html"
-  if (lower.endsWith(".md")) return "text/markdown"
-  if (lower.endsWith(".txt")) return "text/plain"
-  if (lower.endsWith(".csv")) return "text/csv"
-  if (lower.endsWith(".json")) return "application/json"
-  if (lower.endsWith(".pdf")) return "application/pdf"
-  return "application/octet-stream"
-}
 
 /**
  * Pick the attachments worth downloading: those on the source message (the
@@ -105,18 +56,6 @@ export function formatInboundAttachmentManifest(downloaded: DownloadedAttachment
     return `- ${filename} (${mimeType}, ${sizeBytes} bytes) → ${entry.localPath}${marker}`
   })
   return ["Attachments saved into this session's working directory — read them from these paths:", ...lines].join("\n")
-}
-
-/** The attachment links / failure notes appended to an outbound reply. */
-export function buildReplyAttachmentSection(uploaded: AttachmentSummary[], failed: string[]): string {
-  const parts: string[] = []
-  if (uploaded.length > 0) {
-    parts.push(["Attachments:", ...uploaded.map((a) => `- [${a.filename}](attachment:${a.id})`)].join("\n"))
-  }
-  if (failed.length > 0) {
-    parts.push(["Attachment upload failed:", ...failed.map((f) => `- ${f}`)].join("\n"))
-  }
-  return parts.join("\n\n")
 }
 
 // --- IO orchestration -----------------------------------------------------
@@ -189,132 +128,6 @@ export async function downloadInboundAttachments(
     }
   }
   return downloaded
-}
-
-async function uploadFile(
-  client: Pick<ThreaClient, "uploadAttachment">,
-  path: string,
-  cwd: string
-): Promise<AttachmentSummary> {
-  const absolute = resolve(cwd, path)
-  const stats = statSync(absolute)
-  if (!stats.isFile()) throw new Error(`${path} is not a file`)
-  const bytes = readFileSync(absolute)
-  const form = new FormData()
-  form.append("file", new Blob([bytes], { type: guessMimeType(absolute) }), basename(absolute))
-  return client.uploadAttachment(form)
-}
-
-/**
- * Resolve a reply's local files: each image embedded from disk (`![alt](/path)`)
- * uploads and becomes an inline `attachment:<id>` link in place, and each
- * `THREA_ATTACH:` file uploads and is listed under the reply. The backend
- * associates those links with the posted message. Upload failures surface as a
- * note rather than throwing.
- */
-export async function uploadReplyAttachments(
-  client: Pick<ThreaClient, "uploadAttachment">,
-  markdown: string,
-  cwd: string
-): Promise<{ markdown: string; uploaded: AttachmentSummary[]; failed: string[] }> {
-  const { markdown: stripped, paths } = extractAttachmentDirectives(markdown)
-  const images = await uploadLocalImageLinks(
-    stripped,
-    cwd,
-    (path) => uploadFile(client, path, cwd),
-    imageAttachmentLink
-  )
-  const listed: AttachmentSummary[] = []
-  const failed = [...images.failed]
-  for (const path of paths) {
-    try {
-      listed.push(await uploadFile(client, path, cwd))
-    } catch (error) {
-      failed.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
-  const section = buildReplyAttachmentSection(listed, failed)
-  const finalMarkdown = [images.markdown.trim(), section].filter(Boolean).join("\n\n")
-  return { markdown: finalMarkdown, uploaded: [...images.uploaded, ...listed], failed }
-}
-
-// --- Sealed (E2E) attachments ----------------------------------------------
-
-/** Placeholder name/mime for the opaque ciphertext upload — the real values ride only in the sealed ref. */
-const SEALED_UPLOAD_FILENAME = "encrypted"
-const SEALED_UPLOAD_MIME = "application/octet-stream"
-/**
- * Server cap on `attachmentIds` per sealed message (`sealedAttachmentIdsSchema`
- * caps at 16). Clamp before uploading: sending more ids would 400 the whole
- * completion, and the retry loop would re-send the same over-limit body forever.
- */
-export const MAX_SEALED_ATTACHMENTS_PER_MESSAGE = 16
-
-async function uploadSealedFile(
-  client: Pick<ThreaClient, "uploadAttachment">,
-  path: string,
-  cwd: string
-): Promise<AttachmentRef> {
-  const absolute = resolve(cwd, path)
-  const stats = statSync(absolute)
-  if (!stats.isFile()) throw new Error(`${path} is not a file`)
-  const bytes = readFileSync(absolute)
-  const encrypted = await encryptAttachmentBytes(bytes)
-  const form = new FormData()
-  form.append("e2e", "true")
-  form.append("file", new Blob([encrypted.ciphertext], { type: SEALED_UPLOAD_MIME }), SEALED_UPLOAD_FILENAME)
-  const summary = await client.uploadAttachment(form)
-  return {
-    attachmentId: summary.id,
-    key: encrypted.key,
-    iv: encrypted.iv,
-    filename: basename(absolute),
-    mimeType: guessMimeType(absolute),
-    sizeBytes: bytes.length,
-  }
-}
-
-/**
- * Resolve local files in SEALED output (`THREA_ATTACH:` lines and images
- * embedded from disk, which are removed from the text): encrypt each file under a
- * fresh single-use key, upload only the ciphertext (`e2e=true`, placeholder
- * name/mime), and return the refs to seal into the message payload plus the ids
- * the wire body binds to the message row. No `attachment:<id>` links are added —
- * an E2E viewer renders attachments from the sealed refs, not the markdown.
- * Upload failures surface as a note (itself sealed) rather than throwing.
- */
-export async function uploadSealedReplyAttachments(
-  client: Pick<ThreaClient, "uploadAttachment">,
-  markdown: string,
-  cwd: string
-): Promise<{ markdown: string; refs: AttachmentRef[]; attachmentIds: string[] }> {
-  const { markdown: stripped, paths } = extractAttachmentDirectives(markdown)
-  const refs: AttachmentRef[] = []
-  const upload = async (path: string): Promise<AttachmentRef> => {
-    if (refs.length >= MAX_SEALED_ATTACHMENTS_PER_MESSAGE) {
-      throw new Error(`over the ${MAX_SEALED_ATTACHMENTS_PER_MESSAGE}-attachment limit for one message`)
-    }
-    const ref = await uploadSealedFile(client, path, cwd)
-    refs.push(ref)
-    return ref
-  }
-  // Explicit directives claim the capped slots before embedded images.
-  const failed: string[] = []
-  for (const path of paths) {
-    try {
-      await upload(path)
-    } catch (error) {
-      failed.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
-  const images = await uploadLocalImageLinks(stripped, cwd, upload, () => "")
-  failed.push(...images.failed)
-  const failureNote = failed.length > 0 ? ["Attachment upload failed:", ...failed.map((f) => `- ${f}`)].join("\n") : ""
-  return {
-    markdown: [images.markdown.trim(), failureNote].filter(Boolean).join("\n\n"),
-    refs,
-    attachmentIds: refs.map((ref) => ref.attachmentId),
-  }
 }
 
 /** One inbound sealed attachment to fetch: the ref plus whether it rode the trigger message. */

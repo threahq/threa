@@ -1,7 +1,7 @@
 import { closeSync, openSync, readSync, readdirSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, join } from "node:path"
-import { redactAttachDirectives } from "@threahq/remote-session"
+import { redactAttachDirectives } from "@threahq/bot-runtime-client"
 
 /**
  * Trace steps for a Claude Code turn, sourced from the session transcript.
