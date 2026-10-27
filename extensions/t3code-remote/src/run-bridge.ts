@@ -334,6 +334,8 @@ interface OpenRun {
   unanswered?: string
   /** The delivered mark at admission and the runs queued ahead of this turn's, the only marks its reply moves on from. */
   before: Set<string>
+  /** The relay posting runs queued ahead of this turn's, which moves the mark itself while it runs. */
+  aheadRelay?: Relay
 }
 
 /**
@@ -875,8 +877,10 @@ export class T3TurnRunner {
       for (const runId of ahead) this.cutOff.delete(runId)
     } else this.relayUnaccounted(turn.streamId, threadId, ahead)
     if (aborted) return
-    const relayed = this.unprompted.get(threadId)
+    // A takeover's new relay posts runs queued after this turn's.
+    const aheadRelay = takenOver ? undefined : this.unprompted.get(threadId)
     const mark = this.state.delivered?.[threadId]
+    const settling = [...this.settling].filter((open) => open.threadId === threadId)
     const mode: RunTraceMode = turn.sealed && this.options.sealedFullTrace ? "full" : this.options.traceMode
     const run: OpenRun = {
       ...started,
@@ -886,7 +890,13 @@ export class T3TurnRunner {
       abort: new AbortController(),
       steers: new Set(),
       asked: new Set(stale),
-      before: new Set([...(mark ? [mark] : []), ...ahead, ...(relayed ? [relayed.runId, ...relayed.queue] : [])]),
+      before: new Set([
+        ...(mark ? [mark] : []),
+        ...ahead,
+        ...(aheadRelay ? [aheadRelay.runId, ...aheadRelay.queue] : []),
+        ...settling.flatMap((open) => [...open.trace.runIds]),
+      ]),
+      aheadRelay,
       ...(takenOver
         ? { cursor: takenOver.read.cursor }
         : this.cursors.has(started.threadId)
@@ -1167,7 +1177,7 @@ export class T3TurnRunner {
     // A relay still posting runs queued ahead of this one moves the mark itself, and one that already marked a later
     // run keeps the mark there.
     const mark = this.state.delivered?.[run.threadId]
-    if ([...run.before].some((runId) => this.relaying(run.threadId, runId))) return
+    if (run.aheadRelay && this.unprompted.get(run.threadId) === run.aheadRelay) return
     if (mark && !run.before.has(mark) && !run.trace.runIds.has(mark)) return
     this.markDelivered(run.threadId, run.runId)
   }

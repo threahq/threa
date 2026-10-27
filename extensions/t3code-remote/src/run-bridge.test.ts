@@ -1810,6 +1810,53 @@ describe("runs T3 starts by itself", () => {
     })
   })
 
+  test("a turn admitted while the previous turn's reply posts still records its run delivered", async () => {
+    const { t3, session, saved, runner } = setup()
+    const { reply } = session.session
+    let release = () => {}
+    const held = new Promise<void>((resolve) => (release = resolve))
+    session.session.reply = async (invocationId, text) => {
+      if (invocationId === "binv_1") await held
+      return reply(invocationId, text)
+    }
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Done." })] }])
+    await runner.deliverTurn(turn())
+    await until(() => !runner.hasOpenTurns())
+    t3.script("run_2", [{ status: "running" }])
+    await runner.deliverTurn(turn({ invocationId: "binv_2", content: "Now the docs" }))
+    release()
+    await until(() => saved.at(-1)?.delivered?.thread_1 === "run_1")
+    t3.script("run_2", [{ status: "completed", items: [item(2, "assistant_message", { text: "Docs done." })] }])
+    await session.settled()
+    await idle()
+
+    expect(saved.at(-1)?.delivered).toEqual({ thread_1: "run_2" })
+  })
+
+  test("a turn's reply leaves the mark while a relay of a run queued ahead of it posts the run that continues it", async () => {
+    const { t3, session, saved, runner } = setup({ state: { ...LINKED, delivered: { thread_1: "run_1" } } })
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(1, "assistant_message", { text: "Posted before the restart." })])
+    t3.endInT3("run_1")
+    t3.startInT3("thread_1")
+    t3.script("run_2", [{ status: "running" }])
+    await runner.watch()
+    await until(() => runner.busy)
+    t3.script("run_3", [
+      { status: "completed", items: [item(2, "assistant_message", { runId: "run_3", text: "Docs done." })] },
+    ])
+    await runner.deliverTurn(turn({ invocationId: "binv_2", content: "Now the docs" }))
+    t3.script("run_2", [{ status: "running", runId: "run_4" }])
+    t3.script("run_4", [{ status: "running" }])
+    await session.settled()
+    await idle()
+
+    expect({ replies: session.replies, saved }).toEqual({
+      replies: [{ invocationId: "binv_2", text: "Docs done." }],
+      saved: [],
+    })
+  })
+
   test("a /clear while the reply posts leaves no delivered run for the thread", async () => {
     const { t3, session, saved, runner } = setup()
     const { reply } = session.session
