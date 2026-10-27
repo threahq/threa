@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useCallback, useContext, useMemo, forwardRef, useImperativeHandle } from "react"
+import { isAndroid, isiOS } from "@tiptap/core"
 import { useEditor, EditorContent } from "@tiptap/react"
 import { GapCursor } from "@tiptap/pm/gapcursor"
 import type { ResolvedPos } from "@tiptap/pm/model"
@@ -773,11 +774,20 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     editable: !disabled,
     // Not TipTap's `autofocus` option: it focuses with the options the editor was configured with, which can be stale
     // when `create` fires. The ref is refreshed every render, so an editor whose pane the user left meanwhile doesn't
-    // pull the focus, and with it the route, back. Not `commands.focus` either: it focuses a frame after it is called,
-    // so a click into another pane in that frame would lose to this editor. The ref is read in the frame that focuses.
+    // pull the focus, and with it the route, back. Not `commands.focus` on desktop either: it focuses a frame after it
+    // is called, so a click into another pane in that frame would lose to this editor, as would a press that already
+    // focused something else. iOS and Android raise the keyboard only for a synchronous focus, and a phone shows one
+    // pane, so they keep it.
     onCreate: ({ editor }) => {
+      if (isiOS() || isAndroid()) {
+        if (autoFocusRef.current) editor.commands.focus("end")
+        return
+      }
+      const focusedAtCreate = document.activeElement
       requestAnimationFrame(() => {
         if (!autoFocusRef.current || editor.isDestroyed) return
+        const focused = document.activeElement
+        if (focused !== focusedAtCreate && focused !== document.body) return
         editor.view.focus()
         editor.view.dispatch(editor.state.tr.setSelection(Selection.atEnd(editor.state.doc)).scrollIntoView())
       })
