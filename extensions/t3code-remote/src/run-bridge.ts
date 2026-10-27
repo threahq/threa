@@ -63,6 +63,8 @@ export interface ThreadState {
   spawns?: Record<string, PendingSpawn>
   /** Keyed by T3 thread: the run whose outcome, and every earlier run's, reached Threa. */
   delivered?: Record<string, string>
+  /** Keyed by T3 thread: runs after its delivered mark that already posted, so a restart doesn't post them again. */
+  posted?: Record<string, string[]>
 }
 
 export interface ThreadStore {
@@ -431,11 +433,13 @@ export class T3TurnRunner {
     }
     const { [streamId]: threadId, ...threads } = this.state.threads
     const delivered = { ...this.state.delivered }
+    const posted = { ...this.state.posted }
     if (threadId) {
       delete delivered[threadId]
+      delete posted[threadId]
       this.undelivered.delete(threadId)
     }
-    this.saveState({ ...this.state, threads, delivered })
+    this.saveState({ ...this.state, threads, delivered, posted })
   }
 
   /**
@@ -647,6 +651,22 @@ export class T3TurnRunner {
   }
 
   /**
+   * While a run is still owed, a later run that posts leaves the mark before the owed one, and every run its post
+   * covered is recorded posted.
+   */
+  private recordPosted(threadId: string, runId: string, covered: Iterable<string>): void {
+    if (!this.undelivered.has(threadId)) return this.markDelivered(threadId, runId)
+    this.markPosted(threadId, covered)
+  }
+
+  private markPosted(threadId: string, runIds: Iterable<string>): void {
+    const posted = this.state.posted?.[threadId] ?? []
+    const added = [...runIds].filter((runId) => !posted.includes(runId))
+    if (added.length === 0 || !Object.values(this.state.threads).includes(threadId)) return
+    this.saveState({ ...this.state, posted: { ...this.state.posted, [threadId]: [...posted, ...added] } })
+  }
+
+  /**
    * The thread's runs no turn or relay accounts for, oldest first, and its latest run. The first look at a thread
    * accounts for every run through the last one delivered, so a run that ended while the connector was down still
    * posts its final message. Without that record it accounts for every run that already ended, and posts only a run
@@ -682,9 +702,16 @@ export class T3TurnRunner {
       if (delivered !== undefined && through === -1)
         this.log(`thread ${threadId} no longer lists delivered run ${delivered}; only a run still going will post`)
       const going = latest !== null && GOING_RUN_STATUSES.has(status) ? [latest] : []
+      const after = ordered.slice(through + 1)
+      const recorded = this.state.posted?.[threadId] ?? []
+      const posted = recorded.filter((runId) => after.includes(runId))
+      if (posted.length !== recorded.length)
+        this.saveState({ ...this.state, posted: { ...this.state.posted, [threadId]: posted } })
       // A run waiting on a question would hold its relay until someone answers it in T3.
       const owed =
-        through === -1 ? going : ordered.slice(through + 1).filter((runId) => runId !== latest || status !== "waiting")
+        through === -1
+          ? going
+          : after.filter((runId) => !posted.includes(runId) && (runId !== latest || status !== "waiting"))
       // Their updates went to a turn the restart closed, or were never seen; only what comes after this read posts.
       for (const runId of owed) this.cutOff.set(runId, items.at(-1)?.position ?? -1)
       this.account(
@@ -748,7 +775,7 @@ export class T3TurnRunner {
       this.log(`run ${relay.runId} started in T3 Code; posting its reply to ${streamId}`)
       await this.relayRun(streamId, relay)
       if (relay.abort.signal.aborted) return
-      this.markDelivered(relay.read.threadId, relay.runId)
+      this.recordPosted(relay.read.threadId, relay.runId, relay.read.trace.runIds)
       const next = relay.queue.shift()
       // Released in the tick the queue runs dry, so a run found meanwhile starts a relay of its own.
       if (!next) return this.release(relay)
@@ -1174,12 +1201,13 @@ export class T3TurnRunner {
       return
     }
     await this.settle(invocationId, run, status!)
-    // A relay still posting runs queued ahead of this one moves the mark itself, and one that already marked a later
-    // run keeps the mark there.
+    // A relay still posting runs queued ahead of this one moves the mark itself, so this run is only recorded posted;
+    // one that already marked a later run keeps the mark there.
     const mark = this.state.delivered?.[run.threadId]
-    if (run.aheadRelay && this.unprompted.get(run.threadId) === run.aheadRelay) return
+    if (run.aheadRelay && this.unprompted.get(run.threadId) === run.aheadRelay)
+      return this.markPosted(run.threadId, run.trace.runIds)
     if (mark && !run.before.has(mark) && !run.trace.runIds.has(mark)) return
-    this.markDelivered(run.threadId, run.runId)
+    this.recordPosted(run.threadId, run.runId, run.trace.runIds)
   }
 
   /** A card whose request left T3's pending list was answered in T3 itself, so it comes down. */
