@@ -77,9 +77,10 @@ async function evictUnreadableRooms(
   }
   // One user at a time: a recheck of a big room must not take the pool from live requests.
   for (const [workosUserId, sockets] of byLogin) {
-    const held = [...new Set(sockets.flatMap((socket) => [...socket.rooms].filter(checked)))]
-    if (held.length === 0) continue
-    const ids = (parse: (room: string) => string | null) => held.map(parse).filter((id) => id !== null)
+    // `socket.rooms` is live: a room joined while this pass awaits was checked by its own join, not here.
+    const held = new Set(sockets.flatMap((socket) => [...socket.rooms].filter(checked)))
+    if (held.size === 0) continue
+    const ids = (parse: (room: string) => string | null) => [...held].map(parse).filter((id) => id !== null)
     const streamIds = ids(pattern.stream)
     const sessionStreams = new Map<string, string | null>()
     for (const sessionId of ids(pattern.agentSession)) {
@@ -103,7 +104,7 @@ async function evictUnreadableRooms(
     for (const socket of sockets) {
       const join: string[] = []
       const leave: string[] = []
-      for (const room of [...socket.rooms].filter(checked)) {
+      for (const room of [...socket.rooms].filter((room) => held.has(room))) {
         const streamId = pattern.stream(room)
         const docId = pattern.docReaders(room)
         const sessionId = pattern.agentSession(room)
