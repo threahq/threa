@@ -332,6 +332,8 @@ interface OpenRun {
   answerRunId?: string
   /** Why the turn fails instead of settling, once a question goes unanswered. */
   unanswered?: string
+  /** The delivered mark at admission and the runs queued ahead of this turn's, the only marks its reply moves on from. */
+  before: Set<string>
 }
 
 /**
@@ -873,6 +875,8 @@ export class T3TurnRunner {
       for (const runId of ahead) this.cutOff.delete(runId)
     } else this.relayUnaccounted(turn.streamId, threadId, ahead)
     if (aborted) return
+    const relayed = this.unprompted.get(threadId)
+    const mark = this.state.delivered?.[threadId]
     const mode: RunTraceMode = turn.sealed && this.options.sealedFullTrace ? "full" : this.options.traceMode
     const run: OpenRun = {
       ...started,
@@ -882,6 +886,7 @@ export class T3TurnRunner {
       abort: new AbortController(),
       steers: new Set(),
       asked: new Set(stale),
+      before: new Set([...(mark ? [mark] : []), ...ahead, ...(relayed ? [relayed.runId, ...relayed.queue] : [])]),
       ...(takenOver
         ? { cursor: takenOver.read.cursor }
         : this.cursors.has(started.threadId)
@@ -1159,8 +1164,12 @@ export class T3TurnRunner {
       return
     }
     await this.settle(invocationId, run, status!)
-    // A relay still posting runs queued ahead of this one moves the mark itself.
-    if (!this.unprompted.has(run.threadId)) this.markDelivered(run.threadId, run.runId)
+    // A relay still posting runs queued ahead of this one moves the mark itself, and one that already marked a later
+    // run keeps the mark there.
+    const mark = this.state.delivered?.[run.threadId]
+    if ([...run.before].some((runId) => this.relaying(run.threadId, runId))) return
+    if (mark && !run.before.has(mark) && !run.trace.runIds.has(mark)) return
+    this.markDelivered(run.threadId, run.runId)
   }
 
   /** A card whose request left T3's pending list was answered in T3 itself, so it comes down. */

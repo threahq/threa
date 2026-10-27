@@ -1759,6 +1759,57 @@ describe("runs T3 starts by itself", () => {
     })
   })
 
+  test("a turn's reply posting after a later relayed run leaves the mark on the later run", async () => {
+    const { t3, session, saved, runner } = setup()
+    const { reply } = session.session
+    let release = () => {}
+    const held = new Promise<void>((resolve) => (release = resolve))
+    session.session.reply = async (...args) => {
+      await held
+      return reply(...args)
+    }
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Done." })] }])
+    await runner.deliverTurn(turn())
+    await until(() => !runner.hasOpenTurns())
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(2, "assistant_message", { runId: "run_2", text: "Pushed." })])
+    t3.endInT3("run_2")
+    await runner.watch()
+    await until(() => session.posts.length > 0)
+    release()
+    await session.settled()
+    await idle()
+
+    expect({ posts: session.posts, delivered: saved.at(-1)?.delivered }).toEqual({
+      posts: [{ streamId: "stream_root", text: "Pushed.", clientMessageId: "t3run-run_2" }],
+      delivered: { thread_1: "run_2" },
+    })
+  })
+
+  test("a turn's reply moves the mark while a relay posts a run queued after it", async () => {
+    const { t3, session, saved, runner } = setup()
+    const { reply } = session.session
+    let release = () => {}
+    const held = new Promise<void>((resolve) => (release = resolve))
+    session.session.reply = async (...args) => {
+      await held
+      return reply(...args)
+    }
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Done." })] }])
+    await runner.deliverTurn(turn())
+    await until(() => !runner.hasOpenTurns())
+    t3.startInT3("thread_1")
+    await runner.watch()
+    release()
+    await session.settled()
+    await idle()
+
+    expect({ relaying: runner.busy, delivered: saved.at(-1)?.delivered }).toEqual({
+      relaying: true,
+      delivered: { thread_1: "run_1" },
+    })
+  })
+
   test("a /clear while the reply posts leaves no delivered run for the thread", async () => {
     const { t3, session, saved, runner } = setup()
     const { reply } = session.session
