@@ -200,10 +200,12 @@ export function ThumbnailImg({
   src,
   alt,
   load,
+  className,
 }: {
   src: string
   alt: string
   load: ReturnType<typeof useThumbnailLoadState>
+  className?: string
 }) {
   return (
     <img
@@ -223,7 +225,8 @@ export function ThumbnailImg({
       onError={load.markError}
       className={cn(
         "absolute inset-0 h-full w-full object-cover transition-opacity duration-300",
-        load.decoded ? "opacity-100" : "opacity-0"
+        load.decoded ? "opacity-100" : "opacity-0",
+        className
       )}
     />
   )

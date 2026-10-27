@@ -1,6 +1,7 @@
 import type { Editor } from "@tiptap/core"
 import type { UploadResult } from "@/hooks/use-attachments"
-import type { AttachmentReferenceAttrs } from "./attachment-reference-extension"
+import { isImageAttachment, isVideoAttachment } from "@/lib/attachment-kind"
+import type { AttachmentDisplay, AttachmentReferenceAttrs } from "./attachment-reference-extension"
 
 /** Pasted images arrive as `image.png`; number them after the images already in the draft. */
 export function namePastedImages(files: File[], existingImageCount: number): File[] {
@@ -20,6 +21,8 @@ interface InsertFilesOptions {
   onPlaceholdersInserted?: (tempIds: string[]) => void
   /** Takes over a failed upload's placeholder; without it the placeholder settles to an error chip. */
   onUploadFailed?: (tempId: string, error: unknown) => void
+  /** How images and videos land; unset, they land as chips. */
+  mediaDisplay?: AttachmentDisplay
 }
 
 /**
@@ -30,7 +33,7 @@ export function insertFilesIntoEditor(
   editor: Editor,
   files: File[],
   uploadFile: (file: File) => Promise<UploadResult>,
-  { isStillTargeting = () => true, onPlaceholdersInserted, onUploadFailed }: InsertFilesOptions = {}
+  { isStillTargeting = () => true, onPlaceholdersInserted, onUploadFailed, mediaDisplay }: InsertFilesOptions = {}
 ): boolean {
   if (editor.isDestroyed || files.length === 0) return false
   const batchId = `${Date.now()}_${Math.random().toString(36).slice(2)}`
@@ -45,6 +48,7 @@ export function insertFilesIntoEditor(
       imageIndex: null,
       error: null,
     }
+    if (mediaDisplay && (isImageAttachment(attrs) || isVideoAttachment(attrs))) attrs.display = mediaDisplay
     return { file, tempId, isImage: file.type.startsWith("image/"), attrs }
   })
 

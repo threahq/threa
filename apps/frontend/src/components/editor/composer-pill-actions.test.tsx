@@ -6,7 +6,7 @@ import type { JSONContent } from "@threahq/types"
 import { ComposerPillDragPluginKey } from "./composer-pill-drag-extension"
 import { ComposerPillActions } from "./composer-pill-actions"
 import { createEditorExtensions } from "./editor-extensions"
-import { ImageViewerContext } from "./image-viewer-context"
+import { MediaViewerContext } from "./media-viewer-context"
 
 const openEditors: Editor[] = []
 let originalClipboardDescriptor: PropertyDescriptor | undefined
@@ -220,17 +220,17 @@ describe("ComposerPillActions", () => {
     const editor = createPillEditor([attachmentPill("image/png")])
     const open = vi.fn()
     render(
-      <ImageViewerContext.Provider value={{ open, readOnly: false }}>
+      <MediaViewerContext.Provider value={{ open, readOnly: false }}>
         <ComposerPillActions editor={editor} />
-      </ImageViewerContext.Provider>
+      </MediaViewerContext.Provider>
     )
 
     selectPill(editor, "attachmentReference")
     const labelsWhenSelected = actionLabels()
-    fireEvent.click(screen.getByRole("button", { name: "Open image" }))
+    fireEvent.click(screen.getByRole("button", { name: "Open" }))
 
     expect({ labelsWhenSelected, opened: open.mock.calls, labelsAfter: actionLabels() }).toEqual({
-      labelsWhenSelected: ["Copy pill", "Open image", "Show as image"],
+      labelsWhenSelected: ["Copy pill", "Open", "Show as image"],
       opened: [["attach_01IMG"]],
       labelsAfter: [],
     })
@@ -242,6 +242,34 @@ describe("ComposerPillActions", () => {
 
     selectPill(editor, "attachmentReference")
     expect(actionLabels()).toEqual(["Copy pill"])
+  })
+
+  it("should offer Open for a file and Open plus the video toggle for a video when the surface has a gallery", () => {
+    const labelsFor = (mimeType: string, viewer: boolean) => {
+      const editor = createPillEditor([attachmentPill(mimeType)])
+      const bar = <ComposerPillActions editor={editor} />
+      const { unmount } = render(
+        viewer ? (
+          <MediaViewerContext.Provider value={{ open: vi.fn(), readOnly: false }}>{bar}</MediaViewerContext.Provider>
+        ) : (
+          bar
+        )
+      )
+      selectPill(editor, "attachmentReference")
+      const labels = actionLabels()
+      unmount()
+      return labels
+    }
+
+    expect({
+      docPdf: labelsFor("application/pdf", true),
+      docVideo: labelsFor("video/mp4", true),
+      composerVideo: labelsFor("video/mp4", false),
+    }).toEqual({
+      docPdf: ["Copy pill", "Open"],
+      docVideo: ["Copy pill", "Open", "Show as video"],
+      composerVideo: ["Copy pill"],
+    })
   })
 
   it("should keep the bar half its width from the viewport edge when the pill sits at either edge", () => {
