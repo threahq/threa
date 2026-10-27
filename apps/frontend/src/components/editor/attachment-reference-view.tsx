@@ -45,10 +45,13 @@ function getDisplayText(attrs: AttachmentReferenceAttrs): string {
 // A peer's image can 403 while its bytes are still uploading or being scanned, and no event says when that ends.
 const LOAD_RETRY_DELAYS_MS = [2_000, 4_000, 8_000, 15_000, 30_000, 30_000, 30_000, 30_000, 30_000]
 
-/** Retries a failed thumbnail load on a backoff; true once the retries are spent. */
-function useLoadRetries({ error, retryLoad }: ReturnType<typeof useThumbnailLoadState>): boolean {
+/** Retries a failed thumbnail load on a backoff; true once the retries are spent, or at the first failure without them. */
+function useLoadRetries(
+  { error, retryLoad }: ReturnType<typeof useThumbnailLoadState>,
+  { retry }: { retry: boolean }
+): boolean {
   const [retries, setRetries] = useState(0)
-  const retryDelayMs = LOAD_RETRY_DELAYS_MS[retries]
+  const retryDelayMs = retry ? LOAD_RETRY_DELAYS_MS[retries] : undefined
   useEffect(() => {
     if (!error || retryDelayMs === undefined) return
     const timer = setTimeout(() => {
@@ -79,7 +82,7 @@ function InlineImage({
   filename: string
 }) {
   const load = useThumbnailLoadState()
-  const gaveUp = useLoadRetries(load)
+  const gaveUp = useLoadRetries(load, { retry: true })
   const box = thumbnailBox()
 
   return (
@@ -114,9 +117,10 @@ function RowMedia({
   attrs: AttachmentReferenceAttrs
   columns: number
 }) {
-  const load = useThumbnailLoadState()
-  const gaveUp = useLoadRetries(load)
   const video = isVideoAttachment(attrs)
+  const load = useThumbnailLoadState()
+  // Until its transcode completes, a video's thumbnail URL serves the video itself, so a retry refetches the video.
+  const gaveUp = useLoadRetries(load, { retry: !video })
   const tile = columns > 1
   const src = video
     ? attachmentContentUrl(workspaceId, attrs.id, { variant: "thumbnail" })
@@ -288,14 +292,16 @@ export function AttachmentReferenceView({ node, updateAttributes, editor, getPos
     return (
       <NodeViewWrapper as="span" data-type="attachment-reference" className={rowClass}>
         {openMedia ? (
-          <button
-            type="button"
-            aria-label={attrs.filename}
-            className={cn("cursor-zoom-in", triggerClass(!!columns))}
-            onClick={openMedia}
-          >
-            {visual}
-          </button>
+          <AttachmentTooltip attrs={attrs}>
+            <button
+              type="button"
+              aria-label={attrs.filename}
+              className={cn("cursor-zoom-in", triggerClass(!!columns))}
+              onClick={openMedia}
+            >
+              {visual}
+            </button>
+          </AttachmentTooltip>
         ) : (
           visual
         )}

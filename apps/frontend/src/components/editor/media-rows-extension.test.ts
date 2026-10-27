@@ -55,9 +55,9 @@ describe("mediaRowDecorations", () => {
     ).toEqual({ a: 2, b: 2, c: 1, d: null, e: null })
   })
 
-  it("should cap a long row at three across", () => {
-    const run = ["a", "b", "c", "d"].flatMap((id) => [reference(id, "image/png"), space])
-    expect(columnsById([{ type: "paragraph", content: run }])).toEqual({ a: 3, b: 3, c: 3, d: 3 })
+  it("should break a long run into rows of three", () => {
+    const run = ["a", "b", "c", "d", "e"].flatMap((id) => [reference(id, "image/png"), space])
+    expect(columnsById([{ type: "paragraph", content: run }])).toEqual({ a: 3, b: 3, c: 3, d: 2, e: 2 })
   })
 
   it("should lay out media inside a table cell against that cell", () => {

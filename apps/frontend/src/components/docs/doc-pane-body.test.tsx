@@ -733,15 +733,25 @@ describe("DocPaneBody", () => {
     await screen.findByRole("dialog", { name: "shot.png" })
     const strip = screen.getAllByRole("button", { name: /^View / }).map((button) => button.getAttribute("aria-label"))
     fireEvent.keyDown(window, { key: "ArrowRight" })
+    const next = await screen.findByRole("dialog", { name: "notes.pdf" }).then(() => true)
+    fireEvent.keyDown(window, { key: "ArrowRight" })
+    const clip = await screen.findByRole("dialog", { name: "clip.mp4" })
+    await waitFor(() => expect(clip.querySelector("video")?.getAttribute("src")).toBeTruthy())
 
     expect({
       strip,
-      next: await screen.findByRole("dialog", { name: "notes.pdf" }).then(() => true),
+      next,
+      video: clip.querySelector("video")?.getAttribute("src"),
       zipOpens: screen.queryByRole("button", { name: "bundle.zip" }),
-    }).toEqual({ strip: ["View shot.png", "View notes.pdf", "View clip.mp4"], next: true, zipOpens: null })
+    }).toEqual({
+      strip: ["View shot.png", "View notes.pdf", "View clip.mp4"],
+      next: true,
+      video: "https://files.test/presigned",
+      zipOpens: null,
+    })
   })
 
-  it("should lay a lone image across the doc and side-by-side media out as a row", async () => {
+  it("should lay a lone image across the doc and side-by-side media out as a row that widens as media joins", async () => {
     const image = (id: string) => ({
       type: "attachmentReference",
       attrs: { id, filename: `${id}.png`, mimeType: "image/png", sizeBytes: 3, status: "uploaded", display: "inline" },
@@ -754,18 +764,40 @@ describe("DocPaneBody", () => {
       ],
     }
     serverDoc = prosemirrorJSONToYDoc(getThreaSchema(), doc, DOC_FRAGMENT)
-    mount(false)
+    mount(true)
 
     const widthOf = async (name: string) =>
       (await screen.findByRole("button", { name })).closest<HTMLElement>(".react-renderer")!.style.width
-    expect({
+    const before = {
       alone: await widthOf("attach_alone.png"),
       left: await widthOf("attach_left.png"),
       right: await widthOf("attach_right.png"),
+    }
+    const { editor } = proseMirror()
+    editor.commands.insertContentAt(editor.state.doc.content.size - 1, [
+      { type: "text", text: " " },
+      image("attach_third"),
+    ])
+    await screen.findByRole("button", { name: "attach_third.png" })
+
+    expect({
+      before,
+      after: {
+        left: await widthOf("attach_left.png"),
+        right: await widthOf("attach_right.png"),
+        third: await widthOf("attach_third.png"),
+      },
     }).toEqual({
-      alone: "calc(1 * (100% - 0.5rem))",
-      left: "calc(0.5 * (100% - 1rem))",
-      right: "calc(0.5 * (100% - 1rem))",
+      before: {
+        alone: "calc(1 * (100% - 0.5rem))",
+        left: "calc(0.5 * (100% - 1rem))",
+        right: "calc(0.5 * (100% - 1rem))",
+      },
+      after: {
+        left: "calc(0.3333333333333333 * (100% - 1.5rem))",
+        right: "calc(0.3333333333333333 * (100% - 1.5rem))",
+        third: "calc(0.3333333333333333 * (100% - 1.5rem))",
+      },
     })
   })
 

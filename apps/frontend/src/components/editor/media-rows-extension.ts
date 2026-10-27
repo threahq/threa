@@ -17,7 +17,7 @@ function isRowMedia(node: ProseMirrorNode): boolean {
 }
 
 /**
- * Rendered images and videos that follow one another with only spaces between them share a row, up to three across;
+ * Rendered images and videos that follow one another with only spaces between them share rows of up to three;
  * one standing alone fills the width. Anything else in the line ends the row.
  */
 export function mediaRowDecorations(doc: ProseMirrorNode): DecorationSet {
@@ -26,12 +26,14 @@ export function mediaRowDecorations(doc: ProseMirrorNode): DecorationSet {
     if (!block.isTextblock) return true
     let row: Array<{ from: number; to: number }> = []
     const endRow = () => {
-      const columns = Math.min(row.length, MEDIA_ROW_MAX_COLUMNS)
-      const spec: MediaRowSpec = { mediaColumns: columns }
-      // The width goes on the node view's host, the only box whose percentage resolves against the line rather than
-      // a shrink-wrapped parent. The spaces between media sit in the row too, so each item leaves room for one.
-      const attrs = { style: `width: calc((100% - ${columns} * 0.5rem) / ${columns}); vertical-align: top` }
-      for (const { from, to } of row) decorations.push(Decoration.node(from, to, attrs, spec))
+      for (let start = 0; start < row.length; start += MEDIA_ROW_MAX_COLUMNS) {
+        const line = row.slice(start, start + MEDIA_ROW_MAX_COLUMNS)
+        const spec: MediaRowSpec = { mediaColumns: line.length }
+        // The width goes on the node view's host, the only box whose percentage resolves against the line rather than
+        // a shrink-wrapped parent. The spaces between media sit in the row too, so each item leaves room for one.
+        const attrs = { style: `width: calc((100% - ${line.length} * 0.5rem) / ${line.length}); vertical-align: top` }
+        for (const { from, to } of line) decorations.push(Decoration.node(from, to, attrs, spec))
+      }
       row = []
     }
     block.forEach((child, offset) => {
