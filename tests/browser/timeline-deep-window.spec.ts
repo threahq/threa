@@ -116,6 +116,16 @@ test.describe("Bounded timeline read", () => {
     await page.reload()
     await expect(page.getByRole("main").locator(".message-item").first()).toBeVisible({ timeout: 30_000 })
 
+    // msg-0000 rendering is not the end of history: a full final page still
+    // reports more, so the end is the first older page that comes back short.
+    let historyEnded = false
+    page.on("response", async (response) => {
+      const url = new URL(response.url())
+      if (!url.pathname.endsWith(`/streams/${streamId}/events`) || !url.searchParams.has("before")) return
+      const body = (await response.json().catch(() => null)) as { events?: unknown[] } | null
+      if (body?.events && body.events.length < Number(url.searchParams.get("limit"))) historyEnded = true
+    })
+
     // Page back through the whole history, to a message well below the bootstrap
     // window: this is the deep window whose re-materialisation the split read
     // removes. Stopping while older pages remain leaves the reader inside the
@@ -127,7 +137,7 @@ test.describe("Bounded timeline read", () => {
       .poll(
         async () => {
           await scrollUp(page)
-          return (await oldest.count()) > 0 && (await deepAnchor.count()) > 0
+          return historyEnded && (await oldest.count()) > 0 && (await deepAnchor.count()) > 0
         },
         { timeout: 60_000, message: "should page back to the start of the history" }
       )

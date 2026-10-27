@@ -7,7 +7,6 @@ import {
   computeScrollEdges,
   shouldPrefetchOlderHistory,
   shouldRunEdgePagination,
-  shouldShowOlderSkeletons,
   resolveDateJumpAnchor,
   resolveStreamLanding,
   isChromeStripCollapsed,
@@ -338,62 +337,6 @@ describe("shouldRunEdgePagination", () => {
 
   it("allows normal edge prefetch outside jump mode", () => {
     expect(shouldRunEdgePagination({ scrollRefineActive: false, isJumpMode: false, userInteractedAt: 0 })).toBe(true)
-  })
-})
-
-describe("shouldShowOlderSkeletons", () => {
-  it("shows skeletons while the tracked fetch is in flight and the appear delay has elapsed", () => {
-    expect(
-      shouldShowOlderSkeletons({
-        trackedOldestEventId: "evt_1",
-        currentOldestEventId: "evt_1",
-        appearDelayElapsed: true,
-      })
-    ).toBe(true)
-  })
-
-  it("does not flash skeletons before the appear delay elapses (fast responses stay skeleton-free)", () => {
-    expect(
-      shouldShowOlderSkeletons({
-        trackedOldestEventId: "evt_1",
-        currentOldestEventId: "evt_1",
-        appearDelayElapsed: false,
-      })
-    ).toBe(false)
-  })
-
-  it("never shows skeletons when no fetch is tracked — at top of history no fetch ever starts", () => {
-    expect(
-      shouldShowOlderSkeletons({
-        trackedOldestEventId: null,
-        currentOldestEventId: "evt_1",
-        appearDelayElapsed: true,
-      })
-    ).toBe(false)
-  })
-
-  it("removes skeletons in the same render the prepend lands (oldest id changed)", () => {
-    // The load-bearing property (INV-21): removal keys off the rendered oldest
-    // id, not isFetchingOlder — the flag flips false a render or two before
-    // the IDB live query re-emits with the new page, and dropping skeletons
-    // on the flag would leave an intermediate frame N rows shorter.
-    expect(
-      shouldShowOlderSkeletons({
-        trackedOldestEventId: "evt_2",
-        currentOldestEventId: "evt_1",
-        appearDelayElapsed: true,
-      })
-    ).toBe(false)
-  })
-
-  it("hides skeletons when the window empties mid-fetch (stream switch)", () => {
-    expect(
-      shouldShowOlderSkeletons({
-        trackedOldestEventId: "evt_1",
-        currentOldestEventId: null,
-        appearDelayElapsed: true,
-      })
-    ).toBe(false)
   })
 })
 
