@@ -1988,11 +1988,71 @@ describe("@threahq/prosemirror hard break round-trip", () => {
     expect(parseMarkdown(serializeToMarkdown(doc))).toEqual(doc)
   })
 
-  it("should not read an escaped backslash at the end of a line as a break", () => {
+  it.each<[string, JSONContent[]]>([
+    [
+      "a list item ending in a literal backslash",
+      [
+        {
+          type: "bulletList",
+          content: [
+            { type: "listItem", content: [{ type: "paragraph", content: [text("C:\\")] }] },
+            { type: "listItem", content: [{ type: "paragraph", content: [text("two")] }] },
+          ],
+        },
+      ],
+    ],
+    [
+      "a literal backslash right before a break",
+      [{ type: "paragraph", content: [text("C:\\"), hardBreak, text("next")] }],
+    ],
+    [
+      "a quoted paragraph followed by another",
+      [
+        {
+          type: "blockquote",
+          content: [
+            { type: "paragraph", content: [text("C:\\")] },
+            { type: "paragraph", content: [text("b")] },
+          ],
+        },
+      ],
+    ],
+  ])("should keep the structure of %s", (_name, content) => {
+    const doc = { type: "doc", content }
+    expect(parseMarkdown(serializeToMarkdown(doc))).toEqual(doc)
+  })
+
+  it("should drop a break that ends its block, which has no line to break onto", () => {
+    const doc = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [text("a"), hardBreak] },
+        { type: "paragraph", content: [text("b")] },
+      ],
+    }
+    expect(parseMarkdown(serializeToMarkdown(doc))).toEqual({
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [text("a")] },
+        { type: "paragraph", content: [text("b")] },
+      ],
+    })
+  })
+
+  it("should keep a quote reply's broken snippet as markdown", () => {
+    const parsed = parseMarkdown("> one\\\n> two\n>\n> — [A](quote:stream_1/msg_1/usr_1/user)")
+    expect(parsed.content?.[0]?.attrs?.snippet).toBe("one\\\ntwo")
+  })
+
+  it("should not read a literal private-use break token in the input as a break", () => {
+    expect(parseMarkdown("a\uE002b")).toEqual({ type: "doc", content: [{ type: "paragraph", content: [text("ab")] }] })
+  })
+
+  it("should read an escaped backslash at the end of a line as one backslash, not a break", () => {
     expect(parseMarkdown("a\\\\\nb")).toEqual({
       type: "doc",
       content: [
-        { type: "paragraph", content: [text("a\\\\")] },
+        { type: "paragraph", content: [text("a\\")] },
         { type: "paragraph", content: [text("b")] },
       ],
     })

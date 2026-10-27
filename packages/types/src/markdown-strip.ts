@@ -30,6 +30,20 @@ export function resolveEmojiShortcodes(text: string, toEmoji?: (shortcode: strin
   return text.replace(/:([a-z0-9_+-]+):/g, (match, shortcode) => toEmoji(shortcode) ?? match)
 }
 
+/**
+ * A line's trailing backslashes as CommonMark reads them: each pair is one
+ * escaped backslash, and an odd one left over is a hard break.
+ */
+export function readLineEnd(line: string): { text: string; hardBreak: boolean } {
+  const run = line.length - line.replace(/\\+$/, "").length
+  return { text: line.slice(0, line.length - run) + "\\".repeat(Math.floor(run / 2)), hardBreak: run % 2 === 1 }
+}
+
+/** The markdown's lines as a reader sees them: line-end escapes read, hard-break markers dropped. */
+export function markdownLines(md: string): string[] {
+  return md.split("\n").map((line) => readLineEnd(line).text)
+}
+
 const FENCE_RE = /```[\s\S]*?```/g
 
 /** The inner lines of a fenced block, without the fence markers. */

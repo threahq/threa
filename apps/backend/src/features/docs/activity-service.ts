@@ -1,6 +1,7 @@
 import type { Pool } from "pg"
 import {
   AuthorTypes,
+  markdownLines,
   type DocActivityEventPayload,
   type DocActivitySection,
   type DocEditedEventPayload,
@@ -126,7 +127,7 @@ export class DocActivityService {
     }
     const sections: DocActivitySection[] = present
       .filter((section) => touched.has(section.blockId))
-      .map(({ blockId, kind, markdown }) => ({ blockId, kind, markdown: markdown.split("\n", 1)[0]! }))
+      .map(({ blockId, kind, markdown }) => ({ blockId, kind, markdown: markdownLines(markdown)[0]! }))
     // The last editor authors the row: the unread divider skips a viewer's own rows, and whoever edited
     // last has already seen the doc as it stands.
     const lastEdit = folded.at(-1)!

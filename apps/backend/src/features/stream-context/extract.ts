@@ -2,6 +2,7 @@ import { collectGiphyEmbeds } from "@threahq/prosemirror"
 import {
   categoryFromMime,
   parseGitHubPullRequestUrl,
+  markdownLines,
   stripMarkdownToInline,
   type AttachmentSummary,
   type JSONContent,
@@ -28,7 +29,7 @@ export interface ContextRowsForMessageParams {
 }
 
 export function contextSnippet(contentMarkdown: string): string {
-  const firstLine = stripMarkdownToInline(contentMarkdown.split("\n").find((line) => line.trim().length > 0) ?? "")
+  const firstLine = stripMarkdownToInline(markdownLines(contentMarkdown).find((line) => line.trim().length > 0) ?? "")
   // Cut by code point: a lone surrogate from a split emoji makes Postgres reject the snippet array.
   const chars = Array.from(firstLine.trim())
   return chars.length > SNIPPET_MAX_LENGTH ? `${chars.slice(0, SNIPPET_MAX_LENGTH).join("")}…` : chars.join("")

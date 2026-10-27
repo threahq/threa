@@ -7,7 +7,13 @@
  */
 
 import type { ContentRange, JSONContent, JSONContentMark } from "@threahq/types"
-import { actorTypeFromMentionId, isResolvedChannelLinkId, MENTION_PATTERN, CHANNEL_PATTERN } from "@threahq/types"
+import {
+  actorTypeFromMentionId,
+  readLineEnd,
+  isResolvedChannelLinkId,
+  MENTION_PATTERN,
+  CHANNEL_PATTERN,
+} from "@threahq/types"
 import {
   escapeMarkdownLinkText,
   parseAttachmentMetadata,
@@ -34,7 +40,8 @@ import {
 /**
  * CommonMark's hard break: a backslash ending the line. The parser reads one
  * block per line, so `joinHardBreaks` folds a broken line and its continuation
- * into one line with `HARD_BREAK_TOKEN` where the break was.
+ * into one line with `HARD_BREAK_TOKEN` where the break was. A backslash the
+ * text itself ends a line with is escaped, so it never reads as a break.
  */
 const HARD_BREAK_MARKDOWN = "\\\n"
 // U+E000 and U+E001 already delimit the math and link tokens.
@@ -116,11 +123,11 @@ function serializeNode(node: JSONContent, listDepth = 0, listIndex?: number): st
 
   switch (node.type) {
     case "paragraph":
-      return serializeInline(node.content)
+      return serializeInlineLines(node.content)
 
     case "heading": {
       const level = (node.attrs?.level as number) ?? 1
-      return "#".repeat(level) + " " + serializeInline(node.content)
+      return "#".repeat(level) + " " + serializeInlineLines(node.content)
     }
 
     case "codeBlock": {
@@ -235,7 +242,7 @@ function serializeNode(node: JSONContent, listDepth = 0, listIndex?: number): st
       return serializeTable(node)
 
     default:
-      return serializeInline(node.content)
+      return serializeInlineLines(node.content)
   }
 }
 
@@ -590,8 +597,21 @@ function serializeMath(node: JSONContent, before: string, after: string): string
   return ambiguous ? `\\(${tex}\\)` : `$${tex}$`
 }
 
-function serializeInline(nodes: JSONContent[] | undefined): string {
-  if (!nodes) return ""
+/** {@link serializeInline} with each line-ending backslash of the text escaped, for blocks written as lines. */
+function serializeInlineLines(nodes: JSONContent[] | undefined): string {
+  const lines = serializeInline(nodes).split("\n")
+  const escape = (text: string) => text.replace(/\\+$/, (run) => run + run)
+  return lines
+    .map((line, index) => (index < lines.length - 1 ? escape(line.slice(0, -1)) + "\\" : escape(line)))
+    .join("\n")
+}
+
+function serializeInline(content: JSONContent[] | undefined): string {
+  if (!content) return ""
+  // A break ending the block has no line to break onto; CommonMark would read its backslash as text.
+  let end = content.length
+  while (end > 0 && content[end - 1].type === "hardBreak") end--
+  const nodes = content.slice(0, end)
 
   const texts = nodes.map((node) => (node.type === "math" ? "" : getNodeText(node)))
   for (let i = 0; i < nodes.length; i++) {
@@ -749,7 +769,8 @@ export function parseMarkdown(
   // same reason the renderer does it (`extractMath`): a TeX body is not
   // markdown. It also collapses a `$$` block written across lines into one
   // token, so the line-based loop below never has to know about fences.
-  const lines = joinHardBreaks(extractMath(normalizeMarkdownTables(markdown)).split("\n"))
+  const source = markdown.replaceAll(HARD_BREAK_TOKEN, "")
+  const lines = joinHardBreaks(extractMath(normalizeMarkdownTables(source)).split("\n"))
   const content: JSONContent[] = []
   let i = 0
 
@@ -831,7 +852,7 @@ export function parseMarkdown(
         while (snippetLines.length > 0 && snippetLines[snippetLines.length - 1] === "") {
           snippetLines.pop()
         }
-        const snippet = snippetLines.join("\n")
+        const snippet = snippetLines.join("\n").replaceAll(HARD_BREAK_TOKEN, HARD_BREAK_MARKDOWN)
         content.push({
           type: "quoteReply",
           attrs: {
@@ -1263,25 +1284,32 @@ function tokenizeBalancedLinkDestinations(
   return { text: tokenized, hrefByToken }
 }
 
-function endsWithHardBreak(line: string): boolean {
-  const trailing = line.length - line.replace(/\\+$/, "").length
-  return trailing % 2 === 1
-}
-
 function joinHardBreaks(lines: string[]): string[] {
   const joined: string[] = []
   let inFence = false
+  // The last joined line ended in a hard break, its marker already dropped.
+  let broken = false
   for (const line of lines) {
-    const previous = joined.at(-1)
-    if (!inFence && previous !== undefined && line.length > 0 && endsWithHardBreak(previous)) {
-      // A broken line inside a blockquote continues on the next `> ` line.
-      const continuation = previous.startsWith("> ") && line.startsWith("> ") ? line.slice(2) : line
-      joined[joined.length - 1] = previous.slice(0, -1) + HARD_BREAK_TOKEN + continuation
+    const fence = /^(> )?```/.test(line)
+    if (inFence) {
+      if (fence) inFence = false
+      joined.push(line)
       continue
     }
-    if (/^(> )?```/.test(line)) inFence = !inFence
-    joined.push(line)
+    const { text, hardBreak } = readLineEnd(line)
+    // A broken line inside a blockquote continues on the next `> ` line.
+    const continuation = broken && joined.at(-1)!.startsWith(">") ? text.replace(/^>\s?/, "") : text
+    if (broken && !fence && (continuation.length > 0 || hardBreak)) {
+      joined[joined.length - 1] += HARD_BREAK_TOKEN + continuation
+    } else {
+      // A break with no line after it is a literal backslash.
+      if (broken) joined[joined.length - 1] += "\\"
+      if (fence) inFence = true
+      joined.push(fence ? line : text)
+    }
+    broken = !fence && hardBreak
   }
+  if (broken) joined[joined.length - 1] += "\\"
   return joined
 }
 
