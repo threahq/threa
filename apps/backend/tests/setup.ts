@@ -20,6 +20,14 @@ export function getBaseUrl(): string {
   return testServer.url
 }
 
+/** The running server's socket.io instance, for emits a test cannot reach through the API. */
+export function getTestIo(): TestServer["io"] {
+  if (!testServer) {
+    throw new Error("Test server not started. Ensure setup.ts is loaded via --preload")
+  }
+  return testServer.io
+}
+
 // Global setup - runs once before all test files (migrations + MinIO can exceed 5s default hook time)
 beforeAll(
   async () => {

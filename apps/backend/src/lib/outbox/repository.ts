@@ -157,6 +157,7 @@ export type OutboxEventType =
   | "e2e:rewrap_nudge"
   | "github_route:register"
   | "github_route:unregister"
+  | "access:narrowed"
   | "call:invitation_created"
   | "call:invitation_settled"
   | "stream:call_started"
@@ -1136,6 +1137,13 @@ export interface GithubRouteUnregisterOutboxPayload extends WorkspaceScopedPaylo
 }
 
 /**
+ * Internal: readers may have lost access, so the broadcast handler takes their sockets out
+ * of rooms they can no longer read: the grant readers of `docIds`, or every room under
+ * `streamId` along with the grant readers of docs shared there.
+ */
+export type AccessNarrowedOutboxPayload = WorkspaceScopedPayload & ({ docIds: string[] } | { streamId: string })
+
+/**
  * A DM call is ringing the invitee. User-scoped to the invitee (their user room,
  * cross-device by construction) and emitted in the same tx as the invitation
  * insert (INV-4). Carries everything the incoming-call overlay and the ring push
@@ -1564,6 +1572,7 @@ export interface OutboxEventPayloadMap {
   "e2e:rewrap_nudge": E2eRewrapNudgeOutboxPayload
   "github_route:register": GithubRouteRegisterOutboxPayload
   "github_route:unregister": GithubRouteUnregisterOutboxPayload
+  "access:narrowed": AccessNarrowedOutboxPayload
   "call:invitation_created": CallInvitationCreatedOutboxPayload
   "call:invitation_settled": CallInvitationSettledOutboxPayload
   "stream:call_started": StreamCallStartedOutboxPayload

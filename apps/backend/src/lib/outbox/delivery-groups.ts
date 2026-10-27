@@ -259,6 +259,11 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
     return null
   }
 
+  // Internal-only: consumed by the broadcast handler's room eviction.
+  if (isOutboxEventType(event, "access:narrowed")) {
+    return null
+  }
+
   // User-scoped events: deliver to the target user only
   if (isUserScopedEvent(event)) {
     const { targetUserId } = event.payload as ActivityCreatedOutboxPayload

@@ -32,6 +32,7 @@ import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type Process
 import type { OutboxHandler } from "@threahq/backend-common"
 import type { DelegationStatusChangedEventPayload } from "@threahq/types"
 import { invalidatePointersForEvent } from "../../features/messaging/sharing"
+import { evictRevokedRoomsForEvent } from "./room-eviction"
 import { CALLS_NAMESPACE, callRoom } from "../call-routing"
 import {
   outboxBatchSize,
@@ -161,6 +162,7 @@ export class BroadcastHandler implements OutboxHandler {
           // hints so clients subscribed to target streams refresh their
           // hydrated pointer content (see features/messaging/sharing, D7).
           await invalidatePointersForEvent(event, this.db, this.io)
+          await evictRevokedRoomsForEvent(event, this.db, this.io)
           seen.push(event.id)
         }
 

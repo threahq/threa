@@ -65,6 +65,8 @@ export default [
   //   outbox/broadcast-handler — resolves memberId→userId for socket routing and
   //     sequences client-routed events into the sync log (features/sync)
   //   outbox/audiences — reads which guests see a person (features/workspaces) for socket routing
+  //   outbox/room-eviction — rechecks stream and doc access (features/streams, workspaces, sharing) to take
+  //     sockets out of rooms their user can no longer read
   //   outbox/repository — outbox payload types reference domain types (type-only, no runtime dep)
   {
     files: ["src/lib/**/*.ts"],
@@ -76,6 +78,7 @@ export default [
       "src/lib/outbox/audiences.ts",
       "src/lib/outbox/audiences.test.ts",
       "src/lib/outbox/broadcast-handler.ts",
+      "src/lib/outbox/room-eviction.ts",
       "src/lib/outbox/broadcast-handler.test.ts",
       "src/lib/outbox/repository.ts",
     ],

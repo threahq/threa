@@ -12,12 +12,14 @@
 
 import { createServer } from "http"
 import { Pool } from "pg"
+import type { Server } from "socket.io"
 import { S3Client, HeadBucketCommand, CreateBucketCommand } from "@aws-sdk/client-s3"
 import { getTestDatabaseTarget, quoteDatabaseIdentifier } from "./test-database"
 
 export interface TestServer {
   url: string
   port: number
+  io: Server
   stop: () => Promise<void>
 }
 
@@ -226,6 +228,7 @@ export async function startTestServer(): Promise<TestServer> {
   return {
     url: `http://localhost:${port}`,
     port,
+    io: instance.io,
     stop: instance.stop,
   }
 }

@@ -121,6 +121,13 @@ import { publishThreadUpdated } from "./thread-updated"
 
 const DM_UNIQUENESS_KEY_PREFIX = "dm"
 
+/** Who can read without a membership row: `guest_public` every workspace user, `public` those who can browse, `private` nobody. */
+const VISIBILITY_WIDTH: Record<Visibility, number> = {
+  [Visibilities.PRIVATE]: 0,
+  [Visibilities.PUBLIC]: 1,
+  [Visibilities.GUEST_PUBLIC]: 2,
+}
+
 /**
  * `uniqueness_key` of a user's "Meet Ariadne" scratchpad. One per user per
  * workspace; its existence is the checklist item's done signal.
@@ -1731,6 +1738,12 @@ export class StreamService {
           streamId: result.id,
           stream: result,
         })
+        if (VISIBILITY_WIDTH[result.visibility] < VISIBILITY_WIDTH[target.visibility]) {
+          await OutboxRepository.insert(client, "access:narrowed", {
+            workspaceId: result.workspaceId,
+            streamId: result.id,
+          })
+        }
 
         // Timeline row for the description change (INV-61 broadcast event):
         // "X set/cleared the description". Carries the markdown snapshot so the
