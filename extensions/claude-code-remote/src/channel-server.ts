@@ -686,11 +686,13 @@ export class ChannelServer {
     private readonly config: RemoteSessionConfig,
     client: ThreaClient,
     transport?: BotRuntimeTransport,
-    channelActive = true,
+    /** Registration key of the flagged channel instance; undefined serves as plain MCP. */
+    channelServerKey: string | undefined = CHANNEL_SOURCE,
     delegationClient?: DelegationClient,
     private readonly stopHooks?: StopHookListener
   ) {
     this.hookMode = stopHooks !== undefined
+    const channelActive = channelServerKey !== undefined
     const capabilities: Record<string, unknown> = {
       experimental: { "claude/channel": {} },
       tools: {},
@@ -820,6 +822,7 @@ export class ChannelServer {
       mode: config.traceMode,
       emit: (invocationId, frames, statusText) => this.session.recordSteps(invocationId, frames, statusText),
       onApiError: (invocationId, text) => this.carryOn?.onApiError(invocationId, text),
+      channelServerKey,
       log,
     })
     this.wakeBrief = takeWakeBrief(config.runtimeSessionId)
