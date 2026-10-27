@@ -12,6 +12,16 @@ import { listAccessibleStreamIds, StreamRepository } from "../../features/stream
 /** A node that does not answer in time must not hold up every workspace's realtime delivery. */
 const FETCH_SOCKETS_TIMEOUT_MS = 2000
 
+/** On a cluster timeout, this node's sockets are still evicted; the rest wait for their reconnect. */
+async function fetchSocketsIn(io: Server, rooms: string[]) {
+  try {
+    return await io.in(rooms).timeout(FETCH_SOCKETS_TIMEOUT_MS).fetchSockets()
+  } catch (error) {
+    logger.warn({ error, rooms }, "Cluster did not list sockets in time; evicting this node's only")
+    return io.local.in(rooms).fetchSockets()
+  }
+}
+
 function roomPattern(workspaceId: string) {
   const prefix = `ws:${workspaceId}:`
   const idAfter = (room: string, kind: string) =>
@@ -45,8 +55,9 @@ async function moveSocket(io: Server, socketId: string, join: string[], leave: s
  * was withdrawn keeps receiving the stream's events until they reconnect. `rooms` names
  * the rooms to recheck, or "all" for every room the socket holds in the workspace; agent
  * session rooms are always rechecked, since they follow their stream. The user is resolved
- * from the socket's login, not its user room: a grant-only reader may hold a doc-reader
- * room without ever joining the workspace room.
+ * from the socket's login, so `from` can be any room: the stream and doc rooms reach
+ * grant-only readers, and the user room reaches one user's sockets, which the app seats
+ * there by joining the workspace room before any other.
  */
 async function evictUnreadableRooms(
   io: Server,
@@ -59,7 +70,7 @@ async function evictUnreadableRooms(
   const checked = (room: string) =>
     scope.rooms === "all" ? pattern.inWorkspace(room) : scope.rooms.has(room) || pattern.agentSession(room) !== null
   const byLogin = new Map<string, Awaited<ReturnType<Server["fetchSockets"]>>>()
-  for (const socket of await io.in(scope.from).timeout(FETCH_SOCKETS_TIMEOUT_MS).fetchSockets()) {
+  for (const socket of await fetchSocketsIn(io, scope.from)) {
     const { workosUserId } = socket.data as MainSocketData
     if (scope.login !== undefined && workosUserId !== scope.login) continue
     byLogin.set(workosUserId, [...(byLogin.get(workosUserId) ?? []), socket])
@@ -112,7 +123,7 @@ async function evictUnreadableRooms(
   }
 }
 
-/** A grant rides an undeleted message in a stream the reader can read; deleting or moving it can end the grant. */
+/** A grant rides an undeleted message; deleting it ends the grant. A move cannot: it stays under the same root. */
 async function evictGrantReaders(io: Server, db: Pool, workspaceId: string, messageIds: string[]): Promise<void> {
   const docIds = await SharedDocRepository.listDocIdsByShareMessageIds(db, workspaceId, messageIds)
   const from = docIds.map((docId) => docReadersRoom(workspaceId, docId))
@@ -133,7 +144,7 @@ async function subtreeRooms(db: Pool, workspaceId: string, streamId: string): Pr
 async function leaveWorkspaceRooms(io: Server, workspaceId: string, userId: string): Promise<void> {
   const pattern = roomPattern(workspaceId)
   const userRoom = groupToRoom(workspaceId, userGroup(userId))
-  for (const socket of await io.in(userRoom).timeout(FETCH_SOCKETS_TIMEOUT_MS).fetchSockets()) {
+  for (const socket of await fetchSocketsIn(io, [userRoom])) {
     await moveSocket(io, socket.id, [], [...socket.rooms].filter(pattern.inWorkspace))
   }
 }
@@ -148,7 +159,8 @@ async function evictDemotedUser(io: Server, db: Pool, workspaceId: string, userI
 
 /**
  * Only the removed member's sockets lose anything; a bot's ride the `/bot` namespace and
- * resolve to no user. The user room finds a socket watching a session without its stream's room.
+ * resolve to no user. A thread grants no access of its own, so the removal from the root
+ * covers the per-thread removals that follow it.
  */
 async function evictRemovedMember(
   io: Server,
@@ -157,10 +169,12 @@ async function evictRemovedMember(
   streamId: string,
   memberId: string
 ): Promise<void> {
+  const stream = await StreamRepository.findById(db, workspaceId, streamId)
+  if (!stream || stream.rootStreamId) return
   const user = await UserRepository.findById(db, workspaceId, memberId)
   if (!user?.workosUserId) return
   const rooms = await subtreeRooms(db, workspaceId, streamId)
-  const from = [groupToRoom(workspaceId, userGroup(memberId)), ...rooms]
+  const from = [groupToRoom(workspaceId, userGroup(memberId))]
   await evictUnreadableRooms(io, db, workspaceId, { from, rooms: new Set(rooms), login: user.workosUserId })
 }
 
@@ -187,8 +201,6 @@ export async function evictRevokedRoomsForEvent(event: OutboxEvent, db: Pool, io
       await evictUnreadableRooms(io, db, workspaceId, { from, rooms: new Set(from) })
     } else if (isOutboxEventType(event, "message:deleted")) {
       await evictGrantReaders(io, db, workspaceId, [event.payload.messageId])
-    } else if (isOutboxEventType(event, "messages:moved")) {
-      await evictGrantReaders(io, db, workspaceId, event.payload.movedMessageIds)
     }
   } catch (error) {
     logger.error({ error, workspaceId, eventType: event.eventType }, "Failed to evict sockets from revoked rooms")
