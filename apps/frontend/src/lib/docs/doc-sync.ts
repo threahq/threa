@@ -135,6 +135,8 @@ export class DocSync {
   private relayed: Uint8Array[] = []
   // The leader's server doc as of its last save: its own copy may not have landed when this tab takes over. Any base the server holds will do; the rows after it replay in order.
   private leaderBase: { state: Uint8Array; seq: number } | null = null
+  // The server doc changes only with `seq`, so a save at the same seq has no new base to post.
+  private postedBaseSeq: number | null = null
   private readonly stopLeading = new AbortController()
 
   constructor(params: {
@@ -518,7 +520,10 @@ export class DocSync {
       seq: this.seq,
       unsent: this.hasLocalEdits ? Y.encodeStateAsUpdate(this.ydoc, Y.encodeStateVector(this.serverDoc)) : null,
     }
-    this.tell({ kind: "base", state: copy.state, seq: copy.seq })
+    if (copy.seq !== this.postedBaseSeq) {
+      this.postedBaseSeq = copy.seq
+      this.tell({ kind: "base", state: copy.state, seq: copy.seq })
+    }
     try {
       await this.localCopies.write(this.workspaceId, this.docId, copy)
     } catch (error) {
