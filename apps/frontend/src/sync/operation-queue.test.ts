@@ -125,6 +125,12 @@ describe("processOperationQueue edit replay", () => {
 })
 
 describe("doc_update operations", () => {
+  const typedEdit = (() => {
+    const doc = new Y.Doc()
+    doc.getText("t").insert(0, "typed")
+    return bytesToBase64(Y.encodeStateAsUpdate(doc))
+  })()
+
   it("should post a queued doc update through the docs api when drained", async () => {
     const postUpdate = vi
       .spyOn(docsApiModule.docsApi, "postUpdate")
@@ -174,8 +180,9 @@ describe("doc_update operations", () => {
       { workspaceId, docId: "stream_doc", ...copy },
       { workspaceId, docId: "stream_other", ...copy },
     ])
+    vi.spyOn(docsApiModule.docsApi, "listUpdates").mockResolvedValue({ updates: [] })
     vi.spyOn(docsApiModule.docsApi, "postUpdate").mockRejectedValue(new ApiError(403, "FORBIDDEN", "no access"))
-    await enqueueDocUpdate(workspaceId, "stream_doc", "AAE=")
+    await enqueueDocUpdate(workspaceId, "stream_doc", typedEdit)
 
     await process(scheduledServiceRejectingWith(new Error("unused")))
 
@@ -195,15 +202,19 @@ describe("doc_update operations", () => {
       unsent: null,
       _cachedAt: 1,
     })
+    vi.spyOn(docsApiModule.docsApi, "listUpdates").mockResolvedValue({ updates: [] })
     vi.spyOn(docsApiModule.docsApi, "postUpdate").mockRejectedValue(new ApiError(401, "UNAUTHORIZED", "signed out"))
-    await enqueueDocUpdate(workspaceId, "stream_doc", "AAE=")
+    await enqueueDocUpdate(workspaceId, "stream_doc", typedEdit)
 
     await process(scheduledServiceRejectingWith(new Error("unused")))
 
     expect({
       ops: (await db.pendingOperations.toArray()).map((op) => ({ payload: op.payload, retryCount: op.retryCount })),
       copies: (await db.docStates.toArray()).map((row) => row.docId),
-    }).toEqual({ ops: [{ payload: { docId: "stream_doc", update: "AAE=" }, retryCount: 1 }], copies: ["stream_doc"] })
+    }).toEqual({
+      ops: [{ payload: { docId: "stream_doc", update: typedEdit }, retryCount: 1 }],
+      copies: ["stream_doc"],
+    })
     await db.docStates.clear()
   })
 

@@ -1,7 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as Y from "yjs"
 import { base64ToBytes, bytesToBase64 } from "@threahq/crypto"
-import type { DocState, DocUpdatedPayload, DocUpdateView, Stream } from "@threahq/types"
+import { updateYFragment, yXmlFragmentToProsemirrorJSON } from "y-prosemirror"
+import { getThreaSchema } from "@threahq/prosemirror/schema"
+import {
+  DOC_FRAGMENT,
+  type DocState,
+  type DocUpdatedPayload,
+  type DocUpdateView,
+  type JSONContent,
+  type Stream,
+} from "@threahq/types"
 import { ApiError } from "@/api/client"
 import * as operationQueueModule from "@/sync/operation-queue"
 import type { DocLocalCopies, DocLocalCopy } from "./doc-local-copy"
@@ -93,15 +102,28 @@ class FakeDocServer {
     return this.payload(seq)
   }
 
+  /** An agent's rewrite as the server writes it: `staging` first forces fresh elements, as a move does. */
+  writeContent(json: JSONContent, staging?: JSONContent): DocUpdatedPayload {
+    const other = new Y.Doc()
+    Y.applyUpdate(other, Y.encodeStateAsUpdate(this.doc))
+    const before = Y.encodeStateVector(other)
+    other.transact(() => {
+      if (staging) writeDoc(other, staging)
+      writeDoc(other, json)
+    })
+    const seq = this.store(bytesToBase64(Y.encodeStateAsUpdate(other, before)))!
+    return this.payload(seq)
+  }
+
   broadcast(seq: number): void {
     for (const client of this.clients) client.receive(this.payload(seq))
   }
 
   /** Stores and logs the update; `null` when the doc already held every byte of it. */
   private store(update: string): number | null {
-    const before = Y.encodeStateVector(this.doc)
+    const before = Y.snapshot(this.doc)
     Y.applyUpdate(this.doc, base64ToBytes(update))
-    if (sameBytes(before, Y.encodeStateVector(this.doc))) return null
+    if (Y.equalSnapshots(before, Y.snapshot(this.doc))) return null
     const seq = this.seq + 1
     this.log.push({ seq, update, actorId: "usr_1", actorType: "user" })
     return seq
@@ -121,8 +143,9 @@ class FakeDocServer {
   }
 }
 
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
-  return a.length === b.length && a.every((byte, index) => byte === b[index])
+function writeDoc(ydoc: Y.Doc, json: JSONContent): void {
+  const node = getThreaSchema().nodeFromJSON(json)
+  updateYFragment(ydoc, ydoc.getXmlFragment(DOC_FRAGMENT), node, { mapping: new Map(), isOMark: new Map() })
 }
 
 function deferred(): Hold & { promise: Promise<void> } {
@@ -164,7 +187,7 @@ class MemoryLocalCopies implements DocLocalCopies {
   get text(): string | null {
     if (!this.copy) return null
     const doc = new Y.Doc()
-    Y.applyUpdate(doc, this.copy.state)
+    Y.applyUpdate(doc, Y.mergeUpdates([this.copy.state, ...this.copy.unsent]))
     return doc.getText("t").toString()
   }
 }
@@ -791,8 +814,22 @@ describe("DocSync", () => {
       await client.sync.start()
       client.sync.receive(server.writeElsewhere(" later"))
 
-      expect({ text: client.text(), stateVectorSent: server.api.get.mock.calls.at(-1)?.[2] !== undefined }).toEqual({
+      expect({ text: client.text(), after: server.api.listUpdates.mock.calls.map((call) => call[2]) }).toEqual({
         text: "mine theirs later",
+        after: [1],
+      })
+    })
+
+    it("should ask with the server doc's state vector when the copy is behind the server's snapshot", async () => {
+      await closeAfterTyping("mine ", { online: true })
+      server.writeElsewhere("theirs")
+      server.api.listUpdates.mockRejectedValueOnce(new ApiError(409, "DOC_UPDATES_BEHIND_SNAPSHOT", "behind snapshot"))
+
+      const client = connect(server)
+      await client.sync.start()
+
+      expect({ text: client.text(), stateVectorSent: server.api.get.mock.calls.at(-1)?.[2] !== undefined }).toEqual({
+        text: "mine theirs",
         stateVectorSent: true,
       })
     })
@@ -811,7 +848,7 @@ describe("DocSync", () => {
     it("should remove the local copy and show the error when the doc is gone", async () => {
       await closeAfterTyping("saved ", { online: true })
       const gone = new ApiError(404, "STREAM_NOT_FOUND", "gone")
-      server.api.get.mockRejectedValue(gone)
+      server.api.listUpdates.mockRejectedValue(gone)
 
       const client = connect(server)
       await client.sync.start()
@@ -890,7 +927,7 @@ describe("DocSync", () => {
 
     it("should catch up from the copy's seq once reachable again after opening offline", async () => {
       await closeAfterTyping("mine ", { online: true })
-      server.api.get.mockRejectedValueOnce(offline)
+      server.api.listUpdates.mockRejectedValueOnce(offline)
       const client = connect(server)
       await client.sync.start()
       server.writeElsewhere("theirs")
@@ -899,7 +936,7 @@ describe("DocSync", () => {
 
       expect({ text: client.text(), after: server.api.listUpdates.mock.calls.map((call) => call[2]) }).toEqual({
         text: "mine theirs",
-        after: [1],
+        after: [1, 1],
       })
     })
 
@@ -912,6 +949,281 @@ describe("DocSync", () => {
       await client.sync.catchUp()
 
       expect(localCopies.copy).toBeNull()
+    })
+  })
+
+  describe("offline edits in a block the server replaces", () => {
+    const blockIds = {
+      a: "blk_0000000000000000000000000A",
+      b: "blk_0000000000000000000000000B",
+      c: "blk_0000000000000000000000000C",
+    }
+
+    function block(id: string, text: string, type = "paragraph", marks?: JSONContent["marks"]): JSONContent {
+      return {
+        type,
+        attrs: { blockId: id, ...(type === "heading" ? { level: 2 } : {}) },
+        content: [{ type: "text", text, ...(marks ? { marks } : {}) }],
+      }
+    }
+
+    function doc(...blocks: JSONContent[]): JSONContent {
+      return { type: "doc", content: blocks }
+    }
+
+    const alpha = block(blockIds.a, "alpha")
+    const beta = block(blockIds.b, "beta")
+    const gamma = block(blockIds.c, "gamma")
+
+    /** Each top-level block as `type: text`, the shape a reader sees. */
+    function blocksOf(ydoc: Y.Doc): string[] {
+      const json = yXmlFragmentToProsemirrorJSON(ydoc.getXmlFragment(DOC_FRAGMENT)) as JSONContent
+      return (json.content ?? []).map(
+        (node) => `${node.type}: ${(node.content ?? []).map((child) => child.text ?? "").join("")}`
+      )
+    }
+
+    /** Opens the doc, then edits `beta` to `edited` while offline, leaving the edit unacked. */
+    async function editBetaOffline(edited: JSONContent) {
+      server.writeContent(doc(alpha, beta, gamma))
+      const client = connect(server)
+      await client.sync.start()
+      const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)
+      writeDoc(client.ydoc, doc(alpha, edited, gamma))
+      await vi.advanceTimersByTimeAsync(FLUSH_CAP_MS)
+      online.mockRestore()
+      return client
+    }
+
+    it("should keep an offline edit in a block an agent moved when the move arrives first", async () => {
+      const client = await editBetaOffline(block(blockIds.b, "beta mine"))
+      server.writeContent(doc(beta, alpha, gamma), doc(alpha, gamma))
+
+      await client.sync.catchUp()
+      await client.sync.flush()
+
+      const expected = ["paragraph: beta mine", "paragraph: alpha", "paragraph: gamma"]
+      expect({ client: blocksOf(client.ydoc), server: blocksOf(server.doc) }).toEqual({
+        client: expected,
+        server: expected,
+      })
+    })
+
+    it("should keep an offline edit in a block an agent moved when the edit reaches the server first", async () => {
+      const client = await editBetaOffline(block(blockIds.b, "beta mine"))
+      server.writeContent(doc(beta, alpha, gamma), doc(alpha, gamma))
+
+      await client.sync.flush()
+      await vi.advanceTimersByTimeAsync(0)
+      await client.sync.flush()
+
+      const expected = ["paragraph: beta mine", "paragraph: alpha", "paragraph: gamma"]
+      expect({ client: blocksOf(client.ydoc), server: blocksOf(server.doc) }).toEqual({
+        client: expected,
+        server: expected,
+      })
+    })
+
+    it("should keep an offline edit in a moved block when the doc was closed and reopened before the move arrived", async () => {
+      const first = await editBetaOffline(block(blockIds.b, "beta mine"))
+      first.sync.stop()
+      await vi.advanceTimersByTimeAsync(0)
+      server.clients.delete(first.sync)
+      server.writeContent(doc(beta, alpha, gamma), doc(alpha, gamma))
+
+      const client = connect(server)
+      await client.sync.start()
+      await client.sync.flush()
+
+      const expected = ["paragraph: beta mine", "paragraph: alpha", "paragraph: gamma"]
+      expect({ client: blocksOf(client.ydoc), server: blocksOf(server.doc) }).toEqual({
+        client: expected,
+        server: expected,
+      })
+    })
+
+    it("should keep an offline edit in a block an agent turned into a heading", async () => {
+      const client = await editBetaOffline(block(blockIds.b, "beta mine"))
+      server.writeContent(doc(alpha, block(blockIds.b, "beta", "heading"), gamma))
+
+      await client.sync.catchUp()
+      await client.sync.flush()
+
+      const expected = ["paragraph: alpha", "heading: beta mine", "paragraph: gamma"]
+      expect({ client: blocksOf(client.ydoc), server: blocksOf(server.doc) }).toEqual({
+        client: expected,
+        server: expected,
+      })
+    })
+
+    it("should merge an offline edit with an agent's rewrite of the moved block", async () => {
+      const client = await editBetaOffline(block(blockIds.b, "beta mine"))
+      server.writeContent(doc(block(blockIds.b, "beta theirs"), alpha, gamma), doc(alpha, gamma))
+
+      await client.sync.catchUp()
+      await client.sync.flush()
+
+      // Two inserts at the same spot are ordered by Yjs client id, which is random.
+      const [moved, ...rest] = blocksOf(client.ydoc)
+      expect({
+        moved: ["paragraph: beta theirs mine", "paragraph: beta mine theirs"].includes(moved!),
+        rest,
+        server: blocksOf(server.doc),
+      }).toEqual({ moved: true, rest: ["paragraph: alpha", "paragraph: gamma"], server: [moved, ...rest] })
+    })
+
+    it("should keep the offline version beside the agent's when the two cannot merge", async () => {
+      const client = await editBetaOffline(block(blockIds.b, "beta", "paragraph", [{ type: "bold" }]))
+      server.writeContent(doc(alpha, block(blockIds.b, "beta", "codeBlock"), gamma))
+
+      await client.sync.catchUp()
+      await client.sync.flush()
+
+      const expected = ["paragraph: alpha", "codeBlock: beta", "paragraph: beta", "paragraph: gamma"]
+      expect({ client: blocksOf(client.ydoc), server: blocksOf(server.doc) }).toEqual({
+        client: expected,
+        server: expected,
+      })
+    })
+
+    it("should keep an offline heading level change in a block an agent moved", async () => {
+      const heading = (level: number, text: string): JSONContent => ({
+        type: "heading",
+        attrs: { blockId: blockIds.b, level },
+        content: [{ type: "text", text }],
+      })
+      server.writeContent(doc(alpha, heading(2, "beta"), gamma))
+      const client = connect(server)
+      await client.sync.start()
+      const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)
+      writeDoc(client.ydoc, doc(alpha, heading(3, "beta"), gamma))
+      await vi.advanceTimersByTimeAsync(FLUSH_CAP_MS)
+      online.mockRestore()
+      server.writeContent(doc(heading(2, "beta"), alpha, gamma), doc(alpha, gamma))
+
+      await client.sync.catchUp()
+      await client.sync.flush()
+
+      const levelOf = (ydoc: Y.Doc) =>
+        (yXmlFragmentToProsemirrorJSON(ydoc.getXmlFragment(DOC_FRAGMENT)) as JSONContent).content?.[0]?.attrs?.level
+      expect({ client: levelOf(client.ydoc), server: levelOf(server.doc), blocks: blocksOf(server.doc) }).toEqual({
+        client: 3,
+        server: 3,
+        blocks: ["heading: beta", "paragraph: alpha", "paragraph: gamma"],
+      })
+    })
+
+    it("should keep both halves of a block split offline when an agent moves it", async () => {
+      const client = await editBetaOffline(block(blockIds.b, "be"))
+      const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)
+      const fragment = client.ydoc.getXmlFragment(DOC_FRAGMENT)
+      const half = new Y.XmlElement("paragraph")
+      fragment.insert(2, [half])
+      half.setAttribute("blockId", blockIds.b)
+      half.insert(0, [new Y.XmlText("ta mine")])
+      await vi.advanceTimersByTimeAsync(FLUSH_CAP_MS)
+      online.mockRestore()
+      server.writeContent(doc(beta, alpha, gamma), doc(alpha, gamma))
+
+      await client.sync.catchUp()
+      await client.sync.flush()
+
+      const expected = ["paragraph: be", "paragraph: alpha", "paragraph: ta mine", "paragraph: gamma"]
+      expect({ client: blocksOf(client.ydoc), server: blocksOf(server.doc) }).toEqual({
+        client: expected,
+        server: expected,
+      })
+    })
+
+    it("should bring back a block an agent deleted with the offline edit in it", async () => {
+      const client = await editBetaOffline(block(blockIds.b, "beta mine"))
+      server.writeContent(doc(alpha, gamma))
+
+      await client.sync.catchUp()
+      await client.sync.flush()
+
+      const expected = ["paragraph: alpha", "paragraph: beta mine", "paragraph: gamma"]
+      expect({ client: blocksOf(client.ydoc), server: blocksOf(server.doc) }).toEqual({
+        client: expected,
+        server: expected,
+      })
+    })
+
+    it("should bring back a list item an agent deleted with the offline edit in it", async () => {
+      const item = (id: string, text: string): JSONContent => ({ type: "listItem", content: [block(id, text)] })
+      const list = (...items: JSONContent[]): JSONContent => ({
+        type: "bulletList",
+        attrs: { blockId: "blk_0000000000000000000000000L" },
+        content: items,
+      })
+      const itemsOf = (ydoc: Y.Doc) =>
+        (
+          (yXmlFragmentToProsemirrorJSON(ydoc.getXmlFragment(DOC_FRAGMENT)) as JSONContent).content?.[0]?.content ?? []
+        ).map((listItem) => listItem.content?.[0]?.content?.[0]?.text)
+      server.writeContent(doc(list(item(blockIds.a, "one"), item(blockIds.b, "two"), item(blockIds.c, "three"))))
+      const client = connect(server)
+      await client.sync.start()
+      const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)
+      writeDoc(client.ydoc, doc(list(item(blockIds.a, "one"), item(blockIds.b, "two mine"), item(blockIds.c, "three"))))
+      await vi.advanceTimersByTimeAsync(FLUSH_CAP_MS)
+      online.mockRestore()
+      server.writeContent(doc(list(item(blockIds.a, "one"), item(blockIds.c, "three"))))
+
+      await client.sync.catchUp()
+      await client.sync.flush()
+
+      expect({ client: itemsOf(client.ydoc), server: itemsOf(server.doc) }).toEqual({
+        client: ["one", "two mine", "three"],
+        server: ["one", "two mine", "three"],
+      })
+    })
+
+    it("should not bring back edits the server refused when a later update deletes their block", async () => {
+      const client = await editBetaOffline(block(blockIds.b, "beta mine"))
+      server.failNextPost(403, "FORBIDDEN")
+      await client.sync.flush()
+      server.writeContent(doc(alpha, gamma))
+
+      await client.sync.catchUp()
+
+      expect({ rejections: client.rejections, client: blocksOf(client.ydoc) }).toEqual({
+        rejections: ["FORBIDDEN"],
+        client: ["paragraph: alpha", "paragraph: gamma"],
+      })
+    })
+
+    it("should not add an edit twice when it reached the server before a move and the doc reopens", async () => {
+      const first = await editBetaOffline(block(blockIds.b, "beta mine"))
+      first.sync.stop()
+      await vi.advanceTimersByTimeAsync(0)
+      server.clients.delete(first.sync)
+      const copy = localCopies.copy!
+      await server.api.postUpdate(WORKSPACE_ID, DOC_ID, bytesToBase64(Y.mergeUpdates(copy.unsent)))
+      server.writeContent(doc(block(blockIds.b, "beta mine"), alpha, gamma), doc(alpha, gamma))
+
+      const client = connect(server)
+      await client.sync.start()
+      await client.sync.flush()
+
+      const expected = ["paragraph: beta mine", "paragraph: alpha", "paragraph: gamma"]
+      expect({ client: blocksOf(client.ydoc), server: blocksOf(server.doc) }).toEqual({
+        client: expected,
+        server: expected,
+      })
+    })
+
+    it("should leave both edits in place when the agent edits another block", async () => {
+      const client = await editBetaOffline(block(blockIds.b, "beta mine"))
+      server.writeContent(doc(alpha, beta, block(blockIds.c, "delta")))
+
+      await client.sync.catchUp()
+      await client.sync.flush()
+
+      const expected = ["paragraph: alpha", "paragraph: beta mine", "paragraph: delta"]
+      expect({ client: blocksOf(client.ydoc), server: blocksOf(server.doc) }).toEqual({
+        client: expected,
+        server: expected,
+      })
     })
   })
 })
