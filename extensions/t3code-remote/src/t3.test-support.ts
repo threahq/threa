@@ -178,7 +178,11 @@ export function fakeT3() {
       const thread = {
         threadId: args.threadId,
         title: "Fake thread",
-        status: activeRun(args.threadId) ? ("running" as const) : ("idle" as const),
+        status: activeRun(args.threadId)
+          ? ("running" as const)
+          : threadRuns.get(args.threadId)?.some((runId) => !ended.has(runId) && waiting.has(runId))
+            ? ("waiting" as const)
+            : ("idle" as const),
         latestRunId: latestRuns.get(args.threadId) ?? null,
         providerInstanceId: models.get(args.threadId)?.instanceId ?? "codex",
         model: models.get(args.threadId)?.model ?? "gpt-5.5",
@@ -338,6 +342,8 @@ export function fakeT3() {
     },
     /** Start a run from T3 itself, as when background agents finish or a message is queued in T3's composer. */
     startInT3: (threadId: string) => startRun(threadId),
+    /** End a run in T3 with no one waiting on it, as one that finished while the connector was down. */
+    endInT3: (runId: string) => ended.set(runId, "completed"),
     /** Items a run wrote that no wait has seen yet. */
     addItems: (threadId: string, added: ThreadItem[]) => apply(threadId, { status: "running", items: added }),
     /** The environment's default for new threads, unset unless a test sets it. */
@@ -352,6 +358,7 @@ export function fakeSession(rootStreamId = "stream_root") {
   const interims: Array<{ invocationId: string; text: string }> = []
   const interimResults: Array<Awaited<ReturnType<BridgeSession["sendInterim"]>>> = []
   const postFailures: Error[] = []
+  const encrypted = new Set<string>()
   const fails: Array<{ invocationId: string; errorMessage: string }> = []
   const decisions: Array<{ input: DecisionRequestInput; signal?: AbortSignal }> = []
   const outcomes: Array<DecisionOutcome | DecisionAbandonedError> = []
@@ -379,6 +386,7 @@ export function fakeSession(rootStreamId = "stream_root") {
       if (failure) throw failure
       posts.push({ streamId, text, clientMessageId })
     },
+    isEncrypted: async (streamId) => encrypted.has(streamId),
     failTurn: async (invocationId, errorMessage) => {
       fails.push({ invocationId, errorMessage })
       settle()
@@ -410,6 +418,8 @@ export function fakeSession(rootStreamId = "stream_root") {
     interimResults,
     /** What the next posts to a stream throw; unset, they post. */
     postFailures,
+    /** Streams Threa reports as end-to-end encrypted. */
+    encrypted,
     fails,
     decisions,
     /** Answer the open card, or the next one asked. */
