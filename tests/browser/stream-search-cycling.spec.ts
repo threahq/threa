@@ -24,9 +24,12 @@ test.describe.configure({ timeout: 600_000 })
  *  window swap can append newer pages and silently heal a smaller gap, which
  *  would let the frozen-window regression pass unexercised. The tail match
  *  sits inside the last ~25 events so its /events/around answers
- *  hasNewer=false. */
-const TOTAL = 175
-const MATCH_POSITIONS = [30, 165]
+ *  hasNewer=false. The first match needs well over a viewport of history
+ *  above it so the scroll-away at the end can't hit the top of the channel
+ *  with the match still on screen — batches send concurrently, so a message
+ *  can land up to 9 rows earlier than its number. */
+const TOTAL = 185
+const MATCH_POSITIONS = [45, 175]
 
 async function seedMessages(page: Page, workspaceId: string, streamId: string): Promise<void> {
   const BATCH_SIZE = 10
