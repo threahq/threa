@@ -429,7 +429,7 @@ describe("T3 session control", () => {
       ok: true,
       summary: "Started a new T3 Code thread",
     })
-    expect(saved.at(-1)).toEqual({ threads: { stream_thread: "thread_b" } })
+    expect(saved.at(-1)).toEqual({ threads: { stream_thread: "thread_b" }, delivered: {} })
   })
 
   test("/clear right after the reply is not refused", async () => {

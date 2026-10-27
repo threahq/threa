@@ -11,9 +11,10 @@ describe("createFileThreadStore", () => {
 
     const model = { instanceId: "codex", model: "gpt-5.5", options: [{ id: "reasoningEffort", value: "high" }] }
     const spawns = { msg_spawn: { title: "helper", model }, stream_thread: { title: "other" } }
-    store.save({ threads: { stream_root: "thread_a" }, model, spawns })
+    const delivered = { thread_a: "run_2" }
+    store.save({ threads: { stream_root: "thread_a" }, model, spawns, delivered })
 
-    expect(store.load()).toEqual({ threads: { stream_root: "thread_a" }, model, spawns })
+    expect(store.load()).toEqual({ threads: { stream_root: "thread_a" }, model, spawns, delivered })
   })
 
   test("reads a file written before spawns were kept", () => {

@@ -1078,13 +1078,15 @@ describe("T3TurnRunner", () => {
   })
 
   test("a thread deleted in T3 is forgotten so the next message launches a new one", async () => {
-    const { t3, saved, runner } = setup({ state: { threads: { stream_root: "thread_gone" }, model: MODEL } })
+    const { t3, saved, runner } = setup({
+      state: { threads: { stream_root: "thread_gone" }, model: MODEL, delivered: { thread_gone: "run_0" } },
+    })
     t3.failNext("t3_thread_send", new T3ToolError("t3_thread_send", "thread_not_found", "not found"))
 
     await expect(runner.deliverTurn(turn())).rejects.toThrow(
       "`thread_gone` is gone; the next message starts a new one."
     )
-    expect(saved.at(-1)).toEqual({ threads: {}, model: MODEL })
+    expect(saved.at(-1)).toEqual({ threads: {}, model: MODEL, delivered: {} })
   })
 
   test("a thread deleted mid-run fails the turn and is forgotten", async () => {
@@ -1096,7 +1098,7 @@ describe("T3TurnRunner", () => {
 
     expect({ fails: session.fails, state: saved.at(-1) }).toEqual({
       fails: [{ invocationId: "binv_1", errorMessage: expect.stringContaining("`thread_1` is gone") }],
-      state: { threads: {}, model: MODEL },
+      state: { threads: {}, model: MODEL, delivered: {} },
     })
   })
 
@@ -1607,6 +1609,281 @@ describe("runs T3 starts by itself", () => {
     t3.startInT3("thread_1")
     t3.script("run_1", [{ status: "waiting" }])
     await t3.client.call("t3_thread_wait", { threadId: "thread_1", runId: "run_1", timeoutMs: 0 })
+    await runner.watch()
+    await idle()
+
+    expect({ busy: runner.busy, posts: session.posts }).toEqual({ busy: false, posts: [] })
+  })
+
+  test("posts the final message of a run that ended while the connector was down, and records it delivered", async () => {
+    const { t3, session, saved, runner } = setup({ state: { ...LINKED, delivered: { thread_1: "run_1" } } })
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(1, "assistant_message", { text: "Posted before the restart." })])
+    t3.endInT3("run_1")
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [
+      item(2, "assistant_message", { runId: "run_2", text: "THREA_UPDATE: Tests pass." }),
+      item(3, "assistant_message", { runId: "run_2", text: "Pushed." }),
+    ])
+    t3.endInT3("run_2")
+    await runner.watch()
+    await until(() => !runner.busy)
+    await runner.watch()
+
+    expect({ posts: session.posts, delivered: saved.at(-1)?.delivered }).toEqual({
+      posts: [{ streamId: "stream_root", text: "Pushed.", clientMessageId: "t3run-run_2" }],
+      delivered: { thread_1: "run_2" },
+    })
+  })
+
+  test("keeps the delivered mark before a run whose relay gave up", async () => {
+    const { t3, session, saved, runner } = setup({ state: { ...LINKED, delivered: { thread_1: "run_1" } } })
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(1, "assistant_message", { text: "Posted before the restart." })])
+    t3.endInT3("run_1")
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(2, "assistant_message", { runId: "run_2", text: "Pushed." })])
+    t3.endInT3("run_2")
+    t3.failNext("t3_thread_wait", new T3AuthError("Run `threa-t3code login`"))
+    await runner.watch()
+    await until(() => !runner.busy)
+    await runner.watch()
+
+    expect({ posts: session.posts, saved }).toEqual({ posts: [], saved: [] })
+  })
+
+  test("moves the delivered mark past a run whose relay gave up once a later run posts", async () => {
+    const { t3, session, saved, runner } = setup({ state: { ...LINKED, delivered: { thread_1: "run_1" } } })
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(1, "assistant_message", { text: "Posted before the restart." })])
+    t3.endInT3("run_1")
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(2, "assistant_message", { runId: "run_2", text: "Pushed." })])
+    t3.endInT3("run_2")
+    t3.failNext("t3_thread_wait", new T3AuthError("Run `threa-t3code login`"))
+    await runner.watch()
+    await until(() => !runner.busy)
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(3, "assistant_message", { runId: "run_3", text: "Deployed." })])
+    t3.endInT3("run_3")
+    await runner.watch()
+    await until(() => !runner.busy)
+    await runner.watch()
+
+    expect({ posts: session.posts, delivered: saved.at(-1)?.delivered }).toEqual({
+      posts: [{ streamId: "stream_root", text: "Deployed.", clientMessageId: "t3run-run_3" }],
+      delivered: { thread_1: "run_3" },
+    })
+  })
+
+  test("records each relayed run delivered as it posts, up to the one its relay gave up on", async () => {
+    const { t3, session, saved, runner } = setup({ state: { ...LINKED, delivered: { thread_1: "run_1" } } })
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(1, "assistant_message", { text: "Posted before the restart." })])
+    t3.endInT3("run_1")
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(2, "assistant_message", { runId: "run_2", text: "Pushed." })])
+    t3.endInT3("run_2")
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(3, "assistant_message", { runId: "run_3", text: "Deployed." })])
+    t3.endInT3("run_3")
+    const call = t3.client.call
+    t3.client.call = (async (name, args) => {
+      if (name === "t3_thread_wait" && (args as { runId?: string }).runId === "run_3")
+        throw new T3AuthError("Run `threa-t3code login`")
+      return call(name, args)
+    }) as typeof call
+    await runner.watch()
+    await until(() => !runner.busy)
+    await runner.watch()
+
+    expect({ posts: session.posts, delivered: saved.at(-1)?.delivered }).toEqual({
+      posts: [{ streamId: "stream_root", text: "Pushed.", clientMessageId: "t3run-run_2" }],
+      delivered: { thread_1: "run_2" },
+    })
+  })
+
+  test("a run that posts nothing leaves the delivered mark before a run whose relay gave up", async () => {
+    const { t3, session, saved, runner } = setup({ state: { ...LINKED, delivered: { thread_1: "run_1" } } })
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(1, "assistant_message", { text: "Posted before the restart." })])
+    t3.endInT3("run_1")
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(2, "assistant_message", { runId: "run_2", text: "Pushed." })])
+    t3.endInT3("run_2")
+    t3.failNext("t3_thread_wait", new T3AuthError("Run `threa-t3code login`"))
+    await runner.watch()
+    await until(() => !runner.busy)
+    await runner.compact("stream_root", "thread_1")
+    t3.script("run_3", [{ status: "completed" }])
+    await runner.watch()
+    await until(() => !runner.busy)
+    await runner.watch()
+
+    expect({ posts: session.posts, saved }).toEqual({ posts: [], saved: [] })
+  })
+
+  test("records a turn's run delivered once it replies", async () => {
+    const { t3, session, saved, runner } = setup()
+    await settledTurn(t3, session, runner)
+    await idle()
+
+    expect(saved.at(-1)).toEqual({
+      threads: { stream_root: "thread_1" },
+      model: MODEL,
+      delivered: { thread_1: "run_1" },
+    })
+  })
+
+  test("records nothing delivered while a turn's reply is still posting", async () => {
+    const { t3, session, saved, runner } = setup()
+    const { reply } = session.session
+    let release = () => {}
+    const held = new Promise<void>((resolve) => (release = resolve))
+    session.session.reply = async (...args) => {
+      await held
+      return reply(...args)
+    }
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Done." })] }])
+    await runner.deliverTurn(turn())
+    await until(() => !runner.hasOpenTurns())
+    await runner.watch()
+    const whilePosting = saved.at(-1)?.delivered
+    release()
+    await session.settled()
+    await idle()
+
+    expect({ whilePosting, after: saved.at(-1)?.delivered }).toEqual({
+      whilePosting: undefined,
+      after: { thread_1: "run_1" },
+    })
+  })
+
+  test("a turn's reply posting after a later relayed run leaves the mark on the later run", async () => {
+    const { t3, session, saved, runner } = setup()
+    const { reply } = session.session
+    let release = () => {}
+    const held = new Promise<void>((resolve) => (release = resolve))
+    session.session.reply = async (...args) => {
+      await held
+      return reply(...args)
+    }
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Done." })] }])
+    await runner.deliverTurn(turn())
+    await until(() => !runner.hasOpenTurns())
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(2, "assistant_message", { runId: "run_2", text: "Pushed." })])
+    t3.endInT3("run_2")
+    await runner.watch()
+    await until(() => session.posts.length > 0)
+    release()
+    await session.settled()
+    await idle()
+
+    expect({ posts: session.posts, delivered: saved.at(-1)?.delivered }).toEqual({
+      posts: [{ streamId: "stream_root", text: "Pushed.", clientMessageId: "t3run-run_2" }],
+      delivered: { thread_1: "run_2" },
+    })
+  })
+
+  test("a turn's reply moves the mark while a relay posts a run queued after it", async () => {
+    const { t3, session, saved, runner } = setup()
+    const { reply } = session.session
+    let release = () => {}
+    const held = new Promise<void>((resolve) => (release = resolve))
+    session.session.reply = async (...args) => {
+      await held
+      return reply(...args)
+    }
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Done." })] }])
+    await runner.deliverTurn(turn())
+    await until(() => !runner.hasOpenTurns())
+    t3.startInT3("thread_1")
+    await runner.watch()
+    release()
+    await session.settled()
+    await idle()
+
+    expect({ relaying: runner.busy, delivered: saved.at(-1)?.delivered }).toEqual({
+      relaying: true,
+      delivered: { thread_1: "run_1" },
+    })
+  })
+
+  test("a turn admitted while the previous turn's reply posts still records its run delivered", async () => {
+    const { t3, session, saved, runner } = setup()
+    const { reply } = session.session
+    let release = () => {}
+    const held = new Promise<void>((resolve) => (release = resolve))
+    session.session.reply = async (invocationId, text) => {
+      if (invocationId === "binv_1") await held
+      return reply(invocationId, text)
+    }
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Done." })] }])
+    await runner.deliverTurn(turn())
+    await until(() => !runner.hasOpenTurns())
+    t3.script("run_2", [{ status: "running" }])
+    await runner.deliverTurn(turn({ invocationId: "binv_2", content: "Now the docs" }))
+    release()
+    await until(() => saved.at(-1)?.delivered?.thread_1 === "run_1")
+    t3.script("run_2", [{ status: "completed", items: [item(2, "assistant_message", { text: "Docs done." })] }])
+    await session.settled()
+    await idle()
+
+    expect(saved.at(-1)?.delivered).toEqual({ thread_1: "run_2" })
+  })
+
+  test("a turn's reply leaves the mark while a relay of a run queued ahead of it posts the run that continues it", async () => {
+    const { t3, session, saved, runner } = setup({ state: { ...LINKED, delivered: { thread_1: "run_1" } } })
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(1, "assistant_message", { text: "Posted before the restart." })])
+    t3.endInT3("run_1")
+    t3.startInT3("thread_1")
+    t3.script("run_2", [{ status: "running" }])
+    await runner.watch()
+    await until(() => runner.busy)
+    t3.script("run_3", [
+      { status: "completed", items: [item(2, "assistant_message", { runId: "run_3", text: "Docs done." })] },
+    ])
+    await runner.deliverTurn(turn({ invocationId: "binv_2", content: "Now the docs" }))
+    t3.script("run_2", [{ status: "running", runId: "run_4" }])
+    t3.script("run_4", [{ status: "running" }])
+    await session.settled()
+    await idle()
+
+    expect({ replies: session.replies, saved }).toEqual({
+      replies: [{ invocationId: "binv_2", text: "Docs done." }],
+      saved: [],
+    })
+  })
+
+  test("a /clear while the reply posts leaves no delivered run for the thread", async () => {
+    const { t3, session, saved, runner } = setup()
+    const { reply } = session.session
+    let release = () => {}
+    const held = new Promise<void>((resolve) => (release = resolve))
+    session.session.reply = async (...args) => {
+      await held
+      return reply(...args)
+    }
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Done." })] }])
+    await runner.deliverTurn(turn())
+    await until(() => !runner.hasOpenTurns())
+    runner.forgetThread("stream_root")
+    release()
+    await session.settled()
+    await idle()
+
+    expect(saved.at(-1)).toEqual({ threads: {}, model: MODEL, delivered: {} })
+  })
+
+  test("leaves a run waiting on a question after the last one delivered", async () => {
+    const { t3, session, runner } = setup({ state: { ...LINKED, delivered: { thread_1: "run_1" } } })
+    t3.startInT3("thread_1")
+    t3.endInT3("run_1")
+    t3.startInT3("thread_1")
+    t3.script("run_2", [{ status: "waiting" }])
+    await t3.client.call("t3_thread_wait", { threadId: "thread_1", runId: "run_2", timeoutMs: 0 })
     await runner.watch()
     await idle()
 
