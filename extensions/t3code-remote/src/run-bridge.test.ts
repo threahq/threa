@@ -1676,6 +1676,53 @@ describe("runs T3 starts by itself", () => {
     })
   })
 
+  test("records each relayed run delivered as it posts, up to the one its relay gave up on", async () => {
+    const { t3, session, saved, runner } = setup({ state: { ...LINKED, delivered: { thread_1: "run_1" } } })
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(1, "assistant_message", { text: "Posted before the restart." })])
+    t3.endInT3("run_1")
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(2, "assistant_message", { runId: "run_2", text: "Pushed." })])
+    t3.endInT3("run_2")
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(3, "assistant_message", { runId: "run_3", text: "Deployed." })])
+    t3.endInT3("run_3")
+    const call = t3.client.call
+    t3.client.call = (async (name, args) => {
+      if (name === "t3_thread_wait" && (args as { runId?: string }).runId === "run_3")
+        throw new T3AuthError("Run `threa-t3code login`")
+      return call(name, args)
+    }) as typeof call
+    await runner.watch()
+    await until(() => !runner.busy)
+    await runner.watch()
+
+    expect({ posts: session.posts, delivered: saved.at(-1)?.delivered }).toEqual({
+      posts: [{ streamId: "stream_root", text: "Pushed.", clientMessageId: "t3run-run_2" }],
+      delivered: { thread_1: "run_2" },
+    })
+  })
+
+  test("a run that posts nothing leaves the delivered mark before a run whose relay gave up", async () => {
+    const { t3, session, saved, runner } = setup({ state: { ...LINKED, delivered: { thread_1: "run_1" } } })
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(1, "assistant_message", { text: "Posted before the restart." })])
+    t3.endInT3("run_1")
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(2, "assistant_message", { runId: "run_2", text: "Pushed." })])
+    t3.endInT3("run_2")
+    t3.failNext("t3_thread_wait", new T3AuthError("Run `threa-t3code login`"))
+    await runner.watch()
+    await until(() => !runner.busy)
+    await runner.compact("stream_root", "thread_1")
+    t3.script("run_3", [{ status: "completed" }])
+    await runner.watch()
+    await until(() => !runner.busy)
+    await runner.watch()
+
+    expect({ posts: session.posts, saved }).toEqual({ posts: [], saved: [] })
+  })
+
   test("records a turn's run delivered once it replies", async () => {
     const { t3, session, saved, runner } = setup()
     await settledTurn(t3, session, runner)
