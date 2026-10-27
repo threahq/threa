@@ -16,6 +16,7 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk, generateTestId } f
  *   while it is in flight.
  * - a message landing while that send is in flight appears above it, and the
  *   send keeps its place when it confirms.
+ * - a send keeps its row when it confirms, so nothing open on it closes.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -56,9 +57,9 @@ async function postMessage(page: Page, workspaceId: string, streamId: string, co
 }
 
 /**
- * Samples in-frame geometry from the frame the arrival's row first lays out. A
- * send's row is remounted when it confirms, so every read resolves it again; a
- * frame without the row reads `null`.
+ * Samples in-frame geometry from the frame the arrival's row first lays out.
+ * Every read resolves the row again once it leaves the DOM; a frame without the
+ * row reads `null`.
  */
 function sampleArrival({ anchorText, arrivalText }: { anchorText: string; arrivalText: string }) {
   const frames: Frame[] = []
@@ -303,4 +304,37 @@ test("a message landing while your send is in flight appears above it, and your 
   expect(await page.evaluate(() => (window as unknown as { __order: unknown }).__order)).toEqual({
     orders: ["first above second"],
   })
+})
+
+test("your own send keeps its row when it confirms", async ({ page }) => {
+  await openSeededChannel(page)
+  await page.reload()
+  await waitForSettledTail(page)
+
+  const text = `kept ${generateTestId()}`
+  await page.evaluate((text) => {
+    const probe = window as unknown as { __optimisticRow: Element | null }
+    probe.__optimisticRow = null
+    const observer = new MutationObserver(() => {
+      const row = [...document.querySelectorAll('main [data-event-id^="temp_"]')].find((r) =>
+        r.textContent?.includes(text)
+      )
+      if (!row) return
+      probe.__optimisticRow = row
+      observer.disconnect()
+    })
+    observer.observe(document.querySelector("main")!, { subtree: true, childList: true })
+  }, text)
+  const editor = page.locator("[contenteditable='true']").first()
+  await editor.click()
+  await editor.pressSequentially(text)
+  await page.keyboard.press("Enter")
+
+  const confirmed = page.getByRole("main").locator(`[data-event-id]:not([data-event-id^="temp_"])`, { hasText: text })
+  await expect(confirmed).toBeVisible({ timeout: 10000 })
+  expect(
+    await confirmed.evaluate(
+      (row) => (window as unknown as { __optimisticRow: Element | null }).__optimisticRow === row
+    )
+  ).toBe(true)
 })

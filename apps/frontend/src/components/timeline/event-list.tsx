@@ -608,8 +608,13 @@ export function getTimelineItemKey(item: TimelineItem): string {
       return `skeleton:older:${item.index}`
     case "day_divider":
       return `day:${item.dayStartMs}`
-    default:
-      return item.event.id
+    default: {
+      // An own send's echo replaces the optimistic row, whose id is the client
+      // id the echo carries as `clientMessageId`; keying by it keeps the row
+      // mounted across the swap, so an open menu or measured height survives.
+      const clientMessageId = (item.event.payload as { clientMessageId?: unknown } | undefined)?.clientMessageId
+      return typeof clientMessageId === "string" ? clientMessageId : item.event.id
+    }
   }
 }
 
