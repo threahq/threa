@@ -784,13 +784,20 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         return
       }
       const focusedAtCreate = document.activeElement
-      requestAnimationFrame(() => {
+      const focusWhenAttached = () => {
         if (!autoFocusRef.current || editor.isDestroyed) return
         const focused = document.activeElement
         if (focused !== focusedAtCreate && focused !== document.body) return
+        // The editor is created during render; a navigation's commit can land frames later, and focusing the detached
+        // view is a silent no-op.
+        if (!editor.view.dom.isConnected) {
+          requestAnimationFrame(focusWhenAttached)
+          return
+        }
         editor.view.focus()
         editor.view.dispatch(editor.state.tr.setSelection(Selection.atEnd(editor.state.doc)).scrollIntoView())
-      })
+      }
+      requestAnimationFrame(focusWhenAttached)
     },
     onUpdate: ({ editor }) => {
       if (isInternalUpdate.current) return
