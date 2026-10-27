@@ -60,6 +60,8 @@ export function stripMarkdownKeepingCode(md: string): string {
 function stripBlocks(md: string): string {
   return (
     md
+      // A backslash ending a line is a hard break
+      .replace(/\\\n/g, "\n")
       // Remove headers
       .replace(/^#{1,6}\s+/gm, "")
       // Remove bold/italic

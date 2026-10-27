@@ -156,7 +156,7 @@ describe("editor-markdown", () => {
         expect(serializeToMarkdown(doc)).toBe("Above\n\n---\n\nBelow")
       })
 
-      it("should serialize hard break as newline", () => {
+      it("should serialize a hard break as a backslash ending the line", () => {
         const doc: JSONContent = {
           type: "doc",
           content: [
@@ -167,7 +167,7 @@ describe("editor-markdown", () => {
           ],
         }
 
-        expect(serializeToMarkdown(doc)).toBe("Line one\nLine two")
+        expect(serializeToMarkdown(doc)).toBe("Line one\\\nLine two")
       })
     })
 

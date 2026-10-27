@@ -1909,3 +1909,116 @@ describe("@threahq/prosemirror doc embed round-trip", () => {
     )
   })
 })
+
+describe("@threahq/prosemirror hard break round-trip", () => {
+  const text = (value: string, marks?: JSONContent["marks"]): JSONContent => ({
+    type: "text",
+    text: value,
+    ...(marks ? { marks } : {}),
+  })
+  const hardBreak: JSONContent = { type: "hardBreak" }
+
+  it.each<[string, JSONContent, string]>([
+    [
+      "a paragraph",
+      { type: "paragraph", content: [text("line one"), hardBreak, text("line two")] },
+      "line one\\\nline two",
+    ],
+    [
+      "a heading",
+      { type: "heading", attrs: { level: 2 }, content: [text("title"), hardBreak, text("subtitle")] },
+      "## title\\\nsubtitle",
+    ],
+    ["two breaks in a row", { type: "paragraph", content: [text("a"), hardBreak, hardBreak, text("b")] }, "a\\\n\\\nb"],
+    [
+      "a break between bold runs",
+      {
+        type: "paragraph",
+        content: [text("bold", [{ type: "bold" }]), hardBreak, text("more", [{ type: "bold" }])],
+      },
+      "**bold**\\\n**more**",
+    ],
+  ])("should keep the line break in %s", (_name, block, markdown) => {
+    const doc: JSONContent = { type: "doc", content: [block] }
+    expect({ markdown: serializeToMarkdown(doc), parsed: parseMarkdown(serializeToMarkdown(doc)) }).toEqual({
+      markdown,
+      parsed: doc,
+    })
+  })
+
+  it("should keep the line break in a list item", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "bulletList",
+          content: [
+            { type: "listItem", content: [{ type: "paragraph", content: [text("one"), hardBreak, text("two")] }] },
+            { type: "listItem", content: [{ type: "paragraph", content: [text("three")] }] },
+          ],
+        },
+      ],
+    }
+    expect(parseMarkdown(serializeToMarkdown(doc))).toEqual(parseMarkdown("- one\\\ntwo\n- three"))
+    expect(parseMarkdown("- one\\\ntwo\n- three").content?.[0].content?.[0].content?.[0].content).toEqual([
+      text("one"),
+      hardBreak,
+      text("two"),
+    ])
+  })
+
+  it("should keep the line break in a blockquote", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "blockquote", content: [{ type: "paragraph", content: [text("one"), hardBreak, text("two")] }] },
+      ],
+    }
+    expect({ markdown: serializeToMarkdown(doc), parsed: parseMarkdown(serializeToMarkdown(doc)) }).toEqual({
+      markdown: "> one\\\n> two",
+      parsed: doc,
+    })
+  })
+
+  it("should leave a code block line that ends in a backslash alone", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "codeBlock", attrs: { language: "sh" }, content: [text("make \\\n  build")] }],
+    }
+    expect(parseMarkdown(serializeToMarkdown(doc))).toEqual(doc)
+  })
+
+  it("should not read an escaped backslash at the end of a line as a break", () => {
+    expect(parseMarkdown("a\\\\\nb")).toEqual({
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [text("a\\\\")] },
+        { type: "paragraph", content: [text("b")] },
+      ],
+    })
+  })
+
+  it("should write a break in a table cell as a cell line break", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "table",
+          content: [
+            {
+              type: "tableRow",
+              content: [
+                {
+                  type: "tableHeader",
+                  attrs: { colspan: 1, rowspan: 1, colwidth: null },
+                  content: [{ type: "paragraph", content: [text("a"), hardBreak, text("b")] }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+    expect(serializeToMarkdown(doc).split("\n")[0]).toBe("| a<br>b |")
+  })
+})

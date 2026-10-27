@@ -31,6 +31,15 @@ import {
   type ReferencePin,
 } from "./pointer-urls"
 
+/**
+ * CommonMark's hard break: a backslash ending the line. The parser reads one
+ * block per line, so `joinHardBreaks` folds a broken line and its continuation
+ * into one line with `HARD_BREAK_TOKEN` where the break was.
+ */
+const HARD_BREAK_MARKDOWN = "\\\n"
+// U+E000 and U+E001 already delimit the math and link tokens.
+const HARD_BREAK_TOKEN = "\uE002"
+
 /** A memo/doc pointer's link text: its cached title (or the fallback) with only `\\` and `]` escaped. */
 function pointerLinkLabel(title: unknown, fallback: string): string {
   const label = typeof title === "string" && title.length > 0 ? title : fallback
@@ -220,7 +229,7 @@ function serializeNode(node: JSONContent, listDepth = 0, listIndex?: number): st
       return "---"
 
     case "hardBreak":
-      return "\n"
+      return HARD_BREAK_MARKDOWN
 
     case "table":
       return serializeTable(node)
@@ -288,7 +297,7 @@ function serializeTableCell(cell: JSONContent): string {
   // Escape pipes so they don't terminate the cell, and collapse hard-break
   // newlines into `<br>` for the same reason. Leading/trailing whitespace
   // inside a cell is meaningless in GFM, so trim.
-  return joined.replace(/\|/g, "\\|").replace(/\n/g, "<br>").trim()
+  return joined.replace(/\|/g, "\\|").replaceAll(HARD_BREAK_MARKDOWN, "<br>").replace(/\n/g, "<br>").trim()
 }
 
 /**
@@ -310,7 +319,7 @@ export function attachmentReferenceLabel(attrs: { filename?: unknown; imageIndex
 }
 
 function getNodeText(node: JSONContent): string {
-  if (node.type === "hardBreak") return "\n"
+  if (node.type === "hardBreak") return HARD_BREAK_MARKDOWN
   if (node.type === "mention") {
     const slug = node.attrs?.slug as string
     if (!slug) return ""
@@ -740,7 +749,7 @@ export function parseMarkdown(
   // same reason the renderer does it (`extractMath`): a TeX body is not
   // markdown. It also collapses a `$$` block written across lines into one
   // token, so the line-based loop below never has to know about fences.
-  const lines = extractMath(normalizeMarkdownTables(markdown)).split("\n")
+  const lines = joinHardBreaks(extractMath(normalizeMarkdownTables(markdown)).split("\n"))
   const content: JSONContent[] = []
   let i = 0
 
@@ -1254,6 +1263,38 @@ function tokenizeBalancedLinkDestinations(
   return { text: tokenized, hrefByToken }
 }
 
+function endsWithHardBreak(line: string): boolean {
+  const trailing = line.length - line.replace(/\\+$/, "").length
+  return trailing % 2 === 1
+}
+
+function joinHardBreaks(lines: string[]): string[] {
+  const joined: string[] = []
+  let inFence = false
+  for (const line of lines) {
+    const previous = joined.at(-1)
+    if (!inFence && previous !== undefined && line.length > 0 && endsWithHardBreak(previous)) {
+      // A broken line inside a blockquote continues on the next `> ` line.
+      const continuation = previous.startsWith("> ") && line.startsWith("> ") ? line.slice(2) : line
+      joined[joined.length - 1] = previous.slice(0, -1) + HARD_BREAK_TOKEN + continuation
+      continue
+    }
+    if (/^(> )?```/.test(line)) inFence = !inFence
+    joined.push(line)
+  }
+  return joined
+}
+
+function splitHardBreaks(node: JSONContent): JSONContent[] {
+  if (node.type !== "text" || !node.text?.includes(HARD_BREAK_TOKEN)) return [node]
+  return node.text
+    .split(HARD_BREAK_TOKEN)
+    .flatMap((text, index): JSONContent[] => [
+      ...(index > 0 ? [{ type: "hardBreak" }] : []),
+      ...(text ? [{ ...node, text }] : []),
+    ])
+}
+
 /**
  * Math tokens stay opaque through the whole mark and link parse and are
  * expanded once, here: splitting first would hand the two halves of
@@ -1261,15 +1302,19 @@ function tokenizeBalancedLinkDestinations(
  * that mark on a node whose schema allows none.
  */
 function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONContent[] {
-  return parseInlineTokens(text, options).flatMap((node) => {
-    const parts = node.type === "text" && node.text ? splitMathTokens(node.text) : null
-    if (!parts) return [node]
-    return parts
-      .filter((part) => "tex" in part || part.text)
-      .map((part) =>
-        "tex" in part ? { type: "math", attrs: { tex: part.tex, display: part.display } } : { ...node, text: part.text }
-      )
-  })
+  return parseInlineTokens(text, options)
+    .flatMap(splitHardBreaks)
+    .flatMap((node) => {
+      const parts = node.type === "text" && node.text ? splitMathTokens(node.text) : null
+      if (!parts) return [node]
+      return parts
+        .filter((part) => "tex" in part || part.text)
+        .map((part) =>
+          "tex" in part
+            ? { type: "math", attrs: { tex: part.tex, display: part.display } }
+            : { ...node, text: part.text }
+        )
+    })
 }
 
 function parseInlineTokens(text: string, options: ParseOptions = {}): JSONContent[] {
