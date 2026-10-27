@@ -1723,6 +1723,40 @@ describe("runs T3 starts by itself", () => {
     })
   })
 
+  test("a turn whose run T3 continued as a new one is not posted again after a restart", async () => {
+    const { t3, session, saved, runner } = setup({ state: { ...LINKED, delivered: { thread_1: "run_1" } } })
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(1, "assistant_message", { text: "Posted before the restart." })])
+    t3.endInT3("run_1")
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(2, "assistant_message", { runId: "run_2", text: "Pushed." })])
+    t3.endInT3("run_2")
+    t3.failNext("t3_thread_wait", new T3AuthError("Run `threa-t3code login`"))
+    await runner.watch()
+    await until(() => !runner.busy)
+    t3.script("run_3", [{ status: "running", runId: "run_4" }])
+    t3.script("run_4", [
+      { status: "completed", items: [item(3, "assistant_message", { runId: "run_4", text: "Docs done." })] },
+    ])
+    await runner.deliverTurn(turn({ invocationId: "binv_2", content: "Now the docs" }))
+    await session.settled()
+    await idle()
+    t3.endInT3("run_3")
+    const restarted = setup({ state: saved.at(-1), t3 })
+    await restarted.runner.watch()
+    await until(() => !restarted.runner.busy)
+
+    expect({
+      replies: session.replies,
+      posted: saved.at(-1)?.posted,
+      restartedPosts: restarted.session.posts,
+    }).toEqual({
+      replies: [{ invocationId: "binv_2", text: "Docs done." }],
+      posted: { thread_1: ["run_3", "run_4"] },
+      restartedPosts: [{ streamId: "stream_root", text: "Pushed.", clientMessageId: "t3run-run_2" }],
+    })
+  })
+
   test("records each relayed run delivered as it posts, up to the one its relay gave up on", async () => {
     const { t3, session, saved, runner } = setup({ state: { ...LINKED, delivered: { thread_1: "run_1" } } })
     t3.startInT3("thread_1")

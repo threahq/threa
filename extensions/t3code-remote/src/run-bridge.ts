@@ -650,16 +650,20 @@ export class T3TurnRunner {
     this.saveState({ ...this.state, delivered: { ...this.state.delivered, [threadId]: runId } })
   }
 
-  /** While a run is still owed, a later run that posts leaves the mark before the owed one and is recorded posted. */
-  private recordPosted(threadId: string, runId: string): void {
+  /**
+   * While a run is still owed, a later run that posts leaves the mark before the owed one, and every run its post
+   * covered is recorded posted.
+   */
+  private recordPosted(threadId: string, runId: string, covered: Iterable<string>): void {
     if (!this.undelivered.has(threadId)) return this.markDelivered(threadId, runId)
-    this.markPosted(threadId, runId)
+    this.markPosted(threadId, covered)
   }
 
-  private markPosted(threadId: string, runId: string): void {
+  private markPosted(threadId: string, runIds: Iterable<string>): void {
     const posted = this.state.posted?.[threadId] ?? []
-    if (posted.includes(runId) || !Object.values(this.state.threads).includes(threadId)) return
-    this.saveState({ ...this.state, posted: { ...this.state.posted, [threadId]: [...posted, runId] } })
+    const added = [...runIds].filter((runId) => !posted.includes(runId))
+    if (added.length === 0 || !Object.values(this.state.threads).includes(threadId)) return
+    this.saveState({ ...this.state, posted: { ...this.state.posted, [threadId]: [...posted, ...added] } })
   }
 
   /**
@@ -771,7 +775,7 @@ export class T3TurnRunner {
       this.log(`run ${relay.runId} started in T3 Code; posting its reply to ${streamId}`)
       await this.relayRun(streamId, relay)
       if (relay.abort.signal.aborted) return
-      this.recordPosted(relay.read.threadId, relay.runId)
+      this.recordPosted(relay.read.threadId, relay.runId, relay.read.trace.runIds)
       const next = relay.queue.shift()
       // Released in the tick the queue runs dry, so a run found meanwhile starts a relay of its own.
       if (!next) return this.release(relay)
@@ -1201,9 +1205,9 @@ export class T3TurnRunner {
     // one that already marked a later run keeps the mark there.
     const mark = this.state.delivered?.[run.threadId]
     if (run.aheadRelay && this.unprompted.get(run.threadId) === run.aheadRelay)
-      return this.markPosted(run.threadId, run.runId)
+      return this.markPosted(run.threadId, run.trace.runIds)
     if (mark && !run.before.has(mark) && !run.trace.runIds.has(mark)) return
-    this.recordPosted(run.threadId, run.runId)
+    this.recordPosted(run.threadId, run.runId, run.trace.runIds)
   }
 
   /** A card whose request left T3's pending list was answered in T3 itself, so it comes down. */
