@@ -27,8 +27,7 @@ function composerEditor(page: Page): Locator {
 
 async function openScratchpad(page: Page): Promise<string> {
   await loginAndCreateWorkspace(page, "code-language")
-  const workspaceId = page.url().match(/\/w\/([^/]+)/)?.[1] ?? ""
-  expect(workspaceId).not.toBe("")
+  const workspaceId = workspaceIdFromUrl(page)
   const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, { data: { type: "scratchpad" } })
   await expectApiOk(response, "Create scratchpad")
   const { stream } = (await response.json()) as { stream: { id: string } }
@@ -133,10 +132,8 @@ test("on a phone the chip opens the language drawer", async ({ page: setupPage, 
   const box = await chip.boundingBox()
   // The visible chip is small; its tap target is not.
   const hitHeight = await chip.evaluate((el) => parseFloat(getComputedStyle(el, "::after").height))
-  expect({ chipShort: (box?.height ?? 0) < 24, hitHeight: hitHeight >= 40 }).toEqual({
-    chipShort: true,
-    hitHeight: true,
-  })
+  expect(box!.height).toBeLessThan(24)
+  expect(hitHeight).toBeGreaterThanOrEqual(40)
   await chip.tap()
 
   const drawer = page.locator("[data-vaul-drawer]")

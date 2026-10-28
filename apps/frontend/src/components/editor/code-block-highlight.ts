@@ -7,12 +7,23 @@ import { PLAINTEXT_LANGUAGE_ID, normalizeCodeLanguage } from "@threahq/types"
 import { loadCodeLanguage, tryTokenizeSync } from "@/lib/markdown/highlighter"
 
 const LANGUAGE_LOADED = "languageLoaded"
+const FLUSH = "flush"
 
-// Tokenizing is synchronous and reruns on every keystroke in the block; past
-// this size a keystroke would stall typing, so the block stays plain.
-const MAX_HIGHLIGHT_CHARS = 20_000
+// Shiki tokenizes a 2k-char TypeScript block in ~25ms, so edits only map the
+// decorations and the edited blocks are re-tokenized once typing pauses.
+const HIGHLIGHT_DELAY_MS = 150
 
-export const codeBlockHighlightKey = new PluginKey<DecorationSet>("codeBlockHighlight")
+// Re-tokenizing scales with the block (~80ms at this size); past it a pause in
+// typing would stall the next keystroke, so the block stays plain.
+const MAX_HIGHLIGHT_CHARS = 10_000
+
+interface HighlightState {
+  decorations: DecorationSet
+  /** The changed range still carrying mapped, not re-tokenized, decorations. */
+  dirty: { from: number; to: number } | null
+}
+
+export const codeBlockHighlightKey = new PluginKey<HighlightState>("codeBlockHighlight")
 
 /**
  * The range two documents differ in, as a mapping. y-prosemirror applies every
@@ -40,10 +51,11 @@ function diffRange(before: ProseMirrorNode, after: ProseMirrorNode): { from: num
  * only carry `--shiki-light` / `--shiki-dark`; the `.shiki` rules in index.css
  * pick between them, so a draft and its sent message look the same.
  */
-export function codeBlockHighlightPlugin(nodeName: string): Plugin<DecorationSet> {
+export function codeBlockHighlightPlugin(nodeName: string): Plugin<HighlightState> {
   // Each language is loaded at most once per editor: a failed or unknown one stays plain.
   const requested = new Set<string>()
   let view: EditorView | null = null
+  let flushTimer: ReturnType<typeof setTimeout> | undefined
 
   function requestLanguage(language: string) {
     if (requested.has(language)) return
@@ -82,26 +94,45 @@ export function codeBlockHighlightPlugin(nodeName: string): Plugin<DecorationSet
     return set.remove(stale).add(doc, fresh)
   }
 
-  return new Plugin<DecorationSet>({
+  return new Plugin<HighlightState>({
     key: codeBlockHighlightKey,
     state: {
-      init: (_config, state) => redecorate(DecorationSet.empty, state.doc, 0, state.doc.content.size),
-      apply(tr, decorations) {
-        if (tr.getMeta(codeBlockHighlightKey) === LANGUAGE_LOADED) {
-          return redecorate(decorations, tr.doc, 0, tr.doc.content.size)
+      init: (_config, state) => ({
+        decorations: redecorate(DecorationSet.empty, state.doc, 0, state.doc.content.size),
+        dirty: null,
+      }),
+      apply(tr, { decorations, dirty }) {
+        const meta = tr.getMeta(codeBlockHighlightKey)
+        if (meta === LANGUAGE_LOADED) {
+          return { decorations: redecorate(decorations, tr.doc, 0, tr.doc.content.size), dirty: null }
         }
-        if (!tr.docChanged) return decorations
+        if (meta === FLUSH && dirty) {
+          return { decorations: redecorate(decorations, tr.doc, dirty.from, dirty.to), dirty: null }
+        }
+        if (!tr.docChanged) return { decorations, dirty }
         const { from, to, mapping } = diffRange(tr.before, tr.doc)
-        return redecorate(decorations.map(mapping, tr.doc), tr.doc, from, to)
+        const changed = dirty
+          ? { from: Math.min(from, mapping.map(dirty.from, -1)), to: Math.max(to, mapping.map(dirty.to)) }
+          : { from, to }
+        return { decorations: decorations.map(mapping, tr.doc), dirty: changed }
       },
     },
     props: {
-      decorations: (state) => codeBlockHighlightKey.getState(state),
+      decorations: (state) => codeBlockHighlightKey.getState(state)?.decorations,
     },
     view(editorView) {
       view = editorView
       return {
+        update(updated, prevState) {
+          const { dirty } = codeBlockHighlightKey.getState(updated.state)!
+          if (!dirty || updated.state.doc === prevState.doc) return
+          clearTimeout(flushTimer)
+          flushTimer = setTimeout(() => {
+            if (view) view.dispatch(view.state.tr.setMeta(codeBlockHighlightKey, FLUSH))
+          }, HIGHLIGHT_DELAY_MS)
+        },
         destroy() {
+          clearTimeout(flushTimer)
           view = null
         },
       }

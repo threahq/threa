@@ -36,15 +36,26 @@ export function CodeBlockView({ node, editor, getPos, updateAttributes }: NodeVi
   const editable = useEditorEditable(editor)
   const selected = CODE_LANGUAGES_BY_LABEL.find((language) => language.id === languageId) ?? null
 
-  const returnFocusToCode = (event: Event) => {
-    event.preventDefault()
-    // A click outside the list already put focus where the user wanted it.
-    if (document.activeElement && document.activeElement !== document.body) return
+  const focusCode = () => {
     const pos = getPos()
     if (pos === undefined) return
+    const blockEnd = pos + node.nodeSize
     const { from } = editor.state.selection
-    const caretInBlock = from > pos && from < pos + node.nodeSize
-    editor.commands.focus(caretInBlock ? null : pos + node.nodeSize - 1)
+    const caretInBlock = from > pos && from < blockEnd
+    editor.commands.focus(caretInBlock ? null : blockEnd - 1)
+  }
+
+  const pickLanguage = (language: CodeLanguageOption) => {
+    updateAttributes({ language: language.id })
+    // Focus moves now, not after the list's exit animation, so the next keys reach the code.
+    focusCode()
+  }
+
+  const returnFocusToCode = (event: Event) => {
+    event.preventDefault()
+    // A pick or a click outside the list already put focus where the user wanted it.
+    if (document.activeElement && document.activeElement !== document.body) return
+    focusCode()
   }
 
   const chipContent = (
@@ -57,12 +68,17 @@ export function CodeBlockView({ node, editor, getPos, updateAttributes }: NodeVi
   return (
     <NodeViewWrapper data-language={languageId}>
       <pre>
-        <span contentEditable={false} className="-ml-1 -mt-1 mb-1.5 flex select-none">
+        {/* Hosts focus their editor's end on any click inside it; a click on the chip or its list isn't one. */}
+        <span
+          contentEditable={false}
+          className="-ml-1 -mt-1 mb-1.5 flex select-none"
+          onClick={(event) => event.stopPropagation()}
+        >
           {editable ? (
             <SearchableSelect<CodeLanguageOption>
               items={CODE_LANGUAGES_BY_LABEL}
               value={selected}
-              onChange={(language) => updateAttributes({ language: language.id })}
+              onChange={pickLanguage}
               getKey={(language) => language.id}
               getKeywords={(language) => [language.label, language.id, ...language.aliases]}
               renderItem={(language, isSelected) => (
@@ -82,8 +98,9 @@ export function CodeBlockView({ node, editor, getPos, updateAttributes }: NodeVi
                   className={cn(
                     CHIP_CLASS,
                     "relative hover:bg-background/70 hover:text-foreground",
-                    // Widens the hit area to a thumb-sized target without moving the chip.
-                    "after:absolute after:-inset-x-1.5 after:-inset-y-3"
+                    // Widens the hit area to a thumb-sized target without moving the chip; it grows up
+                    // into the block's padding, never down over the first line of code.
+                    "after:absolute after:-inset-x-1.5 after:-top-[18px] after:-bottom-1.5"
                   )}
                 >
                   {chipContent}

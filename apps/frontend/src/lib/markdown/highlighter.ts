@@ -17,7 +17,7 @@ const THEME_OPTIONS = {
   defaultColor: false as const,
 }
 
-// Lazy singleton: warmed on the first `ensureHighlight` call, then reused.
+// Lazy singleton: warmed by the first load request, then reused.
 // Failures aren't cached so a transient dynamic-import error doesn't
 // permanently disable highlighting; the next caller retries.
 function initHighlighter(): Promise<HighlighterGeneric<string, Theme>> {
@@ -64,36 +64,37 @@ export function tryTokenizeSync(code: string, lang: string): ThemedToken[][] | n
   }
 }
 
-// Awaits init and lazy-loads the language. Resolves to plaintext when the
-// language is unknown or failed to fetch, so callers render instead of waiting.
-async function loadLanguage(lang: string): Promise<{ hl: HighlighterGeneric<string, Theme>; lang: string } | null> {
-  let hl: HighlighterGeneric<string, Theme>
+async function ensureLanguage(hl: HighlighterGeneric<string, Theme>, lang: string): Promise<boolean> {
+  if (hl.getLoadedLanguages().includes(lang)) return true
   try {
-    hl = await initHighlighter()
+    await hl.loadLanguage(lang)
+    return true
   } catch {
-    return null
-  }
-  const normalized = normalizeCodeLanguage(lang)
-  if (hl.getLoadedLanguages().includes(normalized)) return { hl, lang: normalized }
-  try {
-    await hl.loadLanguage(normalized)
-    return { hl, lang: normalized }
-  } catch {
-    return { hl, lang: PLAINTEXT_LANGUAGE_ID }
+    return false
   }
 }
 
-/** True once `lang` itself (not the plaintext fallback) can be tokenized synchronously. */
+/** True once `lang` can be tokenized synchronously. */
 export async function loadCodeLanguage(lang: string): Promise<boolean> {
-  const loaded = await loadLanguage(lang)
-  return loaded?.lang === normalizeCodeLanguage(lang)
+  const hl = await initHighlighter().catch(() => null)
+  return hl !== null && (await ensureLanguage(hl, normalizeCodeLanguage(lang)))
 }
 
+// Renders as plaintext when the language is unknown, failed to fetch or fails
+// to render, so callers render instead of waiting.
 export async function ensureHighlight(code: string, lang: string): Promise<string | null> {
-  const loaded = await loadLanguage(lang)
-  if (!loaded) return null
+  const hl = await initHighlighter().catch(() => null)
+  if (!hl) return null
+  const normalized = normalizeCodeLanguage(lang)
+  if (await ensureLanguage(hl, normalized)) {
+    try {
+      return hl.codeToHtml(code, { lang: normalized, ...THEME_OPTIONS })
+    } catch {
+      // Falls through to plaintext.
+    }
+  }
   try {
-    return loaded.hl.codeToHtml(code, { lang: loaded.lang, ...THEME_OPTIONS })
+    return hl.codeToHtml(code, { lang: PLAINTEXT_LANGUAGE_ID, ...THEME_OPTIONS })
   } catch {
     return null
   }
