@@ -40,6 +40,7 @@ export function StreamSheet({
   const isScratchpad = stream.type === StreamTypes.SCRATCHPAD
   const isEncrypted = !!stream.e2eEnabled
   const isArchived = stream.archivedAt != null
+  const isDoc = stream.type === StreamTypes.DOC
 
   const header = (
     <div className="flex flex-col gap-3 px-4 pt-2 pb-3">
@@ -84,8 +85,8 @@ export function StreamSheet({
       open={open}
       onOpenChange={onOpenChange}
       actions={actions}
-      title="Stream details and actions"
-      description="Stream details, agent settings, and actions."
+      title={isDoc ? "Doc details and actions" : "Stream details and actions"}
+      description={isDoc ? "Doc details and actions." : "Stream details, agent settings, and actions."}
       header={header}
     />
   )

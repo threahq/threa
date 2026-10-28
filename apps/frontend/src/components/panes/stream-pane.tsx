@@ -26,6 +26,7 @@ import {
   UserRound,
   MessageSquareDashed,
   FilePlus,
+  ExternalLink,
 } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { DraftAgentSettings } from "@/components/stream-settings/draft-agent-settings"
@@ -56,6 +57,7 @@ import { useOutcomesUrlState } from "@/components/agent-outcomes"
 import { StreamContent, TimelineSkeleton, AgentActivityHeaderChip } from "@/components/timeline"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { DocPaneBody } from "@/components/docs/doc-pane-body"
+import { docExportActions } from "@/components/docs/doc-export-actions"
 import { useDocCanWrite } from "@/components/docs/use-doc-can-write"
 import { useDocSync } from "@/components/docs/use-doc-sync"
 import { DocPresenceAvatars } from "@/components/docs/doc-presence-avatars"
@@ -75,7 +77,7 @@ import { useInputMode } from "@/hooks/use-input-mode"
 import { useCreateDoc } from "@/hooks/use-create-doc"
 import { useCoverClose } from "@/hooks/use-cover-close"
 import { CONVERSATION_OVERLAY_COVER } from "@/lib/covers"
-import { panelIdsOf, primaryPanelOf } from "@/lib/panel-tabs"
+import { PANEL_PARAM, panelIdsOf, primaryPanelOf } from "@/lib/panel-tabs"
 import { InviteActorButton, InviteBotButton } from "@/components/encryption"
 import {
   BotRuntimeStatuses,
@@ -308,27 +310,43 @@ export function StreamPane({
   // feeds) — surfacing "Move messages…" there would be a guaranteed dead
   // end since the move endpoints reject the source stream.
   const isSystem = stream?.type === StreamTypes.SYSTEM
-  const streamMenuActions: SidebarActionItem[] = []
-  if (hasTimeline) {
-    streamMenuActions.push({
-      id: "stream-settings",
-      label: "Settings",
-      icon: Settings,
-      onSelect: () => openStreamSettings(streamId),
-    })
-  }
-  streamMenuActions.push({
+  const labelsAction: SidebarActionItem = {
     id: "labels",
     label: "Labels…",
     icon: Tag,
     onSelect: () => setLabelPickerOpen(true),
-  })
-  streamMenuActions.push({
+  }
+  const copyLinkAction: SidebarActionItem = {
     id: "copy-link",
     label: "Copy link",
     icon: Link2,
     onSelect: () => void copyStreamLink(workspaceId, streamId),
-  })
+  }
+  const streamMenuActions: SidebarActionItem[] = []
+  if (isDoc) {
+    streamMenuActions.push(copyLinkAction)
+    if (docSync.phase === "ready") {
+      streamMenuActions.push(...docExportActions(docSync.ydoc, stream?.displayName || null))
+    }
+    // The route follows the pane worked in, so a doc beside the page's stream can be the route's; the first
+    // column is what the page shows on its own. On a phone every pane already fills the screen.
+    if (!inFirstColumn && !isMobile) {
+      streamMenuActions.push({
+        id: "open-full-page",
+        label: "Open full page",
+        icon: ExternalLink,
+        // A link naming the panes goes to the router; a bare link to this doc from inside its pane only flashes it.
+        href: `/w/${workspaceId}/s/${streamId}?${PANEL_PARAM}=${streamId}`,
+      })
+    }
+    streamMenuActions.push(labelsAction)
+  } else {
+    streamMenuActions.push(
+      { id: "stream-settings", label: "Settings", icon: Settings, onSelect: () => openStreamSettings(streamId) },
+      labelsAction,
+      copyLinkAction
+    )
+  }
   if (createDoc.enabled) {
     streamMenuActions.push({
       id: "new-doc",
@@ -894,6 +912,7 @@ export function StreamPane({
               <SidebarActionMenu
                 actions={desktopMenuActions}
                 ariaLabel="Stream actions"
+                contentClassName="w-auto min-w-40 max-w-64"
                 trigger={
                   <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Stream actions">
                     <MoreHorizontal className="h-4 w-4" />

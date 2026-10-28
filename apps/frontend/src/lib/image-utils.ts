@@ -11,6 +11,14 @@ export function triggerDownload(url: string, filename: string): void {
   document.body.removeChild(link)
 }
 
+/** Downloads bytes held in memory (a decrypted attachment, an exported doc) as `filename`. */
+export function downloadBlob(blob: Blob, filename: string): void {
+  const objectUrl = URL.createObjectURL(blob)
+  triggerDownload(objectUrl, filename)
+  // Give the browser a beat to start the download before reclaiming the URL.
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
+}
+
 /**
  * Downloads an image by requesting a presigned URL with Content-Disposition: attachment.
  * This avoids cross-origin fetch — the browser navigates directly to the S3 URL which

@@ -94,3 +94,24 @@ describe("useCommandItems — pane commands", () => {
     ])
   })
 })
+
+describe("useCommandItems — doc in view", () => {
+  const flags = { workspace: {}, user: {} }
+  const timelineCommands = ["stream-create-snippet", "stream-settings", "stream-files", "stream-agenda"]
+  const streamIds = (context: CommandContext) =>
+    renderItems(flags, context, "").filter((id) => id.startsWith("stream-") && id !== "stream-labels")
+
+  it("should offer no timeline command for a doc", () => {
+    const inDoc = { workspaceId: "ws_1", currentStreamId: "stream_doc", currentStreamType: "doc" } as CommandContext
+    expect(streamIds(inDoc)).toEqual([])
+  })
+
+  it("should keep the timeline commands for a channel", () => {
+    const inChannel = {
+      workspaceId: "ws_1",
+      currentStreamId: "stream_1",
+      currentStreamType: "channel",
+    } as CommandContext
+    expect(streamIds(inChannel)).toEqual(timelineCommands)
+  })
+})

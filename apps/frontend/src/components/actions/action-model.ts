@@ -108,11 +108,34 @@ export async function copyToClipboard(text: string): Promise<void> {
   await navigator.clipboard.writeText(text)
 }
 
+async function copyAsMarkdown(markdown: string): Promise<void> {
+  try {
+    await copyToClipboard(markdown)
+    toast.success("Copied as Markdown") // INV-63-allow: clipboard copy from a closing menu has no inline anchor
+  } catch {
+    toast.error("Failed to copy")
+  }
+}
+
+async function copyAsPlainText(markdown: string): Promise<void> {
+  try {
+    await copyToClipboard(stripMarkdown(markdown))
+    toast.success("Copied as plain text") // INV-63-allow: clipboard copy from a closing menu has no inline anchor
+  } catch {
+    toast.error("Failed to copy")
+  }
+}
+
 /**
  * The Copy as Markdown / Copy as Plain text pair — one definition shared by
- * every surface that offers it, so labels, order, group and the INV-63-allow'd
- * toasts can't drift between the timeline and the drafts explorer.
+ * every surface that offers it (message rows, the drafts explorer, a doc's
+ * menu), so labels, order, group and the INV-63-allow'd toasts can't drift.
  */
+export const COPY_CONTENT_ENTRIES = [
+  { id: "copy-as-markdown", label: "Copy as Markdown", icon: FileText, groupId: "copy", copy: copyAsMarkdown },
+  { id: "copy-as-plain-text", label: "Copy as Plain text", icon: Type, groupId: "copy", copy: copyAsPlainText },
+] as const
+
 export function copyContentActions<Context>(options: {
   /** The markdown to copy for this row. */
   getMarkdown: (context: Context) => string
@@ -121,39 +144,11 @@ export function copyContentActions<Context>(options: {
   separatorBefore?: boolean
 }): ActionDefinition<Context>[] {
   const when = options.when ?? (() => true)
-  return [
-    {
-      id: "copy-as-markdown",
-      label: "Copy as Markdown",
-      icon: FileText,
-      separatorBefore: options.separatorBefore,
-      groupId: "copy",
-      when,
-      disabled: options.disabled,
-      action: async (context) => {
-        try {
-          await copyToClipboard(options.getMarkdown(context))
-          toast.success("Copied as Markdown") // INV-63-allow: clipboard copy from a closing menu has no inline anchor
-        } catch {
-          toast.error("Failed to copy")
-        }
-      },
-    },
-    {
-      id: "copy-as-plain-text",
-      label: "Copy as Plain text",
-      icon: Type,
-      groupId: "copy",
-      when,
-      disabled: options.disabled,
-      action: async (context) => {
-        try {
-          await copyToClipboard(stripMarkdown(options.getMarkdown(context)))
-          toast.success("Copied as plain text") // INV-63-allow: clipboard copy from a closing menu has no inline anchor
-        } catch {
-          toast.error("Failed to copy")
-        }
-      },
-    },
-  ]
+  return COPY_CONTENT_ENTRIES.map(({ copy, ...entry }, index) => ({
+    ...entry,
+    separatorBefore: index === 0 ? options.separatorBefore : undefined,
+    when,
+    disabled: options.disabled,
+    action: (context: Context) => copy(options.getMarkdown(context)),
+  }))
 }
