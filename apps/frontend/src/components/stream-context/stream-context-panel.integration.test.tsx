@@ -377,7 +377,7 @@ describe("StreamContextPanel", () => {
       refId: "https://a.example",
       detail: { url: "https://a.example", title: "Alpha" },
     })
-    await db.streamContextItems.bulkPut([cachedRow(docItem), cachedRow(link)])
+    await db.streamContextItems.bulkPut([cachedRow(docItem, { _cachedAt: 0 }), cachedRow(link)])
     const list = vi.spyOn(streamContextApi, "list").mockResolvedValue(listResponse({ items: [link] }))
 
     renderPanel()
@@ -402,7 +402,7 @@ describe("StreamContextPanel", () => {
           refKind: "doc",
           detail: { title: "Hidden plan" },
         }),
-        { _status: "pending" }
+        { _status: "pending", _cachedAt: 0 }
       ),
       cachedRow(
         serverItem({

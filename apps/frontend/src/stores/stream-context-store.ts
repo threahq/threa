@@ -169,7 +169,7 @@ export interface StreamContextDocWindow {
   newerThan: string | null
   atOrOlderThan: string | null
   seenDocGroupRefs: readonly string[]
-  /** `Date.now()` before the request: a row cached after it is news the page could not have listed. */
+  /** `Date.now()` before the request: a row cached at or after it may be news the page could not have listed. */
   requestedAt: number
 }
 
@@ -195,7 +195,7 @@ async function dropOmittedDocRows(
       false,
       true
     )
-    .filter((row) => row.category === "doc" && !kept.has(row.groupRef) && row._cachedAt <= window.requestedAt)
+    .filter((row) => row.category === "doc" && !kept.has(row.groupRef) && row._cachedAt < window.requestedAt)
     .primaryKeys()
   if (stale.length > 0) await db.streamContextItems.bulkDelete(stale)
 }
