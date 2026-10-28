@@ -979,18 +979,22 @@ describe("resolveSections thread tree", () => {
       thread("t_ch", "c_1"),
       thread("t_sp", "sp_1"),
       thread("t_dm", "dm_hidden"),
+      thread("t_sys", "sys_hidden"),
+      thread("t_aside", "aside_1"),
     ]
     const streamTypeById = new Map<string, StreamItemData["type"]>([
       ["c_1", StreamTypes.CHANNEL],
       ["sp_1", StreamTypes.SCRATCHPAD],
       ["dm_hidden", StreamTypes.DM],
+      ["sys_hidden", StreamTypes.SYSTEM],
+      ["aside_1", StreamTypes.ASIDE],
     ])
 
-    const getUnreadCount = unreadFrom(new Set(["t_ch", "t_sp", "t_dm"]))
+    const getUnreadCount = unreadFrom(new Set(["t_ch", "t_sp", "t_dm", "t_sys", "t_aside"]))
     expect(tree({ processedStreams, streamTypeById, getUnreadCount }, ALL_SIDEBAR_CONFIG)).toEqual([
       { id: "scratchpads", items: ["sp_1", "sp_1>t_sp"] },
       { id: "channels", items: ["c_1", "c_1>t_ch"] },
-      { id: "dms", items: ["t_dm"] },
+      { id: "dms", items: ["t_dm", "t_sys"] },
     ])
   })
 

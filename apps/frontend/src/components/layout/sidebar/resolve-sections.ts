@@ -1,4 +1,12 @@
-import { type StreamType, StreamTypes, type SidebarSectionOrder, defaultSectionOrder } from "@threahq/types"
+import {
+  STREAM_TYPE_CAPABILITIES,
+  STREAM_TYPES,
+  type StreamType,
+  StreamTypes,
+  type SidebarSectionOrder,
+  defaultSectionOrder,
+  streamTypeCapabilities,
+} from "@threahq/types"
 import type { SidebarConfig, SidebarSection } from "./sidebar-config"
 import type { SectionKey, StreamItemData } from "./types"
 import { getActivityTime, getStreamSortName, isUnreadStream, sortStreams, sortStreamsStatic } from "./utils"
@@ -323,26 +331,18 @@ function resolveTypeSection(
   // In the tree a thread lives in its root's type section; `nestThreads` then
   // moves it under the root's row wherever that row landed.
   const threads = streams.filter(
-    (stream) => stream.type === StreamTypes.THREAD && threadHomeType(stream, streamTypeById) === streamType
+    (stream) =>
+      streamTypeCapabilities(stream.type).sidebarSection === "root" &&
+      threadHomeType(stream, streamTypeById) === streamType
   )
-
-  if (streamType === "scratchpad") {
-    const items = streams.filter((stream) => stream.type === StreamTypes.SCRATCHPAD)
-    return [...order(items), ...order(threads)]
-  }
-
-  if (streamType === "channel") {
-    const items = streams.filter((stream) => stream.type === StreamTypes.CHANNEL)
-    return [...order(items), ...order(threads)]
-  }
-
-  // DMs: real DMs, then system streams, then threads, each in the section's
-  // order; synthetic DM drafts (never messaged) trail, alphabetical from
-  // buildVirtualDmDrafts.
-  const realDms = streams.filter((stream) => stream.type === StreamTypes.DM)
-  const systemStreams = streams.filter((stream) => stream.type === StreamTypes.SYSTEM)
-  const drafts = virtualDmStreams.filter((stream) => !exclude.has(stream.id))
-  return [...order(realDms), ...order(systemStreams), ...order(threads), ...drafts]
+  // Each type homed here, in STREAM_TYPES order (DMs before system streams),
+  // then threads; synthetic DM drafts (never messaged) trail, alphabetical
+  // from buildVirtualDmDrafts.
+  const roots = STREAM_TYPES.filter((type) => STREAM_TYPE_CAPABILITIES[type].sidebarSection === streamType).flatMap(
+    (type) => order(streams.filter((stream) => stream.type === type))
+  )
+  const drafts = streamType === "dm" ? virtualDmStreams.filter((stream) => !exclude.has(stream.id)) : []
+  return [...roots, ...order(threads), ...drafts]
 }
 
 /** The type section a thread falls back to when its root has no row: its root's. */
@@ -351,10 +351,8 @@ function threadHomeType(
   streamTypeById: ReadonlyMap<string, StreamType>
 ): TypeSectionStream | null {
   const rootType = thread.rootStreamId ? streamTypeById.get(thread.rootStreamId) : undefined
-  if (rootType === StreamTypes.CHANNEL) return "channel"
-  if (rootType === StreamTypes.SCRATCHPAD) return "scratchpad"
-  if (rootType === StreamTypes.DM || rootType === StreamTypes.SYSTEM) return "dm"
-  return null
+  const section = rootType ? streamTypeCapabilities(rootType).sidebarSection : null
+  return section === "root" ? null : section
 }
 
 /** Read threads nothing keeps: not open, no agent working, not held. */

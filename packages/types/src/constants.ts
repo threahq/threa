@@ -1,3 +1,5 @@
+import type { SidebarTypeSection } from "./sidebar"
+
 /** What a workspace is: the full product, or a Connect workspace. The control plane's `workspace_registry` owns it. */
 export const WORKSPACE_TIERS = { FULL: "full", CONNECT: "connect" } as const
 export type WorkspaceTier = (typeof WORKSPACE_TIERS)[keyof typeof WORKSPACE_TIERS]
@@ -40,23 +42,6 @@ export type SharedSourceStreamKind = (typeof SHARED_SOURCE_STREAM_KINDS)[number]
 
 export const DM_PARTICIPANT_COUNT = 2
 
-/**
- * Stream types an aside may anchor to: no aside-on-aside, no system hosts.
- * The create path, slash-command availability and the client entry points
- * all read this one list.
- */
-export const ASIDE_HOST_STREAM_TYPES = [
-  "channel",
-  "dm",
-  "scratchpad",
-  "thread",
-] as const satisfies readonly StreamType[]
-export type AsideHostStreamType = (typeof ASIDE_HOST_STREAM_TYPES)[number]
-
-export function isAsideHostType(type: string): type is AsideHostStreamType {
-  return (ASIDE_HOST_STREAM_TYPES as readonly string[]).includes(type)
-}
-
 export const STREAM_READ_ONLY_REASONS = [
   "archived",
   "system_stream",
@@ -77,6 +62,85 @@ export const StreamReadOnlyReasons = {
   NOT_A_MEMBER: "not_a_member",
   GUEST_DM_POLICY: "guest_dm_policy",
 } as const satisfies Record<string, StreamReadOnlyReason>
+
+const THREAD_ANCHOR_PREFIXES = ["msg_", "event_"] as const
+type ThreadAnchorPrefix = (typeof THREAD_ANCHOR_PREFIXES)[number]
+
+/** Per-type behavior: adding a stream type means adding a row here, not a branch at every call site. */
+export interface StreamTypeCapabilities {
+  /** Message writes are refused with this reason; null = writable. */
+  messagesReadOnly: StreamReadOnlyReason | null
+  /** Rows in the sidebar and unread badges; false = reached only from its host. */
+  listed: boolean
+  /** Sidebar section of a root stream of this type; "root" = inherits its root's section. */
+  sidebarSection: SidebarTypeSection | "root" | null
+  threadAnchorPrefixes: readonly ThreadAnchorPrefix[]
+  hostsAsides: boolean
+}
+
+export const STREAM_TYPE_CAPABILITIES = {
+  scratchpad: {
+    messagesReadOnly: null,
+    listed: true,
+    sidebarSection: "scratchpad",
+    threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
+    hostsAsides: true,
+  },
+  channel: {
+    messagesReadOnly: null,
+    listed: true,
+    sidebarSection: "channel",
+    threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
+    hostsAsides: true,
+  },
+  dm: {
+    messagesReadOnly: null,
+    listed: true,
+    sidebarSection: "dm",
+    threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
+    hostsAsides: true,
+  },
+  thread: {
+    messagesReadOnly: null,
+    listed: true,
+    sidebarSection: "root",
+    threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
+    hostsAsides: true,
+  },
+  system: {
+    messagesReadOnly: StreamReadOnlyReasons.SYSTEM_STREAM,
+    listed: true,
+    sidebarSection: "dm",
+    threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
+    hostsAsides: false,
+  },
+  aside: {
+    messagesReadOnly: null,
+    listed: false,
+    sidebarSection: null,
+    threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
+    hostsAsides: false,
+  },
+} as const satisfies Record<StreamType, StreamTypeCapabilities>
+
+/** A newer backend can send a type this build has no row for (deploy skew); the open tab degrades instead of crashing. */
+const UNKNOWN_STREAM_TYPE_CAPABILITIES: StreamTypeCapabilities = {
+  messagesReadOnly: null,
+  listed: true,
+  sidebarSection: null,
+  threadAnchorPrefixes: [],
+  hostsAsides: false,
+}
+
+export function streamTypeCapabilities(type: string): StreamTypeCapabilities {
+  return Object.hasOwn(STREAM_TYPE_CAPABILITIES, type)
+    ? STREAM_TYPE_CAPABILITIES[type as StreamType]
+    : UNKNOWN_STREAM_TYPE_CAPABILITIES
+}
+
+export function isAsideHostType(type: string): boolean {
+  return streamTypeCapabilities(type).hostsAsides
+}
 
 export const StreamErrorCodes = {
   READ_ONLY: "STREAM_READ_ONLY",

@@ -2373,7 +2373,7 @@ describe("StreamService.updateStream sealed-name handling", () => {
   })
 
   test("setting a sealed name scrubs the plaintext display_name to null (INV-E1)", async () => {
-    const stream = { id: "stream_1", workspaceId: "ws_1", displayName: null } as never
+    const stream = { id: "stream_1", workspaceId: "ws_1", type: "channel", displayName: null } as never
     mockUpdate.mockResolvedValue(stream)
     mockUpdateDisplayName.mockResolvedValue(stream)
     mockUpdateSealedName.mockResolvedValue(true)
@@ -2401,7 +2401,7 @@ describe("StreamService.updateStream sealed-name handling", () => {
   })
 
   test("setting a sealed name on a non-E2E stream fails loudly and emits no outbox event", async () => {
-    const stream = { id: "stream_1", workspaceId: "ws_1", displayName: null } as never
+    const stream = { id: "stream_1", workspaceId: "ws_1", type: "channel", displayName: null } as never
     mockUpdate.mockResolvedValue(stream)
     mockUpdateDisplayName.mockResolvedValue(stream)
     mockFindById.mockResolvedValue(stream)
@@ -2437,7 +2437,7 @@ describe("StreamService.updateStream sealed-name handling", () => {
   })
 
   test("a plain (non-sealed) rename writes the plaintext displayName unchanged", async () => {
-    const stream = { id: "stream_1", workspaceId: "ws_1", displayName: "New name" } as never
+    const stream = { id: "stream_1", workspaceId: "ws_1", type: "channel", displayName: "New name" } as never
     mockUpdate.mockResolvedValue(stream)
     mockUpdateDisplayName.mockResolvedValue(stream)
     mockFindById.mockResolvedValue(stream)
@@ -2469,7 +2469,7 @@ describe("StreamService.updateStream description", () => {
   })
 
   test("persists the canonical descriptionJson plus its derived markdown and emits stream:updated", async () => {
-    const stream = { id: "stream_1", workspaceId: "ws_1" } as never
+    const stream = { id: "stream_1", workspaceId: "ws_1", type: "channel" } as never
     mockUpdate.mockResolvedValue(stream)
     mockFindById.mockResolvedValue(stream)
 
@@ -2501,7 +2501,7 @@ describe("StreamService.updateStream description", () => {
   })
 
   test("leaves the description columns untouched when neither field is supplied", async () => {
-    const stream = { id: "stream_1", workspaceId: "ws_1" } as never
+    const stream = { id: "stream_1", workspaceId: "ws_1", type: "channel" } as never
     mockUpdate.mockResolvedValue(stream)
     mockUpdateDisplayName.mockResolvedValue(stream)
     mockFindById.mockResolvedValue(stream)
@@ -2553,7 +2553,12 @@ describe("StreamService.updateStream description", () => {
 
   test("does not append a description_set event when the markdown is unchanged (no-op re-save)", async () => {
     mockUpdate.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
-    mockFindById.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1", description: "Same" } as never)
+    mockFindById.mockResolvedValue({
+      id: "stream_1",
+      workspaceId: "ws_1",
+      type: "channel",
+      description: "Same",
+    } as never)
 
     await service.updateStream(
       "stream_1",
@@ -2569,7 +2574,12 @@ describe("StreamService.updateStream description", () => {
 
   test("does not append a description_set event when no actor is provided", async () => {
     mockUpdate.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1", description: "New" } as never)
-    mockFindById.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1", description: "New" } as never)
+    mockFindById.mockResolvedValue({
+      id: "stream_1",
+      workspaceId: "ws_1",
+      type: "channel",
+      description: "New",
+    } as never)
 
     await service.updateStream(
       "stream_1",
@@ -2647,6 +2657,7 @@ describe("StreamService.updateCompanionMode persona validation", () => {
 
   beforeEach(() => {
     service = new StreamService({} as never)
+    mockFindById.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1", type: "channel" } as never)
     mockUpdate.mockReset()
     mockUpdate.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
     mockInsertOutbox.mockClear()

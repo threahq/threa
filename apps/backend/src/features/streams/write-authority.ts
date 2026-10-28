@@ -1,5 +1,6 @@
 import { HttpError } from "@threahq/backend-common"
 import {
+  STREAM_TYPE_CAPABILITIES,
   StreamErrorCodes,
   StreamReadOnlyReasons,
   StreamTypes,
@@ -61,8 +62,9 @@ export function deriveStreamViewerState(params: {
   if (params.target.archivedAt || params.ancestorArchived) {
     return { readOnly: true, readOnlyReason: StreamReadOnlyReasons.ARCHIVED }
   }
-  if (params.target.type === StreamTypes.SYSTEM) {
-    return { readOnly: true, readOnlyReason: StreamReadOnlyReasons.SYSTEM_STREAM }
+  const typeReadOnlyReason = STREAM_TYPE_CAPABILITIES[params.target.type].messagesReadOnly
+  if (typeReadOnlyReason) {
+    return { readOnly: true, readOnlyReason: typeReadOnlyReason }
   }
   if (!params.participates) {
     return { readOnly: true, readOnlyReason: StreamReadOnlyReasons.NOT_A_MEMBER }
