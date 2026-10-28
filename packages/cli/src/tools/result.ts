@@ -10,10 +10,14 @@ export class UnresolvedRefError extends Error {
 
 export class ToolInputError extends Error {
   readonly code: string
-  constructor(code: string, message: string) {
+  readonly hint?: string
+  readonly details?: Record<string, unknown>
+  constructor(code: string, message: string, extra: { hint?: string; details?: Record<string, unknown> } = {}) {
     super(message)
     this.name = "ToolInputError"
     this.code = code
+    this.hint = extra.hint
+    this.details = extra.details
   }
 }
 
@@ -58,9 +62,9 @@ export interface ErrorShape {
 
 export function toErrorShape(error: unknown): ErrorShape {
   if (error instanceof UnresolvedRefError) return { code: "UNRESOLVED_REF", message: error.message }
-  if (error instanceof ToolInputError) return { code: error.code, message: error.message }
-  if (error instanceof ThreaApiError) {
-    const shape: ErrorShape = { code: error.code ?? `HTTP_${error.status}`, message: error.message }
+  if (error instanceof ToolInputError || error instanceof ThreaApiError) {
+    const code = error instanceof ThreaApiError ? (error.code ?? `HTTP_${error.status}`) : error.code
+    const shape: ErrorShape = { code, message: error.message }
     if (error.hint) shape.hint = error.hint
     if (error.details) shape.details = error.details
     return shape

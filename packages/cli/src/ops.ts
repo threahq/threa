@@ -1,4 +1,4 @@
-import type { ThreaApiClient } from "./api-client"
+import { ThreaApiError, type ThreaApiClient } from "./api-client"
 import type { ThreaConfig } from "./config"
 import { enrichConversation, enrichMessages, enrichStreamContext } from "./enrich"
 import type { RefResolver } from "./resolver"
@@ -523,6 +523,111 @@ export function editDoc(
   p: { docId: string; reason: string; edits: DocEditInput[] }
 ): Promise<unknown> {
   return client.post(`/docs/${encodeURIComponent(p.docId)}/edits`, { reason: p.reason, edits: p.edits })
+}
+
+const DOC_MARKER = /^<!--\s*(blk_\w+)\s*-->[ \t]*\n?/gm
+const TASK_LINE = /^(\s*[-*+] \[)( |x|X)(\] )(.*)$/
+
+/** Splits `docs read` markdown back into blocks; `renderWithMarkers` joins them with a blank line. */
+function docBlocks(markdown: string): { blockId: string; markdown: string }[] {
+  const markers = [...markdown.matchAll(DOC_MARKER)]
+  return markers.map((marker, i) => {
+    const start = marker.index + marker[0].length
+    const next = markers[i + 1]
+    const body = markdown.slice(start, next ? next.index : markdown.length)
+    return { blockId: marker[1]!, markdown: next ? body.replace(/\n\n$/, "") : body }
+  })
+}
+
+interface TaskMatch {
+  blockId: string
+  nth: number
+  line: string
+  lineIndex: number
+  blockMarkdown: string
+  checked: boolean
+}
+
+function findTasks(markdown: string, item: string, blockId?: string): TaskMatch[] {
+  const wanted = item.trimEnd()
+  const matches: TaskMatch[] = []
+  for (const block of docBlocks(markdown)) {
+    if (blockId && block.blockId !== blockId) continue
+    block.markdown.split("\n").forEach((line, lineIndex) => {
+      const task = TASK_LINE.exec(line)
+      if (!task || task[4]!.trimEnd() !== wanted) return
+      matches.push({
+        blockId: block.blockId,
+        nth: matches.length + 1,
+        line,
+        lineIndex,
+        blockMarkdown: block.markdown,
+        checked: task[2] !== " ",
+      })
+    })
+  }
+  return matches
+}
+
+function pickTask(matches: TaskMatch[], p: { item: string; nth?: number }): TaskMatch {
+  const listed = matches.map(({ blockId, nth, line }) => ({ blockId, nth, line }))
+  if (matches.length === 0) {
+    throw new ToolInputError("DOC_TASK_NOT_FOUND", `no task item reads exactly "${p.item}"`, {
+      hint: "Read the doc and copy the item text after `[ ] ` verbatim; --block narrows to one block.",
+    })
+  }
+  if (p.nth !== undefined) {
+    const picked = matches[p.nth - 1]
+    if (!picked) {
+      throw new ToolInputError("DOC_TASK_NOT_FOUND", `only ${matches.length} task(s) read "${p.item}", no #${p.nth}`, {
+        details: { matches: listed },
+      })
+    }
+    return picked
+  }
+  if (matches.length > 1) {
+    throw new ToolInputError("DOC_TASK_AMBIGUOUS", `${matches.length} task items read "${p.item}"`, {
+      hint: "Pick one with --nth N (1-based, document order) or narrow with --block.",
+      details: { matches: listed },
+    })
+  }
+  return matches[0]!
+}
+
+export interface CheckDocTaskParams {
+  docId: string
+  item: string
+  checked: boolean
+  reason: string
+  blockId?: string
+  nth?: number
+}
+
+/** Ticks one task item by rewriting its whole block, so a shorter item never matches inside a longer one. */
+export async function checkDocTask(client: ThreaApiClient, p: CheckDocTaskParams): Promise<unknown> {
+  for (let attempt = 0; ; attempt++) {
+    const doc = await client.get<{ data: { markdown: string } }>(`/docs/${encodeURIComponent(p.docId)}`)
+    const task = pickTask(findTasks(doc.data.markdown, p.item, p.blockId), p)
+    const result = { blockId: task.blockId, nth: task.nth, checked: p.checked }
+    if (task.checked === p.checked) return { data: { changed: false, ...result, line: task.line } }
+
+    const lines = task.blockMarkdown.split("\n")
+    const line = task.line.replace(
+      TASK_LINE,
+      (_, head, _mark, tail, text) => `${head}${p.checked ? "x" : " "}${tail}${text}`
+    )
+    lines[task.lineIndex] = line
+    try {
+      const edited = await client.post<{ data: Record<string, unknown> }>(
+        `/docs/${encodeURIComponent(p.docId)}/edits`,
+        { reason: p.reason, edits: [{ blockId: task.blockId, old: task.blockMarkdown, new: lines.join("\n") }] }
+      )
+      return { data: { ...edited.data, changed: true, ...result, line } }
+    } catch (error) {
+      const moved = error instanceof ThreaApiError && error.status === 409 && error.code === "DOC_EDIT_TEXT_NOT_FOUND"
+      if (!moved || attempt > 0) throw error
+    }
+  }
 }
 
 export async function commentOnDoc(
