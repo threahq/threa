@@ -59,7 +59,7 @@ test.describe("Doc shares", () => {
       const composer = pane(owner, publicId).locator("[contenteditable='true']").last()
       await expect(composer).toBeVisible({ timeout: 20000 })
       await composer.click()
-      await owner.keyboard.type(`/doc Plan ${testId.slice(0, 4)}`)
+      await owner.keyboard.type(`/docs Plan ${testId.slice(0, 4)}`)
       await owner
         .getByRole("listbox", { name: "Doc suggestions" })
         .getByRole("option")

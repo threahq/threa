@@ -30,6 +30,7 @@ import {
   useEmojiSuggestion,
   useMemoSuggestion,
   useDocSuggestion,
+  useDocCreateSuggestion,
   useCommandArgPicker,
   useAttachmentPicker,
 } from "./triggers"
@@ -184,7 +185,7 @@ interface RichEditorProps {
   /** Stream context for filtering which broadcast mentions (@channel, @here) are available */
   streamContext?: MentionStreamContext
   /**
-   * Access anchor for the `/memo` picker: the stream this editor composes into.
+   * Access anchor for the `/memos` picker: the stream this editor composes into, and the host of a `/doc` it creates.
    * Scopes the picker to memos shareable into that stream so they can't be
    * embedded into — and leaked to — a stream they don't belong to. Pass the
    * current stream (thread or root); the backend resolves the thread root.
@@ -209,9 +210,9 @@ interface RichEditorProps {
   enableCommands?: boolean
   /** Whether emoji shortcodes should be parsed and autocompleted. */
   enableEmoji?: boolean
-  /** Whether `/memo` inline search and pasted memo links embed memo cards. */
+  /** Whether `/memos` inline search and pasted memo links embed memo cards. */
   enableMemoEmbed?: boolean
-  /** Whether `/doc` inline search and pasted doc links embed doc chips. Defaults to `enableMemoEmbed`. */
+  /** Whether `/docs`, `/doc` and pasted doc links embed doc chips. Defaults to `enableMemoEmbed`. */
   enableDocEmbed?: boolean
   /**
    * The composer's current attachment tray. `/attachment` lists these, so a file
@@ -410,6 +411,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   // Filtered for autocomplete dropdown only
   const { suggestionConfig: mentionConfig, renderMentionList } = useMentionSuggestion(mentionStreamContext)
   const { suggestionConfig: channelConfig, renderChannelList } = useChannelSuggestion()
+  const { docCreateOptions, renderDocCreateList, canCreate: canCreateDoc } = useDocCreateSuggestion(memoAnchorStreamId)
   const {
     suggestionConfig: commandConfig,
     renderCommandList,
@@ -419,6 +421,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   } = useCommandSuggestion({
     includeMemoSearch: enableMemoEmbed,
     includeDocSearch: enableDocEmbed,
+    includeDocCreate: enableDocEmbed && canCreateDoc,
     includeGiphy: giphyEnabled,
     includeSnippet: snippetEnabled,
     includeAttachment: attachmentCommandEnabled,
@@ -560,6 +563,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         emojiSuggestion: enableEmoji ? emojiConfig : undefined,
         memoSearchSuggestion: enableMemoEmbed ? memoConfig : undefined,
         docSearchSuggestion: enableDocEmbed ? docConfig : undefined,
+        docCreate: enableDocEmbed ? docCreateOptions : undefined,
         toEmoji: enableEmoji ? toEmoji : undefined,
       }),
       EditorBehaviors.configure({
@@ -577,6 +581,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       emojiConfig,
       memoConfig,
       docConfig,
+      docCreateOptions,
       toEmoji,
       enableMentions,
       enableChannels,
@@ -1426,6 +1431,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         {enableEmoji ? renderEmojiGrid() : null}
         {enableMemoEmbed ? renderMemoList() : null}
         {enableDocEmbed ? renderDocList() : null}
+        {enableDocEmbed ? renderDocCreateList() : null}
         {giphyEnabled && workspaceId ? (
           <GiphyPickerDialog
             open={giphyOpen}

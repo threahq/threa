@@ -300,7 +300,7 @@ export function StreamPane({
       id: "new-doc",
       label: "New doc",
       icon: FilePlus,
-      onSelect: createDoc.run,
+      onSelect: () => void createDoc.run(),
     })
   }
   if (!isArchived && !isSystem && hasTimeline) {

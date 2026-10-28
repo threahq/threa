@@ -53,7 +53,6 @@ const DRAFT_ID_PATTERN = /^draft_[A-Za-z0-9]{1,64}$/
 
 const DOC_UNSUPPORTED_CREATE_FIELDS = [
   "slug",
-  "displayName",
   "description",
   "visibility",
   "companionMode",

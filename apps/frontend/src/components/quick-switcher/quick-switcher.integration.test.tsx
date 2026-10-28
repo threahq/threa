@@ -1,6 +1,6 @@
 import type React from "react"
 import { useState } from "react"
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, type Mock } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query"
@@ -18,6 +18,7 @@ import { mockSearchResultsList } from "@/test/fixtures/messages"
 import * as hooksModule from "@/hooks"
 import * as mentionablesModule from "@/hooks/use-mentionables"
 import * as createEncryptedScratchpadModule from "@/hooks/use-create-encrypted-scratchpad"
+import * as createDocModule from "@/hooks/use-create-doc"
 import * as e2eUnlockModule from "@/components/encryption/e2e-unlock-provider"
 import * as e2eSessionStoreModule from "@/stores/e2e-session-store"
 import * as authModule from "@/auth"
@@ -55,6 +56,7 @@ const mockOpenStreamSettings = vi.fn()
 // palette created the scratchpad directly or routed through the unlock modal
 // first.
 const mockCreateEncryptedScratchpad = vi.fn(async () => "stream_e2e_test")
+let mockCreateDoc: { enabled: boolean; run: Mock<ReturnType<typeof createDocModule.useCreateDoc>["run"]> }
 
 const mockWorkspaceBootstrap = {
   data: {} as {
@@ -239,6 +241,9 @@ function installSpies() {
       typeof createEncryptedScratchpadModule.useCreateEncryptedScratchpad
     >
   )
+  // `useCreateDoc` also reaches into `useSyncEngine`; its gating is covered in `use-create-doc.test.ts`.
+  mockCreateDoc = { enabled: false, run: vi.fn(async (_title?: string) => null) }
+  vi.spyOn(createDocModule, "useCreateDoc").mockImplementation(() => mockCreateDoc)
   vi.spyOn(hooksModule, "useSearch").mockImplementation(
     () =>
       ({
@@ -1481,6 +1486,28 @@ describe("QuickSwitcher Integration Tests", () => {
         expect(screen.getByText("Open stream settings")).toBeInTheDocument()
       })
       expect(screen.queryByText("Open an aside here")).toBeNull()
+    })
+
+    it("should create a doc in the stream in view when 'New doc' is picked, and hide it where none can be hosted", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      const { unmount } = renderWithProviders(
+        <QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_channel1" />
+      )
+      await waitFor(() => {
+        expect(screen.getByText("Open stream settings")).toBeInTheDocument()
+      })
+      expect(screen.queryByText("New doc")).toBeNull()
+      unmount()
+
+      mockCreateDoc.enabled = true
+      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_channel1" />)
+      await user.click(await screen.findByText("New doc"))
+
+      expect({
+        host: vi.mocked(createDocModule.useCreateDoc).mock.lastCall?.[1]?.id,
+        runs: mockCreateDoc.run.mock.calls,
+        closed: defaultProps.onOpenChange.mock.calls.at(-1),
+      }).toEqual({ host: "stream_channel1", runs: [[]], closed: [false] })
     })
 
     it("should preserve the active stream bootstrap when it is invalidated while the palette is mounted", async () => {

@@ -12,7 +12,7 @@ import type { SuggestionListRef } from "./suggestion-list"
  * offers none. A command is "pickable" when it inserts a chip (i.e. it's not a
  * client-action) and at least one argument carries advertised `suggestions` —
  * the model list on `/model`, the runtimes and their per-runtime overrides on
- * `/spawn`. Client-action entries (`/memo`, `/giphy`, `/snippet`) insert no
+ * `/spawn`. Client-action entries (`/memos`, `/giphy`, `/snippet`) insert no
  * chip, so there is nothing to anchor a picker to.
  */
 export function pickableArgs(item: CommandItem): CommandArgumentInfo[] | null {

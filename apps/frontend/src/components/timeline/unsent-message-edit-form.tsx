@@ -24,7 +24,7 @@ const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Comman
 interface UnsentMessageEditFormProps {
   messageId: string
   workspaceId: string
-  /** The stream this message belongs to — scopes the `/memo` picker. */
+  /** The stream this message belongs to — scopes the `/memos` picker. */
   streamId: string
   initialContentJson?: JSONContent
   onDone: () => void

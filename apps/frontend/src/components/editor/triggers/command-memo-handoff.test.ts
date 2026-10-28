@@ -12,7 +12,7 @@ afterEach(() => {
 })
 
 const MEMO_ITEM: CommandItem = {
-  name: "memo",
+  name: "memos",
   description: "Search and embed a memo",
   clientActionId: MEMO_SEARCH_SLASH_ACTION,
 }
@@ -59,14 +59,14 @@ function typeText(editor: Editor, text: string) {
   for (const ch of text) editor.view.dispatch(editor.state.tr.insertText(ch))
 }
 
-describe("/memo slash-menu discovery handoff", () => {
-  it("selecting the /memo slash item types '/memo ' and activates the memo picker", async () => {
+describe("/memos slash-menu discovery handoff", () => {
+  it("selecting the /memos slash item types '/memos ' and activates the memo picker", async () => {
     const { editor, getSlashCommand, memoStarts } = makeEditor()
     editor.commands.focus()
 
-    // Typing `/memo` opens the slash menu (memo item present); it must NOT yet
+    // Typing `/memos` opens the slash menu (memo item present); it must NOT yet
     // activate the memo-search trigger (that needs a trailing space).
-    typeText(editor, "/memo")
+    typeText(editor, "/memos")
     expect((MemoSearchPluginKey.getState(editor.state) as { active: boolean }).active).toBe(false)
 
     // The suggestion plugin's render `onStart`/`onUpdate` fire on a microtask
@@ -74,14 +74,14 @@ describe("/memo slash-menu discovery handoff", () => {
     // captured slash command.
     await new Promise((r) => setTimeout(r, 0))
 
-    // Pick the "memo" entry from the slash menu.
+    // Pick the "memos" entry from the slash menu.
     const command = getSlashCommand()
     expect(command, "slash command never captured").toBeTruthy()
     command!(MEMO_ITEM)
     await new Promise((r) => setTimeout(r, 0))
 
     // The chip was NOT inserted; instead the text handed off to the memo trigger.
-    expect(editor.getText()).toBe("/memo ")
+    expect(editor.getText()).toBe("/memos ")
     const memoState = MemoSearchPluginKey.getState(editor.state) as { active: boolean; query: string | null }
     expect(memoState.active).toBe(true)
     expect(memoState.query).toBe("")

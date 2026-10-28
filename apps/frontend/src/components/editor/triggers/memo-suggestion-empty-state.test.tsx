@@ -19,12 +19,7 @@ function Harness({ capture }: { capture: (cfg: MemoSuggestionConfig) => void }) 
 // reads editor.storage, items, query, clientRect and command, so a partial
 // props object is sufficient. `storage` is the editor.storage.memoSearch object
 // the hook writes popupVisible into — pass one in to assert on it.
-function activateWith(
-  cfg: MemoSuggestionConfig,
-  query: string,
-  items: Memo[],
-  storage: Record<string, unknown> = {}
-) {
+function activateWith(cfg: MemoSuggestionConfig, query: string, items: Memo[], storage: Record<string, unknown> = {}) {
   const props = {
     editor: { storage: { memoSearch: storage } },
     items,
@@ -69,8 +64,8 @@ function makeMemo(overrides: Partial<Memo>): Memo {
   return { id: "memo_1", title: "Recent memo", knowledgeType: "decision", tags: [], ...overrides } as unknown as Memo
 }
 
-describe("/memo picker discoverability", () => {
-  it("fetches and shows the first page of memos when /memo opens with no query typed", async () => {
+describe("/memos picker discoverability", () => {
+  it("fetches and shows the first page of memos when /memos opens with no query typed", async () => {
     const postSpy = vi
       .spyOn(api, "post")
       .mockResolvedValue({ results: [{ memo: makeMemo({ title: "Recent memo" }) }] } as never)

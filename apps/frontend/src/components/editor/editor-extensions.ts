@@ -48,6 +48,7 @@ import { InAppLinkExtension } from "./in-app-link-extension"
 import { GiphyEmbedExtension } from "./giphy-embed-extension"
 import { MemoSearchExtension, type MemoSearchOptions } from "./triggers/memo-search-extension"
 import { DocSearchExtension, type DocSearchOptions } from "./triggers/doc-search-extension"
+import { DocCreateExtension, type DocCreateOptions } from "./triggers/doc-create-extension"
 import { DictationPreview } from "./dictation-preview-extension"
 import { MathExtension } from "./math-extension"
 import { DictationChunkExtension } from "./dictation-chunk-extension"
@@ -64,6 +65,7 @@ interface ContentExtensionsOptions {
   channelSuggestion?: ChannelOptions["suggestion"]
   emojiSuggestion?: EmojiExtensionOptions["suggestion"]
   docSearchSuggestion?: DocSearchOptions["suggestion"]
+  docCreate?: DocCreateOptions
   /** Look up emoji by shortcode - used for input rule auto-convert */
   toEmoji?: (shortcode: string) => string | null
 }
@@ -211,6 +213,7 @@ function buildExtensions(config: Partial<CreateEditorExtensionsOptions>, surface
     config.docSearchSuggestion
       ? DocSearchExtension.configure({ suggestion: config.docSearchSuggestion })
       : DocSearchExtension,
+    config.docCreate ? DocCreateExtension.configure(config.docCreate) : DocCreateExtension,
 
     BlockIdAttribute,
     ...documentOnly(BlockIdClipboard, DocBlockLanding, MediaRows),

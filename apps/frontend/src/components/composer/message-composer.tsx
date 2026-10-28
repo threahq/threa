@@ -152,7 +152,7 @@ export interface MessageComposerProps {
   /** Stream id; required only when `contextRefs` is non-empty so the strip can build deep-links. */
   streamId?: string
   /**
-   * Access anchor for the `/memo` picker. Defaults to `streamId`; pass it
+   * Access anchor for the `/memos` picker. Defaults to `streamId`; pass it
    * explicitly when the composer has no real `streamId` yet (e.g. a draft thread
    * anchors to its parent stream). May be a thread or root — the backend resolves
    * the root.

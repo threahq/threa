@@ -60,6 +60,19 @@ describe("useCreateDoc", () => {
     expect(openPanel.mock.calls).toEqual([["stream_doc", { beside: "stream_host" }]])
   })
 
+  it("should create the doc with the trimmed title and resolve to it when a title is given", async () => {
+    const { result } = renderHook(() => useCreateDoc("ws_1", channel))
+    let doc: unknown
+    await act(async () => {
+      doc = await result.current.run("  Q4 findings  ")
+    })
+
+    expect({ doc, calls: mutateAsync.mock.calls }).toEqual({
+      doc: { id: "stream_doc" },
+      calls: [[{ type: "doc", parentStreamId: "stream_host", displayName: "Q4 findings" }]],
+    })
+  })
+
   it("creates nothing while an earlier create is still in flight", async () => {
     isPending = true
     const { result } = renderHook(() => useCreateDoc("ws_1", channel))

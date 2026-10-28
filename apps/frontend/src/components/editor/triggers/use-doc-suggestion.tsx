@@ -7,31 +7,46 @@ import { useSuggestion } from "./use-suggestion"
 
 export type DocSuggestionItem = Pick<CachedStream, "id" | "displayName" | "parentStreamId" | "createdAt">
 
+/** The `/doc` picker's row that creates a doc titled `title` (untitled when empty) instead of linking one. */
+export interface NewDocItem {
+  kind: "new-doc"
+  title: string
+}
+
+export function isNewDoc(item: DocSuggestionItem | NewDocItem): item is NewDocItem {
+  return "kind" in item && item.kind === "new-doc"
+}
+
 const DOC_SUGGESTION_LIMIT = 8
 
-function selectActiveDocs(streams: CachedStream[]): DocSuggestionItem[] {
+export function selectActiveDocs(streams: CachedStream[]): DocSuggestionItem[] {
   return streams
     .filter((stream) => stream.type === StreamTypes.DOC && !stream.archivedAt)
     .map(({ id, displayName, parentStreamId, createdAt }) => ({ id, displayName, parentStreamId, createdAt }))
 }
 
-/**
- * Manages the inline `/doc` picker over the workspace's cached docs: titles containing the query,
- * docs hosted by `hostStreamId` first, then newest, never `excludeDocId` (the doc being edited).
- */
+/** Titles containing `query`, docs hosted by `hostStreamId` first, then newest, never `excludeDocId` (the doc being edited). */
+export function rankDocs(
+  docs: DocSuggestionItem[],
+  query: string,
+  { hostStreamId, excludeDocId, limit }: { hostStreamId?: string; excludeDocId?: string; limit: number }
+): DocSuggestionItem[] {
+  const needle = query.trim().toLowerCase()
+  const hostRank = (doc: DocSuggestionItem) => (hostStreamId && doc.parentStreamId === hostStreamId ? 0 : 1)
+  return docs
+    .filter((doc) => doc.id !== excludeDocId && (doc.displayName ?? "").toLowerCase().includes(needle))
+    .sort((a, b) => hostRank(a) - hostRank(b) || Date.parse(b.createdAt) - Date.parse(a.createdAt))
+    .slice(0, limit)
+}
+
+/** Manages the inline `/docs` picker over the workspace's cached docs, ranked by `rankDocs`. */
 export function useDocSuggestion(hostStreamId?: string, excludeDocId?: string) {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const docs = useWorkspaceStreamsSelect(workspaceId, selectActiveDocs)
 
   const filterItems = useCallback(
-    (items: DocSuggestionItem[], query: string) => {
-      const needle = query.trim().toLowerCase()
-      const hostRank = (doc: DocSuggestionItem) => (hostStreamId && doc.parentStreamId === hostStreamId ? 0 : 1)
-      return items
-        .filter((doc) => doc.id !== excludeDocId && (doc.displayName ?? "").toLowerCase().includes(needle))
-        .sort((a, b) => hostRank(a) - hostRank(b) || Date.parse(b.createdAt) - Date.parse(a.createdAt))
-        .slice(0, DOC_SUGGESTION_LIMIT)
-    },
+    (items: DocSuggestionItem[], query: string) =>
+      rankDocs(items, query, { hostStreamId, excludeDocId, limit: DOC_SUGGESTION_LIMIT }),
     [hostStreamId, excludeDocId]
   )
 
@@ -46,7 +61,7 @@ export function useDocSuggestion(hostStreamId?: string, excludeDocId?: string) {
         ref={props.ref}
         items={props.items}
         clientRect={props.clientRect}
-        command={props.command}
+        command={(item) => !isNewDoc(item) && props.command(item)}
         emptyState="No docs found"
       />
     ),

@@ -40,7 +40,7 @@ function MemoSuggestionItem({ item }: { item: Memo }) {
 }
 
 /**
- * Autocomplete list for the inline `/memo` search trigger. Shows matching memos
+ * Autocomplete list for the inline `/memos` search trigger. Shows matching memos
  * with their knowledge-type icon, title, and tags.
  */
 export const MemoSuggestionList = forwardRef<MemoSuggestionListRef, MemoSuggestionListProps>(

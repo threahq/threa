@@ -53,24 +53,24 @@ function docState(editor: Editor) {
 }
 
 describe("DocSearchExtension trigger matching", () => {
-  it("should not activate when a bare /doc has no trailing space", () => {
+  it("should not activate when a bare /docs has no trailing space", () => {
     const { editor } = makeEditor()
     editor.commands.focus()
-    typeText(editor, "hello /doc")
+    typeText(editor, "hello /docs")
     expect(docState(editor).active).toBe(false)
   })
 
-  it("should capture the multi-word query when /doc is followed by one mid-sentence", () => {
+  it("should capture the multi-word query when /docs is followed by one mid-sentence", () => {
     const { editor } = makeEditor()
     editor.commands.focus()
-    typeText(editor, "hello /doc launch plan")
+    typeText(editor, "hello /docs launch plan")
     expect(docState(editor)).toMatchObject({ active: true, query: "launch plan" })
   })
 
-  it("should activate with an empty query when the palette hands off /doc and a space", () => {
+  it("should activate with an empty query when the palette hands off /docs and a space", () => {
     const { editor } = makeEditor()
     editor.commands.focus()
-    typeText(editor, "/doc ")
+    typeText(editor, "/docs ")
     expect(docState(editor)).toMatchObject({ active: true, query: "" })
   })
 
@@ -78,21 +78,21 @@ describe("DocSearchExtension trigger matching", () => {
     const { editor } = makeEditor()
     editor.commands.focus()
     editor.chain().focus().setMark("code").run()
-    typeText(editor, "/doc plan")
+    typeText(editor, "/docs plan")
     expect(docState(editor).active).toBe(false)
   })
 
-  it("should not activate when a backtick sits directly before /doc", () => {
+  it("should not activate when a backtick sits directly before /docs", () => {
     const { editor } = makeEditor()
     editor.commands.focus()
-    typeText(editor, "see `/doc plan")
+    typeText(editor, "see `/docs plan")
     expect(docState(editor).active).toBe(false)
   })
 
   it("should replace the typed trigger with a doc chip when a doc is picked", async () => {
     const { editor, getPick } = makeEditor()
     editor.commands.focus()
-    typeText(editor, "see /doc lau")
+    typeText(editor, "see /docs lau")
     await new Promise((r) => setTimeout(r, 0))
 
     getPick()!(PLAN)
@@ -107,7 +107,7 @@ describe("DocSearchExtension trigger matching", () => {
   it("should carry the caret's bold onto the chip when a doc is picked inside bold text", async () => {
     const { editor, getPick } = makeEditor()
     editor.chain().focus().setMark("bold").run()
-    typeText(editor, "see /doc lau")
+    typeText(editor, "see /docs lau")
     await new Promise((r) => setTimeout(r, 0))
 
     getPick()!(PLAN)

@@ -724,6 +724,7 @@ export class StreamService {
         return this.createDoc({
           workspaceId: params.workspaceId,
           parentStreamId: params.parentStreamId,
+          displayName: params.displayName,
           principal: { kind: "user", userId: params.createdBy },
         })
       }

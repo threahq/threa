@@ -10,7 +10,7 @@ import { useSuggestion } from "./use-suggestion"
 const MEMO_SEARCH_LIMIT = 8
 
 /**
- * Manages the inline `/memo` search picker. Backs the suggestion list with the
+ * Manages the inline `/memos` search picker. Backs the suggestion list with the
  * same keyword + semantic memo search the memory explorer uses, fetched through
  * the shared query cache so repeated queries are instant and consistent.
  *
@@ -27,7 +27,7 @@ export function useMemoSuggestion(anchorStreamId?: string) {
   const searchItems = useCallback(
     async (query: string): Promise<Memo[]> => {
       if (!workspaceId) return []
-      // An empty query is intentional: opening `/memo ` should immediately show
+      // An empty query is intentional: opening `/memos ` should immediately show
       // the first page of memos so they're discoverable before you know what to
       // search for. The backend orders an empty search by recency; typing a
       // query switches it to keyword + semantic ranking.

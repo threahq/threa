@@ -2,6 +2,7 @@ import {
   Archive,
   Check,
   FileCode2,
+  FilePlus,
   ListChecks,
   MessageSquareDashed,
   Paperclip,
@@ -52,6 +53,18 @@ export const streamCommands: Command[] = [
     },
   },
   createSnippetCommand,
+  {
+    // Surfaced only while `CommandContext.createDoc` is set — see `use-command-items`.
+    id: "stream-new-doc",
+    label: "New doc",
+    icon: FilePlus,
+    keywords: ["doc", "document", "create", "write", "page", "current stream"],
+    action: ({ createDoc, closeDialog }) => {
+      if (!createDoc) return
+      closeDialog()
+      void createDoc()
+    },
+  },
   {
     // Surfaced only while `CommandContext.openAside` is set (the stream in view
     // can host one) — see `use-command-items`.
