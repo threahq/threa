@@ -305,7 +305,7 @@ describe("contextItemsFromEvent", () => {
       CTX
     )
     expect(rows.map((r) => [r.key, r.refKind, r.groupKey, r.anchorEventId, r.detail])).toEqual([
-      ["doc:stream_doc1:msg_1", "doc", "stream_doc1", null, { title: null }],
+      ["doc:stream_doc1:msg_1", "doc", "stream_doc1", null, { title: "Plan" }],
     ])
   })
 

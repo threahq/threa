@@ -18,7 +18,7 @@ import {
   Timer,
 } from "lucide-react"
 import { attachmentContentUrl } from "@/api"
-import { useOptionalPanel } from "@/contexts"
+import { useDocHref } from "@/components/docs/use-doc-href"
 import { useLiveDocTitle } from "@/components/docs/use-live-doc-title"
 import { STREAM_ICONS, streamFallbackLabel } from "@/lib/streams"
 import { HighlightedText } from "@/components/search/highlight"
@@ -172,8 +172,8 @@ export function StreamContextRow({
   const { formatRelative } = useFormattedDate()
   const time = formatRelative(new Date(item.createdAt), undefined, { terse: true })
   const liveThread = useLiveThread(workspaceId, item.category === "thread" ? item.threadId : null)
-  const panel = useOptionalPanel()
   const docId = item.category === "doc" ? item.docId : undefined
+  const docHref = useDocHref(workspaceId, docId)
   const { label: docLabel } = useLiveDocTitle(
     workspaceId,
     docId,
@@ -458,9 +458,9 @@ export function StreamContextRow({
       primaryText = docLabel
       secondaryText = item.snippet || "Doc"
       if (item.refCount > 1) secondaryText = `${secondaryText} · ${item.refCount}×`
-      primaryAction = (
+      primaryAction = docHref && (
         <Link
-          to={panel ? panel.getPanelUrl(item.docId) : `/w/${workspaceId}/s/${item.docId}`}
+          to={docHref}
           className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <span className="sr-only">Open doc {primaryText}</span>

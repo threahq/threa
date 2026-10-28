@@ -71,6 +71,7 @@ export {
   collectQuoteReplyMessageIds,
   collectAgentBlockAuthorIds,
   collectMemoEmbedIds,
+  collectDocEmbeds,
   collectDocEmbedIds,
   collectMentionActorRefs,
   collectMentionSlugs,

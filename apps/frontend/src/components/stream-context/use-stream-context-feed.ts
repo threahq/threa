@@ -11,10 +11,20 @@ export const streamContextKeys = {
 
 interface FeedPageParam {
   cursor: string
-  /** The previous page's oldest head: this page answers for what lies below it. */
-  olderThan: string | null
+  /** The previous page's oldest head: this page answers for what lies at or below it. */
+  atOrOlderThan: string | null
   seenDocGroupRefs: string[]
 }
+
+/** A page can prove a cached doc gone only when no filter could have hidden it. */
+function listsEveryDoc(request: ListStreamContextRequest, page: ListStreamContextResponse): boolean {
+  const includesDocs =
+    (request.category === undefined || request.category === "doc") &&
+    (request.categories === undefined || request.categories.includes("doc"))
+  return page.mode === "index" && includesDocs && !request.q && !request.from && !request.before && !request.after
+}
+
+const oldestHead = (page: ListStreamContextResponse) => page.items.at(-1)?.occurredAt ?? null
 
 export interface UseStreamContextFeedOptions {
   scope?: StreamContextScope
@@ -93,29 +103,19 @@ export function useStreamContextFeed(
         after,
         cursor: pageParam?.cursor,
       }
+      const requestedAt = Date.now()
       const page = await streamContextApi.list(workspaceId, streamId, request)
-      const listsEveryDoc =
-        page.mode === "index" &&
-        !q &&
-        !from &&
-        !before &&
-        !after &&
-        (category === undefined || category === "doc") &&
-        (categories === undefined || categories.includes("doc"))
-      await seedStreamContextItems(
-        workspaceId,
-        rootStreamId,
-        page.items,
-        listsEveryDoc
-          ? {
-              streamId,
-              scope,
-              after: page.nextCursor ? (page.items.at(-1)?.occurredAt ?? null) : null,
-              before: pageParam?.olderThan ?? null,
-              seenDocGroupRefs: pageParam?.seenDocGroupRefs ?? [],
-            }
-          : undefined
-      )
+      const docWindow = listsEveryDoc(request, page)
+        ? {
+            streamId,
+            scope,
+            newerThan: page.nextCursor ? oldestHead(page) : null,
+            atOrOlderThan: pageParam?.atOrOlderThan ?? null,
+            seenDocGroupRefs: pageParam?.seenDocGroupRefs ?? [],
+            requestedAt,
+          }
+        : undefined
+      await seedStreamContextItems(workspaceId, rootStreamId, page.items, docWindow)
       return page
     },
     initialPageParam: undefined as FeedPageParam | undefined,
@@ -123,7 +123,7 @@ export function useStreamContextFeed(
       lastPage.nextCursor
         ? {
             cursor: lastPage.nextCursor,
-            olderThan: lastPage.items.at(-1)?.occurredAt ?? null,
+            atOrOlderThan: oldestHead(lastPage),
             seenDocGroupRefs: allPages.flatMap((page) =>
               page.items.filter((item) => item.category === "doc").map(contextGroupRef)
             ),

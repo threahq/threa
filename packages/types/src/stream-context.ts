@@ -176,7 +176,8 @@ export interface StreamContextItem {
   sourceMessageId: string | null
   /**
    * The stream event to deep-link when the artifact has no source message —
-   * a delegation's `delegation:created` card, or a thread anchored on a card.
+   * a delegation's `delegation:created` card, a thread anchored on a card, or
+   * the `doc:created` row a doc's creation writes on its host.
    * `?m=` accepts either id (see `matchesDeepLinkTarget`), so a row jumps with
    * whichever of the two it has.
    */

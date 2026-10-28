@@ -380,7 +380,7 @@ describe("deriveStreamContext", () => {
           sourceMessageId: "msg_2",
           snippet: "again",
           docId: "stream_doc1",
-          title: null,
+          title: "Plan",
           refCount: 2,
         },
       ],

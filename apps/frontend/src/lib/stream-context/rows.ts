@@ -1,4 +1,4 @@
-import { collectDocEmbedIds, collectGiphyEmbeds, collectLinkUrls } from "@threahq/prosemirror"
+import { collectDocEmbeds, collectGiphyEmbeds, collectLinkUrls } from "@threahq/prosemirror"
 import {
   markdownLines,
   BLOCKED_HOSTNAMES,
@@ -187,8 +187,8 @@ export function contextItemsFromEvent(
     })
   }
 
-  for (const docId of contentJson ? collectDocEmbedIds(contentJson) : []) {
-    push("doc", "doc", docId, { title: null })
+  for (const embed of contentJson ? collectDocEmbeds(contentJson) : []) {
+    push("doc", "doc", embed.docId, { title: embed.title || null })
   }
 
   return rows

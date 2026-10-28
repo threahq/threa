@@ -600,7 +600,6 @@ async function processThreadsChunk(
   return threadChunkRows(chunk, workspaceId, threads.rows, anchors, eventAnchors)
 }
 
-/** Same rows `StreamService.createDoc` writes, anchored on each doc's `doc:created` event in its host. */
 async function processDocsChunk(
   ctx: BackfillContext,
   workspaceId: string,

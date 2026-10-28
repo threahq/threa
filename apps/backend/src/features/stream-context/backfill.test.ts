@@ -113,6 +113,7 @@ describe("stream-context backfill plan", () => {
       { match: /SELECT id, stream_id FROM messages/, rows: messageRows },
       { match: /FROM memos mo/, rows: [{ stream_id: "stream_b" }] },
       { match: /FROM delegated_tasks/, rows: [{ stream_id: "stream_a" }] },
+      // Thread parents filter on a literal type, doc hosts on a parameter.
       { match: /SELECT DISTINCT parent_stream_id[\s\S]*type = 'thread'/, rows: [{ parent_stream_id: "stream_a" }] },
       { match: /SELECT DISTINCT parent_stream_id[\s\S]*type = \$/, rows: [{ parent_stream_id: "stream_b" }] },
     ])

@@ -371,7 +371,7 @@ describe("StreamContextPanel", () => {
       sourceMessageId: null,
       anchorEventId: "event_doc1",
       detail: { title: "Roadmap" },
-    } as never)
+    })
     const link = serverItem({
       category: "link",
       refId: "https://a.example",
@@ -401,7 +401,7 @@ describe("StreamContextPanel", () => {
           refId: "stream_unreadable",
           refKind: "doc",
           detail: { title: "Hidden plan" },
-        } as never),
+        }),
         { _status: "pending" }
       ),
       cachedRow(
@@ -421,6 +421,68 @@ describe("StreamContextPanel", () => {
     await waitFor(() => expect(screen.queryByText("Hidden plan")).not.toBeInTheDocument())
   })
 
+  it("keeps a doc chip that lands while the first page is in flight", async () => {
+    const link = serverItem({
+      category: "link",
+      refId: "https://a.example",
+      detail: { url: "https://a.example", title: "Alpha" },
+    })
+    let resolvePage: (value: ListStreamContextResponse) => void = () => {}
+    const list = vi.spyOn(streamContextApi, "list").mockImplementation(
+      () =>
+        new Promise<ListStreamContextResponse>((resolve) => {
+          resolvePage = resolve
+        })
+    )
+
+    renderPanel()
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
+    const chip = cachedRow(
+      serverItem({ category: "doc", refId: "stream_new", refKind: "doc", detail: { title: "Fresh plan" } }),
+      { _status: "pending" }
+    )
+    await db.streamContextItems.put(chip)
+    resolvePage(listResponse({ items: [link] }))
+
+    expect(await screen.findByText("Alpha")).toBeInTheDocument()
+    expect(screen.getByText("Fresh plan")).toBeInTheDocument()
+    expect(await db.streamContextItems.get([WS, chip.key])).toEqual(chip)
+  })
+
+  it("keeps cached doc rows when a filtered page omits them", async () => {
+    const docItem = serverItem({
+      category: "doc",
+      refId: "stream_doc1",
+      refKind: "doc",
+      sourceMessageId: null,
+      anchorEventId: "event_doc1",
+      detail: { title: "Roadmap" },
+    })
+    const link = serverItem({
+      category: "link",
+      refId: "https://a.example",
+      detail: { url: "https://a.example", title: "Alpha" },
+    })
+    const charlie = serverItem({
+      category: "link",
+      refId: "https://c.example",
+      detail: { url: "https://c.example", title: "Charlie" },
+    })
+    vi.spyOn(streamContextApi, "list").mockImplementation(async (_ws, _stream, request) =>
+      request?.categories?.includes("link")
+        ? listResponse({ items: [link, charlie] })
+        : listResponse({ items: [docItem, link], counts: { ...EMPTY_COUNTS, doc: 1, link: 1 } })
+    )
+
+    renderPanel()
+    expect(await screen.findByText("Roadmap")).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: /^Links/ }))
+
+    // The filtered page seeds in one transaction, so its new row landing means any drop already ran.
+    await waitFor(async () => expect(await db.streamContextItems.get([WS, charlie.key])).toBeDefined())
+    expect(await db.streamContextItems.get([WS, docItem.key])).toMatchObject({ refId: "stream_doc1" })
+  })
+
   it("keeps a doc's older occurrence when a later page reaches it below the head an earlier page listed", async () => {
     const head = serverItem({
       category: "doc",
@@ -430,7 +492,7 @@ describe("StreamContextPanel", () => {
       occurredAt: "2026-06-24T10:00:00.000Z",
       occurrenceCount: 2,
       detail: { title: "Roadmap" },
-    } as never)
+    })
     const hosted = serverItem({
       category: "doc",
       refId: "stream_doc1",
@@ -439,7 +501,7 @@ describe("StreamContextPanel", () => {
       anchorEventId: "event_doc1",
       occurredAt: "2026-06-20T10:00:00.000Z",
       detail: { title: "Roadmap" },
-    } as never)
+    })
     const older = serverItem({
       category: "link",
       refId: "https://b.example",

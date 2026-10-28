@@ -21,6 +21,12 @@ function toCached(workspaceId: string, rootStreamId: string, item: StreamContext
   }
 }
 
+function scopeIndex(scope: StreamContextScope, streamId: string, rootStreamId: string) {
+  return scope === "tree"
+    ? (["[workspaceId+rootStreamId+occurredAt]", rootStreamId] as const)
+    : (["[workspaceId+streamId+occurredAt]", streamId] as const)
+}
+
 /**
  * Reactive "In this stream" feed, newest first — the panel's read authority,
  * mirroring how the timeline reads `events` from IDB. A live sync applier or a
@@ -43,10 +49,7 @@ export async function readStreamContextRows(
   rootStreamId: string,
   scope: StreamContextScope
 ): Promise<CachedStreamContextItem[]> {
-  const [index, anchor] =
-    scope === "tree"
-      ? (["[workspaceId+rootStreamId+occurredAt]", rootStreamId] as const)
-      : (["[workspaceId+streamId+occurredAt]", streamId] as const)
+  const [index, anchor] = scopeIndex(scope, streamId, rootStreamId)
   return db.streamContextItems
     .where(index)
     .between([workspaceId, anchor, Dexie.minKey], [workspaceId, anchor, Dexie.maxKey])
@@ -162,10 +165,12 @@ export async function seedStreamContextItems(
 export interface StreamContextDocWindow {
   streamId: string
   scope: StreamContextScope
-  /** Exclusive bounds on `occurredAt`; null is open-ended. */
-  after: string | null
-  before: string | null
+  /** Bounds on `occurredAt`, null open-ended: the page's oldest head (exclusive) and the previous page's (inclusive). */
+  newerThan: string | null
+  atOrOlderThan: string | null
   seenDocGroupRefs: readonly string[]
+  /** `Date.now()` before the request: a row cached after it is news the page could not have listed. */
+  requestedAt: number
 }
 
 /**
@@ -181,19 +186,16 @@ async function dropOmittedDocRows(
   window: StreamContextDocWindow
 ): Promise<void> {
   const kept = new Set([...window.seenDocGroupRefs, ...items.map(contextGroupRef)])
-  const [index, anchor] =
-    window.scope === "tree"
-      ? (["[workspaceId+rootStreamId+occurredAt]", rootStreamId] as const)
-      : (["[workspaceId+streamId+occurredAt]", window.streamId] as const)
+  const [index, anchor] = scopeIndex(window.scope, window.streamId, rootStreamId)
   const stale = await db.streamContextItems
     .where(index)
     .between(
-      [workspaceId, anchor, window.after ?? Dexie.minKey],
-      [workspaceId, anchor, window.before ?? Dexie.maxKey],
+      [workspaceId, anchor, window.newerThan ?? Dexie.minKey],
+      [workspaceId, anchor, window.atOrOlderThan ?? Dexie.maxKey],
       false,
-      false
+      true
     )
-    .filter((row) => row.category === "doc" && !kept.has(row.groupRef))
+    .filter((row) => row.category === "doc" && !kept.has(row.groupRef) && row._cachedAt <= window.requestedAt)
     .primaryKeys()
   if (stale.length > 0) await db.streamContextItems.bulkDelete(stale)
 }

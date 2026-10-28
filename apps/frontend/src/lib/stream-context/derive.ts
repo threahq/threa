@@ -10,7 +10,7 @@ import {
   type LinkPreviewSummary,
   type ThreadSummary,
 } from "@threahq/types"
-import { collectDocEmbedIds, collectGiphyEmbeds, collectLinkUrls } from "@threahq/prosemirror"
+import { collectDocEmbeds, collectGiphyEmbeds, collectLinkUrls } from "@threahq/prosemirror"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import type { CachedEvent } from "@/db"
 import {
@@ -322,7 +322,7 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
     }
 
     // ── Doc chips. A sealed stream cannot host a doc, so a chip is the only way one appears here.
-    for (const docId of contentJson ? collectDocEmbedIds(contentJson) : []) {
+    for (const { docId, title } of contentJson ? collectDocEmbeds(contentJson) : []) {
       const existing = docs.get(docId)
       if (existing) {
         existing.refCount += 1
@@ -335,7 +335,7 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
         sourceMessageId: messageId,
         snippet,
         docId,
-        title: null,
+        title: title || null,
         refCount: 1,
       })
     }

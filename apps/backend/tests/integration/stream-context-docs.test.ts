@@ -10,8 +10,13 @@ import type { Pool } from "pg"
 import type { JSONContent, ListStreamContextResponse, Stream, StreamContextDocDetail } from "@threahq/types"
 import { StreamService } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging/event-service"
-import { createStreamContextService } from "../../src/features/stream-context"
+import {
+  contextRowsForMessage,
+  createStreamContextService,
+  StreamContextRepository,
+} from "../../src/features/stream-context"
 import { plan, processChunk } from "../../src/features/stream-context/backfill"
+import type { BackfillContext } from "../../src/lib/backfill"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { userId, workspaceId } from "../../src/lib/id"
 import { addTestMember, setupIsolatedTestDatabase, withTransaction } from "./setup"
@@ -107,10 +112,16 @@ async function docCreatedEventId(hostId: string, docId: string): Promise<string>
 function list(
   viewer: string,
   streamId: string,
-  q?: string,
-  scope: "tree" | "stream" = "tree"
+  { q, scope = "tree" }: { q?: string; scope?: "tree" | "stream" } = {}
 ): Promise<ListStreamContextResponse> {
   return contextService.list({ workspaceId: wsId, userId: viewer, streamId, scope, queryText: q, limit: 40 })
+}
+
+async function runBackfill(): Promise<number> {
+  const ctx: BackfillContext = { pool }
+  let processed = 0
+  for (const chunk of await plan(ctx, wsId)) processed += (await processChunk(ctx, wsId, chunk)).processed
+  return processed
 }
 
 function docRows(response: ListStreamContextResponse) {
@@ -228,7 +239,7 @@ describe("stream context doc rows", () => {
 
     expect({
       threadMembers: threadMembers.rows.map((row) => row.member_id),
-      rows: docRows(await list(peer, thread.id, undefined, "stream")),
+      rows: docRows(await list(peer, thread.id, { scope: "stream" })),
     }).toEqual({
       threadMembers: [owner],
       rows: [
@@ -276,15 +287,48 @@ describe("stream context doc rows", () => {
     await post(open.id, body(chip(doc.id)), { authorId: peer, consentedShareSourceIds: new Set([doc.id]) })
 
     const outsiderView = await list(outsider, open.id)
-    const outsiderSearch = await list(outsider, open.id, "Secret")
+    const outsiderSearch = await list(outsider, open.id, { q: "Secret" })
     const ownerView = await list(owner, open.id)
+    const ownerSearch = await list(owner, open.id, { q: "Secret" })
 
     expect({
       outsiderRows: docRows(outsiderView),
       outsiderCount: outsiderView.counts?.doc,
       outsiderSearch: outsiderSearch.items.length,
       ownerTitles: docRows(ownerView).map((row) => row.title),
-    }).toEqual({ outsiderRows: [], outsiderCount: 0, outsiderSearch: 0, ownerTitles: ["Secret plan"] })
+      ownerSearchTitles: docRows(ownerSearch).map((row) => row.title),
+    }).toEqual({
+      outsiderRows: [],
+      outsiderCount: 0,
+      outsiderSearch: 0,
+      ownerTitles: ["Secret plan"],
+      ownerSearchTitles: ["Secret plan"],
+    })
+  })
+
+  test("should list no doc row for a chip whose id names a stream that is not a doc", async () => {
+    const channel = await createChannel("public")
+    const other = await createChannel("public")
+    // Sends reject such a chip, so the row is written as an older or foreign writer could have left it.
+    await StreamContextRepository.insertMany(
+      pool,
+      contextRowsForMessage({
+        workspaceId: wsId,
+        streamId: channel.id,
+        rootStreamId: channel.id,
+        messageId: "msg_foreign_chip",
+        authorId: owner,
+        occurredAt: new Date(),
+        sequence: null,
+        contentJson: body(chip(other.id)),
+        contentMarkdown: "see the doc",
+        attachments: [],
+      })
+    )
+
+    const response = await list(owner, channel.id)
+
+    expect({ rows: docRows(response), count: response.counts?.doc }).toEqual({ rows: [], count: 0 })
   })
 
   test("should drop an archived doc's rows and bring them back on unarchive", async () => {
@@ -324,13 +368,9 @@ describe("stream context doc rows", () => {
     const written = await snapshot()
     await pool.query(`DELETE FROM stream_context_items WHERE workspace_id = $1 AND category = 'doc'`, [wsId])
 
-    const ctx = { pool }
-    for (const chunk of await plan(ctx as never, wsId)) await processChunk(ctx as never, wsId, chunk)
+    await runBackfill()
     const rebuilt = await snapshot()
-    let reinserted = 0
-    for (const chunk of await plan(ctx as never, wsId)) {
-      reinserted += (await processChunk(ctx as never, wsId, chunk)).processed
-    }
+    const reinserted = await runBackfill()
 
     expect({ written, rebuilt, reinserted }).toEqual({
       written: [
