@@ -57,7 +57,7 @@ function proseMirror(): HTMLElement & { editor: Editor } {
 
 function DocPane({ canWrite }: { canWrite: boolean | null }) {
   const view = useDocSync(WORKSPACE_ID, DOC_ID)
-  return <DocPaneBody workspaceId={WORKSPACE_ID} canWrite={canWrite} view={view} />
+  return <DocPaneBody workspaceId={WORKSPACE_ID} docId={DOC_ID} canWrite={canWrite} view={view} />
 }
 
 describe("DocPaneBody", () => {
@@ -69,6 +69,9 @@ describe("DocPaneBody", () => {
   let socket: { on: MockInstance; off: MockInstance; emit: MockInstance; connected: boolean }
 
   beforeEach(() => {
+    vi.spyOn(contextsModule, "usePanel").mockReturnValue({
+      getPanelUrl: (panelId: string) => `/w/${WORKSPACE_ID}?panel=${panelId}`,
+    } as unknown as ReturnType<typeof contextsModule.usePanel>)
     serverDoc = prosemirrorJSONToYDoc(getThreaSchema(), paragraphs("Rotation tracker"), DOC_FRAGMENT)
     gate = new SocketEventGate(WORKSPACE_ID)
     socket = { on: vi.fn(), off: vi.fn(), emit: vi.fn(), connected: true }
@@ -113,6 +116,7 @@ describe("DocPaneBody", () => {
     } as unknown as ReturnType<typeof triggersModule.useEmojiSuggestion>)
     vi.spyOn(docsApi, "get").mockImplementation(async () => docState(serverDoc, 1))
     vi.spyOn(docsApi, "listUpdates").mockResolvedValue({ updates: [] })
+    vi.spyOn(docsApi, "listThreads").mockResolvedValue({ threads: [] })
     vi.spyOn(docsApi, "postUpdate").mockResolvedValue({ seq: 2, applied: true, touchedBlockIds: [] })
   })
 
@@ -566,6 +570,27 @@ describe("DocPaneBody", () => {
       readOnly: true,
       uploads: 1,
     })
+  })
+
+  it("shows a stamped block's comment count beside it, linking to its thread", async () => {
+    const blockId = `blk_${"0".repeat(25)}1`
+    serverDoc = prosemirrorJSONToYDoc(
+      getThreaSchema(),
+      {
+        type: "doc",
+        content: [{ type: "paragraph", attrs: { blockId }, content: [{ type: "text", text: "Rotation tracker" }] }],
+      },
+      DOC_FRAGMENT
+    )
+    vi.mocked(docsApi.listThreads).mockResolvedValue({
+      threads: [{ blockId, threadId: "stream_thread", replyCount: 1 }],
+    })
+
+    await mountLoaded()
+
+    expect((await screen.findByRole("link", { name: "1 comment on this block" })).getAttribute("href")).toBe(
+      `/w/${WORKSPACE_ID}?panel=stream_thread`
+    )
   })
 
   describe("useDocSync", () => {

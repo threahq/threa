@@ -922,6 +922,18 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     audit("docs.list_updates", "read"),
     docs.listUpdates
   )
+  app.get(
+    "/api/workspaces/:workspaceId/docs/:docId/threads",
+    ...authed,
+    audit("docs.list_threads", "read"),
+    docs.listThreads
+  )
+  app.get(
+    "/api/workspaces/:workspaceId/docs/:docId/sections/:blockId",
+    ...authed,
+    audit("docs.get_section", "read"),
+    docs.getSection
+  )
   app.post(
     "/api/workspaces/:workspaceId/docs/:docId/updates",
     ...authed,

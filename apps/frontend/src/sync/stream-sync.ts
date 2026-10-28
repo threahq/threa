@@ -1013,13 +1013,13 @@ interface ReactionPayload {
   userId: string
 }
 
-interface StreamCreatedPayload {
+export interface StreamCreatedPayload {
   workspaceId: string
   streamId: string
   stream: Stream
 }
 
-interface ThreadUpdatedPayload {
+export interface ThreadUpdatedPayload {
   workspaceId: string
   /** The PARENT stream (routing scope) — where the anchored timeline item lives. */
   streamId: string

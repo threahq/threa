@@ -2453,6 +2453,23 @@ export interface DocUpdatesResponse {
   updates: DocUpdateView[]
 }
 
+/** One section thread: the thread anchored on a doc block and its reply count. */
+export interface DocBlockThread {
+  blockId: string
+  threadId: string
+  replyCount: number
+}
+
+/** `GET /workspaces/:ws/docs/:docId/threads`. */
+export interface DocThreadsResponse {
+  threads: DocBlockThread[]
+}
+
+/** `GET /workspaces/:ws/docs/:docId/sections/:blockId`. */
+export interface DocSectionResponse {
+  section: DocSection
+}
+
 /** `POST /workspaces/:ws/docs/:docId/updates`. */
 export interface DocPostUpdateResult {
   /** The head seq after the write; unchanged when `applied` is false. */

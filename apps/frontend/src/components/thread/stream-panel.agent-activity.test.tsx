@@ -1,6 +1,6 @@
 import { beforeEach, describe, it, expect, vi } from "vitest"
-import { render, screen, within } from "@testing-library/react"
-import { MemoryRouter, Route, Routes } from "react-router-dom"
+import { render, screen, waitFor, within } from "@testing-library/react"
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { ActiveAgentSession } from "@threahq/types"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -22,6 +22,7 @@ import * as callModule from "@/components/call"
 import * as timelineModule from "@/components/timeline"
 import * as syncEngineModule from "@/sync/sync-engine"
 import { UserProfileProvider } from "@/components/user-profile"
+import { docsApi } from "@/api/docs"
 import { StreamPanel } from "./stream-panel"
 
 const workspaceId = "ws_1"
@@ -62,6 +63,11 @@ beforeEach(() => {
   }))
 })
 
+function LocationProbe() {
+  const location = useLocation()
+  return <output data-testid="location">{location.search}</output>
+}
+
 function renderPanel(panel: string) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -99,6 +105,7 @@ function renderPanel(panel: string) {
                                   }
                                 />
                               </Routes>
+                              <LocationProbe />
                             </CoordinatedLoadingProvider>
                           </PanelProvider>
                         </SidebarProvider>
@@ -145,5 +152,36 @@ describe("StreamPanel header agent chip", () => {
     renderPanel(`draft:${parentStreamId}:msg_anchor`)
 
     expect(headerChip()).toBeNull()
+  })
+})
+
+describe("StreamPanel draft on a doc block", () => {
+  it("quotes the block instead of looking for a timeline anchor", async () => {
+    const blockId = `blk_${"0".repeat(25)}1`
+    const getSection = vi.spyOn(docsApi, "getSection").mockResolvedValue({
+      section: { blockId, position: 0, kind: "paragraph", markdown: "Week one owners", contentJson: {} },
+    })
+
+    renderPanel(`draft:${parentStreamId}:${blockId}`)
+
+    expect(await screen.findByText("Week one owners")).toBeInTheDocument()
+    expect(screen.getByText("Start a new thread")).toBeInTheDocument()
+    expect(getSection.mock.calls).toEqual([[workspaceId, parentStreamId, blockId]])
+  })
+
+  it("moves to the block's thread when someone else already opened it", async () => {
+    const blockId = `blk_${"0".repeat(25)}1`
+    vi.spyOn(docsApi, "getSection").mockResolvedValue({
+      section: { blockId, position: 0, kind: "paragraph", markdown: "Week one owners", contentJson: {} },
+    })
+    vi.spyOn(docsApi, "listThreads").mockResolvedValue({
+      threads: [{ blockId, threadId: threadStreamId, replyCount: 1 }],
+    })
+
+    renderPanel(`draft:${parentStreamId}:${blockId}`)
+
+    await waitFor(() =>
+      expect(new URLSearchParams(screen.getByTestId("location").textContent ?? "").get("panel")).toBe(threadStreamId)
+    )
   })
 })

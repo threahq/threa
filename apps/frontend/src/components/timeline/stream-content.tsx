@@ -1,4 +1,4 @@
-import { matchesDeepLinkTarget } from "@/lib/stream-links"
+import { matchesDeepLinkTarget, splitThreadAnchor } from "@/lib/stream-links"
 import { getDraftPromotionEvents } from "@/lib/draft-promotions"
 import { memo, useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState, useSyncExternalStore } from "react"
 import { createPortal } from "react-dom"
@@ -146,6 +146,7 @@ import { MessageInput } from "./message-input"
 import { StreamDateHeader } from "./stream-date-header"
 import { JoinChannelBar } from "./join-channel-bar"
 import { ThreadParentEvent } from "../thread/thread-parent-event"
+import { DocBlockQuote } from "../docs/doc-block-quote"
 import { EditLastMessageContext } from "./edit-last-message-context"
 import { QuoteReplyProvider } from "./quote-reply-context"
 import { ConversationReplyProvider } from "./conversation-reply-context"
@@ -803,7 +804,8 @@ export function StreamContent({
   // Legacy IDB rows (cached before anchor unification) carry only
   // `parentMessageId`; read it off the cached row so an offline-first startup
   // resolves the anchor before the next online bootstrap rewrites the row.
-  const anchorId = stream ? (stream.parentAnchorId ?? idbStream?.parentMessageId ?? null) : null
+  const threadAnchorId = stream ? (stream.parentAnchorId ?? idbStream?.parentMessageId ?? null) : null
+  const { blockId: blockAnchorId, eventAnchorId: anchorId } = splitThreadAnchor(threadAnchorId)
   const parentCachedEvents = useStreamEvents(workspaceId, parentStreamId ?? undefined)
   const cachedAnchorEvent = useMemo(() => {
     if (!isThread || !parentStreamId || !anchorId || !parentCachedEvents) return null
@@ -2972,6 +2974,14 @@ export function StreamContent({
                               replyCount={threadReplyCount}
                               subagentStatusPatches={subagentThreadParentPatches}
                               subagentRunFallback={subagentRunFallback}
+                            />
+                          )}
+                          {isResolved && !isLoading && isThread && blockAnchorId && parentStreamId && (
+                            <DocBlockQuote
+                              workspaceId={workspaceId}
+                              docId={parentStreamId}
+                              blockId={blockAnchorId}
+                              replyCount={threadReplyCount}
                             />
                           )}
                           {isFetchingOlder && (

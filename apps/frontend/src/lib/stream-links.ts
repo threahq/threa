@@ -1,4 +1,5 @@
 import { toast } from "sonner"
+import { BLOCK_ID_PATTERN } from "@threahq/types"
 import { createConversationPanelId } from "@/contexts/panel-context"
 import { readablePanelParam } from "./panel-tabs"
 
@@ -106,4 +107,15 @@ export async function copyConversationLink(
  */
 export function matchesDeepLinkTarget(event: { id: string; payload: unknown }, target: string): boolean {
   return (event.payload as { messageId?: string })?.messageId === target || event.id === target
+}
+
+/** A thread anchor is a doc block or a timeline item; a block has no event to find or fetch. */
+export function splitThreadAnchor(anchorId: string | null | undefined): {
+  blockId: string | null
+  eventAnchorId: string | null
+} {
+  if (!anchorId) return { blockId: null, eventAnchorId: null }
+  return BLOCK_ID_PATTERN.test(anchorId)
+    ? { blockId: anchorId, eventAnchorId: null }
+    : { blockId: null, eventAnchorId: anchorId }
 }

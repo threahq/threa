@@ -1,6 +1,7 @@
 import { useSearchParams } from "react-router-dom"
 import { useContext, useMemo, useCallback, useEffect, useState, useRef } from "react"
 import { createPortal } from "react-dom"
+import { useQuery } from "@tanstack/react-query"
 import { MessageSquare } from "lucide-react"
 import { SidePanel, SidePanelTitle, SidePanelContent } from "@/components/ui/side-panel"
 import {
@@ -36,7 +37,9 @@ import { ComposerEncryptionNotice } from "@/components/encryption/stream-encrypt
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { referenceAudienceTargetFor, useReferenceAudience } from "@/hooks/use-reference-audience"
 import { ThreadParentEvent } from "./thread-parent-event"
-import { matchesDeepLinkTarget } from "@/lib/stream-links"
+import { DocBlockQuote } from "@/components/docs/doc-block-quote"
+import { docKeys, docsApi } from "@/api/docs"
+import { matchesDeepLinkTarget, splitThreadAnchor } from "@/lib/stream-links"
 import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
 import { StreamTypes, type JSONContent } from "@threahq/types"
 import { useMentionStreamContext, type MentionStreamContext } from "@/hooks/use-mentionables"
@@ -111,6 +114,7 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
   // Nothing to load: the parent message streams in from the cache or the parent's bootstrap.
   useRevealReady(true)
   const draftInfo = parseDraftPanel(panelId)
+  const { blockId: blockAnchorId, eventAnchorId } = splitThreadAnchor(draftInfo?.anchorId)
   const idbStreams = useWorkspaceStreams(workspaceId)
   const currentWorkspaceUserId = useWorkspaceUserId(workspaceId)
 
@@ -130,12 +134,15 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
         : [],
     [hasDraftThreadPendingEvents, draftThreadPendingEvents, currentWorkspaceUserId]
   )
+  const draftReplyCount = hasDraftThreadPendingEvents
+    ? draftThreadPendingEvents!.filter((e) => e.eventType === "message_created").length
+    : 0
   const cachedAnchorEvent = useMemo(() => {
-    if (!draftInfo || !parentCachedEvents) return null
-    return parentCachedEvents.find((event) => matchesDeepLinkTarget(event, draftInfo.anchorId))
-  }, [draftInfo, parentCachedEvents])
+    if (!eventAnchorId || !parentCachedEvents) return null
+    return parentCachedEvents.find((event) => matchesDeepLinkTarget(event, eventAnchorId))
+  }, [eventAnchorId, parentCachedEvents])
   const { data: parentBootstrap } = useStreamBootstrap(workspaceId, draftInfo?.parentStreamId ?? "", {
-    enabled: !!draftInfo && (!idbParentStream || !cachedAnchorEvent),
+    enabled: !!draftInfo && (!idbParentStream || (!blockAnchorId && !cachedAnchorEvent)),
   })
 
   // Fetch the parent stream's ancestors to build the full breadcrumb trail
@@ -149,19 +156,20 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
 
   const localAnchorEvent = useMemo(() => {
     if (cachedAnchorEvent) return cachedAnchorEvent
-    if (!draftInfo) return null
-    return parentBootstrap?.events.find((event) => matchesDeepLinkTarget(event, draftInfo.anchorId)) ?? null
-  }, [cachedAnchorEvent, parentBootstrap?.events, draftInfo])
+    if (!eventAnchorId) return null
+    return parentBootstrap?.events.find((event) => matchesDeepLinkTarget(event, eventAnchorId)) ?? null
+  }, [cachedAnchorEvent, parentBootstrap?.events, eventAnchorId])
   const { event: anchorEvent } = useThreadAnchorEvent(
     workspaceId,
     draftInfo?.parentStreamId,
-    draftInfo?.anchorId,
+    eventAnchorId,
     localAnchorEvent
   )
 
   // Auto-convert draft to real thread when created externally (e.g., agent eager
   // thread creation). The healed threadId lands on the anchor's payload for both
-  // message and card anchors (chunk-2 healing) — one accessor covers both.
+  // message and card anchors (chunk-2 healing) — one accessor covers both. A
+  // doc block has no payload; its thread is in the doc's thread list.
   //
   // This panel's own send writes the same slot: the draft panel id at queue
   // time, the real id on promotion. Neither is external — the queue's
@@ -169,11 +177,18 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
   // alongside it relocates the just-sent draft out from under `resolveDraft`
   // and re-opens the panel from a late callback after the user closed it.
   const [ownReplyQueued, setOwnReplyQueued] = useState(false)
+  const { data: docThreads } = useQuery({
+    queryKey: docKeys.threads(workspaceId, draftInfo?.parentStreamId ?? ""),
+    queryFn: () => docsApi.listThreads(workspaceId, draftInfo!.parentStreamId),
+    enabled: !!blockAnchorId,
+  })
   const externalThreadId = useMemo(() => {
-    if (!anchorEvent || ownReplyQueued) return null
+    if (ownReplyQueued) return null
+    if (blockAnchorId) return docThreads?.threads.find((thread) => thread.blockId === blockAnchorId)?.threadId ?? null
+    if (!anchorEvent) return null
     const threadId = (anchorEvent.payload as { threadId?: string }).threadId ?? null
     return threadId && !isDraftPanel(threadId) ? threadId : null
-  }, [anchorEvent, ownReplyQueued])
+  }, [anchorEvent, blockAnchorId, docThreads, ownReplyQueued])
 
   // Draft composer
   const draftKey = draftInfo ? getDraftMessageKey({ type: "thread", anchorId: draftInfo.anchorId }) : ""
@@ -498,16 +513,20 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
           }
           style={{ paddingBottom: "var(--composer-height, 0px)" }}
         >
+          {blockAnchorId && (
+            <DocBlockQuote
+              workspaceId={workspaceId}
+              docId={draftInfo.parentStreamId}
+              blockId={blockAnchorId}
+              replyCount={draftReplyCount}
+            />
+          )}
           {anchorEvent && (
             <ThreadParentEvent
               event={anchorEvent}
               workspaceId={workspaceId}
               streamId={draftInfo.parentStreamId}
-              replyCount={
-                hasDraftThreadPendingEvents
-                  ? draftThreadPendingEvents!.filter((e) => e.eventType === "message_created").length
-                  : 0
-              }
+              replyCount={draftReplyCount}
             />
           )}
           {hasDraftThreadPendingEvents ? (

@@ -4,8 +4,10 @@ import {
   AuthorTypes,
   DocErrorCodes,
   StreamTypes,
+  type DocBlockThread,
   type DocEditedEventPayload,
   type DocPostUpdateResult,
+  type DocSection,
   type DocState,
   type DocUpdateView,
 } from "@threahq/types"
@@ -17,6 +19,7 @@ import { OutboxRepository } from "../../lib/outbox"
 import { AttachmentRepository } from "../attachments"
 import {
   StreamEventRepository,
+  StreamRepository,
   assertViewerStreamWritable,
   checkStreamAccess,
   resolveLockedStreamAuthorities,
@@ -56,7 +59,7 @@ async function lockWritableDoc(
     workspaceId: params.workspaceId,
     streamIds: [params.docId],
     principal: { kind: "user", userId: params.userId },
-    ignoreTypeReadOnly: true,
+    typeReadOnly: "none",
   })
   if (authority?.target.type !== StreamTypes.DOC) throw new StreamNotFoundError()
   assertViewerStreamWritable(authority.state)
@@ -225,6 +228,30 @@ export class DocService {
       }
 
       return { seq, applied: true, touchedBlockIds }
+    })
+  }
+
+  async listThreads(params: { workspaceId: string; userId: string; docId: string }): Promise<DocBlockThread[]> {
+    return withClient(this.pool, async (client) => {
+      await this.findReadableDoc(client, params)
+      const threads = await StreamRepository.findThreadsWithReplyCounts(client, params.workspaceId, params.docId)
+      return [...threads].map(([blockId, { threadId, replyCount }]) => ({ blockId, threadId, replyCount }))
+    })
+  }
+
+  async getSection(params: {
+    workspaceId: string
+    userId: string
+    docId: string
+    blockId: string
+  }): Promise<DocSection> {
+    return withClient(this.pool, async (client) => {
+      await this.findReadableDoc(client, params)
+      const section = await DocRepository.findSection(client, params.workspaceId, params.docId, params.blockId)
+      if (!section) {
+        throw new HttpError("Doc section not found", { status: 404, code: DocErrorCodes.SECTION_NOT_FOUND })
+      }
+      return section
     })
   }
 

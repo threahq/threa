@@ -51,6 +51,18 @@ export async function assertPrincipalMayManageChannel(
   await assertUserMayManageChannels(db, workspaceId, principal.userId)
 }
 
+/** Which of the type's read-only reasons a write answers to: message writes, thread creation, or neither (a doc's Yjs updates). */
+export type TypeReadOnlyRule = "messages" | "threads" | "none"
+
+function typeReadOnlyReasonFor(
+  type: AuthorityStream["type"],
+  rule: TypeReadOnlyRule = "messages"
+): StreamReadOnlyReason | null {
+  if (rule === "none") return null
+  const capabilities = STREAM_TYPE_CAPABILITIES[type]
+  return rule === "threads" ? capabilities.threadsReadOnly : capabilities.messagesReadOnly
+}
+
 export function deriveStreamViewerState(params: {
   target: Pick<AuthorityStream, "type" | "archivedAt" | "originWorkspaceId" | "disconnectedAt">
   /** Whether any stream up the target's `parent_stream_id` chain is archived. */
@@ -58,14 +70,13 @@ export function deriveStreamViewerState(params: {
   participates: boolean
   /** Whether the guest DM policy closes the target's DM root to writers. */
   guestDmClosed: boolean
-  /** For writes that are not messages (a doc's Yjs updates): the type's message read-only reason does not apply. */
-  ignoreTypeReadOnly?: boolean
+  typeReadOnly?: TypeReadOnlyRule
 }): StreamViewerState {
   if (params.target.archivedAt || params.ancestorArchived) {
     return { readOnly: true, readOnlyReason: StreamReadOnlyReasons.ARCHIVED }
   }
-  const typeReadOnlyReason = STREAM_TYPE_CAPABILITIES[params.target.type].messagesReadOnly
-  if (typeReadOnlyReason && !params.ignoreTypeReadOnly) {
+  const typeReadOnlyReason = typeReadOnlyReasonFor(params.target.type, params.typeReadOnly)
+  if (typeReadOnlyReason) {
     return { readOnly: true, readOnlyReason: typeReadOnlyReason }
   }
   if (!params.participates) {
@@ -278,7 +289,7 @@ export async function resolveLockedStreamAuthorities(
     workspaceId: string
     streamIds: readonly string[]
     principal: StreamWritePrincipal
-    ignoreTypeReadOnly?: boolean
+    typeReadOnly?: TypeReadOnlyRule
   }
 ): Promise<LockedStreamAuthority[]> {
   const facts = await lockEffectiveStreams(db, params.workspaceId, params.streamIds)
@@ -324,7 +335,7 @@ export async function resolveLockedStreamAuthorities(
         ancestorArchived,
         participates,
         guestDmClosed: closedDmRootIds.has(root.id),
-        ignoreTypeReadOnly: params.ignoreTypeReadOnly,
+        typeReadOnly: params.typeReadOnly,
       }),
     })
   }
@@ -333,7 +344,12 @@ export async function resolveLockedStreamAuthorities(
 
 export async function assertStreamsWritable(
   db: Querier,
-  params: { workspaceId: string; streamIds: readonly string[]; principal: StreamWritePrincipal }
+  params: {
+    workspaceId: string
+    streamIds: readonly string[]
+    principal: StreamWritePrincipal
+    typeReadOnly?: TypeReadOnlyRule
+  }
 ): Promise<LockedStreamAuthority[]> {
   const authorities = await resolveLockedStreamAuthorities(db, params)
   for (const authority of authorities) assertViewerStreamWritable(authority.state)
@@ -342,12 +358,13 @@ export async function assertStreamsWritable(
 
 export async function assertStreamWritable(
   db: Querier,
-  params: { workspaceId: string; streamId: string; principal: StreamWritePrincipal }
+  params: { workspaceId: string; streamId: string; principal: StreamWritePrincipal; typeReadOnly?: TypeReadOnlyRule }
 ): Promise<LockedStreamAuthority> {
   const [authority] = await assertStreamsWritable(db, {
     workspaceId: params.workspaceId,
     streamIds: [params.streamId],
     principal: params.principal,
+    typeReadOnly: params.typeReadOnly,
   })
   return authority
 }

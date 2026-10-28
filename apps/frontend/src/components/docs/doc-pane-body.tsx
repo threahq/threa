@@ -25,6 +25,8 @@ import { useLatest } from "@/hooks/use-latest"
 import { getEffectiveEditorBindings } from "@/lib/keyboard-shortcuts"
 import { cn } from "@/lib/utils"
 import type { DocSyncView } from "./use-doc-sync"
+import { useDocBlockThreads } from "./use-doc-block-threads"
+import { DocBlockGutter } from "./doc-block-gutter"
 
 const COLUMN_CLASS = "mx-auto w-full max-w-3xl px-4 sm:px-6"
 
@@ -39,13 +41,14 @@ const NO_SUBMIT = { current: () => {} }
 
 interface DocPaneBodyProps {
   workspaceId: string
+  docId: string
   /** Null while the viewer's write access is unresolved. */
   canWrite: boolean | null
   view: DocSyncView
 }
 
 /** A doc stream's collaborative editor, mounted only once the doc's state and the viewer's write access have loaded. */
-export function DocPaneBody({ workspaceId, canWrite, view }: DocPaneBodyProps) {
+export function DocPaneBody({ workspaceId, docId, canWrite, view }: DocPaneBodyProps) {
   useRevealReady(view.phase === "error" || (view.phase === "ready" && canWrite !== null))
 
   if (view.phase === "error") {
@@ -74,6 +77,8 @@ export function DocPaneBody({ workspaceId, canWrite, view }: DocPaneBodyProps) {
     <DocEditor
       key={view.ydoc.guid}
       workspaceId={workspaceId}
+      docId={docId}
+      joinCount={view.joinCount}
       ydoc={view.ydoc}
       awareness={view.presence.awareness}
       canWrite={canWrite}
@@ -84,14 +89,18 @@ export function DocPaneBody({ workspaceId, canWrite, view }: DocPaneBodyProps) {
 
 interface DocEditorProps {
   workspaceId: string
+  docId: string
+  joinCount: number
   ydoc: Y.Doc
   awareness: Awareness
   canWrite: boolean
   onBlur: () => void
 }
 
-function DocEditor({ workspaceId, ydoc, awareness, canWrite, onBlur }: DocEditorProps) {
+function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, onBlur }: DocEditorProps) {
   const isMobile = useIsMobile()
+  const threads = useDocBlockThreads(workspaceId, docId, joinCount)
+  const [column, setColumn] = useState<HTMLDivElement | null>(null)
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
 
   const { mentionables } = useMentionables()
@@ -251,8 +260,9 @@ function DocEditor({ workspaceId, ydoc, awareness, canWrite, onBlur }: DocEditor
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto" onDragOver={onDragOver} onDrop={onDrop}>
-        <div className={cn(COLUMN_CLASS, "flex min-h-full flex-col py-8")}>
+        <div ref={setColumn} className={cn(COLUMN_CLASS, "relative flex min-h-full flex-col py-8 pr-10")}>
           <EditorContent editor={editor} />
+          <DocBlockGutter editor={editor} container={column} docId={docId} threads={threads} canComment={canWrite} />
           {renderMentionList()}
           {renderChannelList()}
           {renderEmojiGrid()}

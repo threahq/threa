@@ -1,3 +1,4 @@
+import type { ReactNode } from "react"
 import { RollingNumber } from "@/components/rolling-number"
 import { Separator } from "@/components/ui/separator"
 import { EventItem } from "@/components/timeline"
@@ -40,18 +41,25 @@ export function ThreadParentEvent({
   subagentRunFallback,
 }: ThreadParentEventProps) {
   return (
+    <ThreadAnchorFrame replyCount={replyCount}>
+      <EventItem
+        event={event}
+        workspaceId={workspaceId}
+        streamId={streamId}
+        isThreadParent
+        subagentStatusPatches={subagentStatusPatches}
+        subagentRunFallback={subagentRunFallback}
+      />
+    </ThreadAnchorFrame>
+  )
+}
+
+/** The frame every thread anchor renders in at the top of its panel: the anchor, then the "N replies" bar. */
+export function ThreadAnchorFrame({ replyCount, children }: { replyCount: number; children: ReactNode }) {
+  return (
     <div className="border-b">
       <div className="pt-4 pb-2">
-        <div className="mx-auto max-w-[800px] w-full min-w-0">
-          <EventItem
-            event={event}
-            workspaceId={workspaceId}
-            streamId={streamId}
-            isThreadParent
-            subagentStatusPatches={subagentStatusPatches}
-            subagentRunFallback={subagentRunFallback}
-          />
-        </div>
+        <div className="mx-auto max-w-[800px] w-full min-w-0">{children}</div>
       </div>
       <Separator />
       <div className="py-2 bg-muted/30 text-xs text-muted-foreground">

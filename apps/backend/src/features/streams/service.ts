@@ -1158,6 +1158,7 @@ export class StreamService {
         workspaceId: params.workspaceId,
         streamId: params.parentStreamId,
         principal: params.principal,
+        typeReadOnly: "threads",
       })
       return this.createThreadOn(client, params)
     })
@@ -1172,6 +1173,7 @@ export class StreamService {
       workspaceId: params.workspaceId,
       streamId: params.parentStreamId,
       principal,
+      typeReadOnly: "threads",
     })
     return this.createThreadOn(client, params)
   }
@@ -1240,6 +1242,11 @@ export class StreamService {
         anchorActorType = anchorEvent.actorType
       }
       anchorEventRow = anchorEvent
+    } else if (anchorPrefix === "blk_") {
+      const section = await DocRepository.findSection(client, params.workspaceId, params.parentStreamId, anchorId)
+      if (!section) {
+        throw new HttpError("Thread anchor block not found", { status: 404, code: "ANCHOR_NOT_FOUND" })
+      }
     } else {
       throw new HttpError("Unrecognized thread anchor id", { status: 400, code: "ANCHOR_INVALID" })
     }

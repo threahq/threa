@@ -28,6 +28,7 @@ import { TableRow } from "@tiptap/extension-table/row"
 import { TableHeader } from "@tiptap/extension-table/header"
 import { TableCell } from "@tiptap/extension-table/cell"
 import { MarkdownTableInputRule } from "./markdown-table-input-rule"
+import { BlockIdClipboard } from "./block-id-clipboard"
 
 import { MentionExtension, type MentionOptions } from "./triggers/mention-extension"
 import { ChannelExtension, type ChannelOptions } from "./triggers/channel-extension"
@@ -101,6 +102,7 @@ type ExtensionSurface = "composer" | "document"
 // One list so the composer keeps its extension order (plugin and keymap precedence follow it).
 function buildExtensions(config: Partial<CreateEditorExtensionsOptions>, surface: ExtensionSurface): AnyExtension[] {
   const composerOnly = (...extensions: AnyExtension[]) => (surface === "composer" ? extensions : [])
+  const documentOnly = (...extensions: AnyExtension[]) => (surface === "document" ? extensions : [])
 
   const extensions: AnyExtension[] = [
     Document,
@@ -202,6 +204,7 @@ function buildExtensions(config: Partial<CreateEditorExtensionsOptions>, surface
     ),
 
     BlockIdAttribute,
+    ...documentOnly(BlockIdClipboard),
   ]
 
   return extensions
