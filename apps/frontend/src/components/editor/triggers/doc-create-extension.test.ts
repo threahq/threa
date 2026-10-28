@@ -1,7 +1,7 @@
 import { afterEach, describe, it, expect } from "vitest"
 import { Editor } from "@tiptap/core"
 import { createEditorExtensions } from "../editor-extensions"
-import { DocCreatePluginKey, linkNewDoc } from "./doc-create-extension"
+import { DocCreatePluginKey, isDocCreatePending, linkNewDoc } from "./doc-create-extension"
 import { DocSearchPluginKey } from "./doc-search-extension"
 import { isNewDoc, type DocSuggestionItem, type NewDocItem } from "./use-doc-suggestion"
 
@@ -163,6 +163,57 @@ describe("DocCreateExtension", () => {
     await settled()
 
     expect(editor.getJSON().content?.[0]?.content).toEqual([{ type: "text", text: "sent" }])
+  })
+
+  it("should keep text typed after the title while the doc was created", async () => {
+    const creation = deferred<{ id: string; displayName: string | null }>()
+    const { editor, pick, settled } = makeEditor(() => creation.promise)
+    editor.commands.focus()
+    typeText(editor, "see /doc Q4 findings")
+    await new Promise((r) => setTimeout(r, 0))
+
+    pick({ kind: "new-doc", title: "Q4 findings" })
+    typeText(editor, " now")
+    creation.resolve({ id: "stream_new", displayName: "Q4 findings" })
+    await settled()
+    typeText(editor, "!")
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([
+      { type: "text", text: "see " },
+      chip("stream_new", "Q4 findings"),
+      { type: "text", text: " now!" },
+    ])
+  })
+
+  it("should link nothing when the title was edited while the doc was created", async () => {
+    const creation = deferred<{ id: string; displayName: string | null }>()
+    const { editor, pick, settled } = makeEditor(() => creation.promise)
+    editor.commands.focus()
+    typeText(editor, "see /doc Q4 findings")
+    await new Promise((r) => setTimeout(r, 0))
+
+    pick({ kind: "new-doc", title: "Q4 findings" })
+    editor.view.dispatch(editor.state.tr.delete(editor.state.doc.content.size - 2, editor.state.doc.content.size - 1))
+    creation.resolve({ id: "stream_new", displayName: "Q4 findings" })
+    await settled()
+
+    expect(editor.getText()).toBe("see /doc Q4 finding")
+  })
+
+  it("should report a pending create only until the doc is linked", async () => {
+    const creation = deferred<{ id: string; displayName: string | null }>()
+    const { editor, pick, settled } = makeEditor(() => creation.promise)
+    editor.commands.focus()
+    typeText(editor, "see /doc Q4 findings")
+    await new Promise((r) => setTimeout(r, 0))
+
+    const before = isDocCreatePending(editor)
+    pick({ kind: "new-doc", title: "Q4 findings" })
+    const during = isDocCreatePending(editor)
+    creation.resolve({ id: "stream_new", displayName: "Q4 findings" })
+    await settled()
+
+    expect({ before, during, after: isDocCreatePending(editor) }).toEqual({ before: false, during: true, after: false })
   })
 
   it("should leave the typed /doc untouched when the doc could not be created", async () => {

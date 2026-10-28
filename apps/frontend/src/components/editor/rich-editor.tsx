@@ -33,6 +33,7 @@ import {
   useDocCreateSuggestion,
   useCommandArgPicker,
   useAttachmentPicker,
+  isDocCreatePending,
 } from "./triggers"
 import { parseMemoUrl } from "@/lib/memo-url"
 import { tryInsertDocChip, tryInsertInAppLinkChip } from "./in-app-link-chip"
@@ -998,6 +999,10 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         ) {
           event.preventDefault()
           onHistoryStepRef.current(event.key === "ArrowLeft" ? -1 : 1)
+          return true
+        }
+        if (event.key === "Enter" && !event.shiftKey && currentEditor && isDocCreatePending(currentEditor)) {
+          event.preventDefault()
           return true
         }
         // Cmd/Ctrl+Enter: always send (regardless of mode or active suggestions)
