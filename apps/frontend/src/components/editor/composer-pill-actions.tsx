@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react"
 import { createPortal } from "react-dom"
-import { Check, Copy } from "lucide-react"
+import { Check, Copy, Image, Tag } from "lucide-react"
 import { toast } from "sonner"
 import type { Editor } from "@tiptap/react"
 import { NodeSelection } from "@tiptap/pm/state"
@@ -9,16 +9,24 @@ import { useInputMode } from "@/hooks/use-input-mode"
 import { cn } from "@/lib/utils"
 import { serializeClipboardSlice } from "./clipboard-copy"
 import { ComposerPillDragPluginKey, isComposerPillNode } from "./composer-pill-drag-extension"
+import {
+  DISPLAY_TOGGLE_LABEL,
+  imageReferenceDisplay,
+  toggledDisplay,
+  type AttachmentDisplay,
+} from "./attachment-reference-extension"
 
 const COPY_CONFIRMATION_MS = 1_200
-const COPY_BUTTON_GAP_PX = 8
-const COPY_BUTTON_SIZE_PX = 40
+const ACTION_BAR_OFFSET_PX = 8
+const ACTION_BUTTON_SIZE_PX = 40
+const ACTION_BUTTON_GAP_PX = 8
 
-interface CopyButtonAnchor {
+interface ActionBarAnchor {
   pos: number
   left: number
   top: number
   below: boolean
+  imageDisplay: AttachmentDisplay | null
 }
 
 function pillRect(editor: Editor, pos: number): DOMRect | null {
@@ -48,39 +56,51 @@ function selectedPillPos(editor: Editor): number | null {
   return selection.from
 }
 
-function copyButtonAnchor(editor: Editor): CopyButtonAnchor | null {
+function actionBarAnchor(editor: Editor): ActionBarAnchor | null {
   if (editor.isDestroyed || ComposerPillDragPluginKey.getState(editor.state)) return null
   const pos = selectedPillPos(editor)
   if (pos === null) return null
 
   const rect = pillRect(editor, pos)
   if (!rect || rect.bottom < 0 || rect.top > window.innerHeight) return null
-  const half = COPY_BUTTON_SIZE_PX / 2
+  const node = editor.state.doc.nodeAt(pos)
+  const imageDisplay = node ? imageReferenceDisplay(node) : null
+  const buttonCount = imageDisplay ? 2 : 1
+  const barWidth = buttonCount * ACTION_BUTTON_SIZE_PX + (buttonCount - 1) * ACTION_BUTTON_GAP_PX
+  const half = barWidth / 2
   const left = Math.min(Math.max(rect.left + rect.width / 2, half), Math.max(half, window.innerWidth - half))
-  const below = rect.top < COPY_BUTTON_SIZE_PX + COPY_BUTTON_GAP_PX
+  const below = rect.top < ACTION_BUTTON_SIZE_PX + ACTION_BAR_OFFSET_PX
   return {
     pos,
     left,
-    top: below ? rect.bottom + COPY_BUTTON_GAP_PX : rect.top - COPY_BUTTON_GAP_PX,
+    top: below ? rect.bottom + ACTION_BAR_OFFSET_PX : rect.top - ACTION_BAR_OFFSET_PX,
     below,
+    imageDisplay,
   }
 }
 
-function sameAnchor(left: CopyButtonAnchor | null, right: CopyButtonAnchor | null): boolean {
+function sameAnchor(left: ActionBarAnchor | null, right: ActionBarAnchor | null): boolean {
   if (left === right) return true
   if (!left || !right) return false
-  return left.pos === right.pos && left.left === right.left && left.top === right.top && left.below === right.below
+  return (
+    left.pos === right.pos &&
+    left.left === right.left &&
+    left.top === right.top &&
+    left.below === right.below &&
+    left.imageDisplay === right.imageDisplay
+  )
 }
 
 /**
- * Touch-owned copy affordance for a selected composer pill. Blink resolves a
- * long press inside a contenteditable against its own editing heuristics, so a
- * native selection can neither be pinned to one atom nor share the gesture with
- * the app's drag; the pill's exact `NodeSelection` gets its own control instead.
+ * Touch-owned actions for a selected composer pill (copy, and the display toggle
+ * for an image). Blink resolves a long press inside a contenteditable against its
+ * own editing heuristics, so a native selection can neither be pinned to one atom
+ * nor share the gesture with the app's drag; the pill's exact `NodeSelection`
+ * gets its own control instead.
  */
-export function ComposerPillCopyButton({ editor }: { editor: Editor | null }) {
+export function ComposerPillActions({ editor }: { editor: Editor | null }) {
   const inputMode = useInputMode()
-  const [anchor, setAnchor] = useState<CopyButtonAnchor | null>(null)
+  const [anchor, setAnchor] = useState<ActionBarAnchor | null>(null)
   const [copied, setCopied] = useState(false)
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -91,7 +111,7 @@ export function ComposerPillCopyButton({ editor }: { editor: Editor | null }) {
     }
 
     const sync = () => {
-      const next = copyButtonAnchor(editor)
+      const next = actionBarAnchor(editor)
       setAnchor((current) => (sameAnchor(current, next) ? current : next))
     }
     const hide = () => setAnchor(null)
@@ -144,28 +164,55 @@ export function ComposerPillCopyButton({ editor }: { editor: Editor | null }) {
     }
   }, [editor])
 
+  const toggleDisplay = useCallback(() => {
+    if (!editor || editor.isDestroyed) return
+    const pos = selectedPillPos(editor)
+    const node = pos === null ? null : editor.state.doc.nodeAt(pos)
+    const current = node ? imageReferenceDisplay(node) : null
+    if (pos === null || !node || !current) return
+    const tr = editor.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, display: toggledDisplay(current) })
+    editor.view.dispatch(tr.setSelection(NodeSelection.create(tr.doc, pos)))
+  }, [editor])
+
   // A parent re-render can land between the editor's teardown and this effect's
   // cleanup, and `view` throws once unmounted while `isDestroyed` stays safe.
   if (!anchor || !editor || editor.isDestroyed) return null
 
+  // Keeping the press off the document leaves the pill's NodeSelection and
+  // the soft keyboard in place; Chrome for Android still delivers the click.
+  const keepSelection = (event: PointerEvent) => event.preventDefault()
+  const buttonClass = "rounded-full border-primary/40 bg-popover/95 shadow-lg active:scale-[0.97]"
+
   return createPortal(
-    <Button
-      type="button"
-      variant="outline"
-      size="icon"
-      className={cn(
-        "fixed z-[80] -translate-x-1/2 rounded-full border-primary/40 bg-popover/95 shadow-lg active:scale-[0.97]",
-        anchor.below ? "translate-y-0" : "-translate-y-full"
-      )}
-      style={{ left: anchor.left, top: anchor.top }}
-      // Keeping the press off the document leaves the pill's NodeSelection and
-      // the soft keyboard in place; Chrome for Android still delivers the click.
-      onPointerDown={(event) => event.preventDefault()}
-      onClick={() => void copyPill()}
-      aria-label={copied ? "Pill copied" : "Copy pill"}
+    <div
+      className={cn("fixed z-[80] flex -translate-x-1/2", anchor.below ? "translate-y-0" : "-translate-y-full")}
+      style={{ left: anchor.left, top: anchor.top, gap: ACTION_BUTTON_GAP_PX }}
     >
-      {copied ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
-    </Button>,
+      <Button
+        type="button"
+        variant="outline"
+        size="icon"
+        className={buttonClass}
+        onPointerDown={keepSelection}
+        onClick={() => void copyPill()}
+        aria-label={copied ? "Pill copied" : "Copy pill"}
+      >
+        {copied ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
+      </Button>
+      {anchor.imageDisplay && (
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className={buttonClass}
+          onPointerDown={keepSelection}
+          onClick={toggleDisplay}
+          aria-label={DISPLAY_TOGGLE_LABEL[anchor.imageDisplay]}
+        >
+          {anchor.imageDisplay === "inline" ? <Tag className="size-4" /> : <Image className="size-4" />}
+        </Button>
+      )}
+    </div>,
     editor.view.dom.ownerDocument.body
   )
 }

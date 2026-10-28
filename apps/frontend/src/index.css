@@ -1172,6 +1172,26 @@ html[data-input="mouse"]
   @apply my-0;
 }
 
+.ProseMirror ul[data-type="taskList"] {
+  @apply list-none pl-0;
+}
+
+.ProseMirror ul[data-type="taskList"] > li {
+  @apply flex items-start gap-2;
+}
+
+.ProseMirror ul[data-type="taskList"] > li > label {
+  @apply flex flex-none select-none;
+}
+
+.ProseMirror ul[data-type="taskList"] > li > label > input[type="checkbox"] {
+  @apply mt-0.5 h-4 w-4 rounded accent-primary;
+}
+
+.ProseMirror ul[data-type="taskList"] > li > div {
+  @apply min-w-0 flex-1;
+}
+
 @keyframes threa-inline-code-boundary-caret-blink {
   0%,
   49% {

@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { Editor } from "@tiptap/react"
+import { NodeSelection } from "@tiptap/pm/state"
 import type { JSONContent } from "@threahq/types"
 import { ComposerPillDragPluginKey } from "./composer-pill-drag-extension"
-import { ComposerPillCopyButton } from "./composer-pill-copy-button"
+import { ComposerPillActions } from "./composer-pill-actions"
 import { createEditorExtensions } from "./editor-extensions"
 
 const openEditors: Editor[] = []
@@ -52,10 +53,30 @@ function nodePos(editor: Editor, type: string): number {
   return result
 }
 
-function selectPill(editor: Editor) {
+function selectPill(editor: Editor, type = "mention") {
   act(() => {
-    editor.commands.setNodeSelection(nodePos(editor, "mention"))
+    editor.commands.setNodeSelection(nodePos(editor, type))
   })
+}
+
+function attachmentPill(mimeType: string): JSONContent {
+  return {
+    type: "attachmentReference",
+    attrs: {
+      id: "attach_01IMG",
+      filename: "photo.png",
+      mimeType,
+      sizeBytes: 2048,
+      status: "uploaded",
+      imageIndex: 1,
+      error: null,
+      display: "pill",
+    },
+  }
+}
+
+function actionLabels() {
+  return screen.queryAllByRole("button").map((button) => button.getAttribute("aria-label"))
 }
 
 function copyControl() {
@@ -83,12 +104,12 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe("composer pill copy control", () => {
-  it("copies exactly the selected pill's canonical markdown", async () => {
+describe("ComposerPillActions", () => {
+  it("should copy exactly the selected pill's canonical markdown when Copy is tapped", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     stubClipboard(writeText)
     const editor = createPillEditor()
-    render(<ComposerPillCopyButton editor={editor} />)
+    render(<ComposerPillActions editor={editor} />)
 
     selectPill(editor)
     const control = copyControl()
@@ -99,10 +120,10 @@ describe("composer pill copy control", () => {
     expect(writeText).toHaveBeenCalledTimes(1)
   })
 
-  it("confirms in place without resizing the control", async () => {
+  it("should confirm in place without resizing the control when the copy succeeds", async () => {
     stubClipboard(vi.fn().mockResolvedValue(undefined))
     const editor = createPillEditor()
-    render(<ComposerPillCopyButton editor={editor} />)
+    render(<ComposerPillActions editor={editor} />)
 
     selectPill(editor)
     const control = copyControl()!
@@ -113,12 +134,12 @@ describe("composer pill copy control", () => {
     expect(control.className).toBe(beforeClass)
   })
 
-  it("warns instead of confirming when the clipboard rejects", async () => {
+  it("should warn instead of confirming when the clipboard rejects", async () => {
     const { toast } = await import("sonner")
     const error = vi.spyOn(toast, "error").mockReturnValue("id")
     stubClipboard(vi.fn().mockRejectedValue(new Error("denied")))
     const editor = createPillEditor()
-    render(<ComposerPillCopyButton editor={editor} />)
+    render(<ComposerPillActions editor={editor} />)
 
     selectPill(editor)
     fireEvent.click(copyControl()!)
@@ -127,9 +148,9 @@ describe("composer pill copy control", () => {
     expect(screen.queryByRole("button", { name: /pill copied/i })).toBeNull()
   })
 
-  it("keeps the press off the document so the pill keeps its selection", () => {
+  it("should keep the press off the document when a control is pressed, so the pill keeps its selection", () => {
     const editor = createPillEditor()
-    render(<ComposerPillCopyButton editor={editor} />)
+    render(<ComposerPillActions editor={editor} />)
 
     selectPill(editor)
     const pointerDown = new Event("pointerdown", { bubbles: true, cancelable: true })
@@ -138,9 +159,9 @@ describe("composer pill copy control", () => {
     expect(pointerDown.defaultPrevented).toBe(true)
   })
 
-  it("offers nothing for a text selection, a mouse, or a drag in flight", () => {
+  it("should offer nothing when the selection is text, the pointer is a mouse, or a drag is in flight", () => {
     const editor = createPillEditor()
-    render(<ComposerPillCopyButton editor={editor} />)
+    render(<ComposerPillActions editor={editor} />)
 
     act(() => {
       editor.commands.setTextSelection(nodePos(editor, "mention") + 2)
@@ -167,5 +188,59 @@ describe("composer pill copy control", () => {
 
     setInputMode("mouse")
     expect(copyControl()).toBeNull()
+  })
+
+  it("should show the display toggle beside Copy when the selected pill is an image", () => {
+    const editor = createPillEditor([attachmentPill("image/png")])
+    render(<ComposerPillActions editor={editor} />)
+
+    selectPill(editor, "attachmentReference")
+    expect(actionLabels()).toEqual(["Copy pill", "Show as image"])
+  })
+
+  it("should flip display to inline and keep the pill selected when Show as image is tapped", () => {
+    const editor = createPillEditor([attachmentPill("image/png")])
+    render(<ComposerPillActions editor={editor} />)
+    const pos = nodePos(editor, "attachmentReference")
+
+    selectPill(editor, "attachmentReference")
+    fireEvent.click(screen.getByRole("button", { name: "Show as image" }))
+
+    const { selection } = editor.state
+    expect({
+      display: editor.state.doc.nodeAt(pos)?.attrs.display,
+      nodeSelection: selection instanceof NodeSelection,
+      from: selection.from,
+      labels: actionLabels(),
+    }).toEqual({ display: "inline", nodeSelection: true, from: pos, labels: ["Copy pill", "Show as chip"] })
+  })
+
+  it("should show only Copy when the selected pill is not an image", () => {
+    const editor = createPillEditor([attachmentPill("application/pdf")])
+    render(<ComposerPillActions editor={editor} />)
+
+    selectPill(editor, "attachmentReference")
+    expect(actionLabels()).toEqual(["Copy pill"])
+  })
+
+  it("should keep the bar half its width from the viewport edge when the pill sits at either edge", () => {
+    const editor = createPillEditor([attachmentPill("image/png")])
+    render(<ComposerPillActions editor={editor} />)
+    const pillDom = editor.view.nodeDOM(nodePos(editor, "attachmentReference")) as HTMLElement
+    const rect = vi.spyOn(pillDom, "getBoundingClientRect")
+    const barLeftAt = (x: number) => {
+      rect.mockReturnValue(new DOMRect(x, 300, 0, 20))
+      selectPill(editor, "attachmentReference")
+      act(() => {
+        window.dispatchEvent(new Event("resize"))
+      })
+      return screen.getByRole("button", { name: "Copy pill" }).parentElement!.style.left
+    }
+    const halfBar = (2 * 40 + 8) / 2
+
+    expect({ start: barLeftAt(0), end: barLeftAt(window.innerWidth) }).toEqual({
+      start: `${halfBar}px`,
+      end: `${window.innerWidth - halfBar}px`,
+    })
   })
 })

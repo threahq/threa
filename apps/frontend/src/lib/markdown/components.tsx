@@ -575,7 +575,7 @@ export const markdownComponents: Components = {
   // Task list checkboxes (read-only)
   input: ({ type, checked }) => {
     if (type === "checkbox") {
-      return <Checkbox checked={checked} disabled className="mr-2 align-middle cursor-default" />
+      return <Checkbox checked={checked} disabled className="inline-grid mr-2 align-text-bottom cursor-default" />
     }
     return null
   },

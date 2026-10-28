@@ -4,7 +4,12 @@ import { TextSelection, type Transaction, Plugin } from "@tiptap/pm/state"
 import type { EditorState } from "@tiptap/pm/state"
 import type { EditorView } from "@tiptap/pm/view"
 import type { MessageSendMode } from "@threahq/types"
-import { deleteAdjacentInlineAtom, handleEnterTextBehavior, toggleMultilineBlock } from "./multiline-blocks"
+import {
+  activeListItemType,
+  deleteAdjacentInlineAtom,
+  handleEnterTextBehavior,
+  toggleMultilineBlock,
+} from "./multiline-blocks"
 import { matchesKeyBinding } from "@/lib/keyboard-shortcuts"
 
 export interface EditorBehaviorsOptions {
@@ -33,8 +38,9 @@ export function indentSelection(editor: Editor): boolean {
     return handleCodeBlockTab(editor, false)
   }
 
-  if (editor.isActive("listItem")) {
-    return editor.chain().focus().sinkListItem("listItem").run()
+  const listItemType = activeListItemType(editor)
+  if (listItemType) {
+    return editor.chain().focus().sinkListItem(listItemType).run()
   }
 
   return handleTextTab(editor, false)
@@ -45,8 +51,9 @@ export function dedentSelection(editor: Editor): boolean {
     return handleCodeBlockTab(editor, true)
   }
 
-  if (editor.isActive("listItem")) {
-    return editor.chain().focus().liftListItem("listItem").run()
+  const listItemType = activeListItemType(editor)
+  if (listItemType) {
+    return editor.chain().focus().liftListItem(listItemType).run()
   }
 
   return handleTextTab(editor, true)

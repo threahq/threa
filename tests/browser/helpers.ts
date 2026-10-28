@@ -618,6 +618,15 @@ export async function selectAllEditorContent(editor: Locator): Promise<void> {
   })
 }
 
+/** Clicks a main composer toolbar button, opening "Formatting" first when a narrow composer collapses it. */
+export async function clickComposerToolbarButton(page: Page, name: string): Promise<void> {
+  const button = page.getByRole("main").getByRole("button", { name, exact: true })
+  if (!(await button.isVisible())) {
+    await page.getByRole("main").getByRole("button", { name: "Formatting", exact: true }).click()
+  }
+  await button.click()
+}
+
 /** The account the browser is signed in as. */
 export async function currentAccount(page: Page): Promise<DevLoginUser> {
   const response = await page.request.get("/api/auth/me")
