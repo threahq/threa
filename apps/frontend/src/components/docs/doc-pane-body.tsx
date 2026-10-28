@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils"
 import type { DocSyncView } from "./use-doc-sync"
 import { useDocBlockThreads } from "./use-doc-block-threads"
 import { DocBlockGutter } from "./doc-block-gutter"
+import { DocTitle } from "./doc-title"
 
 const COLUMN_CLASS = "mx-auto w-full max-w-3xl px-4 sm:px-6"
 
@@ -261,6 +262,13 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
       )}
       <div className="min-h-0 flex-1 overflow-y-auto" onDragOver={onDragOver} onDrop={onDrop}>
         <div ref={setColumn} className={cn(COLUMN_CLASS, "relative flex min-h-full flex-col py-8 pr-10")}>
+          <DocTitle
+            workspaceId={workspaceId}
+            docId={docId}
+            canWrite={canWrite}
+            onSubmit={() => editor?.commands.focus("start")}
+            className="mb-4"
+          />
           <EditorContent editor={editor} />
           <DocBlockGutter editor={editor} container={column} docId={docId} threads={threads} canComment={canWrite} />
           {renderMentionList()}

@@ -10,3 +10,4 @@ export const DYNAMIC_NAMING_MODEL_ID = "openrouter:openai/gpt-6-luna"
 export const DYNAMIC_NAMING_TEMPERATURE = 0.3
 export const DYNAMIC_NAMING_MAX_MESSAGES = 10
 export const DYNAMIC_NAMING_MAX_EXISTING_TITLES = 10
+export const DYNAMIC_NAMING_MAX_DOC_CONTEXT_CHARS = 8_000

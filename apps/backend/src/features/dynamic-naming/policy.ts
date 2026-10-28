@@ -1,4 +1,5 @@
 import { DYNAMIC_NAMING_CHECKPOINTS, DYNAMIC_NAMING_SETTLING_KEEPS } from "./config"
+import type { DynamicNamingState } from "./state-repository"
 import type { DynamicNamingCheckpoint, DynamicNamingClaimReason, DynamicNamingDecision } from "./types"
 
 export const DYNAMIC_NAMING_FRONTIER_ADVANCING_REASONS = [
@@ -18,6 +19,16 @@ export interface NamingProgress {
   completed: boolean
   structureVersion: number
   lastEvaluatedStructureVersion: number
+}
+
+export function namingProgressOf(state: DynamicNamingState): NamingProgress {
+  return {
+    lastEvaluatedMessageCount: state.lastEvaluatedMessageCount,
+    consecutiveKeeps: state.consecutiveKeeps,
+    completed: state.completedAt !== null,
+    structureVersion: state.structureVersion,
+    lastEvaluatedStructureVersion: state.lastEvaluatedStructureVersion,
+  }
 }
 
 export type NamingEligibility =

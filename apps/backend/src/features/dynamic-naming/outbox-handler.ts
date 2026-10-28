@@ -9,6 +9,8 @@ import { E2eStreamsRepository } from "../e2e-streams"
 import { StreamRepository } from "../streams"
 import { MessageRepository } from "../messaging"
 import { DYNAMIC_NAMING_QUIET_MS } from "./config"
+import { countDocBlocks, isNameableDocStream } from "./doc-target"
+import { getNamingEligibility, namingProgressOf } from "./policy"
 import { DynamicNamingStateRepository } from "./state-repository"
 import type { DynamicNamingService } from "./service"
 import type { DynamicNamingJobScheduler, DynamicNamingTargetKind } from "./types"
@@ -76,6 +78,10 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
       } else if (event.eventType === "message:created") {
         const payload = parseMessagePayload(event.payload)
         if (payload) ordinary.set(`${payload.workspaceId}:stream:${payload.streamId}`, event)
+      } else if (isOutboxEventType(event, "doc:updated")) {
+        if (event.payload.actorType === AuthorTypes.USER) {
+          ordinary.set(`${event.payload.workspaceId}:doc:${event.payload.streamId}`, event)
+        }
       }
     }
     for (const event of requested.values()) await this.processEvent(event)
@@ -198,6 +204,21 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
       ])
       return
     }
+    if (isOutboxEventType(event, "doc:updated")) {
+      const payload = event.payload
+      if (payload.actorType !== AuthorTypes.USER || !payload.actorId) return
+      if (!(await this.isNameableDoc(payload.workspaceId, payload.streamId))) return
+      await this.scheduler.schedule(
+        {
+          workspaceId: payload.workspaceId,
+          targetKind: "doc",
+          targetId: payload.streamId,
+          initiatingUserId: payload.actorId,
+        },
+        new Date(event.createdAt.getTime() + DYNAMIC_NAMING_QUIET_MS)
+      )
+      return
+    }
     if (event.eventType !== "message:created") return
     const payload = parseMessagePayload(event.payload)
     if (!payload || payload.event.actorType !== AuthorTypes.USER || !payload.event.actorId) return
@@ -236,6 +257,18 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
     if (explicitUserId) return explicitUserId
     const message = await MessageRepository.findById(this.db, workspaceId, messageId)
     return message?.authorType === AuthorTypes.USER ? message.authorId : null
+  }
+
+  /**
+   * A doc flushes every few seconds while someone types and its block count rarely
+   * moves, so the checkpoint test runs here, before a job can lock the host chain.
+   */
+  private async isNameableDoc(workspaceId: string, streamId: string): Promise<boolean> {
+    const doc = await StreamRepository.findById(this.db, workspaceId, streamId)
+    if (!isNameableDocStream(doc)) return false
+    const state = await DynamicNamingStateRepository.find(this.db, workspaceId, "doc", streamId)
+    if (!state) return true
+    return getNamingEligibility(namingProgressOf(state), await countDocBlocks(this.db, workspaceId, streamId)).eligible
   }
 
   private async isEligibleConversation(workspaceId: string, conversationId: string): Promise<boolean> {

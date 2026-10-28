@@ -8,7 +8,7 @@ import {
   DYNAMIC_NAMING_DECISION_TIMEOUT_MS,
   DYNAMIC_NAMING_QUIET_MS,
 } from "./config"
-import { getNamingEligibility } from "./policy"
+import { getNamingEligibility, namingProgressOf } from "./policy"
 import { DynamicNamingStateRepository, type DynamicNamingState } from "./state-repository"
 import { DynamicNamingDecisionSchema } from "./types"
 import type {
@@ -30,16 +30,6 @@ export type DynamicNamingEvaluationResult =
   | { status: "protected" | "ineligible" | "stale" | "missing" }
   | { status: "requeued"; processAfter: Date }
   | { status: "evaluated"; action: "defer" | "keep" | "rename"; revision: number | null }
-
-function progressOf(state: DynamicNamingState) {
-  return {
-    lastEvaluatedMessageCount: state.lastEvaluatedMessageCount,
-    consecutiveKeeps: state.consecutiveKeeps,
-    completed: state.completedAt !== null,
-    structureVersion: state.structureVersion,
-    lastEvaluatedStructureVersion: state.lastEvaluatedStructureVersion,
-  }
-}
 
 export class DynamicNamingService {
   constructor(
@@ -112,7 +102,7 @@ export class DynamicNamingService {
         initialLastEvaluatedMessageCount:
           target.title !== null && target.titleSource === TitleSources.GENERATED ? 1 : 0,
       })
-      const eligibility = getNamingEligibility(progressOf(state), target.messageCount)
+      const eligibility = getNamingEligibility(namingProgressOf(state), target.messageCount)
       if (!eligibility.eligible) return { status: "ineligible" as const }
       if (state.claimToken && state.claimExpiresAt && state.claimExpiresAt > this.now()) {
         return { status: "requeue" as const, processAfter: state.claimExpiresAt }
@@ -311,7 +301,7 @@ export class DynamicNamingService {
     state: DynamicNamingState,
     target: DynamicNamingTargetSnapshot
   ): Promise<void> {
-    if (!getNamingEligibility(progressOf(state), target.messageCount).eligible) return
+    if (!getNamingEligibility(namingProgressOf(state), target.messageCount).eligible) return
     await this.scheduler.schedule(ref, this.quietDeadline(target) ?? this.now())
   }
 

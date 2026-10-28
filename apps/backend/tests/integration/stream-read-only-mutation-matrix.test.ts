@@ -186,6 +186,41 @@ describe("synchronous stream read-only mutation matrix", () => {
     })
   })
 
+  test("should rename a doc for a host member and refuse a nonparticipant when updating its settings", async () => {
+    const host = await seed({ visibility: "public" })
+    const service = new StreamService(pool)
+    const doc = await service.create({ workspaceId: workspace, type: "doc", parentStreamId: host, createdBy: member })
+
+    const renamed = await service.updateStream(
+      doc.id,
+      { displayName: "Launch plan", actorId: member },
+      { workspaceId: workspace, principal: { kind: "user", userId: member } }
+    )
+    await expect(
+      service.updateStream(
+        doc.id,
+        { displayName: "Hijacked" },
+        { workspaceId: workspace, principal: { kind: "user", userId: outsider } }
+      )
+    ).rejects.toMatchObject(rejection("not_a_member"))
+    await expect(
+      service.updateStream(
+        doc.id,
+        { description: "Plans", actorId: member },
+        { workspaceId: workspace, principal: { kind: "user", userId: member } }
+      )
+    ).rejects.toMatchObject({ status: 400, code: "DOC_HAS_NO_DESCRIPTION" })
+
+    const outbox = await pool.query(
+      "SELECT payload->'stream'->>'displayName' AS display_name FROM outbox WHERE event_type = 'stream:updated' AND payload->>'streamId' = $1",
+      [doc.id]
+    )
+    expect({ renamed, outbox: outbox.rows }).toMatchObject({
+      renamed: { id: doc.id, displayName: "Launch plan", displayNameSource: "explicit" },
+      outbox: [{ display_name: "Launch plan" }],
+    })
+  })
+
   test("public nonparticipants cannot create threads", async () => {
     const root = await seed({ visibility: "public" })
     const anchor = await StreamEventRepository.insert(pool, {

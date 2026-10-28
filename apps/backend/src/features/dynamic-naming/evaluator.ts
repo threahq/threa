@@ -16,6 +16,7 @@ Rules:
 - Name the subject directly; never add framing such as "Discussion about" or describe the language or tone.
 - Use the dominant language and wording of the participants. Preserve names, products, and technical terms exactly.
 - Use attachments and linked-page context when they establish the subject.
+- When targetKind is "doc", the context is a document body, not a conversation: title it as the document's heading would read.
 - Avoid recent sibling titles when a more specific accurate title is available.
 - A forced evaluation must return keep or rename, never defer.
 - Always return the title field. rename requires a non-empty title of at most 100 characters; keep and defer set title to an empty string.`
@@ -36,6 +37,7 @@ export class DynamicNamingEvaluator implements DynamicNamingDecisionProvider {
         {
           role: "user",
           content: `${JSON.stringify({
+            targetKind: input.targetKind,
             checkpoint: input.checkpoint,
             forced: input.forced,
             currentTitle: input.currentTitle,
@@ -69,8 +71,13 @@ export class DynamicNamingEvaluator implements DynamicNamingDecisionProvider {
   }
 }
 
+const STUB_DOC_TITLE = "Generated doc title"
+
 export class StubDynamicNamingEvaluator implements DynamicNamingDecisionProvider {
   async decide(input: DynamicNamingEvaluationInput): Promise<DynamicNamingDecision> {
+    if (input.targetKind === "doc") {
+      return input.currentTitle === STUB_DOC_TITLE ? { action: "keep" } : { action: "rename", title: STUB_DOC_TITLE }
+    }
     if (input.currentTitle) return { action: "keep" }
     if (!input.forced) return { action: "defer" }
     return { action: "rename", title: "Untitled conversation" }
