@@ -40,7 +40,13 @@ import { useElementWidth } from "@/hooks/use-element-width"
 import { foldHeaderControls } from "@/lib/pane-header-fold"
 import { tabRowReserve } from "@/lib/panel-tab-fit"
 import { useStreamOrDraft, isDmDraftId, useActiveBotPresence } from "@/hooks"
-import { useWorkspaceDmPeers, useWorkspaceMetadata } from "@/stores/workspace-store"
+import {
+  useWorkspaceDmPeers,
+  useWorkspaceMetadata,
+  useWorkspaceStream,
+  type CachedStream,
+} from "@/stores/workspace-store"
+import { useCurrentWorkspaceUserId } from "@/hooks/use-current-workspace-user-id"
 import { createConversationsPanelId, useCoordinatedLoading, useCurrentPane, usePanel, useSidebar } from "@/contexts"
 import { StreamLoadingIndicator } from "@/components/loading"
 import { useUserProfile } from "@/components/user-profile"
@@ -96,6 +102,8 @@ interface StreamPaneProps {
   offersContext?: boolean
   className?: string
 }
+
+const pickCreatedBy = (row: CachedStream) => ({ id: row.id, displayName: row.displayName, createdBy: row.createdBy })
 
 /** One stream's header and timeline, the stream named by `streamId`. */
 export function StreamPane({
@@ -190,6 +198,17 @@ export function StreamPane({
     stream && !isDraft && streamTypeCapabilities(stream.type).hostsDocs ? stream.id : null
   )
   const createDoc = useCreateDoc(workspaceId, isDraft ? undefined : stream)
+  const currentUserId = useCurrentWorkspaceUserId(workspaceId)
+  const docRootCreatedBy = useWorkspaceStream(
+    workspaceId,
+    isDoc ? (stream?.rootStreamId ?? undefined) : undefined,
+    pickCreatedBy
+  )?.createdBy
+  // The backend lets a stream's creator or its root's creator archive it.
+  const canArchiveDoc =
+    isDoc &&
+    !!currentUserId &&
+    ((stream && "createdBy" in stream && stream.createdBy === currentUserId) || docRootCreatedBy === currentUserId)
   // Only the stream page sets a list beside its stream; under an aside it would land out of sight.
   const offersList = (isChannel || isDm) && hasTabs && offersContext
   const dmPeerUserId = isDm ? dmPeers.find((p) => p.streamId === streamId)?.userId : null
@@ -259,11 +278,19 @@ export function StreamPane({
   }
 
   const handleArchive = async () => {
-    await archive()
+    try {
+      await archive()
+    } catch {
+      toast.error("Failed to archive")
+    }
   }
 
   const handleUnarchive = async () => {
-    await unarchive?.()
+    try {
+      await unarchive?.()
+    } catch {
+      toast.error("Failed to unarchive")
+    }
   }
 
   const handleSelectMessages = () => {
@@ -326,10 +353,10 @@ export function StreamPane({
       onSelect: () => openOutcomes({ streamIds: [streamId] }),
     })
   }
-  if (isScratchpad) {
+  if (isScratchpad || canArchiveDoc) {
     // Hide the rename affordance while locked rather than let it fall back to
     // plaintext. Archive/unarchive stay available regardless of lock state.
-    if (canRenameScratchpad) {
+    if (isScratchpad && canRenameScratchpad) {
       streamMenuActions.push({
         id: "rename",
         label: "Rename",
@@ -534,9 +561,9 @@ export function StreamPane({
     )
   }
 
-  // Persisted streams only. Archived non-scratchpads offer no stream actions,
-  // so their sheet holds just the view rows.
-  const offersStreamActions = !(isArchived && !isScratchpad)
+  // Persisted streams only. Archived streams offer no stream actions, so their sheet holds just the view rows, save
+  // the ones their menu unarchives.
+  const offersStreamActions = !(isArchived && !isScratchpad && !canArchiveDoc)
   const canOpenSheet = !!stream && !isDraft && (offersStreamActions || sheetViewActions.length > 0)
   // Beside the page's stream the list rides in the menu, so the header keeps its room for tabs.
   const listInMenu = offersList && !ownsConversationOverlay
@@ -669,7 +696,7 @@ export function StreamPane({
         disabled={renamePending}
       />
     )
-  } else if (isThread && stream) {
+  } else if ((isThread || isDoc) && stream) {
     headerTitle = <ThreadHeader workspaceId={workspaceId} stream={stream} />
   } else if (isMobile && canOpenSheet) {
     // Mobile: the name is the hero — it takes the full remaining width and IS

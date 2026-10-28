@@ -215,10 +215,44 @@ test.describe("Doc pane", () => {
       await expect(readerEditor).toContainText("Visible to the whole workspace", { timeout: 15000 })
       await expect(readerEditor).toHaveAttribute("contenteditable", "false")
       await expect(pane(reader.page, docId).getByRole("button", { name: "Bold" })).toHaveCount(0)
+      await pane(reader.page, docId).getByRole("button", { name: "Stream actions" }).first().click()
+      await expect(reader.page.getByRole("menuitem", { name: "Copy link" })).toBeVisible()
+      await expect(reader.page.getByRole("menuitem", { name: "Archive" })).toHaveCount(0)
     } finally {
       await ownerContext.close()
       await reader.context.close()
     }
+  })
+
+  test("should show the doc's channel in its header, and archive and unarchive it from its menu", async ({ page }) => {
+    const { testId } = await loginAndCreateWorkspace(page, "doc-archive")
+    const workspaceId = workspaceIdFromUrl(page)
+    const channelId = await createChannelViaApi(page, workspaceId, `archive-docs-${testId}`, "private")
+    const docId = await createDocViaApi(page, workspaceId, channelId)
+
+    await openChannel(page, workspaceId, channelId)
+    await anchorRow(page, docId).click()
+    const docPane = pane(page, docId)
+    const editor = docEditor(page, docId)
+    await expect(editor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+    await expect(docPane.locator("header").locator(`a[href*="/s/${channelId}"]`).first()).toContainText(
+      `archive-docs-${testId}`
+    )
+
+    const archived = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith(`/${docId}/archive`))
+    await docPane.getByRole("button", { name: "Stream actions" }).first().click()
+    await page.getByRole("menuitem", { name: "Archive" }).click()
+    await expectApiOk(await archived, "Archive doc")
+    await expect(docPane.getByText("Archived", { exact: true })).toBeVisible()
+    await expect(editor).toHaveAttribute("contenteditable", "false")
+
+    const unarchived = page.waitForResponse((response) =>
+      new URL(response.url()).pathname.endsWith(`/${docId}/unarchive`)
+    )
+    await docPane.getByRole("button", { name: "Stream actions" }).first().click()
+    await page.getByRole("menuitem", { name: "Unarchive" }).click()
+    await expectApiOk(await unarchived, "Unarchive doc")
+    await expect(editor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
   })
 
   test("should merge edits made offline when the member reconnects, and ship edits from a pane closed offline", async ({
