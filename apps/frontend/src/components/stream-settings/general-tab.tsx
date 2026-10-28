@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/responsive-alert-dialog"
 import { ChannelSlugInput } from "./channel-slug-input"
 import { DescriptionSection } from "./description-section"
-import { getStreamName } from "@/lib/streams"
+import { canChangeArchiveState, getStreamName } from "@/lib/streams"
 import { useUpdateStream, useArchiveStream, useUnarchiveStream, useSetNotificationLevel } from "@/hooks"
 import { useRenameStream } from "@/hooks/use-rename-stream"
 import { useCanManageChannels } from "@/lib/use-can-manage-channels"
@@ -513,7 +513,7 @@ function ArchiveSection({
   const [confirmOpen, setConfirmOpen] = useState(false)
   const archiveMutation = useArchiveStream(workspaceId)
   const unarchiveMutation = useUnarchiveStream(workspaceId)
-  const canArchive = stream.createdBy === currentUserId || rootStream?.createdBy === currentUserId
+  const canArchive = canChangeArchiveState(currentUserId, stream, rootStream)
   const isArchived = stream.archivedAt !== null
   const { ancestorArchived, sealedById } = useEffectiveArchived({ workspaceId, stream, fallbackArchived: null })
   const sealingAncestorName = useStreamName(workspaceId, sealedById ?? "", "generic")

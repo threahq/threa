@@ -39,8 +39,14 @@ import { cn } from "@/lib/utils"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { foldHeaderControls } from "@/lib/pane-header-fold"
 import { tabRowReserve } from "@/lib/panel-tab-fit"
-import { useStreamOrDraft, isDmDraftId, useActiveBotPresence } from "@/hooks"
-import { useWorkspaceDmPeers, useWorkspaceMetadata } from "@/stores/workspace-store"
+import { useStreamOrDraft, isDmDraftId, useActiveBotPresence, useEffectiveArchived } from "@/hooks"
+import {
+  useWorkspaceDmPeers,
+  useWorkspaceMetadata,
+  useWorkspaceStream,
+  type CachedStream,
+} from "@/stores/workspace-store"
+import { useCurrentWorkspaceUserId } from "@/hooks/use-current-workspace-user-id"
 import { createConversationsPanelId, useCoordinatedLoading, useCurrentPane, usePanel, useSidebar } from "@/contexts"
 import { StreamLoadingIndicator } from "@/components/loading"
 import { useUserProfile } from "@/components/user-profile"
@@ -78,7 +84,7 @@ import {
   StreamTypes,
   streamTypeCapabilities,
 } from "@threahq/types"
-import { getStreamTypeLabel, streamFallbackLabel, streamLabel } from "@/lib/streams"
+import { getStreamTypeLabel, offersArchiveToggle, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamSheet } from "@/components/stream-sheet"
 import { PaneHeader } from "./pane-header"
 import { PaneLanded } from "./pane-host"
@@ -96,6 +102,13 @@ interface StreamPaneProps {
   offersContext?: boolean
   className?: string
 }
+
+const pickArchiveOwner = (row: CachedStream) => ({
+  id: row.id,
+  displayName: row.displayName,
+  createdBy: row.createdBy,
+  archivedAt: row.archivedAt,
+})
 
 /** One stream's header and timeline, the stream named by `streamId`. */
 export function StreamPane({
@@ -190,6 +203,19 @@ export function StreamPane({
     stream && !isDraft && streamTypeCapabilities(stream.type).hostsDocs ? stream.id : null
   )
   const createDoc = useCreateDoc(workspaceId, isDraft ? undefined : stream)
+  const currentUserId = useCurrentWorkspaceUserId(workspaceId)
+  const docRow = useWorkspaceStream(workspaceId, isDoc ? streamId : undefined, pickArchiveOwner)
+  const docRoot = useWorkspaceStream(
+    workspaceId,
+    isDoc ? (stream?.rootStreamId ?? undefined) : undefined,
+    pickArchiveOwner
+  )
+  const { ancestorArchived } = useEffectiveArchived({
+    workspaceId,
+    stream: isDoc ? stream : undefined,
+    fallbackArchived: null,
+  })
+  const canChangeDocArchive = isDoc && offersArchiveToggle(currentUserId, docRow, docRoot, ancestorArchived)
   // Only the stream page sets a list beside its stream; under an aside it would land out of sight.
   const offersList = (isChannel || isDm) && hasTabs && offersContext
   const dmPeerUserId = isDm ? dmPeers.find((p) => p.streamId === streamId)?.userId : null
@@ -259,11 +285,19 @@ export function StreamPane({
   }
 
   const handleArchive = async () => {
-    await archive()
+    try {
+      await archive()
+    } catch {
+      toast.error("Failed to archive")
+    }
   }
 
   const handleUnarchive = async () => {
-    await unarchive?.()
+    try {
+      await unarchive?.()
+    } catch {
+      toast.error("Failed to unarchive")
+    }
   }
 
   const handleSelectMessages = () => {
@@ -326,18 +360,19 @@ export function StreamPane({
       onSelect: () => openOutcomes({ streamIds: [streamId] }),
     })
   }
-  if (isScratchpad) {
-    // Hide the rename affordance while locked rather than let it fall back to
-    // plaintext. Archive/unarchive stay available regardless of lock state.
-    if (canRenameScratchpad) {
-      streamMenuActions.push({
-        id: "rename",
-        label: "Rename",
-        icon: Pencil,
-        onSelect: handleStartRename,
-        separatorBefore: streamMenuActions.length > 0,
-      })
-    }
+  // Hide the rename affordance while locked rather than let it fall back to plaintext.
+  if (isScratchpad && canRenameScratchpad) {
+    streamMenuActions.push({
+      id: "rename",
+      label: "Rename",
+      icon: Pencil,
+      onSelect: handleStartRename,
+      separatorBefore: streamMenuActions.length > 0,
+    })
+  }
+  // Archive/unarchive stay available regardless of lock state.
+  const offersArchiveAction = isScratchpad || canChangeDocArchive
+  if (offersArchiveAction) {
     streamMenuActions.push(
       isArchived
         ? {
@@ -534,9 +569,9 @@ export function StreamPane({
     )
   }
 
-  // Persisted streams only. Archived non-scratchpads offer no stream actions,
-  // so their sheet holds just the view rows.
-  const offersStreamActions = !(isArchived && !isScratchpad)
+  // Persisted streams only. Archived streams offer no stream actions, so their sheet holds just the view rows, save
+  // the ones their menu unarchives.
+  const offersStreamActions = !isArchived || offersArchiveAction
   const canOpenSheet = !!stream && !isDraft && (offersStreamActions || sheetViewActions.length > 0)
   // Beside the page's stream the list rides in the menu, so the header keeps its room for tabs.
   const listInMenu = offersList && !ownsConversationOverlay
@@ -669,8 +704,16 @@ export function StreamPane({
         disabled={renamePending}
       />
     )
-  } else if (isThread && stream) {
-    headerTitle = <ThreadHeader workspaceId={workspaceId} stream={stream} />
+  } else if ((isThread || isDoc) && stream) {
+    headerTitle = (
+      <>
+        <ThreadHeader workspaceId={workspaceId} stream={stream} />
+        {/* On mobile the sheet holds the Archived badge, so the header keeps the glyph the stream title shows. */}
+        {isMobile && canOpenSheet && isArchived && (
+          <ArchiveX className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label="Archived" role="img" />
+        )}
+      </>
+    )
   } else if (isMobile && canOpenSheet) {
     // Mobile: the name is the hero — it takes the full remaining width and IS
     // the sheet trigger. Live state survives as tiny glyphs beside it (lock =

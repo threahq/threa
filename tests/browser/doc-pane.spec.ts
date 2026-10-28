@@ -32,6 +32,16 @@ const docText = (editor: Locator): Promise<string> =>
   })
 
 /** Moves the caret to the end of the doc through ProseMirror's own keymap. */
+async function changeArchiveFromMenu(page: Page, docId: string, action: "Archive" | "Unarchive"): Promise<void> {
+  const path = `/${docId}/${action.toLowerCase()}`
+  const response = page.waitForResponse((r) => new URL(r.url()).pathname.endsWith(path))
+
+  await pane(page, docId).getByRole("button", { name: "Stream actions" }).first().click()
+  await page.getByRole("menuitem", { name: action }).click()
+
+  await expectApiOk(await response, `${action} doc`)
+}
+
 async function moveCaretToEnd(page: Page, editor: Locator): Promise<void> {
   await editor.click()
   await page.keyboard.press("ControlOrMeta+End")
@@ -215,9 +225,90 @@ test.describe("Doc pane", () => {
       await expect(readerEditor).toContainText("Visible to the whole workspace", { timeout: 15000 })
       await expect(readerEditor).toHaveAttribute("contenteditable", "false")
       await expect(pane(reader.page, docId).getByRole("button", { name: "Bold" })).toHaveCount(0)
+      await pane(reader.page, docId).getByRole("button", { name: "Stream actions" }).first().click()
+      await expect(reader.page.getByRole("menuitem", { name: "Copy link" })).toBeVisible()
+      await expect(reader.page.getByRole("menuitem", { name: "Archive" })).toHaveCount(0)
     } finally {
       await ownerContext.close()
       await reader.context.close()
+    }
+  })
+
+  test("should show the doc's channel in its header, and archive and unarchive it from its menu", async ({ page }) => {
+    const { testId } = await loginAndCreateWorkspace(page, "doc-archive")
+    const workspaceId = workspaceIdFromUrl(page)
+    const channelId = await createChannelViaApi(page, workspaceId, `archive-docs-${testId}`, "private")
+    const docId = await createDocViaApi(page, workspaceId, channelId)
+
+    await openChannel(page, workspaceId, channelId)
+    await anchorRow(page, docId).click()
+    const docPane = pane(page, docId)
+    const editor = docEditor(page, docId)
+    await expect(editor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+    await expect(docPane.locator("header").locator(`a[href*="/s/${channelId}"]`).first()).toContainText(
+      `archive-docs-${testId}`
+    )
+
+    await changeArchiveFromMenu(page, docId, "Archive")
+    await expect(docPane.getByText("Archived", { exact: true })).toBeVisible()
+    await expect(editor).toHaveAttribute("contenteditable", "false")
+
+    await changeArchiveFromMenu(page, docId, "Unarchive")
+    await expect(editor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+  })
+
+  test("should let a doc's author and the channel's creator archive it, and offer no archive once the channel is archived", async ({
+    browser,
+  }) => {
+    const ownerContext = await browser.newContext()
+    const owner = await ownerContext.newPage()
+    const { testId } = await loginAndCreateWorkspace(owner, "doc-host-owner")
+    const workspaceId = workspaceIdFromUrl(owner)
+    const channelId = await createChannelViaApi(owner, workspaceId, `host-docs-${testId}`, "private")
+    const member = await joinWorkspace(browser, workspaceId, "doc-author", testId)
+
+    try {
+      await expectApiOk(
+        await owner.request.post(`/api/workspaces/${workspaceId}/streams/${channelId}/members`, {
+          data: { memberId: await userIdByEmail(owner, workspaceId, member.email) },
+        }),
+        "Add member to channel"
+      )
+      const docId = await createDocViaApi(member.page, workspaceId, channelId)
+
+      await openChannel(member.page, workspaceId, channelId)
+      await anchorRow(member.page, docId).click()
+      const memberPane = pane(member.page, docId)
+      await expect(docEditor(member.page, docId)).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+      await changeArchiveFromMenu(member.page, docId, "Archive")
+      await expect(memberPane.getByText("Archived", { exact: true })).toBeVisible()
+      await changeArchiveFromMenu(member.page, docId, "Unarchive")
+      await expect(docEditor(member.page, docId)).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+
+      await openChannel(owner, workspaceId, channelId)
+      await anchorRow(owner, docId).click()
+      const ownerPane = pane(owner, docId)
+      await expect(docEditor(owner, docId)).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+      await changeArchiveFromMenu(owner, docId, "Archive")
+      await expect(ownerPane.getByText("Archived", { exact: true })).toBeVisible()
+      await expectApiOk(
+        await owner.request.post(`/api/workspaces/${workspaceId}/streams/${docId}/unarchive`),
+        "Unarchive doc"
+      )
+      await expectApiOk(
+        await owner.request.post(`/api/workspaces/${workspaceId}/streams/${channelId}/archive`),
+        "Archive channel"
+      )
+
+      await openChannel(member.page, workspaceId, channelId)
+      await anchorRow(member.page, docId).click()
+      await expect(docEditor(member.page, docId)).toHaveAttribute("contenteditable", "false", { timeout: 15000 })
+      await memberPane.getByRole("button", { name: "Stream actions" }).first().click()
+      await expect(member.page.getByRole("menuitem", { name: "Copy link" })).toBeVisible()
+      await expect(member.page.getByRole("menuitem", { name: "Archive" })).toHaveCount(0)
+    } finally {
+      await ownerContext.close()
+      await member.context.close()
     }
   })
 
