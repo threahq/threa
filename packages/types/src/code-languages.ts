@@ -49,6 +49,8 @@ export type CodeLanguageId = (typeof CODE_LANGUAGES)[number]["id"]
 
 export const CODE_LANGUAGE_IDS = CODE_LANGUAGES.map((language) => language.id) as [CodeLanguageId, ...CodeLanguageId[]]
 
+export const CODE_LANGUAGES_BY_LABEL = [...CODE_LANGUAGES].sort((a, b) => a.label.localeCompare(b.label))
+
 export const CODE_LANGUAGE_PRELOAD_IDS = CODE_LANGUAGES.filter((language) => "preload" in language).map(
   (language) => language.id
 )

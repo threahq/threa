@@ -27,7 +27,7 @@ import {
   DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
   CODE_BLOCK_WRAP_OPTIONS,
   DEFAULT_CODE_BLOCK_WRAP,
-  CODE_LANGUAGES,
+  CODE_LANGUAGES_BY_LABEL,
   formatCodeLanguage,
   type CodeBlockWrap,
   MESSAGE_COLLAPSE_AT_HEIGHT_MIN,
@@ -67,8 +67,6 @@ const CODE_BLOCK_WRAP_LABELS: Record<CodeBlockWrap, string> = {
   scroll: "Scroll horizontally",
   wrap: "Wrap lines",
 }
-
-const CODE_LANGUAGE_OPTIONS = [...CODE_LANGUAGES].sort((a, b) => a.label.localeCompare(b.label))
 
 const THEME_LABELS: Record<Theme, string> = {
   light: "Light",
@@ -209,7 +207,7 @@ export function AppearanceSettings() {
   const codeBlockWrapOverrideRows = Object.entries(codeBlockWrapOverrides).sort(([leftId], [rightId]) =>
     formatCodeLanguage(leftId).localeCompare(formatCodeLanguage(rightId))
   )
-  const codeBlockWrapUnusedLanguages = CODE_LANGUAGE_OPTIONS.filter(
+  const codeBlockWrapUnusedLanguages = CODE_LANGUAGES_BY_LABEL.filter(
     (language) => !(language.id in codeBlockWrapOverrides)
   )
   const messageCollapseEnabled = preferences?.messageCollapseEnabled ?? false

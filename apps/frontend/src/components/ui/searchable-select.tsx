@@ -1,4 +1,4 @@
-import { type ReactNode, useState, useEffect } from "react"
+import { type ReactElement, type ReactNode, useState, useEffect } from "react"
 import { ChevronsUpDown } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -40,6 +40,10 @@ interface SearchableSelectProps<T> {
   prefixContent?: (helpers: { close: () => void }) => ReactNode
   /** Test id forwarded to the trigger. */
   "data-testid"?: string
+  /** Replaces the default full-width trigger button; must forward ref and props (it is rendered `asChild`). */
+  trigger?: ReactElement
+  /** Where focus goes when the list closes; call `event.preventDefault()` to move it off the trigger. */
+  onCloseAutoFocus?: (event: Event) => void
 }
 
 export function SearchableSelect<T>({
@@ -62,6 +66,8 @@ export function SearchableSelect<T>({
   align = "start",
   prefixContent,
   "data-testid": testId,
+  trigger,
+  onCloseAutoFocus,
 }: SearchableSelectProps<T>) {
   // Drawer-vs-popover presentation keys off the active input mode, so a mouse on
   // a touchscreen laptop gets the popover and only a finger gets the drawer.
@@ -96,7 +102,7 @@ export function SearchableSelect<T>({
     </span>
   )
 
-  const triggerButton = (
+  const triggerButton = trigger ?? (
     <Button
       type="button"
       variant="outline"
@@ -140,7 +146,10 @@ export function SearchableSelect<T>({
     return (
       <Drawer open={open} onOpenChange={setOpen}>
         <DrawerTrigger asChild>{triggerButton}</DrawerTrigger>
-        <DrawerContent className={cn("pb-[env(safe-area-inset-bottom)]", contentClassName)}>
+        <DrawerContent
+          className={cn("pb-[env(safe-area-inset-bottom)]", contentClassName)}
+          onCloseAutoFocus={onCloseAutoFocus}
+        >
           <DrawerTitle className="sr-only">{searchPlaceholder}</DrawerTitle>
           <Command>
             <CommandInput placeholder={searchPlaceholder} value={search} onValueChange={setSearch} />
@@ -158,6 +167,7 @@ export function SearchableSelect<T>({
         className={cn("w-[--radix-popover-trigger-width] max-w-[calc(100vw-1rem)] p-0", contentClassName)}
         align={align}
         onWheel={(e) => e.stopPropagation()}
+        onCloseAutoFocus={onCloseAutoFocus}
       >
         <Command>
           <CommandInput placeholder={searchPlaceholder} value={search} onValueChange={setSearch} />
