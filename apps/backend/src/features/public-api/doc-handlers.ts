@@ -118,7 +118,6 @@ export function createDocPublicApiHandlers({
 }) {
   return {
     async listDocs(req: Request, res: Response) {
-      apiKeyPrincipal(req)
       const { streamId, query, includeArchived, after, limit } = validateRequest(listDocsQuerySchema, req.query)
       const workspaceId = req.workspaceId!
       const showArchived = includeArchived === "true"

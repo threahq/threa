@@ -670,5 +670,82 @@ describe("public API docs", () => {
         shown: [{ id: archivedDoc, archived: true }],
       })
     })
+
+    test("should hide an archived doc on a live host unless includeArchived is set, marking it archived", async () => {
+      const archivedDoc = await doc(alphaId, `${tag} Retired spec`)
+      await streamService.archiveStream(archivedDoc, ws, owner)
+
+      const hidden = await listDocs(userReq(owner, { query: { query: `${tag} retired` } }))
+      const shown = await listDocs(userReq(owner, { query: { query: `${tag} retired`, includeArchived: "true" } }))
+
+      expect({ hidden: ids(hidden), shown: shown.data.map((d) => ({ id: d.id, archived: d.archived })) }).toEqual({
+        hidden: [],
+        shown: [{ id: archivedDoc, archived: true }],
+      })
+    })
+
+    test("should list a bot's granted hosts' docs and not an ungranted host's when no streamId is given", async () => {
+      const grantedDoc = await doc(privateChannelId, `${tag} Bot visible`)
+
+      const listed = ids(await listDocs(botReq(grantedBotId, { query: { query: tag } })))
+
+      expect({ granted: listed.includes(grantedDoc), ungranted: listed.includes(secretDoc) }).toEqual({
+        granted: true,
+        ungranted: false,
+      })
+    })
+
+    test("should list a doc shared into a readable stream and still 404 its unreadable host as a filter", async () => {
+      const sharedDoc = await doc(secretId, `${tag} Shared brief`)
+      await new EventService(pool).createMessage({
+        workspaceId: ws,
+        streamId: alphaId,
+        authorId: owner,
+        authorType: "user",
+        contentJson: {
+          type: "doc",
+          content: [
+            { type: "paragraph", content: [{ type: "docEmbed", attrs: { docId: sharedDoc, title: "Brief" } }] },
+          ],
+        },
+        contentMarkdown: "shared",
+        confirmedPrivacyWarning: true,
+      })
+
+      const listed = await listDocs(userReq(outsider, { query: { query: `${tag} shared` } }))
+
+      expect(listed.data.map((d) => ({ id: d.id, hostStreamId: d.hostStreamId }))).toEqual([
+        { id: sharedDoc, hostStreamId: secretId },
+      ])
+      await expect(listDocs(userReq(outsider, { query: { streamId: secretId } }))).rejects.toMatchObject({
+        status: 404,
+      })
+    })
+
+    test("should walk docs created in the same millisecond exactly once each", async () => {
+      const host = await channel(Visibilities.PUBLIC, [owner])
+      const created = [await doc(host, `${tag} ms a`), await doc(host, `${tag} ms b`), await doc(host, `${tag} ms c`)]
+      await pool.query(
+        `UPDATE streams SET created_at = CASE id
+           WHEN $2 THEN '2026-01-01 00:00:00.123456+00'::timestamptz
+           WHEN $3 THEN '2026-01-01 00:00:00.123300+00'::timestamptz
+           ELSE '2026-01-01 00:00:00.123100+00'::timestamptz END
+         WHERE workspace_id = $1 AND id = ANY($4)`,
+        [ws, created[0], created[1], created]
+      )
+
+      const seen: string[] = []
+      let after: string | undefined
+      for (let pages = 0; pages < 10; pages++) {
+        const page = await listDocs(
+          userReq(owner, { query: { streamId: host, limit: "1", ...(after ? { after } : {}) } })
+        )
+        seen.push(...ids(page))
+        if (!page.hasMore) break
+        after = page.cursor!
+      }
+
+      expect(seen).toEqual([...created].sort().reverse())
+    })
   })
 })

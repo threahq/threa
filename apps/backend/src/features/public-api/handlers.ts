@@ -888,6 +888,8 @@ export interface PublicApiDeps {
    * REST handlers behave identically without every caller threading it.
    */
   botRuntimeWriteOps?: BotRuntimeWriteOps
+  /** Production shares one resolver with the doc handlers (INV-13); omitted, it is built from `pool`. */
+  getAccessibleStreamIds?: (req: Request) => Promise<string[]>
   streamService: StreamService
   eventService: EventService
   /**
@@ -935,6 +937,7 @@ export function createPublicApiHandlers({
   botChannelService,
   botRuntimeService,
   botRuntimeWriteOps: providedWriteOps,
+  getAccessibleStreamIds: providedGetAccessibleStreamIds,
   streamService,
   eventService,
   conversationService: providedConversationService,
@@ -946,7 +949,8 @@ export function createPublicApiHandlers({
   const botRuntimeWriteOps =
     providedWriteOps ?? createBotRuntimeWriteOps({ pool, io, botRuntimeService, botChannelService })
   const conversationService = providedConversationService ?? new ConversationService(pool)
-  const getAccessibleStreamIds = createAccessibleStreamIdsResolver({ pool, botChannelService })
+  const getAccessibleStreamIds =
+    providedGetAccessibleStreamIds ?? createAccessibleStreamIdsResolver({ pool, botChannelService })
 
   function memoAudienceForRequest(req: Request, accessibleStreamIds: string[]): MemoAudience {
     return req.userApiKey

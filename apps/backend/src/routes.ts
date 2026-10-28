@@ -2392,7 +2392,9 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     workspaceAuthzService,
     pool,
   })
+  const getAccessibleStreamIds = createAccessibleStreamIdsResolver({ pool, botChannelService })
   const publicApi = createPublicApiHandlers({
+    getAccessibleStreamIds,
     searchService,
     featureFlagService,
     memoExplorerService,
@@ -2414,7 +2416,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     docAgentService,
     pool,
     eventService,
-    getAccessibleStreamIds: createAccessibleStreamIdsResolver({ pool, botChannelService }),
+    getAccessibleStreamIds,
   })
   const delegationPublicApi = createDelegationPublicApiHandlers({
     pool,
