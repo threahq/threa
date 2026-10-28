@@ -7538,9 +7538,9 @@
     "/api/v1/workspaces/{workspaceId}/docs": {
       "get": {
         "operationId": "listDocs",
-        "summary": "List a stream's docs",
+        "summary": "List docs",
         "tags": ["Docs"],
-        "description": "The active docs hosted by `streamId`, newest first. 404 when the stream is missing or the key cannot read it.",
+        "description": "Docs the key can read across the workspace, newest first, with cursor pagination. `streamId` narrows to one host stream (404 when it is missing or the key cannot read it); `query` matches titles case-insensitively. Archived docs, and docs under archived hosts, appear only with `includeArchived=true`.",
         "security": [{ "apiKey": ["docs:read"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -7554,8 +7554,27 @@
           {
             "name": "streamId",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": { "type": "string", "minLength": 1, "maxLength": 64 }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "minLength": 1, "maxLength": 200 }
+          },
+          {
+            "name": "includeArchived",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "enum": ["true", "false"] }
+          },
+          { "name": "after", "in": "query", "required": false, "schema": { "type": "string" } },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "default": 50, "type": "integer", "minimum": 1, "maximum": 200 }
           }
         ],
         "responses": {
@@ -7576,14 +7595,17 @@
                           "hostStreamId": { "type": "string" },
                           "title": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
                           "seq": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
-                          "createdAt": { "type": "string", "format": "date-time" }
+                          "createdAt": { "type": "string", "format": "date-time" },
+                          "archived": { "type": "boolean" }
                         },
-                        "required": ["id", "hostStreamId", "title", "seq", "createdAt"],
+                        "required": ["id", "hostStreamId", "title", "seq", "createdAt", "archived"],
                         "additionalProperties": false
                       }
-                    }
+                    },
+                    "hasMore": { "type": "boolean" },
+                    "cursor": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
                   },
-                  "required": ["data"],
+                  "required": ["data", "hasMore", "cursor"],
                   "additionalProperties": false
                 }
               }

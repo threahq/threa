@@ -1,5 +1,6 @@
 import type { Pool } from "pg"
 import { logger } from "@threahq/backend-common"
+import { escapeLikePattern } from "../../lib/sql-filters"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
 import { LinkPreviewRepository, type LinkPreview } from "./repository"
 import type { LinkPreviewService } from "./service"
@@ -156,15 +157,6 @@ export async function refreshLinkPreview(
     }
   }
   return { refreshed: true }
-}
-
-/**
- * Backslash-escape LIKE wildcards so a value used as a prefix matches literally.
- * Repo names legitimately contain `_` (a single-char wildcard); without this a
- * base like `.../my_repo/pull/1` would over-match.
- */
-export function escapeLikePattern(value: string): string {
-  return value.replace(/[\\%_]/g, (char) => `\\${char}`)
 }
 
 /**

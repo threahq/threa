@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
 import type { Pool } from "pg"
-import { escapeLikePattern, findGithubPreviewMatches, githubTargetIdentity, refreshLinkPreview } from "./refresh"
+import { escapeLikePattern } from "../../lib/sql-filters"
+import { findGithubPreviewMatches, githubTargetIdentity, refreshLinkPreview } from "./refresh"
 import { LinkPreviewRepository, type LinkPreview } from "./repository"
 import * as githubPreview from "./github-preview"
 import { parseGitHubUrl } from "./url-utils"

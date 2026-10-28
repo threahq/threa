@@ -74,6 +74,7 @@ import { createGithubWebhookHandlers } from "./features/github-webhooks"
 import { createGiphyHandlers } from "./features/giphy"
 import { createWorkspaceIntegrationHandlers } from "./features/workspace-integrations"
 import {
+  createAccessibleStreamIdsResolver,
   createPublicApiHandlers,
   createBotHandlers,
   createDelegationPublicApiHandlers,
@@ -2391,7 +2392,9 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     workspaceAuthzService,
     pool,
   })
+  const getAccessibleStreamIds = createAccessibleStreamIdsResolver({ pool, botChannelService })
   const publicApi = createPublicApiHandlers({
+    getAccessibleStreamIds,
     searchService,
     featureFlagService,
     memoExplorerService,
@@ -2409,7 +2412,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     io: deps.io,
   })
   const decisionPublicApi = createDecisionPublicApi({ decisionService })
-  const docPublicApi = createDocPublicApiHandlers({ docAgentService, pool, eventService })
+  const docPublicApi = createDocPublicApiHandlers({
+    docAgentService,
+    pool,
+    eventService,
+    getAccessibleStreamIds,
+  })
   const delegationPublicApi = createDelegationPublicApiHandlers({
     pool,
     delegationService,

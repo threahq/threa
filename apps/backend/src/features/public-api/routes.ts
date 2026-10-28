@@ -1927,15 +1927,15 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     method: "get",
     path: "/api/v1/workspaces/{workspaceId}/docs",
     operationId: "listDocs",
-    summary: "List a stream's docs",
+    summary: "List docs",
     description:
-      "The active docs hosted by `streamId`, newest first. 404 when the stream is missing or the key cannot read it.",
+      "Docs the key can read across the workspace, newest first, with cursor pagination. `streamId` narrows to one host stream (404 when it is missing or the key cannot read it); `query` matches titles case-insensitively. Archived docs, and docs under archived hosts, appear only with `includeArchived=true`.",
     tags: ["Docs"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.DOCS_READ],
     parameters: [workspaceIdParam],
     requestSchema: listDocsQuerySchema,
     requestIn: "query",
-    responseSchema: dataArrayEnvelope(docSchema),
+    responseSchema: paginated(docSchema.extend({ archived: z.boolean() })),
     canReturn404: true,
   },
   {

@@ -12,13 +12,26 @@ export function registerDocTools(server: McpServer, client: ThreaApiClient, reso
   server.registerTool(
     "list_docs",
     {
-      title: "List docs on a stream",
+      title: "List docs",
       description:
-        "List the active docs hosted by a stream, newest first: id, title, seq (edit counter), createdAt. " +
-        "`stream_id` accepts a stream_ id or `#channel-slug`.",
-      inputSchema: { stream_id: z.string() },
+        "List docs newest first: id, hostStreamId, title, seq (edit counter), createdAt, archived. Without " +
+        "`stream_id` it lists every doc this key can read across the workspace; `stream_id` (a stream_ id or " +
+        "`#channel-slug`) narrows to the docs one stream hosts. `query` matches doc titles case-insensitively. " +
+        "Page by passing the previous response's `cursor` back as `after`; `hasMore` tells you when to stop. " +
+        "limit ≤ 200 (default 50). Archived docs and docs under an archived host are omitted unless " +
+        "`include_archived` is true.",
+      inputSchema: {
+        stream_id: z.string().optional(),
+        query: z.string().optional(),
+        include_archived: z.boolean().optional(),
+        after: z.string().optional(),
+        limit: z.number().int().min(1).max(200).optional(),
+      },
     },
-    async ({ stream_id }) => runTool(() => listDocs(client, resolver, { streamRef: stream_id }))
+    async ({ stream_id, query, include_archived, after, limit }) =>
+      runTool(() =>
+        listDocs(client, resolver, { streamRef: stream_id, query, includeArchived: include_archived, after, limit })
+      )
   )
 
   server.registerTool(

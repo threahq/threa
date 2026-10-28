@@ -1,7 +1,9 @@
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { DocErrorCodes, StreamErrorCodes } from "@threahq/types"
+import { DocErrorCodes, StreamErrorCodes, StreamTypes } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
+import { DocRepository } from "../docs"
+import { StreamRepository } from "../streams"
 import { validateRequest } from "../../lib/validation"
 import type {
   DocAgentAccessRefusal,
@@ -12,6 +14,7 @@ import type {
   DocAgentWriteResult,
 } from "../docs"
 import { principalActorId } from "../streams"
+import { decodeCursor, encodeCursor } from "./cursor"
 import type { EventService } from "../messaging"
 import { createMessageAsKey, plaintextMessageBody } from "./handlers"
 import { apiKeyPrincipal } from "./principal"
@@ -106,17 +109,60 @@ export function createDocPublicApiHandlers({
   docAgentService,
   pool,
   eventService,
+  getAccessibleStreamIds,
 }: {
   docAgentService: DocAgentService
   pool: Pool
   eventService: EventService
+  getAccessibleStreamIds: (req: Request) => Promise<string[]>
 }) {
   return {
     async listDocs(req: Request, res: Response) {
-      const { streamId } = validateRequest(listDocsQuerySchema, req.query)
-      const listed = await docAgentService.listDocs(keyContext(req, streamId))
-      if (listed.status === "not_found") throw notFound()
-      res.json({ data: listed.docs.map(serializeDoc) })
+      const { streamId, query, includeArchived, after, limit } = validateRequest(listDocsQuerySchema, req.query)
+      const workspaceId = req.workspaceId!
+      const showArchived = includeArchived === "true"
+      const accessibleIds = await getAccessibleStreamIds(req)
+      if (streamId && !accessibleIds.includes(streamId)) throw notFound()
+
+      const cursor = after ? decodeCursor(after) : undefined
+      const docs = await StreamRepository.listByIds(pool, workspaceId, accessibleIds, {
+        types: [StreamTypes.DOC],
+        parentStreamId: streamId,
+        query,
+        includeArchived: showArchived,
+        cursorCreatedAt: cursor?.sortKey,
+        cursorId: cursor?.id,
+        limit: limit + 1,
+      })
+      const hasMore = docs.length > limit
+      const page = hasMore ? docs.slice(0, limit) : docs
+      const pageIds = page.map((doc) => doc.id)
+      const [heads, archivedIds] = await Promise.all([
+        DocRepository.listHeads(pool, workspaceId, pageIds),
+        showArchived ? StreamRepository.filterEffectivelyArchivedIds(pool, workspaceId, pageIds) : Promise.resolve([]),
+      ])
+      const seqs = new Map(heads.map((head) => [head.streamId, head.updateSeq]))
+      const archived = new Set(archivedIds)
+      const last = page[page.length - 1]
+      res.json({
+        data: page.map((doc) => {
+          const seq = seqs.get(doc.id)
+          if (seq === undefined) throw new Error(`Doc ${doc.id} has no head row`)
+          if (!doc.parentStreamId) throw new Error(`Doc ${doc.id} has no host stream`)
+          return {
+            ...serializeDoc({
+              docId: doc.id,
+              hostStreamId: doc.parentStreamId,
+              title: doc.displayName ?? null,
+              seq,
+              createdAt: doc.createdAt,
+            }),
+            archived: archived.has(doc.id),
+          }
+        }),
+        hasMore,
+        cursor: hasMore && last ? encodeCursor(last.createdAt, last.id) : null,
+      })
     },
 
     async getDoc(req: Request, res: Response) {

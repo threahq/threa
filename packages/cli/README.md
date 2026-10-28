@@ -79,7 +79,8 @@ threa attachments list --stream #eng                # browse recent attachments,
 threa attachments get att_123 --url                 # --url returns a short-lived signed download URL
 threa attachments download att_123 ./               # download bytes; dir dest names it after the file
 threa attachments upload ./report.csv               # upload a file; reference it as [report.csv](attachment:<id>)
-threa docs list #eng                                # docs a stream hosts: id, title, seq
+threa docs list --query roadmap                     # docs across the workspace by title: id, title, seq, host
+threa docs list #eng                                # only the docs one stream hosts
 threa docs read stream_abc                            # whole doc as markdown with <!-- blk_… --> markers
 threa skill print                                   # print the threa-cli agent skill to stdout
 

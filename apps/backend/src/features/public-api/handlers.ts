@@ -888,6 +888,8 @@ export interface PublicApiDeps {
    * REST handlers behave identically without every caller threading it.
    */
   botRuntimeWriteOps?: BotRuntimeWriteOps
+  /** Production shares one resolver with the doc handlers (INV-13); omitted, it is built from `pool`. */
+  getAccessibleStreamIds?: (req: Request) => Promise<string[]>
   streamService: StreamService
   eventService: EventService
   /**
@@ -902,28 +904,15 @@ export interface PublicApiDeps {
   io: Server
 }
 
-export function createPublicApiHandlers({
-  searchService,
-  featureFlagService,
-  memoExplorerService,
-  preparedRecall,
-  attachmentService,
-  botChannelService,
-  botRuntimeService,
-  botRuntimeWriteOps: providedWriteOps,
-  streamService,
-  eventService,
-  conversationService: providedConversationService,
-  labelService,
-  labelAssignmentService,
+/** The streams the current key can read. Archiving blocks writes, so archive state never narrows this. */
+export function createAccessibleStreamIdsResolver({
   pool,
-  io,
-}: PublicApiDeps) {
-  const botRuntimeWriteOps =
-    providedWriteOps ?? createBotRuntimeWriteOps({ pool, io, botRuntimeService, botChannelService })
-  const conversationService = providedConversationService ?? new ConversationService(pool)
-  /** The streams the current key can read. Archiving blocks writes, so archive state never narrows this. */
-  async function getAccessibleStreamIds(req: Request): Promise<string[]> {
+  botChannelService,
+}: {
+  pool: Pool
+  botChannelService: BotChannelService
+}) {
+  return async function getAccessibleStreamIds(req: Request): Promise<string[]> {
     if (req.sandboxSession) {
       return sandboxReadableStreamIds(pool, req.sandboxSession)
     }
@@ -937,6 +926,31 @@ export function createPublicApiHandlers({
     }
     throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
   }
+}
+
+export function createPublicApiHandlers({
+  searchService,
+  featureFlagService,
+  memoExplorerService,
+  preparedRecall,
+  attachmentService,
+  botChannelService,
+  botRuntimeService,
+  botRuntimeWriteOps: providedWriteOps,
+  getAccessibleStreamIds: providedGetAccessibleStreamIds,
+  streamService,
+  eventService,
+  conversationService: providedConversationService,
+  labelService,
+  labelAssignmentService,
+  pool,
+  io,
+}: PublicApiDeps) {
+  const botRuntimeWriteOps =
+    providedWriteOps ?? createBotRuntimeWriteOps({ pool, io, botRuntimeService, botChannelService })
+  const conversationService = providedConversationService ?? new ConversationService(pool)
+  const getAccessibleStreamIds =
+    providedGetAccessibleStreamIds ?? createAccessibleStreamIdsResolver({ pool, botChannelService })
 
   function memoAudienceForRequest(req: Request, accessibleStreamIds: string[]): MemoAudience {
     return req.userApiKey
@@ -3224,8 +3238,7 @@ export function createPublicApiHandlers({
         return res.json({ data: [], hasMore: false, cursor: null })
       }
 
-      // Cursor pagination disabled when query is provided (relevance ordering)
-      const cursor = !query && afterCursor ? decodeCursor(afterCursor) : undefined
+      const cursor = afterCursor ? decodeCursor(afterCursor) : undefined
 
       const streams = await StreamRepository.listByIds(pool, req.workspaceId!, accessibleStreamIds, {
         types: type,
@@ -3254,7 +3267,7 @@ export function createPublicApiHandlers({
           return serializeStream(s, archivedIds.has(s.id), parentStream ? { parentStream } : undefined)
         }),
         hasMore,
-        cursor: !query && lastStream ? encodeCursor(lastStream.createdAt, lastStream.id) : null,
+        cursor: lastStream ? encodeCursor(lastStream.createdAt, lastStream.id) : null,
       })
     },
 

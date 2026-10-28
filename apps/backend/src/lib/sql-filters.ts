@@ -70,3 +70,8 @@ export function archiveStatusSql(
   if (!includeArchived) return `NOT ${sealed}`
   return options?.archivedIncludesSealed ? sealed : `${alias}.archived_at IS NOT NULL`
 }
+
+/** Backslash-escape LIKE wildcards so the value matches literally; pair with `ESCAPE '\\'`. */
+export function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (char) => `\\${char}`)
+}

@@ -16,6 +16,7 @@ import { StreamTypes, TitleSources } from "@threahq/types"
 import {
   archiveStatusSql,
   effectivelyArchivedSql,
+  escapeLikePattern,
   MAX_STREAM_CHAIN_DEPTH,
   parseArchiveStatusFilter,
   type ArchiveStatus,
@@ -708,6 +709,7 @@ export const StreamRepository = {
     ids: string[],
     filters?: {
       types?: StreamType[]
+      parentStreamId?: string
       query?: string
       limit?: number
       cursorCreatedAt?: Date
@@ -727,14 +729,19 @@ export const StreamRepository = {
       conditions.push(`s.type = ANY($${paramIndex++})`)
       values.push(filters.types)
     }
+    if (filters?.parentStreamId) {
+      conditions.push(`s.parent_stream_id = $${paramIndex++}`)
+      values.push(filters.parentStreamId)
+    }
     if (filters?.query) {
-      const pattern = `%${filters.query}%`
-      conditions.push(`(s.display_name ILIKE $${paramIndex} OR s.slug ILIKE $${paramIndex})`)
+      const pattern = `%${escapeLikePattern(filters.query)}%`
+      conditions.push(`(s.display_name ILIKE $${paramIndex} ESCAPE '\\' OR s.slug ILIKE $${paramIndex} ESCAPE '\\')`)
       paramIndex++
       values.push(pattern)
     }
     if (filters?.cursorCreatedAt && filters?.cursorId) {
-      conditions.push(`(s.created_at, s.id) < ($${paramIndex}, $${paramIndex + 1})`)
+      // Truncated to ms: the cursor's created_at round-trips through a JS Date, the column is µs.
+      conditions.push(`(date_trunc('milliseconds', s.created_at), s.id) < ($${paramIndex}, $${paramIndex + 1})`)
       values.push(filters.cursorCreatedAt, filters.cursorId)
       paramIndex += 2
     }
@@ -746,7 +753,7 @@ export const StreamRepository = {
     const result = await db.query<StreamRow>(
       `SELECT ${SELECT_FIELDS_WITH_E2E} FROM ${FROM_STREAMS_WITH_E2E}
         WHERE s.workspace_id = $1 AND ${conditions.join(" AND ")}
-        ORDER BY s.created_at DESC, s.id DESC
+        ORDER BY date_trunc('milliseconds', s.created_at) DESC, s.id DESC
         LIMIT $${paramIndex}`,
       values
     )

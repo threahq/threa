@@ -332,4 +332,45 @@ describe("public API reads on archived streams", () => {
       ).rejects.toMatchObject({ status: 403, code: "STREAM_READ_ONLY" })
     })
   }
+  test("should page listStreams with a cursor when a query matches channels created in the same millisecond", async () => {
+    const tag = `pg${Math.random().toString(36).slice(2, 8)}`
+    const ids = [streamId(), streamId()]
+    for (const [i, id] of ids.entries()) {
+      await StreamRepository.insert(pool, {
+        id,
+        workspaceId: ws,
+        type: StreamTypes.CHANNEL,
+        visibility: Visibilities.PRIVATE,
+        slug: `${tag}-${i}`,
+        createdBy: keyOwnerId,
+      })
+      await StreamMemberRepository.insert(pool, ws, id, keyOwnerId)
+    }
+    await pool.query(
+      `UPDATE streams SET created_at = CASE id WHEN $2 THEN '2026-01-01 00:00:00.123456+00'::timestamptz
+         ELSE '2026-01-01 00:00:00.123100+00'::timestamptz END
+       WHERE workspace_id = $1 AND id = ANY($3)`,
+      [ws, ids[0], ids]
+    )
+
+    const walk = async () => {
+      const seen: string[] = []
+      let after: string | undefined
+      for (let pages = 0; pages < 5; pages++) {
+        const out = recorder()
+        await handlers.listStreams(userReq({ query: { query: tag, limit: "1", ...(after ? { after } : {}) } }), out.res)
+        const page = out.last<Array<{ id: string }>>() as unknown as {
+          data: Array<{ id: string }>
+          hasMore: boolean
+          cursor: string | null
+        }
+        seen.push(...page.data.map((s) => s.id))
+        if (!page.hasMore) return { seen, pages: pages + 1 }
+        after = page.cursor!
+      }
+      throw new Error("cursor never ended")
+    }
+
+    expect(await walk()).toEqual({ seen: [...ids].sort().reverse(), pages: 2 })
+  })
 })

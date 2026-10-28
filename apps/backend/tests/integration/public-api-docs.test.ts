@@ -12,7 +12,11 @@ import { AuthorTypes, DocErrorCodes, StreamErrorCodes, StreamTypes, Visibilities
 import { BotChannelAccessRepository, BotChannelService } from "../../src/features/api-keys"
 import { DocAgentService, DocRepository, DocService } from "../../src/features/docs"
 import { EventService, MessageRepository } from "../../src/features/messaging"
-import { BotRepository, createDocPublicApiHandlers } from "../../src/features/public-api"
+import {
+  BotRepository,
+  createAccessibleStreamIdsResolver,
+  createDocPublicApiHandlers,
+} from "../../src/features/public-api"
 import {
   StreamEventRepository,
   StreamMemberRepository,
@@ -70,10 +74,12 @@ async function readDoc(req: Request) {
   return rec.last<Doc>()
 }
 
+type ListedDoc = Omit<Doc, "markdown"> & { archived: boolean }
+
 async function listDocs(req: Request) {
   const rec = recorder()
   await handlers.listDocs(req, rec.res)
-  return rec.last<Omit<Doc, "markdown">[]>()
+  return rec.last<ListedDoc[]>() as { status: number; data: ListedDoc[]; hasMore: boolean; cursor: string | null }
 }
 
 async function editDoc(req: Request) {
@@ -109,6 +115,7 @@ beforeAll(async () => {
     }),
     pool,
     eventService: new EventService(pool),
+    getAccessibleStreamIds: createAccessibleStreamIdsResolver({ pool, botChannelService }),
   })
   ws = workspaceId()
   privateChannelId = streamId()
@@ -220,8 +227,11 @@ describe("public API docs", () => {
             title: "Rotation tracker",
             seq: 1,
             createdAt: created.data.createdAt,
+            archived: false,
           },
         ],
+        hasMore: false,
+        cursor: null,
       },
       read: { status: 200, markdown: "## Keys\n\n- AWS key is live" },
       edited: {
@@ -586,6 +596,183 @@ describe("public API docs", () => {
       await expect(
         comment(ownerReq({ params: { docId, blockId: "stream_abc" }, body: { content: "Hi" } }))
       ).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" })
+    })
+  })
+
+  describe("listing across the workspace", () => {
+    let tag: string
+    let alphaId: string
+    let betaId: string
+    let secretId: string
+    let alphaDocs: string[]
+    let betaDoc: string
+    let secretDoc: string
+
+    const channel = async (visibility: string, members: string[]) => {
+      const id = streamId()
+      await StreamRepository.insert(pool, {
+        id,
+        workspaceId: ws,
+        type: StreamTypes.CHANNEL,
+        visibility,
+        slug: `list-${id}`,
+        createdBy: owner,
+      })
+      for (const member of members) await StreamMemberRepository.insert(pool, ws, id, member)
+      return id
+    }
+    const doc = async (host: string, title: string) =>
+      (await createDoc(userReq(owner, { body: { streamId: host, title } }))).data.id
+    const ids = (listed: { data: ListedDoc[] }) => listed.data.map((d) => d.id)
+
+    beforeAll(async () => {
+      tag = `t${Math.random().toString(36).slice(2, 8)}`
+      alphaId = await channel(Visibilities.PUBLIC, [owner, outsider])
+      betaId = await channel(Visibilities.PUBLIC, [owner])
+      secretId = await channel(Visibilities.PRIVATE, [owner])
+      alphaDocs = [await doc(alphaId, `${tag} Roadmap`), await doc(alphaId, `${tag} 100% done`)]
+      betaDoc = await doc(betaId, `${tag} ROADMAP notes`)
+      secretDoc = await doc(secretId, `${tag} Secret roadmap`)
+    })
+
+    test("should list readable docs from every host and hide a private channel the key is not in", async () => {
+      const listed = await listDocs(userReq(outsider, { query: { query: tag } }))
+
+      expect({ ids: ids(listed), hosts: listed.data.map((d) => d.hostStreamId), hasMore: listed.hasMore }).toEqual({
+        ids: [betaDoc, alphaDocs[1], alphaDocs[0]],
+        hosts: [betaId, alphaId, alphaId],
+        hasMore: false,
+      })
+      expect(ids(await listDocs(userReq(owner, { query: { query: tag } })))).toContain(secretDoc)
+    })
+
+    test("should match titles case-insensitively and treat % literally", async () => {
+      const roadmap = await listDocs(userReq(outsider, { query: { query: `${tag} roadmap` } }))
+      const percent = await listDocs(userReq(owner, { query: { query: `${tag} 100%` } }))
+      const wildcard = await listDocs(userReq(owner, { query: { query: `${tag} %` } }))
+
+      expect({ roadmap: ids(roadmap), percent: ids(percent), wildcard: ids(wildcard) }).toEqual({
+        roadmap: [betaDoc, alphaDocs[0]],
+        percent: [alphaDocs[1]],
+        wildcard: [],
+      })
+    })
+
+    test("should narrow to one host with streamId", async () => {
+      expect(ids(await listDocs(userReq(owner, { query: { streamId: alphaId } })))).toEqual([
+        alphaDocs[1],
+        alphaDocs[0],
+      ])
+    })
+
+    test("should walk every page via the cursor with and without a query", async () => {
+      const walk = async (query: Record<string, string>) => {
+        const seen: string[] = []
+        let after: string | undefined
+        for (let pages = 0; pages < 10; pages++) {
+          const page = await listDocs(userReq(owner, { query: { ...query, limit: "1", ...(after ? { after } : {}) } }))
+          seen.push(...ids(page))
+          if (!page.hasMore) return { seen, lastCursor: page.cursor }
+          after = page.cursor!
+        }
+        throw new Error("cursor never ended")
+      }
+
+      expect({ queried: await walk({ query: tag }), hosted: await walk({ streamId: alphaId }) }).toEqual({
+        queried: { seen: [secretDoc, betaDoc, alphaDocs[1], alphaDocs[0]], lastCursor: null },
+        hosted: { seen: [alphaDocs[1], alphaDocs[0]], lastCursor: null },
+      })
+    })
+
+    test("should hide an archived host's docs unless includeArchived is set, marking them archived", async () => {
+      const archivedHost = await channel(Visibilities.PUBLIC, [owner])
+      const archivedDoc = await doc(archivedHost, `${tag} Archived plan`)
+      await streamService.archiveStream(archivedHost, ws, owner)
+
+      const hidden = await listDocs(userReq(owner, { query: { query: `${tag} archived` } }))
+      const shown = await listDocs(userReq(owner, { query: { query: `${tag} archived`, includeArchived: "true" } }))
+
+      expect({ hidden: ids(hidden), shown: shown.data.map((d) => ({ id: d.id, archived: d.archived })) }).toEqual({
+        hidden: [],
+        shown: [{ id: archivedDoc, archived: true }],
+      })
+    })
+
+    test("should hide an archived doc on a live host unless includeArchived is set, marking it archived", async () => {
+      const archivedDoc = await doc(alphaId, `${tag} Retired spec`)
+      await streamService.archiveStream(archivedDoc, ws, owner)
+
+      const hidden = await listDocs(userReq(owner, { query: { query: `${tag} retired` } }))
+      const shown = await listDocs(userReq(owner, { query: { query: `${tag} retired`, includeArchived: "true" } }))
+
+      expect({ hidden: ids(hidden), shown: shown.data.map((d) => ({ id: d.id, archived: d.archived })) }).toEqual({
+        hidden: [],
+        shown: [{ id: archivedDoc, archived: true }],
+      })
+    })
+
+    test("should list a bot's granted hosts' docs and not an ungranted host's when no streamId is given", async () => {
+      const grantedDoc = await doc(privateChannelId, `${tag} Bot visible`)
+
+      const listed = ids(await listDocs(botReq(grantedBotId, { query: { query: tag } })))
+
+      expect({ granted: listed.includes(grantedDoc), ungranted: listed.includes(secretDoc) }).toEqual({
+        granted: true,
+        ungranted: false,
+      })
+    })
+
+    test("should list a doc shared into a readable stream and still 404 its unreadable host as a filter", async () => {
+      const sharedDoc = await doc(secretId, `${tag} Shared brief`)
+      await new EventService(pool).createMessage({
+        workspaceId: ws,
+        streamId: alphaId,
+        authorId: owner,
+        authorType: "user",
+        contentJson: {
+          type: "doc",
+          content: [
+            { type: "paragraph", content: [{ type: "docEmbed", attrs: { docId: sharedDoc, title: "Brief" } }] },
+          ],
+        },
+        contentMarkdown: "shared",
+        confirmedPrivacyWarning: true,
+      })
+
+      const listed = await listDocs(userReq(outsider, { query: { query: `${tag} shared` } }))
+
+      expect(listed.data.map((d) => ({ id: d.id, hostStreamId: d.hostStreamId }))).toEqual([
+        { id: sharedDoc, hostStreamId: secretId },
+      ])
+      await expect(listDocs(userReq(outsider, { query: { streamId: secretId } }))).rejects.toMatchObject({
+        status: 404,
+      })
+    })
+
+    test("should walk docs created in the same millisecond exactly once each", async () => {
+      const host = await channel(Visibilities.PUBLIC, [owner])
+      const created = [await doc(host, `${tag} ms a`), await doc(host, `${tag} ms b`), await doc(host, `${tag} ms c`)]
+      await pool.query(
+        `UPDATE streams SET created_at = CASE id
+           WHEN $2 THEN '2026-01-01 00:00:00.123456+00'::timestamptz
+           WHEN $3 THEN '2026-01-01 00:00:00.123300+00'::timestamptz
+           ELSE '2026-01-01 00:00:00.123100+00'::timestamptz END
+         WHERE workspace_id = $1 AND id = ANY($4)`,
+        [ws, created[0], created[1], created]
+      )
+
+      const seen: string[] = []
+      let after: string | undefined
+      for (let pages = 0; pages < 10; pages++) {
+        const page = await listDocs(
+          userReq(owner, { query: { streamId: host, limit: "1", ...(after ? { after } : {}) } })
+        )
+        seen.push(...ids(page))
+        if (!page.hasMore) break
+        after = page.cursor!
+      }
+
+      expect(seen).toEqual([...created].sort().reverse())
     })
   })
 })

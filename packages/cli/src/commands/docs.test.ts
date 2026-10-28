@@ -40,7 +40,30 @@ test("docs list resolves a #channel-slug and lists that stream's docs", async ()
     path: DOCS,
     streamId: "stream_gen",
   })
-  expect(result.stdout).toContain("stream_d1  (untitled)  3")
+  expect(result.stdout).toContain("stream_d1  (untitled)  3  stream_gen")
+})
+
+test("docs list without a stream searches the workspace and hints the next cursor", async () => {
+  fetchSpy.mockResolvedValue(
+    jsonResponse(200, {
+      data: [{ id: "stream_d2", hostStreamId: "stream_ops", title: "Runbook", seq: 1, archived: true }],
+      hasMore: true,
+      cursor: "cur_2",
+    })
+  )
+
+  const result = await run(
+    ["docs", "list", "--query", "run", "--archived", "--after", "cur_1", "--limit", "1", "-o", "text"],
+    { config: TEST_CONFIG }
+  )
+
+  expect(result.exitCode).toBe(0)
+  const call = lastCall()
+  expect({ path: call.url.pathname, query: Object.fromEntries(call.url.searchParams) }).toEqual({
+    path: DOCS,
+    query: { query: "run", includeArchived: "true", after: "cur_1", limit: "1" },
+  })
+  expect(result.stdout).toContain("stream_d2  Runbook  1  stream_ops  [archived]\n… more (--after cur_2)")
 })
 
 test("docs read prints the markdown with block markers as is", async () => {
