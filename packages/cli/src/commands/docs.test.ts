@@ -338,3 +338,19 @@ test("docs check without --reason is a usage error before any HTTP", async () =>
   expect(result.exitCode).toBe(2)
   expect(fetchSpy).not.toHaveBeenCalled()
 })
+
+test("docs check skips a task-shaped line inside a fenced code block", async () => {
+  const doc = fakeDoc([{ id: "blk_1", markdown: "- [ ] Ship it\n  ```md\n  - [ ] Ship it\n  ```" }])
+
+  const result = await check(["--item", "Ship it"])
+
+  expect(result.exitCode).toBe(0)
+  expect(doc.blocks[0]!.markdown).toBe("- [x] Ship it\n  ```md\n  - [ ] Ship it\n  ```")
+})
+
+test("docs check --nth rejects anything but a plain positive integer", async () => {
+  const results = await Promise.all(["0x2", "1e1", "0"].map((nth) => check(["--item", "x", "--nth", nth])))
+
+  expect(results.map((r) => r.exitCode)).toEqual([2, 2, 2])
+  expect(fetchSpy).not.toHaveBeenCalled()
+})

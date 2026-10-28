@@ -243,10 +243,10 @@ const checkVerb: VerbSpec = {
     const reason = stringFlag(values, "reason")
     if (!reason) throw new UsageError("docs check requires --reason (one line shown on the stream's timeline)")
     const rawNth = stringFlag(values, "nth")
-    const nth = rawNth === undefined ? undefined : Number(rawNth)
-    if (nth !== undefined && !(Number.isInteger(nth) && nth >= 1)) {
+    if (rawNth !== undefined && !/^[1-9]\d*$/.test(rawNth)) {
       throw new UsageError("docs check --nth must be a whole number >= 1")
     }
+    const nth = rawNth === undefined ? undefined : Number(rawNth)
     return checkDocTask(ctx.client, {
       docId,
       item,

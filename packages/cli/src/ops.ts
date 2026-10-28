@@ -527,6 +527,7 @@ export function editDoc(
 
 const DOC_MARKER = /^<!--\s*(blk_\w+)\s*-->[ \t]*\n?/gm
 const TASK_LINE = /^(\s*[-*+] \[)( |x|X)(\] )(.*)$/
+const FENCE_LINE = /^\s*(```|~~~)/
 
 /** Splits `docs read` markdown back into blocks; `renderWithMarkers` joins them with a blank line. */
 function docBlocks(markdown: string): { blockId: string; markdown: string }[] {
@@ -553,7 +554,10 @@ function findTasks(markdown: string, item: string, blockId?: string): TaskMatch[
   const matches: TaskMatch[] = []
   for (const block of docBlocks(markdown)) {
     if (blockId && block.blockId !== blockId) continue
+    let inFence = false
     block.markdown.split("\n").forEach((line, lineIndex) => {
+      if (FENCE_LINE.test(line)) inFence = !inFence
+      if (inFence) return
       const task = TASK_LINE.exec(line)
       if (!task || task[4]!.trimEnd() !== wanted) return
       matches.push({
