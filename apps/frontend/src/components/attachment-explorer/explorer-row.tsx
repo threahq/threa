@@ -7,6 +7,7 @@ import { useFormattedDate } from "@/hooks"
 import { formatFileSize } from "@/lib/file-size"
 import { cn } from "@/lib/utils"
 import { CATEGORY_META } from "./category"
+import { attachmentSource } from "./source-link"
 
 interface ExplorerRowProps {
   workspaceId: string
@@ -47,7 +48,9 @@ export function ExplorerRow({ workspaceId, item, isSelected, onSelect, onSelectA
   }, [workspaceId, item.id, category])
 
   const createdAt = new Date(item.createdAt)
-  const sourceUrl = item.streamId && item.messageId ? `/w/${workspaceId}/s/${item.streamId}?m=${item.messageId}` : null
+  const source = attachmentSource(workspaceId, item)
+  const sourceLabel =
+    source?.kind === "doc" ? `Open in ${item.streamName ?? "doc"}` : `Open in #${item.streamSlug ?? "stream"}`
 
   return (
     <button
@@ -95,13 +98,16 @@ export function ExplorerRow({ workspaceId, item, isSelected, onSelect, onSelectA
           <span className="flex-none">{formatFileSize(item.sizeBytes)}</span>
         </div>
       </div>
-      {sourceUrl && !onSelectAttachment ? (
+      {source && !onSelectAttachment ? (
         <Link
-          to={sourceUrl}
-          onClick={(e) => e.stopPropagation()}
+          to={source.to}
+          onClick={(e) => {
+            e.stopPropagation()
+            source.onFollow?.()
+          }}
           className="flex-none rounded p-1 text-muted-foreground reveal-actions hover:bg-background hover:text-foreground"
-          aria-label={`Open in #${item.streamSlug ?? "stream"}`}
-          title={`Open in #${item.streamSlug ?? "stream"}`}
+          aria-label={sourceLabel}
+          title={sourceLabel}
         >
           <ExternalLink className="h-3.5 w-3.5" />
         </Link>

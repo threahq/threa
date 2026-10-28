@@ -346,13 +346,13 @@ export function StreamPane({
       separatorBefore: true,
     })
   }
+  streamMenuActions.push({
+    id: "browse-files",
+    label: "Browse files…",
+    icon: Paperclip,
+    onSelect: () => openExplorer({ streamIds: [streamId] }),
+  })
   if (hasTimeline) {
-    streamMenuActions.push({
-      id: "browse-files",
-      label: "Browse files…",
-      icon: Paperclip,
-      onSelect: () => openExplorer({ streamIds: [streamId] }),
-    })
     streamMenuActions.push({
       id: "view-outcomes",
       label: "Agent agenda…",
