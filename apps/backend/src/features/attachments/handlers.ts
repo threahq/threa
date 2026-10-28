@@ -651,5 +651,6 @@ function serializeSearchRow(row: AttachmentSearchRow) {
     uploaderSlug: row.uploaderSlug,
     uploaderName: row.uploaderName,
     referenceCount: row.referenceCount,
+    docBlockId: row.docBlockId,
   }
 }

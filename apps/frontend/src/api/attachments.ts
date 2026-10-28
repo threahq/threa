@@ -20,6 +20,8 @@ export interface AttachmentSearchItem extends Attachment {
   uploaderSlug: string | null
   uploaderName: string | null
   referenceCount: number
+  /** The first block of the doc embedding a doc-bound file; null for a message's file. */
+  docBlockId: string | null
 }
 
 export interface AttachmentSearchRequest {

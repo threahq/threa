@@ -147,6 +147,9 @@ const SELECT_FIELDS = `
   created_at
 `
 
+/** An `attachmentReference` node with id `$id` anywhere inside a doc section's `content_json`. */
+const DOC_ATTACHMENT_NODE_PATH = '$.** ? (@.type == "attachmentReference" && @.attrs.id == $id)'
+
 /**
  * Attachment `a` came from the other side of a shared channel whose share has
  * ended: its uploader is a copy from another workspace, and the channel no
@@ -699,6 +702,10 @@ export const AttachmentRepository = {
    *   - mime-category filter resolved through `mimePrefixesForCategory`
    *   - keyset cursor on `(created_at DESC, id DESC)`
    *
+   * A file is listed once it belongs to a message, or to a doc whose current
+   * body still embeds it: binding a file to a doc is never undone, so the
+   * doc's projected sections, not the binding, say whether it is still there.
+   *
    * Returns `limit + 1` rows when more pages are available; the caller
    * trims the trailing row and uses it to mint the next cursor.
    */
@@ -764,9 +771,20 @@ export const AttachmentRepository = {
         s.type AS stream_type,
         u.slug AS uploader_slug,
         u.name AS uploader_name,
-        COALESCE(ref_count.count, 0)::int AS reference_count
+        COALESCE(ref_count.count, 0)::int AS reference_count,
+        doc_block.block_id AS doc_block_id
       FROM attachments a
       JOIN scoped_streams ss ON ss.id = a.stream_id
+      LEFT JOIN LATERAL (
+        SELECT ds.block_id
+        FROM doc_sections ds
+        WHERE a.message_id IS NULL
+          AND ds.workspace_id = ${workspaceId}
+          AND ds.doc_id = a.stream_id
+          AND jsonb_path_exists(ds.content_json, ${DOC_ATTACHMENT_NODE_PATH}::jsonpath, jsonb_build_object('id', a.id))
+        ORDER BY ds.position
+        LIMIT 1
+      ) doc_block ON TRUE
       LEFT JOIN attachment_extractions e ON e.attachment_id = a.id AND e.workspace_id = ${workspaceId}
       LEFT JOIN streams s ON s.id = a.stream_id AND s.workspace_id = ${workspaceId}
       LEFT JOIN users u ON u.id = a.uploaded_by AND u.workspace_id = ${workspaceId}
@@ -777,7 +795,7 @@ export const AttachmentRepository = {
         GROUP BY attachment_id
       ) ref_count ON ref_count.attachment_id = a.id
       WHERE a.workspace_id = ${workspaceId}
-        AND a.message_id IS NOT NULL
+        AND (a.message_id IS NOT NULL OR doc_block.block_id IS NOT NULL)
         AND a.safety_status = ${AttachmentSafetyStatuses.CLEAN}
         AND NOT ${fromEndedShareSql}
         AND (${!hasCategories} OR a.mime_type ILIKE ANY(${mimePatterns}))
@@ -846,6 +864,8 @@ export interface AttachmentSearchRow extends Attachment {
   uploaderSlug: string | null
   uploaderName: string | null
   referenceCount: number
+  /** The first block of the doc embedding a doc-bound file; null for a message's file. */
+  docBlockId: string | null
 }
 
 interface AttachmentSearchRowDb extends AttachmentRow {
@@ -857,6 +877,7 @@ interface AttachmentSearchRowDb extends AttachmentRow {
   uploader_slug: string | null
   uploader_name: string | null
   reference_count: number
+  doc_block_id: string | null
 }
 
 function mapRowToSearchRow(row: AttachmentSearchRowDb): AttachmentSearchRow {
@@ -874,5 +895,6 @@ function mapRowToSearchRow(row: AttachmentSearchRowDb): AttachmentSearchRow {
     uploaderSlug: row.uploader_slug,
     uploaderName: row.uploader_name,
     referenceCount: row.reference_count,
+    docBlockId: row.doc_block_id,
   }
 }

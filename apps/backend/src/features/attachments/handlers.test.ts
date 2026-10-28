@@ -586,6 +586,7 @@ function buildSearchRow(overrides: Partial<AttachmentSearchRow> = {}): Attachmen
     uploaderSlug: "mira",
     uploaderName: "Mira",
     referenceCount: 0,
+    docBlockId: null,
     ...overrides,
   }
 }

@@ -14,6 +14,7 @@ import { isHtmlAttachment, isMarkdownAttachment, isPdfAttachment } from "@/lib/a
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { formatFileSize } from "@/lib/file-size"
 import { CATEGORY_META } from "./category"
+import { attachmentSource } from "./source-link"
 
 interface ExplorerPreviewProps {
   workspaceId: string
@@ -167,8 +168,7 @@ export function ExplorerPreview({ workspaceId, item }: ExplorerPreviewProps) {
   const selected = item
   const meta = CATEGORY_META[category]
   const Icon = meta.icon
-  const sourceUrl =
-    selected.streamId && selected.messageId ? `/w/${workspaceId}/s/${selected.streamId}?m=${selected.messageId}` : null
+  const source = attachmentSource(workspaceId, selected)
   // Browsers handle iPhone .mov source poorly; prefer the transcoded mp4 when ready.
   const playbackUrl = category === "video" ? (processedUrl ?? rawUrl) : rawUrl
   const isMarkdown = isMarkdownAttachment(selected)
@@ -315,11 +315,11 @@ export function ExplorerPreview({ workspaceId, item }: ExplorerPreviewProps) {
           ) : null}
 
           <div className="flex flex-wrap gap-2 pt-1">
-            {sourceUrl ? (
+            {source ? (
               <Button size="sm" asChild>
-                <Link to={sourceUrl} className="gap-1">
+                <Link to={source.to} onClick={source.onFollow} className="gap-1">
                   <ExternalLink className="h-3.5 w-3.5" />
-                  Show message
+                  {source.kind === "doc" ? "Show in doc" : "Show message"}
                 </Link>
               </Button>
             ) : null}
