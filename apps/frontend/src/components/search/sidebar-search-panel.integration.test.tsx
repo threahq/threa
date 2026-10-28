@@ -1047,6 +1047,16 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(screen.getByText("in:@user")).toBeInTheDocument()
     })
 
+    it("offers message stream types but not docs when picking a stream type", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      renderPanel()
+      await openFilterMenu(user)
+
+      await user.click(screen.getByText("Stream type"))
+      expect(await screen.findByText("Thread")).toBeInTheDocument()
+      expect(screen.queryByText("Doc")).not.toBeInTheDocument()
+    })
+
     it("adds a from: filter without typing any syntax", async () => {
       const user = userEvent.setup({ pointerEventsCheck: 0 })
       renderPanel()

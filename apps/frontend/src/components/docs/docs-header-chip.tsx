@@ -2,11 +2,18 @@ import { memo, useCallback } from "react"
 import { Link } from "react-router-dom"
 import { StreamTypes } from "@threahq/types"
 import { Button } from "@/components/ui/button"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { usePanel } from "@/contexts"
 import { formatRelativeTime } from "@/lib/dates"
 import { STREAM_ICONS, streamLabel } from "@/lib/streams"
 import { useWorkspaceStreamsSelect, type CachedStream } from "@/stores/workspace-store"
+import { docListHref } from "./doc-list"
 
 const DocGlyph = STREAM_ICONS[StreamTypes.DOC]
 
@@ -34,6 +41,8 @@ export function useHostedDocs(workspaceId: string, hostId: string | null): Hoste
 }
 
 interface DocsHeaderChipProps {
+  workspaceId: string
+  hostId: string
   docs: HostedDoc[]
 }
 
@@ -57,8 +66,8 @@ function HostedDocItems({ docs, getPanelUrl }: HostedDocItemsProps) {
   ))
 }
 
-/** A count of the host's docs that opens a menu of them, each opening in a pane. */
-export const DocsHeaderChip = memo(function DocsHeaderChip({ docs }: DocsHeaderChipProps) {
+/** A count of the host's docs that opens a menu of them, each opening in a pane, and the docs page filtered to the host. */
+export const DocsHeaderChip = memo(function DocsHeaderChip({ workspaceId, hostId, docs }: DocsHeaderChipProps) {
   const { getPanelUrl } = usePanel()
   return (
     <DropdownMenu>
@@ -75,6 +84,10 @@ export const DocsHeaderChip = memo(function DocsHeaderChip({ docs }: DocsHeaderC
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
         <HostedDocItems docs={docs} getPanelUrl={getPanelUrl} />
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link to={docListHref(workspaceId, new URLSearchParams(), { host: hostId })}>All docs</Link>
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )

@@ -2505,6 +2505,26 @@ export interface DocBacklinksResponse {
   backlinks: DocBacklink[]
 }
 
+export interface DocEditor {
+  actorId: string
+  actorType: AuthorType
+  lastEditedAt: string
+}
+
+/** `editors` newest first; `lastEditedAt` is the newest editor's, null for a never-edited doc. */
+export interface DocListItem {
+  id: string
+  displayName: string | null
+  createdAt: string
+  lastEditedAt: string | null
+  editors: DocEditor[]
+}
+
+/** `GET /workspaces/:ws/docs`: every non-archived doc the viewer can read. */
+export interface DocListResponse {
+  docs: DocListItem[]
+}
+
 /** `GET /workspaces/:ws/docs/:docId/sections/:blockId`. */
 export interface DocSectionResponse {
   section: DocSection

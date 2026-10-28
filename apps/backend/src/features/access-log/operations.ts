@@ -111,6 +111,7 @@ export const ACCESS_LOG_OPERATIONS = [
   "streams.history",
   "streams.around",
   "streams.catchup",
+  "docs.list",
   "docs.get",
   "docs.list_updates",
   "docs.list_threads",

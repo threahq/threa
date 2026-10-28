@@ -280,6 +280,7 @@ describe("moveQuickLink", () => {
       "saved",
       "streams",
       "files",
+      "docs",
       "scheduled",
       "agenda",
       "memory",

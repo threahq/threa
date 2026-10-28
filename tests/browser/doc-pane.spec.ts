@@ -1,12 +1,16 @@
-import { test, expect, type Browser, type Page, type Locator } from "@playwright/test"
+import { test, expect, type Page, type Locator } from "@playwright/test"
 import {
   createChannelViaApi,
   createDocViaApi,
   expectApiOk,
   loginAndCreateWorkspace,
-  loginInNewContext,
   userIdByEmail,
   workspaceIdFromUrl,
+  pane,
+  docEditor,
+  anchorRow,
+  openChannel,
+  joinWorkspace,
 } from "./helpers"
 
 /**
@@ -17,9 +21,6 @@ import {
 
 test.describe.configure({ timeout: 150_000 })
 
-const pane = (page: Page, id: string): Locator => page.locator(`[data-panel-tab="${id}"]`)
-const docEditor = (page: Page, docId: string): Locator => pane(page, docId).locator(".ProseMirror")
-const anchorRow = (page: Page, docId: string): Locator => page.locator(`a[data-doc-id="${docId}"]`)
 const presenceStack = (page: Page, docId: string): Locator => pane(page, docId).locator('[data-testid="doc-presence"]')
 
 /** The doc's text without peers' caret labels, which y-prosemirror renders inside the editor. */
@@ -29,22 +30,6 @@ const docText = (editor: Locator): Promise<string> =>
     copy.querySelectorAll(".ProseMirror-yjs-cursor").forEach((caret) => caret.remove())
     return copy.textContent ?? ""
   })
-
-async function joinWorkspace(browser: Browser, workspaceId: string, prefix: string, testId: string) {
-  const email = `${prefix}-${testId}@example.com`
-  const name = `${prefix} ${testId}`
-  const user = await loginInNewContext(browser, email, name)
-  await expectApiOk(
-    await user.page.request.post(`/api/dev/workspaces/${workspaceId}/join`, { data: { role: "member", name } }),
-    `${prefix} joins workspace`
-  )
-  return { ...user, email, name }
-}
-
-async function openChannel(page: Page, workspaceId: string, streamId: string): Promise<void> {
-  await page.goto(`/w/${workspaceId}/s/${streamId}`)
-  await expect(page.locator(`[data-stream-scroller="${streamId}"]`)).toBeVisible({ timeout: 20000 })
-}
 
 /** Moves the caret to the end of the doc through ProseMirror's own keymap. */
 async function moveCaretToEnd(page: Page, editor: Locator): Promise<void> {

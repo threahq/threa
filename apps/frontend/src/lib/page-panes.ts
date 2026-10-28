@@ -14,6 +14,7 @@ export const PAGE_PANES = {
   "/labels": "Labels",
   "/labels/:labelId": "Label",
   "/files": "Files",
+  "/docs": "Docs",
   "/agenda": "Agent agenda",
 } as const
 

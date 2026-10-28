@@ -61,7 +61,7 @@ describe("DocsHeaderChip", () => {
   // The pane's wiring: the chip mounts only while the host has docs.
   function HostHeader() {
     const docs = useHostedDocs(WORKSPACE_ID, HOST_ID)
-    return docs.length > 0 ? <DocsHeaderChip docs={docs} /> : null
+    return docs.length > 0 ? <DocsHeaderChip workspaceId={WORKSPACE_ID} hostId={HOST_ID} docs={docs} /> : null
   }
 
   function mount() {
@@ -81,7 +81,7 @@ describe("DocsHeaderChip", () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it("should list the host's live docs newest first as links to their panes when opened", async () => {
+  it("should list the host's live docs newest first, then all its docs on the docs page, when opened", async () => {
     streams = [
       doc("stream_older", minutesAgo(30)),
       doc("stream_newer", minutesAgo(5)),
@@ -97,6 +97,7 @@ describe("DocsHeaderChip", () => {
       items: [
         { href: "/panel/stream_newer", text: ["Untitled", "5m ago"] },
         { href: "/panel/stream_older", text: ["Untitled", "30m ago"] },
+        { href: `/w/${WORKSPACE_ID}/docs?host=${HOST_ID}`, text: [] },
       ],
     })
   })
@@ -107,7 +108,10 @@ describe("DocsHeaderChip", () => {
 
     vi.setSystemTime(new Date(NOW.getTime() + 10 * 60_000))
 
-    expect(await openMenuItems()).toEqual([{ href: "/panel/stream_only", text: ["Untitled", "15m ago"] }])
+    expect(await openMenuItems()).toEqual([
+      { href: "/panel/stream_only", text: ["Untitled", "15m ago"] },
+      { href: `/w/${WORKSPACE_ID}/docs?host=${HOST_ID}`, text: [] },
+    ])
   })
 
   it("should name the trigger in the singular when the host has one doc", () => {

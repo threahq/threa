@@ -722,3 +722,37 @@ export async function userIdByEmail(page: Page, workspaceId: string, email: stri
   if (!user) throw new Error(`No workspace user for ${email}`)
   return user.id
 }
+
+/** A panel by its tab id; a doc's pane is keyed by the doc's stream id. */
+export const pane = (page: Page, id: string): Locator => page.locator(`[data-panel-tab="${id}"]`)
+
+export const docEditor = (page: Page, docId: string): Locator => pane(page, docId).locator(".ProseMirror")
+
+/** The doc's row in its host channel's timeline. */
+export const anchorRow = (page: Page, docId: string): Locator => page.locator(`a[data-doc-id="${docId}"]`)
+
+export const docChip = (scope: Locator): Locator => scope.locator('[data-type="doc-chip"]')
+
+export async function openChannel(page: Page, workspaceId: string, streamId: string): Promise<void> {
+  await page.goto(`/w/${workspaceId}/s/${streamId}`)
+  await expect(page.locator(`[data-stream-scroller="${streamId}"]`)).toBeVisible({ timeout: 20000 })
+}
+
+/** A new member of the workspace in its own browser context. */
+export async function joinWorkspace(browser: Browser, workspaceId: string, prefix: string, testId: string) {
+  const email = `${prefix}-${testId}@example.com`
+  const name = `${prefix} ${testId}`
+  const user = await loginInNewContext(browser, email, name)
+  await expectApiOk(
+    await user.page.request.post(`/api/dev/workspaces/${workspaceId}/join`, { data: { role: "member", name } }),
+    `${prefix} joins workspace`
+  )
+  return { ...user, email, name }
+}
+
+export async function renameDoc(page: Page, workspaceId: string, docId: string, displayName: string): Promise<void> {
+  await expectApiOk(
+    await page.request.patch(`/api/workspaces/${workspaceId}/streams/${docId}`, { data: { displayName } }),
+    "Rename doc"
+  )
+}

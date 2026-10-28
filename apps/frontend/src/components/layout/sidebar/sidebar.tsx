@@ -211,6 +211,7 @@ const SidebarBody = memo(function SidebarBody({
   const { mutate: unmuteStream } = useUnmuteStream(workspaceId)
   const isMemoryPage = splat === "memory" || location.pathname.endsWith("/memory")
   const isFilesPage = splat === "files" || location.pathname.endsWith("/files")
+  const isDocsPage = splat === "docs" || location.pathname.endsWith("/docs")
   const isAgendaPage = splat === "agenda" || location.pathname.endsWith("/agenda")
   const isLabelsPage = splat === "labels" || location.pathname.includes("/labels")
   const isStreamsPage = /^\/w\/[^/]+\/streams(\/|$)/.test(location.pathname)
@@ -523,6 +524,7 @@ const SidebarBody = memo(function SidebarBody({
         isActivityPage={isActivityPage}
         isMemoryPage={isMemoryPage}
         isFilesPage={isFilesPage}
+        isDocsPage={isDocsPage}
         isAgendaPage={isAgendaPage}
         isLabelsPage={isLabelsPage}
         isStreamsPage={isStreamsPage}
@@ -558,6 +560,7 @@ const SidebarBody = memo(function SidebarBody({
     isActivityPage,
     isMemoryPage,
     isFilesPage,
+    isDocsPage,
     isAgendaPage,
     isLabelsPage,
     isStreamsPage,

@@ -19,8 +19,8 @@ export function filterFilterTypes(items: FilterTypeItem[], query: string): Filte
 /**
  * Hook for managing filter type suggestions (`is:` trigger).
  */
-export function useFilterTypeSuggestion() {
-  const getItems = useCallback(() => FILTER_TYPE_OPTIONS, [])
+export function useFilterTypeSuggestion(options: FilterTypeItem[] = FILTER_TYPE_OPTIONS) {
+  const getItems = useCallback(() => options, [options])
 
   const renderList = useCallback(
     (props: {

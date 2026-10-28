@@ -25,7 +25,8 @@ import {
   X,
 } from "lucide-react"
 import { toast } from "sonner"
-import { SETTINGS_TABS, type SettingsTab, type WorkspaceSettingsTab } from "@threahq/types"
+import { SETTINGS_TABS, StreamTypes, type SettingsTab, type WorkspaceSettingsTab } from "@threahq/types"
+import { STREAM_ICONS } from "@/lib/streams"
 import { SETTINGS_TAB_CONFIG } from "@/components/settings/tab-config"
 import type { ExplorerFilters } from "@/components/attachment-explorer"
 import type { OutcomesFilters } from "@/components/agent-outcomes"
@@ -301,6 +302,13 @@ export const commands: Command[] = [
       closeDialog()
       openExplorer({ streamIds: [] })
     },
+  },
+  {
+    id: "browse-docs",
+    label: "Browse docs",
+    icon: STREAM_ICONS[StreamTypes.DOC],
+    keywords: ["docs", "documents", "pages", "notes"],
+    ...page("/docs"),
   },
   {
     id: "view-agenda",

@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Locator } from "@playwright/test"
-import { loginAndCreateWorkspace, workspaceIdFromUrl, createChannelViaApi, createDocViaApi } from "./helpers"
+import { loginAndCreateWorkspace, workspaceIdFromUrl, createChannelViaApi, createDocViaApi, docEditor } from "./helpers"
 
 /**
  * Edits to a doc land on its host's timeline as one activity row per quiet
@@ -8,8 +8,6 @@ import { loginAndCreateWorkspace, workspaceIdFromUrl, createChannelViaApi, creat
 
 test.describe.configure({ timeout: 180_000 })
 
-const pane = (page: Page, id: string): Locator => page.locator(`[data-panel-tab="${id}"]`)
-const docEditor = (page: Page, docId: string): Locator => pane(page, docId).locator(".ProseMirror")
 const activityRow = (page: Page, docId: string): Locator =>
   page.locator(`a[data-doc-id="${docId}"]`).filter({ hasText: "edited" })
 

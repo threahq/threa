@@ -25,17 +25,20 @@ interface SidebarQuickLinksProps {
   isActivityPage: boolean
   isMemoryPage: boolean
   isFilesPage: boolean
+  isDocsPage: boolean
   isAgendaPage: boolean
   isLabelsPage: boolean
   isStreamsPage: boolean
   unreadActivityCount: number
 }
 
+type QuickLinkSignal = "count" | "badge" | null
+
 interface QuickLinkItem {
   to: string
   isActive: boolean
   unreadCount: number
-  signalSlot: ReactNode
+  signal: QuickLinkSignal
 }
 
 // Collapse-state key for the block; also its section id in the config, so the
@@ -49,12 +52,14 @@ const DEFAULT_STATE = "open"
 const MORE_KEY = `${QUICK_LINKS_SECTION_ID}:more`
 const MORE_DEFAULT = "collapsed"
 
-function countSlot(count: number): ReactNode {
-  return count > 0 ? (
+function signalSlot(signal: QuickLinkSignal, count: number): ReactNode {
+  if (signal === null || count === 0) return null
+  if (signal === "badge") return <UnreadBadge count={count} className="ml-auto" />
+  return (
     <span className="ml-auto text-xs text-muted-foreground">
       (<RollingNumber value={count} />)
     </span>
-  ) : null
+  )
 }
 
 export const SidebarQuickLinks = memo(function SidebarQuickLinks({
@@ -69,13 +74,13 @@ export const SidebarQuickLinks = memo(function SidebarQuickLinks({
   isActivityPage,
   isMemoryPage,
   isFilesPage,
+  isDocsPage,
   isAgendaPage,
   isLabelsPage,
   isStreamsPage,
   unreadActivityCount,
 }: SidebarQuickLinksProps) {
   const { collapseOnMobile, getSectionState, toggleSectionState } = useSidebar()
-  const pickRow = useStreamRowPick()
   const state = getSectionState(SECTION_KEY, DEFAULT_STATE)
   const moreState = getSectionState(MORE_KEY, MORE_DEFAULT)
 
@@ -86,30 +91,31 @@ export const SidebarQuickLinks = memo(function SidebarQuickLinks({
       to: `/w/${workspaceId}/drafts`,
       isActive: isDraftsPage,
       unreadCount: draftCount,
-      signalSlot: countSlot(draftCount),
+      signal: "count",
     },
     saved: {
       to: `/w/${workspaceId}/saved`,
       isActive: isSavedPage,
       unreadCount: savedCount,
-      signalSlot: countSlot(savedCount),
+      signal: "count",
     },
-    streams: { to: `/w/${workspaceId}/streams`, isActive: isStreamsPage, unreadCount: 0, signalSlot: null },
-    files: { to: `/w/${workspaceId}/files`, isActive: isFilesPage, unreadCount: 0, signalSlot: null },
-    agenda: { to: `/w/${workspaceId}/agenda`, isActive: isAgendaPage, unreadCount: 0, signalSlot: null },
+    streams: { to: `/w/${workspaceId}/streams`, isActive: isStreamsPage, unreadCount: 0, signal: null },
+    files: { to: `/w/${workspaceId}/files`, isActive: isFilesPage, unreadCount: 0, signal: null },
+    docs: { to: `/w/${workspaceId}/docs`, isActive: isDocsPage, unreadCount: 0, signal: null },
+    agenda: { to: `/w/${workspaceId}/agenda`, isActive: isAgendaPage, unreadCount: 0, signal: null },
     scheduled: {
       to: `/w/${workspaceId}/scheduled`,
       isActive: isScheduledPage,
       unreadCount: scheduledCount,
-      signalSlot: countSlot(scheduledCount),
+      signal: "count",
     },
-    memory: { to: `/w/${workspaceId}/memory`, isActive: isMemoryPage, unreadCount: 0, signalSlot: null },
-    labels: { to: `/w/${workspaceId}/labels`, isActive: isLabelsPage, unreadCount: 0, signalSlot: null },
+    memory: { to: `/w/${workspaceId}/memory`, isActive: isMemoryPage, unreadCount: 0, signal: null },
+    labels: { to: `/w/${workspaceId}/labels`, isActive: isLabelsPage, unreadCount: 0, signal: null },
     activity: {
       to: `/w/${workspaceId}/activity`,
       isActive: isActivityPage,
       unreadCount: unreadActivityCount,
-      signalSlot: unreadActivityCount > 0 ? <UnreadBadge count={unreadActivityCount} className="ml-auto" /> : null,
+      signal: "badge",
     },
   }
 
@@ -138,32 +144,9 @@ export const SidebarQuickLinks = memo(function SidebarQuickLinks({
   // Render nothing only when there are no links at all to show or fold.
   if (visible.length === 0 && folded.length === 0) return null
 
-  const renderLink = ({ key }: SidebarQuickLink) => {
-    const { label, icon: Icon } = QUICK_LINK_META[key]
-    const { to, isActive, unreadCount, signalSlot } = itemByKey[key]
-    return (
-      <Link
-        key={key}
-        to={to}
-        onClick={(event) => {
-          pickRow(event, pagePaneAt(to)!)
-          collapseOnMobile()
-        }}
-        onPointerEnter={() => preloadPage(pagePaneAt(to)!)}
-        onFocus={() => preloadPage(pagePaneAt(to)!)}
-        aria-current={isActive ? "page" : undefined}
-        className={cn(
-          "flex items-center gap-2.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
-          isActive ? "bg-primary/10" : "hover:bg-muted/50",
-          !isActive && unreadCount === 0 && "text-muted-foreground"
-        )}
-      >
-        <Icon className="h-4 w-4" />
-        {label}
-        {signalSlot}
-      </Link>
-    )
-  }
+  const renderLink = ({ key }: SidebarQuickLink) => (
+    <QuickLinkRow key={key} linkKey={key} {...itemByKey[key]} onNavigate={collapseOnMobile} />
+  )
 
   return (
     <div className="mb-2 space-y-1">
@@ -188,5 +171,39 @@ export const SidebarQuickLinks = memo(function SidebarQuickLinks({
         </>
       )}
     </div>
+  )
+})
+
+/** Memoized so a sidebar context change (hover, resize) does not re-render every link. */
+const QuickLinkRow = memo(function QuickLinkRow({
+  linkKey,
+  to,
+  isActive,
+  unreadCount,
+  signal,
+  onNavigate,
+}: QuickLinkItem & { linkKey: SidebarQuickLinkKey; onNavigate: () => void }) {
+  const pickRow = useStreamRowPick()
+  const { label, icon: Icon } = QUICK_LINK_META[linkKey]
+  return (
+    <Link
+      to={to}
+      onClick={(event) => {
+        pickRow(event, pagePaneAt(to)!)
+        onNavigate()
+      }}
+      onPointerEnter={() => preloadPage(pagePaneAt(to)!)}
+      onFocus={() => preloadPage(pagePaneAt(to)!)}
+      aria-current={isActive ? "page" : undefined}
+      className={cn(
+        "flex items-center gap-2.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+        isActive ? "bg-primary/10" : "hover:bg-muted/50",
+        !isActive && unreadCount === 0 && "text-muted-foreground"
+      )}
+    >
+      <Icon className="h-4 w-4" />
+      {label}
+      {signalSlot(signal, unreadCount)}
+    </Link>
   )
 })

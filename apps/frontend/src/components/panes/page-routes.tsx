@@ -37,6 +37,7 @@ const PAGES: Record<PagePanePattern, PageRoute> = {
   "/labels": route(() => import("@/pages/labels").then((m) => m.LabelsPage)),
   "/labels/:labelId": route(() => import("@/pages/label-detail").then((m) => m.LabelDetailPage)),
   "/files": route(() => import("@/pages/files").then((m) => m.FilesPage)),
+  "/docs": route(() => import("@/pages/docs").then((m) => m.DocsPage)),
   "/agenda": route(() => import("@/pages/outcomes").then((m) => m.OutcomesPage)),
 }
 

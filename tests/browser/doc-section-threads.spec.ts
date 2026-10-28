@@ -1,14 +1,18 @@
-import { test, expect, type Browser, type Page, type Locator } from "@playwright/test"
+import { test, expect, type Page, type Locator } from "@playwright/test"
 import {
   expectApiOk,
   loginAndCreateWorkspace,
-  loginInNewContext,
   sendPanelReply,
   waitForRealThreadPanel,
   workspaceIdFromUrl,
   createChannelViaApi,
   createDocViaApi,
   userIdByEmail,
+  pane,
+  docEditor,
+  anchorRow,
+  openChannel,
+  joinWorkspace,
 } from "./helpers"
 
 /**
@@ -18,31 +22,12 @@ import {
 
 test.describe.configure({ timeout: 150_000 })
 
-const pane = (page: Page, id: string): Locator => page.locator(`[data-panel-tab="${id}"]`)
-const docEditor = (page: Page, docId: string): Locator => pane(page, docId).locator(".ProseMirror")
-const anchorRow = (page: Page, docId: string): Locator => page.locator(`a[data-doc-id="${docId}"]`)
 const blocks = (page: Page, docId: string): Locator => docEditor(page, docId).locator(":scope > p")
 const commentLink = (page: Page, docId: string): Locator =>
   pane(page, docId).getByRole("link", { name: "Comment on this block" })
 const threadChip = (page: Page, docId: string): Locator =>
   pane(page, docId).getByRole("link", { name: /^\d+ comments? on this block$/ })
 const modifier = process.platform === "darwin" ? "Meta" : "Control"
-
-async function joinWorkspace(browser: Browser, workspaceId: string, prefix: string, testId: string) {
-  const email = `${prefix}-${testId}@example.com`
-  const name = `${prefix} ${testId}`
-  const user = await loginInNewContext(browser, email, name)
-  await expectApiOk(
-    await user.page.request.post(`/api/dev/workspaces/${workspaceId}/join`, { data: { role: "member", name } }),
-    `${prefix} joins workspace`
-  )
-  return { ...user, email, name }
-}
-
-async function openChannel(page: Page, workspaceId: string, streamId: string): Promise<void> {
-  await page.goto(`/w/${workspaceId}/s/${streamId}`)
-  await expect(page.locator(`[data-stream-scroller="${streamId}"]`)).toBeVisible({ timeout: 20000 })
-}
 
 async function typeAtEnd(page: Page, editor: Locator, text: string): Promise<void> {
   await editor.click()

@@ -113,6 +113,7 @@ describe("commands", () => {
       saved: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/saved`),
       streams: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/streams`),
       files: ({ openExplorer }) => expect(openExplorer).toHaveBeenCalled(),
+      docs: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/docs`),
       agenda: ({ openOutcomes }) => expect(openOutcomes).toHaveBeenCalled(),
       scheduled: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/scheduled`),
       memory: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/memory`),

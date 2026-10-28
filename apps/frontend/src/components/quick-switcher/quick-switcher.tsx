@@ -63,6 +63,7 @@ import { useStreamItems } from "./use-stream-items"
 import { useCommandItems } from "./use-command-items"
 import { ItemList } from "./item-list"
 import { ModeTabs } from "./mode-tabs"
+import { STREAM_FILTER_TYPE_OPTIONS } from "@/components/editor/triggers/filter-type-extension"
 import { COMMAND_TRIGGERS, RichInput, type RichInputRef, STREAM_TRIGGERS } from "./rich-input"
 import type { CommandContext, InputRequest } from "./commands"
 import type { QuickSwitcherItem } from "./types"
@@ -859,6 +860,7 @@ function QuickSwitcherBody({
               }}
               onPopoverActiveChange={handlePopoverActiveChange}
               triggers={triggers}
+              filterTypeOptions={STREAM_FILTER_TYPE_OPTIONS}
               placeholder={MODE_PLACEHOLDERS[mode]}
               ariaLabel="Quick switcher input"
               autoFocus={!isTouchInput}
