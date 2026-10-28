@@ -65,8 +65,8 @@ Read results already carry author identity, so you seldom need a second call to 
 
 A doc is a markdown document hosted by a stream. `threa docs list <stream-ref>` (tool `list_docs`) shows a stream's docs; `threa docs read <doc-id>` (tool `read_doc`) prints the whole doc with a `<!-- blk_… -->` marker line before each block.
 
-- Read before you edit. Copy each `--old` verbatim from one block of the read output (never across a marker line); `--block blk_…` (tool `block_id`) confines the edit to that block.
-- `--old`/`--new` repeat and pair by position (tool `edits: [{ block_id?, old, new }]`). Every edit in a call applies together, or nothing is written. A value that starts with a dash, such as a list item, needs the `=` form: `--old="- AWS key is live"`.
+- Read before you edit. Copy each `--old` verbatim from one block of the read output (never across a marker line); trailing whitespace and surrounding blank lines are ignored. `--block blk_…` (tool `block_id`) confines the edit to that block.
+- `--old`/`--new` repeat and pair by position (tool `edits: [{ block_id?, old, new }]`). Every edit in a call applies together, or nothing is written. A value that starts with a dash, such as a list item, needs the `=` form: `--old="- AWS key is live"`. To tick a task: `--old "[ ] text" --new "[x] text"`.
 - `--reason` is one line shown to people on the stream's timeline: what changed and why.
 - A 409 (`DOC_EDIT_TEXT_NOT_FOUND`, `DOC_EDIT_TEXT_AMBIGUOUS`, `DOC_SECTION_NOT_FOUND`) means the text moved or matched twice. Re-read the doc (`details.scope.markdown` holds the current text) and retry with a tighter anchor.
 - `threa docs create <stream-ref> --title t --body - --reason r` (tool `create_doc`) starts one; `--reason` is required with a body.

@@ -242,6 +242,33 @@ describe("public API docs", () => {
     })
   })
 
+  test("should apply an edit whose old carries the trailing newline a copy from the read output picks up", async () => {
+    const created = await createDoc(
+      userReq(owner, {
+        body: { streamId: privateChannelId, markdown: "Deadline is Friday\n\nOwner is Sam", reason: "Seed" },
+      })
+    )
+    const markers = [...created.data.markdown.matchAll(/<!-- (blk_\w+) -->/g)].map((m) => m[1])
+
+    const edited = await editDoc(
+      userReq(owner, {
+        params: { docId: created.data.id },
+        body: { reason: "Moved the deadline", edits: [{ old: "Deadline is Friday\n", new: "Deadline is Monday\n" }] },
+      })
+    )
+
+    expect({ ...edited, data: { ...edited.data, markdown: unmarked(edited.data.markdown) } }).toEqual({
+      status: 200,
+      data: {
+        id: created.data.id,
+        title: null,
+        seq: 2,
+        touchedBlockIds: [markers[0]],
+        markdown: "Deadline is Monday",
+      },
+    })
+  })
+
   test("should refuse an edit that misses or matches twice with the text to retry against", async () => {
     const created = await createDoc(
       userReq(owner, {

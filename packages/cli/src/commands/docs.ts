@@ -59,11 +59,12 @@ const editVerb: VerbSpec = {
   help:
     "threa docs edit <doc-id> --reason r --old a --new b [flags]\n\n" +
     "Replace text in a doc. --old and --new are repeatable and pair by position: the first --old with the first " +
-    "--new, and so on. Copy each --old verbatim from one block of `threa docs read`. All edits apply together; " +
+    "--new, and so on. Copy each --old verbatim from one block of `threa docs read`; trailing whitespace and " +
+    "surrounding blank lines are ignored. All edits apply together; " +
     "if any --old fails to match, nothing is written. A 409 (DOC_EDIT_TEXT_NOT_FOUND, DOC_EDIT_TEXT_AMBIGUOUS, " +
     "DOC_SECTION_NOT_FOUND) means the text moved or matched more than once: re-read the doc and retry with a " +
     "tighter --old (details.scope.markdown holds the current text). A value that starts with a dash, such as a " +
-    'list item, needs the = form: --old="- AWS key is live".\n\n' +
+    'list item, needs the = form: --old="- AWS key is live". To tick a task: --old "[ ] text" --new "[x] text".\n\n' +
     "Flags:\n" +
     "  --reason r     required; one line shown to people on the stream's timeline\n" +
     "  --old a        text to replace (repeatable, pairs with --new by position)\n" +

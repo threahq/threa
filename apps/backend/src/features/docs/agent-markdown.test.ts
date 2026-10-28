@@ -183,4 +183,89 @@ describe("agent markdown", () => {
       { blockId: id(5), markdown: "```py\nx = 1   \ny = 3\n```", changed: true },
     ])
   })
+
+  test("should match an old with surrounding newlines, CRLF or NBSP when the exact text finds nothing", () => {
+    const edited = (old: string, replacement: string) => {
+      const result = resolveEdits(sections, [{ old, new: replacement }])
+      return result.ok ? changedMarkdown(result.sections).filter((s) => s.changed) : result.refusal.reason
+    }
+
+    expect({
+      trailingNewline: edited("AWS key is live\n", "AWS key is revoked\n"),
+      leadingBlankLine: edited("\n\nGCP key is live", "\n\nGCP key is revoked"),
+      crlf: edited("## Rotation\r\n", "## Rotated\r\n"),
+      nbsp: edited("AWS key is live\u00a0", "AWS key is gone"),
+    }).toEqual({
+      trailingNewline: [{ blockId: id(2), markdown: "AWS key is revoked", changed: true }],
+      leadingBlankLine: [{ blockId: id(3), markdown: "GCP key is revoked", changed: true }],
+      crlf: [{ blockId: id(1), markdown: "## Rotated", changed: true }],
+      nbsp: [{ blockId: id(2), markdown: "AWS key is gone", changed: true }],
+    })
+  })
+
+  test("should match a hard break written without its backslash and write the new line break as a hard break", () => {
+    const poem = { blockId: id(6), markdown: "roses are red\\\nviolets are blue", contentJson: paragraph("", 6) }
+
+    const result = resolveEdits([poem], [{ old: "roses are red\nviolets are blue", new: "roses are red\nsky is blue" }])
+
+    expect(result.ok && changedMarkdown(result.sections)).toEqual([
+      { blockId: id(6), markdown: "roses are red\\\nsky is blue", changed: true },
+    ])
+  })
+
+  test("should keep a blank line the replacement adds beyond the newline the old dropped", () => {
+    const result = resolveEdits(sections, [{ old: "AWS key is live\n", new: "AWS key is live\n\nRotate it" }])
+
+    expect(result.ok && changedMarkdown(result.sections).filter((s) => s.changed)).toEqual([
+      { blockId: id(2), markdown: "AWS key is live\n\nRotate it", changed: true },
+    ])
+  })
+
+  test("should match each hard break on its own when the old also spans a plain line break", () => {
+    const list = { blockId: id(9), markdown: "- first\\\nsecond\n- third", contentJson: paragraph("", 9) }
+
+    const result = resolveEdits([list], [{ old: "first\nsecond\n- third", new: "first\nsecond\n- 3rd" }])
+
+    expect(result.ok && changedMarkdown(result.sections)).toEqual([
+      { blockId: id(9), markdown: "- first\\\nsecond\n- 3rd", changed: true },
+    ])
+  })
+
+  test("should keep the replacement's line breaks literal when its shape differs from the matched old", () => {
+    const poem = { blockId: id(6), markdown: "roses are red\\\nviolets are blue", contentJson: paragraph("", 6) }
+
+    const result = resolveEdits([poem], [{ old: "roses are red\nviolets are blue", new: "roses\nare\nred" }])
+
+    expect(result.ok && changedMarkdown(result.sections)).toEqual([
+      { blockId: id(6), markdown: "roses\nare\nred", changed: true },
+    ])
+  })
+
+  test("should refuse as ambiguous when a fallback matches twice", () => {
+    expect(resolveEdits(sections, [{ old: "key is live\n", new: "key is gone" }])).toEqual({
+      ok: false,
+      refusal: { reason: "ambiguous", editIndex: 0, scope: { markdown: renderWithMarkers(sections) } },
+    })
+  })
+
+  test("should prefer the exact match over a fallback when the exact text occurs once", () => {
+    const blocks = [
+      { blockId: id(7), markdown: "a\n\nb", contentJson: paragraph("", 7) },
+      { blockId: id(8), markdown: "a", contentJson: paragraph("", 8) },
+    ]
+
+    const result = resolveEdits(blocks, [{ old: "a\n", new: "c\n" }])
+
+    expect(result.ok && changedMarkdown(result.sections)).toEqual([
+      { blockId: id(7), markdown: "c\n\nb", changed: true },
+      { blockId: id(8), markdown: "a", changed: false },
+    ])
+  })
+
+  test("should refuse as not found when no fallback matches either", () => {
+    expect(resolveEdits(sections, [{ old: "\nAzure key is live\n", new: "x" }])).toEqual({
+      ok: false,
+      refusal: { reason: "not_found", editIndex: 0, scope: { markdown: renderWithMarkers(sections) } },
+    })
+  })
 })
