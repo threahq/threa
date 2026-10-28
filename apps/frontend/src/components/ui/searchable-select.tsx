@@ -1,4 +1,4 @@
-import { type ReactElement, type ReactNode, useState, useEffect } from "react"
+import { type ReactElement, type ReactNode, useState, useEffect, useRef } from "react"
 import { ChevronsUpDown } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -74,10 +74,17 @@ export function SearchableSelect<T>({
   const isTouch = useInputMode() === "touch"
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState("")
+  const popoverSearchRef = useRef<HTMLInputElement>(null)
 
   // Reset filter input each time the popover/drawer closes so the next open shows the full list.
   useEffect(() => {
     if (!open) setSearch("")
+  }, [open])
+
+  // Radix focuses the search only when the list mounts. Reopening during the exit animation
+  // reuses the still-mounted list, which would leave focus on the trigger.
+  useEffect(() => {
+    if (open) popoverSearchRef.current?.focus()
   }, [open])
 
   const handleSelect = (item: T) => {
@@ -170,7 +177,12 @@ export function SearchableSelect<T>({
         onCloseAutoFocus={onCloseAutoFocus}
       >
         <Command>
-          <CommandInput placeholder={searchPlaceholder} value={search} onValueChange={setSearch} />
+          <CommandInput
+            ref={popoverSearchRef}
+            placeholder={searchPlaceholder}
+            value={search}
+            onValueChange={setSearch}
+          />
           {/*
            * Override cmdk's default 300px ceiling so the list shows more rows on
            * tall viewports and stays inside the screen on short ones. overscroll-
