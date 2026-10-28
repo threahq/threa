@@ -104,8 +104,13 @@ async function docCreatedEventId(hostId: string, docId: string): Promise<string>
   return result.rows[0]!.id
 }
 
-function list(viewer: string, streamId: string, q?: string): Promise<ListStreamContextResponse> {
-  return contextService.list({ workspaceId: wsId, userId: viewer, streamId, scope: "tree", queryText: q, limit: 40 })
+function list(
+  viewer: string,
+  streamId: string,
+  q?: string,
+  scope: "tree" | "stream" = "tree"
+): Promise<ListStreamContextResponse> {
+  return contextService.list({ workspaceId: wsId, userId: viewer, streamId, scope, queryText: q, limit: 40 })
 }
 
 function docRows(response: ListStreamContextResponse) {
@@ -180,20 +185,85 @@ describe("stream context doc rows", () => {
     })
   })
 
-  test("should list a chip of a doc hosted elsewhere on the channel it was posted in", async () => {
+  test("should list a private doc's chip to a reader who holds its grant", async () => {
     const host = await createChannel("private")
     const doc = await createDoc(host.id, "Private plan")
     const open = await createChannel("public")
     const message = await post(open.id, body(chip(doc.id)), { confirmedPrivacyWarning: true })
+    const grants = await pool.query(
+      `SELECT 1 FROM shared_docs WHERE workspace_id = $1 AND share_message_id = $2 AND doc_id = $3`,
+      [wsId, message.id, doc.id]
+    )
 
-    expect(docRows(await list(outsider, open.id))).toEqual([
+    expect({ granted: grants.rowCount, rows: docRows(await list(outsider, open.id)) }).toEqual({
+      granted: 1,
+      rows: [
+        {
+          refId: doc.id,
+          streamId: open.id,
+          sourceMessageId: message.id,
+          anchorEventId: null,
+          occurrenceCount: 1,
+          title: "Private plan",
+        },
+      ],
+    })
+  })
+
+  test("should list a chip in a thread to a channel member who never joined the thread (INV-62)", async () => {
+    const channel = await createChannel("private", [peer])
+    const doc = await createDoc(channel.id, "Thread plan")
+    const anchor = await post(channel.id, body(text("kickoff")))
+    const thread = await streamService.createThreadInternal({
+      workspaceId: wsId,
+      parentStreamId: channel.id,
+      parentAnchorId: anchor.id,
+      createdBy: owner,
+    })
+    const message = await post(thread.id, body(chip(doc.id)))
+    const threadMembers = await pool.query<{ member_id: string }>(
+      `SELECT member_id FROM stream_members WHERE workspace_id = $1 AND stream_id = $2`,
+      [wsId, thread.id]
+    )
+
+    expect({
+      threadMembers: threadMembers.rows.map((row) => row.member_id),
+      rows: docRows(await list(peer, thread.id, undefined, "stream")),
+    }).toEqual({
+      threadMembers: [owner],
+      rows: [
+        {
+          refId: doc.id,
+          streamId: thread.id,
+          sourceMessageId: message.id,
+          anchorEventId: null,
+          occurrenceCount: 1,
+          title: "Thread plan",
+        },
+      ],
+    })
+  })
+
+  test("should drop a chip's occurrence when its message is deleted, keeping the hosted row", async () => {
+    const channel = await createChannel("public")
+    const doc = await createDoc(channel.id, "Kept")
+    const message = await post(channel.id, body(chip(doc.id)))
+
+    await eventService.deleteMessageInternal({
+      workspaceId: wsId,
+      streamId: channel.id,
+      messageId: message.id,
+      actorId: owner,
+    })
+
+    expect(docRows(await list(owner, channel.id))).toEqual([
       {
         refId: doc.id,
-        streamId: open.id,
-        sourceMessageId: message.id,
-        anchorEventId: null,
+        streamId: channel.id,
+        sourceMessageId: null,
+        anchorEventId: await docCreatedEventId(channel.id, doc.id),
         occurrenceCount: 1,
-        title: "Private plan",
+        title: "Kept",
       },
     ])
   })
@@ -217,15 +287,24 @@ describe("stream context doc rows", () => {
     }).toEqual({ outsiderRows: [], outsiderCount: 0, outsiderSearch: 0, ownerTitles: ["Secret plan"] })
   })
 
-  test("should drop an archived doc's rows", async () => {
+  test("should drop an archived doc's rows and bring them back on unarchive", async () => {
     const channel = await createChannel("public")
     const doc = await createDoc(channel.id, "Old notes")
     await post(channel.id, body(chip(doc.id)))
+    const summary = (response: ListStreamContextResponse) => ({
+      rows: docRows(response).map((row) => row.occurrenceCount),
+      count: response.counts?.doc,
+    })
 
     await streamService.archiveStream(doc.id, wsId, owner)
-    const response = await list(owner, channel.id)
+    const archived = summary(await list(owner, channel.id))
+    await streamService.unarchiveStream(doc.id, wsId, owner)
+    const unarchived = summary(await list(owner, channel.id))
 
-    expect({ rows: docRows(response), count: response.counts?.doc }).toEqual({ rows: [], count: 0 })
+    expect({ archived, unarchived }).toEqual({
+      archived: { rows: [], count: 0 },
+      unarchived: { rows: [2], count: 1 },
+    })
   })
 
   test("should rebuild hosted and chip rows from stored state when backfilled", async () => {

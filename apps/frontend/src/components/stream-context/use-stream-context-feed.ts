@@ -1,12 +1,19 @@
 import { useInfiniteQuery } from "@tanstack/react-query"
 import { streamContextApi, type ListStreamContextRequest } from "@/api"
-import { seedStreamContextItems } from "@/stores/stream-context-store"
+import { contextGroupRef, seedStreamContextItems } from "@/stores/stream-context-store"
 import type { ContextCategory, ListStreamContextResponse, StreamContextScope } from "@threahq/types"
 
 export const streamContextKeys = {
   all: ["stream-context"] as const,
   feed: (workspaceId: string, streamId: string, params: Record<string, string | undefined>) =>
     ["stream-context", workspaceId, streamId, params] as const,
+}
+
+interface FeedPageParam {
+  cursor: string
+  /** The previous page's oldest head: this page answers for what lies below it. */
+  olderThan: string | null
+  seenDocGroupRefs: string[]
 }
 
 export interface UseStreamContextFeedOptions {
@@ -84,14 +91,44 @@ export function useStreamContextFeed(
         from,
         before,
         after,
-        cursor: pageParam,
+        cursor: pageParam?.cursor,
       }
       const page = await streamContextApi.list(workspaceId, streamId, request)
-      await seedStreamContextItems(workspaceId, rootStreamId, page.items)
+      const listsEveryDoc =
+        page.mode === "index" &&
+        !q &&
+        !from &&
+        !before &&
+        !after &&
+        (category === undefined || category === "doc") &&
+        (categories === undefined || categories.includes("doc"))
+      await seedStreamContextItems(
+        workspaceId,
+        rootStreamId,
+        page.items,
+        listsEveryDoc
+          ? {
+              streamId,
+              scope,
+              after: page.nextCursor ? (page.items.at(-1)?.occurredAt ?? null) : null,
+              before: pageParam?.olderThan ?? null,
+              seenDocGroupRefs: pageParam?.seenDocGroupRefs ?? [],
+            }
+          : undefined
+      )
       return page
     },
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    initialPageParam: undefined as FeedPageParam | undefined,
+    getNextPageParam: (lastPage, allPages): FeedPageParam | undefined =>
+      lastPage.nextCursor
+        ? {
+            cursor: lastPage.nextCursor,
+            olderThan: lastPage.items.at(-1)?.occurredAt ?? null,
+            seenDocGroupRefs: allPages.flatMap((page) =>
+              page.items.filter((item) => item.category === "doc").map(contextGroupRef)
+            ),
+          }
+        : undefined,
     staleTime: Infinity,
     refetchOnMount: true,
     refetchOnWindowFocus: false,

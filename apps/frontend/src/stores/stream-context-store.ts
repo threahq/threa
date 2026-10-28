@@ -135,15 +135,67 @@ export function useStreamContextOccurrences(
  * upserts the fetched rows without touching rows the page didn't return, so a
  * locally derived row the server hasn't projected yet survives, and a row the
  * server does return reconciles over its local copy under the same `key` —
- * gaining the real `groupKey`/`detail` and losing `_status`.
+ * gaining the real `groupKey`/`detail` and losing `_status`. With a
+ * `docWindow`, doc rows the page omitted are dropped (see {@link dropOmittedDocRows}).
  */
 export async function seedStreamContextItems(
   workspaceId: string,
   rootStreamId: string,
-  items: StreamContextItem[]
+  items: StreamContextItem[],
+  docWindow?: StreamContextDocWindow
 ): Promise<void> {
-  if (items.length === 0) return
-  await db.streamContextItems.bulkPut(items.map((item) => toCached(workspaceId, rootStreamId, item)))
+  if (items.length === 0 && !docWindow) return
+  await db.transaction("rw", db.streamContextItems, async () => {
+    if (docWindow) await dropOmittedDocRows(workspaceId, rootStreamId, items, docWindow)
+    if (items.length > 0) {
+      await db.streamContextItems.bulkPut(items.map((item) => toCached(workspaceId, rootStreamId, item)))
+    }
+  })
+}
+
+/**
+ * The span an unfiltered feed page answered for: every group whose head falls
+ * inside it was eligible to be returned.
+ * `seenDocGroupRefs` carries the doc groups earlier pages returned, whose older
+ * occurrences sit below their head and so inside later windows.
+ */
+export interface StreamContextDocWindow {
+  streamId: string
+  scope: StreamContextScope
+  /** Exclusive bounds on `occurredAt`; null is open-ended. */
+  after: string | null
+  before: string | null
+  seenDocGroupRefs: readonly string[]
+}
+
+/**
+ * Doc rows are the one category the server hides by the target's state rather
+ * than by a delete event: archiving a doc or losing read access drops its whole
+ * group from the feed, and a locally derived chip of an unreadable doc is never
+ * confirmed. Without this, either stays cached (or pending) forever.
+ */
+async function dropOmittedDocRows(
+  workspaceId: string,
+  rootStreamId: string,
+  items: StreamContextItem[],
+  window: StreamContextDocWindow
+): Promise<void> {
+  const kept = new Set([...window.seenDocGroupRefs, ...items.map(contextGroupRef)])
+  const [index, anchor] =
+    window.scope === "tree"
+      ? (["[workspaceId+rootStreamId+occurredAt]", rootStreamId] as const)
+      : (["[workspaceId+streamId+occurredAt]", window.streamId] as const)
+  const stale = await db.streamContextItems
+    .where(index)
+    .between(
+      [workspaceId, anchor, window.after ?? Dexie.minKey],
+      [workspaceId, anchor, window.before ?? Dexie.maxKey],
+      false,
+      false
+    )
+    .filter((row) => row.category === "doc" && !kept.has(row.groupRef))
+    .primaryKeys()
+  if (stale.length > 0) await db.streamContextItems.bulkDelete(stale)
 }
 
 /**

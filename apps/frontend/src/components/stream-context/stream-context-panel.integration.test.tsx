@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createElement, Fragment, useState } from "react"
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -281,7 +281,7 @@ describe("StreamContextPanel", () => {
     renderPanel()
 
     const links = await screen.findByRole("button", { name: /^Links/ })
-    expect(links).toHaveTextContent("9")
+    await waitFor(() => expect(links).toHaveTextContent("9"))
     expect(screen.getByRole("button", { name: /^Memories/ })).toHaveTextContent("4")
 
     await userEvent.click(screen.getByRole("button", { name: /^Memories/ }))
@@ -363,6 +363,104 @@ describe("StreamContextPanel", () => {
     expect(screen.queryByText("Stream PR section")).not.toBeInTheDocument()
   })
 
+  it("drops a cached doc row once the server stops listing it, and shows it again when it returns", async () => {
+    const docItem = serverItem({
+      category: "doc",
+      refId: "stream_doc1",
+      refKind: "doc",
+      sourceMessageId: null,
+      anchorEventId: "event_doc1",
+      detail: { title: "Roadmap" },
+    } as never)
+    const link = serverItem({
+      category: "link",
+      refId: "https://a.example",
+      detail: { url: "https://a.example", title: "Alpha" },
+    })
+    await db.streamContextItems.bulkPut([cachedRow(docItem), cachedRow(link)])
+    const list = vi.spyOn(streamContextApi, "list").mockResolvedValue(listResponse({ items: [link] }))
+
+    renderPanel()
+
+    expect(await screen.findByText("Alpha")).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText("Roadmap")).not.toBeInTheDocument())
+    expect(list).toHaveBeenCalledTimes(1)
+
+    cleanup()
+    list.mockResolvedValue(listResponse({ items: [docItem, link] }))
+    renderPanel()
+
+    expect(await screen.findByText("Roadmap")).toBeInTheDocument()
+  })
+
+  it("drops a pending doc chip the server never confirms, and keeps other pending rows", async () => {
+    await db.streamContextItems.bulkPut([
+      cachedRow(
+        serverItem({
+          category: "doc",
+          refId: "stream_unreadable",
+          refKind: "doc",
+          detail: { title: "Hidden plan" },
+        } as never),
+        { _status: "pending" }
+      ),
+      cachedRow(
+        serverItem({
+          category: "link",
+          refId: "https://local.example",
+          detail: { url: "https://local.example", title: "Local" },
+        }),
+        { _status: "pending" }
+      ),
+    ])
+    vi.spyOn(streamContextApi, "list").mockResolvedValue(listResponse())
+
+    renderPanel()
+
+    expect(await screen.findByText("Local")).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText("Hidden plan")).not.toBeInTheDocument())
+  })
+
+  it("keeps a doc's older occurrence when a later page reaches it below the head an earlier page listed", async () => {
+    const head = serverItem({
+      category: "doc",
+      refId: "stream_doc1",
+      refKind: "doc",
+      sourceMessageId: "msg_chip",
+      occurredAt: "2026-06-24T10:00:00.000Z",
+      occurrenceCount: 2,
+      detail: { title: "Roadmap" },
+    } as never)
+    const hosted = serverItem({
+      category: "doc",
+      refId: "stream_doc1",
+      refKind: "doc",
+      sourceMessageId: null,
+      anchorEventId: "event_doc1",
+      occurredAt: "2026-06-20T10:00:00.000Z",
+      detail: { title: "Roadmap" },
+    } as never)
+    const older = serverItem({
+      category: "link",
+      refId: "https://b.example",
+      occurredAt: "2026-06-19T10:00:00.000Z",
+      detail: { url: "https://b.example", title: "Bravo" },
+    })
+    await db.streamContextItems.put(cachedRow(hosted))
+    const list = vi
+      .spyOn(streamContextApi, "list")
+      .mockResolvedValueOnce(listResponse({ items: [head], nextCursor: "c1" }))
+      .mockResolvedValueOnce(listResponse({ items: [older], counts: null }))
+
+    renderPanel()
+
+    expect(await screen.findByText("Roadmap")).toBeInTheDocument()
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
+    triggerSentinel()
+    expect(await screen.findByText("Bravo")).toBeInTheDocument()
+    expect(await db.streamContextItems.get([WS, hosted.key])).toBeDefined()
+  })
+
   it("keeps server counts across a chip change while the new page is in flight", async () => {
     await db.streamContextItems.bulkPut([
       cachedRow(serverItem({ category: "link", refId: "https://a.example", detail: { url: "https://a.example" } })),
@@ -378,7 +476,8 @@ describe("StreamContextPanel", () => {
       )
 
     renderPanel()
-    expect(await screen.findByRole("button", { name: /^Links/ })).toHaveTextContent("240")
+    const links = await screen.findByRole("button", { name: /^Links/ })
+    await waitFor(() => expect(links).toHaveTextContent("240"))
 
     // The second page never resolves, so this pins what the chips read while a
     // category query is still in flight — the moment the flip-flop happened.

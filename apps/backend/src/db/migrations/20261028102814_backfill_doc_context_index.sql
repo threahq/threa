@@ -7,7 +7,9 @@
 -- `stream-context-index` definition per workspace: the plan now fans out a
 -- `docs` chunk per host stream, and messages chunks derive doc-chip rows. Chunks
 -- are idempotent (`ON CONFLICT DO NOTHING` on the identity index), so nothing
--- that already exists is rewritten.
+-- that already exists is rewritten. Only workspaces holding a doc are
+-- enqueued: without one there is no hosted row or chip to rebuild, and the
+-- re-plan rescans every message.
 --
 -- `process_after` is 15 minutes out (INV-67) so replicas still on the old code
 -- have cut over before a chunk job claims a chunk kind they don't handle.
@@ -30,4 +32,7 @@ SELECT
     ),
     NOW() + INTERVAL '15 minutes',
     NOW()
-FROM workspaces w;
+FROM workspaces w
+WHERE EXISTS (
+    SELECT 1 FROM streams s WHERE s.workspace_id = w.id AND s.type = 'doc'
+);
