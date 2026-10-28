@@ -1145,11 +1145,10 @@ export interface CachedStreamConnection extends StreamConnection {
 export interface CachedDocState {
   workspaceId: string
   docId: string
-  /** Full Yjs state, local edits included. */
+  /** The server's Yjs state at `seq`, as this device last knew it. */
   state: Uint8Array
-  /** Every server row up to this seq is in `state`. */
   seq: number
-  /** Local edits in `state` the server had not acked when it was saved. */
+  /** Local edits on top of `state`, some possibly already acked; the server skips what it holds. */
   unsent: Uint8Array | null
   _cachedAt: number
 }

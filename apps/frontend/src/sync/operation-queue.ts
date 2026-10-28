@@ -6,6 +6,8 @@ import type { CachedEvent, PendingOperation } from "@/db/database"
 import type { CommandFailedPayload, ScheduleMessageInput, ScheduledMessageView } from "@threahq/types"
 import { ApiError, commandsApi, isPermanentApiError } from "@/api"
 import { docsApi } from "@/api/docs"
+import { deliverQueuedDocUpdate } from "@/lib/docs/doc-delivery"
+import { dexieDocLocalCopies } from "@/lib/docs/doc-local-copy"
 import { persistScheduledRows, removeScheduledRow, replaceLocalScheduledRow } from "@/hooks/use-scheduled"
 import { executeDraftDelete, executeDraftResolve, executeDraftUpsert, type DraftsServiceLike } from "./draft-sync"
 import { bumpLaterOptimisticAnchors } from "./stream-sync"
@@ -359,7 +361,13 @@ async function executeOperation(
     }
 
     case "doc_update":
-      await docsApi.postUpdate(workspaceId, payload.docId as string, payload.update as string)
+      await deliverQueuedDocUpdate({
+        workspaceId,
+        docId: payload.docId as string,
+        update: payload.update as string,
+        api: docsApi,
+        localCopies: dexieDocLocalCopies(database),
+      })
       break
 
     case "upsert_draft": {

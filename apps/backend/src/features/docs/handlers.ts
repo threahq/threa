@@ -58,13 +58,8 @@ export function createDocHandlers({ docService }: Dependencies) {
     async listUpdates(req: Request, res: Response) {
       const { docId } = validateRequest(paramsSchema, req.params)
       const { after } = validateRequest(listUpdatesQuerySchema, req.query)
-      const updates = await docService.listUpdates({
-        workspaceId: req.workspaceId!,
-        userId: req.user!.id,
-        docId,
-        after,
-      })
-      res.json({ updates } satisfies DocUpdatesResponse)
+      const page = await docService.listUpdates({ workspaceId: req.workspaceId!, userId: req.user!.id, docId, after })
+      res.json(page satisfies DocUpdatesResponse)
     },
 
     async listThreads(req: Request, res: Response) {

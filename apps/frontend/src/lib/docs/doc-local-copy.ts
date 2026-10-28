@@ -5,7 +5,7 @@ import type { ThreaDatabase } from "@/db"
 export interface DocLocalCopy {
   state: Uint8Array
   seq: number
-  /** Local edits in `state` the server may not hold yet: the copy's own, then the queue's for this doc. */
+  /** Local edits on top of `state` the server may not hold yet: the copy's own, then the queue's for this doc. */
   unsent: Uint8Array[]
   /** The queue rows whose bytes are in `unsent`. */
   queuedIds: string[]
@@ -51,4 +51,9 @@ export function dexieDocLocalCopies(database: ThreaDatabase): DocLocalCopies {
         await database.pendingOperations.bulkDelete(queuedIds)
       }),
   }
+}
+
+/** Held shared by every open `DocSync` of the doc, exclusive by the queue while it sends the doc's rows: one writer per copy. */
+export function docLockName(workspaceId: string, docId: string): string {
+  return `threa-doc:${workspaceId}:${docId}`
 }

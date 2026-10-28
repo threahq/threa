@@ -174,7 +174,7 @@ describe("DocPaneBody", () => {
       renderEmojiGrid: () => null,
     } as unknown as ReturnType<typeof triggersModule.useEmojiSuggestion>)
     vi.spyOn(docsApi, "get").mockImplementation(async () => docState(serverDoc, 1))
-    vi.spyOn(docsApi, "listUpdates").mockResolvedValue({ updates: [] })
+    vi.spyOn(docsApi, "listUpdates").mockResolvedValue({ updates: [], hasMore: false })
     vi.spyOn(docsApi, "listThreads").mockResolvedValue({ threads: [] })
     vi.spyOn(docsApi, "listBacklinks").mockResolvedValue({ backlinks: [] })
     vi.spyOn(docsApi, "postUpdate").mockResolvedValue({ seq: 2, applied: true, touchedBlockIds: [] })
@@ -472,7 +472,7 @@ describe("DocPaneBody", () => {
     joinRoom.mockImplementation(() => new Promise<void>((resolve) => (ackJoin = resolve)))
     await mountLoaded()
     const missed = remoteParagraph("Committed before the join", 2)
-    vi.mocked(docsApi.listUpdates).mockResolvedValue({ updates: [missed] })
+    vi.mocked(docsApi.listUpdates).mockResolvedValue({ updates: [missed], hasMore: false })
     expect(docsApi.listUpdates).not.toHaveBeenCalled()
 
     await act(async () => ackJoin())

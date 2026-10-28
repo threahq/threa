@@ -5,7 +5,9 @@ import { ApiError, isPermanentApiError } from "@/api/client"
 import { docsApi } from "@/api/docs"
 import { getActiveDb } from "@/db"
 import { enqueueDocUpdate } from "@/sync/operation-queue"
-import { dexieDocLocalCopies, type DocLocalCopies } from "./doc-local-copy"
+import { applyServerUpdate } from "./block-rescue"
+import { rowsAfter } from "./doc-delivery"
+import { dexieDocLocalCopies, docLockName, type DocLocalCopies } from "./doc-local-copy"
 
 /** Transaction origin of every update that came from the server; anything else is a local edit to send. */
 export const REMOTE_ORIGIN = Symbol("doc-sync-remote")
@@ -19,7 +21,7 @@ const BOUNDARY_TEXT = /[\s\p{P}]$/u
 
 export type DocSyncStatus = { phase: "loading" } | { phase: "ready" } | { phase: "error"; error: unknown }
 
-type DocsApi = Pick<typeof docsApi, "get" | "listUpdates" | "postUpdate">
+export type DocsApi = Pick<typeof docsApi, "get" | "listUpdates" | "postUpdate">
 
 function backoffMs(failures: number): number {
   return Math.min(1000 * 2 ** (failures - 1), MAX_BACKOFF_MS)
@@ -47,6 +49,10 @@ function isAccessGone(error: unknown): boolean {
   return ApiError.isApiError(error) && (error.status === 403 || error.status === 404)
 }
 
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((byte, index) => byte === b[index])
+}
+
 function sameStatus(a: DocSyncStatus, b: DocSyncStatus): boolean {
   if (a.phase !== b.phase) return false
   if (a.phase === "error" && b.phase === "error") return a.error === b.error
@@ -58,6 +64,8 @@ export class DocSync {
   private readonly workspaceId: string
   private readonly docId: string
   private readonly ydoc: Y.Doc
+  // Exactly the server's doc at `seq`: the base a rescue diffs local edits against, and what the local copy stores.
+  private readonly serverDoc = new Y.Doc()
   private readonly api: DocsApi
   private readonly localCopies: DocLocalCopies
   private readonly onRejected?: (refusal: ApiError) => void
@@ -82,6 +90,9 @@ export class DocSync {
   private keepLocalCopy = true
   // Queue rows a restore folded into `unacked`: a refusal of `unacked` is a refusal of them too.
   private restoredQueueIds: string[] = []
+  // A refused session's edits are dropped, never carried over a move.
+  private refused = false
+  private releaseDocLock: () => void = () => {}
   private stopped = false
 
   constructor(params: {
@@ -118,7 +129,7 @@ export class DocSync {
 
   start(): Promise<void> {
     this.ydoc.on("update", this.onUpdate)
-    return this.load()
+    return this.holdDocLock().then(() => this.load())
   }
 
   retry(): Promise<void> {
@@ -135,6 +146,20 @@ export class DocSync {
     if (this.catchUpTimer) clearTimeout(this.catchUpTimer)
     this.listeners.clear()
     if (this.unacked.length > 0) void this.handOff()
+    this.serverDoc.destroy()
+    this.releaseDocLock()
+  }
+
+  /** Shared with other tabs holding the doc open; the queue delivers this doc's rows only while nobody does. */
+  private holdDocLock(): Promise<void> {
+    if (!navigator.locks) return Promise.resolve()
+    const released = new Promise<void>((release) => (this.releaseDocLock = release))
+    return new Promise((granted) => {
+      void navigator.locks.request(docLockName(this.workspaceId, this.docId), { mode: "shared" }, () => {
+        granted()
+        return released
+      })
+    })
   }
 
   /** Sends every unacked edit now; one request is in flight at a time, so a call during one runs after it. */
@@ -179,6 +204,11 @@ export class DocSync {
     return this.catchUpRun
   }
 
+  /** Pure deletions add no items, so only `unacked` shows them. */
+  private get hasLocalEdits(): boolean {
+    return this.unacked.length > 0 || !sameBytes(Y.encodeStateVector(this.ydoc), Y.encodeStateVector(this.serverDoc))
+  }
+
   private get hasMissed(): boolean {
     return this.seq !== null && this.highestSeen > this.seq
   }
@@ -189,7 +219,10 @@ export class DocSync {
     if (this.stopped) return
     this.setStatus({ phase: restored ? "ready" : "loading" })
     try {
-      await this.reload()
+      // Row by row from a restored copy: one merged diff would show our own delivered edit and a later move of its
+      // block as a single change, and the rescue would add the edit a second time.
+      if (restored) await this.fetchMissed(this.seq!)
+      else await this.reload()
     } catch (error) {
       if (this.stopped || (restored && !isPermanentApiError(error))) return
       if (isAccessGone(error)) void this.dropLocalCopy()
@@ -212,6 +245,7 @@ export class DocSync {
       return false
     }
     if (!copy || this.stopped || this.seq !== null) return false
+    Y.applyUpdate(this.serverDoc, copy.state, REMOTE_ORIGIN)
     Y.applyUpdate(this.ydoc, Y.mergeUpdates([copy.state, ...copy.unsent]), REMOTE_ORIGIN)
     this.unacked.push(...copy.unsent)
     this.restoredQueueIds = copy.queuedIds
@@ -220,7 +254,8 @@ export class DocSync {
   }
 
   private async reload(): Promise<void> {
-    const stateVector = this.seq === null ? undefined : bytesToBase64(Y.encodeStateVector(this.ydoc))
+    // The server doc's vector, not the local one: the local doc holds acked edits the server doc may not yet.
+    const stateVector = this.seq === null ? undefined : bytesToBase64(Y.encodeStateVector(this.serverDoc))
     const doc = await this.api.get(this.workspaceId, this.docId, stateVector)
     if (this.stopped) return
     this.applyRemote(doc.state)
@@ -256,19 +291,11 @@ export class DocSync {
   }
 
   private async fetchMissed(after: number): Promise<void> {
-    try {
-      const { updates } = await this.api.listUpdates(this.workspaceId, this.docId, after)
+    for await (const row of rowsAfter(this.api, this.workspaceId, this.docId, after)) {
       if (this.stopped) return
-      let seq = this.seq ?? after
-      for (const update of updates) {
-        if (update.seq <= seq) continue
-        this.applyRemote(update.update)
-        seq = update.seq
-      }
-      this.seq = seq
-    } catch (error) {
-      if (ApiError.isApiError(error) && error.status === 409) return this.reload()
-      throw error
+      if (row.seq <= (this.seq ?? after)) continue
+      this.applyRemote(row.update)
+      this.seq = row.seq
     }
   }
 
@@ -295,9 +322,9 @@ export class DocSync {
     this.clearSaveTimer()
     if (this.stopped || !this.keepLocalCopy || this.seq === null) return
     const copy = {
-      state: Y.encodeStateAsUpdate(this.ydoc),
+      state: Y.encodeStateAsUpdate(this.serverDoc),
       seq: this.seq,
-      unsent: this.unacked.length > 0 ? Y.mergeUpdates(this.unacked) : null,
+      unsent: this.hasLocalEdits ? Y.encodeStateAsUpdate(this.ydoc, Y.encodeStateVector(this.serverDoc)) : null,
     }
     try {
       await this.localCopies.write(this.workspaceId, this.docId, copy)
@@ -377,13 +404,17 @@ export class DocSync {
     // Advance only past our own row, and only when the head did not move during the request: a no-op answers a head
     // that may be a peer's row, a server stamp adds a row after ours, and any head that moved meanwhile belongs to
     // the broadcasts, which apply each row in order.
-    if (result.applied && before !== null && this.seq === before && result.seq === before + 1) this.seq = result.seq
+    if (result.applied && before !== null && this.seq === before && result.seq === before + 1) {
+      this.seq = result.seq
+      Y.applyUpdate(this.serverDoc, update, REMOTE_ORIGIN)
+    }
     if (!result.applied) return
     this.scheduleSave()
     this.onSaved?.()
   }
 
   private async discardRefusedEdits(error: ApiError): Promise<void> {
+    this.refused = true
     this.unacked = []
     await this.dropLocalCopy(this.restoredQueueIds)
     try {
@@ -395,7 +426,8 @@ export class DocSync {
   }
 
   private applyRemote(update: string): void {
-    Y.applyUpdate(this.ydoc, base64ToBytes(update), REMOTE_ORIGIN)
+    const rescue = !this.refused && this.hasLocalEdits
+    applyServerUpdate(this.ydoc, this.serverDoc, base64ToBytes(update), REMOTE_ORIGIN, rescue)
   }
 
   private setStatus(status: DocSyncStatus): void {
