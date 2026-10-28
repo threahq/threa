@@ -1,7 +1,10 @@
 import { describe, test, expect } from "bun:test"
 import type { Socket } from "socket.io-client"
+import * as Y from "yjs"
 import { DOC_AWARENESS_MAX_UPDATE_CHARS, type DocAwarenessPayload, type Stream } from "@threahq/types"
 import { DOC_AWARENESS_RATE_BURST } from "../../src/features/docs/config"
+import { decodeUpdateBase64, encodeUpdateBase64, writeContentJson, ydocToContentJson } from "../../src/features/docs"
+import { blockId } from "../../src/lib/id"
 import {
   TestClient,
   connectSocket,
@@ -10,6 +13,7 @@ import {
   loginAs,
   createWorkspace,
   createChannel,
+  createThread,
   joinWorkspace,
   addStreamMember,
 } from "../client"
@@ -147,6 +151,83 @@ describe("socket doc awareness relay", () => {
       ownerSocket.disconnect()
       ownerSecondTab.disconnect()
       memberSocket.disconnect()
+    }
+  })
+
+  test("should seat a grant-only reader in the doc's readers room when their read comes from a share grant", async () => {
+    const { owner, workspaceId, docId, room } = await createDocRoom("grant")
+    const open = await createChannel(owner, workspaceId, `awareness-grant-open-${testRunId}`, "public")
+    const reader = new TestClient()
+    await loginAs(reader, `awareness-grant-reader-${testRunId}@test.com`, "Grant Reader")
+    await joinWorkspace(reader, workspaceId)
+
+    const appendParagraph = async (anchor: string) => {
+      const loaded = await owner.get<{ state: string }>(`/api/workspaces/${workspaceId}/docs/${docId}`)
+      const ydoc = new Y.Doc()
+      Y.applyUpdate(ydoc, decodeUpdateBase64(loaded.data.state))
+      const json = ydocToContentJson(ydoc)
+      const block = { type: "paragraph", attrs: { blockId: anchor }, content: [{ type: "text", text: "x" }] }
+      const update = encodeUpdateBase64(writeContentJson(ydoc, { ...json, content: [...(json.content ?? []), block] }))
+      expect((await owner.post(`/api/workspaces/${workspaceId}/docs/${docId}/updates`, { update })).status).toBe(200)
+    }
+    const sectionAnchor = blockId()
+    await appendParagraph(sectionAnchor)
+    const shared = await owner.post(`/api/workspaces/${workspaceId}/messages`, {
+      streamId: open.id,
+      contentJson: {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "docEmbed", attrs: { docId, title: "Plan" } }] }],
+      },
+      confirmedPrivacyWarning: true,
+    })
+    expect(shared.status).toBe(201)
+
+    const ownerSocket = createSocket(owner)
+    const readerSocket = createSocket(reader)
+    try {
+      await Promise.all([connectSocket(ownerSocket), connectSocket(readerSocket)])
+      expect({ owner: await joinAck(ownerSocket, room), reader: await joinAck(readerSocket, room) }).toEqual({
+        owner: { ok: true },
+        reader: { ok: true },
+      })
+
+      const seen = { owner: [] as string[], reader: [] as string[] }
+      const nextEvent = (socket: Socket, eventType: string) =>
+        new Promise<void>((resolve) => socket.once(eventType, () => resolve()))
+      for (const eventType of ["stream:created", "doc:updated"]) {
+        ownerSocket.on(eventType, () => seen.owner.push(eventType))
+        readerSocket.on(eventType, () => seen.reader.push(eventType))
+      }
+      const ownerSawThread = nextEvent(ownerSocket, "stream:created")
+      await createThread(owner, workspaceId, docId, sectionAnchor)
+      await ownerSawThread
+      const readerSawUpdate = nextEvent(readerSocket, "doc:updated")
+      await appendParagraph(blockId())
+      await readerSawUpdate
+
+      const ownerFrames = collectFrames(ownerSocket)
+      const readerFrames = collectFrames(readerSocket)
+      const fromOwner: DocAwarenessPayload = { workspaceId, docId, update: "AQID" }
+      const fromReader: DocAwarenessPayload = { workspaceId, docId, update: "BAUG" }
+      ownerSocket.emit("doc:awareness", fromOwner)
+      await readerFrames.waitFor(1)
+      readerSocket.emit("doc:awareness", fromReader)
+      await ownerFrames.waitFor(1)
+
+      expect({
+        reader: [...new Set(seen.reader)],
+        ownerSawThread: seen.owner.includes("stream:created"),
+        readerFrames: readerFrames.frames,
+        ownerFrames: ownerFrames.frames,
+      }).toEqual({
+        reader: ["doc:updated"],
+        ownerSawThread: true,
+        readerFrames: [fromOwner],
+        ownerFrames: [fromReader],
+      })
+    } finally {
+      ownerSocket.disconnect()
+      readerSocket.disconnect()
     }
   })
 })

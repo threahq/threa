@@ -5,6 +5,7 @@ import {
   permissionGroupsForRole,
   permissionGroup,
   streamGroup,
+  docReadersGroup,
   userGroup,
   BROWSE_GROUP,
   WORKSPACE_GROUP,
@@ -112,7 +113,58 @@ describe("resolveDeliveryGroups — docs", () => {
       updated: resolveDeliveryGroups(
         event("doc:updated", { workspaceId: "ws_1", streamId: "stream_doc", seq: 1, update: "AA==" })
       ),
-    }).toEqual({ created: [streamGroup("stream_host")], updated: [streamGroup("stream_doc")] })
+    }).toEqual({
+      created: [streamGroup("stream_host")],
+      updated: [streamGroup("stream_doc"), docReadersGroup("stream_doc")],
+    })
+  })
+
+  it("should reach the doc's grant-only readers with its own content and lifecycle but not its threads when the stream is a doc", () => {
+    const doc = {
+      id: "stream_doc",
+      type: StreamTypes.DOC,
+      visibility: Visibilities.PRIVATE,
+      rootStreamId: "stream_host",
+    }
+    const channel = { id: "stream_1", type: StreamTypes.CHANNEL, visibility: Visibilities.PRIVATE, rootStreamId: null }
+    const route = (eventType: OutboxEventType, payload: Record<string, unknown>) =>
+      resolveDeliveryGroups(event(eventType, { workspaceId: "ws_1", ...payload }))
+    expect({
+      docUpdated: route("stream:updated", { streamId: doc.id, stream: doc }),
+      docRenamed: route("stream:display_name_updated", {
+        streamId: doc.id,
+        displayName: "Plan",
+        visibility: Visibilities.PRIVATE,
+        streamType: StreamTypes.DOC,
+        source: "generated",
+        revision: 1,
+      }),
+      docArchived: route("stream:archived", { streamId: doc.id, stream: doc, threadStreamIds: [] }),
+      docUnarchived: route("stream:unarchived", { streamId: doc.id, stream: doc, threadStreamIds: [] }),
+      channelUpdated: route("stream:updated", { streamId: channel.id, stream: channel }),
+      channelArchived: route("stream:archived", { streamId: channel.id, stream: channel, threadStreamIds: [] }),
+      sectionThreadUpdated: route("thread:updated", { streamId: doc.id, threadId: "stream_thread" }),
+      sectionThreadCreated: route("stream:created", {
+        streamId: "stream_thread",
+        stream: {
+          id: "stream_thread",
+          type: StreamTypes.THREAD,
+          parentAnchorId: "block_1",
+          parentStreamId: doc.id,
+          visibility: Visibilities.PRIVATE,
+          createdBy: "usr_1",
+        },
+      }),
+    }).toEqual({
+      docUpdated: [BROWSE_GROUP, streamGroup(doc.id), docReadersGroup(doc.id)],
+      docRenamed: [streamGroup(doc.id), docReadersGroup(doc.id)],
+      docArchived: [streamGroup(doc.id), docReadersGroup(doc.id)],
+      docUnarchived: [streamGroup(doc.id), docReadersGroup(doc.id)],
+      channelUpdated: [BROWSE_GROUP, streamGroup(channel.id)],
+      channelArchived: [streamGroup(channel.id)],
+      sectionThreadUpdated: [streamGroup(doc.id)],
+      sectionThreadCreated: [streamGroup(doc.id)],
+    })
   })
 })
 

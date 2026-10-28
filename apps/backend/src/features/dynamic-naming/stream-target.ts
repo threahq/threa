@@ -184,6 +184,7 @@ export async function applyStreamDisplayNameRename(
     streamId: target.targetId,
     displayName: title,
     visibility,
+    streamType: target.stream.type,
     source: TitleSources.GENERATED,
     revision: named.displayNameRevision!,
   })

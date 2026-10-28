@@ -34,7 +34,7 @@ import {
   AttachmentRepository,
   type InsertAttachmentParams,
 } from "../../src/features/attachments"
-import { resolveDeliveryGroups, streamGroup, type OutboxEvent } from "../../src/lib/outbox"
+import { resolveDeliveryGroups, docReadersGroup, streamGroup, type OutboxEvent } from "../../src/lib/outbox"
 import { attachmentId, blockId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { addTestMember, setupIsolatedTestDatabase, testMessageContent, withTransaction } from "./setup"
 
@@ -739,7 +739,7 @@ describe("DocService", () => {
       routes: {
         created: [streamGroup(channel.id)],
         docCreated: [streamGroup(channel.id)],
-        updated: [[streamGroup(doc.id)]],
+        updated: [[streamGroup(doc.id), docReadersGroup(doc.id)]],
       },
       updated: [
         {

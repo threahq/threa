@@ -792,7 +792,7 @@ export function createStreamHandlers({
 
       const { eventId, messageId, date, limit } = validateRequest(listEventsAroundQuerySchema, req.query)
 
-      await streamService.validateStreamAccess(streamId, workspaceId, userId)
+      const stream = await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
       // Date jumps resolve to the first message on/after the instant and carry
       // an explicit scroll anchor; id jumps center on the given event/message.
@@ -815,10 +815,12 @@ export function createStreamHandlers({
       }
 
       const candidateAnchorIds = collectThreadAnchorIds(result.events)
-      const [threadDataMap, threadSummaryMap] = await Promise.all([
-        streamService.getThreadsWithReplyCounts(workspaceId, streamId, candidateAnchorIds),
-        streamService.getThreadSummaries(workspaceId, streamId, candidateAnchorIds),
-      ])
+      const { threadDataMap, threadSummaryMap } = await streamService.getViewerThreads(
+        workspaceId,
+        stream,
+        userId,
+        candidateAnchorIds
+      )
       const enrichedEvents = await eventService.enrichBootstrapEvents(result.events, threadDataMap, threadSummaryMap, {
         workspaceId,
         streamId,
@@ -973,6 +975,10 @@ export function createStreamHandlers({
       const afterSequence = query.after ? BigInt(query.after) : undefined
 
       const stream = await streamService.validateStreamAccess(streamId, workspaceId, userId)
+      // A doc read through a share grant alone shows nothing of its host.
+      const hostHidden =
+        stream.type === StreamTypes.DOC &&
+        !(await streamService.tryAccess(stream.rootStreamId ?? stream.id, workspaceId, userId))
 
       // Start the scratchpad tool-policy reads now so they run alongside the
       // rest of bootstrap instead of serially after enrichment. Only scratchpads
@@ -1014,8 +1020,10 @@ export function createStreamHandlers({
         activityService?.getUnreadCountsForStream(userId, workspaceId, streamId),
         // Archiving writes only the target row, so a stream's own
         // `archivedAt` cannot tell the client it is sealed by an ancestor.
-        stream.parentStreamId ? streamService.findArchivedAncestor(workspaceId, streamId) : Promise.resolve(null),
-        streamConnectionService.listConnectedWorkspaces({ workspaceId, stream }),
+        stream.parentStreamId && !hostHidden
+          ? streamService.findArchivedAncestor(workspaceId, streamId)
+          : Promise.resolve(null),
+        hostHidden ? Promise.resolve([]) : streamConnectionService.listConnectedWorkspaces({ workspaceId, stream }),
       ])
       const botRuntimePresences = await botRuntimeService.findLatestPresences({ workspaceId, botIds: botMemberIds })
       const commands = await commandAvailabilityService.listStreamCommands({ workspaceId, userId, streamId })
@@ -1089,10 +1097,12 @@ export function createStreamHandlers({
       // track: a message anchors by its `msg_` id, a card by its `event_` id.
       const candidateAnchorIds = collectThreadAnchorIds(events)
       const threadScope = syncMode === "append" ? undefined : candidateAnchorIds
-      const [threadDataMap, threadSummaryMap] = await Promise.all([
-        streamService.getThreadsWithReplyCounts(workspaceId, streamId, threadScope),
-        streamService.getThreadSummaries(workspaceId, streamId, threadScope),
-      ])
+      const { threadDataMap, threadSummaryMap } = await streamService.getViewerThreads(
+        workspaceId,
+        stream,
+        userId,
+        threadScope
+      )
       const threadStates =
         syncMode === "append"
           ? [...threadDataMap.entries()].map(([anchorId, thread]) => ({

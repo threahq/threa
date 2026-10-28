@@ -270,3 +270,29 @@ function mapUnsharedReference(row: UnsharedReferenceRow): UnsharedReference {
     flavor: row.flavor as ShareFlavor,
   }
 }
+
+export const SharedDocRepository = {
+  /** Returns the doc ids the deleted rows granted. */
+  async deleteByShareMessageId(db: Querier, workspaceId: string, shareMessageId: string): Promise<Set<string>> {
+    const result = await db.query<{ doc_id: string }>(sql`
+      DELETE FROM shared_docs
+      WHERE workspace_id = ${workspaceId}
+        AND share_message_id = ${shareMessageId}
+      RETURNING doc_id
+    `)
+    return new Set(result.rows.map((row) => row.doc_id))
+  },
+
+  async insertMany(
+    db: Querier,
+    params: { workspaceId: string; shareMessageId: string; createdBy: string; docIds: readonly string[] }
+  ): Promise<void> {
+    if (params.docIds.length === 0) return
+    await db.query(sql`
+      INSERT INTO shared_docs (workspace_id, share_message_id, doc_id, created_by)
+      SELECT ${params.workspaceId}, ${params.shareMessageId}, doc_id, ${params.createdBy}
+      FROM unnest(${params.docIds as string[]}::text[]) AS doc_id
+      ON CONFLICT (workspace_id, share_message_id, doc_id) DO NOTHING
+    `)
+  },
+}

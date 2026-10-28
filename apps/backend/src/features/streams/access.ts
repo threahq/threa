@@ -1,7 +1,7 @@
 import type { QueryConfig } from "pg"
 import type { Querier } from "../../db"
 import { sql, composeSql } from "../../db"
-import { Visibilities, type Visibility } from "@threahq/types"
+import { StreamTypes, Visibilities, type Visibility } from "@threahq/types"
 import {
   PeoplePurposes,
   anyUserLacksBrowseSql,
@@ -70,11 +70,29 @@ export async function resolveEffectiveAccessStreams<T extends AccessResolvable>(
 }
 
 /**
+ * `docGrants: false` decides access without the `shared_docs` leg: what a reader reaches through
+ * membership and visibility alone. Defaults to true.
+ */
+export interface StreamAccessOptions {
+  docGrants?: boolean
+}
+
+/**
+ * Whether an access scope (an agent's `accessibleStreamIds`) reads a doc without a share grant: the scope
+ * already holds grant-reached docs, and only the doc's root says the scope reads it on its own.
+ */
+export function scopeReadsDocWithoutGrant(
+  scope: ReadonlySet<string>,
+  doc: Pick<Stream, "id" | "rootStreamId">
+): boolean {
+  return scope.has(doc.id) && scope.has(doc.rootStreamId ?? doc.id)
+}
+
+/**
  * Canonical "does this user have access to this stream?" check.
  *
  * Returns the stream when access is granted; `null` otherwise. Handles all
- * three cases callers usually get wrong when they reach for
- * `StreamMemberRepository.isMember` directly:
+ * four cases a direct `StreamMemberRepository.isMember` check misses:
  *
  * 1. **Workspace boundary** — a stream belonging to another workspace is
  *    treated as inaccessible (INV-8), even when the caller's userId
@@ -86,11 +104,13 @@ export async function resolveEffectiveAccessStreams<T extends AccessResolvable>(
  * 3. **Threads** — threads inherit access from their root stream's
  *    membership/visibility; checking membership on the thread itself is
  *    nearly always wrong.
+ * 4. **Doc grants** — a doc is also readable by readers of a stream holding
+ *    an undeleted message that carries its chip.
  *
  * Use this from any feature that needs to gate on stream access. Inlining
  * `StreamMemberRepository.isMember` plus visibility logic is a recurring
  * footgun (membership ≠ access) — route everything through here so the
- * three cases above stay consistent (INV-62).
+ * four cases above stay consistent (INV-62).
  *
  * Takes a `Querier` so it composes with existing transactions (`withClient`
  * / `withTransaction` blocks) without acquiring an extra connection. The
@@ -101,11 +121,12 @@ export async function checkStreamAccess(
   db: Querier,
   streamId: string,
   workspaceId: string,
-  userId: string
+  userId: string,
+  options?: StreamAccessOptions
 ): Promise<Stream | null> {
   const stream = await StreamRepository.findById(db, workspaceId, streamId)
   if (!stream) return null
-  const accessible = await listAccessibleStreamIds(db, workspaceId, userId, [stream.id])
+  const accessible = await listAccessibleStreamIds(db, workspaceId, userId, [stream.id], options)
   return accessible.has(stream.id) ? stream : null
 }
 
@@ -173,6 +194,11 @@ export function rootReadableConditionSql(
  * decides readability — the same leaf the catch-up CTE applies, so the two
  * cannot drift.
  *
+ * A doc is also readable through a `shared_docs` grant: an undeleted message
+ * carrying its chip sits in a stream whose root passes the same leaf. That leg
+ * is not recursive (a grant never flows through another grant), and the
+ * catch-up CTE does not apply it. `options.docGrants: false` drops the leg.
+ *
  * The returned `QueryConfig` is spliced into a larger query via
  * {@link composeSql} (squid's own `sql` tag cannot nest fragments — it would
  * parametrize the whole object). Any row source can gate on stream access by
@@ -191,14 +217,33 @@ export function rootReadableConditionSql(
  *
  * `userId` is an id, or a `QueryConfig` column reference correlating the
  * predicate to an outer row's user. It must not name an alias the fragment
- * binds (`u`, `wup`, `stream_members`, `eff_s`, `eff_root`), or it matches the
- * fragment's own row.
+ * binds (`u`, `wup`, `stream_members`, `eff_s`, `eff_root`, `sd`, `sd_m`, `sd_s`,
+ * `sd_root`), or it matches the fragment's own row.
  */
 export function streamAccessPredicateSql(
   workspaceId: string,
   userId: string | QueryConfig,
-  streamIdColumn: string
+  streamIdColumn: string,
+  options?: StreamAccessOptions
 ): QueryConfig {
+  const docGrantSql =
+    options?.docGrants === false
+      ? sql`FALSE`
+      : composeSql`(
+          eff_s.type = ${StreamTypes.DOC}
+          AND EXISTS (
+            SELECT 1
+            FROM shared_docs sd
+            JOIN messages sd_m ON sd_m.workspace_id = sd.workspace_id AND sd_m.id = sd.share_message_id
+              AND sd_m.deleted_at IS NULL
+            JOIN streams sd_s ON sd_s.id = sd_m.stream_id AND sd_s.workspace_id = sd.workspace_id
+            JOIN streams sd_root ON sd_root.id = COALESCE(sd_s.root_stream_id, sd_s.id)
+              AND sd_root.workspace_id = sd.workspace_id
+            WHERE sd.workspace_id = ${workspaceId}
+              AND sd.doc_id = eff_s.id
+              AND ${rootReadableConditionSql(workspaceId, userId, "sd_root")}
+          )
+        )`
   return composeSql`EXISTS (
     SELECT 1
     FROM streams eff_s
@@ -207,7 +252,10 @@ export function streamAccessPredicateSql(
     WHERE ${sql`eff_s.id = ${sql.raw(streamIdColumn)}`}
       AND eff_s.workspace_id = ${workspaceId}
       AND eff_root.workspace_id = ${workspaceId}
-      AND ${rootReadableConditionSql(workspaceId, userId, "eff_root")}
+      AND (
+        ${rootReadableConditionSql(workspaceId, userId, "eff_root")}
+        OR ${docGrantSql}
+      )
   )`
 }
 
@@ -314,10 +362,10 @@ export async function listRoomReadableStreamIds(
  * Batched equivalent of {@link checkStreamAccess}. Given a candidate set
  * of stream ids in a workspace, returns the subset the viewer can read.
  *
- * Routes through {@link streamAccessPredicateSql} so the thread → root
- * access rule has exactly one definition shared with the cross-cutting
- * features (search, attachments) that filter many stream ids at once
- * without an N+1.
+ * Routes through {@link streamAccessPredicateSql} so the access rule
+ * (thread → root, doc grants) has exactly one definition shared with the
+ * cross-cutting features (search, attachments) that filter many stream ids
+ * at once without an N+1.
  *
  * Empty input → empty Set; missing/cross-workspace ids are silently dropped
  * exactly like the per-id helper returning `null`.
@@ -326,7 +374,8 @@ export async function listAccessibleStreamIds(
   db: Querier,
   workspaceId: string,
   userId: string,
-  candidateStreamIds: readonly string[]
+  candidateStreamIds: readonly string[],
+  options?: StreamAccessOptions
 ): Promise<Set<string>> {
   if (candidateStreamIds.length === 0) return new Set()
   const result = await db.query<{ id: string }>(composeSql`
@@ -334,7 +383,7 @@ export async function listAccessibleStreamIds(
     FROM streams s
     WHERE s.workspace_id = ${workspaceId}
       AND s.id = ANY(${candidateStreamIds as string[]})
-      AND ${streamAccessPredicateSql(workspaceId, userId, "s.id")}
+      AND ${streamAccessPredicateSql(workspaceId, userId, "s.id", options)}
   `)
   return new Set(result.rows.map((r) => r.id))
 }

@@ -31,9 +31,11 @@ export {
   roomSharedSql,
   rootReadableConditionSql,
   rootReadableWithoutMembershipSql,
+  scopeReadsDocWithoutGrant,
   streamAccessPredicateSql,
   usersReadingWithoutMembership,
 } from "./access"
+export type { StreamAccessOptions } from "./access"
 
 export {
   deriveStreamViewerState,

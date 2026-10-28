@@ -1,7 +1,7 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { AuthorTypes } from "@threahq/types"
+import { AuthorTypes, StreamTypes } from "@threahq/types"
 import { HttpError, StreamNotFoundError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import { checkStreamAccess } from "./access"
@@ -39,8 +39,13 @@ export function createStreamBriefHandlers({ pool, streamBriefService }: Dependen
 
       const stream = await checkStreamAccess(pool, streamId, workspaceId, userId)
       if (!stream) throw new StreamNotFoundError()
+      const briefStreamId = resolveBriefStreamId(stream)
+      // Only a doc can be read without its root: a share grant reads the doc, not its host's brief.
+      if (stream.type === StreamTypes.DOC && !(await checkStreamAccess(pool, briefStreamId, workspaceId, userId))) {
+        throw new StreamNotFoundError()
+      }
 
-      const brief = await streamBriefService.get({ workspaceId, streamId: resolveBriefStreamId(stream) })
+      const brief = await streamBriefService.get({ workspaceId, streamId: briefStreamId })
       res.json({ brief })
     },
 
