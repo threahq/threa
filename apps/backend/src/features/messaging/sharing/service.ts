@@ -1,6 +1,7 @@
 import type { Querier } from "../../../db"
 import { HttpError } from "../../../lib/errors"
 import { sharedMessageId } from "../../../lib/id"
+import { OutboxRepository } from "../../../lib/outbox"
 import { collectDocEmbedIds } from "@threahq/prosemirror"
 import { type JSONContent, ShareFlavors, type ShareFlavor, ShareErrorCodes, StreamTypes } from "@threahq/types"
 import { MessageRepository } from "../repository"
@@ -409,8 +410,22 @@ async function recordDocShares(params: ValidateAndRecordSharesParams): Promise<v
     params.workspaceId,
     params.shareMessageId
   )
+  const granted = await grantDocShares(params, previouslyGranted)
+  const revoked = [...previouslyGranted].filter((docId) => !granted.includes(docId))
+  if (revoked.length > 0) {
+    await OutboxRepository.insert(params.client, "access:narrowed", {
+      workspaceId: params.workspaceId,
+      docIds: revoked,
+    })
+  }
+}
+
+async function grantDocShares(
+  params: ValidateAndRecordSharesParams,
+  previouslyGranted: Set<string>
+): Promise<string[]> {
   const chipDocIds = collectDocEmbedIds(params.contentJson)
-  if (chipDocIds.length === 0) return
+  if (chipDocIds.length === 0) return []
 
   const docs = await StreamRepository.findByIds(params.client, params.workspaceId, chipDocIds)
   const docIdsFound = new Set(docs.filter((doc) => doc.type === StreamTypes.DOC).map((doc) => doc.id))
@@ -419,7 +434,7 @@ async function recordDocShares(params: ValidateAndRecordSharesParams): Promise<v
     throw new HttpError("Doc not found", { status: 400, code: ShareErrorCodes.SOURCE_STREAM_NOT_FOUND })
   }
   const docIds = chipDocIds.filter((docId) => docIdsFound.has(docId))
-  if (docIds.length === 0) return
+  if (docIds.length === 0) return []
   const scope = params.accessibleStreamIds ? new Set(params.accessibleStreamIds) : null
   const readable = scope
     ? new Set(docs.filter((doc) => scopeReadsDocWithoutGrant(scope, doc)).map((doc) => doc.id))
@@ -450,6 +465,7 @@ async function recordDocShares(params: ValidateAndRecordSharesParams): Promise<v
     createdBy: params.sharerId,
     docIds: granted,
   })
+  return granted
 }
 
 /**

@@ -283,6 +283,27 @@ export const SharedDocRepository = {
     return new Set(result.rows.map((row) => row.doc_id))
   },
 
+  async listDocIdsByShareMessageIds(db: Querier, workspaceId: string, shareMessageIds: string[]): Promise<string[]> {
+    if (shareMessageIds.length === 0) return []
+    const result = await db.query<{ doc_id: string }>(sql`
+      SELECT DISTINCT doc_id FROM shared_docs
+      WHERE workspace_id = ${workspaceId}
+        AND share_message_id = ANY(${shareMessageIds})
+    `)
+    return result.rows.map((row) => row.doc_id)
+  },
+
+  async listDocIdsSharedInStreams(db: Querier, workspaceId: string, streamIds: string[]): Promise<string[]> {
+    if (streamIds.length === 0) return []
+    const result = await db.query<{ doc_id: string }>(sql`
+      SELECT DISTINCT sd.doc_id FROM shared_docs sd
+      JOIN messages m ON m.workspace_id = sd.workspace_id AND m.id = sd.share_message_id
+      WHERE sd.workspace_id = ${workspaceId}
+        AND m.stream_id = ANY(${streamIds})
+    `)
+    return result.rows.map((row) => row.doc_id)
+  },
+
   async insertMany(
     db: Querier,
     params: { workspaceId: string; shareMessageId: string; createdBy: string; docIds: readonly string[] }
