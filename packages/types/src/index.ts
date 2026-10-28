@@ -263,6 +263,8 @@ export {
   ACTIVITY_TYPES,
   type ActivityType,
   ActivityTypes,
+  MENTION_ACTIVITY_TYPES,
+  isMentionActivityType,
   // Saved messages
   SAVED_STATUSES,
   type SavedStatus,

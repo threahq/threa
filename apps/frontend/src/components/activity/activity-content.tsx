@@ -18,6 +18,7 @@ const ACTIVITY_DISPLAY: Record<string, ActivityDisplay> = {
   saved_reminder: { kind: "verb-only", verb: "Reminder for message in" },
   member_added: { kind: "actor-prefixed", verb: "added you to", selfVerb: "You were added to" },
   missed_call: { kind: "actor-prefixed", verb: "called you in", selfVerb: "You called" },
+  doc_mention: { kind: "actor-prefixed", verb: "mentioned you in", selfVerb: "You mentioned someone in" },
 }
 
 // Standalone (message-less) saved-item reminders have no stream to name —

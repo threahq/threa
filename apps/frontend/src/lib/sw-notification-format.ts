@@ -5,6 +5,7 @@ import {
   DEFAULT_PUSH_REMINDER_MINUTES,
   PUSH_ACTIONS_MAX,
   PushActions,
+  isMentionActivityType,
   type PushAction,
 } from "@threahq/types"
 import { readablePanelParam } from "./panel-tabs"
@@ -91,7 +92,7 @@ export function isStreamOnScreen(
  */
 export function resolveTag(workspaceId: string, streamId: string, activityType?: string): string {
   const scoped = workspaceScopedKey(workspaceId, streamId)
-  if (activityType === ActivityTypes.MENTION) {
+  if (isMentionActivityType(activityType)) {
     return `${scoped}:mention`
   }
   return scoped
@@ -105,16 +106,16 @@ export function resolveRewrapTag(workspaceId: string, streamId: string): string 
 /** Format the notification title based on message count, stream name, and activity type. */
 export function formatTitle(messages: NotificationMessage[], streamName?: string, activityType?: string): string {
   const count = messages.length
-  const isMention = activityType === ActivityTypes.MENTION
+  const mentioned = isMentionActivityType(activityType)
 
   if (count === 1) {
-    if (isMention) {
+    if (mentioned) {
       return streamName ? `Mentioned in ${streamName}` : "You were mentioned"
     }
     return streamName ?? "New message"
   }
 
-  if (isMention) {
+  if (mentioned) {
     return streamName ? `${count} new mentions in ${streamName}` : `${count} new mentions`
   }
   return streamName ? `${streamName} · ${count} new messages` : `${count} new messages`
@@ -209,6 +210,8 @@ export function resolveActions(
   prefs: NotificationActionPrefs,
   limit: number = PUSH_ACTIONS_MAX
 ): NotificationActionButton[] {
+  // The buttons act on a message; a doc mention points at a block.
+  if (activityType === ActivityTypes.DOC_MENTION) return []
   const actions = (prefs.pushActions ?? DEFAULT_PUSH_ACTIONS).slice(0, limit)
   return actions
     .filter((action) => !(action === PushActions.REACT && activityType === ActivityTypes.REACTION))

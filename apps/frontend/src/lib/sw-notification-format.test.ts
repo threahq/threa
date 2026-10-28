@@ -53,6 +53,10 @@ describe("resolveTag", () => {
     expect(resolveTag("ws_1", "stream_123", "mention")).toBe("ws_1/stream_123:mention")
   })
 
+  it("returns the mention tag for a doc mention", () => {
+    expect(resolveTag("ws_1", "stream_doc", "doc_mention")).toBe("ws_1/stream_doc:mention")
+  })
+
   it("returns the workspace-scoped stream key when activityType is undefined", () => {
     expect(resolveTag("ws_1", "stream_123")).toBe("ws_1/stream_123")
   })
@@ -179,6 +183,12 @@ describe("appendMessage", () => {
 })
 
 describe("formatTitle", () => {
+  it("titles a doc mention as a mention in the doc", () => {
+    expect(formatTitle([{ authorName: "Alice", contentPreview: "Ping" }], "Rotation plan", "doc_mention")).toBe(
+      "Mentioned in Rotation plan"
+    )
+  })
+
   it("single message with stream name", () => {
     const messages: NotificationMessage[] = [{ authorName: "Alice", contentPreview: "hey" }]
     expect(formatTitle(messages, "#general")).toBe("#general")
@@ -288,6 +298,10 @@ describe("formatBody", () => {
 })
 
 describe("resolveActions", () => {
+  it("offers no message buttons for a doc mention", () => {
+    expect(resolveActions("doc_mention", { pushActions: ["mark_read", "remind"] })).toEqual([])
+  })
+
   it("defaults to mark read and a 5m reminder for a message", () => {
     expect(resolveActions("message", {})).toEqual([
       { action: "mark_read", title: "Mark read" },

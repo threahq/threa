@@ -34,13 +34,20 @@ export type DocActivityRollUpResult =
   | { status: "skipped" }
   | { status: "requeued"; processAfter: Date }
 
-async function listEditsAfter(db: Querier, workspaceId: string, docId: string, afterSequence: bigint) {
+export async function listEditsAfter(
+  db: Querier,
+  workspaceId: string,
+  docId: string,
+  afterSequence: bigint,
+  actorId?: string
+) {
   const edits: StreamEvent[] = []
   for (let cursor = afterSequence; ; ) {
     const page = await StreamEventRepository.list(db, workspaceId, docId, {
       types: ["doc:edited"],
       afterSequence: cursor,
       limit: EDIT_PAGE_SIZE,
+      actorId,
     })
     edits.push(...page)
     if (page.length < EDIT_PAGE_SIZE) return edits

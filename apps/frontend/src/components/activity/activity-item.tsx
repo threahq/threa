@@ -8,7 +8,7 @@ import { URGENCY_COLORS } from "@/components/layout/sidebar/config"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { PersonaAvatar } from "@/components/persona-avatar"
 import { ActivityContent } from "./activity-content"
-import type { Activity } from "@threahq/types"
+import { isMentionActivityType, type Activity } from "@threahq/types"
 
 /** Shape returned by `useActors(...).getActorAvatar`. Repeated here to avoid a
  *  cross-hook type import and to document what each field is used for. */
@@ -27,7 +27,7 @@ export interface ActivityItemAvatar {
  * "an agent did this" here instead of "unread".
  */
 export function activityUrgency(activity: Activity): keyof typeof URGENCY_COLORS {
-  if (activity.activityType === "mention") return "mentions"
+  if (isMentionActivityType(activity.activityType)) return "mentions"
   if (activity.actorType === "persona") return "ai"
   if (activity.actorType === "bot") return "bot"
   return "activity"
@@ -124,7 +124,8 @@ export function ActivityItem({
 /**
  * Where an activity row navigates. A saved-reminder for a message saved from a
  * conversation carries `context.conversationId` and reopens the conversation
- * panel; otherwise the source-message stream permalink. Standalone saved-item
+ * panel; otherwise the source-message stream permalink, which for a doc mention
+ * names the block the doc lands on. Standalone saved-item
  * reminders have no source message — land on the Saved page where the item lives.
  */
 function resolveActivityHref(workspaceId: string, activity: Activity): string {
@@ -150,7 +151,7 @@ function renderTypeGlyph(activityType: string, reactionEmoji: string | null) {
     // line ("reacted to a message in …") can't carry it.
     return <span className={cn(badge, "bg-background text-[10px] leading-none")}>{reactionEmoji}</span>
   }
-  if (activityType === "mention") {
+  if (isMentionActivityType(activityType)) {
     return (
       <span aria-hidden className={cn(badge, "text-white")} style={{ backgroundColor: URGENCY_COLORS.mentions }}>
         <AtSign className="h-2.5 w-2.5" strokeWidth={3} />

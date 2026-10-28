@@ -684,7 +684,8 @@ self.addEventListener("push", (event) => {
               {
                 workspaceId: data.workspaceId,
                 streamId: data.streamId ?? null,
-                messageId: data.messageId ?? null,
+                // A doc mention's messageId is a block, which has no events around it.
+                messageId: data.activityType === ActivityTypes.DOC_MENTION ? null : (data.messageId ?? null),
                 workosUserId: data.workosUserId ?? null,
               },
               self.registration

@@ -65,6 +65,7 @@ export const JobQueues = {
   STREAM_CONNECTION_COPY_ATTACHMENT: "stream_connection.copy_attachment",
   STREAM_CONNECTION_PROFILES: "stream_connection.profiles",
   DOC_ACTIVITY_ROLLUP: "doc.activity-rollup",
+  DOC_MENTION_SETTLE: "doc.mention-settle",
 } as const
 
 export type JobQueueName = (typeof JobQueues)[keyof typeof JobQueues]
@@ -486,6 +487,19 @@ export const DocActivityRollupJobSchema = z.object({
 })
 export type DocActivityRollupJobData = z.infer<typeof DocActivityRollupJobSchema>
 
+/**
+ * Settles one author's edited blocks in a doc and notifies the users mentioned in them. Senders
+ * key the queue-message id on the author and a quiet-window time bucket; `hop` counts the
+ * worker's own reschedules while the author is still in a block.
+ */
+export const DocMentionSettleJobSchema = z.object({
+  workspaceId: z.string().min(1),
+  docId: z.string().min(1),
+  actorId: z.string().min(1),
+  hop: z.number().int().nonnegative().optional(),
+})
+export type DocMentionSettleJobData = z.infer<typeof DocMentionSettleJobSchema>
+
 export interface JobDataMap {
   [JobQueues.PERSONA_AGENT]: PersonaAgentJobData
   [JobQueues.DYNAMIC_NAMING_EVALUATE]: DynamicNamingEvaluateJobData
@@ -528,6 +542,7 @@ export interface JobDataMap {
   [JobQueues.STREAM_CONNECTION_COPY_ATTACHMENT]: StreamConnectionCopyAttachmentJobData
   [JobQueues.STREAM_CONNECTION_PROFILES]: StreamConnectionProfilesJobData
   [JobQueues.DOC_ACTIVITY_ROLLUP]: DocActivityRollupJobData
+  [JobQueues.DOC_MENTION_SETTLE]: DocMentionSettleJobData
 }
 
 /** Returns void on success, throws on error. */

@@ -1,4 +1,4 @@
-import type { Activity, WorkspaceBootstrap } from "@threahq/types"
+import { isMentionActivityType, type Activity, type WorkspaceBootstrap } from "@threahq/types"
 
 /**
  * Pure state math for the unread counter family.
@@ -100,7 +100,7 @@ export function deriveActivityCounts(rows: Activity[]): {
   for (const row of rows) {
     if (!row.streamId) continue
     activityCounts[row.streamId] = (activityCounts[row.streamId] ?? 0) + 1
-    if (row.activityType === "mention") {
+    if (isMentionActivityType(row.activityType)) {
       mentionCounts[row.streamId] = (mentionCounts[row.streamId] ?? 0) + 1
     }
   }

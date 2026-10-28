@@ -2,7 +2,7 @@ import type { Querier } from "../../db"
 import { sql } from "../../db"
 import { activityId } from "../../lib/id"
 import { effectivelyArchivedSql } from "../../lib/sql-filters"
-import { ActivityTypes } from "@threahq/types"
+import { ActivityTypes, MENTION_ACTIVITY_TYPES } from "@threahq/types"
 
 interface ActivityRow {
   id: string
@@ -88,6 +88,8 @@ export interface InsertActivityBatchParams {
   /** Required when activityType === "reaction"; NULL for all other types. */
   emoji?: string | null
 }
+
+const MENTION_TYPES = [...MENTION_ACTIVITY_TYPES]
 
 /** Column list for user_activity; single source of truth for SELECT lists */
 const USER_ACTIVITY_COLUMNS =
@@ -285,7 +287,7 @@ export const ActivityRepository = {
     const result = await db.query<{ stream_id: string; mention_count: string; total_count: string }>(sql`
       SELECT
         stream_id,
-        COUNT(*) FILTER (WHERE activity_type = 'mention')::text AS mention_count,
+        COUNT(*) FILTER (WHERE activity_type = ANY(${MENTION_TYPES}::text[]))::text AS mention_count,
         COUNT(*)::text AS total_count
       FROM user_activity
       WHERE user_id = ${userId}
@@ -327,7 +329,7 @@ export const ActivityRepository = {
       SELECT
         p.user_id,
         p.stream_id,
-        COUNT(ua.id) FILTER (WHERE ua.activity_type = 'mention')::text AS mention_count,
+        COUNT(ua.id) FILTER (WHERE ua.activity_type = ANY(${MENTION_TYPES}::text[]))::text AS mention_count,
         COUNT(ua.id)::text AS total_count
       FROM (
         SELECT DISTINCT user_id, stream_id
@@ -361,7 +363,7 @@ export const ActivityRepository = {
   ): Promise<{ mentionCount: number; totalCount: number }> {
     const result = await db.query<{ mention_count: string; total_count: string }>(sql`
       SELECT
-        COUNT(*) FILTER (WHERE activity_type = 'mention')::text AS mention_count,
+        COUNT(*) FILTER (WHERE activity_type = ANY(${MENTION_TYPES}::text[]))::text AS mention_count,
         COUNT(*)::text AS total_count
       FROM user_activity
       WHERE user_id = ${userId}

@@ -13,3 +13,6 @@ export const DOC_PUBLIC_MARKDOWN_MAX_CHARS = 100_000
 
 /** Distinct agent reasons one `doc:activity` row carries; the most recent are kept. */
 export const DOC_ACTIVITY_MAX_REASONS = 5
+
+/** A block an author edited settles, and its mentions notify, once that author has left it alone this long. */
+export const DOC_MENTION_QUIET_MS = 10_000

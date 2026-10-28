@@ -388,6 +388,25 @@ export async function listAccessibleStreamIds(
   return new Set(result.rows.map((r) => r.id))
 }
 
+/** Which of `userIds` (workspace users) can read `streamId`, by the same predicate as {@link checkStreamAccess}. */
+export async function listUsersWithStreamAccess(
+  db: Querier,
+  workspaceId: string,
+  streamId: string,
+  userIds: readonly string[]
+): Promise<Set<string>> {
+  if (userIds.length === 0) return new Set()
+  const result = await db.query<{ id: string }>(composeSql`
+    SELECT reader.id
+    FROM users reader
+    CROSS JOIN (SELECT ${streamId}::text AS id) target
+    WHERE reader.workspace_id = ${workspaceId}
+      AND reader.id = ANY(${userIds as string[]})
+      AND ${streamAccessPredicateSql(workspaceId, sql`reader.id`, "target.id")}
+  `)
+  return new Set(result.rows.map((r) => r.id))
+}
+
 /**
  * Which of `userIds` read a stream of this `visibility` without a `stream_members` row, for gates
  * that decide in TypeScript. The SQL form of the same rule is {@link rootReadableWithoutMembershipSql}.

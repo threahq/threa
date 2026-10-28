@@ -349,6 +349,7 @@ export class DocService {
         touchedBlockIds: update.touchedBlockIds,
         actorId: update.actorId,
         actorType: update.actorType,
+        ...(update === stored[0] && params.reason !== undefined ? { reason: params.reason } : {}),
       })
     }
     return seq

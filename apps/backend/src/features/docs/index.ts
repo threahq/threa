@@ -5,6 +5,7 @@ export { DocService, DOC_SNAPSHOT_INTERVAL } from "./service"
 export { createDocHandlers } from "./handlers"
 export {
   DOC_ACTIVITY_QUIET_MS,
+  DOC_MENTION_QUIET_MS,
   DOC_AWARENESS_RATE_BURST,
   DOC_AWARENESS_RATE_REFILL_PER_SEC,
   DOC_PUBLIC_MARKDOWN_MAX_CHARS,
@@ -13,6 +14,9 @@ export {
 export { DocActivityService } from "./activity-service"
 export { DocActivityOutboxHandler } from "./activity-outbox-handler"
 export { createDocActivityWorker } from "./activity-worker"
+export { DocMentionService } from "./mention-service"
+export { DocMentionOutboxHandler } from "./mention-outbox-handler"
+export { createDocMentionWorker } from "./mention-worker"
 export { DocAgentService, type DocAgentContext, type DocAgentTurn, type HostedDocAgentContext } from "./agent-service"
 export { docHostFor, listHostedDocs, docFirstLine, UNTITLED_DOC_LABEL, type HostedDoc } from "./hosted-docs"
 export type { DocAgentEdit } from "./agent-markdown"

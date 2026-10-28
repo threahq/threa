@@ -511,6 +511,7 @@ export const ACTIVITY_TYPES = [
   "saved_reminder",
   "member_added",
   "missed_call",
+  "doc_mention",
 ] as const
 export type ActivityType = (typeof ACTIVITY_TYPES)[number]
 
@@ -521,7 +522,15 @@ export const ActivityTypes = {
   SAVED_REMINDER: "saved_reminder",
   MEMBER_ADDED: "member_added",
   MISSED_CALL: "missed_call",
+  DOC_MENTION: "doc_mention",
 } as const satisfies Record<string, ActivityType>
+
+/** Activity types that count, push and render as mentions of the recipient. */
+export const MENTION_ACTIVITY_TYPES: readonly ActivityType[] = [ActivityTypes.MENTION, ActivityTypes.DOC_MENTION]
+
+export function isMentionActivityType(activityType: string | undefined): boolean {
+  return MENTION_ACTIVITY_TYPES.includes(activityType as ActivityType)
+}
 
 export const SAVED_STATUSES = ["saved", "done", "archived"] as const
 export type SavedStatus = (typeof SAVED_STATUSES)[number]
