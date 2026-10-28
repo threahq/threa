@@ -97,6 +97,7 @@ threa docs create #eng --title Plan --body - --reason "start the plan" < plan.md
 threa docs edit stream_abc --reason "fix date" --old "May 3" --new "May 4" --block blk_abc   # --old/--new repeat, pair by position; a value starting with - needs --old="- item"
 threa docs check stream_abc --item "Ship it" --reason "shipped"   # --uncheck clears it; --nth N / --block pick among duplicates
 threa docs comment stream_abc --block blk_abc --body "Is May 4 confirmed?"   # posts in the block's thread, starting it on the first comment
+threa docs move stream_abc --to #design   # creator or workspace admin only
 
 # delegations
 threa delegations list --since 2026-07-16T00:00:00Z # availability changed after this time
@@ -120,7 +121,7 @@ threa messages send stream_abc "ship it"            # sealed here; the plaintext
 threa mcp serve
 ```
 
-Any stream argument (`streams read`, `messages send`, `labels add`, `labels remove`, `docs list`, `docs create`, `search --stream`, `conversations list --stream`, `messages find-by-metadata --stream`) accepts a `stream_…` id or a `#channel-slug`. An `@user-slug` is not resolvable as a stream (a DM hides its counterpart on the wire); pass the DM's `stream_…` id. A ref that matches nothing or is ambiguous fails before any API call with code `UNRESOLVED_REF`.
+Any stream argument (`streams read`, `messages send`, `labels add`, `labels remove`, `docs list`, `docs create`, `docs move --to`, `search --stream`, `conversations list --stream`, `messages find-by-metadata --stream`) accepts a `stream_…` id or a `#channel-slug`. An `@user-slug` is not resolvable as a stream (a DM hides its counterpart on the wire); pass the DM's `stream_…` id. A ref that matches nothing or is ambiguous fails before any API call with code `UNRESOLVED_REF`.
 
 An archived stream stays readable to any key that could read it before. `streams read`, `conversations read`, and `search` work on it and on any thread under it; a send, edit, or delete there fails with code `STREAM_READ_ONLY`. By default `streams list` leaves out archived streams and their threads, and `conversations list` leaves out the conversations in those streams. With `--archived`, both commands include those rows, which print `[archived]` and carry `archived: true` in JSON. A `#channel-slug` does not resolve an archived channel (the ref fails with `UNRESOLVED_REF`), so pass the `stream_…` id that `streams list --archived` shows.
 
@@ -174,7 +175,7 @@ Claude Code maps every worktree of a repo to the same project entry, so a persis
 }
 ```
 
-The MCP tools mirror the commands: `whoami`, `list_streams`, `read_stream`, `list_users`, `search`, `list_conversations`, `read_conversation`, `find_messages_by_metadata`, `send_message`, `update_message`, `delete_message`, `list_labels`, `apply_label`, `remove_label`, `list_docs`, `read_doc`, `create_doc`, `edit_doc`, `check_doc_task`, `comment_on_doc`, `get_memo`, `get_attachment`, `get_attachment_download_url`, `list_delegations`, `get_delegation`, `claim_delegation`, `release_delegation`, `update_delegation`, `finish_delegation`, `request_delegation_access`. Tool results are JSON in the API envelope. Failures return `isError` with `{ code, message, hint? }`.
+The MCP tools mirror the commands: `whoami`, `list_streams`, `read_stream`, `list_users`, `search`, `list_conversations`, `read_conversation`, `find_messages_by_metadata`, `send_message`, `update_message`, `delete_message`, `list_labels`, `apply_label`, `remove_label`, `list_docs`, `read_doc`, `create_doc`, `edit_doc`, `check_doc_task`, `comment_on_doc`, `move_doc`, `get_memo`, `get_attachment`, `get_attachment_download_url`, `list_delegations`, `get_delegation`, `claim_delegation`, `release_delegation`, `update_delegation`, `finish_delegation`, `request_delegation_access`. Tool results are JSON in the API envelope. Failures return `isError` with `{ code, message, hint? }`.
 
 ## Keys
 
@@ -202,7 +203,7 @@ The scopes on the key decide which areas work. A key without a scope does not ge
 | `labels:read`       | `labels list`                                                                                                        |
 | `labels:write`      | `labels add`, `labels remove`                                                                                        |
 | `docs:read`         | `docs list`, `docs read`, `docs check`, `docs comment`                                                               |
-| `docs:write`        | `docs create`, `docs edit`, `docs check`                                                                             |
+| `docs:write`        | `docs create`, `docs edit`, `docs check`, `docs move`                                                                |
 | `delegations:read`  | `delegations list`, `delegations get`                                                                                |
 | `delegations:write` | `delegations claim`, `delegations release`, `delegations update`, `delegations finish`, `delegations request-access` |
 

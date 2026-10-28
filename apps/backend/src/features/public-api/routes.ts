@@ -85,6 +85,7 @@ import {
   createDocSchema,
   editDocSchema,
   commentOnDocSectionSchema,
+  moveDocSchema,
 } from "./schemas"
 
 // Response schemas — the single source of truth for public API wire shapes.
@@ -1054,6 +1055,7 @@ export type OperationId =
   | "createDoc"
   | "editDoc"
   | "commentOnDocSection"
+  | "moveDoc"
   | "getMe"
   | "listMyBots"
   | "getMyE2eKey"
@@ -2008,6 +2010,27 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     responseSchema: dataEnvelope(docCommentSchema),
     successStatus: 201,
     canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/docs/{docId}/move",
+    operationId: "moveDoc",
+    summary: "Move a doc to another stream",
+    description:
+      "Re-host the doc and its block comment threads under `toStreamId`; they take that stream's access, and " +
+      "share grants carried by messages stay. Only the doc's creator or a workspace admin may move it (403 " +
+      "DOC_MOVE_FORBIDDEN): a user key acts as its user, a workspace key as the bot. The key must also write the " +
+      "doc and the target (403 STREAM_READ_ONLY). `fromStreamId` is the host the caller saw; 409 " +
+      "DOC_MOVED_CONCURRENTLY when the doc has moved since. 400 DOC_HOST_TYPE_INVALID or DOC_E2E_HOST_NOT_ALLOWED " +
+      "for a target that cannot host docs. Moving to the current host changes nothing.",
+    tags: ["Docs"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DOCS_WRITE],
+    parameters: [workspaceIdParam, docIdParam],
+    requestSchema: moveDocSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(docSchema),
+    canReturn404: true,
+    canReturn409: true,
   },
   {
     method: "get",

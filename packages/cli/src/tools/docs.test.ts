@@ -185,3 +185,29 @@ test("check_doc_task reports duplicates as DOC_TASK_AMBIGUOUS without writing", 
   expect((textPayload(result) as { code: string }).code).toBe("DOC_TASK_AMBIGUOUS")
   expect(fetchSpy.mock.calls.length).toBe(1)
 })
+
+test("move_doc resolves to_stream_id and posts the move", async () => {
+  const response = { data: { id: "stream_d1", hostStreamId: "stream_des", title: null, seq: 3 } }
+  fetchSpy.mockImplementation(
+    fetchByPath((path) =>
+      path === STREAMS_LIST
+        ? jsonResponse(200, { data: [{ id: "stream_des", slug: "design" }], hasMore: false })
+        : jsonResponse(200, response)
+    )
+  )
+  const client = await connectClient()
+
+  const result = (await client.callTool({
+    name: "move_doc",
+    arguments: { doc_id: "stream_d1", to_stream_id: "#design" },
+  })) as CallToolResult
+  expect(result.isError).toBeFalsy()
+
+  const call = lastCall()
+  expect({ method: call.method, path: call.path, body: call.body, payload: textPayload(result) }).toEqual({
+    method: "POST",
+    path: `${DOCS}/stream_d1/move`,
+    body: { toStreamId: "stream_des" },
+    payload: response,
+  })
+})

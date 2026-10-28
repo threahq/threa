@@ -354,3 +354,32 @@ test("docs check --nth rejects anything but a plain positive integer", async () 
   expect(results.map((r) => r.exitCode)).toEqual([2, 2, 2])
   expect(fetchSpy).not.toHaveBeenCalled()
 })
+
+test("docs move resolves --to #slug and posts the target stream id", async () => {
+  fetchSpy.mockImplementation(
+    fetchByPath((path) =>
+      path === STREAMS_LIST
+        ? jsonResponse(200, { data: [{ id: "stream_des", slug: "design" }], hasMore: false })
+        : jsonResponse(200, { data: { id: "stream_d1", hostStreamId: "stream_des", title: null, seq: 3 } })
+    )
+  )
+
+  const result = await run(["docs", "move", "stream_d1", "--to", "#design", "-o", "text"], { config: TEST_CONFIG })
+
+  expect(result.exitCode).toBe(0)
+  const call = lastCall()
+  expect({ method: call.method, path: call.url.pathname, body: call.body, stdout: result.stdout.trim() }).toEqual({
+    method: "POST",
+    path: `${DOCS}/stream_d1/move`,
+    body: { toStreamId: "stream_des" },
+    stdout: "moved stream_d1 to stream_des",
+  })
+})
+
+test("docs move without --to is a usage error before any HTTP", async () => {
+  const result = await run(["docs", "move", "stream_d1"], { config: TEST_CONFIG })
+
+  expect(result.exitCode).toBe(2)
+  expect((JSON.parse(result.stderr) as { code: string }).code).toBe("USAGE")
+  expect(fetchSpy).not.toHaveBeenCalled()
+})

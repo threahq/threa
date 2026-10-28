@@ -22,6 +22,7 @@ import type {
 } from "@threahq/types"
 import { withClient, withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
+import { endSessionLinksForStreams } from "./session-archive"
 import { BotRepository, type Bot } from "../public-api/bot-repository"
 import {
   botInvocationId,
@@ -784,25 +785,7 @@ export class BotRuntimeService {
    * rows, so nothing re-notifies.
    */
   async endSessionsForArchivedStream(params: { workspaceId: string; streamIds: readonly string[] }): Promise<number> {
-    return withTransaction(this.pool, async (db) => {
-      const ended = await BotRuntimeSessionLinkRepository.archiveActiveByStreams(db, params)
-      for (const link of ended) {
-        await OutboxRepository.insert(db, "bot:session_archived", {
-          workspaceId: params.workspaceId,
-          botId: link.botId,
-          instanceId: link.instanceId,
-          runtimeSessionId: link.runtimeSessionId,
-          rootStreamId: link.rootStreamId,
-        })
-      }
-      if (ended.length > 0) {
-        logger.info(
-          { workspaceId: params.workspaceId, streamIds: params.streamIds, endedLinks: ended.length },
-          "Ended runtime session links for archived stream"
-        )
-      }
-      return ended.length
-    })
+    return withTransaction(this.pool, (db) => endSessionLinksForStreams(db, { ...params, cause: "stream_archived" }))
   }
 
   /**

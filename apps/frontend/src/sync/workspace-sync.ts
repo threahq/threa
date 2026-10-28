@@ -98,6 +98,7 @@ import type {
   DraftDeletedPayload,
   PersonaListItem,
   StreamConnectionUpdatedPayload,
+  DocListResponse,
 } from "@threahq/types"
 import { cachedPersonaFromListItem } from "@/lib/personas"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
@@ -116,6 +117,7 @@ import { putStreamConnection } from "@/stores/stream-connections-store"
 import { activityKeys } from "@/hooks/use-activity"
 import { memoKeys } from "@/hooks/use-memos"
 import { invitationKeys } from "@/api/invitations"
+import { docKeys } from "@/api/docs"
 import { savedSuggestionKeys } from "@/hooks/use-saved-suggestions"
 import { persistScheduledRows, removeScheduledRow, scheduledKeys } from "@/hooks/use-scheduled"
 import { unsharedReferenceKeys } from "@/hooks/use-unshared-references"
@@ -189,6 +191,13 @@ interface WorkspaceUserPayload {
   setupCompleted: boolean
   email: string
   joinedAt: string
+}
+
+interface StreamDocMovedPayload {
+  workspaceId: string
+  streamId: string
+  doc: Stream
+  movedStreamIds: string[]
 }
 
 interface StreamPayload {
@@ -1913,6 +1922,82 @@ export function registerWorkspaceSocketHandlers(
     refreshGuestRosterForUnknown(payload.event.actorId)
   }
 
+  // Archived threads live only in IndexedDB and `archivedStreams`, so the active cache alone would miss them.
+  const pruneUnreadableStreams = async (
+    isUnreadable: (stream: { id: string; rootStreamId?: string | null }) => boolean
+  ) => {
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
+    const candidates = [
+      ...(bootstrap?.streams ?? []),
+      ...(bootstrap?.archivedStreams ?? []),
+      ...(await db.streams.where("workspaceId").equals(workspaceId).toArray()),
+    ]
+    const unreadableIds = new Set(candidates.filter(isUnreadable).map((s) => s.id))
+    if (unreadableIds.size === 0) return
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (current) =>
+      current
+        ? {
+            ...current,
+            streams: current.streams?.filter((s) => !unreadableIds.has(s.id)),
+            archivedStreams: current.archivedStreams?.filter((s) => !unreadableIds.has(s.id)),
+          }
+        : current
+    )
+    await Promise.all(
+      [...unreadableIds].flatMap((streamId) => [
+        db.streams.delete([workspaceId, streamId]),
+        deleteStreamSlots(db, workspaceId, streamId),
+      ])
+    )
+  }
+
+  const handleStreamDocMoved = async (payload: StreamDocMovedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    const { doc, movedStreamIds } = payload
+    const movedIds = new Set(movedStreamIds)
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
+    if (!bootstrap) return
+
+    if (!bootstrap.streams.some((s) => s.id === doc.rootStreamId)) {
+      queryClient.setQueryData<DocListResponse>(docKeys.list(workspaceId), (old) =>
+        old ? { ...old, docs: old.docs.filter((item) => !movedIds.has(item.id)) } : old
+      )
+      await pruneUnreadableStreams((s) => movedIds.has(s.id))
+      return
+    }
+
+    const rehost = <T extends Partial<Stream> & { id: string }>(stream: T): T =>
+      stream.id === doc.id
+        ? mergeStreamByRevision(stream, doc)
+        : { ...stream, rootStreamId: doc.rootStreamId, visibility: doc.visibility }
+
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+      if (!old) return old
+      const hasDoc = old.streams.some((s) => s.id === doc.id)
+      const streams = old.streams.map((s) => (movedIds.has(s.id) ? rehost(s) : s))
+      return {
+        ...old,
+        streams: hasDoc ? streams : [...streams, { ...doc, lastMessagePreview: null }],
+        archivedStreams: old.archivedStreams?.map((s) => (movedIds.has(s.id) ? rehost(s) : s)),
+      }
+    })
+    for (const id of movedStreamIds) {
+      queryClient.setQueryData<Stream>(streamKeys.detail(workspaceId, id), (old) => (old ? rehost(old) : old))
+      queryClient.setQueryData<StreamBootstrap>(streamKeys.bootstrap(workspaceId, id), (old) =>
+        old ? { ...old, stream: rehost(old.stream) } : old
+      )
+    }
+    void queryClient.invalidateQueries({ queryKey: docKeys.list(workspaceId) })
+
+    const now = Date.now()
+    await db.transaction("rw", db.streams, async () => {
+      const cached = await db.streams.bulkGet(movedStreamIds.map((id) => [workspaceId, id] as [string, string]))
+      const rows = cached.flatMap((row) => (row ? [{ ...rehost(row), _cachedAt: now }] : []))
+      if (!rows.some((row) => row.id === doc.id)) rows.push({ ...doc, lastMessagePreview: null, _cachedAt: now })
+      await db.streams.bulkPut(rows)
+    })
+  }
+
   const handleStreamMemberRemoved = async (payload: { workspaceId: string; streamId: string; memberId: string }) => {
     if (payload.workspaceId !== workspaceId) return
 
@@ -1953,35 +2038,22 @@ export function registerWorkspaceSocketHandlers(
 
     const removedStream = old.streams?.find((s) => s.id === payload.streamId)
     const shouldRemoveFromSidebar = removedStream?.visibility === "private"
-    // Threads carry no access of their own (INV-62): a private root's revocation takes them along.
-    // Archived threads live only in IndexedDB and `archivedStreams`, so the active cache alone would miss them.
-    const candidates = shouldRemoveFromSidebar
-      ? [
-          ...(old.streams ?? []),
-          ...(old.archivedStreams ?? []),
-          ...(await db.streams.where("workspaceId").equals(workspaceId).toArray()),
-        ]
-      : []
-    const unreadableIds = new Set(
-      candidates.filter((s) => s.id === payload.streamId || s.rootStreamId === payload.streamId).map((s) => s.id)
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (current) =>
+      current
+        ? {
+            ...current,
+            streamMemberships: current.streamMemberships.filter((m: StreamMember) => m.streamId !== payload.streamId),
+          }
+        : current
     )
-    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (current) => {
-      if (!current) return current
-      return {
-        ...current,
-        streamMemberships: current.streamMemberships.filter((m: StreamMember) => m.streamId !== payload.streamId),
-        streams: current.streams?.filter((s) => !unreadableIds.has(s.id)),
-        archivedStreams: current.archivedStreams?.filter((s) => !unreadableIds.has(s.id)),
-      }
-    })
 
     await Promise.all([
       db.streamMemberships.delete(`${workspaceId}:${payload.streamId}`),
       db.streamReadState.delete(`${workspaceId}:${payload.streamId}`),
-      ...[...unreadableIds].flatMap((streamId) => [
-        db.streams.delete([workspaceId, streamId]),
-        deleteStreamSlots(db, workspaceId, streamId),
-      ]),
+      // Threads carry no access of their own (INV-62): a private root's revocation takes them along.
+      ...(shouldRemoveFromSidebar
+        ? [pruneUnreadableStreams((s) => s.id === payload.streamId || s.rootStreamId === payload.streamId)]
+        : []),
       // The cards this stream contributed are unreadable now — drop them
       // rather than leave them rendering off the cache.
       ...(shouldRemoveFromSidebar ? [removeBoardConversationsForStream(workspaceId, payload.streamId)] : []),
@@ -2697,6 +2769,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("stream:member_added", handleStreamMemberAdded)
   socket.on("stream:member_joined", handleStreamMemberJoined)
   socket.on("stream:member_removed", handleStreamMemberRemoved)
+  socket.on("stream:doc_moved", handleStreamDocMoved)
   socket.on("user_preferences:updated", handleUserPreferencesUpdated)
   socket.on("sidebar_config:updated", handleSidebarConfigUpdated)
   socket.on("workspace_settings:updated", handleWorkspaceSettingsUpdated)
@@ -2773,6 +2846,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("stream:member_added", handleStreamMemberAdded)
     socket.off("stream:member_joined", handleStreamMemberJoined)
     socket.off("stream:member_removed", handleStreamMemberRemoved)
+    socket.off("stream:doc_moved", handleStreamDocMoved)
     socket.off("user_preferences:updated", handleUserPreferencesUpdated)
     socket.off("sidebar_config:updated", handleSidebarConfigUpdated)
     socket.off("workspace_settings:updated", handleWorkspaceSettingsUpdated)

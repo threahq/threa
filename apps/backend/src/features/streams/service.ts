@@ -31,6 +31,7 @@ import {
 import { formatParticipantNames } from "./display-name"
 import {
   checkStreamAccess,
+  countDocMoveReaders,
   findReadersWithoutAccess,
   listAccessibleStreamIds,
   usersReadingWithoutMembership,
@@ -81,6 +82,8 @@ import {
   type ToolPrivacyPolicy,
   type AsideAnchoredEventPayload,
   type DocCreatedEventPayload,
+  type DocMovedEventPayload,
+  type DocMovePreviewResponse,
   type JSONContent,
   type AuthorType,
   type DescriptionSetEventPayload,
@@ -107,6 +110,7 @@ import { EnclaveRuntimesRepository, ENCLAVE_RUNTIME_STALENESS_MS } from "../encl
 // leaves (db + types only). Same lesson as the BIK schema in lib/schemas.
 import { BOT_RUNTIME_BIK_STALENESS_MS } from "../bot-runtimes/repository"
 import { RuntimeE2eKeysRepository } from "../bot-runtimes/runtime-e2e-keys"
+import { endSessionLinksForStreams } from "../bot-runtimes/session-archive"
 import { BotRepository, serializeBot } from "../public-api/bot-repository"
 import {
   streamTypeSchema,
@@ -273,6 +277,17 @@ export interface CreateDocParams {
   parentStreamId: string
   principal: StreamWritePrincipal
   displayName?: string
+}
+
+export interface MoveDocParams {
+  workspaceId: string
+  docId: string
+  /** The host the caller saw; omitted, the current host is taken as seen. */
+  fromStreamId?: string
+  toStreamId: string
+  principal: StreamWritePrincipal
+  /** Resolved by the caller's auth path; a bot principal is never an admin. */
+  isWorkspaceAdmin: boolean
 }
 
 export type CreateAsideParams = z.infer<typeof createAsideParamsSchema> & {
@@ -1084,6 +1099,123 @@ export class StreamService {
 
       return stream
     })
+  }
+
+  /**
+   * Re-hosts a doc and its section threads under `toStreamId`; they take the new root's access (INV-62).
+   * Only the doc's creator or a workspace admin may move it, and they must write the doc and post in the
+   * target. `fromStreamId` pins the host the caller saw. A share grant stays, since it rides its message.
+   */
+  async moveDoc(params: MoveDocParams): Promise<Stream> {
+    const { workspaceId, docId, toStreamId, principal } = params
+    return withTransaction(this.pool, async (client) => {
+      const authorities = await resolveLockedStreamAuthorities(client, {
+        workspaceId,
+        streamIds: [docId, toStreamId],
+        principal,
+        // Hosting types post messages freely; the doc itself takes Yjs writes, never messages.
+        typeReadOnly: "none",
+      })
+      const docAuthority = authorities.find(({ target }) => target.id === docId)
+      const targetAuthority = authorities.find(({ target }) => target.id === toStreamId)
+      if (docAuthority?.target.type !== StreamTypes.DOC || !targetAuthority) throw new StreamNotFoundError()
+      const doc = docAuthority.target
+      const oldHostId = doc.parentStreamId
+      if (!oldHostId) throw new Error(`Doc ${doc.id} has no host stream`)
+
+      const mover = principalActorId(principal)
+      if (doc.createdBy !== mover && !(principal.kind === "user" && params.isWorkspaceAdmin)) {
+        throw new HttpError("Only the doc's creator or a workspace admin can move it", {
+          status: 403,
+          code: DocErrorCodes.MOVE_FORBIDDEN,
+        })
+      }
+      if (params.fromStreamId !== undefined && params.fromStreamId !== oldHostId) {
+        throw new HttpError("The doc moved since this was requested", {
+          status: 409,
+          code: DocErrorCodes.MOVED_CONCURRENTLY,
+          details: { hostStreamId: oldHostId },
+        })
+      }
+      if (oldHostId === toStreamId) return doc
+
+      const { target, root } = targetAuthority
+      if (!STREAM_TYPE_CAPABILITIES[target.type].hostsDocs) {
+        throw new HttpError("A doc cannot be moved to this stream type", {
+          status: 400,
+          code: DocErrorCodes.HOST_TYPE_INVALID,
+        })
+      }
+      if (await E2eStreamsRepository.isE2eStream(client, workspaceId, target.id)) {
+        throw new HttpError("Docs cannot live under an end-to-end encrypted stream", {
+          status: 400,
+          code: DocErrorCodes.E2E_HOST_NOT_ALLOWED,
+        })
+      }
+      assertViewerStreamWritable(docAuthority.state)
+      assertViewerStreamWritable(targetAuthority.state)
+
+      const movedStreamIds = await StreamRepository.moveDocSubtree(client, {
+        workspaceId,
+        docId,
+        parentStreamId: target.id,
+        root,
+        threadsTakeCompanion: root.type === StreamTypes.SCRATCHPAD || root.type === StreamTypes.ASIDE,
+      })
+      const moved = await StreamRepository.findById(client, workspaceId, docId)
+      if (!moved) throw new StreamNotFoundError()
+
+      await StreamContextRepository.reRootStreams(client, workspaceId, movedStreamIds, root.id)
+      await StreamContextRepository.deleteHostedDoc(client, workspaceId, oldHostId, docId)
+      await endSessionLinksForStreams(client, { workspaceId, streamIds: movedStreamIds, cause: "doc_moved" })
+
+      const payload = { docId, fromStreamId: oldHostId, toStreamId: target.id } satisfies DocMovedEventPayload
+      for (const hostId of [oldHostId, target.id]) {
+        const event = await StreamEventRepository.insert(client, {
+          id: eventId(),
+          workspaceId,
+          streamId: hostId,
+          eventType: "doc:moved",
+          payload,
+          actorId: mover,
+          actorType: principal.kind,
+        })
+        await OutboxRepository.insert(client, "stream:doc_moved", {
+          workspaceId,
+          streamId: hostId,
+          event,
+          doc: moved,
+          movedStreamIds,
+        })
+        if (hostId === target.id) {
+          await StreamContextRepository.insertMany(client, [
+            hostedDocContextRow({
+              workspaceId,
+              hostStreamId: hostId,
+              rootStreamId: root.id,
+              docId,
+              createdEvent: event,
+            }),
+          ])
+        }
+      }
+      await OutboxRepository.insert(client, "access:narrowed", { workspaceId, streamId: docId })
+      return moved
+    })
+  }
+
+  /** Who a move of `docId` under `toStreamId` takes read access from and gives it to; the caller must read both. */
+  async previewDocMove(params: {
+    workspaceId: string
+    docId: string
+    toStreamId: string
+    userId: string
+  }): Promise<DocMovePreviewResponse> {
+    const { workspaceId, docId, toStreamId, userId } = params
+    const readable = await listAccessibleStreamIds(this.pool, workspaceId, userId, [docId, toStreamId])
+    const doc = readable.has(docId) ? await StreamRepository.findById(this.pool, workspaceId, docId) : null
+    if (doc?.type !== StreamTypes.DOC || !readable.has(toStreamId)) throw new StreamNotFoundError()
+    return countDocMoveReaders(this.pool, workspaceId, docId, toStreamId)
   }
 
   async createChannel(params: CreateChannelParams): Promise<Stream> {

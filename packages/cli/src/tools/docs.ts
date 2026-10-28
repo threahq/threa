@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
-import { checkDocTask, commentOnDoc, createDoc, editDoc, listDocs, readDoc } from "../ops"
+import { checkDocTask, commentOnDoc, createDoc, editDoc, listDocs, moveDoc, readDoc } from "../ops"
 import type { RefResolver } from "../resolver"
 import { runTool } from "./result"
 
@@ -138,5 +138,22 @@ export function registerDocTools(server: McpServer, client: ThreaApiClient, reso
     },
     async ({ doc_id, item, checked, block_id, nth, reason }) =>
       runTool(() => checkDocTask(client, { docId: doc_id, item, checked, blockId: block_id, nth, reason }))
+  )
+
+  server.registerTool(
+    "move_doc",
+    {
+      title: "Move a doc",
+      description:
+        "Move a doc to another host stream; content, history and threads come with it. `to_stream_id` takes a " +
+        "`stream_…` id or `#channel-slug`. Only the doc's creator or a workspace admin can move it (403 " +
+        "DOC_MOVE_FORBIDDEN otherwise). The result is the doc with its new `hostStreamId`.",
+      inputSchema: {
+        doc_id: z.string(),
+        to_stream_id: z.string(),
+      },
+    },
+    async ({ doc_id, to_stream_id }) =>
+      runTool(() => moveDoc(client, resolver, { docId: doc_id, toStreamRef: to_stream_id }))
   )
 }

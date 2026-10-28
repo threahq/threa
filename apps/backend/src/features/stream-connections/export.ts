@@ -86,6 +86,7 @@ const EVENT_RULES: Record<EventType, EventRule> = {
   "doc:created": "withheld",
   "doc:edited": "withheld",
   "doc:activity": "withheld",
+  "doc:moved": "withheld",
 }
 
 type NodeRule =

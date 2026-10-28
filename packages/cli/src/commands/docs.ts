@@ -1,4 +1,4 @@
-import { checkDocTask, commentOnDoc, createDoc, editDoc, listDocs, readDoc } from "../ops"
+import { checkDocTask, commentOnDoc, createDoc, editDoc, listDocs, moveDoc, readDoc } from "../ops"
 import {
   arrayFlag,
   boolFlag,
@@ -263,8 +263,37 @@ const checkVerb: VerbSpec = {
   },
 }
 
+const moveVerb: VerbSpec = {
+  name: "move",
+  summary: "Move a doc to another host stream",
+  usage: "threa docs move <doc-id> --to <stream-ref>",
+  help:
+    "threa docs move <doc-id> --to <stream-ref> [flags]\n\n" +
+    "Move a doc to another stream; its content, history and threads come with it. Only the doc's creator or a " +
+    "workspace admin can move it. A 403 DOC_MOVE_FORBIDDEN means the key's user is neither; 400 " +
+    "DOC_HOST_TYPE_INVALID or DOC_E2E_HOST_NOT_ALLOWED means the target cannot host docs.\n\n" +
+    "Flags:\n" +
+    "  --to ref   the new host: a stream_… id or #channel-slug (required)\n" +
+    "  --json     print the envelope (the doc with its new hostStreamId)\n" +
+    "  --help     show this help",
+  options: {
+    to: { type: "string" },
+  },
+  run: async (ctx, positionals, values) => {
+    const docId = positionals[0]
+    if (!docId) throw new UsageError("docs move requires a <doc-id>")
+    const toStreamRef = stringFlag(values, "to")
+    if (!toStreamRef) throw new UsageError("docs move requires --to <stream-ref>")
+    return moveDoc(ctx.client, ctx.resolver, { docId, toStreamRef })
+  },
+  render: (payload) => {
+    const p = payload as { data?: { id?: string; hostStreamId?: string } }
+    return `moved ${p.data?.id ?? "?"} to ${p.data?.hostStreamId ?? "?"}`
+  },
+}
+
 export const docsNoun: NounSpec = {
   name: "docs",
-  summary: "List, read, create, edit, check tasks in, and comment on docs hosted by streams",
-  verbs: [listVerb, readVerb, editVerb, checkVerb, createVerb, commentVerb],
+  summary: "List, read, create, edit, check tasks in, comment on, and move docs hosted by streams",
+  verbs: [listVerb, readVerb, editVerb, checkVerb, createVerb, commentVerb, moveVerb],
 }

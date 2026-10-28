@@ -11,7 +11,8 @@ import { eventId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import { OutboxRepository } from "../../lib/outbox"
 import { JobQueues, type DocActivityRollupJobData, type QueueManager } from "../../lib/queue"
-import { StreamEventRepository, StreamRepository, type StreamEvent } from "../streams"
+import { StreamEventRepository, StreamRepository, listAccessibleStreamIds, type StreamEvent } from "../streams"
+import type { BotChannelService } from "../api-keys"
 import { DocActivityStateRepository } from "./activity-repository"
 import { DOC_ACTIVITY_MAX_REASONS, DOC_ACTIVITY_QUIET_MS } from "./config"
 import { DocRepository } from "./repository"
@@ -58,11 +59,18 @@ export async function listEditsAfter(
 export class DocActivityService {
   private readonly pool: Pool
   private readonly jobQueue: Pick<QueueManager, "send">
+  private readonly botChannelService: Pick<BotChannelService, "isStreamAccessibleForBot">
   private readonly now: () => Date
 
-  constructor(deps: { pool: Pool; jobQueue: Pick<QueueManager, "send">; now?: () => Date }) {
+  constructor(deps: {
+    pool: Pool
+    jobQueue: Pick<QueueManager, "send">
+    botChannelService: Pick<BotChannelService, "isStreamAccessibleForBot">
+    now?: () => Date
+  }) {
     this.pool = deps.pool
     this.jobQueue = deps.jobQueue
+    this.botChannelService = deps.botChannelService
     this.now = deps.now ?? (() => new Date())
   }
 
@@ -117,7 +125,9 @@ export class DocActivityService {
     const host = await StreamRepository.findById(db, workspaceId, doc.parentStreamId)
     if (!host || host.archivedAt || doc.archivedAt) return { status: "skipped" }
 
-    const folded = edits.filter((edit) => edit.actorId && edit.actorType && edit.actorType !== AuthorTypes.SYSTEM)
+    const authored = edits.filter((edit) => edit.actorId && edit.actorType && edit.actorType !== AuthorTypes.SYSTEM)
+    const readers = await this.actorsReadingDoc(db, workspaceId, docId, authored)
+    const folded = authored.filter((edit) => readers.has(`${edit.actorType}:${edit.actorId}`))
     if (folded.length === 0) return { status: "nothing" }
 
     const actors = new Map<string, DocActivityEventPayload["actors"][number]>()
@@ -159,5 +169,27 @@ export class DocActivityService {
     })
     await OutboxRepository.insert(db, "stream:doc_activity", { workspaceId, streamId: host.id, event })
     return { status: "appended", eventId: event.id }
+  }
+  /**
+   * The edit authors the host's row may name: a doc moved since an edit takes it to a host its author may
+   * not read. Users and bots are checked against the doc as it stands; a persona has no access of its own.
+   */
+  private async actorsReadingDoc(
+    db: Querier,
+    workspaceId: string,
+    docId: string,
+    edits: readonly StreamEvent[]
+  ): Promise<Set<string>> {
+    const readers = new Set<string>()
+    for (const key of new Set(edits.map((edit) => `${edit.actorType}:${edit.actorId}`))) {
+      const [actorType, actorId] = key.split(":") as [string, string]
+      const reads =
+        actorType === AuthorTypes.USER
+          ? (await listAccessibleStreamIds(db, workspaceId, actorId, [docId])).has(docId)
+          : actorType !== AuthorTypes.BOT ||
+            (await this.botChannelService.isStreamAccessibleForBot(workspaceId, actorId, docId))
+      if (reads) readers.add(key)
+    }
+    return readers
   }
 }

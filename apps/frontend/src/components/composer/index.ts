@@ -15,7 +15,12 @@ export { StashedDraftsPicker } from "./stashed-drafts-picker"
 export { ScheduledMessagesPicker } from "./scheduled-messages-picker"
 export { ContextRefStrip } from "./context-ref-strip"
 export { MessageContextBadge } from "./message-context-badge"
-export { StreamTargetPicker, type StreamTargetPickerProps } from "./stream-target-picker"
+export {
+  StreamTargetList,
+  StreamTargetPicker,
+  type StreamTargetListProps,
+  type StreamTargetPickerProps,
+} from "./stream-target-picker"
 export { StreamSortToggle } from "./stream-sort-toggle"
 export { OverlayComposerShell, type OverlayComposerShellProps } from "./overlay-composer-shell"
 export { ConversationReplyStrip, ConversationReplyStripPlaceholder } from "./conversation-reply-strip"

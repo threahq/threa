@@ -721,6 +721,11 @@ export const commentOnDocSectionSchema = z.object({
   metadata: messageMetadataSchema.optional(),
 })
 
+export const moveDocSchema = z.object({
+  toStreamId: docHostStreamId,
+  fromStreamId: docHostStreamId.optional(),
+})
+
 // Edits apply together: if one fails to match, nothing is written.
 export const editDocSchema = z.object({
   reason: docReason,

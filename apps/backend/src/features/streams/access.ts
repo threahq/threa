@@ -229,21 +229,7 @@ export function streamAccessPredicateSql(
   const docGrantSql =
     options?.docGrants === false
       ? sql`FALSE`
-      : composeSql`(
-          eff_s.type = ${StreamTypes.DOC}
-          AND EXISTS (
-            SELECT 1
-            FROM shared_docs sd
-            JOIN messages sd_m ON sd_m.workspace_id = sd.workspace_id AND sd_m.id = sd.share_message_id
-              AND sd_m.deleted_at IS NULL
-            JOIN streams sd_s ON sd_s.id = sd_m.stream_id AND sd_s.workspace_id = sd.workspace_id
-            JOIN streams sd_root ON sd_root.id = COALESCE(sd_s.root_stream_id, sd_s.id)
-              AND sd_root.workspace_id = sd.workspace_id
-            WHERE sd.workspace_id = ${workspaceId}
-              AND sd.doc_id = eff_s.id
-              AND ${rootReadableConditionSql(workspaceId, userId, "sd_root")}
-          )
-        )`
+      : composeSql`(eff_s.type = ${StreamTypes.DOC} AND ${docGrantReadableSql(workspaceId, userId, "eff_s.id")})`
   return composeSql`EXISTS (
     SELECT 1
     FROM streams eff_s
@@ -257,6 +243,60 @@ export function streamAccessPredicateSql(
         OR ${docGrantSql}
       )
   )`
+}
+
+/**
+ * The `shared_docs` leg of doc read access on its own: an undeleted message carrying the doc's chip sits
+ * in a stream whose root the user reads. It never flows through another grant. `docIdColumn` is a trusted
+ * column reference, never user input; a `QueryConfig` `userId` must not name `sd`, `sd_m`, `sd_s` or
+ * `sd_root`, nor the aliases {@link rootReadableConditionSql} binds.
+ */
+export function docGrantReadableSql(
+  workspaceId: string,
+  userId: string | QueryConfig,
+  docIdColumn: string
+): QueryConfig {
+  return composeSql`EXISTS (
+    SELECT 1
+    FROM shared_docs sd
+    JOIN messages sd_m ON sd_m.workspace_id = sd.workspace_id AND sd_m.id = sd.share_message_id
+      AND sd_m.deleted_at IS NULL
+    JOIN streams sd_s ON sd_s.id = sd_m.stream_id AND sd_s.workspace_id = sd.workspace_id
+    JOIN streams sd_root ON sd_root.id = COALESCE(sd_s.root_stream_id, sd_s.id)
+      AND sd_root.workspace_id = sd.workspace_id
+    WHERE sd.workspace_id = ${workspaceId}
+      AND ${sql`sd.doc_id = ${sql.raw(docIdColumn)}`}
+      AND ${rootReadableConditionSql(workspaceId, userId, "sd_root")}
+  )`
+}
+
+/**
+ * How many users a doc's move under `targetStreamId` takes read access from and gives it to. After the
+ * move the doc reads through the target's root or a share grant, and grants do not move with it.
+ */
+export async function countDocMoveReaders(
+  db: Querier,
+  workspaceId: string,
+  docId: string,
+  targetStreamId: string
+): Promise<{ losing: number; gaining: number }> {
+  const reader = sql`reader.id`
+  const result = await db.query<{ losing: number; gaining: number }>(composeSql`
+    WITH reach AS (
+      SELECT
+        ${streamAccessPredicateSql(workspaceId, reader, "ids.doc_id")} AS reads_doc,
+        ${streamAccessPredicateSql(workspaceId, reader, "ids.target_id", { docGrants: false })} AS reads_target,
+        ${docGrantReadableSql(workspaceId, reader, "ids.doc_id")} AS granted
+      FROM users reader
+      CROSS JOIN (SELECT ${docId}::text AS doc_id, ${targetStreamId}::text AS target_id) ids
+      WHERE reader.workspace_id = ${workspaceId}
+    )
+    SELECT
+      COUNT(*) FILTER (WHERE reads_doc AND NOT reads_target AND NOT granted)::int AS losing,
+      COUNT(*) FILTER (WHERE reads_target AND NOT reads_doc)::int AS gaining
+    FROM reach
+  `)
+  return result.rows[0] ?? { losing: 0, gaining: 0 }
 }
 
 /**

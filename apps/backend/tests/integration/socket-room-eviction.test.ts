@@ -297,6 +297,57 @@ describe("socket room eviction on lost access", () => {
     }
   })
 
+  test("should stop delivering a moved doc and its section thread to a reader of the old host only", async () => {
+    const { owner, otherUser, workspaceId, ownerSocket, otherSocket } = await setup("doc-move")
+    try {
+      const from = await createChannel(owner, workspaceId, `evict-move-from-${testRunId}`, "private")
+      expect((await addStreamMember(owner, workspaceId, from.id, otherUser.id)).status).toBe(201)
+      const to = await createChannel(owner, workspaceId, `evict-move-to-${testRunId}`, "private")
+      const created = await owner.post<{ stream: Stream }>(`/api/workspaces/${workspaceId}/streams`, {
+        type: "doc",
+        parentStreamId: from.id,
+      })
+      expect(created.status).toBe(201)
+      const docId = created.data.stream.id
+      const loaded = await owner.get<{ state: string }>(`/api/workspaces/${workspaceId}/docs/${docId}`)
+      const ydoc = new Y.Doc()
+      Y.applyUpdate(ydoc, decodeUpdateBase64(loaded.data.state))
+      const block = blockId()
+      const update = encodeUpdateBase64(
+        writeContentJson(ydoc, {
+          type: "doc",
+          content: [{ type: "paragraph", attrs: { blockId: block }, content: [{ type: "text", text: "x" }] }],
+        })
+      )
+      expect((await owner.post(`/api/workspaces/${workspaceId}/docs/${docId}/updates`, { update })).status).toBe(200)
+      const thread = await createThread(owner, workspaceId, docId, block)
+      for (const streamId of [docId, thread.id]) {
+        expect({
+          owner: await joinAck(ownerSocket, roomOf(workspaceId, streamId)),
+          other: await joinAck(otherSocket, roomOf(workspaceId, streamId)),
+        }).toEqual({ owner: { ok: true }, other: { ok: true } })
+      }
+
+      const moved = await owner.post(`/api/workspaces/${workspaceId}/docs/${docId}/move`, {
+        fromStreamId: from.id,
+        toStreamId: to.id,
+      })
+      expect(moved.status).toBe(200)
+      const seen = record(otherSocket, ["message:created"])
+      await ownerSends(
+        ownerSocket,
+        otherSocket,
+        () => sendMessage(owner, workspaceId, thread.id, "after"),
+        "message:created"
+      )
+
+      expect(seen).toEqual([])
+    } finally {
+      ownerSocket.disconnect()
+      otherSocket.disconnect()
+    }
+  })
+
   describe("a reader whose only access is a share grant", () => {
     async function sharedDoc(label: string, { hostMember = false } = {}) {
       const context = await setup(label)

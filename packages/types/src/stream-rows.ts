@@ -366,6 +366,7 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
 
   "doc:created": CHROME_BROADCAST,
   "doc:activity": { ...CHROME_BROADCAST, rendersAsOwnRow: false, grouping: "doc" },
+  "doc:moved": CHROME_BROADCAST,
   // An edit in the doc stream's own log; no timeline row, no slot.
   "doc:edited": {
     rendersAsOwnRow: false,

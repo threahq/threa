@@ -1,13 +1,8 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import {
-  personaConfigPatchSchema,
-  personaCustomConfigSchema,
-  permissionsForRole,
-  PERSONA_NAME_MAX_CHARS,
-  WORKSPACE_PERMISSION_SCOPES,
-} from "@threahq/types"
+import { personaConfigPatchSchema, personaCustomConfigSchema, PERSONA_NAME_MAX_CHARS } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
+import { callerIsWorkspaceAdmin } from "../../middleware/workspace-admin"
 import { validateRequest } from "../../lib/validation"
 import { getVisibleBuiltInAgentConfig } from "./built-in-agents"
 import type { PersonaCaller, PersonaConfigService } from "./persona-config-service"
@@ -47,15 +42,6 @@ const forkPersonaSchema = z.object({
  * equivalent (user-scoped-personas). Persona routes are session-only (`authed`),
  * so the API-key branches don't apply.
  */
-function callerIsWorkspaceAdmin(req: Request): boolean {
-  const admin = WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN
-  return (
-    req.authUser?.permissions?.includes(admin) ??
-    (req.user != null && (permissionsForRole(req.user.role) as readonly string[]).includes(admin)) ??
-    false
-  )
-}
-
 function resolveCaller(req: Request): PersonaCaller {
   return { userId: req.user!.id, isAdmin: callerIsWorkspaceAdmin(req) }
 }

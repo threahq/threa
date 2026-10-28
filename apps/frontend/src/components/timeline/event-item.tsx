@@ -23,6 +23,7 @@ import { DescriptionSetEvent } from "./description-set-event"
 import { CallCard } from "./call-card"
 import { AsideAnchorEvent } from "./aside-anchor-event"
 import { DocAnchorEvent } from "./doc-anchor-event"
+import { DocMovedEvent } from "./doc-moved-event"
 import { SystemEvent } from "./system-event"
 import { DeletedMessageEvent } from "./deleted-message-event"
 
@@ -343,6 +344,13 @@ export function EventItem({
       return (
         <div data-event-id={event.id}>
           <DocAnchorEvent event={event} workspaceId={workspaceId} />
+        </div>
+      )
+
+    case "doc:moved":
+      return (
+        <div data-event-id={event.id}>
+          <DocMovedEvent event={event} workspaceId={workspaceId} streamId={streamId} />
         </div>
       )
 

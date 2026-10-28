@@ -3,7 +3,8 @@ import type { Pool } from "pg"
 import { DocErrorCodes, StreamErrorCodes, StreamTypes } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import { DocRepository } from "../docs"
-import { StreamRepository } from "../streams"
+import { StreamRepository, type Stream, type StreamService } from "../streams"
+import { callerIsWorkspaceAdmin } from "../../middleware/workspace-admin"
 import { validateRequest } from "../../lib/validation"
 import type {
   DocAgentAccessRefusal,
@@ -25,6 +26,7 @@ import {
   docSectionParamSchema,
   editDocSchema,
   listDocsQuerySchema,
+  moveDocSchema,
 } from "./schemas"
 
 function keyContext<Host extends string | null>(
@@ -100,6 +102,17 @@ function serializeDoc(doc: DocAgentDocSummary) {
   }
 }
 
+function serializeDocStream(doc: Stream, seq: number) {
+  if (!doc.parentStreamId) throw new Error(`Doc ${doc.id} has no host stream`)
+  return serializeDoc({
+    docId: doc.id,
+    hostStreamId: doc.parentStreamId,
+    title: doc.displayName ?? null,
+    seq,
+    createdAt: doc.createdAt,
+  })
+}
+
 /**
  * Docs on the public API: the same ops a persona's doc tools run, acting as the
  * key's principal (user keys as the owner, workspace keys as the bot), with the
@@ -109,11 +122,13 @@ export function createDocPublicApiHandlers({
   docAgentService,
   pool,
   eventService,
+  streamService,
   getAccessibleStreamIds,
 }: {
   docAgentService: DocAgentService
   pool: Pool
   eventService: EventService
+  streamService: Pick<StreamService, "moveDoc">
   getAccessibleStreamIds: (req: Request) => Promise<string[]>
 }) {
   return {
@@ -148,15 +163,8 @@ export function createDocPublicApiHandlers({
         data: page.map((doc) => {
           const seq = seqs.get(doc.id)
           if (seq === undefined) throw new Error(`Doc ${doc.id} has no head row`)
-          if (!doc.parentStreamId) throw new Error(`Doc ${doc.id} has no host stream`)
           return {
-            ...serializeDoc({
-              docId: doc.id,
-              hostStreamId: doc.parentStreamId,
-              title: doc.displayName ?? null,
-              seq,
-              createdAt: doc.createdAt,
-            }),
+            ...serializeDocStream(doc, seq),
             archived: archived.has(doc.id),
           }
         }),
@@ -216,6 +224,23 @@ export function createDocPublicApiHandlers({
         default:
           throw writeError(result)
       }
+    },
+
+    async moveDoc(req: Request, res: Response) {
+      const { docId } = validateRequest(docIdParamSchema, req.params)
+      const { fromStreamId, toStreamId } = validateRequest(moveDocSchema, req.body)
+      const workspaceId = req.workspaceId!
+      const doc = await streamService.moveDoc({
+        workspaceId,
+        docId,
+        fromStreamId,
+        toStreamId,
+        principal: apiKeyPrincipal(req),
+        isWorkspaceAdmin: callerIsWorkspaceAdmin(req),
+      })
+      const [head] = await DocRepository.listHeads(pool, workspaceId, [doc.id])
+      if (!head) throw new Error(`Doc ${doc.id} has no head row`)
+      res.json({ data: serializeDocStream(doc, head.updateSeq) })
     },
 
     async commentOnDocSection(req: Request, res: Response) {

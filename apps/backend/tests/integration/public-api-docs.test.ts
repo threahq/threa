@@ -88,6 +88,12 @@ async function editDoc(req: Request) {
   return rec.last<{ id: string; title: string | null; seq: number; touchedBlockIds: string[]; markdown: string }>()
 }
 
+async function moveDoc(req: Request) {
+  const rec = recorder()
+  await handlers.moveDoc(req, rec.res)
+  return rec.last<Omit<Doc, "markdown">>()
+}
+
 type Comment = { threadId: string; message: Record<string, unknown> }
 
 async function comment(req: Request) {
@@ -115,6 +121,7 @@ beforeAll(async () => {
     }),
     pool,
     eventService: new EventService(pool),
+    streamService,
     getAccessibleStreamIds: createAccessibleStreamIdsResolver({ pool, botChannelService }),
   })
   ws = workspaceId()
@@ -774,5 +781,78 @@ describe("public API docs", () => {
 
       expect(seen).toEqual([...created].sort().reverse())
     })
+  })
+})
+
+describe("public API doc moves", () => {
+  async function privateChannel(members: string[], grantedBots: string[] = []) {
+    const id = streamId()
+    await withTransaction(pool, async (client) => {
+      await StreamRepository.insert(client, {
+        id,
+        workspaceId: ws,
+        type: StreamTypes.CHANNEL,
+        visibility: Visibilities.PRIVATE,
+        slug: `move-${id.toLowerCase()}`,
+        createdBy: owner,
+      })
+      for (const member of members) await StreamMemberRepository.insert(client, ws, id, member)
+      for (const bot of grantedBots) {
+        await BotChannelAccessRepository.grantAccess(client, {
+          id: botChannelAccessId(),
+          workspaceId: ws,
+          botId: bot,
+          streamId: id,
+          grantedBy: owner,
+        })
+      }
+    })
+    return id
+  }
+
+  const asMember = (user: string, extra: Record<string, unknown>) =>
+    userReq(user, { user: { id: user, role: "member" }, ...extra })
+
+  test("should move a user key's own doc under the target, taking the current host when fromStreamId is omitted", async () => {
+    const from = await privateChannel([owner])
+    const to = await privateChannel([owner])
+    const created = await createDoc(asMember(owner, { body: { streamId: from, title: "Runbook" } }))
+
+    const moved = await moveDoc(asMember(owner, { params: { docId: created.data.id }, body: { toStreamId: to } }))
+    const stale = moveDoc(
+      asMember(owner, { params: { docId: created.data.id }, body: { fromStreamId: from, toStreamId: from } })
+    )
+
+    expect(moved).toEqual({
+      status: 200,
+      data: { id: created.data.id, hostStreamId: to, title: "Runbook", seq: 0, createdAt: created.data.createdAt },
+    })
+    await expect(stale).rejects.toMatchObject({ status: 409, code: DocErrorCodes.MOVED_CONCURRENTLY })
+  })
+
+  test("should refuse a key whose principal neither created the doc nor administers the workspace", async () => {
+    const from = await privateChannel([owner, outsider], [grantedBotId])
+    const to = await privateChannel([owner, outsider], [grantedBotId])
+    const created = await createDoc(asMember(owner, { body: { streamId: from } }))
+    const params = { docId: created.data.id }
+
+    await expect(moveDoc(asMember(outsider, { params, body: { toStreamId: to } }))).rejects.toMatchObject({
+      status: 403,
+      code: DocErrorCodes.MOVE_FORBIDDEN,
+    })
+    await expect(moveDoc(botReq(grantedBotId, { params, body: { toStreamId: to } }))).rejects.toMatchObject({
+      status: 403,
+      code: DocErrorCodes.MOVE_FORBIDDEN,
+    })
+  })
+
+  test("should let a bot key move a doc the bot created", async () => {
+    const from = await privateChannel([owner], [grantedBotId])
+    const to = await privateChannel([owner], [grantedBotId])
+    const created = await createDoc(botReq(grantedBotId, { body: { streamId: from } }))
+
+    const moved = await moveDoc(botReq(grantedBotId, { params: { docId: created.data.id }, body: { toStreamId: to } }))
+
+    expect({ status: moved.status, hostStreamId: moved.data.hostStreamId }).toEqual({ status: 200, hostStreamId: to })
   })
 })

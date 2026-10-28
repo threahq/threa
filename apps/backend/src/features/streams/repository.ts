@@ -12,7 +12,7 @@ import type {
   ThreaDocument,
   TitleSource,
 } from "@threahq/types"
-import { StreamTypes, TitleSources } from "@threahq/types"
+import { CompanionModes, StreamTypes, TitleSources } from "@threahq/types"
 import {
   archiveStatusSql,
   effectivelyArchivedSql,
@@ -663,6 +663,45 @@ export const StreamRepository = {
         SELECT s.id FROM streams s JOIN subtree t ON s.parent_stream_id = t.id WHERE s.workspace_id = ${workspaceId}
       )
       SELECT id FROM subtree
+    `)
+    return result.rows.map((row) => row.id)
+  },
+
+  /**
+   * Re-homes a doc under `parentStreamId` and re-roots it and every stream below it on `root`, copying the
+   * root's settings the way creation does (INV-62). Threads get the companion setting a thread created
+   * under `root` would. Returns the moved ids.
+   */
+  async moveDocSubtree(
+    db: Querier,
+    params: {
+      workspaceId: string
+      docId: string
+      parentStreamId: string
+      root: Pick<Stream, "id" | "visibility" | "memoryMode" | "companionMode" | "companionPersonaId">
+      threadsTakeCompanion: boolean
+    }
+  ): Promise<string[]> {
+    const companionMode = params.threadsTakeCompanion ? params.root.companionMode : CompanionModes.OFF
+    const companionPersonaId = params.threadsTakeCompanion ? params.root.companionPersonaId : null
+    const result = await db.query<{ id: string }>(sql`
+      WITH RECURSIVE subtree AS (
+        SELECT id FROM streams WHERE workspace_id = ${params.workspaceId} AND id = ${params.docId}
+        UNION ALL
+        SELECT s.id FROM streams s JOIN subtree t ON s.parent_stream_id = t.id
+        WHERE s.workspace_id = ${params.workspaceId}
+      )
+      UPDATE streams s
+      SET parent_stream_id = CASE WHEN s.id = ${params.docId} THEN ${params.parentStreamId} ELSE s.parent_stream_id END,
+        root_stream_id = ${params.root.id},
+        visibility = ${params.root.visibility},
+        memory_mode = ${params.root.memoryMode},
+        companion_mode = CASE WHEN s.type = ${StreamTypes.THREAD} THEN ${companionMode} ELSE s.companion_mode END,
+        companion_persona_id = CASE WHEN s.type = ${StreamTypes.THREAD} THEN ${companionPersonaId}::text ELSE s.companion_persona_id END,
+        updated_at = NOW()
+      FROM subtree
+      WHERE s.workspace_id = ${params.workspaceId} AND s.id = subtree.id
+      RETURNING s.id
     `)
     return result.rows.map((row) => row.id)
   },

@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, type ReactNode } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import { ChevronsUpDown, PenSquare, StickyNote } from "lucide-react"
 import { StreamTypes, type StreamType } from "@threahq/types"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
@@ -33,10 +33,11 @@ const NEW_OPTIONS: NewOption[] = [
   { value: NEW_QUICK_NOTE, label: "New quick note", hint: "just you", icon: <StickyNote className="h-4 w-4" /> },
 ]
 
-/** Type groups rendered in order; channels first, then DMs. */
+/** Type groups rendered in order; a group shows only when the caller's filter admits its type. */
 const TYPE_GROUPS: { type: StreamType; heading: string }[] = [
   { type: StreamTypes.CHANNEL, heading: "Channels" },
   { type: StreamTypes.DM, heading: "Direct messages" },
+  { type: StreamTypes.SCRATCHPAD, heading: "Scratchpads" },
 ]
 
 export interface StreamTargetPickerProps {
@@ -73,18 +74,115 @@ export function StreamTargetPicker({
 }: StreamTargetPickerProps) {
   const isTouch = useInputMode() === "touch"
   const [open, setOpen] = useState(false)
-  const [search, setSearch] = useState("")
-  const [sortMode, setSortMode] = useStoredStreamSortMode()
 
   const streams = useWorkspaceStreams(workspaceId)
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
-  const groups = useStreamPickerGroups(workspaceId, { search, sortMode, filter })
 
-  // Reset the filter each time the picker closes so the next open shows everything.
-  useEffect(() => {
-    if (!open) setSearch("")
-  }, [open])
+  const selectedLabel = useMemo(() => {
+    if (!value) return null
+    const newOpt = NEW_OPTIONS.find((o) => o.value === value)
+    if (newOpt) return newOpt.label
+    return resolveStreamName(value, { streams, users, dmPeers }, "generic") ?? "Untitled stream"
+  }, [value, streams, users, dmPeers])
+
+  const selectedIcon = useMemo(() => {
+    if (!value) return null
+    const newOpt = NEW_OPTIONS.find((o) => o.value === value)
+    if (newOpt) return newOpt.icon
+    // Resolve from the full stream cache, not the search-narrowed groups, so
+    // typing in the open picker never drops the trigger's icon for the current
+    // target while its label (resolved from the same cache) stays put.
+    const stream = streams.find((s) => s.id === value)
+    if (!stream) return null
+    const Icon = STREAM_ICONS[stream.type]
+    return <Icon className="h-4 w-4" />
+  }, [value, streams])
+
+  const handleSelect = (next: string) => {
+    onChange(next)
+    setOpen(false)
+  }
+
+  const trigger = (
+    <Button
+      type="button"
+      variant="ghost"
+      role="combobox"
+      aria-expanded={open}
+      disabled={disabled}
+      className={cn(
+        "h-8 gap-1.5 rounded-full border bg-background px-3 text-sm font-medium",
+        !value && "text-muted-foreground",
+        className
+      )}
+    >
+      {selectedIcon}
+      <span className="max-w-[40vw] truncate sm:max-w-[220px]">{selectedLabel ?? "Post to…"}</span>
+      <ChevronsUpDown className={cn("h-3.5 w-3.5 shrink-0 opacity-50 transition-transform", open && "opacity-80")} />
+    </Button>
+  )
+
+  const list = (
+    <StreamTargetList
+      workspaceId={workspaceId}
+      onSelect={handleSelect}
+      includeNewOptions={includeNewOptions}
+      filter={filter}
+      recents={recents}
+    />
+  )
+
+  if (isTouch) {
+    return (
+      <Drawer open={open} onOpenChange={setOpen}>
+        <DrawerTrigger asChild>{trigger}</DrawerTrigger>
+        <DrawerContent className="pb-[env(safe-area-inset-bottom)]">
+          <DrawerTitle className="sr-only">Choose where to post</DrawerTitle>
+          {list}
+        </DrawerContent>
+      </Drawer>
+    )
+  }
+
+  return (
+    <Popover open={open} onOpenChange={setOpen} modal={false}>
+      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-[320px] max-w-[calc(100vw-1rem)] p-0"
+        onWheel={(e) => e.stopPropagation()}
+      >
+        {list}
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+export interface StreamTargetListProps {
+  workspaceId: string
+  onSelect: (value: string) => void
+  includeNewOptions?: boolean
+  filter?: (stream: CachedStream) => boolean
+  recents?: string[]
+  searchPlaceholder?: string
+}
+
+/**
+ * The picker's searchable, type-grouped list on its own, for a surface that
+ * already is the overlay (a dialog or drawer). Search starts empty on every mount.
+ */
+export function StreamTargetList({
+  workspaceId,
+  onSelect,
+  includeNewOptions = false,
+  filter = isPostableStream,
+  recents,
+  searchPlaceholder = "Search or start a post…",
+}: StreamTargetListProps) {
+  const [search, setSearch] = useState("")
+  const [sortMode, setSortMode] = useStoredStreamSortMode()
+  const groups = useStreamPickerGroups(workspaceId, { search, sortMode, filter })
 
   const lower = search.toLowerCase()
   const isSearching = lower.length > 0
@@ -122,58 +220,14 @@ export function StreamTargetPicker({
   // (and cmdk keys rows by value, so a duplicate id would double-register).
   const recentIds = useMemo(() => new Set(recentRows.map((r) => r.value)), [recentRows])
 
-  const selectedLabel = useMemo(() => {
-    if (!value) return null
-    const newOpt = NEW_OPTIONS.find((o) => o.value === value)
-    if (newOpt) return newOpt.label
-    return resolveStreamName(value, { streams, users, dmPeers }, "generic") ?? "Untitled stream"
-  }, [value, streams, users, dmPeers])
-
-  const selectedIcon = useMemo(() => {
-    if (!value) return null
-    const newOpt = NEW_OPTIONS.find((o) => o.value === value)
-    if (newOpt) return newOpt.icon
-    // Resolve from the full stream cache, not the search-narrowed `groups`, so
-    // typing in the open picker never drops the trigger's icon for the current
-    // target while its label (resolved from the same cache) stays put.
-    const stream = streams.find((s) => s.id === value)
-    if (!stream) return null
-    const Icon = STREAM_ICONS[stream.type]
-    return <Icon className="h-4 w-4" />
-  }, [value, streams])
-
-  const handleSelect = (next: string) => {
-    onChange(next)
-    setOpen(false)
-  }
-
   const hasAnyRow =
     newOptions.length > 0 || recentRows.length > 0 || TYPE_GROUPS.some((g) => (groups.get(g.type)?.length ?? 0) > 0)
 
-  const trigger = (
-    <Button
-      type="button"
-      variant="ghost"
-      role="combobox"
-      aria-expanded={open}
-      disabled={disabled}
-      className={cn(
-        "h-8 gap-1.5 rounded-full border bg-background px-3 text-sm font-medium",
-        !value && "text-muted-foreground",
-        className
-      )}
-    >
-      {selectedIcon}
-      <span className="max-w-[40vw] truncate sm:max-w-[220px]">{selectedLabel ?? "Post to…"}</span>
-      <ChevronsUpDown className={cn("h-3.5 w-3.5 shrink-0 opacity-50 transition-transform", open && "opacity-80")} />
-    </Button>
-  )
-
-  const list = (
+  return (
     <Command shouldFilter={false}>
       <div className="flex items-center gap-1 border-b px-1">
         <CommandInput
-          placeholder="Search or start a post…"
+          placeholder={searchPlaceholder}
           value={search}
           onValueChange={setSearch}
           className="flex-1 border-0"
@@ -185,7 +239,7 @@ export function StreamTargetPicker({
         {newOptions.length > 0 && (
           <CommandGroup heading="Start something new">
             {newOptions.map((o) => (
-              <CommandItem key={o.value} value={o.value} onSelect={() => handleSelect(o.value)} className="gap-2">
+              <CommandItem key={o.value} value={o.value} onSelect={() => onSelect(o.value)} className="gap-2">
                 <span className="flex h-4 w-4 items-center justify-center text-muted-foreground">{o.icon}</span>
                 <span>{o.label}</span>
                 <span className="ml-auto text-xs text-muted-foreground/70">{o.hint}</span>
@@ -199,7 +253,7 @@ export function StreamTargetPicker({
               <CommandItem
                 key={`recent:${r.value}`}
                 value={r.value}
-                onSelect={() => handleSelect(r.value)}
+                onSelect={() => onSelect(r.value)}
                 className="gap-2"
               >
                 <span className="flex h-4 w-4 items-center justify-center">{r.icon}</span>
@@ -216,12 +270,7 @@ export function StreamTargetPicker({
               {list.map(({ stream }) => {
                 const Icon = STREAM_ICONS[stream.type]
                 return (
-                  <CommandItem
-                    key={stream.id}
-                    value={stream.id}
-                    onSelect={() => handleSelect(stream.id)}
-                    className="gap-2"
-                  >
+                  <CommandItem key={stream.id} value={stream.id} onSelect={() => onSelect(stream.id)} className="gap-2">
                     <Icon className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                     <span className="truncate">{streamLabel(stream)}</span>
                   </CommandItem>
@@ -232,30 +281,5 @@ export function StreamTargetPicker({
         })}
       </CommandList>
     </Command>
-  )
-
-  if (isTouch) {
-    return (
-      <Drawer open={open} onOpenChange={setOpen}>
-        <DrawerTrigger asChild>{trigger}</DrawerTrigger>
-        <DrawerContent className="pb-[env(safe-area-inset-bottom)]">
-          <DrawerTitle className="sr-only">Choose where to post</DrawerTitle>
-          {list}
-        </DrawerContent>
-      </Drawer>
-    )
-  }
-
-  return (
-    <Popover open={open} onOpenChange={setOpen} modal={false}>
-      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-      <PopoverContent
-        align="start"
-        className="w-[320px] max-w-[calc(100vw-1rem)] p-0"
-        onWheel={(e) => e.stopPropagation()}
-      >
-        {list}
-      </PopoverContent>
-    </Popover>
   )
 }

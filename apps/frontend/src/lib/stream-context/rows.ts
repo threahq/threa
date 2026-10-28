@@ -11,6 +11,7 @@ import {
   type CapturedMemoSummary,
   type ContextCategory,
   type DocCreatedEventPayload,
+  type DocMovedEventPayload,
   type JSONContent,
   type StreamContextItemDetail,
   type StreamContextRefKind,
@@ -77,6 +78,11 @@ export function contextItemsFromEvent(
 ): CachedStreamContextItem[] {
   if (event.eventType === "memos:captured") return memoRows(event, ctx, sourceMessages)
   if (event.eventType === "doc:created") return hostedDocRows(event, ctx)
+  if (event.eventType === "doc:moved") {
+    return (event.payload as DocMovedEventPayload | undefined)?.toStreamId === ctx.streamId
+      ? hostedDocRows(event, ctx)
+      : []
+  }
   if (event.eventType !== "message_created") return []
 
   const payload = event.payload as MessageEventPayload
@@ -323,7 +329,7 @@ function buildRow(
     refKind: StreamContextRefKind
     refId: string
     sourceMessageId: string | null
-    /** Only a hosted doc's row, derived from its `doc:created` event. */
+    /** Only a hosted doc's row, derived from its `doc:created` or new host's `doc:moved` event. */
     anchorEventId?: string
     authorId: string | null
     occurredAt: string

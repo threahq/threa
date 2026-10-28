@@ -83,6 +83,7 @@ export type OutboxEventType =
   | "stream:aside_anchored"
   | "stream:doc_created"
   | "stream:doc_activity"
+  | "stream:doc_moved"
   | "doc:updated"
   | "agent_session:started"
   | "agent_session:completed"
@@ -197,6 +198,7 @@ export type StreamScopedEventType =
   | "stream:decision_resolved"
   | "stream:doc_created"
   | "stream:doc_activity"
+  | "stream:doc_moved"
   | "doc:updated"
   | "stream:call_started"
   | "stream:call_ended"
@@ -761,6 +763,16 @@ export interface StreamAsideAnchoredOutboxPayload extends StreamScopedPayload {
 /** The host stream's `doc:created` or `doc:activity` row; `streamId` is the host. */
 export interface StreamDocRowOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
+}
+
+/**
+ * One host's `doc:moved` row; `streamId` is that host. Carries the doc as it stands after the move and
+ * every stream that took the new root, so open clients re-home their cached copies without a fetch.
+ */
+export interface StreamDocMovedOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+  doc: Stream
+  movedStreamIds: string[]
 }
 
 interface AgentSessionOutboxPayload extends StreamScopedPayload {
@@ -1515,6 +1527,7 @@ export interface OutboxEventPayloadMap {
   "stream:aside_anchored": StreamAsideAnchoredOutboxPayload
   "stream:doc_created": StreamDocRowOutboxPayload
   "stream:doc_activity": StreamDocRowOutboxPayload
+  "stream:doc_moved": StreamDocMovedOutboxPayload
   "doc:updated": DocUpdatedPayload
   "agent_session:started": AgentSessionStartedOutboxPayload
   "agent_session:completed": AgentSessionCompletedOutboxPayload
@@ -1647,6 +1660,7 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "stream:decision_resolved",
   "stream:doc_created",
   "stream:doc_activity",
+  "stream:doc_moved",
   "doc:updated",
   "call:participants_changed",
   "call:transport_transfer_changed",

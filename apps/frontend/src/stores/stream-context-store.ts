@@ -2,7 +2,13 @@ import Dexie from "dexie"
 import { useLiveQuery } from "dexie-react-hooks"
 import { db, type CachedStreamContextItem } from "@/db"
 import { getPerfCapture } from "@/lib/perf/capture"
-import { MESSAGE_BODY_CONTEXT_CATEGORIES, type StreamContextItem, type StreamContextScope } from "@threahq/types"
+import {
+  MESSAGE_BODY_CONTEXT_CATEGORIES,
+  streamContextItemKey,
+  type DocMovedEventPayload,
+  type StreamContextItem,
+  type StreamContextScope,
+} from "@threahq/types"
 
 export type { CachedStreamContextItem }
 
@@ -222,6 +228,27 @@ export async function putLocalContextRows(rows: CachedStreamContextItem[]): Prom
     })
     if (writable.length === 0) return
     await db.streamContextItems.bulkPut(writable.map((row) => ({ ...row, _status: "pending" as const })))
+  })
+}
+
+/**
+ * A moved doc's hosted row: one row per doc (`key` is not stream-scoped), so the new host's row replaces it
+ * outright, reconciled or not, and the old host drops it only while it still points there.
+ */
+export async function moveHostedDocContextRow(
+  workspaceId: string,
+  streamId: string,
+  payload: DocMovedEventPayload,
+  rows: CachedStreamContextItem[]
+): Promise<void> {
+  if (payload.toStreamId === streamId) {
+    await db.streamContextItems.bulkPut(rows.map((row) => ({ ...row, _status: "pending" as const })))
+    return
+  }
+  const key = streamContextItemKey({ category: "doc", refId: payload.docId, sourceMessageId: null })
+  await db.transaction("rw", db.streamContextItems, async () => {
+    const row = await db.streamContextItems.get([workspaceId, key])
+    if (row?.streamId === streamId) await db.streamContextItems.delete([workspaceId, key])
   })
 }
 

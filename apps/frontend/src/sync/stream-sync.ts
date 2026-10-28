@@ -17,6 +17,7 @@ import {
   type JSONContent,
   type SlotMap,
   type SharedMessageSlot,
+  type DocMovedEventPayload,
 } from "@threahq/types"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { writeSlotCarrier } from "@/stores/slot-store"
@@ -48,6 +49,7 @@ import { isAgentSessionLifecycleEvent } from "@/lib/agent-session-lifecycle"
 import { contextItemsFromEvent, type ContextRowsContext } from "@/lib/stream-context/rows"
 import {
   deleteContextRowsForMessage,
+  moveHostedDocContextRow,
   putLocalContextRows,
   reparentContextRows,
   replaceContextRowsForMessage,
@@ -1912,7 +1914,12 @@ function bindStreamSocketHandlers(
       | DescriptionSetPayload
   ) => {
     if (payload.streamId !== streamId) return
-    const now = Date.now()
+    const cachedEvent: CachedEvent = {
+      ...payload.event,
+      workspaceId,
+      _sequenceNum: sequenceToNum(payload.event.sequence),
+      _cachedAt: Date.now(),
+    }
     // Set when this event's sequence reveals missed events behind it; reported
     // after the transaction commits so the backfill never runs inside it.
     let gapAfterSequence: string | null = null
@@ -1932,12 +1939,7 @@ function bindStreamSocketHandlers(
           : undefined
       const commandCandidate = commandClientId ? await db.events.get([workspaceId, commandClientId]) : undefined
       const optimisticCommand = commandCandidate?._status != null ? commandCandidate : undefined
-      await db.events.put({
-        ...payload.event,
-        workspaceId,
-        _sequenceNum: sequenceToNum(payload.event.sequence),
-        _cachedAt: now,
-      })
+      await db.events.put(cachedEvent)
       await resolveUnknownOptimisticAnchors(workspaceId, streamId)
       if (commandClientId && optimisticCommand) {
         await bumpLaterOptimisticAnchors(
@@ -1966,12 +1968,15 @@ function bindStreamSocketHandlers(
     // The appended rows that carry context artifacts: `memos:captured` names each
     // memo and its source messages (INV-69), `doc:created` the doc it hosts here.
     if (payload.event.eventType === "memos:captured" || payload.event.eventType === "doc:created") {
-      await applyContextRowsForEvent(workspaceId, streamId, {
-        ...payload.event,
+      await applyContextRowsForEvent(workspaceId, streamId, cachedEvent)
+    }
+    if (payload.event.eventType === "doc:moved") {
+      await moveHostedDocContextRow(
         workspaceId,
-        _sequenceNum: sequenceToNum(payload.event.sequence),
-        _cachedAt: now,
-      })
+        streamId,
+        payload.event.payload as DocMovedEventPayload,
+        contextItemsFromEvent(cachedEvent, await resolveContextScope(workspaceId, streamId))
+      )
     }
     if (isAgentSessionLifecycleEvent(payload.event)) {
       await reconcileAppendedAgentActivity(workspaceId, streamId, payload.event)
@@ -2171,6 +2176,7 @@ function bindStreamSocketHandlers(
   on("command:progress", handleAppendEvent)
   on("stream:aside_anchored", handleAppendEvent)
   on("stream:doc_created", handleAppendEvent)
+  on("stream:doc_moved", handleAppendEvent)
   on("stream:doc_activity", handleAppendEvent)
   on("agent_session:started", handleAppendEvent)
   on("agent_session:completed", handleAppendEvent)

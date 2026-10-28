@@ -119,6 +119,20 @@ describe("resolveDeliveryGroups — docs", () => {
     })
   })
 
+  it("should route a doc move to its host, the doc and the doc's grant-only readers", () => {
+    expect(
+      resolveDeliveryGroups(
+        event("stream:doc_moved", {
+          workspaceId: "ws_1",
+          streamId: "stream_old_host",
+          event: {},
+          doc: { id: "stream_doc", type: StreamTypes.DOC },
+          movedStreamIds: ["stream_doc"],
+        })
+      )
+    ).toEqual([streamGroup("stream_old_host"), streamGroup("stream_doc"), docReadersGroup("stream_doc")])
+  })
+
   it("should reach the doc's grant-only readers with its own content and lifecycle but not its threads when the stream is a doc", () => {
     const doc = {
       id: "stream_doc",

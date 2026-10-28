@@ -2,11 +2,14 @@ import { api } from "./client"
 import type {
   DocBacklinksResponse,
   DocListResponse,
+  DocMovePreviewResponse,
   DocPostUpdateResult,
   DocSectionResponse,
   DocState,
   DocThreadsResponse,
   DocUpdatesResponse,
+  MoveDocInput,
+  Stream,
 } from "@threahq/types"
 
 export const docKeys = {
@@ -49,5 +52,16 @@ export const docsApi = {
 
   listBacklinks(workspaceId: string, docId: string): Promise<DocBacklinksResponse> {
     return api.get<DocBacklinksResponse>(`/api/workspaces/${workspaceId}/docs/${docId}/backlinks`)
+  },
+
+  /** How many users the move would take read access from, and give it to. */
+  previewMove(workspaceId: string, docId: string, toStreamId: string): Promise<DocMovePreviewResponse> {
+    return api.get<DocMovePreviewResponse>(
+      `/api/workspaces/${workspaceId}/docs/${docId}/move-preview?toStreamId=${encodeURIComponent(toStreamId)}`
+    )
+  },
+
+  move(workspaceId: string, docId: string, input: MoveDocInput): Promise<{ stream: Stream }> {
+    return api.post<{ stream: Stream }>(`/api/workspaces/${workspaceId}/docs/${docId}/move`, input)
   },
 }

@@ -335,6 +335,22 @@ describe("contextItemsFromEvent", () => {
     ])
   })
 
+  it("emits the hosted doc row for doc:moved only in the new host", () => {
+    const moved = (toStreamId: string) =>
+      contextItemsFromEvent(
+        {
+          ...messageEvent({ docId: "stream_doc1", fromStreamId: "stream_old", toStreamId }),
+          id: "event_moved",
+          eventType: "doc:moved",
+        },
+        CTX
+      ).map((r) => ({ key: r.key, anchorEventId: r.anchorEventId, streamId: r.streamId }))
+    expect({ newHost: moved("stream_thread"), oldHost: moved("stream_other") }).toEqual({
+      newHost: [{ key: "doc:stream_doc1:", anchorEventId: "event_moved", streamId: "stream_thread" }],
+      oldHost: [],
+    })
+  })
+
   it("ignores events that carry no context artifacts", () => {
     expect(contextItemsFromEvent({ ...messageEvent({}), eventType: "thread_created" }, CTX)).toEqual([])
     // A message event without a messageId can't be keyed.
