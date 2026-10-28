@@ -1,5 +1,9 @@
 name: Bun install cache
 description: Restores Bun's package cache before `bun install` and saves it after a miss, so installs link packages instead of downloading every tarball.
+inputs:
+  share-across-jobs:
+    description: Fall back to another job's cache on a miss. Off in a container, where `actions/cache` unpacks a runner-saved archive outside `$HOME`.
+    default: "true"
 runs:
   using: composite
   steps:
@@ -14,4 +18,4 @@ runs:
         key: bun-install-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/bun.lock') }}
         restore-keys: |
           bun-install-${{ runner.os }}-${{ github.job }}-
-          bun-install-${{ runner.os }}-
+          ${{ inputs.share-across-jobs == 'true' && format('bun-install-{0}-', runner.os) || '' }}
