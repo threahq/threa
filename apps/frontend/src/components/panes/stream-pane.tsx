@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react"
 import { toast } from "sonner"
 import { useParams, useSearchParams } from "react-router-dom"
 import {
+  AppWindow,
   ListChecks,
   MoreHorizontal,
   Pencil,
@@ -26,7 +27,6 @@ import {
   UserRound,
   MessageSquareDashed,
   FilePlus,
-  ExternalLink,
 } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { DraftAgentSettings } from "@/components/stream-settings/draft-agent-settings"
@@ -60,6 +60,7 @@ import { DocPaneBody } from "@/components/docs/doc-pane-body"
 import { docExportActions } from "@/components/docs/doc-export-actions"
 import { useDocCanWrite } from "@/components/docs/use-doc-can-write"
 import { useDocSync } from "@/components/docs/use-doc-sync"
+import { useLiveDocTitle } from "@/components/docs/use-live-doc-title"
 import { DocPresenceAvatars } from "@/components/docs/doc-presence-avatars"
 import { DocsHeaderChip, useHostedDocs } from "@/components/docs/docs-header-chip"
 import { LabelPicker } from "@/components/labels/label-picker"
@@ -77,7 +78,7 @@ import { useInputMode } from "@/hooks/use-input-mode"
 import { useCreateDoc } from "@/hooks/use-create-doc"
 import { useCoverClose } from "@/hooks/use-cover-close"
 import { CONVERSATION_OVERLAY_COVER } from "@/lib/covers"
-import { PANEL_PARAM, panelIdsOf, primaryPanelOf } from "@/lib/panel-tabs"
+import { PANEL_PARAM, panelIdsOf, primaryPanelOf, soleFirstPanelOf } from "@/lib/panel-tabs"
 import { InviteActorButton, InviteBotButton } from "@/components/encryption"
 import {
   BotRuntimeStatuses,
@@ -198,6 +199,7 @@ export function StreamPane({
   const isDoc = stream?.type === StreamTypes.DOC
   // A doc's body is its editor: no timeline to search, move, browse or summarize, and no settings of its own.
   const hasTimeline = !isDoc
+  const docTitle = useLiveDocTitle(workspaceId, isDoc ? streamId : undefined, "").title
   const canWriteDoc = useDocCanWrite(workspaceId, stream)
   const docSync = useDocSync(workspaceId, isDoc ? streamId : null)
   const hostedDocs = useHostedDocs(
@@ -326,15 +328,15 @@ export function StreamPane({
   if (isDoc) {
     streamMenuActions.push(copyLinkAction)
     if (docSync.phase === "ready") {
-      streamMenuActions.push(...docExportActions(docSync.ydoc, stream?.displayName || null))
+      streamMenuActions.push(...docExportActions(docSync.ydoc, docTitle))
     }
-    // The route follows the pane worked in, so a doc beside the page's stream can be the route's; the first
-    // column is what the page shows on its own. On a phone every pane already fills the screen.
-    if (!inFirstColumn && !isMobile) {
+    // On a phone every pane already fills the screen.
+    const isWholePage = layout.columns.length === 1 && soleFirstPanelOf(layout) === streamId
+    if (!isWholePage && !isMobile) {
       streamMenuActions.push({
         id: "open-full-page",
         label: "Open full page",
-        icon: ExternalLink,
+        icon: AppWindow,
         // A link naming the panes goes to the router; a bare link to this doc from inside its pane only flashes it.
         href: `/w/${workspaceId}/s/${streamId}?${PANEL_PARAM}=${streamId}`,
       })

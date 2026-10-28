@@ -310,6 +310,12 @@ test.describe("Doc pane", () => {
     await openMenu()
     await expect(menuItem("Copy as Markdown")).toBeVisible()
     await expect(menuItem("Open full page")).toHaveCount(0)
+
+    await page.keyboard.press("Escape")
+    await page.goto(`/w/${workspaceId}/s/${channelId}?panel=${channelId}--${docId}`)
+    await expect(docEditor(page, docId)).toContainText("Owners and dates", { timeout: 15000 })
+    await openMenu()
+    await expect(menuItem("Open full page")).toBeVisible()
   })
 
   test("should let a doc's author and the channel's creator archive it, and offer no archive once the channel is archived", async ({

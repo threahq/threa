@@ -20,6 +20,7 @@ export function docMarkdownFilename(title: string | null): string {
     .replace(/[\\/:*?"<>|\p{Cc}]/gu, " ")
     .replace(/^[\s.]+/, "")
     .replace(/\s+/g, " ")
+    .replace(/[\s.]+$/, "")
     .trim()
   return `${name || streamFallbackLabel(StreamTypes.DOC, "generic")}.md`
 }

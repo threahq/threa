@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryRouter } from "react-router-dom"
 import * as Y from "yjs"
 import { updateYFragment } from "y-prosemirror"
@@ -33,19 +33,30 @@ function readText(blob: Blob): Promise<string> {
   })
 }
 
-async function pick(ydoc: Y.Doc, title: string | null, label: string) {
+async function pick(ydoc: Y.Doc, title: string | null, label: string, submenu?: string) {
   render(
     <MemoryRouter>
       <SidebarActionMenu actions={docExportActions(ydoc, title)} ariaLabel="Stream actions" />
     </MemoryRouter>
   )
   await userEvent.click(screen.getByRole("button", { name: "Stream actions" }))
+  if (submenu) await userEvent.click(await screen.findByRole("menuitem", { name: submenu }))
   await userEvent.click(await screen.findByRole("menuitem", { name: label }))
 }
 
 describe("doc export", () => {
+  const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard")
+  const writeText = vi.fn()
+
   beforeEach(() => {
     vi.restoreAllMocks()
+    writeText.mockReset().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } })
+  })
+
+  afterEach(() => {
+    if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard)
+    else delete (navigator as { clipboard?: Clipboard }).clipboard
   })
 
   it("should put the title above the body, and leave an untitled doc without a heading", () => {
@@ -61,17 +72,21 @@ describe("doc export", () => {
       docMarkdownFilename("Launch: plan/v2"),
       docMarkdownFilename("..hidden"),
       docMarkdownFilename(' <*?"> '),
+      docMarkdownFilename("v2. "),
       docMarkdownFilename(null),
-    ]).toEqual(["Launch plan v2.md", "hidden.md", "Untitled.md", "Untitled.md"])
+    ]).toEqual(["Launch plan v2.md", "hidden.md", "Untitled.md", "v2.md", "Untitled.md"])
   })
 
   it("should copy the doc as Markdown from its menu", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, { clipboard: { writeText } })
-
     await pick(docWith(owners), "Launch plan", "Copy as Markdown")
 
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("# Launch plan\n\nOwners and **dates**"))
+  })
+
+  it("should copy the doc as plain text from its menu", async () => {
+    await pick(docWith(owners), "Launch plan", "Copy as Plain text", "Copy as Markdown options")
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("Launch plan\n\nOwners and dates"))
   })
 
   it("should download the doc as a Markdown file named after its title", async () => {
