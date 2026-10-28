@@ -55,7 +55,7 @@ test.describe("Doc title", () => {
     await input.fill("Launch plan")
     await input.press("Enter")
 
-    await expect(pane(page, docId).getByRole("heading", { name: "Launch plan", level: 1 })).toBeVisible({
+    await expect(pane(page, docId).locator('header [aria-current="page"]')).toHaveText("Launch plan", {
       timeout: 15000,
     })
     await expect(docEditor(page, docId)).toBeFocused()
@@ -81,7 +81,7 @@ test.describe("Doc title", () => {
     const input = titleInput(page, docId)
     await input.fill("Launch plan")
     await input.press("Enter")
-    await expect(pane(page, docId).getByRole("heading", { name: "Launch plan", level: 1 })).toBeVisible({
+    await expect(pane(page, docId).locator('header [aria-current="page"]')).toHaveText("Launch plan", {
       timeout: 15000,
     })
 
