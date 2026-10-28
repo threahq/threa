@@ -63,6 +63,7 @@ import {
   StreamBriefService,
   StreamService,
 } from "../../../src/features/streams"
+import { BotChannelService } from "../../../src/features/api-keys"
 import {
   DocAgentService,
   DocRepository,
@@ -413,7 +414,12 @@ async function runDocEditTask(input: DocEditInput, ctx: EvalContext): Promise<Do
         throw new Error("createThread is not expected in doc-edit evals")
       },
       updateBrief,
-      docAgent: new DocAgentService({ pool: ctx.pool, docService, streamService }),
+      docAgent: new DocAgentService({
+        pool: ctx.pool,
+        docService,
+        streamService,
+        botChannelService: new BotChannelService({ pool: ctx.pool }),
+      }),
     })
 
     const agentInput: PersonaAgentInput = {

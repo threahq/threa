@@ -8,6 +8,7 @@ import { registerAttachmentTools } from "./tools/attachments"
 import { registerConversationTools } from "./tools/conversations"
 import { registerDelegationTools } from "./tools/delegations"
 import { registerIdentityTools } from "./tools/identity"
+import { registerDocTools } from "./tools/docs"
 import { registerLabelTools } from "./tools/labels"
 import { registerMemoTools } from "./tools/memos"
 import { registerMessageTools } from "./tools/messages"
@@ -37,7 +38,9 @@ const INSTRUCTIONS =
   "`what` accepts only its own filters. Write tools: send_message (markdown; optional conversation resume via " +
   "conversation_id or a new one via start_conversation; auto client_message_id for idempotent retries), " +
   "update_message / delete_message (only messages this key sent), and list_labels / apply_label / remove_label " +
-  "(labels are private to the key actor and found-or-created by name). Memory: recall_memos returns the few " +
+  "(labels are private to the key actor and found-or-created by name). Docs: list_docs / read_doc / " +
+  "create_doc / edit_doc — read a doc before editing it and copy each edit's `old` text exactly from one block; " +
+  "a 409 means the text moved, so re-read and retry. Memory: recall_memos returns the few " +
   "memos relevant to a message you are about to answer (empty when nothing is), get_memo traces a " +
   "memo to its source messages. Attachments: get_attachment (metadata plus extracted text), " +
   "get_attachment_download_url (short-lived signed URL for the raw bytes). Delegations: close the loop on a " +
@@ -83,6 +86,7 @@ export function createThreaMcpServer(config: ThreaConfig, deps: ThreaMcpServerDe
   registerSearchTools(server, client, resolver)
   registerConversationTools(server, client, resolver)
   registerLabelTools(server, client, resolver)
+  registerDocTools(server, client, resolver)
   registerMemoTools(server, client)
   registerAttachmentTools(server, client)
   registerDelegationTools(server, client, tokenStore, config.workspaceId)

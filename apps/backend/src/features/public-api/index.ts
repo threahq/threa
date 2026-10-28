@@ -1,5 +1,6 @@
 export { createPublicApiHandlers, serializeBot, type PublicApiDeps } from "./handlers"
 export { createDelegationPublicApiHandlers } from "./delegation-handlers"
+export { createDocPublicApiHandlers } from "./doc-handlers"
 export { PUBLIC_API_ROUTES, type OperationId } from "./routes"
 export { toExpressPath, assertHandlerParity } from "./mount"
 export { API_VERSIONS, CURRENT_API_VERSION, parseApiVersion, type ApiVersion } from "./versions"

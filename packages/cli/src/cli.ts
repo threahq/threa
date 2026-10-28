@@ -8,6 +8,7 @@ import { conversationsNoun } from "./commands/conversations"
 import { delegationsNoun } from "./commands/delegations"
 import { e2eNoun } from "./commands/e2e"
 import { whoamiCommand } from "./commands/identity"
+import { docsNoun } from "./commands/docs"
 import { labelsNoun } from "./commands/labels"
 import { mcpCommand, serveMcp } from "./commands/mcp"
 import { messagesNoun } from "./commands/messages"
@@ -43,6 +44,7 @@ const NOUNS: NounSpec[] = [
   memosNoun,
   attachmentsNoun,
   labelsNoun,
+  docsNoun,
   delegationsNoun,
   e2eNoun,
 ]

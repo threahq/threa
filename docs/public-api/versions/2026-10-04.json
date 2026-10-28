@@ -3,7 +3,7 @@
   "info": {
     "title": "Threa Public API",
     "version": "2026-10-04",
-    "description": "The Threa Public API lets you programmatically read and write messages, list streams, and search messages, memos, and attachments.\n\n## Authentication\n\nAll requests require a Bearer token in the `Authorization` header:\n\n```\nAuthorization: Bearer threa_uk_your_api_key_here\n```\n\nKeys use two prefixes. A **personal access key** (`threa_uk_…`) carries a member's own\nidentity and access; any member creates one in the Threa app under **Settings > API keys**.\nA **bot key** (`threa_bk_…`) belongs to a bot with its own identity in the workspace\n(a personal bot or a shared workspace bot) and is minted from the bot's settings\n(personal bots by their owner, shared bots by an admin).\nEach key is scoped to a workspace and granted specific permissions (scopes).\n\nHuman-readable docs: https://threa.io/developers (agent-friendly mirror: https://threa.io/llms.txt).\n\n## Scopes\n\nAPI keys are granted specific scopes that control access:\n\n- `messages:search`: Grants access to search messages in public streams in a workspace. Application level stream grants can extend permissions to private streams.\n- `streams:read`: Grants access to list and search accessible streams in a workspace.\n- `streams:write`: Grants access to set a stream's description (rich text) and to archive or unarchive accessible streams.\n- `messages:read`: Grants access to read messages in accessible streams.\n- `messages:write`: Grants access to send, update, and delete messages in accessible streams.\n- `users:read`: Grants access to list and search workspace users.\n- `memos:read`: Grants access to search preserved workspace memos and inspect their provenance.\n- `attachments:read`: Grants access to search accessible attachments, inspect extracted content, and fetch download URLs.\n- `attachments:write`: Grants access to upload and replace attachments in accessible streams.\n- `labels:read`: Grants access to list workspace labels and their assignments on accessible resources.\n- `labels:write`: Grants access to create, edit, archive, join, and apply labels to accessible resources such as streams.\n- `bot-runtime:read`: Grants access to read bot runtime presence and invocation state.\n- `bot-runtime:write`: Grants access to heartbeat bot runtime presence and link runtime sessions.\n- `bot-invocations:read`: Grants access to read bot invocation state.\n- `bot-invocations:write`: Grants access to claim, complete, or fail bot invocations.\n- `delegations:read`: Grants access to list and inspect delegated tasks in accessible streams.\n- `delegations:write`: Grants an agent access to claim or release delegated tasks and report progress, completion (posting the result as the key's identity), or failure.\n\n## Rate Limits\n\nRequests are rate-limited per workspace and per API key. Rate limit headers are included in responses.\n\n## Pagination\n\nList endpoints return paginated results with `hasMore` and `cursor` fields.\nPass the `cursor` value as the `after` query parameter to fetch the next page."
+    "description": "The Threa Public API lets you programmatically read and write messages, list streams, and search messages, memos, and attachments.\n\n## Authentication\n\nAll requests require a Bearer token in the `Authorization` header:\n\n```\nAuthorization: Bearer threa_uk_your_api_key_here\n```\n\nKeys use two prefixes. A **personal access key** (`threa_uk_…`) carries a member's own\nidentity and access; any member creates one in the Threa app under **Settings > API keys**.\nA **bot key** (`threa_bk_…`) belongs to a bot with its own identity in the workspace\n(a personal bot or a shared workspace bot) and is minted from the bot's settings\n(personal bots by their owner, shared bots by an admin).\nEach key is scoped to a workspace and granted specific permissions (scopes).\n\nHuman-readable docs: https://threa.io/developers (agent-friendly mirror: https://threa.io/llms.txt).\n\n## Scopes\n\nAPI keys are granted specific scopes that control access:\n\n- `messages:search`: Grants access to search messages in public streams in a workspace. Application level stream grants can extend permissions to private streams.\n- `streams:read`: Grants access to list and search accessible streams in a workspace.\n- `streams:write`: Grants access to set a stream's description (rich text) and to archive or unarchive accessible streams.\n- `messages:read`: Grants access to read messages in accessible streams.\n- `messages:write`: Grants access to send, update, and delete messages in accessible streams.\n- `users:read`: Grants access to list and search workspace users.\n- `memos:read`: Grants access to search preserved workspace memos and inspect their provenance.\n- `attachments:read`: Grants access to search accessible attachments, inspect extracted content, and fetch download URLs.\n- `attachments:write`: Grants access to upload and replace attachments in accessible streams.\n- `labels:read`: Grants access to list workspace labels and their assignments on accessible resources.\n- `labels:write`: Grants access to create, edit, archive, join, and apply labels to accessible resources such as streams.\n- `docs:read`: Grants access to list and read the docs on accessible streams.\n- `docs:write`: Grants access to create docs on writable streams and edit their content.\n- `bot-runtime:read`: Grants access to read bot runtime presence and invocation state.\n- `bot-runtime:write`: Grants access to heartbeat bot runtime presence and link runtime sessions.\n- `bot-invocations:read`: Grants access to read bot invocation state.\n- `bot-invocations:write`: Grants access to claim, complete, or fail bot invocations.\n- `delegations:read`: Grants access to list and inspect delegated tasks in accessible streams.\n- `delegations:write`: Grants an agent access to claim or release delegated tasks and report progress, completion (posting the result as the key's identity), or failure.\n\n## Rate Limits\n\nRequests are rate-limited per workspace and per API key. Rate limit headers are included in responses.\n\n## Pagination\n\nList endpoints return paginated results with `hasMore` and `cursor` fields.\nPass the `cursor` value as the `after` query parameter to fetch the next page."
   },
   "servers": [{ "url": "https://app.threa.io", "description": "Production" }],
   "security": [{ "apiKey": [] }],
@@ -8614,6 +8614,408 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspaceId}/docs": {
+      "get": {
+        "operationId": "listDocs",
+        "summary": "List a stream's docs",
+        "tags": ["Docs"],
+        "description": "The active docs hosted by `streamId`, newest first. 404 when the stream is missing or the key cannot read it.",
+        "security": [{ "apiKey": ["docs:read"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "streamId",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "minLength": 1, "maxLength": 64 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "hostStreamId": { "type": "string" },
+                          "title": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                          "seq": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+                          "createdAt": { "type": "string", "format": "date-time" }
+                        },
+                        "required": ["id", "hostStreamId", "title", "seq", "createdAt"],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      },
+      "post": {
+        "operationId": "createDoc",
+        "summary": "Create a doc",
+        "tags": ["Docs"],
+        "description": "Create a doc under `streamId` as the key's actor (user keys as the owner, workspace keys as the bot). An optional `markdown` body is the first write and needs a `reason`; the host must accept writes from the key (403 STREAM_READ_ONLY otherwise). 400 DOC_HOST_TYPE_INVALID when the stream type cannot host docs. When the body cannot be applied after the doc exists, DOC_CREATE_INCOMPLETE carries the new doc's id.",
+        "security": [{ "apiKey": ["docs:write"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "streamId": { "type": "string", "minLength": 1, "maxLength": 64 },
+                  "title": { "type": "string", "minLength": 1, "maxLength": 100 },
+                  "markdown": { "type": "string", "minLength": 1, "maxLength": 100000 },
+                  "reason": { "type": "string", "minLength": 1, "maxLength": 280 }
+                },
+                "required": ["streamId"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "hostStreamId": { "type": "string" },
+                        "title": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "seq": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+                        "createdAt": { "type": "string", "format": "date-time" },
+                        "markdown": { "type": "string" }
+                      },
+                      "required": ["id", "hostStreamId", "title", "seq", "createdAt", "markdown"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/docs/{docId}": {
+      "get": {
+        "operationId": "getDoc",
+        "summary": "Read a doc",
+        "tags": ["Docs"],
+        "description": "The doc as markdown with a `<!-- blk_… -->` marker line before each block; block ids anchor edits. 404 when the doc is missing, archived, or out of the key's reach.",
+        "security": [{ "apiKey": ["docs:read"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "docId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Doc ID (a stream_ ULID of type doc)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "hostStreamId": { "type": "string" },
+                        "title": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "seq": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+                        "createdAt": { "type": "string", "format": "date-time" },
+                        "markdown": { "type": "string" }
+                      },
+                      "required": ["id", "hostStreamId", "title", "seq", "createdAt", "markdown"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/docs/{docId}/edits": {
+      "post": {
+        "operationId": "editDoc",
+        "summary": "Edit a doc by text anchors",
+        "tags": ["Docs"],
+        "description": "Replace exact text inside blocks: each edit's `old` must match once, within `blockId` when given or anywhere in the doc otherwise. All edits apply together or none do; a miss is 409 (DOC_EDIT_TEXT_NOT_FOUND, DOC_EDIT_TEXT_AMBIGUOUS or DOC_SECTION_NOT_FOUND) whose `details.scope.markdown` is the current text to retry against. `reason` is shown on the host's timeline.",
+        "security": [{ "apiKey": ["docs:write"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "docId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Doc ID (a stream_ ULID of type doc)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "reason": { "type": "string", "minLength": 1, "maxLength": 280 },
+                  "edits": {
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "blockId": { "type": "string", "minLength": 1, "maxLength": 64 },
+                        "old": { "type": "string", "minLength": 1, "maxLength": 100000 },
+                        "new": { "type": "string", "maxLength": 100000 }
+                      },
+                      "required": ["old", "new"],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": ["reason", "edits"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "title": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "seq": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+                        "touchedBlockIds": { "type": "array", "items": { "type": "string" } },
+                        "markdown": { "type": "string" }
+                      },
+                      "required": ["id", "title", "seq", "touchedBlockIds", "markdown"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" },
+          "409": {
+            "description": "Conflict: the resource is not in the state the operation requires",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspaceId}/labels": {
       "get": {
         "operationId": "listLabels",
@@ -9690,6 +10092,7 @@
     { "name": "Attachments", "description": "Search attachments, inspect extracted content, and fetch download URLs" },
     { "name": "Users", "description": "List workspace users" },
     { "name": "Labels", "description": "List, create, edit, archive, join, and apply workspace labels" },
+    { "name": "Docs", "description": "List, read, create, and edit the docs hosted by a stream" },
     {
       "name": "Bot runtimes",
       "description": "Register a runtime and keep its presence alive so it can be assigned work."

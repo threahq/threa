@@ -83,6 +83,7 @@ const TAG_DEFS: { name: string; description: string }[] = [
   { name: "Attachments", description: "Search attachments, inspect extracted content, and fetch download URLs" },
   { name: "Users", description: "List workspace users" },
   { name: "Labels", description: "List, create, edit, archive, join, and apply workspace labels" },
+  { name: "Docs", description: "List, read, create, and edit the docs hosted by a stream" },
   {
     name: "Bot runtimes",
     description: "Register a runtime and keep its presence alive so it can be assigned work.",

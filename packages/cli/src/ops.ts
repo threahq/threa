@@ -483,6 +483,48 @@ export async function removeLabel(
   return { removed: true, name: p.name, stream_id: resourceId }
 }
 
+export async function listDocs(
+  client: ThreaApiClient,
+  resolver: RefResolver,
+  p: { streamRef: string }
+): Promise<unknown> {
+  const streamId = await resolver.resolveStream(p.streamRef)
+  return client.get(`/docs${buildQuery({ streamId })}`)
+}
+
+export function readDoc(client: ThreaApiClient, docId: string): Promise<unknown> {
+  return client.get(`/docs/${encodeURIComponent(docId)}`)
+}
+
+export interface DocEditInput {
+  blockId?: string
+  old: string
+  new: string
+}
+
+export function editDoc(
+  client: ThreaApiClient,
+  p: { docId: string; reason: string; edits: DocEditInput[] }
+): Promise<unknown> {
+  return client.post(`/docs/${encodeURIComponent(p.docId)}/edits`, { reason: p.reason, edits: p.edits })
+}
+
+export interface CreateDocParams {
+  streamRef: string
+  title?: string
+  markdown?: string
+  reason?: string
+}
+
+export async function createDoc(client: ThreaApiClient, resolver: RefResolver, p: CreateDocParams): Promise<unknown> {
+  return client.post("/docs", {
+    streamId: await resolver.resolveStream(p.streamRef),
+    title: p.title,
+    markdown: p.markdown,
+    reason: p.reason,
+  })
+}
+
 export interface ListDelegationsParams {
   status?: "open"
   since?: string

@@ -724,7 +724,8 @@ export async function startServer(): Promise<ServerInstance> {
   })
   const streamBriefService = new StreamBriefService({ pool })
   const docService = new DocService({ pool })
-  const docAgentService = new DocAgentService({ pool, docService, streamService })
+  const botChannelService = new BotChannelService({ pool })
+  const docAgentService = new DocAgentService({ pool, docService, streamService, botChannelService })
   const delegationService = new DelegationService({ pool })
   // Declared here rather than beside the other socket registries because the
   // subagent cancel path routes an abort through it (below).
@@ -820,7 +821,6 @@ export async function startServer(): Promise<ServerInstance> {
 
   // WorkOS validates API keys in production, stub in dev.
   const apiKeyService = config.useStubAuth ? new StubApiKeyService() : new WorkosApiKeyService(config.workos)
-  const botChannelService = new BotChannelService({ pool })
   // Constructed after botChannelService: applying a label to a stream reuses the
   // actor's own access model, so the assignment service resolves bot reachability
   // through channel grants (users resolve through stream membership).
@@ -980,6 +980,7 @@ export async function startServer(): Promise<ServerInstance> {
     personaConfigService,
     delegationService,
     docService,
+    docAgentService,
     decisionService,
     subagentService,
     draftsService,

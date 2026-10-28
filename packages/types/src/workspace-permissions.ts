@@ -17,6 +17,8 @@ export const WORKSPACE_PERMISSION_SCOPES = {
   ATTACHMENTS_WRITE: "attachments:write",
   LABELS_READ: "labels:read",
   LABELS_WRITE: "labels:write",
+  DOCS_READ: "docs:read",
+  DOCS_WRITE: "docs:write",
   BOTS_CREATE_PERSONAL: "bots:create:personal",
   BOTS_CREATE_SHARED: "bots:create:shared",
   BOTS_MANAGE: "bots:manage",
@@ -106,6 +108,16 @@ export const WORKSPACE_PERMISSIONS: readonly WorkspacePermission[] = Object.free
     name: "Manage labels",
     description:
       "Grants access to create, edit, archive, join, and apply labels to accessible resources such as streams.",
+  },
+  {
+    slug: WORKSPACE_PERMISSION_SCOPES.DOCS_READ,
+    name: "Read docs",
+    description: "Grants access to list and read the docs on accessible streams.",
+  },
+  {
+    slug: WORKSPACE_PERMISSION_SCOPES.DOCS_WRITE,
+    name: "Edit docs",
+    description: "Grants access to create docs on writable streams and edit their content.",
   },
   {
     slug: WORKSPACE_PERMISSION_SCOPES.BOTS_CREATE_PERSONAL,
@@ -207,6 +219,8 @@ const READ_AND_SELF_SERVE: readonly WorkspacePermissionSlug[] = Object.freeze([
   WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_WRITE,
   WORKSPACE_PERMISSION_SCOPES.LABELS_READ,
   WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE,
+  WORKSPACE_PERMISSION_SCOPES.DOCS_READ,
+  WORKSPACE_PERMISSION_SCOPES.DOCS_WRITE,
   WORKSPACE_PERMISSION_SCOPES.BOTS_CREATE_PERSONAL,
   WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_READ,
   WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE,

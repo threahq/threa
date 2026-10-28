@@ -106,7 +106,9 @@ export class BotChannelService {
     const rootResolved = !stream.rootStreamId || effective.id === stream.rootStreamId
     if (rootResolved && isOpenVisibility(effective.visibility)) return true
 
-    const grantStreamId = stream.type === StreamTypes.THREAD && stream.rootStreamId ? stream.rootStreamId : stream.id
+    // Threads and docs inherit their root's access (INV-62), so the grant lives on the root.
+    const inheritsAccess = stream.type === StreamTypes.THREAD || stream.type === StreamTypes.DOC
+    const grantStreamId = inheritsAccess && stream.rootStreamId ? stream.rootStreamId : stream.id
 
     // Point query for explicit grant (single EXISTS, no full scan)
     return BotChannelAccessRepository.hasGrant(this.pool, workspaceId, botId, grantStreamId)

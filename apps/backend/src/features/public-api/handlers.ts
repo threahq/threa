@@ -25,7 +25,6 @@ import {
   type Stream,
   type DisplayNameContext,
   type StreamService,
-  type StreamWritePrincipal,
 } from "../streams"
 import { PeoplePurposes, UserRepository } from "../workspaces"
 import { ConversationRepository, ConversationService, type Conversation } from "../conversations"
@@ -125,6 +124,7 @@ import { encodeCursor, decodeCursor } from "./cursor"
 import { serializeTraceStep, synthesizeReplyOnlyBotTrace } from "./trace-steps"
 import { createBotRuntimeWriteOps } from "./runtime-write-ops"
 import { listMyBotsSchema } from "./schemas"
+import { apiKeyPrincipal } from "./principal"
 import type {
   WireStream,
   WireMessage,
@@ -908,12 +908,6 @@ export function createPublicApiHandlers({
     throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
   }
 
-  function streamWritePrincipal(req: Request): StreamWritePrincipal {
-    if (req.userApiKey) return { kind: "user", userId: req.user!.id }
-    if (req.botApiKey) return { kind: "bot", botId: req.botApiKey.botId }
-    throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
-  }
-
   /** Whether `stream` is archived itself or sealed by an archived ancestor. */
   async function isEffectivelyArchived(stream: Stream): Promise<boolean> {
     if (stream.archivedAt != null) return true
@@ -945,12 +939,7 @@ export function createPublicApiHandlers({
     return async function archiveHandler(req: Request, res: Response) {
       const streamId = req.params.streamId
       await assertStreamAccessible(req, streamId)
-      const stream = await streamService.setStreamArchived(
-        req.workspaceId!,
-        streamId,
-        streamWritePrincipal(req),
-        archived
-      )
+      const stream = await streamService.setStreamArchived(req.workspaceId!, streamId, apiKeyPrincipal(req), archived)
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
       res.json({ data: serializeStream(stream, await isEffectivelyArchived(stream), await displayNameContext(stream)) })
     }
@@ -3226,7 +3215,7 @@ export function createPublicApiHandlers({
       const updated = await streamService.updateStream(
         streamId,
         { description, actorId, actorType },
-        { workspaceId, principal: streamWritePrincipal(req) }
+        { workspaceId, principal: apiKeyPrincipal(req) }
       )
       if (!updated || updated.archivedAt) {
         throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })

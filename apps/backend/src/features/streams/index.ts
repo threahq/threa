@@ -41,6 +41,7 @@ export {
   assertViewerStreamWritable,
   canHostAside,
   assertStreamWritable,
+  principalActorId,
   assertStreamsWritable,
   resolveLockedStreamAuthorities,
   projectStreamForPrincipal,

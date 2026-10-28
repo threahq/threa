@@ -50,6 +50,7 @@ import {
   lockEffectiveStreams,
   resolveLockedStreamAuthorities,
   type LockedStreamFacts,
+  principalActorId,
   type StreamWritePrincipal,
 } from "./write-authority"
 import { PeoplePurposes, UserRepository } from "../workspaces"
@@ -262,7 +263,8 @@ const createAsideParamsSchema = z.object({
 export interface CreateDocParams {
   workspaceId: string
   parentStreamId: string
-  createdBy: string
+  principal: StreamWritePrincipal
+  displayName?: string
 }
 
 export type CreateAsideParams = z.infer<typeof createAsideParamsSchema> & {
@@ -362,10 +364,6 @@ function assertCanArchive(target: Stream, root: Stream, principal: StreamWritePr
     status: 403,
     code: "FORBIDDEN",
   })
-}
-
-function principalActorId(principal: StreamWritePrincipal): string {
-  return principal.kind === "user" ? principal.userId : principal.botId
 }
 
 async function lockPrincipalAccess(
@@ -719,7 +717,7 @@ export class StreamService {
         return this.createDoc({
           workspaceId: params.workspaceId,
           parentStreamId: params.parentStreamId,
-          createdBy: params.createdBy,
+          principal: { kind: "user", userId: params.createdBy },
         })
       }
       default:
@@ -1004,9 +1002,16 @@ export class StreamService {
    * root, so access and write authority resolve through it unchanged (INV-62).
    */
   async createDoc(params: CreateDocParams): Promise<Stream> {
+    const { principal } = params
+    const createdBy = principalActorId(principal)
     return withTransaction(this.pool, async (client) => {
-      const host = await checkStreamAccess(client, params.parentStreamId, params.workspaceId, params.createdBy)
-      if (!host) throw new StreamNotFoundError()
+      const [authority] = await resolveLockedStreamAuthorities(client, {
+        workspaceId: params.workspaceId,
+        streamIds: [params.parentStreamId],
+        principal,
+      })
+      if (!authority) throw new StreamNotFoundError()
+      const { target: host, root, state } = authority
 
       if (!STREAM_TYPE_CAPABILITIES[host.type].hostsDocs) {
         throw new HttpError("A doc cannot be created on this stream type", {
@@ -1014,19 +1019,15 @@ export class StreamService {
           code: DocErrorCodes.HOST_TYPE_INVALID,
         })
       }
-      // The doc body is projected server-side as plaintext.
-      if (host.e2eEnabled === true) {
+      // The doc body is projected server-side as plaintext; the locked row carries no E2E join.
+      if (await E2eStreamsRepository.isE2eStream(client, params.workspaceId, host.id)) {
         throw new HttpError("Docs cannot be created on an end-to-end encrypted stream", {
           status: 400,
           code: DocErrorCodes.E2E_HOST_NOT_ALLOWED,
         })
       }
 
-      const { root } = await assertStreamWritable(client, {
-        workspaceId: params.workspaceId,
-        streamId: params.parentStreamId,
-        principal: { kind: "user", userId: params.createdBy },
-      })
+      assertViewerStreamWritable(state)
 
       const stream = await StreamRepository.insert(client, {
         id: streamId(),
@@ -1036,7 +1037,9 @@ export class StreamService {
         rootStreamId: root.id,
         visibility: root.visibility,
         memoryMode: root.memoryMode,
-        createdBy: params.createdBy,
+        createdBy,
+        displayName: params.displayName,
+        displayNameUpdatedByUserId: principal.kind === "user" ? principal.userId : null,
       })
       await DocRepository.insertHead(client, { workspaceId: params.workspaceId, streamId: stream.id })
 
@@ -1051,9 +1054,9 @@ export class StreamService {
         workspaceId: params.workspaceId,
         streamId: host.id,
         eventType: "doc:created",
-        payload: { docId: stream.id, createdBy: params.createdBy } satisfies DocCreatedEventPayload,
-        actorId: params.createdBy,
-        actorType: "user",
+        payload: { docId: stream.id, createdBy } satisfies DocCreatedEventPayload,
+        actorId: createdBy,
+        actorType: principal.kind,
       })
       await OutboxRepository.insert(client, "stream:doc_created", {
         workspaceId: params.workspaceId,

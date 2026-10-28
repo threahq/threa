@@ -77,6 +77,7 @@ import {
   createPublicApiHandlers,
   createBotHandlers,
   createDelegationPublicApiHandlers,
+  createDocPublicApiHandlers,
   PUBLIC_API_ROUTES,
   type OperationId,
   toExpressPath,
@@ -113,7 +114,7 @@ import { createApiVersionGate } from "./middleware/api-version"
 import { WORKSPACE_PERMISSION_SCOPES, isPushRequestPath } from "@threahq/types"
 import type { WorkspaceService } from "./features/workspaces"
 import type { StreamService } from "./features/streams"
-import { createDocHandlers, type DocService } from "./features/docs"
+import { createDocHandlers, type DocAgentService, type DocService } from "./features/docs"
 import type { EventService } from "./features/messaging"
 import type { AttachmentService } from "./features/attachments"
 import type { SearchService, SearchQueryLogService } from "./features/search"
@@ -199,6 +200,7 @@ interface Dependencies {
   personaConfigService: PersonaConfigService
   delegationService: DelegationService
   docService: DocService
+  docAgentService: DocAgentService
   decisionService: DecisionService
   subagentService: SubagentService
   draftsService: DraftsService
@@ -287,6 +289,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     personaConfigService,
     delegationService,
     docService,
+    docAgentService,
     decisionService,
     subagentService,
     draftsService,
@@ -2399,6 +2402,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     io: deps.io,
   })
   const decisionPublicApi = createDecisionPublicApi({ decisionService })
+  const docPublicApi = createDocPublicApiHandlers({ docAgentService })
   const delegationPublicApi = createDelegationPublicApiHandlers({
     pool,
     delegationService,
@@ -2461,6 +2465,10 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     getDecision: decisionPublicApi.getDecision,
     listStreams: publicApi.listStreams,
     getStream: publicApi.getStream,
+    listDocs: docPublicApi.listDocs,
+    getDoc: docPublicApi.getDoc,
+    createDoc: docPublicApi.createDoc,
+    editDoc: docPublicApi.editDoc,
     updateStream: publicApi.updateStream,
     archiveStream: publicApi.archiveStream,
     unarchiveStream: publicApi.unarchiveStream,

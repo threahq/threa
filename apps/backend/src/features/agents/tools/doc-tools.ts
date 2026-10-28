@@ -16,7 +16,7 @@ import type {
   DocAgentTitleResult,
   DocAgentWriteResult,
 } from "../../docs"
-import { UNTITLED_DOC_LABEL } from "../../docs"
+import { DOC_REASON_MAX_CHARS, UNTITLED_DOC_LABEL } from "../../docs"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
 import type { DocToolDeps } from "./tool-deps"
 
@@ -25,7 +25,7 @@ const reason = z
   .string()
   .trim()
   .min(1)
-  .max(280)
+  .max(DOC_REASON_MAX_CHARS)
   .describe("One line on what changed and why, shown to people on this stream's timeline.")
 const after = z
   .string()
@@ -150,11 +150,7 @@ function failureCause(failure: DocAgentRewriteFailure): string {
 function formatCreate(result: DocAgentCreateResult): string {
   if (result.status !== "created") return formatAccessRefusal(result)
   const header = writtenDoc("Created", result.docId, result.title)
-  const failures = [
-    ...(result.titleFailure ? [`the title was not set: ${failureCause(result.titleFailure)}.`] : []),
-    ...(result.body ? [`the body was not applied: ${failureCause(result.body)}.`] : []),
-  ]
-  if (failures.length > 0) return `${header} (seq ${result.seq}), but ${failures.join(" Also, ")}`
+  if (result.body) return `${header} (seq ${result.seq}), but the body was not applied: ${failureCause(result.body)}.`
   return result.markdown
     ? `${header} (seq ${result.seq}):\n\n${result.markdown}`
     : `${header} (seq ${result.seq}). It is empty.`
@@ -206,10 +202,11 @@ export function createReadDocTool(deps: DocToolDeps) {
     execute: async (input): Promise<AgentToolResult> => {
       try {
         if (!input.docId) {
-          const docs = await deps.listDocs()
-          if (docs.length === 0) return { output: "This stream hosts no docs." }
+          const listed = await deps.listDocs()
+          if (listed.status === "not_found") return { output: "This stream's docs are not available to you." }
+          if (listed.docs.length === 0) return { output: "This stream hosts no docs." }
           return {
-            output: `Docs on this stream:\n${docs.map((doc) => `- ${doc.docId}: ${doc.title ?? UNTITLED_DOC_LABEL}`).join("\n")}`,
+            output: `Docs on this stream:\n${listed.docs.map((doc) => `- ${doc.docId}: ${doc.title ?? UNTITLED_DOC_LABEL}`).join("\n")}`,
           }
         }
         const result = await deps.readDoc({ docId: input.docId })

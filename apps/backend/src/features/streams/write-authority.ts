@@ -104,6 +104,10 @@ export function createStreamReadOnlyError(reason: StreamReadOnlyReason): HttpErr
   })
 }
 
+export function principalActorId(principal: StreamWritePrincipal): string {
+  return principal.kind === "user" ? principal.userId : principal.botId
+}
+
 export function assertViewerStreamWritable(state: StreamViewerState): void {
   if (state.readOnlyReason) throw createStreamReadOnlyError(state.readOnlyReason)
 }

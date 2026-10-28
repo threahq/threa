@@ -91,6 +91,14 @@ export const DocRepository = {
     return result.rows[0] ? mapHead(result.rows[0]) : null
   },
 
+  async listHeads(db: Querier, workspaceId: string, streamIds: readonly string[]): Promise<DocHead[]> {
+    if (streamIds.length === 0) return []
+    const result = await db.query<DocHeadRow>(sql`
+      SELECT ${sql.raw(HEAD_COLUMNS)} FROM docs WHERE workspace_id = ${workspaceId} AND stream_id = ANY(${streamIds})
+    `)
+    return result.rows.map(mapHead)
+  },
+
   /**
    * The per-doc write lock, taken after the stream chain's lock
    * (`resolveLockedStreamAuthorities`): seq allocation and projection happen under it.

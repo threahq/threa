@@ -5,12 +5,20 @@ import {
   StreamErrorCodes,
   StreamReadOnlyReasons,
   StreamTypes,
+  type AuthorType,
   type StreamReadOnlyReason,
 } from "@threahq/types"
 import { HttpError, StreamNotFoundError } from "../../lib/errors"
 import { blockId } from "../../lib/id"
 import { logger } from "../../lib/logger"
-import { StreamRepository, checkStreamAccess, type StreamService } from "../streams"
+import type { BotChannelService } from "../api-keys"
+import {
+  StreamRepository,
+  checkStreamAccess,
+  type Stream,
+  type StreamService,
+  type StreamWritePrincipal,
+} from "../streams"
 import {
   deleteSection,
   insertSection,
@@ -25,20 +33,36 @@ import type {
   DocAgentAccessRefusal,
   DocAgentCreateResult,
   DocAgentDocSummary,
+  DocAgentListResult,
   DocAgentReadResult,
   DocAgentRefusalCode,
   DocAgentTitleResult,
   DocAgentWriteResult,
 } from "./agent-types"
+import { DocRepository } from "./repository"
 import type { DocService } from "./service"
 
-/** Who an agent turn acts as: authorized as `invokingUserId`, attributed to `personaId`, confined to `hostStreamId`'s docs. */
+/**
+ * Who a doc op acts as: authorized as `principal`, attributed to `actor`, and
+ * confined to `hostStreamId`'s docs when set (null reaches any doc the principal can read).
+ */
 export interface DocAgentContext {
+  workspaceId: string
+  hostStreamId: string | null
+  principal: StreamWritePrincipal
+  actor: { actorId: string; actorType: AuthorType }
+}
+
+/** A persona turn: authorized as `invokingUserId`, attributed to `personaId`, confined to `hostStreamId`'s docs. */
+export interface DocAgentTurn {
   workspaceId: string
   hostStreamId: string
   invokingUserId: string
   personaId: string
 }
+
+/** Listing and creating need a host; reads and writes by id do not. */
+export type HostedDocAgentContext = DocAgentContext & { hostStreamId: string }
 
 const READ_ONLY_REFUSALS: Partial<Record<StreamReadOnlyReason, DocAgentRefusalCode>> = {
   [StreamReadOnlyReasons.ARCHIVED]: "archived",
@@ -49,7 +73,11 @@ function refusalFor(error: HttpError): DocAgentAccessRefusal {
   switch (error.code) {
     case StreamErrorCodes.READ_ONLY: {
       const reason = (error.details as { reason?: StreamReadOnlyReason } | undefined)?.reason
-      return { status: "refused", code: (reason && READ_ONLY_REFUSALS[reason]) ?? "read_only" }
+      return {
+        status: "refused",
+        code: (reason && READ_ONLY_REFUSALS[reason]) ?? "read_only",
+        ...(reason ? { reason } : {}),
+      }
     }
     case StreamErrorCodes.CHANNEL_MANAGEMENT_FORBIDDEN:
       return { status: "refused", code: "forbidden" }
@@ -86,19 +114,36 @@ async function orLoggedError<T>(
   }
 }
 
+function summarize(doc: Stream, hostStreamId: string, seq: number): DocAgentDocSummary {
+  return { docId: doc.id, hostStreamId, title: doc.displayName ?? null, seq, createdAt: doc.createdAt }
+}
+
 export class DocAgentService {
   private pool: Pool
   private docService: DocService
   private streamService: StreamService
+  private botChannelService: BotChannelService
 
-  constructor(deps: { pool: Pool; docService: DocService; streamService: StreamService }) {
+  constructor(deps: {
+    pool: Pool
+    docService: DocService
+    streamService: StreamService
+    botChannelService: BotChannelService
+  }) {
     this.pool = deps.pool
     this.docService = deps.docService
     this.streamService = deps.streamService
+    this.botChannelService = deps.botChannelService
   }
 
   /** The doc ops bound to one turn's context; the doc tools take this as their deps. */
-  forTurn(ctx: DocAgentContext) {
+  forTurn(turn: DocAgentTurn) {
+    const ctx: HostedDocAgentContext = {
+      workspaceId: turn.workspaceId,
+      hostStreamId: turn.hostStreamId,
+      principal: { kind: "user", userId: turn.invokingUserId },
+      actor: { actorId: turn.personaId, actorType: AuthorTypes.PERSONA },
+    }
     return {
       listDocs: () => this.listDocs(ctx),
       readDoc: (input: { docId: string }) => this.readDoc(ctx, input),
@@ -113,29 +158,40 @@ export class DocAgentService {
     }
   }
 
-  async listDocs(ctx: DocAgentContext): Promise<DocAgentDocSummary[]> {
-    const host = await checkStreamAccess(this.pool, ctx.hostStreamId, ctx.workspaceId, ctx.invokingUserId)
-    if (!host) return []
+  /** The host's active docs, newest first; `not_found` when the principal cannot read the host. */
+  async listDocs(ctx: HostedDocAgentContext): Promise<DocAgentListResult> {
+    if (!(await this.canRead(ctx, ctx.hostStreamId))) return { status: "not_found" }
     const docs = await StreamRepository.list(this.pool, ctx.workspaceId, {
       types: [StreamTypes.DOC],
       parentStreamId: ctx.hostStreamId,
       archiveStatus: ["active"],
     })
-    return docs.map((doc) => ({ docId: doc.id, title: doc.displayName ?? null }))
+    const heads = await DocRepository.listHeads(
+      this.pool,
+      ctx.workspaceId,
+      docs.map((doc) => doc.id)
+    )
+    const seqs = new Map(heads.map((head) => [head.streamId, head.updateSeq]))
+    return {
+      status: "ok",
+      docs: docs.map((doc) => {
+        const seq = seqs.get(doc.id)
+        if (seq === undefined) throw new Error(`Doc ${doc.id} has no head row`)
+        return summarize(doc, ctx.hostStreamId, seq)
+      }),
+    }
   }
 
   async readDoc(ctx: DocAgentContext, input: { docId: string }): Promise<DocAgentReadResult> {
-    if (await this.hostedDocRefusal(ctx, input.docId)) return { status: "not_found" }
-    const result = await orRefusal(() =>
-      this.docService.get({ workspaceId: ctx.workspaceId, userId: ctx.invokingUserId, docId: input.docId })
-    )
-    if ("status" in result) return { status: "not_found" }
+    const doc = await this.accessibleDoc(ctx, input.docId)
+    if (!doc || doc.archivedAt) return { status: "not_found" }
+    const head = await DocRepository.findHead(this.pool, ctx.workspaceId, doc.id)
+    if (!head) throw new Error(`Doc ${doc.id} has no head row`)
+    const sections = await DocRepository.listSections(this.pool, ctx.workspaceId, doc.id)
     return {
       status: "ok",
-      docId: input.docId,
-      title: result.stream.displayName ?? null,
-      seq: result.seq,
-      markdown: renderWithMarkers(result.sections),
+      ...summarize(doc, doc.parentStreamId, head.updateSeq),
+      markdown: renderWithMarkers(sections),
     }
   }
 
@@ -178,41 +234,31 @@ export class DocAgentService {
       await this.streamService.updateStream(
         input.docId,
         { displayName: title },
-        { workspaceId: ctx.workspaceId, principal: { kind: "user", userId: ctx.invokingUserId } }
+        { workspaceId: ctx.workspaceId, principal: ctx.principal }
       )
       return { status: "applied", docId: input.docId, title }
     })
   }
 
-  /**
-   * Title and body are separate commits after the doc exists, the body landing
-   * as the persona's first write. A blank title leaves the doc untitled.
-   */
+  /** The title commits with the doc row (blank leaves it untitled); the body lands as the actor's first write after it. */
   async createDoc(
-    ctx: DocAgentContext,
+    ctx: HostedDocAgentContext,
     input: { reason: string; title?: string; markdown?: string }
   ): Promise<DocAgentCreateResult> {
     const created = await orRefusal(() =>
       this.streamService.createDoc({
         workspaceId: ctx.workspaceId,
         parentStreamId: ctx.hostStreamId,
-        createdBy: ctx.invokingUserId,
+        principal: ctx.principal,
+        displayName: input.title?.trim() || undefined,
       })
     )
     if ("status" in created) return created
     const docId = created.id
-
-    const requestedTitle = input.title?.trim()
-    const titled = requestedTitle
-      ? await orLoggedError({ docId, step: "title" }, () => this.setTitle(ctx, { docId, title: requestedTitle }))
-      : null
     const result: Extract<DocAgentCreateResult, { status: "created" }> = {
       status: "created",
-      docId,
-      title: titled?.status === "applied" ? titled.title : null,
-      seq: 0,
+      ...summarize(created, ctx.hostStreamId, 0),
       markdown: "",
-      ...(titled && titled.status !== "applied" ? { titleFailure: titled } : {}),
     }
 
     const markdown = input.markdown
@@ -243,8 +289,8 @@ export class DocAgentService {
       const result = await this.docService.applyAgentRewrite({
         workspaceId: ctx.workspaceId,
         docId,
-        invokingUserId: ctx.invokingUserId,
-        actor: { actorId: ctx.personaId, actorType: AuthorTypes.PERSONA },
+        principal: ctx.principal,
+        actor: ctx.actor,
         reason,
         rewrite,
       })
@@ -268,11 +314,33 @@ export class DocAgentService {
     })
   }
 
-  /** Parentage never changes after creation, so this check needs no lock; the write's own lock rechecks archive state. */
   private async hostedDocRefusal(ctx: DocAgentContext, docId: string): Promise<DocAgentAccessRefusal | null> {
-    const stream = await StreamRepository.findById(this.pool, ctx.workspaceId, docId)
-    if (stream?.type !== StreamTypes.DOC || stream.parentStreamId !== ctx.hostStreamId) return { status: "not_found" }
-    if (stream.archivedAt) return { status: "refused", code: "archived" }
+    const doc = await this.accessibleDoc(ctx, docId)
+    if (!doc) return { status: "not_found" }
+    if (doc.archivedAt) return { status: "refused", code: "archived", reason: StreamReadOnlyReasons.ARCHIVED }
     return null
+  }
+
+  /**
+   * The doc when this context may read it: under the host when confined, and reachable by the principal.
+   * Parentage never changes after creation, so this needs no lock; a write's own lock rechecks archive state.
+   */
+  private async accessibleDoc(
+    ctx: DocAgentContext,
+    docId: string
+  ): Promise<(Stream & { parentStreamId: string }) | null> {
+    const stream = await StreamRepository.findById(this.pool, ctx.workspaceId, docId)
+    if (stream?.type !== StreamTypes.DOC || !stream.parentStreamId) return null
+    if (ctx.hostStreamId !== null && stream.parentStreamId !== ctx.hostStreamId) return null
+    if (!(await this.canRead(ctx, stream.id))) return null
+    return { ...stream, parentStreamId: stream.parentStreamId }
+  }
+
+  private async canRead(ctx: DocAgentContext, streamId: string): Promise<boolean> {
+    const { principal } = ctx
+    if (principal.kind === "user") {
+      return (await checkStreamAccess(this.pool, streamId, ctx.workspaceId, principal.userId)) !== null
+    }
+    return this.botChannelService.isStreamAccessibleForBot(ctx.workspaceId, principal.botId, streamId)
   }
 }
