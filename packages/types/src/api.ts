@@ -2420,6 +2420,51 @@ export interface DocEditedEventPayload {
   touchedBlockIds: string[]
 }
 
+/** One top-level block of a doc, projected for search and section threads. */
+export interface DocSection {
+  blockId: string
+  position: number
+  /** The top-level node type. */
+  kind: string
+  markdown: string
+  contentJson: JSONContent
+}
+
+/** `GET /workspaces/:ws/docs/:docId`. */
+export interface DocState {
+  stream: Stream
+  seq: number
+  /** Base64 Yjs update holding the full state at `seq`. */
+  state: string
+  sections: DocSection[]
+}
+
+/** One stored update in `GET /workspaces/:ws/docs/:docId/updates?after=`. */
+export interface DocUpdateView {
+  seq: number
+  /** Base64 Yjs update. */
+  update: string
+  actorId: string
+  actorType: AuthorType
+}
+
+/** `GET /workspaces/:ws/docs/:docId/updates?after=`. */
+export interface DocUpdatesResponse {
+  updates: DocUpdateView[]
+}
+
+/** `POST /workspaces/:ws/docs/:docId/updates`. */
+export interface DocPostUpdateResult {
+  seq: number
+  touchedBlockIds: string[]
+}
+
+/** Socket `doc:updated` on the doc stream's room: one applied Yjs update; `streamId` is the doc. */
+export interface DocUpdatedPayload extends DocUpdateView, DocEditedEventPayload {
+  workspaceId: string
+  streamId: string
+}
+
 export interface AIUsageSummary {
   totalCostUsd: number
   promptTokens: number

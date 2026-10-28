@@ -7,9 +7,15 @@ import type { MessageSendMode } from "@threahq/types"
 import {
   activeListItemType,
   deleteAdjacentInlineAtom,
+  handleBeforeInputAtomDelete,
+  handleBeforeInputGraphemeDelete,
+  handleBeforeInputKeyboardPaste,
+  handleBeforeInputNewline,
   handleEnterTextBehavior,
   toggleMultilineBlock,
+  type BeforeInputEventLike,
 } from "./multiline-blocks"
+import type { EmojiLookup, MentionTypeLookup, ParseMarkdownOptions } from "./editor-markdown"
 import { matchesKeyBinding } from "@/lib/keyboard-shortcuts"
 
 export interface EditorBehaviorsOptions {
@@ -75,6 +81,30 @@ export function isSuggestionActive(editor: Editor): boolean {
     s.emoji?.popupVisible ||
     s.memoSearch?.popupVisible
   )
+}
+
+interface BeforeInputLookups {
+  getMentionType?: MentionTypeLookup
+  toEmoji?: EmojiLookup
+  parseOptions?: ParseMarkdownOptions
+}
+
+/** The `beforeinput` repairs an editor without the composer's link-paste steps needs, in order. */
+export function handleBeforeInput(editor: Editor, event: BeforeInputEventLike, lookups: BeforeInputLookups): boolean {
+  const suggestionActive = isSuggestionActive(editor)
+  if (handleBeforeInputNewline(editor, event, { allowDuringComposition: suggestionActive })) return true
+  if (suggestionActive) return false
+
+  // Android atom deletion: keymap doesn't fire for Backspace, so delete
+  // adjacent inline atoms here before the browser's two-step selection.
+  if (handleBeforeInputAtomDelete(editor, event)) return true
+
+  // Firefox Android can delete emoji text by code unit, leaving a
+  // broken half-grapheme. Delete the whole grapheme before native input.
+  if (handleBeforeInputGraphemeDelete(editor, event)) return true
+
+  // Gboard / SwiftKey clipboard-bar paste arrives as insertText, not paste.
+  return handleBeforeInputKeyboardPaste(editor, event, lookups.getMentionType, lookups.toEmoji, lookups.parseOptions)
 }
 
 type EscapableInlineMarkName = "code" | "link"

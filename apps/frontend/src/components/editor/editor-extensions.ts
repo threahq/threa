@@ -47,20 +47,30 @@ import { DictationPreview } from "./dictation-preview-extension"
 import { MathExtension } from "./math-extension"
 import { DictationChunkExtension } from "./dictation-chunk-extension"
 import { ComposerPillDragExtension } from "./composer-pill-drag-extension"
+import { YjsCollaboration } from "./yjs-extension"
+import type * as Y from "yjs"
 
 const lowlight = createLowlight(common)
 
-interface CreateEditorExtensionsOptions {
-  placeholder: string
+interface ContentExtensionsOptions {
+  placeholder?: string
   mentionSuggestion?: MentionOptions["suggestion"]
   channelSuggestion?: ChannelOptions["suggestion"]
+  emojiSuggestion?: EmojiExtensionOptions["suggestion"]
+  /** Look up emoji by shortcode - used for input rule auto-convert */
+  toEmoji?: (shortcode: string) => string | null
+}
+
+interface CreateEditorExtensionsOptions extends ContentExtensionsOptions {
+  placeholder: string
   commandSuggestion?: CommandOptions["suggestion"]
   /** Arguments of a composer command, drawn as chips beside its own (view-only). */
   commandArgsFor?: CommandArgDecorationOptions["commandArgsFor"]
-  emojiSuggestion?: EmojiExtensionOptions["suggestion"]
   memoSearchSuggestion?: MemoSearchOptions["suggestion"]
-  /** Look up emoji by shortcode - used for input rule auto-convert */
-  toEmoji?: (shortcode: string) => string | null
+}
+
+interface CreateDocumentExtensionsOptions extends ContentExtensionsOptions {
+  ydoc: Y.Doc
 }
 
 /**
@@ -76,17 +86,30 @@ interface CreateEditorExtensionsOptions {
 export function createEditorExtensions(options: CreateEditorExtensionsOptions | string) {
   // Support legacy string-only signature
   const config: CreateEditorExtensionsOptions = typeof options === "string" ? { placeholder: options } : options
+  return buildExtensions(config, "composer")
+}
+
+/** A collaborative document editor: the shared content extensions without composer tooling, bound to a Yjs fragment that also owns undo. */
+export function createDocumentExtensions({ ydoc, ...options }: CreateDocumentExtensionsOptions) {
+  return [...buildExtensions(options, "document"), YjsCollaboration.configure({ ydoc })]
+}
+
+type ExtensionSurface = "composer" | "document"
+
+// One list so the composer keeps its extension order (plugin and keymap precedence follow it).
+function buildExtensions(config: Partial<CreateEditorExtensionsOptions>, surface: ExtensionSurface): AnyExtension[] {
+  const composerOnly = (...extensions: AnyExtension[]) => (surface === "composer" ? extensions : [])
 
   const extensions: AnyExtension[] = [
     Document,
     Paragraph,
     Text,
     HardBreak,
-    History,
+    ...composerOnly(History),
     Gapcursor,
 
     Placeholder.configure({
-      placeholder: config.placeholder,
+      placeholder: config.placeholder ?? "",
       emptyEditorClass: "is-editor-empty",
     }),
 
@@ -142,18 +165,19 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
 
     GiphyEmbedExtension,
 
-    ComposerPillDragExtension,
+    ...composerOnly(ComposerPillDragExtension),
 
     // An equation is a node, like a code block: KaTeX in the composer, `$…$` on
     // the wire, and a tap opens its TeX rather than raw delimiters.
     MathExtension,
 
-    // Live dictation hypothesis ghost (inert unless actively dictating)
-    DictationPreview,
-
-    // Tracks ranges of polished dictation chunks so the session toggle can
-    // swap them back to raw transcript; inert unless chunks are added.
-    DictationChunkExtension,
+    ...composerOnly(
+      // Live dictation hypothesis ghost (inert unless actively dictating)
+      DictationPreview,
+      // Tracks ranges of polished dictation chunks so the session toggle can
+      // swap them back to raw transcript; inert unless chunks are added.
+      DictationChunkExtension
+    ),
 
     // Schema nodes stay mounted even when their picker is disabled. Their
     // extensions provide inert default suggestions, so every RichEditor parses
@@ -161,15 +185,19 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     config.mentionSuggestion ? MentionExtension.configure({ suggestion: config.mentionSuggestion }) : MentionExtension,
     config.channelSuggestion ? ChannelExtension.configure({ suggestion: config.channelSuggestion }) : ChannelExtension,
     config.commandSuggestion ? CommandExtension.configure({ suggestion: config.commandSuggestion }) : CommandExtension,
-    config.commandArgsFor
-      ? CommandArgDecoration.configure({ commandArgsFor: config.commandArgsFor })
-      : CommandArgDecoration,
+    ...composerOnly(
+      config.commandArgsFor
+        ? CommandArgDecoration.configure({ commandArgsFor: config.commandArgsFor })
+        : CommandArgDecoration
+    ),
     config.emojiSuggestion && config.toEmoji
       ? EmojiExtension.configure({ suggestion: config.emojiSuggestion, toEmoji: config.toEmoji })
       : EmojiExtension,
-    config.memoSearchSuggestion
-      ? MemoSearchExtension.configure({ suggestion: config.memoSearchSuggestion })
-      : MemoSearchExtension,
+    ...composerOnly(
+      config.memoSearchSuggestion
+        ? MemoSearchExtension.configure({ suggestion: config.memoSearchSuggestion })
+        : MemoSearchExtension
+    ),
 
     BlockIdAttribute,
   ]

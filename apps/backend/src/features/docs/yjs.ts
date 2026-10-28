@@ -7,11 +7,8 @@ import {
 } from "y-prosemirror"
 import { ensureBlockIds } from "@threahq/prosemirror"
 import { getThreaSchema, normalizeContentJson } from "@threahq/prosemirror/schema"
-import type { JSONContent } from "@threahq/types"
+import { DOC_FRAGMENT, type JSONContent } from "@threahq/types"
 import { blockId } from "../../lib/id"
-
-/** The fragment TipTap's Collaboration extension binds by default; y-prosemirror's own default is "prosemirror". */
-export const DOC_FRAGMENT = "default"
 
 /**
  * The Yjs client id of every server-authored write. Safe to share across

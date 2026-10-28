@@ -1,4 +1,5 @@
 import type { NodeViewProps } from "@tiptap/react"
+import { ySyncPluginKey } from "y-prosemirror"
 import type { DisplayStamp, DisplayStampedNode } from "@/lib/display-stamps"
 
 /**
@@ -10,6 +11,8 @@ export function stampNodeAttrs<T extends DisplayStampedNode>(
   type: T,
   attrs: DisplayStamp<T>
 ): void {
+  // A shared doc is never mutated by rendering it.
+  if (ySyncPluginKey.getState(editor.state)) return
   const pos = getPos()
   if (typeof pos !== "number") return
   const current = editor.state.doc.nodeAt(pos)

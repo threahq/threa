@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useParams } from "react-router-dom"
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react"
 import { attachmentReferenceLabel } from "@threahq/prosemirror"
@@ -36,6 +36,9 @@ function getDisplayText(attrs: AttachmentReferenceAttrs): string {
   return attachmentReferenceLabel(attrs)
 }
 
+// A peer's image can 403 while its bytes are still uploading or being scanned, and no event says when that ends.
+const LOAD_RETRY_DELAYS_MS = [2_000, 4_000, 8_000, 15_000, 30_000, 30_000, 30_000, 30_000, 30_000]
+
 function InlineImage({
   workspaceId,
   attachmentId,
@@ -52,12 +55,24 @@ function InlineImage({
   const src =
     getUploadJobByAttachmentId(attachmentId)?.previewUrl ??
     attachmentContentUrl(workspaceId, attachmentId, { variant: "thumbnail" })
+  const [retries, setRetries] = useState(0)
+  const retryDelayMs = LOAD_RETRY_DELAYS_MS[retries]
+  const { error, retryLoad } = load
+  useEffect(() => {
+    if (!error || retryDelayMs === undefined) return
+    const timer = setTimeout(() => {
+      setRetries((count) => count + 1)
+      retryLoad()
+    }, retryDelayMs)
+    return () => clearTimeout(timer)
+  }, [error, retryDelayMs, retryLoad])
+
   return (
     <span
       style={{ width: box.width, height: box.height }}
       className="relative inline-block align-top overflow-hidden rounded-lg border bg-muted/30"
     >
-      {load.error ? (
+      {error && retryDelayMs === undefined ? (
         <span className="absolute inset-0 flex items-center justify-center p-2 text-center text-xs text-muted-foreground">
           Image unavailable
         </span>

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { Editor } from "@tiptap/core"
 import { DOMParser as PMDOMParser, DOMSerializer, type Slice } from "@tiptap/pm/model"
 import { NodeSelection, TextSelection } from "@tiptap/pm/state"
+import { closeHistory } from "@tiptap/pm/history"
 import { attachmentReferenceLabel } from "@threahq/prosemirror"
 import { createEditorExtensions } from "./editor-extensions"
 import type { AttachmentReferenceAttrs } from "./attachment-reference-extension"
@@ -139,6 +140,26 @@ describe("attachment reference insertion", () => {
       ids: ["temp_1", "temp_2", "temp_3"],
       updateCalls: 1,
     })
+  })
+
+  it("removes an inserted file with one undo after its upload settled", () => {
+    const editor = new Editor({
+      element: document.createElement("div"),
+      extensions: createEditorExtensions({ placeholder: "Type a message..." }),
+      content: { type: "doc", content: [{ type: "paragraph" }] },
+    })
+    openEditors.push(editor)
+
+    editor.commands.insertAttachmentReferences([{ ...CHIP_ATTRS, id: "temp_1", status: "uploading" }])
+    editor.view.dispatch(closeHistory(editor.state.tr))
+    editor.commands.updateAttachmentReference("temp_1", { id: CHIP_ATTRS.id, status: "uploaded" })
+    editor.commands.undo()
+
+    let references = 0
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === "attachmentReference") references++
+    })
+    expect(references).toBe(0)
   })
 
   it("does not add a leading space after a hard break", () => {

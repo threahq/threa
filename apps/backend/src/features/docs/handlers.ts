@@ -1,5 +1,6 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
+import type { DocUpdatesResponse } from "@threahq/types"
 import { validateRequest } from "../../lib/validation"
 import type { DocService } from "./service"
 
@@ -41,7 +42,7 @@ export function createDocHandlers({ docService }: Dependencies) {
         docId,
         after,
       })
-      res.json({ updates })
+      res.json({ updates } satisfies DocUpdatesResponse)
     },
 
     async postUpdate(req: Request, res: Response) {

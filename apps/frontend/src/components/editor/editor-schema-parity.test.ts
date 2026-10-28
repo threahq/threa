@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest"
 import { getSchema } from "@tiptap/core"
 import type { Schema } from "@tiptap/pm/model"
 import { getThreaSchema } from "@threahq/prosemirror/schema"
-import { createEditorExtensions } from "./editor-extensions"
+import * as Y from "yjs"
+import { createDocumentExtensions, createEditorExtensions } from "./editor-extensions"
 
 // `parseDOM` rules hold closures that never compare equal; `allowGapCursor` is
 // the gap-cursor extension's own addition.
@@ -35,11 +36,21 @@ describe("editor schema parity", () => {
     expect(nodeShapes(editorSchema)).toEqual(nodeShapes(sharedSchema))
   })
 
-  it("should match the shared mark specs when the editor sets the link class", () => {
-    const expected = markShapes(sharedSchema).map((mark) =>
-      mark.name === "link" ? { ...mark, attrs: { ...mark.attrs, class: expect.any(String) } } : mark
-    )
+  // The editor's link mark defaults `class` to its styling; the attr itself is shared.
+  const expectedMarks = markShapes(sharedSchema).map((mark) =>
+    mark.name === "link" ? { ...mark, attrs: { ...mark.attrs, class: expect.any(String) } } : mark
+  )
 
-    expect(markShapes(editorSchema)).toEqual(expected)
+  it("should match the shared mark specs when the editor sets the link class", () => {
+    expect(markShapes(editorSchema)).toEqual(expectedMarks)
+  })
+
+  it("should build the shared schema for the collaborative document editor", () => {
+    const documentSchema = getSchema(createDocumentExtensions({ ydoc: new Y.Doc() }))
+
+    expect({ nodes: nodeShapes(documentSchema), marks: markShapes(documentSchema) }).toEqual({
+      nodes: nodeShapes(sharedSchema),
+      marks: expectedMarks,
+    })
   })
 })

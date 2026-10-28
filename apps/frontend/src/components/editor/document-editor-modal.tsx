@@ -28,7 +28,8 @@ import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { ComposerPillDndProvider } from "./composer-pill-dnd"
 import { createEditorExtensions } from "./editor-extensions"
-import { EditorBehaviors, handleLinkToolbarAction, isSuggestionActive } from "./editor-behaviors"
+import { EditorBehaviors, handleBeforeInput, handleLinkToolbarAction } from "./editor-behaviors"
+import { EDITOR_CONTENT_CLASS } from "./editor-content-class"
 import { serializeToMarkdown, parseMarkdown, isProseMirrorClipboardEvent } from "./editor-markdown"
 import { serializeClipboardSlice } from "./clipboard-copy"
 import { insertPlainText, isPlainTextPaste } from "./plain-text-paste"
@@ -36,14 +37,7 @@ import { useMentionSuggestion, useChannelSuggestion, useEmojiSuggestion } from "
 import { useMentionables, useMarkdownTriggerLookups, type MentionStreamContext } from "@/hooks/use-mentionables"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { LinkEditor } from "./link-editor"
-import {
-  handleBeforeInputAtomDelete,
-  handleBeforeInputGraphemeDelete,
-  handleBeforeInputKeyboardPaste,
-  handleBeforeInputNewline,
-  insertPastedText,
-  toggleMultilineBlock,
-} from "./multiline-blocks"
+import { insertPastedText, toggleMultilineBlock } from "./multiline-blocks"
 import { cn } from "@/lib/utils"
 import { usePreferences } from "@/contexts"
 import { getEffectiveEditorBindings, formatKeyBinding } from "@/lib/keyboard-shortcuts"
@@ -132,20 +126,7 @@ export function DocumentEditorModal({
     content: parseMarkdown(initialContent, getMentionType, toEmoji, markdownParseOptions),
     editorProps: {
       attributes: {
-        class: cn(
-          "min-h-[300px] max-h-[60vh] overflow-y-auto w-full px-4 py-3 outline-none",
-          "prose prose-sm dark:prose-invert max-w-none",
-          "[&_p]:my-0 [&_p]:min-h-[1.5em]",
-          "[&_ul]:my-1 [&_ul]:pl-5 [&_ol]:my-1 [&_ol]:pl-5",
-          "[&_li]:my-0 [&_li]:pl-0.5",
-          "[&_pre]:my-2 [&_pre]:rounded-md [&_pre]:bg-muted [&_pre]:p-3",
-          "[&_pre_code]:bg-transparent [&_pre_code]:p-0",
-          "[&_blockquote]:my-2 [&_blockquote]:border-l-2 [&_blockquote]:border-muted-foreground/30 [&_blockquote]:pl-4 [&_blockquote]:italic",
-          "[&_h1]:text-xl [&_h1]:font-bold [&_h1]:my-2",
-          "[&_h2]:text-lg [&_h2]:font-semibold [&_h2]:my-1.5",
-          "[&_h3]:text-base [&_h3]:font-semibold [&_h3]:my-1",
-          "focus:outline-none"
-        ),
+        class: cn("min-h-[300px] max-h-[60vh] overflow-y-auto w-full px-4 py-3 outline-none", EDITOR_CONTENT_CLASS),
       },
       clipboardTextSerializer: serializeClipboardSlice,
       handlePaste: (view, event) => {
@@ -180,39 +161,11 @@ export function DocumentEditorModal({
         beforeinput: (_view, event) => {
           const editor = editorRef.current
           if (!editor) return false
-
-          const suggestionActive = isSuggestionActive(editor)
-          if (handleBeforeInputNewline(editor, event as InputEvent, { allowDuringComposition: suggestionActive })) {
-            return true
-          }
-          if (suggestionActive) return false
-
-          // Android atom deletion: keymap doesn't fire for Backspace, so delete
-          // adjacent inline atoms here before the browser's two-step selection.
-          if (handleBeforeInputAtomDelete(editor, event as InputEvent)) {
-            return true
-          }
-
-          // Firefox Android can delete emoji text by code unit, leaving a
-          // broken half-grapheme. Delete the whole grapheme before native input.
-          if (handleBeforeInputGraphemeDelete(editor, event as InputEvent)) {
-            return true
-          }
-
-          // Gboard / SwiftKey clipboard-bar paste arrives as insertText, not paste.
-          if (
-            handleBeforeInputKeyboardPaste(
-              editor,
-              event as InputEvent,
-              getMentionTypeRef.current,
-              toEmojiRef.current,
-              markdownParseOptions
-            )
-          ) {
-            return true
-          }
-
-          return false
+          return handleBeforeInput(editor, event as InputEvent, {
+            getMentionType: getMentionTypeRef.current,
+            toEmoji: toEmojiRef.current,
+            parseOptions: markdownParseOptions,
+          })
         },
       },
       handleKeyDown: (_view, event) => {

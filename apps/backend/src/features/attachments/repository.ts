@@ -366,11 +366,37 @@ export const AttachmentRepository = {
     // plus the author's own still-settling reservations — the service layer
     // enforces the uploader==author rule for pending ones before calling this.
     // Reads the shared allowlist so this race-safe filter (INV-20) and the
-    // service-layer gate can't drift (INV-33).
+    // service-layer gate can't drift (INV-33). A row already bound to another
+    // stream (a doc's inline image) is never claimed by a message elsewhere.
     const result = await client.query(sql`
       UPDATE attachments
       SET message_id = ${messageId}, stream_id = ${streamId}
       WHERE workspace_id = ${workspaceId} AND id = ANY(${attachmentIds}) AND message_id IS NULL
+        AND (stream_id IS NULL OR stream_id = ${streamId})
+        AND safety_status = ANY(${[...BINDABLE_ATTACHMENT_SAFETY_STATUSES]})
+    `)
+    return result.rowCount ?? 0
+  },
+
+  /**
+   * Bind free-floating uploads to a stream without a message (a doc referencing
+   * inline images). Only the uploader's own unbound, bindable, non-E2E rows move,
+   * so a reference to someone else's upload never claims it. The predicate sits
+   * in the UPDATE so a concurrent claimer loses cleanly (INV-20).
+   */
+  async attachToStream(
+    client: Querier,
+    workspaceId: string,
+    attachmentIds: string[],
+    streamId: string,
+    uploadedBy: string
+  ): Promise<number> {
+    if (attachmentIds.length === 0) return 0
+    const result = await client.query(sql`
+      UPDATE attachments
+      SET stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${attachmentIds})
+        AND stream_id IS NULL AND message_id IS NULL AND uploaded_by = ${uploadedBy} AND e2e_only = false
         AND safety_status = ANY(${[...BINDABLE_ATTACHMENT_SAFETY_STATUSES]})
     `)
     return result.rowCount ?? 0
@@ -387,10 +413,10 @@ export const AttachmentRepository = {
    * Delete the row ONLY while it is still free-floating (bound to neither a
    * message nor a stream), returning its storage path when it ran so the caller
    * can drop the S3 object — and `null` when it did not, because a concurrent
-   * `attachToMessage` claimed it between the caller's checks (INV-20: the
-   * predicate is in the DELETE, not a check-then-act re-fetch). A `null` return
-   * means the file now has real message provenance and its bytes must be left
-   * intact.
+   * `attachToMessage` or `attachToStream` claimed it between the caller's checks
+   * (INV-20: the predicate is in the DELETE, not a check-then-act re-fetch). A
+   * `null` return means the file now has real message or stream provenance and
+   * its bytes must be left intact.
    */
   async deleteIfUnbound(client: Querier, workspaceId: string, id: string): Promise<string | null> {
     const result = await client.query<{ storage_path: string }>(sql`

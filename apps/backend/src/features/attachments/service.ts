@@ -943,10 +943,10 @@ export class AttachmentService {
 
   /**
    * Hard-delete an attachment ONLY while it is still free-floating (unbound to a
-   * message and a stream), race-safe against a concurrent `attachToMessage`
-   * (INV-20 — the predicate rides the DELETE). Used by the persona
-   * context-attachment paths, where the file must never be destroyed once a
-   * message has claimed it. Returns `{ deleted }`: `false` (extraction/upload
+   * message and a stream), race-safe against a concurrent `attachToMessage` or
+   * `attachToStream` (INV-20 — the predicate rides the DELETE). Used by the
+   * persona context-attachment paths, where the file must never be destroyed
+   * once a message or a doc has claimed it. Returns `{ deleted }`: `false` (extraction/upload
    * rows and the S3 object left intact) when the row was already claimed or gone.
    */
   async deleteIfUnbound(workspaceId: string, id: string): Promise<{ deleted: boolean }> {

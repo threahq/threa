@@ -35,7 +35,7 @@ import type {
   StreamReadFrontierSnapshot,
   CallTransferPhase,
   StreamConnectionUpdatedPayload,
-  DocEditedEventPayload,
+  DocUpdatedPayload,
 } from "@threahq/types"
 
 export type OutboxEventType =
@@ -756,14 +756,6 @@ export interface StreamAsideAnchoredOutboxPayload extends StreamScopedPayload {
 /** The host stream's `doc:created` row; `streamId` is the host. */
 export interface StreamDocCreatedOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
-}
-
-/** One applied Yjs update, delivered to the doc stream's room; `streamId` is the doc. */
-export interface DocUpdatedOutboxPayload extends StreamScopedPayload, DocEditedEventPayload {
-  /** Base64 Yjs update. */
-  update: string
-  actorId: string
-  actorType: AuthorType
 }
 
 interface AgentSessionOutboxPayload extends StreamScopedPayload {
@@ -1510,7 +1502,7 @@ export interface OutboxEventPayloadMap {
   "command:progress": CommandProgressOutboxPayload
   "stream:aside_anchored": StreamAsideAnchoredOutboxPayload
   "stream:doc_created": StreamDocCreatedOutboxPayload
-  "doc:updated": DocUpdatedOutboxPayload
+  "doc:updated": DocUpdatedPayload
   "agent_session:started": AgentSessionStartedOutboxPayload
   "agent_session:completed": AgentSessionCompletedOutboxPayload
   "agent_session:failed": AgentSessionFailedOutboxPayload
@@ -1660,6 +1652,13 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "command:failed",
   "command:progress",
 ]
+
+/**
+ * Routed to their rooms but never appended to `sync_log`: doc clients catch up
+ * through `GET /docs/:id/updates`, and logging every Yjs update would replay
+ * doc bytes to every reader of the host root.
+ */
+export const SYNC_LOG_EXCLUDED_EVENT_TYPES: ReadonlySet<OutboxEventType> = new Set<OutboxEventType>(["doc:updated"])
 
 /**
  * Type guard to check if an event is stream-scoped (has streamId in payload).

@@ -1538,3 +1538,43 @@ describe("aside anchor rows", () => {
     ])
   })
 })
+
+describe("doc anchor rows", () => {
+  const docRow = (createdAt: string): StreamEvent => ({
+    ...createEvent({ id: "evt_doc", sequence: "2", eventType: "doc:created", payload: { docId: "stream_doc" } }),
+    actorId: "user_a",
+    actorType: "user",
+    createdAt,
+  })
+
+  it("is an item of its own for every viewer, never folded under a message", () => {
+    const message = createMessageEvent({ id: "1", actorId: "user_a", createdAt: "2026-04-19T10:00:00Z" })
+    const items = groupTimelineItems([message, docRow("2026-04-19T10:01:00Z")], "user_other")
+    expect(items.map((item) => (item.type === "event" ? item.event.id : item.type))).toEqual(["1", "evt_doc"])
+  })
+
+  it("renders with height and can carry the unread divider", () => {
+    const items = [toEventItem(docRow("2026-04-19T10:01:00Z"))]
+    expect(filterVisibleItems(items)).toEqual(items)
+    expect(collectDividerAnchorIds(items)).toEqual(new Set(["evt_doc"]))
+  })
+
+  it("breaks a same-author run like other chrome rows", () => {
+    const items = [
+      toEventItem(createMessageEvent({ id: "1", actorId: "user_a", createdAt: "2026-04-19T10:00:00Z" })),
+      toEventItem(docRow("2026-04-19T10:00:30Z")),
+      toEventItem(createMessageEvent({ id: "3", actorId: "user_a", createdAt: "2026-04-19T10:01:00Z" })),
+    ]
+    expect(continuationFlags(annotateAuthorGroups(items))).toEqual([false, false, false])
+  })
+
+  it("opens its own day", () => {
+    const items = [
+      toEventItem(
+        createMessageEvent({ id: "1", actorId: "user_a", createdAt: new Date(2026, 5, 15, 9).toISOString() })
+      ),
+      toEventItem(docRow(new Date(2026, 5, 16, 9).toISOString())),
+    ]
+    expect(injectDayDividers(items).map((item) => item.type)).toEqual(["event", "day_divider", "event"])
+  })
+})

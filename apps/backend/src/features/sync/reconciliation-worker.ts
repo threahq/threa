@@ -2,7 +2,7 @@ import type { Pool } from "pg"
 import type { Server } from "socket.io"
 import { Ticker } from "@threahq/backend-common"
 import { logger } from "../../lib/logger"
-import { resolveAudiences, emitToGroups, type OutboxEvent } from "../../lib/outbox"
+import { resolveAudiences, emitToGroups, SYNC_LOG_EXCLUDED_EVENT_TYPES, type OutboxEvent } from "../../lib/outbox"
 import { SyncLogRepository, type SyncLogEntryInput } from "./repository"
 
 export interface SyncLogReconciliationWorkerConfig {
@@ -93,6 +93,7 @@ export class SyncLogReconciliationWorker {
           since: sweptUntil,
           until: cutoff,
           limit: this.config.batchSize,
+          excludeEventTypes: SYNC_LOG_EXCLUDED_EVENT_TYPES,
         })
 
         await this.rescue(stragglers)

@@ -403,11 +403,12 @@ export const SyncLogRepository = {
   /**
    * Outbox rows in [since, until) with no sync_log entry, in id order.
    * Already-sequenced rows drop out via the anti-join, so re-running over the
-   * same window converges.
+   * same window converges; `excludeEventTypes` are never logged, so they must
+   * be filtered here or they would fill every batch forever.
    */
   async listUnsequencedOutboxEvents(
     db: Querier,
-    params: { since: Date; until: Date; limit: number }
+    params: { since: Date; until: Date; limit: number; excludeEventTypes: ReadonlySet<string> }
   ): Promise<Array<{ id: bigint; eventType: string; payload: unknown; createdAt: Date }>> {
     // eslint-disable-next-line threa/workspace-scoped-sql -- reconciliation across every workspace; outbox has no workspace_id
     const result = await db.query<{ id: string; event_type: string; payload: unknown; created_at: Date }>(sql`
@@ -415,6 +416,7 @@ export const SyncLogRepository = {
       FROM outbox o
       WHERE o.created_at >= ${params.since}
         AND o.created_at < ${params.until}
+        AND o.event_type <> ALL(${[...params.excludeEventTypes]}::text[])
         AND NOT EXISTS (SELECT 1 FROM sync_log s WHERE s.outbox_event_id = o.id)
       ORDER BY o.id
       LIMIT ${params.limit}

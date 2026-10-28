@@ -10,6 +10,8 @@ import { countAttachmentReferences } from "./attachment-reference-counts"
 import { buildImageIndexByAttachment } from "@/components/timeline/attachment-image-index"
 import { findUploadJob } from "@/lib/uploads/upload-manager"
 import { createEditorExtensions } from "./editor-extensions"
+import { insertFilesIntoEditor, namePastedImages } from "./insert-files"
+import { EDITOR_CONTENT_CLASS } from "./editor-content-class"
 import { applyExternalEditorContent } from "./apply-external-content"
 import { ReferenceAudienceContext, NO_REFERENCE_AUDIENCE } from "./reference-audience-context"
 import { ComposerPillActions } from "./composer-pill-actions"
@@ -63,7 +65,6 @@ import { PaneFocusContext } from "@/components/panes/pane-focus"
 import { usePreferences } from "@/contexts"
 import { getEffectiveEditorBindings, getEffectiveKeyBinding, matchesKeyBinding } from "@/lib/keyboard-shortcuts"
 import type { PendingAttachment, UploadResult } from "@/hooks/use-attachments"
-import type { AttachmentReferenceAttrs } from "./attachment-reference-extension"
 import type {
   MessageSendMode,
   JSONContent,
@@ -627,60 +628,12 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const handleFilesInsert = useCallback(
     (files: File[], editorInstance: ReturnType<typeof useEditor> | null): boolean => {
       const uploadFn = onFileUploadRef.current
-      if (!uploadFn || !editorInstance || editorInstance.isDestroyed || files.length === 0) return false
+      if (!uploadFn || !editorInstance) return false
       const uploadScopeVersion = uploadScopeVersionRef.current
-      const batchId = `${Date.now()}_${Math.random().toString(36).slice(2)}`
-      const insertions = files.map((file, index) => {
-        const tempId = `temp_${batchId}_${index}`
-        const attrs: AttachmentReferenceAttrs = {
-          id: tempId,
-          filename: file.name,
-          mimeType: file.type || "application/octet-stream",
-          sizeBytes: file.size,
-          status: "uploading",
-          imageIndex: null,
-          error: null,
-        }
-        return { file, tempId, isImage: file.type.startsWith("image/"), attrs }
+      return insertFilesIntoEditor(editorInstance, files, uploadFn, {
+        isStillTargeting: () =>
+          uploadScopeVersion === uploadScopeVersionRef.current && editorRef.current === editorInstance,
       })
-
-      // A picked batch must reach the controlled editor as one document update;
-      // intermediate renders can otherwise overwrite one placeholder while the
-      // near-simultaneous reservations settle.
-      if (!editorInstance.commands.insertAttachmentReferences(insertions.map(({ attrs }) => attrs))) return false
-
-      for (const { file, tempId, isImage } of insertions) {
-        void (async () => {
-          const isStillTargeting = () =>
-            uploadScopeVersion === uploadScopeVersionRef.current &&
-            !editorInstance.isDestroyed &&
-            editorRef.current === editorInstance
-
-          try {
-            const result = await uploadFn(file)
-            if (!isStillTargeting()) return
-            // uploadFn resolves once the id is RESERVED — the bytes may still be
-            // streaming in the background. The node is a reference marker, so it
-            // settles to "uploaded" here (live transfer state renders on the chip
-            // row, and stored content never persists "uploading" — see
-            // materializePendingAttachmentReferences).
-            editorInstance.commands.updateAttachmentReference(tempId, {
-              id: result.attachment.id,
-              status: result.attachment.status === "error" ? "error" : "uploaded",
-              imageIndex: isImage ? result.imageIndex : null,
-              error: result.attachment.error || null,
-            })
-          } catch (err) {
-            if (!isStillTargeting()) return
-            editorInstance.commands.updateAttachmentReference(tempId, {
-              status: "error",
-              error: err instanceof Error ? err.message : "Upload failed",
-            })
-          }
-        })()
-      }
-
-      return true
     },
     []
   )
@@ -824,25 +777,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         "aria-label": ariaLabel,
         "aria-multiline": "true",
         ...(ariaDescribedBy ? { "aria-describedby": ariaDescribedBy } : {}),
-        class: cn(
-          "min-h-[40px] max-h-[200px] overflow-y-auto w-full py-2 outline-none",
-          "prose prose-sm dark:prose-invert max-w-none text-sm",
-          // Paragraph styling - minimal spacing for chat-like feel
-          "[&_p]:my-0 [&_p]:min-h-[1.5em]",
-          // List styling
-          "[&_ul]:my-1 [&_ul]:pl-5 [&_ol]:my-1 [&_ol]:pl-5",
-          "[&_li]:my-0 [&_li]:pl-0.5",
-          // Code block styling
-          "[&_pre]:my-2 [&_pre]:rounded-md [&_pre]:bg-muted [&_pre]:p-3",
-          "[&_pre_code]:bg-transparent [&_pre_code]:p-0",
-          // Blockquote styling
-          "[&_blockquote]:my-2 [&_blockquote]:border-l-2 [&_blockquote]:border-muted-foreground/30 [&_blockquote]:pl-4 [&_blockquote]:italic",
-          // Heading styling
-          "[&_h1]:text-xl [&_h1]:font-bold [&_h1]:my-2",
-          "[&_h2]:text-lg [&_h2]:font-semibold [&_h2]:my-1.5",
-          "[&_h3]:text-base [&_h3]:font-semibold [&_h3]:my-1",
-          "focus:outline-none"
-        ),
+        class: cn("min-h-[40px] max-h-[200px] overflow-y-auto w-full py-2 outline-none text-sm", EDITOR_CONTENT_CLASS),
       },
       clipboardTextSerializer: serializeClipboardSlice,
       handlePaste: (view, event) => {
@@ -863,16 +798,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         const files = event.clipboardData?.files
         if (files && files.length > 0 && onFileUploadRef.current && editorRef.current) {
           event.preventDefault()
-          let pasteImageOffset = 0
-          const filesToInsert = Array.from(files).map((file) => {
-            if (!file.type.startsWith("image/")) return file
-            pasteImageOffset++
-            const nextIndex = imageCountRef.current + pasteImageOffset
-            const ext = file.name.split(".").pop() || "png"
-            const newName = `pasted-image-${nextIndex}.${ext}`
-            return new File([file], newName, { type: file.type })
-          })
-          handleFilesInsert(filesToInsert, editorRef.current)
+          handleFilesInsert(namePastedImages(Array.from(files), imageCountRef.current), editorRef.current)
           return true
         }
 

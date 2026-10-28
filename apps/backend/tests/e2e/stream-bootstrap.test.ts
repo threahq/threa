@@ -10,6 +10,7 @@ import {
   getBootstrap,
   getWorkspaceBootstrap,
   getUserId,
+  addStreamMember,
 } from "../client"
 
 const testRunId = Math.random().toString(36).slice(2, 8)
@@ -139,5 +140,34 @@ describe("Stream Bootstrap E2E", () => {
 
     const fullBootstrap = await getBootstrap(memberClient, workspace.id, channel.id)
     expect(overflowBootstrap.latestSequence).toBe(fullBootstrap.latestSequence)
+  })
+
+  test("returns a doc's stream row with no messages to a host member who did not create it", async () => {
+    const ownerClient = new TestClient()
+    const memberClient = new TestClient()
+
+    await loginAs(ownerClient, testEmail("owner-doc"), "Owner Doc")
+    const workspace = await createWorkspace(ownerClient, `Stream Bootstrap Doc ${testRunId}`)
+    const member = await loginAs(memberClient, testEmail("member-doc"), "Member Doc")
+    await joinWorkspace(memberClient, workspace.id, "member")
+    const memberUserId = await getUserId(memberClient, workspace.id, member.id)
+
+    const channel = await createChannel(ownerClient, workspace.id, `doc-host-${testRunId}`, "private")
+    const added = await addStreamMember(ownerClient, workspace.id, channel.id, memberUserId)
+    expect(added.status).toBe(201)
+    const created = await ownerClient.post<{ stream: { id: string } }>(`/api/workspaces/${workspace.id}/streams`, {
+      type: "doc",
+      parentStreamId: channel.id,
+    })
+    expect(created.status).toBe(201)
+    const docId = created.data.stream.id
+
+    const bootstrap = await getBootstrap(memberClient, workspace.id, docId)
+
+    expect({
+      stream: { id: bootstrap.stream.id, type: bootstrap.stream.type },
+      messages: bootstrap.events.filter((event) => event.eventType === "message_created"),
+      membership: bootstrap.membership,
+    }).toEqual({ stream: { id: docId, type: "doc" }, messages: [], membership: null })
   })
 })

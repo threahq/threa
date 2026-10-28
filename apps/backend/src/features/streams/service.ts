@@ -56,6 +56,7 @@ import { PeoplePurposes, UserRepository } from "../workspaces"
 import { BotChannelAccessRepository } from "../api-keys"
 import {
   STREAM_TYPE_CAPABILITIES,
+  DocErrorCodes,
   StreamTypes,
   isAsideHostType,
   Visibilities,
@@ -1010,14 +1011,14 @@ export class StreamService {
       if (!STREAM_TYPE_CAPABILITIES[host.type].hostsDocs) {
         throw new HttpError("A doc cannot be created on this stream type", {
           status: 400,
-          code: "DOC_HOST_TYPE_INVALID",
+          code: DocErrorCodes.HOST_TYPE_INVALID,
         })
       }
       // The doc body is projected server-side as plaintext.
       if (host.e2eEnabled === true) {
         throw new HttpError("Docs cannot be created on an end-to-end encrypted stream", {
           status: 400,
-          code: "DOC_E2E_HOST_NOT_ALLOWED",
+          code: DocErrorCodes.E2E_HOST_NOT_ALLOWED,
         })
       }
 

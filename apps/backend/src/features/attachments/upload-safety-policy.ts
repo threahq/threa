@@ -36,7 +36,7 @@ const MALWARE_SIGNATURES = ["EICAR-STANDARD-ANTIVIRUS-TEST-FILE", "X5O!P%@AP"] a
 export function isAttachmentSafeForSharing(safetyStatus: AttachmentSafetyStatus): boolean {
   // Scanned-clean or E2E ciphertext (unscannable but the owner's own bytes).
   // SHAREABLE_SAFETY_STATUSES is the single source of truth this and the
-  // race-safe `attachToMessage` SQL filter both read from (INV-33).
+  // race-safe `attachToMessage`/`attachToStream` SQL filters read from (INV-33).
   return (SHAREABLE_SAFETY_STATUSES as readonly AttachmentSafetyStatus[]).includes(safetyStatus)
 }
 

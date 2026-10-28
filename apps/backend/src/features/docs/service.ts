@@ -1,9 +1,19 @@
 import type { Pool } from "pg"
-import { AuthorTypes, StreamTypes, type AuthorType, type DocEditedEventPayload } from "@threahq/types"
+import {
+  AuthorTypes,
+  DocErrorCodes,
+  StreamTypes,
+  type DocEditedEventPayload,
+  type DocPostUpdateResult,
+  type DocState,
+  type DocUpdateView,
+} from "@threahq/types"
+import { collectAttachmentReferenceIds } from "@threahq/prosemirror"
 import { withClient, withTransaction, type Querier } from "../../db"
 import { HttpError, StreamNotFoundError } from "../../lib/errors"
 import { eventId } from "../../lib/id"
 import { OutboxRepository } from "../../lib/outbox"
+import { AttachmentRepository } from "../attachments"
 import {
   StreamEventRepository,
   assertViewerStreamWritable,
@@ -11,7 +21,7 @@ import {
   resolveLockedStreamAuthorities,
   type Stream,
 } from "../streams"
-import { diffSections, projectDoc, type DocSection } from "./projection"
+import { diffSections, projectDoc } from "./projection"
 import { DocRepository, type DocHead, type DocUpdate } from "./repository"
 import {
   DOC_SERVER_CLIENT_ID,
@@ -25,21 +35,6 @@ import {
 } from "./yjs"
 
 export const DOC_SNAPSHOT_INTERVAL = 200
-
-export interface DocState {
-  stream: Stream
-  seq: number
-  /** Base64 Yjs update holding the full state at `seq`. */
-  state: string
-  sections: DocSection[]
-}
-
-export interface DocUpdateView {
-  seq: number
-  update: string
-  actorId: string
-  actorType: AuthorType
-}
 
 type StoredUpdate = DocUpdate & { touchedBlockIds: string[] }
 
@@ -76,15 +71,18 @@ function applyOrRefuse(...args: Parameters<typeof applyClientWrite>): ReturnType
     if (error instanceof DocUpdateNotApplicableError) {
       throw new HttpError("Update depends on doc state the server does not have", {
         status: 400,
-        code: "DOC_UPDATE_NOT_APPLICABLE",
+        code: DocErrorCodes.UPDATE_NOT_APPLICABLE,
       })
     }
     if (error instanceof DocUpdateInvalidError) {
-      throw new HttpError("Update is not a valid doc update", { status: 400, code: "DOC_UPDATE_INVALID" })
+      throw new HttpError("Update is not a valid doc update", { status: 400, code: DocErrorCodes.UPDATE_INVALID })
     }
     throw error
   }
 }
+
+/** `DocState` before serialization: the stream still carries `Date`s. */
+type LoadedDocState = Omit<DocState, "stream"> & { stream: Stream }
 
 export class DocService {
   private pool: Pool
@@ -93,7 +91,7 @@ export class DocService {
     this.pool = deps.pool
   }
 
-  async get(params: { workspaceId: string; userId: string; docId: string }): Promise<DocState> {
+  async get(params: { workspaceId: string; userId: string; docId: string }): Promise<LoadedDocState> {
     return withClient(this.pool, async (client) => {
       const stream = await this.findReadableDoc(client, params)
       const { ydoc, seq } = await loadStoredState(client, params.workspaceId, params.docId)
@@ -138,7 +136,7 @@ export class DocService {
     userId: string
     docId: string
     update: string
-  }): Promise<{ seq: number; touchedBlockIds: string[] }> {
+  }): Promise<DocPostUpdateResult> {
     const { workspaceId, docId, userId } = params
     const clientUpdate = decodeUpdateBase64(params.update)
 
@@ -180,6 +178,13 @@ export class DocService {
         bodyMarkdown: projection.bodyMarkdown,
         bodyJson: projection.bodyJson,
       })
+      await AttachmentRepository.attachToStream(
+        client,
+        workspaceId,
+        collectAttachmentReferenceIds(content),
+        docId,
+        userId
+      )
 
       await StreamEventRepository.insert(client, {
         id: eventId(),
