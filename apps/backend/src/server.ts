@@ -96,7 +96,13 @@ import {
   type DynamicNamingTargetAdapter,
   type DynamicNamingTargetKind,
 } from "./features/dynamic-naming"
-import { DocActivityOutboxHandler, DocActivityService, createDocActivityWorker } from "./features/docs"
+import {
+  DocActivityOutboxHandler,
+  DocActivityService,
+  DocAgentService,
+  DocService,
+  createDocActivityWorker,
+} from "./features/docs"
 import {
   AttachmentService,
   createAttachmentUploadSweepWorker,
@@ -717,6 +723,8 @@ export async function startServer(): Promise<ServerInstance> {
       resolveSubagentModels({ workspaceSettings: await workspaceSettingsService.getSettings(id), modelRegistry }),
   })
   const streamBriefService = new StreamBriefService({ pool })
+  const docService = new DocService({ pool })
+  const docAgentService = new DocAgentService({ pool, docService, streamService })
   const delegationService = new DelegationService({ pool })
   // Declared here rather than beside the other socket registries because the
   // subagent cancel path routes an abort through it (below).
@@ -971,6 +979,7 @@ export async function startServer(): Promise<ServerInstance> {
     agentFollowUpService,
     personaConfigService,
     delegationService,
+    docService,
     decisionService,
     subagentService,
     draftsService,
@@ -1257,6 +1266,7 @@ export async function startServer(): Promise<ServerInstance> {
         : { ok: false, reason: result.reason }
     },
     loadFollowUp: ({ workspaceId, followUpId }) => agentFollowUpService.getById({ workspaceId, followUpId }),
+    docAgent: docAgentService,
     updateBrief: async ({
       initiatingUserId,
       workspaceId,

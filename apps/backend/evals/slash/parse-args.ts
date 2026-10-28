@@ -19,6 +19,7 @@ export const EVAL_SUITES = [
   "memo-classifier",
   "memorizer",
   "brief-correction",
+  "doc-edit",
 ] as const
 
 /** Default suite when the command names none — the cheap, high-signal one. */

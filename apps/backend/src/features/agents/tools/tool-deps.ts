@@ -7,6 +7,7 @@ import type {
   UserPreferences,
 } from "@threahq/types"
 import type { AttachmentService } from "../../attachments"
+import type { DocAgentService } from "../../docs"
 import type { MemoAudience, MemoExplorerService } from "../../memos"
 import type { PeopleViewer } from "../../workspaces"
 import type { SearchService } from "../../search"
@@ -139,6 +140,9 @@ export interface UpdateStreamBriefToolDeps {
     expectedVersion: number
   }) => Promise<UpdateStreamBriefToolResult>
 }
+
+/** The doc ops bound to one turn (workspace, host stream, invoking user, persona); the tools supply only each op's input. */
+export type DocToolDeps = ReturnType<DocAgentService["forTurn"]>
 
 /**
  * The `run_command` tool's sandbox, bound by the caller to this stream and to

@@ -848,7 +848,7 @@ export async function runSuites(
  * Config files allow detailed per-component overrides for complex suites
  * like the companion agent.
  */
-const companionBackedSuites = new Set(["persona-style", "brief-correction", "multimodal-vision"])
+const companionBackedSuites = new Set(["persona-style", "brief-correction", "doc-edit", "multimodal-vision"])
 export function getPrimaryComponentOverride(suiteName: string, components?: ComponentOverrides) {
   return components?.[suiteName] ?? (companionBackedSuites.has(suiteName) ? components?.companion : undefined)
 }

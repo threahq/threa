@@ -15,6 +15,12 @@ describe("DRAFT_TEST_EXCLUDED_TOOLS", () => {
         AgentToolNames.SAVE_MEMO,
         AgentToolNames.RUN_COMMAND,
         AgentToolNames.UPDATE_USER_SETTINGS,
+        AgentToolNames.EDIT_DOC,
+        AgentToolNames.INSERT_BLOCK,
+        AgentToolNames.MOVE_BLOCK,
+        AgentToolNames.DELETE_BLOCK,
+        AgentToolNames.SET_DOC_TITLE,
+        AgentToolNames.CREATE_DOC,
       ].sort()
     )
   })
@@ -53,6 +59,7 @@ describe("DRAFT_TEST_EXCLUDED_TOOLS", () => {
       AgentToolNames.READ_URL,
       AgentToolNames.SEARCH_MESSAGES,
       AgentToolNames.READ_ATTACHMENT,
+      AgentToolNames.READ_DOC,
       AgentToolNames.GITHUB_REPOS,
       AgentToolNames.LINEAR_LIST_ISSUES,
       // `report_back` is bound only inside a subagent thread, so a test-drive

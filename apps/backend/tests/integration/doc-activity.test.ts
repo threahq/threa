@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import * as Y from "yjs"
-import { AuthorTypes, type JSONContent, type Stream } from "@threahq/types"
+import { AuthorTypes, type DocActivityEventPayload, type JSONContent, type Stream } from "@threahq/types"
 import {
   DOC_ACTIVITY_QUIET_MS,
   DocActivityService,
+  DocAgentService,
   DocRepository,
   DocService,
   decodeUpdateBase64,
@@ -16,7 +17,7 @@ import { docActivityRollupJobId } from "../../src/features/docs/activity-service
 import { StreamEventRepository, StreamService } from "../../src/features/streams"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { JobQueues } from "../../src/lib/queue"
-import { blockId, eventId, userId, workspaceId } from "../../src/lib/id"
+import { blockId, eventId, personaId, userId, workspaceId } from "../../src/lib/id"
 import { addTestMember, setupIsolatedTestDatabase, withTransaction } from "./setup"
 
 let pool: Pool
@@ -164,6 +165,7 @@ describe("doc activity roll-up", () => {
             ],
             removedBlockIds: [],
             editCount: 2,
+            reasons: [],
             fromSequence: userEdits[0]!.sequence.toString(),
             toSequence: userEdits[1]!.sequence.toString(),
           },
@@ -215,6 +217,7 @@ describe("doc activity roll-up", () => {
       sections: [{ blockId: kept.attrs!.blockId, kind: "paragraph", markdown: "On-call rota, updated" }],
       removedBlockIds: [dropped.attrs!.blockId],
       editCount: 1,
+      reasons: [],
       fromSequence: last.sequence.toString(),
       toSequence: last.sequence.toString(),
     })
@@ -243,6 +246,36 @@ describe("doc activity roll-up", () => {
     }).toEqual({
       sections: [{ blockId: heading.attrs.blockId, kind: "heading", markdown: "## On-call owners" }],
       removed: [],
+    })
+  })
+
+  test("should carry an agent's distinct reasons with the most recent last", async () => {
+    const row = paragraph("AWS key: active")
+    const doc = await createDocWithBody([row])
+    const { service } = buildService()
+    await service.rollUp({ workspaceId: wsId, docId: doc.id })
+    const agent = new DocAgentService({ pool, docService, streamService })
+    const ctx = { workspaceId: wsId, hostStreamId: doc.parentStreamId, invokingUserId: owner, personaId: personaId() }
+    const edit = (reason: string, from: string, to: string) =>
+      agent.editDoc(ctx, { docId: doc.id, reason, edits: [{ old: from, new: to }] })
+    const outcomes = [
+      await edit("marked the AWS key revoked", "active", "revoked"),
+      await edit("noted the rotation date", "revoked", "revoked 2026-10-01"),
+      await edit("marked the AWS key revoked", "revoked 2026-10-01", "revoked"),
+    ]
+
+    await service.rollUp({ workspaceId: wsId, docId: doc.id })
+    const [, activity] = await hostActivity(doc.parentStreamId)
+    const payload = activity!.payload as DocActivityEventPayload
+
+    expect({
+      statuses: outcomes.map((outcome) => outcome.status),
+      actors: payload.actors,
+      reasons: payload.reasons,
+    }).toEqual({
+      statuses: ["applied", "applied", "applied"],
+      actors: [{ actorId: ctx.personaId, actorType: AuthorTypes.PERSONA }],
+      reasons: ["noted the rotation date", "marked the AWS key revoked"],
     })
   })
 

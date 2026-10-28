@@ -11,6 +11,7 @@ export {
   type UpdateFollowUpToolResult,
   type FollowUpSummary,
   type UpdateStreamBriefToolDeps,
+  type DocToolDeps,
   type UpdateUserSettingsToolDeps,
   type RunCommandToolDeps,
   type UpdateStreamBriefToolResult,
@@ -60,6 +61,15 @@ export { createListFollowUpsTool, type ListFollowUpsInput } from "./list-follow-
 export { createCancelFollowUpTool, type CancelFollowUpInput } from "./cancel-follow-up-tool"
 export { createUpdateFollowUpTool, type UpdateFollowUpInput } from "./update-follow-up-tool"
 export { createUpdateStreamBriefTool, type UpdateStreamBriefInput } from "./update-stream-brief-tool"
+export {
+  createReadDocTool,
+  createEditDocTool,
+  createInsertBlockTool,
+  createMoveBlockTool,
+  createDeleteBlockTool,
+  createSetDocTitleTool,
+  createCreateDocTool,
+} from "./doc-tools"
 export {
   createUpdateUserSettingsTool,
   canOfferUserSettings,

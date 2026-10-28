@@ -10,7 +10,16 @@ import { TOOL_TIERS_BY_NAME, ToolTiers } from "./tool-tiers"
  * reviewed" and "did this change something" are two different claims, and only
  * the first one was visible before this existed.
  */
-export const TOOL_EFFECT_KINDS = ["settings", "delegation", "subagent", "memo", "follow_up", "brief", "other"] as const
+export const TOOL_EFFECT_KINDS = [
+  "settings",
+  "delegation",
+  "subagent",
+  "memo",
+  "follow_up",
+  "brief",
+  "doc",
+  "other",
+] as const
 export type ToolEffectKind = (typeof TOOL_EFFECT_KINDS)[number]
 
 export interface AgentToolEffect {
@@ -72,6 +81,13 @@ export const MUTATING_TOOLS = {
   cancel_follow_up: true,
   update_follow_up: true,
   update_stream_brief: true,
+  // The doc is its own stream; the host timeline shows only a rolled-up row.
+  edit_doc: true,
+  insert_block: true,
+  move_block: true,
+  delete_block: true,
+  set_doc_title: true,
+  create_doc: true,
   save_memo: true,
   delegate_task: true,
   update_user_settings: true,
@@ -91,6 +107,7 @@ export const MUTATING_TOOLS = {
 
   // Reads.
   list_follow_ups: false,
+  read_doc: false,
   web_search: false,
   read_url: false,
   general_research: false,

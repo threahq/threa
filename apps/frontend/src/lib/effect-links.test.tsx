@@ -38,6 +38,7 @@ describe("resolveEffectPath", () => {
       memo: null,
       follow_up: null,
       brief: null,
+      doc: "/w/ws_1/s/id_1",
       other: null,
     })
   })
@@ -78,6 +79,7 @@ describe("labels and diffs", () => {
       "Memo",
       "Follow-up",
       "Brief",
+      "Doc",
       "Change",
     ])
   })

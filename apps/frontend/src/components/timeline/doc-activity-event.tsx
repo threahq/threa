@@ -46,6 +46,8 @@ export function DocActivityEvent({ events, workspaceId }: DocActivityEventProps)
     for (const blockId of payload.removedBlockIds) removed.add(blockId)
   }
 
+  const latestReason = events.flatMap((event) => payloadOf(event).reasons ?? []).at(-1)
+  const reason = latestReason && stripMarkdownToInline(latestReason).trim()
   const labels = [...sections]
     .filter(([blockId]) => !removed.has(blockId))
     .map(([, markdown]) => truncateInline(stripMarkdownToInline(markdown).trim(), MAX_SECTION_LENGTH))
@@ -65,10 +67,11 @@ export function DocActivityEvent({ events, workspaceId }: DocActivityEventProps)
         <span className="font-medium text-foreground">{joinNames([...names.values()], MAX_NAMED_ACTORS)}</span> edited
       </span>{" "}
       <span className="min-w-0 shrink truncate font-medium text-foreground group-hover:text-primary">{title}</span>{" "}
-      {details.length > 0 && <span className="min-w-0 truncate">· {details.join(", ")}</span>}{" "}
+      {details.length > 0 && <span className="min-w-0 shrink-[2] truncate">· {details.join(", ")}</span>}{" "}
       {removed.size > 0 && (
         <span className="shrink-0">· {removed.size === 1 ? "1 block removed" : `${removed.size} blocks removed`}</span>
       )}{" "}
+      {reason && <span className="min-w-0 shrink-[3] truncate">— {reason}</span>}{" "}
       <span className="ml-auto shrink-0">{age}</span>
     </Link>
   )

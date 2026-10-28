@@ -42,6 +42,7 @@ bun run eval -- --config evals/companion-model-comparison.yaml -s persona-style
 | `memo-classifier`     | Knowledge-worthiness classification |
 | `memorizer`           | Memo generation from messages       |
 | `voice-polish`        | Dictation correction and structure  |
+| `doc-edit`            | Companion edits to a hosted doc     |
 
 ### voice-polish gating semantics
 

@@ -16,6 +16,7 @@ import type { GeneralResearchResult } from "../general-researcher"
 import type { GitHubToolDeps, LinearToolDeps, RunGeneralResearchOptions, RunWorkspaceAgentOptions } from "../tools"
 import type {
   DelegateTaskToolDeps,
+  DocToolDeps,
   StartSubagentToolDeps,
   ReportBackToolDeps,
   FollowUpToolDeps,
@@ -44,6 +45,13 @@ import {
   createCancelFollowUpTool,
   createUpdateFollowUpTool,
   createUpdateStreamBriefTool,
+  createReadDocTool,
+  createEditDocTool,
+  createInsertBlockTool,
+  createMoveBlockTool,
+  createDeleteBlockTool,
+  createSetDocTitleTool,
+  createCreateDocTool,
   createUpdateUserSettingsTool,
   createDelegateTaskTool,
   createStartSubagentTool,
@@ -104,6 +112,8 @@ export interface ToolSetConfig {
    * clobber. Defaults to 0 (no brief yet → create).
    */
   briefVersion?: number
+  /** Doc callbacks bound to the turn's host stream and invoking user, gating the doc tools. Live companion turn only. */
+  docs?: DocToolDeps
   /**
    * Delegation callback bound to the running persona/session/stream and the
    * invoking user, gating the `delegate_task` tool. Present only on the live
@@ -169,6 +179,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     followUps,
     brief,
     briefVersion,
+    docs,
     delegation,
     subagentDelegation,
     reportBack,
@@ -272,6 +283,13 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     brief && isToolEnabled(enabledTools, AgentToolNames.UPDATE_STREAM_BRIEF)
       ? createUpdateStreamBriefTool(brief, { currentVersion: briefVersion ?? 0 })
       : null,
+    docs && isToolEnabled(enabledTools, AgentToolNames.READ_DOC) ? createReadDocTool(docs) : null,
+    docs && isToolEnabled(enabledTools, AgentToolNames.EDIT_DOC) ? createEditDocTool(docs) : null,
+    docs && isToolEnabled(enabledTools, AgentToolNames.INSERT_BLOCK) ? createInsertBlockTool(docs) : null,
+    docs && isToolEnabled(enabledTools, AgentToolNames.MOVE_BLOCK) ? createMoveBlockTool(docs) : null,
+    docs && isToolEnabled(enabledTools, AgentToolNames.DELETE_BLOCK) ? createDeleteBlockTool(docs) : null,
+    docs && isToolEnabled(enabledTools, AgentToolNames.SET_DOC_TITLE) ? createSetDocTitleTool(docs) : null,
+    docs && isToolEnabled(enabledTools, AgentToolNames.CREATE_DOC) ? createCreateDocTool(docs) : null,
     delegation && isToolEnabled(enabledTools, AgentToolNames.DELEGATE_TASK) ? createDelegateTaskTool(delegation) : null,
     subagentDelegation && isToolEnabled(enabledTools, AgentToolNames.START_SUBAGENT)
       ? createStartSubagentTool(subagentDelegation)

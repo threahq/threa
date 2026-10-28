@@ -99,6 +99,18 @@ const CAPABILITIES: Array<{
   { parts: [[AgentToolNames.UPDATE_STREAM_BRIEF, "keep this stream's brief up to date"]], line: (p) => `${p}.` },
   {
     parts: [
+      [AgentToolNames.READ_DOC, "read"],
+      [AgentToolNames.EDIT_DOC, "edit"],
+      [AgentToolNames.INSERT_BLOCK, "add to"],
+      [AgentToolNames.MOVE_BLOCK, "reorder"],
+      [AgentToolNames.DELETE_BLOCK, "remove blocks from"],
+      [AgentToolNames.SET_DOC_TITLE, "rename"],
+    ],
+    line: (p) => `${p} the docs on this stream.`,
+  },
+  { parts: [[AgentToolNames.CREATE_DOC, "create docs on this stream"]], line: (p) => `${p}.` },
+  {
+    parts: [
       [
         AgentToolNames.START_SUBAGENT,
         "hand a question to another model, which answers in a thread under a card in this stream, when a person asks for a second opinion or names a model",

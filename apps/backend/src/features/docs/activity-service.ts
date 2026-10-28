@@ -12,7 +12,7 @@ import { OutboxRepository } from "../../lib/outbox"
 import { JobQueues, type DocActivityRollupJobData, type QueueManager } from "../../lib/queue"
 import { StreamEventRepository, StreamRepository, type StreamEvent } from "../streams"
 import { DocActivityStateRepository } from "./activity-repository"
-import { DOC_ACTIVITY_QUIET_MS } from "./config"
+import { DOC_ACTIVITY_MAX_REASONS, DOC_ACTIVITY_QUIET_MS } from "./config"
 import { DocRepository } from "./repository"
 
 /** Bounds a clock-skew requeue loop; whatever a stopped chain left unfolded rides the next edit's window. */
@@ -114,9 +114,15 @@ export class DocActivityService {
 
     const actors = new Map<string, DocActivityEventPayload["actors"][number]>()
     const touched = new Set<string>()
+    const reasons = new Set<string>()
     for (const edit of folded) {
+      const payload = edit.payload as DocEditedEventPayload
       actors.set(`${edit.actorType}:${edit.actorId}`, { actorId: edit.actorId!, actorType: edit.actorType! })
-      for (const blockId of (edit.payload as DocEditedEventPayload).touchedBlockIds) touched.add(blockId)
+      for (const blockId of payload.touchedBlockIds) touched.add(blockId)
+      if (payload.reason) {
+        reasons.delete(payload.reason)
+        reasons.add(payload.reason)
+      }
     }
     const sections: DocActivitySection[] = present
       .filter((section) => touched.has(section.blockId))
@@ -136,6 +142,7 @@ export class DocActivityService {
         sections,
         removedBlockIds: (cursor.blockIds ?? []).filter((blockId) => !presentIds.has(blockId)),
         editCount: folded.length,
+        reasons: [...reasons].slice(-DOC_ACTIVITY_MAX_REASONS),
         fromSequence: folded[0]!.sequence.toString(),
         toSequence: folded.at(-1)!.sequence.toString(),
       } satisfies DocActivityEventPayload,
