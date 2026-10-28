@@ -347,6 +347,8 @@ jobs:
       - name: Setup Bun
         run: npm install -g bun
 
+      - uses: ./.github/actions/bun-install-cache
+
       - name: Install dependencies
         run: bun install
 

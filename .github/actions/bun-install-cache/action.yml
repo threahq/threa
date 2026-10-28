@@ -1,0 +1,15 @@
+name: Bun install cache
+description: Restores Bun's package cache before `bun install` and saves it after a miss, so installs link packages instead of downloading every tarball.
+runs:
+  using: composite
+  steps:
+    # Every job installing cold from the npm registry at once gets rate-limited
+    # ("registry asked to wait 60s before retrying"), and the install then stalls
+    # until the job times out. The prefix fallback keeps a lockfile change to
+    # downloading only what changed.
+    - uses: actions/cache@v4
+      with:
+        path: ~/.bun/install/cache
+        key: bun-install-${{ runner.os }}-${{ hashFiles('**/bun.lock') }}
+        restore-keys: |
+          bun-install-${{ runner.os }}-
