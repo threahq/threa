@@ -31,7 +31,17 @@ const STREAM = "stream_root"
 const THREAD = "stream_thread"
 const WORKOS_ME = "workos_me"
 
-const EMPTY_COUNTS = { pull_request: 0, link: 0, media: 0, file: 0, memo: 0, delegation: 0, follow_up: 0, thread: 0 }
+const EMPTY_COUNTS = {
+  pull_request: 0,
+  link: 0,
+  media: 0,
+  file: 0,
+  memo: 0,
+  delegation: 0,
+  follow_up: 0,
+  thread: 0,
+  doc: 0,
+}
 
 /** jsdom has no IntersectionObserver; capture the callbacks so a test can fire them. */
 let observerCallbacks: IntersectionObserverCallback[] = []

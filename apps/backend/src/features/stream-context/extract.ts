@@ -1,4 +1,4 @@
-import { collectGiphyEmbeds } from "@threahq/prosemirror"
+import { collectDocEmbedIds, collectGiphyEmbeds } from "@threahq/prosemirror"
 import {
   categoryFromMime,
   parseGitHubPullRequestUrl,
@@ -37,7 +37,7 @@ export function contextSnippet(contentMarkdown: string): string {
 
 /**
  * Projection rows for a single message: pull requests, links, inline Giphy
- * embeds, and attachments. Any URL into a pull request (the PR page or a view
+ * embeds, doc chips, and attachments. Any URL into a pull request (the PR page or a view
  * under it) is a `pull_request` row keyed by the canonical PR URL — never also a
  * `link` row, so the PR section is the one place a PR shows up. Deduped within
  * the message by `(category, refId)` — occurrences across messages are separate
@@ -95,6 +95,9 @@ export function contextRowsForMessage(params: ContextRowsForMessageParams): NewS
         height: embed.height,
       })
     }
+    for (const docId of collectDocEmbedIds(params.contentJson)) {
+      push("doc", "doc", docId, docId, {})
+    }
   }
 
   for (const attachment of params.attachments) {
@@ -112,4 +115,37 @@ export function contextRowsForMessage(params: ContextRowsForMessageParams): NewS
   }
 
   return rows
+}
+
+interface HostedDocContextRowParams {
+  workspaceId: string
+  hostStreamId: string
+  rootStreamId: string
+  docId: string
+  /** The host's `doc:created` event, the row's jump target. */
+  createdEvent: { id: string; actorId: string | null; createdAt: Date; sequence: bigint }
+}
+
+/**
+ * The row a doc's creation writes on its host. It carries no source message, so
+ * a message edit refresh or delete never reaches it; a chip of the same doc in a
+ * message is a separate occurrence that collapses into it by `groupKey`.
+ */
+export function hostedDocContextRow(params: HostedDocContextRowParams): NewStreamContextItem {
+  return {
+    id: streamContextItemId(),
+    workspaceId: params.workspaceId,
+    streamId: params.hostStreamId,
+    rootStreamId: params.rootStreamId,
+    category: "doc",
+    refKind: "doc",
+    refId: params.docId,
+    groupKey: params.docId,
+    sourceMessageId: null,
+    authorId: params.createdEvent.actorId,
+    occurredAt: params.createdEvent.createdAt,
+    sequence: params.createdEvent.sequence,
+    snippet: "",
+    detail: { anchorEventId: params.createdEvent.id },
+  }
 }

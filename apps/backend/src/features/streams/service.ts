@@ -17,7 +17,7 @@ import { StreamEventRepository, type StreamEvent } from "./event-repository"
 import { SparseReadRepository } from "./sparse-read-repository"
 import { MessageRepository, type Message } from "../messaging"
 import { ConversationRepository } from "../conversations"
-import { StreamContextRepository, contextSnippet } from "../stream-context"
+import { StreamContextRepository, contextSnippet, hostedDocContextRow } from "../stream-context"
 import { OutboxRepository } from "../../lib/outbox"
 import { streamId, eventId, streamContextItemId } from "../../lib/id"
 import { logger } from "../../lib/logger"
@@ -1070,6 +1070,15 @@ export class StreamService {
         streamId: host.id,
         event: createdEvent,
       })
+      await StreamContextRepository.insertMany(client, [
+        hostedDocContextRow({
+          workspaceId: params.workspaceId,
+          hostStreamId: host.id,
+          rootStreamId: root.id,
+          docId: stream.id,
+          createdEvent,
+        }),
+      ])
 
       return stream
     })

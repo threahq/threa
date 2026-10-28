@@ -10,10 +10,11 @@ import type {
   StreamContextItemDetail,
   StreamContextScope,
 } from "@threahq/types"
-import { CONTEXT_CATEGORIES, streamContextItemKey } from "@threahq/types"
+import { CONTEXT_CATEGORIES, StreamTypes, streamContextItemKey } from "@threahq/types"
 import { composeSql, type Querier } from "../../db"
 import { KEYSET_EPOCH, type KeysetCursor } from "../../lib/keyset-cursor"
 import { memoAudienceVisibleSql } from "../memos"
+import { streamAccessPredicateSql } from "../streams"
 
 export interface StreamContextFeedFilters {
   workspaceId: string
@@ -101,6 +102,7 @@ interface DbRow {
   thread_reply_count: number | null
   thread_last_reply_at: Date | null
   thread_anchor_event_id: string | null
+  doc_title: string | null
 }
 
 function stringOrNull(value: unknown): string | null {
@@ -171,13 +173,15 @@ function detailFor(row: DbRow): StreamContextItemDetail {
         lastReplyAt: row.thread_last_reply_at?.toISOString() ?? null,
         anchorEventId: row.thread_anchor_event_id,
       }
+    case "doc":
+      return { title: row.doc_title }
   }
 }
 
 /**
  * The event a row deep-links to when it has no source message: the delegation's
- * created card, the follow-up's scheduled card, or the anchor a card-anchored
- * thread hangs under. Null for every
+ * created card, the follow-up's scheduled card, the anchor a card-anchored
+ * thread hangs under, or a hosted doc's `doc:created` row. Null for every
  * artifact that lives in a message — those jump by `sourceMessageId`.
  */
 function anchorEventIdFor(row: DbRow): string | null {
@@ -187,6 +191,7 @@ function anchorEventIdFor(row: DbRow): string | null {
     const anchor = stringOrNull(row.detail.anchorEventId) ?? row.thread_anchor_event_id
     return anchor?.startsWith("event_") ? anchor : null
   }
+  if (row.category === "doc") return stringOrNull(row.detail.anchorEventId)
   return null
 }
 
@@ -274,7 +279,8 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
       th.display_name AS thread_name,
       th.reply_count AS thread_reply_count,
       th.last_reply_at AS thread_last_reply_at,
-      th.parent_anchor_id AS thread_anchor_event_id
+      th.parent_anchor_id AS thread_anchor_event_id,
+      doc.display_name AS doc_title
     FROM stream_context_items sci
     LEFT JOIN link_previews lp
       ON sci.category IN ('link', 'pull_request')
@@ -312,6 +318,11 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
       ON sci.category = 'thread'
      AND th.workspace_id = sci.workspace_id
      AND th.id = sci.ref_id
+    LEFT JOIN streams doc
+      ON sci.category = 'doc'
+     AND doc.workspace_id = sci.workspace_id
+     AND doc.id = sci.ref_id
+     AND doc.type = ${StreamTypes.DOC}
     WHERE sci.workspace_id = ${filters.workspaceId}
       AND (
         (${isTree} AND sci.root_stream_id = ${filters.rootStreamId})
@@ -321,6 +332,13 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
         sci.category <> 'memo'
         OR mem.id IS NULL
         OR ${memoAudienceVisibleSql(filters.workspaceId, [{ kind: "users", userIds: [filters.viewerUserId] }], "mem")}
+      )
+      AND (
+        sci.category <> 'doc'
+        OR (
+          doc.archived_at IS NULL
+          AND ${streamAccessPredicateSql(filters.workspaceId, filters.viewerUserId, "doc.id")}
+        )
       )
       AND (${filters.category === undefined} OR sci.category = ${filters.category ?? ""})
       AND (${filters.categories === undefined} OR sci.category = ANY(${filters.categories ?? [""]}))
@@ -339,6 +357,7 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
         OR dt.title ILIKE ${likePattern}
         OR afu.note ILIKE ${likePattern}
         OR th.display_name ILIKE ${likePattern}
+        OR doc.display_name ILIKE ${likePattern}
       )
   `
 }

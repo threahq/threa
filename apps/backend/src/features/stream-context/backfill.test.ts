@@ -113,7 +113,8 @@ describe("stream-context backfill plan", () => {
       { match: /SELECT id, stream_id FROM messages/, rows: messageRows },
       { match: /FROM memos mo/, rows: [{ stream_id: "stream_b" }] },
       { match: /FROM delegated_tasks/, rows: [{ stream_id: "stream_a" }] },
-      { match: /SELECT DISTINCT parent_stream_id/, rows: [{ parent_stream_id: "stream_a" }] },
+      { match: /SELECT DISTINCT parent_stream_id[\s\S]*type = 'thread'/, rows: [{ parent_stream_id: "stream_a" }] },
+      { match: /SELECT DISTINCT parent_stream_id[\s\S]*type = \$/, rows: [{ parent_stream_id: "stream_b" }] },
     ])
 
     const chunks = await plan(ctx, "ws_1")
@@ -127,6 +128,7 @@ describe("stream-context backfill plan", () => {
       { kind: "memos", streamId: "stream_b", rootStreamId: "stream_a" },
       { kind: "delegations", streamId: "stream_a", rootStreamId: "stream_a" },
       { kind: "threads", streamId: "stream_a", rootStreamId: "stream_a" },
+      { kind: "docs", streamId: "stream_b", rootStreamId: "stream_a" },
     ])
   })
 
@@ -709,5 +711,42 @@ describe("stream-context backfill — memos, delegations, threads", () => {
       snippet: "",
       detail: JSON.stringify({ anchorEventId: "event_9" }),
     })
+  })
+
+  it("places a doc row on its host at the doc:created event, with no source message", async () => {
+    const { ctx, insertValues } = fakePool([
+      {
+        match: /FROM streams d/,
+        rows: [
+          {
+            doc_id: "stream_doc",
+            event_id: "event_doc",
+            actor_id: "usr_3",
+            created_at: new Date("2026-10-20T10:00:00.000Z"),
+            sequence: "21",
+          },
+        ],
+      },
+    ])
+
+    await processChunk(ctx, "ws_1", { kind: "docs", streamId: "stream_host", rootStreamId: "stream_host" })
+
+    expect(insertedRows(insertValues[0]!)).toEqual([
+      {
+        workspaceId: "ws_1",
+        streamId: "stream_host",
+        rootStreamId: "stream_host",
+        category: "doc",
+        refKind: "doc",
+        refId: "stream_doc",
+        groupKey: "stream_doc",
+        sourceMessageId: null,
+        authorId: "usr_3",
+        occurredAt: new Date("2026-10-20T10:00:00.000Z"),
+        sequence: "21",
+        snippet: "",
+        detail: { anchorEventId: "event_doc" },
+      },
+    ])
   })
 })

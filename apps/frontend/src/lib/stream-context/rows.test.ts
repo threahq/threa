@@ -292,6 +292,49 @@ describe("contextItemsFromEvent", () => {
     expect(rows.map((r) => r.key)).toEqual(["link:https://docs.example.com/guide:msg_1"])
   })
 
+  it("emits a doc row per doc chip, never a link row", () => {
+    const rows = contextItemsFromEvent(
+      messageEvent({
+        messageId: "msg_1",
+        contentMarkdown: "see [Plan](doc:stream_doc1)",
+        contentJson: doc(
+          { type: "docEmbed", attrs: { docId: "stream_doc1", title: "Plan" } },
+          { type: "docEmbed", attrs: { docId: "stream_doc1", title: "Plan" } }
+        ),
+      }),
+      CTX
+    )
+    expect(rows.map((r) => [r.key, r.refKind, r.groupKey, r.anchorEventId, r.detail])).toEqual([
+      ["doc:stream_doc1:msg_1", "doc", "stream_doc1", null, { title: null }],
+    ])
+  })
+
+  it("emits the hosted doc row the server writes for a doc:created event, jumping by the event", () => {
+    const rows = contextItemsFromEvent(
+      { ...messageEvent({ docId: "stream_doc1", createdBy: "usr_1" }), id: "event_doc", eventType: "doc:created" },
+      CTX
+    )
+    expect(
+      rows.map((r) => ({
+        key: r.key,
+        sourceMessageId: r.sourceMessageId,
+        anchorEventId: r.anchorEventId,
+        streamId: r.streamId,
+        authorId: r.authorId,
+        occurredAt: r.occurredAt,
+      }))
+    ).toEqual([
+      {
+        key: "doc:stream_doc1:",
+        sourceMessageId: null,
+        anchorEventId: "event_doc",
+        streamId: "stream_thread",
+        authorId: "usr_1",
+        occurredAt: "2026-07-01T10:00:00.000Z",
+      },
+    ])
+  })
+
   it("ignores events that carry no context artifacts", () => {
     expect(contextItemsFromEvent({ ...messageEvent({}), eventType: "thread_created" }, CTX)).toEqual([])
     // A message event without a messageId can't be keyed.

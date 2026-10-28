@@ -11,6 +11,7 @@ import {
 import type {
   StreamContextAttachmentDetail,
   StreamContextDelegationDetail,
+  StreamContextDocDetail,
   StreamContextFollowUpDetail,
   StreamContextLinkDetail,
   StreamContextMemoDetail,
@@ -37,8 +38,8 @@ export function contextItemFromCached(row: CachedStreamContextItem): ContextItem
   const base = {
     key: row.key,
     createdAt: row.occurredAt,
-    // Delegations and card-anchored threads have no source message; they jump
-    // by the event that anchors them, which `?m=` resolves just as well.
+    // Delegations, card-anchored threads and hosted docs have no source message;
+    // they jump by the event that anchors them, which `?m=` resolves just as well.
     sourceMessageId: row.sourceMessageId ?? row.anchorEventId ?? null,
     snippet: row.snippet,
   }
@@ -159,6 +160,16 @@ export function contextItemFromCached(row: CachedStreamContextItem): ContextItem
         snippet: detail.name ?? row.snippet,
         replyCount: detail.replyCount ?? 0,
         lastReplyPreview: null,
+      }
+    }
+    case "doc": {
+      const detail = row.detail as Partial<StreamContextDocDetail>
+      return {
+        ...base,
+        category: "doc",
+        docId: row.refId,
+        title: detail.title ?? null,
+        refCount: row.occurrenceCount,
       }
     }
   }

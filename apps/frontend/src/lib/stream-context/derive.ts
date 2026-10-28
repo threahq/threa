@@ -10,7 +10,7 @@ import {
   type LinkPreviewSummary,
   type ThreadSummary,
 } from "@threahq/types"
-import { collectGiphyEmbeds, collectLinkUrls } from "@threahq/prosemirror"
+import { collectDocEmbedIds, collectGiphyEmbeds, collectLinkUrls } from "@threahq/prosemirror"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import type { CachedEvent } from "@/db"
 import {
@@ -18,6 +18,7 @@ import {
   type ContextCategory,
   type ContextItem,
   type DerivedStreamContext,
+  type DocContextItem,
   type LinkContextItem,
   type PullRequestContextItem,
 } from "./types"
@@ -125,11 +126,11 @@ export function linkPreviewBadge(
  * shared messages, channels, memos, conversations, delegated tasks — badged by
  * their preview contentType), pull requests (any github.com PR URL, folded to
  * its canonical URL and colored by the PR preview's state), media (images/GIFs/videos), file
- * attachments, captured memories, and threads branched from this stream — each
- * carrying the source message id for "jump to origin". Items dedup within their
- * category (links by normalized URL, attachments by id, memos by memoId,
- * threads by threadId), keeping the most recent occurrence; the whole list is
- * returned newest-first.
+ * attachments, captured memories, doc chips, and threads branched from this
+ * stream — each carrying the source message id for "jump to origin". Items dedup
+ * within their category (links by normalized URL, attachments by id, memos by
+ * memoId, docs by docId, threads by threadId), keeping the most recent
+ * occurrence; the whole list is returned newest-first.
  *
  * Scope is the loaded window only (what's in IDB). This is the sealed-stream
  * path and only that: an E2E stream reaches the server as ciphertext, so
@@ -143,6 +144,7 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
   const files = new Map<string, ContextItem>()
   const memos = new Map<string, ContextItem>()
   const threads = new Map<string, ContextItem>()
+  const docs = new Map<string, DocContextItem>()
 
   // Newest-first so the first occurrence we see of a dedup key is the most
   // recent — later (older) occurrences only bump refCount, never overwrite.
@@ -319,6 +321,25 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
       })
     }
 
+    // ── Doc chips. A sealed stream cannot host a doc, so a chip is the only way one appears here.
+    for (const docId of contentJson ? collectDocEmbedIds(contentJson) : []) {
+      const existing = docs.get(docId)
+      if (existing) {
+        existing.refCount += 1
+        continue
+      }
+      docs.set(docId, {
+        key: `doc:${docId}`,
+        category: "doc",
+        createdAt,
+        sourceMessageId: messageId,
+        snippet,
+        docId,
+        title: null,
+        refCount: 1,
+      })
+    }
+
     // ── Threads branched from this stream.
     if (payload.threadId && (payload.replyCount ?? 0) > 0) {
       if (!threads.has(payload.threadId)) {
@@ -346,6 +367,7 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
     ...files.values(),
     ...memos.values(),
     ...threads.values(),
+    ...docs.values(),
   ].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 
   const counts = Object.fromEntries(CONTEXT_CATEGORIES.map((c) => [c, 0])) as Record<ContextCategory, number>

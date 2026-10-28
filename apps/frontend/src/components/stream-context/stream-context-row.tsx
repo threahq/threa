@@ -1,5 +1,6 @@
 import { useState, type MouseEvent } from "react"
-import { useNavigate } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
+import { StreamTypes } from "@threahq/types"
 import {
   CornerDownRight,
   ExternalLink,
@@ -17,6 +18,9 @@ import {
   Timer,
 } from "lucide-react"
 import { attachmentContentUrl } from "@/api"
+import { useOptionalPanel } from "@/contexts"
+import { useLiveDocTitle } from "@/components/docs/use-live-doc-title"
+import { STREAM_ICONS, streamFallbackLabel } from "@/lib/streams"
 import { HighlightedText } from "@/components/search/highlight"
 import { CATEGORY_META } from "@/components/attachment-explorer/category"
 import { useFormattedDate } from "@/hooks"
@@ -33,6 +37,8 @@ import { AgentActivityDot } from "@/components/layout/sidebar/stream-item"
 import { UnreadBadge } from "@/components/unread-badge"
 import { colorWithAlpha, PR_STATE_LABELS, prStateColor, StatePill } from "@/components/timeline/link-preview-primitives"
 import type { ContextItem, LinkContextItem, MediaContextItem, PullRequestContextItem } from "@/lib/stream-context/types"
+
+const DocGlyph = STREAM_ICONS[StreamTypes.DOC]
 
 interface StreamContextRowProps {
   workspaceId: string
@@ -166,6 +172,13 @@ export function StreamContextRow({
   const { formatRelative } = useFormattedDate()
   const time = formatRelative(new Date(item.createdAt), undefined, { terse: true })
   const liveThread = useLiveThread(workspaceId, item.category === "thread" ? item.threadId : null)
+  const panel = useOptionalPanel()
+  const docId = item.category === "doc" ? item.docId : undefined
+  const { label: docLabel } = useLiveDocTitle(
+    workspaceId,
+    docId,
+    (item.category === "doc" && item.title) || streamFallbackLabel(StreamTypes.DOC, "generic")
+  )
 
   let leading: React.ReactNode
   let primaryText: string
@@ -436,6 +449,25 @@ export function StreamContextRow({
       )
       break
     }
+    case "doc": {
+      leading = (
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+          <DocGlyph className="size-4" />
+        </div>
+      )
+      primaryText = docLabel
+      secondaryText = item.snippet || "Doc"
+      if (item.refCount > 1) secondaryText = `${secondaryText} · ${item.refCount}×`
+      primaryAction = (
+        <Link
+          to={panel ? panel.getPanelUrl(item.docId) : `/w/${workspaceId}/s/${item.docId}`}
+          className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <span className="sr-only">Open doc {primaryText}</span>
+        </Link>
+      )
+      break
+    }
   }
 
   // Rows whose primary click goes somewhere other than the source message
@@ -443,7 +475,8 @@ export function StreamContextRow({
   // a secondary "go to message" affordance. Rows that already jump on primary
   // (non-previewable files) don't need it.
   const showJump =
-    (item.category === "link" || item.category === "pull_request" || galleryKey != null) && jumpTarget != null
+    (item.category === "link" || item.category === "pull_request" || item.category === "doc" || galleryKey != null) &&
+    jumpTarget != null
 
   return (
     <div className="group relative flex gap-3">

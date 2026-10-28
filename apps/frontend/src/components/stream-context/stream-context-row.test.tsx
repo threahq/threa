@@ -9,6 +9,7 @@ import * as workspaceStore from "@/stores/workspace-store"
 import type {
   ContextItem,
   DelegationContextItem,
+  DocContextItem,
   FileContextItem,
   LinkContextItem,
   MediaContextItem,
@@ -326,5 +327,56 @@ describe("StreamContextRow thread", () => {
       secondary: screen.getByText(/2 replies/).textContent,
       agent: screen.queryByRole("img", { name: "Agent working" }) !== null,
     }).toEqual({ name: "Anchor text", secondary: "2 replies", agent: false })
+  })
+})
+
+describe("StreamContextRow doc", () => {
+  const doc: DocContextItem = {
+    ...itemBase,
+    key: "doc:stream_doc1:",
+    category: "doc",
+    sourceMessageId: "event_doc1",
+    docId: "stream_doc1",
+    title: "Plan",
+    refCount: 1,
+  }
+
+  function spyDocInStore(displayName: string | null | undefined) {
+    vi.spyOn(workspaceStore, "useWorkspaceStream").mockReturnValue(
+      (displayName === undefined ? undefined : { id: "stream_doc1", type: "doc", displayName }) as ReturnType<
+        typeof workspaceStore.useWorkspaceStream
+      >
+    )
+  }
+
+  it("should show the store's live title, link to the doc and jump to where it came from", async () => {
+    spyDocInStore("Launch plan")
+    const { onJumpToMessage } = renderRow(doc)
+
+    const anchor = screen.getByRole("link", { name: "Open doc Launch plan" })
+    await userEvent.click(screen.getByRole("button", { name: "Go to message" }))
+
+    expect({
+      href: anchor.getAttribute("href"),
+      secondary: screen.getByText("Doc").textContent,
+      jumpedTo: onJumpToMessage.mock.calls[0]?.[0],
+    }).toEqual({ href: "/w/ws_1/s/stream_doc1", secondary: "Doc", jumpedTo: "event_doc1" })
+  })
+
+  it("should fall back to the feed's title when the doc is not in the store", () => {
+    spyDocInStore(undefined)
+    renderRow({ ...doc, refCount: 2, snippet: "see the plan" })
+
+    expect({
+      link: screen.getByRole("link").textContent,
+      secondary: screen.getByText(/see the plan/).textContent,
+    }).toEqual({ link: "Open doc Plan", secondary: "see the plan · 2×" })
+  })
+
+  it("should label an untitled doc Untitled", () => {
+    spyDocInStore(null)
+    renderRow({ ...doc, title: null })
+
+    expect(screen.getByRole("link").textContent).toBe("Open doc Untitled")
   })
 })

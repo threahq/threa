@@ -20,6 +20,7 @@ export type ContextCategory =
   | "delegation"
   | "follow_up"
   | "thread"
+  | "doc"
 
 export const CONTEXT_CATEGORIES: ContextCategory[] = [
   "pull_request",
@@ -30,6 +31,7 @@ export const CONTEXT_CATEGORIES: ContextCategory[] = [
   "delegation",
   "follow_up",
   "thread",
+  "doc",
 ]
 
 interface ContextItemBase {
@@ -140,6 +142,16 @@ export interface ThreadContextItem extends ContextItemBase {
   lastReplyPreview: string | null
 }
 
+export interface DocContextItem extends ContextItemBase {
+  category: "doc"
+  /** The doc's stream id — open it with `getPanelUrl(docId)`. */
+  docId: string
+  /** Null while untitled or not yet joined; the row prefers the store's live title. */
+  title: string | null
+  /** How many occurrences (its creation here plus chips) this row stands for. */
+  refCount: number
+}
+
 export type ContextItem =
   | PullRequestContextItem
   | LinkContextItem
@@ -149,6 +161,7 @@ export type ContextItem =
   | DelegationContextItem
   | FollowUpContextItem
   | ThreadContextItem
+  | DocContextItem
 
 export interface DerivedStreamContext {
   /** All items, newest first. */
