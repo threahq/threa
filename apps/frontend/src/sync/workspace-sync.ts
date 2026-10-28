@@ -1911,6 +1911,9 @@ export function registerWorkspaceSocketHandlers(
           }
         : current
     )
+    // The server hides an unreadable stream's rows from the feed and the badge counts.
+    commitCounter((state) => [...unreadableIds].reduce(dropActivitiesForStream, state))
+    invalidateActivityFeed(true)
     await Promise.all(
       [...unreadableIds].flatMap((streamId) => [
         db.streams.delete([workspaceId, streamId]),

@@ -5760,6 +5760,62 @@ describe("stream:member_removed board cleanup", () => {
     cleanup()
   })
 
+  it("drops the held activity and badges of a private root and its threads the viewer was removed from", async () => {
+    const held = (id: string, streamId: string): Activity => ({
+      id,
+      workspaceId: "ws_1",
+      userId: "member_1",
+      activityType: "mention",
+      streamId,
+      messageId: `msg_${id}`,
+      actorId: "member_2",
+      actorType: "user",
+      context: {},
+      readAt: null,
+      createdAt: new Date().toISOString(),
+      isSelf: false,
+      emoji: null,
+    })
+    const queryClient = seededClient("private")
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"), (old) => ({
+      ...old!,
+      streams: [
+        ...old!.streams,
+        {
+          ...makeStream("thread_t", { type: "thread", parentStreamId: "chan_x", rootStreamId: "chan_x" }),
+          lastMessagePreview: null,
+        },
+        { ...makeStream("chan_y"), lastMessagePreview: null },
+      ],
+      unreadActivities: [held("act_root", "chan_x"), held("act_thread", "thread_t"), held("act_other", "chan_y")],
+      activityCounts: { chan_x: 1, thread_t: 1, chan_y: 1 },
+      mentionCounts: { chan_x: 1, thread_t: 1, chan_y: 1 },
+      unreadActivityCount: 3,
+    }))
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    emit("stream:member_removed", { workspaceId: "ws_1", streamId: "chan_x", memberId: "member_1" })
+
+    await vi.waitFor(() => {
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: activityKeys.list("ws_1") })
+    })
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))!
+    expect({
+      held: bootstrap.unreadActivities?.map((a) => a.id),
+      activityCounts: bootstrap.activityCounts,
+      mentionCounts: bootstrap.mentionCounts,
+      unreadActivityCount: bootstrap.unreadActivityCount,
+    }).toEqual({
+      held: ["act_other"],
+      activityCounts: { chan_y: 1 },
+      mentionCounts: { chan_y: 1 },
+      unreadActivityCount: 1,
+    })
+    cleanup()
+  })
+
   it("keeps the board rows of a PUBLIC stream — a public root grants read without membership (INV-62)", async () => {
     await seedBoardRow("conv_x", "ws_1", "thread_x", "chan_x")
     const { socket, emit } = createTestSocket()
