@@ -2,7 +2,7 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
 import { setupTestDatabase, withTestTransaction } from "./setup"
 import { LinkPreviewRepository } from "../../src/features/link-previews/repository"
-import { escapeLikePattern } from "../../src/features/link-previews/refresh"
+import { escapeLikePattern } from "../../src/lib/sql-filters"
 
 /**
  * Exercise the real Postgres query because a SQL `ESCAPE` clause can be changed

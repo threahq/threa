@@ -16,6 +16,7 @@ import { StreamTypes, TitleSources } from "@threahq/types"
 import {
   archiveStatusSql,
   effectivelyArchivedSql,
+  escapeLikePattern,
   MAX_STREAM_CHAIN_DEPTH,
   parseArchiveStatusFilter,
   type ArchiveStatus,
@@ -708,6 +709,7 @@ export const StreamRepository = {
     ids: string[],
     filters?: {
       types?: StreamType[]
+      parentStreamId?: string
       query?: string
       limit?: number
       cursorCreatedAt?: Date
@@ -727,9 +729,13 @@ export const StreamRepository = {
       conditions.push(`s.type = ANY($${paramIndex++})`)
       values.push(filters.types)
     }
+    if (filters?.parentStreamId) {
+      conditions.push(`s.parent_stream_id = $${paramIndex++}`)
+      values.push(filters.parentStreamId)
+    }
     if (filters?.query) {
-      const pattern = `%${filters.query}%`
-      conditions.push(`(s.display_name ILIKE $${paramIndex} OR s.slug ILIKE $${paramIndex})`)
+      const pattern = `%${escapeLikePattern(filters.query)}%`
+      conditions.push(`(s.display_name ILIKE $${paramIndex} ESCAPE '\\' OR s.slug ILIKE $${paramIndex} ESCAPE '\\')`)
       paramIndex++
       values.push(pattern)
     }

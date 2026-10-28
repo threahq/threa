@@ -689,7 +689,14 @@ const docHostStreamId = z.string().min(1).max(64)
 const docReason = z.string().trim().min(1).max(DOC_REASON_MAX_CHARS)
 const docMarkdown = z.string().max(DOC_PUBLIC_MARKDOWN_MAX_CHARS)
 
-export const listDocsQuerySchema = z.object({ streamId: docHostStreamId })
+export const listDocsQuerySchema = z.object({
+  streamId: docHostStreamId.optional(),
+  query: z.string().trim().min(1).max(200).optional(),
+  // Query-string boolean, as on listStreamsSchema.
+  includeArchived: z.enum(["true", "false"]).optional(),
+  after: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+})
 
 // A body is a first write, so it carries the reason the timeline shows for it.
 export const createDocSchema = z

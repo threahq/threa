@@ -487,13 +487,25 @@ export async function removeLabel(
   return { removed: true, name: p.name, stream_id: resourceId }
 }
 
-export async function listDocs(
-  client: ThreaApiClient,
-  resolver: RefResolver,
-  p: { streamRef: string }
-): Promise<unknown> {
-  const streamId = await resolver.resolveStream(p.streamRef)
-  return client.get(`/docs${buildQuery({ streamId })}`)
+export interface ListDocsParams {
+  streamRef?: string
+  query?: string
+  includeArchived?: boolean
+  after?: string
+  limit?: number
+}
+
+export async function listDocs(client: ThreaApiClient, resolver: RefResolver, p: ListDocsParams): Promise<unknown> {
+  const streamId = p.streamRef ? await resolver.resolveStream(p.streamRef) : undefined
+  return client.get(
+    `/docs${buildQuery({
+      streamId,
+      query: p.query,
+      after: p.after,
+      limit: p.limit,
+      includeArchived: p.includeArchived ? "true" : undefined,
+    })}`
+  )
 }
 
 export function readDoc(client: ThreaApiClient, docId: string): Promise<unknown> {

@@ -1,8 +1,19 @@
 import { commentOnDoc, createDoc, editDoc, listDocs, readDoc } from "../ops"
-import { arrayFlag, stringFlag, UsageError, type NounSpec, type VerbSpec } from "../output"
+import {
+  arrayFlag,
+  boolFlag,
+  intFlag,
+  renderList,
+  stringFlag,
+  UsageError,
+  type NounSpec,
+  type VerbSpec,
+} from "../output"
 
 interface DocRow {
   id?: string
+  hostStreamId?: string
+  archived?: boolean
   title?: string | null
   seq?: number
   markdown?: string
@@ -11,25 +22,43 @@ interface DocRow {
 
 const listVerb: VerbSpec = {
   name: "list",
-  summary: "List the active docs a stream hosts, newest first",
-  usage: "threa docs list <stream-ref>",
+  summary: "List docs across the workspace or on one stream, newest first",
+  usage: "threa docs list [<stream-ref>] [--query q] [--archived] [--after cursor] [--limit n]",
   help:
-    "threa docs list <stream-ref> [flags]\n\n" +
-    "List the active docs hosted by a stream, newest first. Each row is the doc id, its title (or (untitled)), " +
-    "and its seq (the edit counter). <stream-ref> is a stream_ id or #channel-slug.\n\n" +
+    "threa docs list [<stream-ref>] [flags]\n\n" +
+    "List docs this key can read, newest first. Without <stream-ref> it searches the whole workspace; " +
+    "<stream-ref> (a stream_ id or #channel-slug) narrows to the docs that stream hosts. Each row is the doc id, " +
+    "its title (or (untitled)), its seq (the edit counter) and its host stream. Page by passing the previous " +
+    "response's cursor back as --after.\n\n" +
     "Flags:\n" +
-    "  --json    force JSON output\n" +
-    "  --help    show this help",
-  options: {},
-  run: (ctx, positionals) => {
-    const ref = positionals[0]
-    if (!ref) throw new UsageError("docs list requires a <stream-ref> (a stream_ id or #channel-slug)")
-    return listDocs(ctx.client, ctx.resolver, { streamRef: ref })
+    "  --query q    case-insensitive match on the doc title\n" +
+    "  --archived   include archived docs and docs under archived hosts\n" +
+    "  --after c    pagination cursor from a previous response\n" +
+    "  --limit n    max results, <= 200 (default 50)\n" +
+    "  --json       force JSON output\n" +
+    "  --help       show this help",
+  options: {
+    query: { type: "string" },
+    archived: { type: "boolean" },
+    after: { type: "string" },
+    limit: { type: "string" },
   },
-  render: (payload) => {
-    const rows = (payload as { data?: DocRow[] }).data ?? []
-    return rows.map((d) => `${d.id ?? "?"}  ${d.title || "(untitled)"}  ${d.seq ?? "?"}`).join("\n") || "(no docs)"
-  },
+  run: (ctx, positionals, values) =>
+    listDocs(ctx.client, ctx.resolver, {
+      streamRef: positionals[0],
+      query: stringFlag(values, "query"),
+      includeArchived: boolFlag(values, "archived"),
+      after: stringFlag(values, "after"),
+      limit: intFlag(values, "limit"),
+    }),
+  render: (payload) =>
+    renderList<DocRow>(
+      payload,
+      (d) =>
+        `${d.id ?? "?"}  ${d.title || "(untitled)"}  ${d.seq ?? "?"}  ${d.hostStreamId ?? "?"}` +
+        (d.archived ? "  [archived]" : ""),
+      { empty: "(no docs)", cursorFlag: "after" }
+    ),
 }
 
 const readVerb: VerbSpec = {

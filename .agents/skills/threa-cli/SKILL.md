@@ -63,7 +63,7 @@ Read results already carry author identity, so you seldom need a second call to 
 
 ## Docs
 
-A doc is a markdown document hosted by a stream. `threa docs list <stream-ref>` (tool `list_docs`) shows a stream's docs; `threa docs read <doc-id>` (tool `read_doc`) prints the whole doc with a `<!-- blk_… -->` marker line before each block.
+A doc is a markdown document hosted by a stream. `threa docs list [<stream-ref>] [--query q]` (tool `list_docs`) finds docs across the workspace by title, or only the docs one stream hosts when given a stream ref; it pages with `--after` like other lists, and `--archived` includes archived docs. `threa docs read <doc-id>` (tool `read_doc`) prints the whole doc with a `<!-- blk_… -->` marker line before each block.
 
 - Read before you edit. Copy each `--old` verbatim from one block of the read output (never across a marker line); `--block blk_…` (tool `block_id`) confines the edit to that block.
 - `--old`/`--new` repeat and pair by position (tool `edits: [{ block_id?, old, new }]`). Every edit in a call applies together, or nothing is written. A value that starts with a dash, such as a list item, needs the `=` form: `--old="- AWS key is live"`.

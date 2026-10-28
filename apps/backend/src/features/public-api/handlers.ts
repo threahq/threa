@@ -902,6 +902,30 @@ export interface PublicApiDeps {
   io: Server
 }
 
+/** The streams the current key can read. Archiving blocks writes, so archive state never narrows this. */
+export function createAccessibleStreamIdsResolver({
+  pool,
+  botChannelService,
+}: {
+  pool: Pool
+  botChannelService: BotChannelService
+}) {
+  return async function getAccessibleStreamIds(req: Request): Promise<string[]> {
+    if (req.sandboxSession) {
+      return sandboxReadableStreamIds(pool, req.sandboxSession)
+    }
+    if (req.userApiKey) {
+      return resolveUserAccessibleStreamIds(pool, req.workspaceId!, req.user!.id, {
+        archiveStatus: ["active", "archived"],
+      })
+    }
+    if (req.botApiKey) {
+      return botChannelService.getAccessibleStreamIdsForBot(req.workspaceId!, req.botApiKey.botId)
+    }
+    throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
+  }
+}
+
 export function createPublicApiHandlers({
   searchService,
   featureFlagService,
@@ -922,21 +946,7 @@ export function createPublicApiHandlers({
   const botRuntimeWriteOps =
     providedWriteOps ?? createBotRuntimeWriteOps({ pool, io, botRuntimeService, botChannelService })
   const conversationService = providedConversationService ?? new ConversationService(pool)
-  /** The streams the current key can read. Archiving blocks writes, so archive state never narrows this. */
-  async function getAccessibleStreamIds(req: Request): Promise<string[]> {
-    if (req.sandboxSession) {
-      return sandboxReadableStreamIds(pool, req.sandboxSession)
-    }
-    if (req.userApiKey) {
-      return resolveUserAccessibleStreamIds(pool, req.workspaceId!, req.user!.id, {
-        archiveStatus: ["active", "archived"],
-      })
-    }
-    if (req.botApiKey) {
-      return botChannelService.getAccessibleStreamIdsForBot(req.workspaceId!, req.botApiKey.botId)
-    }
-    throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
-  }
+  const getAccessibleStreamIds = createAccessibleStreamIdsResolver({ pool, botChannelService })
 
   function memoAudienceForRequest(req: Request, accessibleStreamIds: string[]): MemoAudience {
     return req.userApiKey
@@ -3224,8 +3234,7 @@ export function createPublicApiHandlers({
         return res.json({ data: [], hasMore: false, cursor: null })
       }
 
-      // Cursor pagination disabled when query is provided (relevance ordering)
-      const cursor = !query && afterCursor ? decodeCursor(afterCursor) : undefined
+      const cursor = afterCursor ? decodeCursor(afterCursor) : undefined
 
       const streams = await StreamRepository.listByIds(pool, req.workspaceId!, accessibleStreamIds, {
         types: type,
@@ -3254,7 +3263,7 @@ export function createPublicApiHandlers({
           return serializeStream(s, archivedIds.has(s.id), parentStream ? { parentStream } : undefined)
         }),
         hasMore,
-        cursor: !query && lastStream ? encodeCursor(lastStream.createdAt, lastStream.id) : null,
+        cursor: lastStream ? encodeCursor(lastStream.createdAt, lastStream.id) : null,
       })
     },
 

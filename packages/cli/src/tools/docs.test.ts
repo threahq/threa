@@ -44,6 +44,23 @@ test("list_docs resolves a #channel-slug and lists that stream's docs", async ()
   })
 })
 
+test("list_docs without stream_id lists workspace-wide with query and paging", async () => {
+  fetchSpy.mockResolvedValue(jsonResponse(200, { data: [], hasMore: false, cursor: null }))
+  const client = await connectClient()
+
+  const result = (await client.callTool({
+    name: "list_docs",
+    arguments: { query: "plan", include_archived: true, after: "cur_1", limit: 5 },
+  })) as CallToolResult
+  expect(result.isError).toBeFalsy()
+
+  const call = lastCall()
+  expect({ path: call.path, query: Object.fromEntries(call.query) }).toEqual({
+    path: DOCS,
+    query: { query: "plan", includeArchived: "true", after: "cur_1", limit: "5" },
+  })
+})
+
 test("read_doc gets the doc by id", async () => {
   const doc = { id: "stream_d1", hostStreamId: "stream_1", title: "Plan", seq: 1, markdown: "<!-- blk_1 -->\nhi" }
   fetchSpy.mockResolvedValue(jsonResponse(200, { data: doc }))
