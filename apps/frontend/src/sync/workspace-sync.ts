@@ -867,17 +867,20 @@ export function registerWorkspaceSocketHandlers(
         dmPeerUserId && !old.dmPeers.some((peer) => peer.streamId === payload.stream.id && peer.userId === dmPeerUserId)
       )
       const isPrivate = payload.stream.visibility === Visibilities.PRIVATE
+      const hostCached =
+        payload.stream.type === StreamTypes.DOC && old.streams.some((s) => s.id === payload.stream.parentStreamId)
       const shouldAddStream =
         !streamExists &&
         (payload.stream.type === StreamTypes.DM
           ? isDmParticipant
           : // Private streams (scratchpads, private channels) — only add to sidebar for the creator.
-            // Other members are added via stream:member_added.
-            !isPrivate || isCreator)
+            // Other members are added via stream:member_added; docs take their access from the host.
+            !isPrivate || isCreator || hostCached)
 
       // Ensure members are subscribed immediately for follow-up stream activity.
       shouldJoinStreamRoom = hasMembership || shouldAddMembership
-      shouldCacheStream = payload.stream.type === StreamTypes.DM ? isDmParticipant : !isPrivate || isCreator
+      shouldCacheStream =
+        payload.stream.type === StreamTypes.DM ? isDmParticipant : !isPrivate || isCreator || hostCached
 
       return {
         ...old,
@@ -1790,6 +1793,7 @@ export function registerWorkspaceSocketHandlers(
     // the second add path and the one that leaked the test scratchpad.
     if (payload.stream.purpose === StreamPurposes.PERSONA_TEST) return
     let shouldSubscribeStream = false
+    let hostArrived = false
 
     const guestRoster = getGuestRoster()
     if (guestRoster) {
@@ -1855,6 +1859,7 @@ export function registerWorkspaceSocketHandlers(
 
       const membershipExists = old.streamMemberships.some((m: StreamMember) => m.streamId === payload.streamId)
       const streamExists = old.streams?.some((s) => s.id === payload.streamId)
+      hostArrived = !streamExists
 
       if (!membershipExists) {
         const now = Date.now()
@@ -1893,6 +1898,11 @@ export function registerWorkspaceSocketHandlers(
 
     if (shouldSubscribeStream) {
       refs.subscribeStream(payload.streamId)
+    }
+    // A host this viewer could not see before arrives without its docs (their stream:created went to the host's
+    // room); the bootstrap lists them through the root's access.
+    if (hostArrived && streamTypeCapabilities(payload.stream.type).hostsDocs) {
+      void queryClient.invalidateQueries({ queryKey: workspaceKeys.bootstrap(workspaceId) })
     }
     await Promise.all(writes)
   }

@@ -12,6 +12,15 @@ test.describe.configure({ timeout: 150_000 })
 const pane = (page: Page, id: string): Locator => page.locator(`[data-panel-tab="${id}"]`)
 const docEditor = (page: Page, docId: string): Locator => pane(page, docId).locator(".ProseMirror")
 const anchorRow = (page: Page, docId: string): Locator => page.locator(`a[data-doc-id="${docId}"]`)
+const presenceStack = (page: Page, docId: string): Locator => pane(page, docId).locator('[data-testid="doc-presence"]')
+
+/** The doc's text without peers' caret labels, which y-prosemirror renders inside the editor. */
+const docText = (editor: Locator): Promise<string> =>
+  editor.evaluate((el) => {
+    const copy = el.cloneNode(true) as HTMLElement
+    copy.querySelectorAll(".ProseMirror-yjs-cursor").forEach((caret) => caret.remove())
+    return copy.textContent ?? ""
+  })
 
 async function createChannelViaApi(
   page: Page,
@@ -42,7 +51,7 @@ async function joinWorkspace(browser: Browser, workspaceId: string, prefix: stri
     await user.page.request.post(`/api/dev/workspaces/${workspaceId}/join`, { data: { role: "member", name } }),
     `${prefix} joins workspace`
   )
-  return { ...user, email }
+  return { ...user, email, name }
 }
 
 async function userIdByEmail(page: Page, workspaceId: string, email: string): Promise<string> {
@@ -106,10 +115,12 @@ function collectRevealFallbacks(page: Page): string[] {
 }
 
 test.describe("Doc pane", () => {
-  test("should create a doc beside its channel and converge two members' edits", async ({ browser }) => {
+  test("should create a doc beside its channel, converge two members' edits and show who is in it", async ({
+    browser,
+  }) => {
     const ownerContext = await browser.newContext()
     const owner = await ownerContext.newPage()
-    const { testId } = await loginAndCreateWorkspace(owner, "doc-owner")
+    const { testId, name: ownerName } = await loginAndCreateWorkspace(owner, "doc-owner")
     const workspaceId = workspaceIdFromUrl(owner)
     const channelId = await createChannelViaApi(owner, workspaceId, `docs-${testId}`, "private")
     const member = await joinWorkspace(browser, workspaceId, "doc-member", testId)
@@ -124,6 +135,7 @@ test.describe("Doc pane", () => {
       )
 
       await openChannel(owner, workspaceId, channelId)
+      await openChannel(member.page, workspaceId, channelId)
       const created = owner.waitForResponse(
         (response) => response.request().method() === "POST" && /\/streams$/.test(new URL(response.url()).pathname)
       )
@@ -139,6 +151,7 @@ test.describe("Doc pane", () => {
       const ownerEditor = docEditor(owner, docId)
       await expect(ownerEditor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
       await expect(pane(owner, docId).getByRole("button", { name: "Bold" })).toBeVisible()
+      await expect(pane(member.page, channelId).getByRole("button", { name: "1 doc" })).toBeVisible({ timeout: 15000 })
 
       await typeAtEnd(owner, ownerEditor, "Rotation tracker")
       await owner.keyboard.press("Enter")
@@ -148,7 +161,6 @@ test.describe("Doc pane", () => {
       await expect(ownerEditor.locator("strong")).toHaveText("Keys")
       await owner.keyboard.press("Enter")
 
-      await openChannel(member.page, workspaceId, channelId)
       const row = anchorRow(member.page, docId)
       await expect(row).toContainText("created a doc", { timeout: 15000 })
       await expect(row).toContainText("Untitled")
@@ -161,7 +173,7 @@ test.describe("Doc pane", () => {
 
       await typeAtEnd(member.page, memberEditor, "AWS key rotated")
 
-      const bothTexts = async () => [await ownerEditor.innerText(), await memberEditor.innerText()]
+      const bothTexts = async () => [await docText(ownerEditor), await docText(memberEditor)]
       await expect
         .poll(
           async () => {
@@ -171,6 +183,18 @@ test.describe("Doc pane", () => {
           { timeout: 15000, message: "both editors should hold both edits" }
         )
         .toBe(true)
+
+      await expect(ownerEditor.locator(".ProseMirror-yjs-cursor")).toContainText(member.name, { timeout: 10000 })
+      await expect(presenceStack(owner, docId).getByRole("button", { name: member.name })).toBeVisible({
+        timeout: 10000,
+      })
+      await expect(presenceStack(member.page, docId).getByRole("button", { name: ownerName })).toBeVisible({
+        timeout: 10000,
+      })
+      await pane(owner, channelId).getByRole("button", { name: "1 doc" }).click()
+      const docLink = owner.getByRole("menuitem", { name: /Untitled/ })
+      await expect(docLink).toHaveAttribute("href", new RegExp(docId))
+      await owner.keyboard.press("Escape")
 
       // Give the 400 ms debounce time to post before the reload drops the page; > 1 means both members' edits are saved.
       await expect.poll(() => savedUpdateCount(owner, workspaceId, docId)).toBeGreaterThan(1)
@@ -192,6 +216,13 @@ test.describe("Doc pane", () => {
       await expect(memberTask).toContainText("revoke old key", { timeout: 15000 })
       await expect(memberTask).toHaveAttribute("data-checked", "true", { timeout: 15000 })
       expect(revealFallbacks.flat()).toEqual([])
+
+      await expect(presenceStack(owner, docId).getByRole("button", { name: member.name })).toBeVisible({
+        timeout: 10000,
+      })
+      await pane(member.page, docId).getByRole("button", { name: "Close", exact: true }).click()
+      await expect(pane(member.page, docId)).toHaveCount(0)
+      await expect(presenceStack(owner, docId)).toHaveCount(0, { timeout: 10000 })
     } finally {
       await ownerContext.close()
       await member.context.close()

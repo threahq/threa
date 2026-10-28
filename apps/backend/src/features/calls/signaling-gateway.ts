@@ -7,6 +7,7 @@ import { createSocketAuthMiddleware } from "../../lib/socket-auth"
 import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"
 import { CALLS_NAMESPACE, callRoom } from "../../lib/call-routing"
+import { createTokenBucket } from "../../lib/token-bucket"
 import { UserRepository } from "../workspaces"
 import type { FeatureFlagService } from "../feature-flags"
 import { checkCallAccess } from "./access"
@@ -106,22 +107,6 @@ interface SocketBinding {
 }
 
 type Ack = (result: { ok: boolean; error?: string; code?: string; data?: unknown }) => void
-
-/** Continuous-refill token bucket, one per socket (INV — signaling abuse hardening). */
-function createTokenBucket(burst: number, refillPerSecond: number) {
-  let tokens = burst
-  let last = Date.now()
-  return {
-    take(): boolean {
-      const now = Date.now()
-      tokens = Math.min(burst, tokens + ((now - last) / 1000) * refillPerSecond)
-      last = now
-      if (tokens < 1) return false
-      tokens -= 1
-      return true
-    },
-  }
-}
 
 /**
  * The `/calls` control namespace. Mirrors {@link registerVoiceGateway}: own

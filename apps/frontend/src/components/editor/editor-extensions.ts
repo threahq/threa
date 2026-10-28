@@ -49,6 +49,7 @@ import { DictationChunkExtension } from "./dictation-chunk-extension"
 import { ComposerPillDragExtension } from "./composer-pill-drag-extension"
 import { YjsCollaboration } from "./yjs-extension"
 import type * as Y from "yjs"
+import type { Awareness } from "y-protocols/awareness"
 
 const lowlight = createLowlight(common)
 
@@ -71,6 +72,7 @@ interface CreateEditorExtensionsOptions extends ContentExtensionsOptions {
 
 interface CreateDocumentExtensionsOptions extends ContentExtensionsOptions {
   ydoc: Y.Doc
+  awareness: Awareness | null
 }
 
 /**
@@ -90,8 +92,8 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
 }
 
 /** A collaborative document editor: the shared content extensions without composer tooling, bound to a Yjs fragment that also owns undo. */
-export function createDocumentExtensions({ ydoc, ...options }: CreateDocumentExtensionsOptions) {
-  return [...buildExtensions(options, "document"), YjsCollaboration.configure({ ydoc })]
+export function createDocumentExtensions({ ydoc, awareness, ...options }: CreateDocumentExtensionsOptions) {
+  return [...buildExtensions(options, "document"), YjsCollaboration.configure({ ydoc, awareness })]
 }
 
 type ExtensionSurface = "composer" | "document"

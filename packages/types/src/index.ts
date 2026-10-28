@@ -1280,6 +1280,7 @@ export {
 
 // Device context
 export { parseDeviceContext, type DeviceOs, type DeviceContext } from "./device-context"
+export { DOC_AWARENESS_MAX_UPDATE_CHARS, docAwarenessPayloadSchema, type DocAwarenessPayload } from "./doc-awareness"
 
 // Sidebar configuration
 export {

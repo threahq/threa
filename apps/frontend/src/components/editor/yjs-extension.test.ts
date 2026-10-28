@@ -1,17 +1,21 @@
 import { DOC_FRAGMENT } from "@threahq/types"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { Editor, type JSONContent } from "@tiptap/core"
 import * as Y from "yjs"
 import { prosemirrorJSONToYDoc } from "y-prosemirror"
+import { applyAwarenessUpdate, Awareness, encodeAwarenessUpdate } from "y-protocols/awareness"
 import { getThreaSchema } from "@threahq/prosemirror/schema"
 import { createDocumentExtensions } from "./editor-extensions"
 
 const editors: Editor[] = []
 
-function createEditor(ydoc: Y.Doc): Editor {
+/** y-prosemirror's defaultCursorBuilder pads the caret's name label with word joiners. */
+const CARET_WORD_JOINERS = /\u2060/g
+
+function createEditor(ydoc: Y.Doc, awareness: Awareness | null = null): Editor {
   const element = document.createElement("div")
   document.body.append(element)
-  const editor = new Editor({ element, extensions: createDocumentExtensions({ ydoc }) })
+  const editor = new Editor({ element, extensions: createDocumentExtensions({ ydoc, awareness }) })
   editor.on("destroy", () => element.remove())
   editors.push(editor)
   return editor
@@ -37,8 +41,11 @@ function pressUndo(editor: Editor) {
   editor.view.dom.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))
 }
 
+const awarenesses: Awareness[] = []
+
 afterEach(() => {
   for (const editor of editors.splice(0)) editor.destroy()
+  for (const awareness of awarenesses.splice(0)) awareness.destroy()
 })
 
 describe("YjsCollaboration", () => {
@@ -124,5 +131,71 @@ describe("YjsCollaboration", () => {
     editor.destroy()
 
     expect(observers()).toEqual(before)
+  })
+
+  it.each([true, false])(
+    "should draw a peer's caret with their name when their awareness carries a cursor and editable is %s",
+    async (editable) => {
+      const ydoc = prosemirrorJSONToYDoc(getThreaSchema(), paragraphs("hello"), DOC_FRAGMENT)
+      const awareness = new Awareness(ydoc)
+      const peerDoc = new Y.Doc()
+      Y.applyUpdate(peerDoc, Y.encodeStateAsUpdate(ydoc))
+      const peer = new Awareness(peerDoc)
+      awarenesses.push(awareness, peer)
+      const editor = createEditor(ydoc, awareness)
+      editor.setEditable(editable)
+
+      const text = peerDoc.getXmlFragment(DOC_FRAGMENT).get(0) as Y.XmlElement
+      const at = Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(text.get(0) as Y.XmlText, 2))
+      peer.setLocalState({ user: { name: "Alice", color: "#d97706" }, cursor: { anchor: at, head: at } })
+      applyAwarenessUpdate(awareness, encodeAwarenessUpdate(peer, [peer.clientID]), "remote")
+
+      const caret = await vi.waitFor(() => {
+        const found = editor.view.dom.querySelector<HTMLElement>(".ProseMirror-yjs-cursor")
+        if (!found) throw new Error("no caret yet")
+        return found
+      })
+      expect({
+        name: caret.textContent?.replace(CARET_WORD_JOINERS, ""),
+        color: caret.style.borderColor,
+        ariaHidden: caret.getAttribute("aria-hidden"),
+      }).toEqual({
+        name: "Alice",
+        color: "rgb(217, 119, 6)",
+        ariaHidden: "true",
+      })
+    }
+  )
+
+  it("should not draw a caret for the viewer's own other tab", async () => {
+    const ydoc = prosemirrorJSONToYDoc(getThreaSchema(), paragraphs("hello"), DOC_FRAGMENT)
+    const awareness = new Awareness(ydoc)
+    awareness.setLocalStateField("user", { userId: "usr_me", name: "Me", color: "#d97706" })
+    const otherTabDoc = new Y.Doc()
+    Y.applyUpdate(otherTabDoc, Y.encodeStateAsUpdate(ydoc))
+    const otherTab = new Awareness(otherTabDoc)
+    const alice = new Awareness(new Y.Doc())
+    awarenesses.push(awareness, otherTab, alice)
+    const editor = createEditor(ydoc, awareness)
+
+    const text = otherTabDoc.getXmlFragment(DOC_FRAGMENT).get(0) as Y.XmlElement
+    const at = Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(text.get(0) as Y.XmlText, 2))
+    otherTab.setLocalState({
+      user: { userId: "usr_me", name: "Me", color: "#d97706" },
+      cursor: { anchor: at, head: at },
+    })
+    alice.setLocalState({
+      user: { userId: "usr_alice", name: "Alice", color: "#d97706" },
+      cursor: { anchor: at, head: at },
+    })
+    applyAwarenessUpdate(awareness, encodeAwarenessUpdate(otherTab, [otherTab.clientID]), "remote")
+    applyAwarenessUpdate(awareness, encodeAwarenessUpdate(alice, [alice.clientID]), "remote")
+
+    const names = await vi.waitFor(() => {
+      const carets = [...editor.view.dom.querySelectorAll<HTMLElement>(".ProseMirror-yjs-cursor")]
+      if (carets.length === 0) throw new Error("no caret yet")
+      return carets.map((caret) => caret.textContent?.replace(CARET_WORD_JOINERS, ""))
+    })
+    expect(names).toEqual(["Alice"])
   })
 })

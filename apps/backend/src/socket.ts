@@ -6,7 +6,7 @@ import { socketConnectionId } from "./lib/id"
 import { socketHandshakeIp } from "./lib/socket-ip"
 import type { AccessLogService, AuditSubjectRef } from "./features/access-log"
 import { SubscribeCoalescer, unionSubjectChunks } from "./features/access-log"
-import { DEVICE_KEY_LENGTH, HEARTBEAT_INTERACTION_THROTTLE_MS } from "@threahq/types"
+import { DEVICE_KEY_LENGTH, docAwarenessPayloadSchema, HEARTBEAT_INTERACTION_THROTTLE_MS } from "@threahq/types"
 import { listAccessibleStreamIds, type StreamService } from "./features/streams"
 import type { PushService } from "./features/push"
 import type { UserSocketRegistry } from "./lib/user-socket-registry"
@@ -19,7 +19,9 @@ import {
   VISIBLE_REFRESH_MAX_IDS,
   VISIBLE_REPORT_MIN_INTERVAL_MS,
 } from "./features/link-previews"
+import { DOC_AWARENESS_RATE_BURST, DOC_AWARENESS_RATE_REFILL_PER_SEC } from "./features/docs"
 import type { QueueManager } from "./lib/queue"
+import { createTokenBucket } from "./lib/token-bucket"
 import { permissionRoomsFor } from "./lib/outbox"
 import { isValidIanaTimezone } from "./lib/temporal"
 import { HttpError } from "./lib/errors"
@@ -722,6 +724,18 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       enqueueVisiblePreviewRefreshes(jobQueue, workspaceId, previewIds).catch((err) => {
         logger.warn({ err, workspaceId }, "Failed to enqueue visible preview refreshes")
       })
+    })
+
+    // Awareness is exempt from INV-4 on purpose: a caret frame has no domain write behind it, nothing replays it, and it is
+    // stale by the time an outbox dispatcher would read it, so it is relayed directly and never persisted. A socket holds a
+    // stream room only after an access-checked join, so membership still gates the relay.
+    const docAwarenessBucket = createTokenBucket(DOC_AWARENESS_RATE_BURST, DOC_AWARENESS_RATE_REFILL_PER_SEC)
+    socket.on("doc:awareness", (payload: unknown) => {
+      const parsed = docAwarenessPayloadSchema.safeParse(payload)
+      if (!parsed.success) return
+      const room = `ws:${parsed.data.workspaceId}:stream:${parsed.data.docId}`
+      if (!socket.rooms.has(room) || !docAwarenessBucket.take()) return
+      socket.to(room).emit("doc:awareness", parsed.data)
     })
 
     // Liveness probe for client-initiated zombie-socket detection on resume.
