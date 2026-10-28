@@ -152,6 +152,8 @@ test("a language picked in a doc reaches the other tab and the saved markdown", 
   await expect(secondEditor).toHaveAttribute("contenteditable", "true", { timeout: 15_000 })
 
   await firstEditor.click()
+  await page.keyboard.type("Intro")
+  await page.keyboard.press("Enter")
   await page.keyboard.type("``` ")
   await page.keyboard.type("print(1)")
   await firstEditor.getByRole("button", { name: "Code language: Plain text" }).click()
@@ -159,6 +161,17 @@ test("a language picked in a doc reaches the other tab and the saved markdown", 
   await page.keyboard.press("Enter")
 
   await expect(secondEditor.getByRole("button", { name: "Code language: Python" })).toBeVisible()
+
+  // Clicking back into the text while the list is open leaves the caret where the click put it.
+  await firstEditor.getByRole("button", { name: "Code language: Python" }).click()
+  await expect(page.getByPlaceholder("Search languages")).toBeFocused()
+  const intro = firstEditor.locator("p", { hasText: "Intro" })
+  await intro.click()
+  await expect(page.getByPlaceholder("Search languages")).toBeHidden()
+  await page.keyboard.press("End")
+  await page.keyboard.type(" first")
+  await expect(intro).toHaveText("Intro first")
+  await expect(firstEditor.locator("pre code")).toHaveText("print(1)")
   await expect
     .poll(
       async () => {

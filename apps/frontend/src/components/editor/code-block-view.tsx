@@ -38,6 +38,8 @@ export function CodeBlockView({ node, editor, getPos, updateAttributes }: NodeVi
 
   const returnFocusToCode = (event: Event) => {
     event.preventDefault()
+    // A click outside the list already put focus where the user wanted it.
+    if (document.activeElement && document.activeElement !== document.body) return
     const pos = getPos()
     if (pos === undefined) return
     const { from } = editor.state.selection
