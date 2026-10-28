@@ -174,7 +174,7 @@ function buildExtensions(config: Partial<CreateEditorExtensionsOptions>, surface
 
     GiphyEmbedExtension,
 
-    ...composerOnly(ComposerPillDragExtension),
+    ComposerPillDragExtension,
 
     // An equation is a node, like a code block: KaTeX in the composer, `$…$` on
     // the wire, and a tap opens its TeX rather than raw delimiters.

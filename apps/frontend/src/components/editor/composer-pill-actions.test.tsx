@@ -6,6 +6,7 @@ import type { JSONContent } from "@threahq/types"
 import { ComposerPillDragPluginKey } from "./composer-pill-drag-extension"
 import { ComposerPillActions } from "./composer-pill-actions"
 import { createEditorExtensions } from "./editor-extensions"
+import { ImageViewerContext } from "./image-viewer-context"
 
 const openEditors: Editor[] = []
 let originalClipboardDescriptor: PropertyDescriptor | undefined
@@ -213,6 +214,26 @@ describe("ComposerPillActions", () => {
       from: selection.from,
       labels: actionLabels(),
     }).toEqual({ display: "inline", nodeSelection: true, from: pos, labels: ["Copy pill", "Show as chip"] })
+  })
+
+  it("should open the image and take the bar down when Open is tapped on a surface with a gallery", () => {
+    const editor = createPillEditor([attachmentPill("image/png")])
+    const open = vi.fn()
+    render(
+      <ImageViewerContext.Provider value={{ open, readOnly: false }}>
+        <ComposerPillActions editor={editor} />
+      </ImageViewerContext.Provider>
+    )
+
+    selectPill(editor, "attachmentReference")
+    const labelsWhenSelected = actionLabels()
+    fireEvent.click(screen.getByRole("button", { name: "Open image" }))
+
+    expect({ labelsWhenSelected, opened: open.mock.calls, labelsAfter: actionLabels() }).toEqual({
+      labelsWhenSelected: ["Copy pill", "Open image", "Show as image"],
+      opened: [["attach_01IMG"]],
+      labelsAfter: [],
+    })
   })
 
   it("should show only Copy when the selected pill is not an image", () => {

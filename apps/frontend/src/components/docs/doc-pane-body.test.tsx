@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { MemoryRouter, Route, Routes } from "react-router-dom"
+import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from "react-router-dom"
 import type { Editor, JSONContent } from "@tiptap/core"
 import * as Y from "yjs"
 import { prosemirrorJSONToYDoc, yDocToProsemirrorJSON } from "y-prosemirror"
@@ -22,6 +22,11 @@ import { ApiError } from "@/api/client"
 import { docsApi } from "@/api/docs"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { RevealOnReady } from "@/contexts/coordinated-loading-context"
+import { MediaGalleryProvider } from "@/contexts/media-gallery-context"
+import { __resetOverlayHistoryForTests, attachOverlayHistoryRouter } from "@/components/ui/history-back-close"
+import * as mobileModule from "@/hooks/use-mobile"
+import * as inputModeModule from "@/hooks/use-input-mode"
+import { usePullToRefresh } from "@/hooks/use-pull-to-refresh"
 import { DocSync, FLUSH_CAP_MS } from "@/lib/docs/doc-sync"
 import { PRESENCE_SEND_WINDOW_MS } from "@/lib/docs/doc-presence"
 import { getOpenDocIds } from "@/lib/docs/open-docs"
@@ -58,6 +63,41 @@ function proseMirror(): HTMLElement & { editor: Editor } {
   const element = document.querySelector(".ProseMirror")
   if (!element) throw new Error("editor not mounted")
   return element as HTMLElement & { editor: Editor }
+}
+
+/** tiptap's focus command lands on the next animation frame. */
+const nextFrame = () => act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+
+function PullToRefreshHost({ children }: { children: ReactNode }) {
+  const { ref, distance } = usePullToRefresh({ enabled: true })
+  return (
+    <div ref={ref} data-testid="pull-host" data-distance={distance}>
+      {children}
+    </div>
+  )
+}
+
+const IMAGE_DOC: JSONContent = {
+  type: "doc",
+  content: [
+    { type: "paragraph", content: [{ type: "text", text: "Rotation tracker" }] },
+    {
+      type: "paragraph",
+      content: [
+        {
+          type: "attachmentReference",
+          attrs: {
+            id: "attach_shot",
+            filename: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+            status: "uploaded",
+            display: "inline",
+          },
+        },
+      ],
+    },
+  ],
 }
 
 function DocPane({ canWrite }: { canWrite: boolean | null }) {
@@ -147,9 +187,11 @@ describe("DocPaneBody", () => {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <MemoryRouter initialEntries={[`/w/${WORKSPACE_ID}`]}>
-            <Routes>
-              <Route path="/w/:workspaceId" element={wrap(<DocPane canWrite={canWrite} />)} />
-            </Routes>
+            <MediaGalleryProvider>
+              <Routes>
+                <Route path="/w/:workspaceId" element={wrap(<DocPane canWrite={canWrite} />)} />
+              </Routes>
+            </MediaGalleryProvider>
           </MemoryRouter>
         </TooltipProvider>
       </QueryClientProvider>
@@ -559,6 +601,153 @@ describe("DocPaneBody", () => {
       afterFailure: JSON.stringify(proseMirror().editor.getJSON()).includes('"type":"attachmentReference"'),
       toasts: toastError.mock.calls.map(([message]) => message),
     }).toEqual({ withPlaceholder: true, afterFailure: false, toasts: ["Couldn't upload the file"] })
+  })
+
+  it("should upload files picked from the attach button into the doc", async () => {
+    const uploadFile = vi.fn(() => new Promise<never>(() => {}))
+    vi.spyOn(attachmentsModule, "useAttachments").mockReturnValue({
+      uploadFile,
+      imageCount: 0,
+    } as unknown as ReturnType<typeof attachmentsModule.useAttachments>)
+    await mountLoaded()
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
+    const openPicker = vi.spyOn(input, "click").mockImplementation(() => {})
+    const file = new File(["png"], "shot.png", { type: "image/png" })
+
+    fireEvent.click(screen.getByRole("button", { name: "Attach files" }))
+    expect(openPicker).toHaveBeenCalledTimes(1)
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => expect(uploadFile).toHaveBeenCalledWith(file))
+    expect(JSON.stringify(proseMirror().editor.getJSON())).toContain('"type":"attachmentReference"')
+  })
+
+  it("should open an image in the gallery on tap when the doc is read-only", async () => {
+    serverDoc = prosemirrorJSONToYDoc(getThreaSchema(), IMAGE_DOC, DOC_FRAGMENT)
+    mount(false)
+
+    fireEvent.click(await screen.findByRole("button", { name: "shot.png" }))
+
+    expect(await screen.findByRole("dialog", { name: "shot.png" })).toBeTruthy()
+    expect(screen.queryByRole("button", { name: "Show as link" })).toBeNull()
+  })
+
+  it("should open an image in the gallery from its menu when the doc is editable", async () => {
+    serverDoc = prosemirrorJSONToYDoc(getThreaSchema(), IMAGE_DOC, DOC_FRAGMENT)
+    mount(true)
+
+    fireEvent.click(await screen.findByRole("button", { name: "shot.png" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Open" }))
+
+    expect(await screen.findByRole("dialog", { name: "shot.png" })).toBeTruthy()
+  })
+
+  it("should leave a downward swipe in a short doc to the doc instead of pulling to refresh", async () => {
+    await mountLoaded(true, { wrap: (body) => <PullToRefreshHost>{body}</PullToRefreshHost> })
+    const editor = proseMirror()
+
+    fireEvent.touchStart(editor, { touches: [{ clientY: 100 }] })
+    fireEvent.touchMove(editor, { touches: [{ clientY: 400 }] })
+
+    expect(screen.getByTestId("pull-host").dataset.distance).toBe("0")
+  })
+
+  it("should drop the caret on Back before leaving the doc on a phone", async () => {
+    vi.spyOn(mobileModule, "useIsMobile").mockReturnValue(true)
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const docPath = `/w/${WORKSPACE_ID}`
+    const router = createMemoryRouter(
+      [
+        {
+          children: [
+            { path: "/other", element: <div>other-page</div> },
+            {
+              path: "/w/:workspaceId",
+              element: (
+                <MediaGalleryProvider>
+                  <DocPane canWrite />
+                </MediaGalleryProvider>
+              ),
+            },
+          ],
+        },
+      ],
+      { initialEntries: ["/other", docPath], initialIndex: 1 }
+    )
+    attachOverlayHistoryRouter(router)
+    try {
+      render(
+        <QueryClientProvider client={queryClient}>
+          <TooltipProvider>
+            <RouterProvider router={router} />
+          </TooltipProvider>
+        </QueryClientProvider>
+      )
+      await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
+      const keyBefore = router.state.location.key
+      act(() => {
+        proseMirror().editor.commands.focus("end")
+      })
+      await waitFor(() => expect(router.state.location.key).not.toBe(keyBefore))
+
+      await act(async () => {
+        await router.navigate(-1)
+      })
+      await nextFrame()
+      const afterFirstBack = { path: router.state.location.pathname, focused: document.activeElement === proseMirror() }
+      await act(async () => {
+        await router.navigate(-1)
+      })
+
+      expect({ afterFirstBack, afterSecondBack: router.state.location.pathname }).toEqual({
+        afterFirstBack: { path: docPath, focused: false },
+        afterSecondBack: "/other",
+      })
+    } finally {
+      __resetOverlayHistoryForTests()
+    }
+  })
+
+  it("should format on tap, not on touch, when a wide screen is driven by touch", async () => {
+    vi.spyOn(mobileModule, "useIsMobile").mockReturnValue(false)
+    vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("touch")
+    await mountLoaded()
+    act(() => {
+      proseMirror().editor.commands.focus("end")
+    })
+    const bold = screen.getByRole("button", { name: "Bold" })
+
+    fireEvent.pointerDown(bold)
+    const onTouch = proseMirror().editor.isActive("bold")
+    fireEvent.click(bold)
+
+    expect({ onTouch, onTap: proseMirror().editor.isActive("bold") }).toEqual({ onTouch: false, onTap: true })
+  })
+
+  it("should check a task without focusing the doc", async () => {
+    serverDoc = prosemirrorJSONToYDoc(
+      getThreaSchema(),
+      {
+        type: "doc",
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: "Rotation tracker" }] },
+          {
+            type: "taskList",
+            content: [{ type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph" }] }],
+          },
+        ],
+      },
+      DOC_FRAGMENT
+    )
+    mount(true)
+
+    fireEvent.click(await screen.findByRole("checkbox"))
+    await nextFrame()
+
+    expect({
+      checked: proseMirror().editor.state.doc.lastChild?.firstChild?.attrs.checked,
+      focused: document.activeElement === proseMirror(),
+    }).toEqual({ checked: true, focused: false })
   })
 
   it("keeps a file dropped beside the editor from opening in place of the app", async () => {

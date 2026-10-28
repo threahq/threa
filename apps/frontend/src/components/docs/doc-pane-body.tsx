@@ -1,9 +1,12 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react"
 import { EditorContent, useEditor, type Editor } from "@tiptap/react"
 import type * as Y from "yjs"
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model"
 import type { Awareness } from "y-protocols/awareness"
 import { toast } from "sonner"
+import { Paperclip } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Skeleton } from "@/components/ui/skeleton"
 import { createDocumentExtensions } from "@/components/editor/editor-extensions"
 import { EDITOR_CONTENT_CLASS } from "@/components/editor/editor-content-class"
@@ -21,12 +24,24 @@ import {
 } from "@/components/editor/triggers"
 import { tryInsertDocChip } from "@/components/editor/in-app-link-chip"
 import { EditorToolbar } from "@/components/editor/editor-toolbar"
+import { ComposerPillDndProvider } from "@/components/editor/composer-pill-dnd"
+import { ComposerPillActions } from "@/components/editor/composer-pill-actions"
+import {
+  imageReferenceDisplay,
+  type AttachmentReferenceAttrs,
+} from "@/components/editor/attachment-reference-extension"
+import { ImageViewerContext, type ImageViewer } from "@/components/editor/image-viewer-context"
+import { HistoryBackClose } from "@/components/ui/history-back-close"
+import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
+import { attachmentContentUrl } from "@/api"
+import { useMediaGallery } from "@/contexts/media-gallery-context"
 import { usePreferences } from "@/contexts"
 import { useRevealReady } from "@/contexts/coordinated-loading-context"
 import { useMentionables, useMarkdownTriggerLookups } from "@/hooks/use-mentionables"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useAttachments } from "@/hooks/use-attachments"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { useLatest } from "@/hooks/use-latest"
 import { getEffectiveEditorBindings } from "@/lib/keyboard-shortcuts"
 import { cn } from "@/lib/utils"
@@ -115,6 +130,9 @@ interface DocEditorProps {
 
 function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, onBlur }: DocEditorProps) {
   const isMobile = useIsMobile()
+  const isTouch = useInputMode() === "touch"
+  const { openMedia } = useMediaGallery()
+  const imageViewer = useMemo<ImageViewer>(() => ({ open: openMedia, readOnly: !canWrite }), [openMedia, canWrite])
   const threads = useDocBlockThreads(workspaceId, docId, joinCount)
   const [column, setColumn] = useState<HTMLDivElement | null>(null)
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
@@ -263,10 +281,32 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
     if (editor && editor.isEditable !== canWrite) editor.setEditable(canWrite)
   }, [editor, canWrite])
 
+  const [focused, setFocused] = useState(false)
+  useEffect(() => {
+    if (!editor) return
+    const onFocus = () => setFocused(true)
+    const onBlur = () => setFocused(false)
+    editor.on("focus", onFocus)
+    editor.on("blur", onBlur)
+    return () => {
+      editor.off("focus", onFocus)
+      editor.off("blur", onBlur)
+    }
+  }, [editor])
+
   // Files dropped beside the editor (the spacer, a read-only doc) would otherwise open in place of the app.
   const onDragOver = (event: DragEvent) => {
     if (event.dataTransfer.types.includes("Files")) event.preventDefault()
   }
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const onFilesPicked = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? [])
+    event.target.value = ""
+    if (files.length === 0 || !editor) return
+    editor.commands.focus()
+    insertFiles(files)
+  }
+
   const onDrop = (event: DragEvent) => {
     if (event.defaultPrevented || event.dataTransfer.files.length === 0) return
     if (canWrite && editor) {
@@ -280,48 +320,138 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
   }
 
   return (
-    <div className="flex h-full flex-col">
-      {canWrite && (
-        <div className={cn(COLUMN_CLASS, "shrink-0")}>
-          <EditorToolbar
-            editor={editor}
-            isVisible
-            inline
-            inlinePosition="above"
-            linkPopoverOpen={linkPopoverOpen}
-            onLinkPopoverOpenChange={setLinkPopoverOpen}
-            showSpecialInputControls={isMobile}
-          />
-        </div>
-      )}
-      <div className="min-h-0 flex-1 overflow-y-auto" onDragOver={onDragOver} onDrop={onDrop}>
-        <div ref={setColumn} className={cn(COLUMN_CLASS, "relative flex min-h-full flex-col py-8 pr-10")}>
-          <DocTitle
-            workspaceId={workspaceId}
-            docId={docId}
-            canWrite={canWrite}
-            onSubmit={() => editor?.commands.focus("start")}
-            className="mb-4"
-          />
-          <EditorContent editor={editor} />
-          <DocBlockGutter editor={editor} container={column} docId={docId} threads={threads} canComment={canWrite} />
-          <DocBacklinks workspaceId={workspaceId} docId={docId} />
-          {renderMentionList()}
-          {renderChannelList()}
-          {renderEmojiGrid()}
-          {renderDocList()}
+    <ImageViewerContext.Provider value={imageViewer}>
+      <ComposerPillDndProvider editor={editor}>
+        <div className="flex h-full flex-col" data-suppress-pull-refresh="true">
+          {/* Back drops the caret before it leaves the doc; while the keyboard is up, Android spends that Back closing it. */}
+          {isMobile && <HistoryBackClose open={focused} onClose={() => editor?.commands.blur()} />}
           {canWrite && (
-            <div
-              className="min-h-24 flex-1 cursor-text"
-              aria-hidden="true"
-              onMouseDown={(event) => {
-                event.preventDefault()
-                editor?.commands.focus("end")
-              }}
-            />
+            <div className={cn(COLUMN_CLASS, "shrink-0")}>
+              <EditorToolbar
+                editor={editor}
+                isVisible
+                inline
+                inlinePosition="above"
+                linkPopoverOpen={linkPopoverOpen}
+                onLinkPopoverOpenChange={setLinkPopoverOpen}
+                showSpecialInputControls={isMobile}
+                touch={isTouch}
+                trailingContent={<AttachButton touch={isTouch} onAttach={() => fileInputRef.current?.click()} />}
+              />
+              <input ref={fileInputRef} type="file" multiple className="hidden" onChange={onFilesPicked} />
+            </div>
           )}
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain" onDragOver={onDragOver} onDrop={onDrop}>
+            <div ref={setColumn} className={cn(COLUMN_CLASS, "relative flex min-h-full flex-col py-8 pr-10")}>
+              <DocTitle
+                workspaceId={workspaceId}
+                docId={docId}
+                canWrite={canWrite}
+                onSubmit={() => editor?.commands.focus("start")}
+                className="mb-4"
+              />
+              <EditorContent editor={editor} />
+              <DocBlockGutter
+                editor={editor}
+                container={column}
+                docId={docId}
+                threads={threads}
+                canComment={canWrite}
+              />
+              <DocBacklinks workspaceId={workspaceId} docId={docId} />
+              {renderMentionList()}
+              {renderChannelList()}
+              {renderEmojiGrid()}
+              {renderDocList()}
+              {canWrite && (
+                <div
+                  className="min-h-24 flex-1 cursor-text"
+                  aria-hidden="true"
+                  onMouseDown={(event) => {
+                    event.preventDefault()
+                    editor?.commands.focus("end")
+                  }}
+                />
+              )}
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
+        {canWrite && <ComposerPillActions editor={editor} />}
+        <DocImageGallery editor={editor} workspaceId={workspaceId} />
+      </ComposerPillDndProvider>
+    </ImageViewerContext.Provider>
+  )
+}
+
+function docImageItems(doc: ProseMirrorNode, workspaceId: string): GalleryItem[] {
+  const items: GalleryItem[] = []
+  const seen = new Set<string>()
+  doc.descendants((node) => {
+    const attrs = node.attrs as AttachmentReferenceAttrs
+    if (!imageReferenceDisplay(node) || attrs.status !== "uploaded" || seen.has(attrs.id)) return
+    seen.add(attrs.id)
+    items.push({
+      type: "image",
+      url: attachmentContentUrl(workspaceId, attrs.id),
+      thumbnailUrl: attachmentContentUrl(workspaceId, attrs.id, { variant: "thumbnail" }),
+      filename: attrs.filename,
+      attachmentId: attrs.id,
+    })
+  })
+  return items
+}
+
+/** The doc's images in document order, opened through the shared `?media=` param so Back closes them. */
+function DocImageGallery({ editor, workspaceId }: { editor: Editor | null; workspaceId: string }) {
+  const { mediaAttachmentId, openMedia, closeMedia } = useMediaGallery()
+  const [items, setItems] = useState<GalleryItem[]>([])
+  const open = mediaAttachmentId !== null
+
+  useEffect(() => {
+    if (!editor || !open) return
+    const sync = () => setItems(docImageItems(editor.state.doc, workspaceId))
+    sync()
+    editor.on("update", sync)
+    return () => {
+      editor.off("update", sync)
+    }
+  }, [editor, open, workspaceId])
+
+  const index = items.findIndex((item) => item.attachmentId === mediaAttachmentId)
+  return (
+    <MediaGallery
+      isOpen={index !== -1}
+      onClose={closeMedia}
+      items={items}
+      initialIndex={Math.max(0, index)}
+      workspaceId={workspaceId}
+      onItemChange={openMedia}
+    />
+  )
+}
+
+/** The doc's file picker, pinned after the formatting buttons so it never scrolls out of reach. */
+function AttachButton({ touch, onAttach }: { touch: boolean; onAttach: () => void }) {
+  const button = (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      aria-label="Attach files"
+      className={cn("shrink-0 p-0", touch ? "h-9 w-9" : "h-8 w-8")}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onAttach}
+    >
+      <Paperclip className="h-4 w-4" />
+    </Button>
+  )
+  if (touch) return button
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipContent side="bottom" className="text-xs">
+        Attach files
+      </TooltipContent>
+    </Tooltip>
   )
 }

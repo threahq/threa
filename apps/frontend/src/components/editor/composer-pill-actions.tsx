@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react"
 import { createPortal } from "react-dom"
-import { Check, Copy, Image, Tag } from "lucide-react"
+import { Check, Copy, Image, Maximize2, Tag } from "lucide-react"
 import { toast } from "sonner"
 import type { Editor } from "@tiptap/react"
 import { NodeSelection } from "@tiptap/pm/state"
@@ -9,6 +9,7 @@ import { useInputMode } from "@/hooks/use-input-mode"
 import { cn } from "@/lib/utils"
 import { serializeClipboardSlice } from "./clipboard-copy"
 import { ComposerPillDragPluginKey, isComposerPillNode } from "./composer-pill-drag-extension"
+import { useImageViewer, type ImageViewer } from "./image-viewer-context"
 import {
   DISPLAY_TOGGLE_LABEL,
   imageReferenceDisplay,
@@ -27,6 +28,7 @@ interface ActionBarAnchor {
   top: number
   below: boolean
   imageDisplay: AttachmentDisplay | null
+  canOpenImage: boolean
 }
 
 function pillRect(editor: Editor, pos: number): DOMRect | null {
@@ -56,7 +58,7 @@ function selectedPillPos(editor: Editor): number | null {
   return selection.from
 }
 
-function actionBarAnchor(editor: Editor): ActionBarAnchor | null {
+function actionBarAnchor(editor: Editor, viewer: ImageViewer | null): ActionBarAnchor | null {
   if (editor.isDestroyed || ComposerPillDragPluginKey.getState(editor.state)) return null
   const pos = selectedPillPos(editor)
   if (pos === null) return null
@@ -65,7 +67,8 @@ function actionBarAnchor(editor: Editor): ActionBarAnchor | null {
   if (!rect || rect.bottom < 0 || rect.top > window.innerHeight) return null
   const node = editor.state.doc.nodeAt(pos)
   const imageDisplay = node ? imageReferenceDisplay(node) : null
-  const buttonCount = imageDisplay ? 2 : 1
+  const canOpenImage = !!viewer && !!imageDisplay && node?.attrs.status === "uploaded"
+  const buttonCount = 1 + (imageDisplay ? 1 : 0) + (canOpenImage ? 1 : 0)
   const barWidth = buttonCount * ACTION_BUTTON_SIZE_PX + (buttonCount - 1) * ACTION_BUTTON_GAP_PX
   const half = barWidth / 2
   const left = Math.min(Math.max(rect.left + rect.width / 2, half), Math.max(half, window.innerWidth - half))
@@ -76,6 +79,7 @@ function actionBarAnchor(editor: Editor): ActionBarAnchor | null {
     top: below ? rect.bottom + ACTION_BAR_OFFSET_PX : rect.top - ACTION_BAR_OFFSET_PX,
     below,
     imageDisplay,
+    canOpenImage,
   }
 }
 
@@ -87,19 +91,21 @@ function sameAnchor(left: ActionBarAnchor | null, right: ActionBarAnchor | null)
     left.left === right.left &&
     left.top === right.top &&
     left.below === right.below &&
-    left.imageDisplay === right.imageDisplay
+    left.imageDisplay === right.imageDisplay &&
+    left.canOpenImage === right.canOpenImage
   )
 }
 
 /**
- * Touch-owned actions for a selected composer pill (copy, and the display toggle
- * for an image). Blink resolves a long press inside a contenteditable against its
+ * Touch-owned actions for a selected composer pill (copy, and for an image the
+ * display toggle and, where the surface has a gallery, opening it). Blink resolves a long press inside a contenteditable against its
  * own editing heuristics, so a native selection can neither be pinned to one atom
  * nor share the gesture with the app's drag; the pill's exact `NodeSelection`
  * gets its own control instead.
  */
 export function ComposerPillActions({ editor }: { editor: Editor | null }) {
   const inputMode = useInputMode()
+  const viewer = useImageViewer()
   const [anchor, setAnchor] = useState<ActionBarAnchor | null>(null)
   const [copied, setCopied] = useState(false)
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -111,7 +117,7 @@ export function ComposerPillActions({ editor }: { editor: Editor | null }) {
     }
 
     const sync = () => {
-      const next = actionBarAnchor(editor)
+      const next = actionBarAnchor(editor, viewer)
       setAnchor((current) => (sameAnchor(current, next) ? current : next))
     }
     const hide = () => setAnchor(null)
@@ -134,7 +140,7 @@ export function ComposerPillActions({ editor }: { editor: Editor | null }) {
       win.visualViewport?.removeEventListener("resize", sync)
       win.visualViewport?.removeEventListener("scroll", sync)
     }
-  }, [editor, inputMode])
+  }, [editor, inputMode, viewer])
 
   useEffect(() => {
     setCopied(false)
@@ -174,6 +180,16 @@ export function ComposerPillActions({ editor }: { editor: Editor | null }) {
     editor.view.dispatch(tr.setSelection(NodeSelection.create(tr.doc, pos)))
   }, [editor])
 
+  const openImage = useCallback(() => {
+    if (!editor || editor.isDestroyed || !viewer) return
+    const pos = selectedPillPos(editor)
+    const node = pos === null ? null : editor.state.doc.nodeAt(pos)
+    if (pos === null || !node) return
+    // The bar sits above every overlay; moving the caret past the pill takes it down under the gallery.
+    editor.commands.setTextSelection(pos + node.nodeSize)
+    viewer.open(node.attrs.id as string)
+  }, [editor, viewer])
+
   // A parent re-render can land between the editor's teardown and this effect's
   // cleanup, and `view` throws once unmounted while `isDestroyed` stays safe.
   if (!anchor || !editor || editor.isDestroyed) return null
@@ -199,6 +215,19 @@ export function ComposerPillActions({ editor }: { editor: Editor | null }) {
       >
         {copied ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
       </Button>
+      {anchor.canOpenImage && (
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className={buttonClass}
+          onPointerDown={keepSelection}
+          onClick={openImage}
+          aria-label="Open image"
+        >
+          <Maximize2 className="size-4" />
+        </Button>
+      )}
       {anchor.imageDisplay && (
         <Button
           type="button"

@@ -9,6 +9,7 @@ import { AttachmentChip } from "@/components/timeline/attachment-chip"
 import { ThumbnailImg, thumbnailBox, useThumbnailLoadState } from "@/components/timeline/attachment-thumbnail"
 import { attachmentContentUrl } from "@/api"
 import { getUploadJobByAttachmentId } from "@/lib/uploads/upload-manager"
+import { useImageViewer } from "./image-viewer-context"
 import {
   DISPLAY_TOGGLE_LABEL,
   imageReferenceDisplay,
@@ -115,12 +116,14 @@ function ImageDisplayToggle({
   display,
   updateAttributes,
   focusAfterNode,
+  onOpen,
   children,
 }: {
   attrs: AttachmentReferenceAttrs
   display: AttachmentDisplay
   updateAttributes: NodeViewProps["updateAttributes"]
   focusAfterNode: () => void
+  onOpen: (() => void) | null
   children: ReactNode
 }) {
   const [open, setOpen] = useState(false)
@@ -138,7 +141,7 @@ function ImageDisplayToggle({
       </AttachmentTooltip>
       <PopoverContent
         side="top"
-        className="w-auto p-1"
+        className="flex w-auto gap-1 p-1"
         // The composer takes typing, a focused trigger does not; an outside
         // press already put focus where the user meant it.
         onInteractOutside={() => {
@@ -150,6 +153,20 @@ function ImageDisplayToggle({
           dismissedOutside.current = false
         }}
       >
+        {onOpen && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              // The gallery takes focus; handing it back to the editor would race it.
+              dismissedOutside.current = true
+              setOpen(false)
+              onOpen()
+            }}
+          >
+            Open
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"
@@ -168,7 +185,9 @@ function ImageDisplayToggle({
 export function AttachmentReferenceView({ node, updateAttributes, editor, getPos }: NodeViewProps) {
   const attrs = node.attrs as AttachmentReferenceAttrs
   const { workspaceId } = useParams<{ workspaceId: string }>()
+  const viewer = useImageViewer()
   const display = imageReferenceDisplay(node)
+  const openImage = viewer && display && attrs.status === "uploaded" ? () => viewer.open(attrs.id) : null
   const showInline = display === "inline" && attrs.status === "uploaded"
 
   const visual =
@@ -188,6 +207,25 @@ export function AttachmentReferenceView({ node, updateAttributes, editor, getPos
     )
   }
 
+  if (viewer?.readOnly) {
+    return (
+      <NodeViewWrapper as="span" data-type="attachment-reference">
+        {openImage ? (
+          <button
+            type="button"
+            aria-label={attrs.filename}
+            className="inline cursor-zoom-in align-baseline"
+            onClick={openImage}
+          >
+            {visual}
+          </button>
+        ) : (
+          visual
+        )}
+      </NodeViewWrapper>
+    )
+  }
+
   const focusAfterNode = () => {
     const pos = getPos()
     if (pos === undefined) editor.commands.focus()
@@ -201,6 +239,7 @@ export function AttachmentReferenceView({ node, updateAttributes, editor, getPos
         display={display}
         updateAttributes={updateAttributes}
         focusAfterNode={focusAfterNode}
+        onOpen={openImage}
       >
         {visual}
       </ImageDisplayToggle>
