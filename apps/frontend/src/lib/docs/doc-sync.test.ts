@@ -50,6 +50,13 @@ class FakeDocServer {
     postUpdate: vi.fn(async (_ws: string, _doc: string, update: string) => {
       const error = this.postErrors.shift()
       if (error) throw error
+      // As the server does: bytes whose dependencies it lacks are refused.
+      const trial = new Y.Doc()
+      Y.applyUpdate(trial, Y.encodeStateAsUpdate(this.doc))
+      Y.applyUpdate(trial, base64ToBytes(update))
+      if (trial.store.pendingStructs || trial.store.pendingDs) {
+        throw new ApiError(400, "UPDATE_NOT_APPLICABLE", "UPDATE_NOT_APPLICABLE")
+      }
       const seq = this.store(update)
       if (seq === null) return { seq: this.seq, applied: false, touchedBlockIds: [] }
       this.broadcast(seq)
@@ -227,6 +234,79 @@ function textOf(update: string): string {
 
 function postedTexts(server: FakeDocServer): string[] {
   return server.api.postUpdate.mock.calls.map((call) => textOf(call[2]))
+}
+
+const blockIds = {
+  a: "blk_0000000000000000000000000A",
+  b: "blk_0000000000000000000000000B",
+  c: "blk_0000000000000000000000000C",
+}
+
+function block(id: string, text: string, type = "paragraph", marks?: JSONContent["marks"]): JSONContent {
+  return {
+    type,
+    attrs: { blockId: id, ...(type === "heading" ? { level: 2 } : {}) },
+    content: [{ type: "text", text, ...(marks ? { marks } : {}) }],
+  }
+}
+
+function doc(...blocks: JSONContent[]): JSONContent {
+  return { type: "doc", content: blocks }
+}
+
+const alpha = block(blockIds.a, "alpha")
+const beta = block(blockIds.b, "beta")
+const gamma = block(blockIds.c, "gamma")
+
+/** Each top-level block as `type: text`, the shape a reader sees. */
+function blocksOf(ydoc: Y.Doc): string[] {
+  const json = yXmlFragmentToProsemirrorJSON(ydoc.getXmlFragment(DOC_FRAGMENT)) as JSONContent
+  return (json.content ?? []).map(
+    (node) => `${node.type}: ${(node.content ?? []).map((child) => child.text ?? "").join("")}`
+  )
+}
+
+/** Web Locks as one browser grants them to its tabs: shared or exclusive, queued in order, `ifAvailable`, abortable. */
+class FakeLocks {
+  private readonly held = new Map<string, { exclusive: boolean; count: number }>()
+  private readonly waiting = new Map<string, (() => boolean)[]>()
+
+  request(name: string, options: LockOptions, callback: (lock: Lock | null) => unknown): Promise<unknown> {
+    const exclusive = options.mode !== "shared"
+    const free = () => {
+      const lock = this.held.get(name)
+      return !lock || (!exclusive && !lock.exclusive)
+    }
+    const run = () => {
+      const lock = this.held.get(name) ?? { exclusive, count: 0 }
+      lock.count += 1
+      this.held.set(name, lock)
+      return Promise.resolve(callback({ name, mode: exclusive ? "exclusive" : "shared" })).finally(() => {
+        lock.count -= 1
+        if (lock.count === 0) this.held.delete(name)
+        const queue = this.waiting.get(name) ?? []
+        while (queue.length > 0 && queue[0]()) queue.shift()
+      })
+    }
+    if (free() && !this.waiting.get(name)?.length) return run()
+    if (options.ifAvailable) return Promise.resolve(callback(null))
+    return new Promise((resolve, reject) => {
+      const grant = () => {
+        if (!free()) return false
+        run().then(resolve, reject)
+        return true
+      }
+      const queue = this.waiting.get(name) ?? []
+      queue.push(grant)
+      this.waiting.set(name, queue)
+      options.signal?.addEventListener("abort", () => {
+        const index = queue.indexOf(grant)
+        if (index === -1) return
+        queue.splice(index, 1)
+        reject(new DOMException("Aborted", "AbortError"))
+      })
+    })
+  }
 }
 
 describe("DocSync", () => {
@@ -936,37 +1016,238 @@ describe("DocSync", () => {
     })
   })
 
+  describe("between tabs", () => {
+    beforeEach(() => {
+      Object.defineProperty(navigator, "locks", { value: new FakeLocks(), configurable: true })
+    })
+
+    afterEach(() => {
+      Reflect.deleteProperty(navigator, "locks")
+    })
+
+    /** Lets the tabs' messages, each a microtask, run to the end of every chain they start. */
+    async function settle(): Promise<void> {
+      for (let round = 0; round < 50; round++) await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
+    }
+
+    async function openTwo() {
+      const leader = connect(server)
+      await leader.sync.start()
+      const follower = connect(server)
+      await follower.sync.start()
+      await settle()
+      return { leader, follower }
+    }
+
+    it("should leave the doc to the next tab when stopped before the election", async () => {
+      const unmounted = connect(server)
+      const started = unmounted.sync.start()
+      unmounted.sync.stop()
+      server.clients.delete(unmounted.sync)
+      await started
+      type(server.doc, "on the server ")
+      server.log.push({
+        seq: 1,
+        update: bytesToBase64(Y.encodeStateAsUpdate(server.doc)),
+        actorId: "usr_1",
+        actorType: "user",
+      })
+
+      const mounted = connect(server)
+      await mounted.sync.start()
+      await settle()
+
+      expect({ status: mounted.sync.getStatus(), text: mounted.text() }).toEqual({
+        status: { phase: "ready" },
+        text: "on the server ",
+      })
+    })
+
+    it("should show each tab's edits in the other at once while offline", async () => {
+      const { leader, follower } = await openTwo()
+      vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)
+
+      type(follower.ydoc, "from the follower ")
+      type(leader.ydoc, "from the leader ")
+      await settle()
+
+      expect({ leader: leader.text(), follower: follower.text(), posts: server.api.postUpdate.mock.calls }).toEqual({
+        leader: follower.text(),
+        follower: expect.stringMatching(/^(?=.*from the follower )(?=.*from the leader )/),
+        posts: [],
+      })
+    })
+
+    it("should send a following tab's edit from the leading tab", async () => {
+      const { leader, follower } = await openTwo()
+
+      type(follower.ydoc, "typed in the follower ")
+      await settle()
+      await leader.sync.flush()
+
+      expect({ server: server.text, follower: follower.sync.getStatus() }).toEqual({
+        server: "typed in the follower ",
+        follower: { phase: "ready" },
+      })
+    })
+
+    it("should bring back a deleted block with its offline edit once when two tabs open the saved copy", async () => {
+      server.writeContent(doc(alpha, beta, gamma))
+      const first = connect(server)
+      await first.sync.start()
+      await settle()
+      const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)
+      writeDoc(first.ydoc, doc(alpha, block(blockIds.b, "beta mine"), gamma))
+      await vi.advanceTimersByTimeAsync(FLUSH_CAP_MS)
+      first.sync.stop()
+      server.clients.delete(first.sync)
+      await settle()
+      server.writeContent(doc(alpha, gamma))
+      online.mockRestore()
+
+      const { leader, follower } = await openTwo()
+      await leader.sync.flush()
+      await settle()
+
+      const expected = ["paragraph: alpha", "paragraph: beta mine", "paragraph: gamma"]
+      expect({
+        server: blocksOf(server.doc),
+        leader: blocksOf(leader.ydoc),
+        follower: blocksOf(follower.ydoc),
+      }).toEqual({ server: expected, leader: expected, follower: expected })
+    })
+
+    it("should keep a following tab's edit to a block an agent deletes before the edit reaches the leading tab", async () => {
+      server.writeContent(doc(alpha, beta, gamma))
+      const { leader, follower } = await openTwo()
+
+      writeDoc(follower.ydoc, doc(alpha, block(blockIds.b, "beta mine"), gamma))
+      leader.sync.receive(server.writeContent(doc(alpha, gamma)))
+      await settle()
+      await leader.sync.flush()
+      await settle()
+
+      const expected = ["paragraph: alpha", "paragraph: beta mine", "paragraph: gamma"]
+      expect({
+        server: blocksOf(server.doc),
+        leader: blocksOf(leader.ydoc),
+        follower: blocksOf(follower.ydoc),
+      }).toEqual({ server: expected, leader: expected, follower: expected })
+    })
+
+    it("should send a following tab's offline edits once the leading tab closes", async () => {
+      const { leader, follower } = await openTwo()
+      const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)
+      type(follower.ydoc, "kept across the hand-over ")
+      await settle()
+
+      leader.sync.stop()
+      server.clients.delete(leader.sync)
+      online.mockRestore()
+      await settle()
+      await follower.sync.flush()
+
+      expect({ server: server.text, follower: follower.sync.getStatus() }).toEqual({
+        server: "kept across the hand-over ",
+        follower: { phase: "ready" },
+      })
+    })
+
+    it("should send what a tab typed while following when it is typed in during the takeover", async () => {
+      const { leader, follower } = await openTwo()
+      const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)
+      type(follower.ydoc, "while following ")
+      await settle()
+      leader.sync.stop()
+      server.clients.delete(leader.sync)
+      // The closing tab's copy has not landed when the next one reads it.
+      localCopies.copy = null
+      online.mockRestore()
+      const real = server.api.get.getMockImplementation()!
+      const loaded = deferred()
+      server.api.get.mockImplementationOnce(async (...args) => {
+        await loaded.promise
+        return real(...args)
+      })
+      await settle()
+
+      type(follower.ydoc, "taking over. ")
+      await settle()
+      loaded.release()
+      await settle()
+      await follower.sync.flush()
+
+      expect({ server: server.text, rejections: follower.rejections }).toEqual({
+        server: "while following taking over. ",
+        rejections: [],
+      })
+    })
+
+    it("should bring back a deleted block with a following tab's offline edit when the leading tab's copy has not landed", async () => {
+      server.writeContent(doc(alpha, beta, gamma))
+      const { leader, follower } = await openTwo()
+      const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)
+      writeDoc(follower.ydoc, doc(alpha, block(blockIds.b, "beta mine"), gamma))
+      await settle()
+      leader.sync.stop()
+      server.clients.delete(leader.sync)
+      localCopies.copy = null
+      server.writeContent(doc(alpha, gamma))
+      online.mockRestore()
+      await settle()
+      await follower.sync.flush()
+      await settle()
+
+      const expected = ["paragraph: alpha", "paragraph: beta mine", "paragraph: gamma"]
+      expect({ server: blocksOf(server.doc), follower: blocksOf(follower.ydoc) }).toEqual({
+        server: expected,
+        follower: expected,
+      })
+    })
+
+    it("should queue a following tab's last edit when both tabs close before the leading tab gets it", async () => {
+      const { leader, follower } = await openTwo()
+
+      type(follower.ydoc, "last words ")
+      leader.sync.stop()
+      follower.sync.stop()
+      server.clients.clear()
+      await settle()
+
+      expect({ server: server.text, enqueued }).toEqual({
+        server: "",
+        enqueued: [{ docId: DOC_ID, text: "last words " }],
+      })
+    })
+
+    it("should neither send nor queue a following tab's edits once the leading tab's send of them was refused", async () => {
+      const { leader, follower } = await openTwo()
+      server.failNextPost(403, "FORBIDDEN")
+      type(follower.ydoc, "refused ")
+      await settle()
+      await leader.sync.flush()
+      await settle()
+      type(follower.ydoc, "built on the refused edit ")
+      await settle()
+      await leader.sync.flush()
+
+      leader.sync.stop()
+      server.clients.delete(leader.sync)
+      await settle()
+      follower.sync.stop()
+      server.clients.clear()
+      await settle()
+
+      expect({ rejections: [leader.rejections, follower.rejections], posts: postedTexts(server), enqueued }).toEqual({
+        rejections: [["FORBIDDEN"], ["FORBIDDEN"]],
+        posts: ["refused "],
+        enqueued: [],
+      })
+    })
+  })
+
   describe("offline edits in a block the server replaces", () => {
-    const blockIds = {
-      a: "blk_0000000000000000000000000A",
-      b: "blk_0000000000000000000000000B",
-      c: "blk_0000000000000000000000000C",
-    }
-
-    function block(id: string, text: string, type = "paragraph", marks?: JSONContent["marks"]): JSONContent {
-      return {
-        type,
-        attrs: { blockId: id, ...(type === "heading" ? { level: 2 } : {}) },
-        content: [{ type: "text", text, ...(marks ? { marks } : {}) }],
-      }
-    }
-
-    function doc(...blocks: JSONContent[]): JSONContent {
-      return { type: "doc", content: blocks }
-    }
-
-    const alpha = block(blockIds.a, "alpha")
-    const beta = block(blockIds.b, "beta")
-    const gamma = block(blockIds.c, "gamma")
-
-    /** Each top-level block as `type: text`, the shape a reader sees. */
-    function blocksOf(ydoc: Y.Doc): string[] {
-      const json = yXmlFragmentToProsemirrorJSON(ydoc.getXmlFragment(DOC_FRAGMENT)) as JSONContent
-      return (json.content ?? []).map(
-        (node) => `${node.type}: ${(node.content ?? []).map((child) => child.text ?? "").join("")}`
-      )
-    }
-
     /** Opens the doc, then edits `beta` to `edited` while offline, leaving the edit unacked. */
     async function editBetaOffline(edited: JSONContent) {
       server.writeContent(doc(alpha, beta, gamma))
