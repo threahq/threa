@@ -84,7 +84,7 @@ import {
   StreamTypes,
   streamTypeCapabilities,
 } from "@threahq/types"
-import { canChangeArchiveState, getStreamTypeLabel, streamFallbackLabel, streamLabel } from "@/lib/streams"
+import { getStreamTypeLabel, offersArchiveToggle, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamSheet } from "@/components/stream-sheet"
 import { PaneHeader } from "./pane-header"
 import { PaneLanded } from "./pane-host"
@@ -103,7 +103,12 @@ interface StreamPaneProps {
   className?: string
 }
 
-const pickCreatedBy = (row: CachedStream) => ({ id: row.id, displayName: row.displayName, createdBy: row.createdBy })
+const pickArchiveOwner = (row: CachedStream) => ({
+  id: row.id,
+  displayName: row.displayName,
+  createdBy: row.createdBy,
+  archivedAt: row.archivedAt,
+})
 
 /** One stream's header and timeline, the stream named by `streamId`. */
 export function StreamPane({
@@ -199,21 +204,18 @@ export function StreamPane({
   )
   const createDoc = useCreateDoc(workspaceId, isDraft ? undefined : stream)
   const currentUserId = useCurrentWorkspaceUserId(workspaceId)
+  const docRow = useWorkspaceStream(workspaceId, isDoc ? streamId : undefined, pickArchiveOwner)
   const docRoot = useWorkspaceStream(
     workspaceId,
     isDoc ? (stream?.rootStreamId ?? undefined) : undefined,
-    pickCreatedBy
+    pickArchiveOwner
   )
   const { ancestorArchived } = useEffectiveArchived({
     workspaceId,
     stream: isDoc ? stream : undefined,
     fallbackArchived: null,
   })
-  // Under an archived host the doc is already read-only, so archiving it would change nothing visible.
-  const canArchiveDoc =
-    isDoc &&
-    canChangeArchiveState(currentUserId, stream && "createdBy" in stream ? stream : null, docRoot) &&
-    (!ancestorArchived || stream?.archivedAt != null)
+  const canChangeDocArchive = isDoc && offersArchiveToggle(currentUserId, docRow, docRoot, ancestorArchived)
   // Only the stream page sets a list beside its stream; under an aside it would land out of sight.
   const offersList = (isChannel || isDm) && hasTabs && offersContext
   const dmPeerUserId = isDm ? dmPeers.find((p) => p.streamId === streamId)?.userId : null
@@ -358,18 +360,19 @@ export function StreamPane({
       onSelect: () => openOutcomes({ streamIds: [streamId] }),
     })
   }
-  if (isScratchpad || canArchiveDoc) {
-    // Hide the rename affordance while locked rather than let it fall back to
-    // plaintext. Archive/unarchive stay available regardless of lock state.
-    if (isScratchpad && canRenameScratchpad) {
-      streamMenuActions.push({
-        id: "rename",
-        label: "Rename",
-        icon: Pencil,
-        onSelect: handleStartRename,
-        separatorBefore: streamMenuActions.length > 0,
-      })
-    }
+  // Hide the rename affordance while locked rather than let it fall back to plaintext.
+  if (isScratchpad && canRenameScratchpad) {
+    streamMenuActions.push({
+      id: "rename",
+      label: "Rename",
+      icon: Pencil,
+      onSelect: handleStartRename,
+      separatorBefore: streamMenuActions.length > 0,
+    })
+  }
+  // Archive/unarchive stay available regardless of lock state.
+  const offersArchiveAction = isScratchpad || canChangeDocArchive
+  if (offersArchiveAction) {
     streamMenuActions.push(
       isArchived
         ? {
@@ -568,7 +571,7 @@ export function StreamPane({
 
   // Persisted streams only. Archived streams offer no stream actions, so their sheet holds just the view rows, save
   // the ones their menu unarchives.
-  const offersStreamActions = !(isArchived && !isScratchpad && !canArchiveDoc)
+  const offersStreamActions = !isArchived || offersArchiveAction
   const canOpenSheet = !!stream && !isDraft && (offersStreamActions || sheetViewActions.length > 0)
   // Beside the page's stream the list rides in the menu, so the header keeps its room for tabs.
   const listInMenu = offersList && !ownsConversationOverlay
@@ -702,7 +705,15 @@ export function StreamPane({
       />
     )
   } else if ((isThread || isDoc) && stream) {
-    headerTitle = <ThreadHeader workspaceId={workspaceId} stream={stream} />
+    headerTitle = (
+      <>
+        <ThreadHeader workspaceId={workspaceId} stream={stream} />
+        {/* On mobile the sheet holds the Archived badge, so the header keeps the glyph the stream title shows. */}
+        {isMobile && canOpenSheet && isArchived && (
+          <ArchiveX className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label="Archived" role="img" />
+        )}
+      </>
+    )
   } else if (isMobile && canOpenSheet) {
     // Mobile: the name is the hero — it takes the full remaining width and IS
     // the sheet trigger. Live state survives as tiny glyphs beside it (lock =

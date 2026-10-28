@@ -18,6 +18,23 @@ export const STREAM_ICONS: Record<StreamType, ComponentType<{ className?: string
   [StreamTypes.DOC]: File,
 }
 
+type ArchiveOwner = { createdBy: string } | null | undefined
+
+/** Mirrors the backend's `assertCanArchive`: a stream's creator or its root's creator may archive or unarchive it. */
+export function canChangeArchiveState(userId: string | null | undefined, stream: ArchiveOwner, root: ArchiveOwner) {
+  return !!userId && (stream?.createdBy === userId || root?.createdBy === userId)
+}
+
+/** Under an archived ancestor the stream is already read-only, so only unarchiving the stream itself is offered. */
+export function offersArchiveToggle(
+  userId: string | null | undefined,
+  stream: { createdBy: string; archivedAt: string | null } | null | undefined,
+  root: ArchiveOwner,
+  ancestorArchived: boolean
+) {
+  return canChangeArchiveState(userId, stream, root) && (!ancestorArchived || stream?.archivedAt != null)
+}
+
 /**
  * A system-purpose stream (e.g. the persona editor's test scratchpad) is fully
  * functional when mounted directly but must not appear in user-facing stream
@@ -26,15 +43,6 @@ export const STREAM_ICONS: Record<StreamType, ComponentType<{ className?: string
  * read time with this predicate rather than every writer guarding — and name
  * resolution (`useStreamName`) stays unfiltered so labels still resolve.
  */
-/** Mirrors the backend's `assertCanArchive`: a stream's creator or its root's creator may archive or unarchive it. */
-export function canChangeArchiveState(
-  userId: string | null | undefined,
-  stream: { createdBy?: unknown } | null | undefined,
-  root: { createdBy?: unknown } | null | undefined
-): boolean {
-  return !!userId && (stream?.createdBy === userId || root?.createdBy === userId)
-}
-
 export function isUtilityStream(stream: { purpose?: string | null }): boolean {
   return stream.purpose != null
 }

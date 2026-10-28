@@ -13,7 +13,7 @@ import { hashKey, useQueryClient } from "@tanstack/react-query"
 import type { StreamBootstrap, WorkspaceSettingsTab } from "@threahq/types"
 import { streamKeys } from "@/hooks/use-streams"
 import { useEffectiveArchived } from "@/hooks/use-effective-archived"
-import { canChangeArchiveState, isUtilityStream } from "@/lib/streams"
+import { isUtilityStream, offersArchiveToggle } from "@/lib/streams"
 import { isAsideHostType } from "@threahq/types"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { Terminal, FileText } from "lucide-react"
@@ -385,9 +385,7 @@ function QuickSwitcherBody({
     () => users.find((workspaceUser) => workspaceUser.workosUserId === user?.id)?.id ?? null,
     [users, user?.id]
   )
-  const canChangeCurrentStreamArchive =
-    canChangeArchiveState(currentUserId, currentStream, currentRoot) &&
-    (!ancestorArchived || !!currentStream?.archivedAt)
+  const canChangeCurrentStreamArchive = offersArchiveToggle(currentUserId, currentStream, currentRoot, ancestorArchived)
 
   const isMobile = useIsMobile()
   // Width drives the layout (tab position, escape-hint clipping); the active
