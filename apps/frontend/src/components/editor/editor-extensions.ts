@@ -7,14 +7,7 @@ import History from "@tiptap/extension-history"
 import Gapcursor from "@tiptap/extension-gapcursor"
 import Placeholder from "@tiptap/extension-placeholder"
 
-import {
-  BlockIdAttribute,
-  TaskList,
-  ThreaHeading,
-  ThreaLink,
-  ThreaTable,
-  codeBlockOptions,
-} from "@threahq/prosemirror/schema"
+import { BlockIdAttribute, TaskList, ThreaHeading, ThreaLink, ThreaTable } from "@threahq/prosemirror/schema"
 import { TaskItemExtension } from "./task-list-extension"
 import { AtomAwareBold, AtomAwareItalic, AtomAwareStrike, AtomAwareCode } from "./atom-aware-marks"
 
@@ -22,8 +15,7 @@ import Blockquote from "@tiptap/extension-blockquote"
 import BulletList from "@tiptap/extension-bullet-list"
 import OrderedList from "@tiptap/extension-ordered-list"
 import ListItem from "@tiptap/extension-list-item"
-import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight"
-import { common, createLowlight } from "lowlight"
+import { CodeBlockExtension } from "./code-block-extension"
 import { TableRow } from "@tiptap/extension-table/row"
 import { TableHeader } from "@tiptap/extension-table/header"
 import { TableCell } from "@tiptap/extension-table/cell"
@@ -55,8 +47,6 @@ import { ComposerPillDragExtension } from "./composer-pill-drag-extension"
 import { YjsCollaboration } from "./yjs-extension"
 import type * as Y from "yjs"
 import type { Awareness } from "y-protocols/awareness"
-
-const lowlight = createLowlight(common)
 
 interface ContentExtensionsOptions {
   placeholder?: string
@@ -135,7 +125,7 @@ function buildExtensions(config: Partial<CreateEditorExtensionsOptions>, surface
     TaskItemExtension,
     Blockquote,
     HorizontalRule,
-    CodeBlockLowlight.configure({ lowlight, ...codeBlockOptions }),
+    CodeBlockExtension,
 
     // GFM tables. Default cell content (`block+`) is intentionally kept so
     // pasting a table whose cells contain inline marks or hard breaks works

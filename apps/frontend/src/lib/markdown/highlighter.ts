@@ -1,4 +1,4 @@
-import { createHighlighter, type HighlighterGeneric } from "shiki"
+import { createHighlighter, type HighlighterGeneric, type ThemedToken } from "shiki"
 import { CODE_LANGUAGE_PRELOAD_IDS, PLAINTEXT_LANGUAGE_ID, normalizeCodeLanguage } from "@threahq/types"
 
 // Warmed at boot so common code blocks paint highlighted on first render.
@@ -12,7 +12,7 @@ type Theme = (typeof THEMES)[number]
 let highlighter: HighlighterGeneric<string, Theme> | null = null
 let initPromise: Promise<HighlighterGeneric<string, Theme>> | null = null
 
-const CODE_TO_HTML_OPTIONS = {
+const THEME_OPTIONS = {
   themes: { light: "github-light", dark: "github-dark" } as Record<"light" | "dark", Theme>,
   defaultColor: false as const,
 }
@@ -46,15 +46,27 @@ export function tryHighlightSync(code: string, lang: string): string | null {
   if (!hl) return null
   const normalized = normalizeCodeLanguage(lang)
   try {
-    return hl.codeToHtml(code, { lang: normalized, ...CODE_TO_HTML_OPTIONS })
+    return hl.codeToHtml(code, { lang: normalized, ...THEME_OPTIONS })
   } catch {
     return null
   }
 }
 
-// Awaits init, lazy-loads the language if missing, falls back to plaintext
-// rather than leaving the block stuck on its unhighlighted placeholder.
-export async function ensureHighlight(code: string, lang: string): Promise<string | null> {
+// Token lines for the editor's in-place highlighting; null until the
+// highlighter and `lang` are loaded, which `loadCodeLanguage` gets to.
+export function tryTokenizeSync(code: string, lang: string): ThemedToken[][] | null {
+  const hl = highlighter
+  if (!hl) return null
+  try {
+    return hl.codeToTokens(code, { lang: normalizeCodeLanguage(lang), ...THEME_OPTIONS }).tokens
+  } catch {
+    return null
+  }
+}
+
+// Awaits init and lazy-loads the language. Resolves to plaintext when the
+// language is unknown or failed to fetch, so callers render instead of waiting.
+async function loadLanguage(lang: string): Promise<{ hl: HighlighterGeneric<string, Theme>; lang: string } | null> {
   let hl: HighlighterGeneric<string, Theme>
   try {
     hl = await initHighlighter()
@@ -62,23 +74,27 @@ export async function ensureHighlight(code: string, lang: string): Promise<strin
     return null
   }
   const normalized = normalizeCodeLanguage(lang)
-
-  try {
-    return hl.codeToHtml(code, { lang: normalized, ...CODE_TO_HTML_OPTIONS })
-  } catch {
-    // Language not pre-loaded — try to fetch it.
-  }
-
+  if (hl.getLoadedLanguages().includes(normalized)) return { hl, lang: normalized }
   try {
     await hl.loadLanguage(normalized)
-    return hl.codeToHtml(code, { lang: normalized, ...CODE_TO_HTML_OPTIONS })
+    return { hl, lang: normalized }
   } catch {
-    // Unknown or failed to fetch — render as plaintext so the block still
-    // renders inside its panel rather than getting stuck on the placeholder.
-    try {
-      return hl.codeToHtml(code, { lang: PLAINTEXT_LANGUAGE_ID, ...CODE_TO_HTML_OPTIONS })
-    } catch {
-      return null
-    }
+    return { hl, lang: PLAINTEXT_LANGUAGE_ID }
+  }
+}
+
+/** True once `lang` itself (not the plaintext fallback) can be tokenized synchronously. */
+export async function loadCodeLanguage(lang: string): Promise<boolean> {
+  const loaded = await loadLanguage(lang)
+  return loaded?.lang === normalizeCodeLanguage(lang)
+}
+
+export async function ensureHighlight(code: string, lang: string): Promise<string | null> {
+  const loaded = await loadLanguage(lang)
+  if (!loaded) return null
+  try {
+    return loaded.hl.codeToHtml(code, { lang: loaded.lang, ...THEME_OPTIONS })
+  } catch {
+    return null
   }
 }

@@ -1,0 +1,107 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { createRef } from "react"
+import { render, cleanup, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { MemoryRouter } from "react-router-dom"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { parseMarkdown, serializeToMarkdown } from "@threahq/prosemirror"
+import type { JSONContent } from "@threahq/types"
+import { spyOnExport } from "@/test/spy"
+import * as mentionablesModule from "@/hooks/use-mentionables"
+import * as emojiModule from "@/hooks/use-workspace-emoji"
+import * as giphyModule from "@/hooks/use-giphy-enabled"
+import * as streamCommandsModule from "@/hooks/use-stream-commands"
+import * as contextsModule from "@/contexts"
+import { RichEditor, type RichEditorHandle } from "./rich-editor"
+
+const NO_MENTIONABLES = { mentionables: [], isLoading: false }
+const NO_EMOJI = { emojis: [], emojiWeights: {}, toEmoji: () => null, toShortcode: () => null }
+const NO_PREFERENCES = { preferences: {} }
+
+beforeEach(() => {
+  spyOnExport(mentionablesModule, "useMentionables").mockReturnValue((() => NO_MENTIONABLES) as never)
+  spyOnExport(emojiModule, "useWorkspaceEmoji").mockReturnValue((() => NO_EMOJI) as never)
+  spyOnExport(giphyModule, "useGiphyEnabled").mockReturnValue((() => false) as never)
+  spyOnExport(streamCommandsModule, "useStreamCommands").mockReturnValue((() => []) as never)
+  spyOnExport(contextsModule, "usePreferences").mockReturnValue((() => NO_PREFERENCES) as never)
+})
+
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
+
+function mountEditor(markdown: string, { disabled = false } = {}) {
+  const ref = createRef<RichEditorHandle>()
+  let content: JSONContent = parseMarkdown(markdown)
+
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MemoryRouter>
+        <RichEditor
+          ref={ref}
+          value={content}
+          onChange={(json) => {
+            content = json
+          }}
+          onSubmit={() => undefined}
+          ariaLabel="Message input"
+          disabled={disabled}
+        />
+      </MemoryRouter>
+    </QueryClientProvider>
+  )
+
+  return { editor: ref.current!.getEditor()!, getMarkdown: () => serializeToMarkdown(content) }
+}
+
+describe("code block language chip", () => {
+  it("sends the picked language as the fence info string and hands focus back to the code", async () => {
+    const user = userEvent.setup()
+    const { editor, getMarkdown } = mountEditor("```\nname: threa\n```")
+
+    await user.click(await screen.findByRole("button", { name: "Code language: Plain text" }))
+    await user.type(screen.getByPlaceholderText("Search languages"), "yml")
+    await user.click(screen.getByRole("option", { name: "YAML" }))
+
+    expect({
+      markdown: getMarkdown(),
+      chip: screen.getByRole("button", { name: "Code language: YAML" }).textContent,
+      focused: editor.view.hasFocus(),
+    }).toEqual({ markdown: "```yaml\nname: threa\n```", chip: "YAML", focused: true })
+  })
+
+  it("closes on Escape without changing the language", async () => {
+    const user = userEvent.setup()
+    const { getMarkdown } = mountEditor("```ts\nconst a = 1\n```")
+
+    await user.click(await screen.findByRole("button", { name: "Code language: TypeScript" }))
+    await user.keyboard("{Escape}")
+
+    expect({ open: screen.queryByPlaceholderText("Search languages"), markdown: getMarkdown() }).toEqual({
+      open: null,
+      markdown: "```ts\nconst a = 1\n```",
+    })
+  })
+
+  it("shows the language without a picker when the editor is read-only", async () => {
+    mountEditor("```yaml\nname: threa\n```", { disabled: true })
+
+    await screen.findByText("YAML")
+    expect(screen.queryByRole("button", { name: /Code language/ })).toBeNull()
+  })
+
+  it("colours the code with the Shiki themes posted messages use", async () => {
+    mountEditor("```yaml\nname: threa\n```")
+
+    await waitFor(() => {
+      const keyToken = [...document.querySelectorAll<HTMLElement>("pre code span[style]")].find(
+        (span) => span.textContent === "name"
+      )
+      expect({
+        light: keyToken?.style.getPropertyValue("--shiki-light"),
+        dark: keyToken?.style.getPropertyValue("--shiki-dark"),
+      }).toEqual({ light: expect.stringMatching(/^#[0-9a-f]{6}$/i), dark: expect.stringMatching(/^#[0-9a-f]{6}$/i) })
+    })
+  })
+})
