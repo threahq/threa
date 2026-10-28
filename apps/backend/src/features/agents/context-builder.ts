@@ -19,6 +19,7 @@ import {
   DEFAULT_USER_PREFERENCES,
 } from "@threahq/types"
 import { StreamRepository, StreamMemberRepository, type Stream } from "../streams"
+import { listHostedDocs, type HostedDoc } from "../docs"
 import { MessageRepository, type Message } from "../messaging"
 import { UserRepository } from "../workspaces"
 import { AttachmentRepository } from "../attachments"
@@ -124,6 +125,8 @@ export interface StreamContext {
   temporal?: TemporalContext
   /** Participant timezone info (for multi-timezone awareness) */
   participantTimezones?: ParticipantTemporal[]
+  /** The docs of `docHostId`; absent when the turn has no doc host. */
+  docs?: HostedDoc[]
 }
 
 /**
@@ -166,6 +169,10 @@ export interface BuildStreamContextOptions {
   includeAttachments?: boolean
   /** Whether to append completed link-preview card metadata to each message. */
   includeLinkPreviews?: boolean
+  /** The stream whose docs this turn can read and edit (`docHostFor`); its docs join the context. */
+  docHostId?: string | null
+  /** Doc ids open on the invoking user's device; marks the matching host docs as open. */
+  openDocIds?: string[]
 }
 
 /**
@@ -260,6 +267,10 @@ export async function buildStreamContext(
     const head = context.conversationHistory.slice(0, pinned)
     const trimmed = trimToCharBudget(context.conversationHistory.slice(pinned), options.maxChars)
     context.conversationHistory = pinned > 0 ? [...head, ...trimmed] : trimmed
+  }
+
+  if (options?.docHostId) {
+    context.docs = await listHostedDocs(db, stream.workspaceId, options.docHostId, options.openDocIds)
   }
 
   if (options?.includeAttachments) {

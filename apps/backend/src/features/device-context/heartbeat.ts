@@ -17,18 +17,21 @@ export async function storeDevice(pool: Pool, targets: DeviceTarget[], device: D
  * Stores the device an interacted heartbeat reports, for every workspace the
  * connection serves. Only interacted heartbeats count: they name the device the
  * user is actually using, so across a user's devices the most recently stored
- * report wins.
+ * report wins. Resolves once the report is stored, skipped, or its failure
+ * logged; never rejects, so a caller may chain reports.
  */
-export function storeHeartbeatDevice(
+export async function storeHeartbeatDevice(
   pool: Pool,
   heartbeat: { device?: unknown; interacted: boolean },
   targets: DeviceTarget[]
-): void {
+): Promise<void> {
   if (!heartbeat.interacted) return
   const device = parseDeviceContext(heartbeat.device)
   if (!device) return
 
-  storeDevice(pool, targets, device).catch((err) => {
+  try {
+    await storeDevice(pool, targets, device)
+  } catch (err) {
     logger.warn({ err, targets }, "Failed to store device context")
-  })
+  }
 }

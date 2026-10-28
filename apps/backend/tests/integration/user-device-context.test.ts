@@ -8,8 +8,8 @@ import { UserRepository } from "../../src/features/workspaces"
 import { userId, workspaceId } from "../../src/lib/id"
 import { DEFAULT_USER_PREFERENCES, type DeviceContext } from "@threahq/types"
 
-const laptop: DeviceContext = { layout: "desktop", os: "linux", installed: false }
-const phone: DeviceContext = { layout: "mobile", os: "android", installed: true }
+const laptop: DeviceContext = { layout: "desktop", os: "linux", installed: false, openDocIds: [] }
+const phone: DeviceContext = { layout: "mobile", os: "android", installed: true, openDocIds: [] }
 
 describe("UserDeviceContextRepository", () => {
   let pool: Pool
@@ -55,6 +55,40 @@ describe("UserDeviceContextRepository", () => {
 
     await UserDeviceContextRepository.delete(pool, wsId, usrId)
     expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toBeNull()
+  })
+
+  test("should keep the open docs and write when only the open docs change", async () => {
+    const { wsId, usrId } = await seedUser()
+    const target = [{ workspaceId: wsId, userId: usrId }]
+    const version = async () =>
+      (
+        await pool.query<{ xmin: string }>(sql`
+          SELECT xmin::text FROM user_device_contexts WHERE workspace_id = ${wsId} AND user_id = ${usrId}
+        `)
+      ).rows[0]?.xmin
+
+    await storeDevice(pool, target, laptop)
+    const before = await version()
+    const withDocs = { ...laptop, openDocIds: ["stream_doc_a", "stream_doc_b"] }
+    await storeDevice(pool, target, withDocs)
+
+    expect({
+      device: await UserDeviceContextRepository.find(pool, wsId, usrId),
+      rewritten: (await version()) !== before,
+    }).toEqual({
+      device: withDocs,
+      rewritten: true,
+    })
+  })
+
+  test("should read a row stored before open docs were reported as having none open", async () => {
+    const { wsId, usrId } = await seedUser()
+    await pool.query(sql`
+      INSERT INTO user_device_contexts (workspace_id, user_id, layout, os, installed)
+      VALUES (${wsId}, ${usrId}, 'desktop', 'linux', FALSE)
+    `)
+
+    expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toEqual(laptop)
   })
 
   test("should store the device for every member in one report and skip users who left or opted out", async () => {

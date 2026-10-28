@@ -33,6 +33,8 @@ function output(over: Partial<DocEditOutput>): DocEditOutput {
     wrote: false,
     writeCount: 0,
     personaUpdateCount: 0,
+    decoyPersonaUpdateCount: 0,
+    decoyTouchedSections: [],
     createdDocCount: 0,
     titleChanged: false,
     touchedSections: [],
@@ -201,6 +203,54 @@ describe("scopedChangeEvaluator", () => {
   it("should skip when the case expects no write", async () => {
     expect(await passed(scopedChangeEvaluator, written({ removedBlockIds: ["x"] }), { shouldWrite: false })).toBe(true)
   })
+
+  it("should fail when the decoy doc was written on a case that expects it untouched", async () => {
+    const expected: DocEditExpected = { ...WRITE, decoy: "untouched" }
+    expect({
+      untouched: await scopedChangeEvaluator.evaluate(written(), expected, ctx),
+      written: await scopedChangeEvaluator.evaluate(written({ decoyPersonaUpdateCount: 1 }), expected, ctx),
+    }).toEqual({
+      untouched: { name: "scoped-change", score: 1, passed: true, details: undefined },
+      written: {
+        name: "scoped-change",
+        score: 0,
+        passed: false,
+        details: "decoy doc got 1 updates (expected none)",
+      },
+    })
+  })
+
+  it("should require a changed decoy section to match on a case that expects the decoy to change", async () => {
+    const expected: DocEditExpected = { shouldWrite: true, maxTouchedSections: 0, decoy: /\[x\].*AWS access key/i }
+    const decoyChanged = (after: string) =>
+      output({
+        wrote: true,
+        writeCount: 1,
+        decoyPersonaUpdateCount: 1,
+        decoyTouchedSections: [{ blockId: "block_launch", before: TASKS_BEFORE, after }],
+        reasons: ["revoked"],
+      })
+    expect({
+      decoyTicked: await scopedChangeEvaluator.evaluate(decoyChanged(tickedTask.after), expected, ctx),
+      decoyOtherLine: await scopedChangeEvaluator.evaluate(decoyChanged("- [x] Freeze the release"), expected, ctx),
+      seededWritten: await scopedChangeEvaluator.evaluate(written(), expected, ctx),
+    }).toEqual({
+      decoyTicked: { name: "scoped-change", score: 1, passed: true, details: undefined },
+      decoyOtherLine: {
+        name: "scoped-change",
+        score: 0,
+        passed: false,
+        details: "no changed or added decoy section matches /\\[x\\].*AWS access key/i",
+      },
+      seededWritten: {
+        name: "scoped-change",
+        score: 0,
+        passed: false,
+        details:
+          '1 sections changed or added (max 0); dropped line "- [ ] Revoke the old AWS access key" in block_tasks; no changed or added decoy section matches /\\[x\\].*AWS access key/i',
+      },
+    })
+  })
 })
 
 describe("reasonPresentEvaluator", () => {
@@ -209,8 +259,13 @@ describe("reasonPresentEvaluator", () => {
       present: await passed(reasonPresentEvaluator, written(), WRITE),
       blank: await passed(reasonPresentEvaluator, written({ reasons: ["ok", "  "] }), WRITE),
       missingEvent: await passed(reasonPresentEvaluator, written({ personaUpdateCount: 2, reasons: ["ok"] }), WRITE),
+      missingDecoyEvent: await passed(
+        reasonPresentEvaluator,
+        written({ personaUpdateCount: 1, decoyPersonaUpdateCount: 1, reasons: ["ok"] }),
+        WRITE
+      ),
       chitchat: await passed(reasonPresentEvaluator, written({ reasons: [""] }), { shouldWrite: false }),
-    }).toEqual({ present: true, blank: false, missingEvent: false, chitchat: true })
+    }).toEqual({ present: true, blank: false, missingEvent: false, missingDecoyEvent: false, chitchat: true })
   })
 })
 

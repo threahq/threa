@@ -16,6 +16,7 @@ import type {
   DocAgentTitleResult,
   DocAgentWriteResult,
 } from "../../docs"
+import { UNTITLED_DOC_LABEL } from "../../docs"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
 import type { DocToolDeps } from "./tool-deps"
 
@@ -62,6 +63,7 @@ const PROMPT_BLOCK = `## Working with docs
 
 Docs hosted on this stream are shared working documents. \`read_doc\` without a docId lists them; with one it returns the doc as markdown, each top-level block preceded by a \`<!-- blk_… -->\` marker.
 
+- A doc marked open under "Docs on this stream" is the one in front of them: "the doc" means that one unless they name another, and a doc they name wins.
 - Read a doc before editing it, and **edit, don't append**: change the text in place with \`edit_doc\` rather than adding a new block that restates it.
 - \`old\` must be the exact current text inside ONE block — copy it from read_doc; a match never spans two blocks. On not_found or ambiguous, retry once with a tighter anchor or a \`blockId\`.
 - Markers are ids, not content: use them as \`blockId\`/\`after\`, never write them into text.
@@ -207,13 +209,13 @@ export function createReadDocTool(deps: DocToolDeps) {
           const docs = await deps.listDocs()
           if (docs.length === 0) return { output: "This stream hosts no docs." }
           return {
-            output: `Docs on this stream:\n${docs.map((doc) => `- ${doc.docId}: ${doc.title ?? "(untitled)"}`).join("\n")}`,
+            output: `Docs on this stream:\n${docs.map((doc) => `- ${doc.docId}: ${doc.title ?? UNTITLED_DOC_LABEL}`).join("\n")}`,
           }
         }
         const result = await deps.readDoc({ docId: input.docId })
         if (result.status === "not_found") return { output: NOT_FOUND }
         return {
-          output: `Doc ${result.docId} "${result.title ?? "(untitled)"}" (seq ${result.seq}):\n\n${result.markdown}`,
+          output: `Doc ${result.docId} "${result.title ?? UNTITLED_DOC_LABEL}" (seq ${result.seq}):\n\n${result.markdown}`,
         }
       } catch (error) {
         logger.error({ error }, "read_doc failed")

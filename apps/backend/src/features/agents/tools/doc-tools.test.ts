@@ -52,7 +52,7 @@ describe("read_doc", () => {
       })
     )
     const result = await tool.config.execute({}, EXEC_OPTS)
-    expect(result.output).toBe("Docs on this stream:\n- stream_doc1: Rotation tracker\n- stream_doc2: (untitled)")
+    expect(result.output).toBe("Docs on this stream:\n- stream_doc1: Rotation tracker\n- stream_doc2: Untitled")
   })
 
   it("says so when the host has no docs", async () => {

@@ -1,5 +1,13 @@
 import { test, expect, type Browser, type Page, type Locator } from "@playwright/test"
-import { expectApiOk, loginAndCreateWorkspace, loginInNewContext, workspaceIdFromUrl } from "./helpers"
+import {
+  createChannelViaApi,
+  createDocViaApi,
+  expectApiOk,
+  loginAndCreateWorkspace,
+  loginInNewContext,
+  userIdByEmail,
+  workspaceIdFromUrl,
+} from "./helpers"
 
 /**
  * A doc opens as a pane beside its host channel. Two members editing it
@@ -22,27 +30,6 @@ const docText = (editor: Locator): Promise<string> =>
     return copy.textContent ?? ""
   })
 
-async function createChannelViaApi(
-  page: Page,
-  workspaceId: string,
-  slug: string,
-  visibility: "public" | "private"
-): Promise<string> {
-  const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
-    data: { type: "channel", slug, visibility },
-  })
-  await expectApiOk(response, `Create ${visibility} channel`)
-  return ((await response.json()) as { stream: { id: string } }).stream.id
-}
-
-async function createDoc(page: Page, workspaceId: string, hostId: string): Promise<string> {
-  const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
-    data: { type: "doc", parentStreamId: hostId },
-  })
-  await expectApiOk(response, "Create doc")
-  return ((await response.json()) as { stream: { id: string } }).stream.id
-}
-
 async function joinWorkspace(browser: Browser, workspaceId: string, prefix: string, testId: string) {
   const email = `${prefix}-${testId}@example.com`
   const name = `${prefix} ${testId}`
@@ -52,15 +39,6 @@ async function joinWorkspace(browser: Browser, workspaceId: string, prefix: stri
     `${prefix} joins workspace`
   )
   return { ...user, email, name }
-}
-
-async function userIdByEmail(page: Page, workspaceId: string, email: string): Promise<string> {
-  const response = await page.request.get(`/api/workspaces/${workspaceId}/bootstrap`)
-  await expectApiOk(response, "Get workspace bootstrap")
-  const body = (await response.json()) as { data: { users: Array<{ id: string; email: string }> } }
-  const user = body.data.users.find((candidate) => candidate.email === email)
-  if (!user) throw new Error(`No workspace user for ${email}`)
-  return user.id
 }
 
 async function openChannel(page: Page, workspaceId: string, streamId: string): Promise<void> {
@@ -237,7 +215,7 @@ test.describe("Doc pane", () => {
     const { testId } = await loginAndCreateWorkspace(owner, "doc-public")
     const workspaceId = workspaceIdFromUrl(owner)
     const channelId = await createChannelViaApi(owner, workspaceId, `public-docs-${testId}`, "public")
-    const docId = await createDoc(owner, workspaceId, channelId)
+    const docId = await createDocViaApi(owner, workspaceId, channelId)
     const reader = await joinWorkspace(browser, workspaceId, "doc-reader", testId)
 
     try {
@@ -276,7 +254,7 @@ test.describe("Doc pane", () => {
         }),
         "Add member to channel"
       )
-      const docId = await createDoc(owner, workspaceId, channelId)
+      const docId = await createDocViaApi(owner, workspaceId, channelId)
 
       await openChannel(owner, workspaceId, channelId)
       await anchorRow(owner, docId).click()
@@ -332,7 +310,7 @@ test.describe("Doc pane", () => {
       const { testId } = await loginAndCreateWorkspace(page, "doc-phone")
       const workspaceId = workspaceIdFromUrl(page)
       const channelId = await createChannelViaApi(page, workspaceId, `phone-docs-${testId}`, "public")
-      const docId = await createDoc(page, workspaceId, channelId)
+      const docId = await createDocViaApi(page, workspaceId, channelId)
       await page.setViewportSize({ width: 390, height: 780 })
       await openChannel(page, workspaceId, channelId)
 

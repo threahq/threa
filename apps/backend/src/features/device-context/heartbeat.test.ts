@@ -7,7 +7,7 @@ import { UserDeviceContextRepository } from "./repository"
 // A client stand-in: withTransaction runs the work under a savepoint on it.
 const pool = { query: async () => ({ rows: [] }), release() {} } as unknown as Pool
 const targets = [{ workspaceId: "ws_1", userId: "usr_1" }]
-const phone: DeviceContext = { layout: "mobile", os: "android", installed: true }
+const phone: DeviceContext = { layout: "mobile", os: "android", installed: true, openDocIds: ["stream_doc1"] }
 
 const lockMembers = spyOn(UserDeviceContextRepository, "lockMembers")
 const upsert = spyOn(UserDeviceContextRepository, "upsert")
@@ -34,6 +34,33 @@ describe("storeHeartbeatDevice", () => {
     await Bun.sleep(0)
 
     expect(writes()).toEqual([{ members: both, device: phone }])
+  })
+
+  test("should store a device from a client that reports no open docs as having none open", async () => {
+    lockMembers.mockResolvedValue(targets)
+    upsert.mockResolvedValue(undefined)
+    await storeHeartbeatDevice(
+      pool,
+      { device: { layout: "mobile", os: "ios", installed: false }, interacted: true },
+      targets
+    )
+
+    expect(writes()).toEqual([
+      { members: targets, device: { layout: "mobile", os: "ios", installed: false, openDocIds: [] } },
+    ])
+  })
+
+  test("should resolve only after the store completes, so a caller can chain reports in arrival order", async () => {
+    lockMembers.mockResolvedValue(targets)
+    let finish!: () => void
+    upsert.mockReturnValue(new Promise<void>((resolve) => (finish = resolve)))
+    let settled = false
+    const store = storeHeartbeatDevice(pool, { device: phone, interacted: true }, targets).then(() => (settled = true))
+    await Bun.sleep(0)
+    expect(settled).toBe(false)
+    finish()
+    await store
+    expect(settled).toBe(true)
   })
 
   test.each([

@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import * as memosModule from "../../memos"
-import { AgentToolNames, DEFAULT_USER_PREFERENCES, MemoryModes, StreamTypes, Visibilities } from "@threahq/types"
+import {
+  AgentToolNames,
+  DEFAULT_USER_PREFERENCES,
+  MemoryModes,
+  StreamTypes,
+  Visibilities,
+  type DeviceContext,
+} from "@threahq/types"
 import { StreamBriefRepository, StreamMemberRepository, StreamRepository, type StreamBrief } from "../../streams"
 import { MessageRepository } from "../../messaging"
 import { UserDeviceContextRepository } from "../../device-context"
@@ -431,7 +438,7 @@ describe("buildAgentContext carried source streams", () => {
 describe("buildAgentContext device context", () => {
   afterEach(() => mock.restore())
 
-  const phone = { layout: "mobile", os: "android", installed: true } as const
+  const phone: DeviceContext = { layout: "mobile", os: "android", installed: true, openDocIds: [] }
 
   async function volatilePrompt(shareDeviceWithAgents: boolean) {
     spyOn(MessageRepository, "findById").mockResolvedValue({

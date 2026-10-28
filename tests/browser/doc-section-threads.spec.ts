@@ -6,6 +6,9 @@ import {
   sendPanelReply,
   waitForRealThreadPanel,
   workspaceIdFromUrl,
+  createChannelViaApi,
+  createDocViaApi,
+  userIdByEmail,
 } from "./helpers"
 
 /**
@@ -25,22 +28,6 @@ const threadChip = (page: Page, docId: string): Locator =>
   pane(page, docId).getByRole("link", { name: /^\d+ comments? on this block$/ })
 const modifier = process.platform === "darwin" ? "Meta" : "Control"
 
-async function createChannelViaApi(page: Page, workspaceId: string, slug: string): Promise<string> {
-  const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
-    data: { type: "channel", slug, visibility: "public" },
-  })
-  await expectApiOk(response, "Create public channel")
-  return ((await response.json()) as { stream: { id: string } }).stream.id
-}
-
-async function createDoc(page: Page, workspaceId: string, hostId: string): Promise<string> {
-  const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
-    data: { type: "doc", parentStreamId: hostId },
-  })
-  await expectApiOk(response, "Create doc")
-  return ((await response.json()) as { stream: { id: string } }).stream.id
-}
-
 async function joinWorkspace(browser: Browser, workspaceId: string, prefix: string, testId: string) {
   const email = `${prefix}-${testId}@example.com`
   const name = `${prefix} ${testId}`
@@ -50,15 +37,6 @@ async function joinWorkspace(browser: Browser, workspaceId: string, prefix: stri
     `${prefix} joins workspace`
   )
   return { ...user, email, name }
-}
-
-async function userIdByEmail(page: Page, workspaceId: string, email: string): Promise<string> {
-  const response = await page.request.get(`/api/workspaces/${workspaceId}/bootstrap`)
-  await expectApiOk(response, "Get workspace bootstrap")
-  const body = (await response.json()) as { data: { users: Array<{ id: string; email: string }> } }
-  const user = body.data.users.find((candidate) => candidate.email === email)
-  if (!user) throw new Error(`No workspace user for ${email}`)
-  return user.id
 }
 
 async function openChannel(page: Page, workspaceId: string, streamId: string): Promise<void> {
@@ -106,8 +84,8 @@ test.describe("Doc section threads", () => {
     const owner = await ownerContext.newPage()
     const { testId } = await loginAndCreateWorkspace(owner, "doc-threads")
     const workspaceId = workspaceIdFromUrl(owner)
-    const channelId = await createChannelViaApi(owner, workspaceId, `doc-threads-${testId}`)
-    const docId = await createDoc(owner, workspaceId, channelId)
+    const channelId = await createChannelViaApi(owner, workspaceId, `doc-threads-${testId}`, "public")
+    const docId = await createDocViaApi(owner, workspaceId, channelId)
     const member = await joinWorkspace(browser, workspaceId, "doc-threads-member", testId)
 
     try {

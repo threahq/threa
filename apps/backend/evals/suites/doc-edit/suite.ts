@@ -71,6 +71,7 @@ import {
   writeContentJson,
 } from "../../../src/features/docs"
 import { EventService } from "../../../src/features/messaging"
+import { storeDevice, UserDeviceContextRepository } from "../../../src/features/device-context"
 import { createModelRegistry, DecisionsAvailability } from "@threahq/agent-runtime"
 import { WorkspaceAIResidencyPolicy } from "../../../src/features/ai-usage"
 import type { StorageProvider } from "../../../src/lib/storage/s3-client"
@@ -87,8 +88,45 @@ interface SeededCase {
   personaId: string
   streamId: string
   docId: string
+  decoyDocId: string | null
   messageId: string
   baseline: Map<string, string>
+  decoyBaseline: Map<string, string>
+}
+
+interface SeedServices {
+  docService: DocService
+  streamService: StreamService
+  userPreferencesService: UserPreferencesService
+}
+
+/** Host a titled doc on the scratchpad with its body written as a member's client update. */
+async function hostDoc(
+  ctx: EvalContext,
+  services: Pick<SeedServices, "docService" | "streamService">,
+  hostStreamId: string,
+  title: string,
+  markdown: string
+): Promise<string> {
+  const doc = await services.streamService.create({
+    workspaceId: ctx.workspaceId,
+    type: StreamTypes.DOC,
+    parentStreamId: hostStreamId,
+    createdBy: ctx.userId,
+  })
+  await services.streamService.updateStream(
+    doc.id,
+    { displayName: title },
+    { workspaceId: ctx.workspaceId, principal: { kind: "user", userId: ctx.userId } }
+  )
+  const body = writeContentJson(new Y.Doc(), { type: "doc", content: parseMarkdown(markdown).content })
+  await services.docService.postUpdate({
+    workspaceId: ctx.workspaceId,
+    userId: ctx.userId,
+    docId: doc.id,
+    update: encodeUpdateBase64(body),
+  })
+  return doc.id
 }
 
 async function sectionsByBlockId(ctx: EvalContext, docId: string): Promise<Map<string, string>> {
@@ -98,16 +136,11 @@ async function sectionsByBlockId(ctx: EvalContext, docId: string): Promise<Map<s
 
 /**
  * Seed a private scratchpad with companion mode on and the eval Ariadne
- * persona (as brief-correction does), host the "Rotation tracker" doc on it
- * with its body written as a member's client update, then post the history
- * and the trigger message.
+ * persona (as brief-correction does), host the "Rotation tracker" doc and any
+ * decoy doc on it, report the user's open docs, then post the history and the
+ * trigger message.
  */
-async function setupTestData(
-  input: DocEditInput,
-  ctx: EvalContext,
-  services: { docService: DocService; streamService: StreamService; userPreferencesService: UserPreferencesService }
-): Promise<SeededCase> {
-  const { docService, streamService, userPreferencesService } = services
+async function setupTestData(input: DocEditInput, ctx: EvalContext, services: SeedServices): Promise<SeededCase> {
   const pool = ctx.pool
 
   const templatePersona = await PersonaRepository.findById(pool, ctx.workspaceId, ARIADNE_AGENT_ID)
@@ -135,27 +168,28 @@ async function setupTestData(
   })
   await StreamMemberRepository.insert(pool, ctx.workspaceId, testStreamId, ctx.userId)
 
-  await userPreferencesService.updatePreferences(ctx.workspaceId, ctx.userId, { timezone: "UTC" })
+  await services.userPreferencesService.updatePreferences(ctx.workspaceId, ctx.userId, { timezone: "UTC" })
 
-  const doc = await streamService.create({
-    workspaceId: ctx.workspaceId,
-    type: StreamTypes.DOC,
-    parentStreamId: testStreamId,
-    createdBy: ctx.userId,
-  })
-  await streamService.updateStream(
-    doc.id,
-    { displayName: DOC_TITLE },
-    { workspaceId: ctx.workspaceId, principal: { kind: "user", userId: ctx.userId } }
-  )
-  const body = writeContentJson(new Y.Doc(), { type: "doc", content: parseMarkdown(DOC_BODY).content })
-  await docService.postUpdate({
-    workspaceId: ctx.workspaceId,
-    userId: ctx.userId,
-    docId: doc.id,
-    update: encodeUpdateBase64(body),
-  })
-  const baseline = await sectionsByBlockId(ctx, doc.id)
+  const docId = await hostDoc(ctx, services, testStreamId, DOC_TITLE, DOC_BODY)
+  const decoyDocId = input.decoyDoc
+    ? await hostDoc(ctx, services, testStreamId, input.decoyDoc.title, input.decoyDoc.body)
+    : null
+  const baseline = await sectionsByBlockId(ctx, docId)
+  const decoyBaseline = decoyDocId ? await sectionsByBlockId(ctx, decoyDocId) : new Map<string, string>()
+
+  // Cases share one fixture user, so a case without an open doc clears the previous case's report.
+  if (input.openDoc) {
+    const openDocId = input.openDoc === "seeded" ? docId : decoyDocId
+    if (!openDocId) throw new Error('openDoc: "decoy" needs a decoyDoc')
+    await storeDevice(pool, [{ workspaceId: ctx.workspaceId, userId: ctx.userId }], {
+      layout: "desktop",
+      os: "linux",
+      installed: false,
+      openDocIds: [openDocId],
+    })
+  } else {
+    await UserDeviceContextRepository.delete(pool, ctx.workspaceId, ctx.userId)
+  }
 
   const eventService = new EventService(pool)
 
@@ -179,18 +213,29 @@ async function setupTestData(
     contentMarkdown: input.message,
   })
 
-  return { personaId: testPersonaId, streamId: testStreamId, docId: doc.id, messageId: triggerMessage.id, baseline }
+  return {
+    personaId: testPersonaId,
+    streamId: testStreamId,
+    docId,
+    decoyDocId,
+    messageId: triggerMessage.id,
+    baseline,
+    decoyBaseline,
+  }
 }
 
 async function readBack(
   ctx: EvalContext,
-  seeded: { streamId: string; docId: string; baseline: Map<string, string> }
+  seeded: Pick<SeededCase, "streamId" | "docId" | "decoyDocId" | "baseline" | "decoyBaseline">
 ): Promise<Omit<DocEditOutput, "input" | "error">> {
-  const { streamId, docId, baseline } = seeded
-  const [after, updates, edits, childDocs, doc] = await Promise.all([
+  const { streamId, docId, decoyDocId, baseline, decoyBaseline } = seeded
+  const [after, decoyAfter, updates, decoyUpdates, edits, decoyEdits, childDocs, doc] = await Promise.all([
     sectionsByBlockId(ctx, docId),
+    decoyDocId ? sectionsByBlockId(ctx, decoyDocId) : new Map<string, string>(),
     DocRepository.listUpdatesAfter(ctx.pool, ctx.workspaceId, docId, 0),
+    decoyDocId ? DocRepository.listUpdatesAfter(ctx.pool, ctx.workspaceId, decoyDocId, 0) : [],
     StreamEventRepository.list(ctx.pool, ctx.workspaceId, docId, { types: ["doc:edited"] }),
+    decoyDocId ? StreamEventRepository.list(ctx.pool, ctx.workspaceId, decoyDocId, { types: ["doc:edited"] }) : [],
     StreamRepository.list(ctx.pool, ctx.workspaceId, {
       types: [StreamTypes.DOC],
       parentStreamId: streamId,
@@ -200,18 +245,21 @@ async function readBack(
   ])
 
   const personaUpdateCount = updates.filter((update) => update.actorType === AuthorTypes.PERSONA).length
-  const createdDocCount = childDocs.filter((child) => child.id !== docId).length
+  const decoyPersonaUpdateCount = decoyUpdates.filter((update) => update.actorType === AuthorTypes.PERSONA).length
+  const createdDocCount = childDocs.filter((child) => child.id !== docId && child.id !== decoyDocId).length
   const titleChanged = doc?.displayName !== DOC_TITLE
-  const writeCount = personaUpdateCount + createdDocCount + (titleChanged ? 1 : 0)
+  const writeCount = personaUpdateCount + decoyPersonaUpdateCount + createdDocCount + (titleChanged ? 1 : 0)
 
   return {
     wrote: writeCount > 0,
     writeCount,
     personaUpdateCount,
+    decoyPersonaUpdateCount,
+    decoyTouchedSections: diffSections(decoyBaseline, decoyAfter).touchedSections,
     createdDocCount,
     titleChanged,
     ...diffSections(baseline, after),
-    reasons: edits
+    reasons: [...edits, ...decoyEdits]
       .filter((event) => event.actorType === AuthorTypes.PERSONA)
       .map((event) => (event.payload as DocEditedEventPayload).reason ?? ""),
   }
@@ -222,11 +270,12 @@ async function runDocEditTask(input: DocEditInput, ctx: EvalContext): Promise<Do
     const docService = new DocService({ pool: ctx.pool })
     const streamService = new StreamService(ctx.pool)
     const userPreferencesService = new UserPreferencesService(ctx.pool)
-    const { personaId, streamId, docId, messageId, baseline } = await setupTestData(input, ctx, {
+    const seeded = await setupTestData(input, ctx, {
       docService,
       streamService,
       userPreferencesService,
     })
+    const { personaId, streamId, messageId } = seeded
 
     const embeddingService = new EmbeddingService({ ai: ctx.ai })
     const workspaceAgent = new WorkspaceAgent({
@@ -388,7 +437,7 @@ async function runDocEditTask(input: DocEditInput, ctx: EvalContext): Promise<Do
       error = `agent session skipped: ${run.skipReason ?? "no reason recorded"}`
     }
 
-    const readback = await readBack(ctx, { streamId, docId, baseline })
+    const readback = await readBack(ctx, seeded)
     return { input, ...readback, error }
   } catch (error) {
     return {
@@ -396,6 +445,8 @@ async function runDocEditTask(input: DocEditInput, ctx: EvalContext): Promise<Do
       wrote: false,
       writeCount: 0,
       personaUpdateCount: 0,
+      decoyPersonaUpdateCount: 0,
+      decoyTouchedSections: [],
       createdDocCount: 0,
       titleChanged: false,
       touchedSections: [],

@@ -8,6 +8,7 @@ export { DocActivityService } from "./activity-service"
 export { DocActivityOutboxHandler } from "./activity-outbox-handler"
 export { createDocActivityWorker } from "./activity-worker"
 export { DocAgentService, type DocAgentContext } from "./agent-service"
+export { docHostFor, listHostedDocs, docFirstLine, UNTITLED_DOC_LABEL, type HostedDoc } from "./hosted-docs"
 export type { DocAgentEdit } from "./agent-markdown"
 export type {
   DocAgentAccessRefusal,

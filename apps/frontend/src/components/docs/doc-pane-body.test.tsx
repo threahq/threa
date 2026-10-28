@@ -24,6 +24,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { RevealOnReady } from "@/contexts/coordinated-loading-context"
 import { DocSync, FLUSH_CAP_MS } from "@/lib/docs/doc-sync"
 import { PRESENCE_SEND_WINDOW_MS } from "@/lib/docs/doc-presence"
+import { getOpenDocIds } from "@/lib/docs/open-docs"
 import { getPresenceColor } from "@/lib/avatar-color"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
@@ -607,6 +608,19 @@ describe("DocPaneBody", () => {
   })
 
   describe("useDocSync", () => {
+    it("marks the doc open on this device while mounted, across a doc change", async () => {
+      const { rerender, unmount } = renderHook(({ docId }) => useDocSync(WORKSPACE_ID, docId), {
+        initialProps: { docId: DOC_ID as string | null },
+      })
+      expect(getOpenDocIds()).toEqual([DOC_ID])
+
+      rerender({ docId: "stream_other" })
+      expect(getOpenDocIds()).toEqual(["stream_other"])
+
+      unmount()
+      expect(getOpenDocIds()).toEqual([])
+    })
+
     it("opens no session and touches no socket when the doc id is null", async () => {
       const { result } = renderHook(() => useDocSync(WORKSPACE_ID, null))
       await act(async () => {})

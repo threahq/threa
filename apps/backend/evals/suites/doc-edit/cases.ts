@@ -4,6 +4,8 @@
  * Every case runs against the same seeded "Rotation tracker" doc hosted on the
  * scratchpad: a heading, a credential table and a task list. Write cases ask
  * for one targeted change; chitchat and read-only questions must leave it alone.
+ * Decoy cases host a second doc with a look-alike task: the open doc decides
+ * an unnamed request, a named doc beats the open one.
  */
 
 import type { EvalCase } from "../../framework/types"
@@ -21,6 +23,16 @@ export const DOC_BODY = `# Rotation tracker
 `
 
 export const DOC_TITLE = "Rotation tracker"
+
+const LAUNCH_CHECKLIST = {
+  title: "Launch checklist",
+  body: `# Launch checklist
+
+- [ ] Freeze the release branch
+- [ ] Revoke the old AWS access key
+- [ ] Post the release notes
+`,
+}
 
 export const docEditCases: EvalCase<DocEditInput, DocEditExpected>[] = [
   {
@@ -47,6 +59,34 @@ export const docEditCases: EvalCase<DocEditInput, DocEditExpected>[] = [
       touchedSectionMustMatch: /GitHub token/i,
       maxTouchedSections: 1,
     },
+  },
+  {
+    id: "open-doc-implicit-001",
+    name: "Edits the open doc when none is named",
+    input: { message: "tick off the revoke item", decoyDoc: LAUNCH_CHECKLIST, openDoc: "seeded" },
+    expectedOutput: {
+      shouldWrite: true,
+      touchedSectionMustMatch: /\[x\].*AWS access key/i,
+      maxTouchedSections: 1,
+      replaceableLine: /AWS access key/i,
+      decoy: "untouched",
+    },
+  },
+  {
+    id: "open-decoy-implicit-001",
+    name: "Edits the open decoy when none is named",
+    input: { message: "tick off the revoke item", decoyDoc: LAUNCH_CHECKLIST, openDoc: "decoy" },
+    expectedOutput: { shouldWrite: true, maxTouchedSections: 0, decoy: /\[x\].*AWS access key/i },
+  },
+  {
+    id: "named-over-open-001",
+    name: "A named doc beats the open one",
+    input: {
+      message: "tick off the revoke item in the launch checklist",
+      decoyDoc: LAUNCH_CHECKLIST,
+      openDoc: "seeded",
+    },
+    expectedOutput: { shouldWrite: true, maxTouchedSections: 0, decoy: /\[x\].*AWS access key/i },
   },
   {
     id: "chitchat-001",

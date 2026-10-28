@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Locator } from "@playwright/test"
-import { expectApiOk, loginAndCreateWorkspace, workspaceIdFromUrl } from "./helpers"
+import { loginAndCreateWorkspace, workspaceIdFromUrl, createChannelViaApi, createDocViaApi } from "./helpers"
 
 /**
  * A doc's title is its stream's name: a member renames it in the field above
@@ -16,22 +16,6 @@ const docEditor = (page: Page, docId: string): Locator => pane(page, docId).loca
 const titleInput = (page: Page, docId: string): Locator => pane(page, docId).getByRole("textbox", { name: "Doc title" })
 const anchorRow = (page: Page, docId: string): Locator => page.locator(`a[data-doc-id="${docId}"]`)
 
-async function createChannelViaApi(page: Page, workspaceId: string, slug: string): Promise<string> {
-  const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
-    data: { type: "channel", slug, visibility: "private" },
-  })
-  await expectApiOk(response, "Create channel")
-  return ((await response.json()) as { stream: { id: string } }).stream.id
-}
-
-async function createDoc(page: Page, workspaceId: string, hostId: string): Promise<string> {
-  const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
-    data: { type: "doc", parentStreamId: hostId },
-  })
-  await expectApiOk(response, "Create doc")
-  return ((await response.json()) as { stream: { id: string } }).stream.id
-}
-
 async function openDoc(page: Page, workspaceId: string, channelId: string, docId: string): Promise<void> {
   await page.goto(`/w/${workspaceId}/s/${channelId}`)
   await expect(page.locator(`[data-stream-scroller="${channelId}"]`)).toBeVisible({ timeout: 20000 })
@@ -43,7 +27,7 @@ async function setUp(page: Page, prefix: string) {
   const { testId } = await loginAndCreateWorkspace(page, prefix)
   const workspaceId = workspaceIdFromUrl(page)
   const channelId = await createChannelViaApi(page, workspaceId, `${prefix}-${testId}`)
-  const docId = await createDoc(page, workspaceId, channelId)
+  const docId = await createDocViaApi(page, workspaceId, channelId)
   await openDoc(page, workspaceId, channelId, docId)
   return { workspaceId, channelId, docId }
 }
