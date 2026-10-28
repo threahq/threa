@@ -213,6 +213,34 @@ describe("agent markdown", () => {
     ])
   })
 
+  test("should keep a blank line the replacement adds beyond the newline the old dropped", () => {
+    const result = resolveEdits(sections, [{ old: "AWS key is live\n", new: "AWS key is live\n\nRotate it" }])
+
+    expect(result.ok && changedMarkdown(result.sections).filter((s) => s.changed)).toEqual([
+      { blockId: id(2), markdown: "AWS key is live\n\nRotate it", changed: true },
+    ])
+  })
+
+  test("should match each hard break on its own when the old also spans a plain line break", () => {
+    const list = { blockId: id(9), markdown: "- first\\\nsecond\n- third", contentJson: paragraph("", 9) }
+
+    const result = resolveEdits([list], [{ old: "first\nsecond\n- third", new: "first\nsecond\n- 3rd" }])
+
+    expect(result.ok && changedMarkdown(result.sections)).toEqual([
+      { blockId: id(9), markdown: "- first\\\nsecond\n- 3rd", changed: true },
+    ])
+  })
+
+  test("should keep the replacement's line breaks literal when its shape differs from the matched old", () => {
+    const poem = { blockId: id(6), markdown: "roses are red\\\nviolets are blue", contentJson: paragraph("", 6) }
+
+    const result = resolveEdits([poem], [{ old: "roses are red\nviolets are blue", new: "roses\nare\nred" }])
+
+    expect(result.ok && changedMarkdown(result.sections)).toEqual([
+      { blockId: id(6), markdown: "roses\nare\nred", changed: true },
+    ])
+  })
+
   test("should refuse as ambiguous when a fallback matches twice", () => {
     expect(resolveEdits(sections, [{ old: "key is live\n", new: "key is gone" }])).toEqual({
       ok: false,

@@ -38,10 +38,71 @@ export function normalizeTrailingWs(text: string): string {
     .join("\n")
 }
 
-const trimNewlines = (text: string) => text.replace(/^\n+|\n+$/g, "")
+interface Match {
+  index: number
+  at: number
+  length: number
+  replacement: string
+}
 
-/** A lone newline stands for a hard break, which stored markdown writes as a trailing backslash. */
-const asHardBreaks = (text: string) => text.replace(/(?<![\\\n])\n(?!\n)/g, "\\\n")
+/** One way to read an edit's `old` against a block, yielding each match and what replaces it. */
+interface Reading {
+  find: (text: string) => { at: number; length: number; replacement: string }[]
+}
+
+/** A newline that isn't part of a blank line or already behind a hard break's backslash. */
+const LONE_NEWLINE = /(?<![\\\n])\n(?!\n)/g
+
+const edgeNewlines = (text: string) => ({
+  leading: text.length - text.replace(/^\n+/, "").length,
+  trailing: text.length - text.replace(/\n+$/, "").length,
+})
+
+/** Drops the edge newlines `old` lost, and no more, so a replacement that adds a blank line keeps it. */
+function trimLike(old: string, replacement: string): string {
+  const dropped = edgeNewlines(old)
+  const rest = replacement.slice(Math.min(dropped.leading, edgeNewlines(replacement).leading))
+  return rest.slice(0, rest.length - Math.min(dropped.trailing, edgeNewlines(rest).trailing))
+}
+
+function literalReading(needle: string, replacement: string): Reading {
+  return {
+    find: (text) => findOccurrences(text, needle).map((at) => ({ at, length: needle.length, replacement })),
+  }
+}
+
+/**
+ * Each lone newline in `needle` also matches a hard break (stored as a trailing
+ * backslash), independently, so a list item's line break can sit beside a hard
+ * break. The replacement takes the matched separators positionally when it has
+ * as many lone newlines; otherwise it stays literal.
+ */
+function hardBreakReading(needle: string, replacement: string): Reading {
+  const pattern = needle
+    .split(LONE_NEWLINE)
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("(\\\\?\\n)")
+  return {
+    find: (text) => {
+      const parts = replacement.split(LONE_NEWLINE)
+      const regex = new RegExp(pattern, "g")
+      const found: { at: number; length: number; replacement: string }[] = []
+      for (let m = regex.exec(text); m && found.length < 2; m = regex.exec(text)) {
+        const separators = m.slice(1)
+        found.push({
+          at: m.index,
+          length: m[0].length,
+          replacement:
+            parts.length - 1 === separators.length
+              ? parts.reduce((joined, part, i) => joined + separators[i - 1] + part)
+              : replacement,
+        })
+        regex.lastIndex = m.index + 1
+      }
+      return found
+    },
+  }
+}
 
 function keep({ blockId, markdown, contentJson }: AgentSection): NextSection {
   return { changed: false, blockId, markdown, contentJson }
@@ -111,29 +172,27 @@ export function resolveEdits(sections: readonly AgentSection[], edits: readonly 
     if (!scope) return refuse(sections, "unknown_block", { editIndex })
 
     const exact = normalizeTrailingWs(stripMarkers(edit.old))
-    const trimmed = trimNewlines(exact)
     const replacement = normalizeTrailingWs(stripMarkers(edit.new))
-    // Each looser needle runs only when the stricter ones found nothing, so a unique match never turns ambiguous.
-    const attempts = [
-      { old: exact, new: replacement },
-      { old: trimmed, new: trimNewlines(replacement) },
-      { old: asHardBreaks(trimmed), new: asHardBreaks(trimNewlines(replacement)) },
+    const trimmed = exact.replace(/^\n+|\n+$/g, "")
+    const trimmedReplacement = trimLike(exact, replacement)
+    // Each looser reading runs only when the stricter ones found nothing, so a unique match never turns ambiguous.
+    const readings = [
+      literalReading(exact, replacement),
+      ...(trimmed === exact ? [] : [literalReading(trimmed, trimmedReplacement)]),
+      ...(trimmed.split(LONE_NEWLINE).length > 1 ? [hardBreakReading(trimmed, trimmedReplacement)] : []),
     ]
-    let found: { old: string; new: string; matches: { index: number; at: number }[] } | undefined
-    for (const attempt of attempts) {
-      if (attempt.old === "" || found?.old === attempt.old) continue
-      const matches = scope.flatMap((index) =>
-        findOccurrences(normalizeTrailingWs(working[index]), attempt.old).map((at) => ({ index, at }))
+    let matches: Match[] = []
+    for (const reading of trimmed === "" ? [] : readings) {
+      matches = scope.flatMap((index) =>
+        reading.find(normalizeTrailingWs(working[index])).map((match) => ({ index, ...match }))
       )
-      found = { ...attempt, matches }
       if (matches.length > 0) break
     }
-    const matches = found?.matches ?? []
-    if (!found || matches.length !== 1) {
+    if (matches.length !== 1) {
       return refuse(sections, matches.length === 0 ? "not_found" : "ambiguous", { blockId: edit.blockId, editIndex })
     }
-    const [{ index, at }] = matches
-    working[index] = spliceNormalized(working[index], at, found.old.length, found.new)
+    const [{ index, at, length, replacement: next }] = matches
+    working[index] = spliceNormalized(working[index], at, length, next)
   }
   return {
     ok: true,
