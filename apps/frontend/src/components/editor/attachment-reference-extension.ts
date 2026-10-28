@@ -19,6 +19,8 @@ export interface AttachmentReferenceAttrs {
   imageIndex: number | null
   /** Error message if status is "error" */
   error: string | null
+  /** How the sent message draws it: a chip, or an image in the body. */
+  display?: "pill" | "inline"
 }
 
 declare module "@tiptap/core" {

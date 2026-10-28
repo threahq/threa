@@ -37,6 +37,7 @@ export {
   pushReceiptId,
   avatarUploadId,
   messageVersionId,
+  blockId,
   pushSubscriptionId,
   userSessionId,
   apiKeyChannelAccessId,

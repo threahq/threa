@@ -159,6 +159,7 @@ describe("EditorToolbar", () => {
       content: [
         {
           type: "paragraph",
+          attrs: { blockId: null },
           content: [
             { type: "text", text: "area " },
             { type: "math", attrs: { tex: "x^2", display: false } },

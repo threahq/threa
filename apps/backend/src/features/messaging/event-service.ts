@@ -48,6 +48,7 @@ import { StreamContextRepository, contextRowsForMessage, contextSnippet } from "
 import { MemoRepository, resolveMemoEmbedSummaries, resolveMemoSummariesByStream } from "../memos"
 import {
   attachmentReferenceId,
+  blockId,
   eventId,
   messageId,
   messageVersionId,
@@ -56,7 +57,7 @@ import {
 } from "../../lib/id"
 import { MessageVersionRepository, type MessageVersion } from "./version-repository"
 import { MessageComposeTraceRepository } from "./compose-trace-repository"
-import { collectAgentBlockAuthorIds, collectMemoEmbedIds } from "@threahq/prosemirror"
+import { collectAgentBlockAuthorIds, collectMemoEmbedIds, ensureBlockIds } from "@threahq/prosemirror"
 import { withDerivedMessageMetadata } from "./metadata-schema"
 import { serializeBigInt } from "@threahq/backend-common"
 import { messagesTotal } from "../../lib/observability"
@@ -728,8 +729,9 @@ export class EventService {
     // Pin every quote/share node to a source revision + span and re-derive the
     // quote bodies from it (the server is the sole writer of a quote snippet).
     // Runs before the event, the projections and the outbox so they all read
-    // the pinned body. Skipped in E2E streams: the stored content is a
-    // placeholder there and carries no references.
+    // the pinned body, then gives every block its id. Skipped in E2E streams:
+    // the stored content is a placeholder there, with no references to pin and
+    // no blocks to anchor.
     if (stream?.e2eEnabled !== true) {
       const resolvedReferences = await resolveMessageReferences(client, {
         workspaceId: params.workspaceId,
@@ -747,6 +749,7 @@ export class EventService {
         params.contentJson = resolvedReferences.contentJson
         params.contentMarkdown = deriveContentMarkdown(resolvedReferences.contentJson)
       }
+      params.contentJson = ensureBlockIds(params.contentJson, blockId)
     }
 
     // Validate attachments before creating the event. Two flavors:
@@ -1377,6 +1380,7 @@ export class EventService {
             params.contentJson = resolvedEditReferences.contentJson
             params.contentMarkdown = deriveContentMarkdown(resolvedEditReferences.contentJson)
           }
+          params.contentJson = ensureBlockIds(params.contentJson, blockId, existing.contentJson)
 
           const snapshot = await MessageVersionRepository.insert(client, {
             id: messageVersionId(),

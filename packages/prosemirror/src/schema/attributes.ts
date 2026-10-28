@@ -56,3 +56,18 @@ export const referencePinAttributes = {
     },
   },
 }
+
+export const BLOCK_ID_NODE_TYPES: readonly string[] = [
+  "paragraph",
+  "heading",
+  "bulletList",
+  "orderedList",
+  "taskList",
+  "blockquote",
+  "codeBlock",
+  "table",
+  "horizontalRule",
+  "agentBlock",
+  "quoteReply",
+  "sharedMessage",
+]

@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test"
 import { privateQuoteAttrs } from "@threahq/prosemirror"
 import {
+  BLOCK_ID_PATTERN,
   MessageReferenceErrorCodes,
   ShareErrorCodes,
   type JSONContent,
@@ -326,6 +327,11 @@ describe("share privacy on a scheduled send", () => {
       return unshared.data.references.filter((ref) => ref.messageId === quoteMessageId)
     }
     const privateQuote = { type: "quoteReply", attrs: privateQuoteAttrs(source) }
+    // The sink gives the quote block an id on send and keeps it across the edit.
+    const privateQuoteSeen = {
+      type: "quoteReply",
+      attrs: { ...privateQuoteAttrs(source), blockId: expect.stringMatching(BLOCK_ID_PATTERN) },
+    }
     const quoteSeenWithoutAccess = await quoteSeenByBob()
     const listedWithoutAccess = await listed()
     const seenWithoutAccess = await seenByBob()
@@ -351,14 +357,14 @@ describe("share privacy on a scheduled send", () => {
       quoteSent: {
         status: 200,
         seen: {
-          quote: privateQuote,
+          quote: privateQuoteSeen,
           markdown: `> — [Private quote](quote:${source.streamId}/${source.messageId}?private=1)`,
         },
       },
       quoteEdited: {
         status: 200,
         seen: {
-          quote: privateQuote,
+          quote: privateQuoteSeen,
           markdown: `> — [Private quote](quote:${source.streamId}/${source.messageId}?private=1)\n\nedited`,
         },
         listed: [],

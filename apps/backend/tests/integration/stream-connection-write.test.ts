@@ -14,6 +14,7 @@ import {
   setupIsolatedTestDatabase,
   testContentJson,
   testMessageContent,
+  withMintedBlockIds,
 } from "./setup"
 import { PersonaRepository } from "../../src/features/agents"
 import { AttachmentRepository } from "../../src/features/attachments"
@@ -413,29 +414,31 @@ describe("A partner's writes to a shared channel", () => {
 
     const { messageId: id } = await send(world, content, { users: [world.sam] })
 
-    expect((await stored(world, id))?.contentJson).toEqual({
-      type: "doc",
-      content: [
-        {
-          type: "paragraph",
-          content: [
-            hostMention,
-            { type: "text", text: " " },
-            ownMention,
-            { type: "text", text: " " },
-            { type: "text", text: "@hostly" },
-            { type: "text", text: " " },
-            { type: "text", text: "@tess-writes-third" },
-            { type: "text", text: " " },
-            { type: "text", text: "@channel" },
-            { type: "text", text: " " },
-            { type: "text", text: "@channel" },
-            { type: "text", text: " " },
-            { type: "text", text: "@Here" },
-          ],
-        },
-      ],
-    })
+    expect((await stored(world, id))?.contentJson).toEqual(
+      withMintedBlockIds({
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              hostMention,
+              { type: "text", text: " " },
+              ownMention,
+              { type: "text", text: " " },
+              { type: "text", text: "@hostly" },
+              { type: "text", text: " " },
+              { type: "text", text: "@tess-writes-third" },
+              { type: "text", text: " " },
+              { type: "text", text: "@channel" },
+              { type: "text", text: " " },
+              { type: "text", text: "@channel" },
+              { type: "text", text: " " },
+              { type: "text", text: "@Here" },
+            ],
+          },
+        ],
+      })
+    )
   })
 
   test("should keep a mention of another active partner's user and flatten a revoked partner's when the partner sends", async () => {
@@ -454,15 +457,17 @@ describe("A partner's writes to a shared channel", () => {
 
     const { messageId: id } = await send(world, content)
 
-    expect((await stored(world, id))?.contentJson).toEqual({
-      type: "doc",
-      content: [
-        {
-          type: "paragraph",
-          content: [mention(active.id, "olle"), { type: "text", text: " " }, { type: "text", text: "@rune" }],
-        },
-      ],
-    })
+    expect((await stored(world, id))?.contentJson).toEqual(
+      withMintedBlockIds({
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [mention(active.id, "olle"), { type: "text", text: " " }, { type: "text", text: "@rune" }],
+          },
+        ],
+      })
+    )
   })
 
   test("should drop quotes, shares and file references without failing when the partner sends in a private channel", async () => {
@@ -516,10 +521,12 @@ describe("A partner's writes to a shared channel", () => {
       ],
     })
 
-    expect((await stored(world, id))?.contentJson).toEqual({
-      type: "doc",
-      content: [{ type: "paragraph", content: [{ type: "text", text: "see above" }] }],
-    })
+    expect((await stored(world, id))?.contentJson).toEqual(
+      withMintedBlockIds({
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "see above" }] }],
+      })
+    )
   })
 
   test("should refuse content naming a node or mark the bridge doesn't carry when the partner sends it", async () => {
@@ -549,7 +556,7 @@ describe("A partner's writes to a shared channel", () => {
     const { messageId: id } = await send(world, { type: "doc", content: [block("agentBlock")] })
 
     expect({ content: (await stored(world, id))?.contentJson, metadata: (await stored(world, id))?.metadata }).toEqual({
-      content: { type: "doc", content: [block("blockquote")] },
+      content: withMintedBlockIds({ type: "doc", content: [block("blockquote")] }),
       metadata: {},
     })
   })
@@ -686,7 +693,7 @@ describe("A partner's writes to a shared channel", () => {
             referenced_by: [first.messageId],
           },
         ],
-        contentJson: content,
+        contentJson: withMintedBlockIds(content),
       })
     })
 
@@ -765,13 +772,13 @@ describe("A partner's writes to a shared channel", () => {
         contentJson: (await stored(world, id))?.contentJson,
         referencedBy: (await hostFiles(world, [file.id]))[0]?.referenced_by,
       }).toEqual({
-        contentJson: {
+        contentJson: withMintedBlockIds({
           type: "doc",
           content: [
             ...withFile(file, " second").content!,
             { type: "paragraph", content: [{ type: "text", text: " borrowed" }] },
           ],
-        },
+        }),
         referencedBy: [id],
       })
     })

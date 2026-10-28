@@ -5,6 +5,7 @@ export interface ParsedAttachmentMetadata {
   filename?: string
   mimeType?: string
   sizeBytes: number | null
+  display?: "inline"
 }
 
 function parseNonNegativeSafeInteger(rawValue: string | null): number | null {
@@ -45,6 +46,9 @@ export function serializeAttachmentMetadata(attrs: Record<string, unknown> | und
   if (typeof attrs.sizeBytes === "number" && Number.isSafeInteger(attrs.sizeBytes) && attrs.sizeBytes >= 0) {
     params.set("sizeBytes", String(attrs.sizeBytes))
   }
+  if (attrs.display === "inline") {
+    params.set("display", "inline")
+  }
 
   const encoded = params.toString()
   if (!encoded) return ""
@@ -67,5 +71,6 @@ export function parseAttachmentMetadata(rawTitle: string | undefined): ParsedAtt
     filename: params.get("filename") ?? undefined,
     mimeType: params.get("mimeType") ?? undefined,
     sizeBytes: parseNonNegativeSafeInteger(params.get("sizeBytes")),
+    display: params.get("display") === "inline" ? "inline" : undefined,
   }
 }

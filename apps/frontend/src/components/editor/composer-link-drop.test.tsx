@@ -195,7 +195,7 @@ describe("dropping a file into an editor that takes no uploads", () => {
 
     expect({ notCancelled, content: getContent() }).toEqual({
       notCancelled: false,
-      content: { type: "doc", content: [{ type: "paragraph" }] },
+      content: { type: "doc", content: [{ type: "paragraph", attrs: { blockId: null } }] },
     })
   })
 

@@ -368,11 +368,19 @@ export function collectLinkUrls(content: JSONContent): string[] {
  * rule (markdown.ts), and dedupes preserving first-seen order.
  */
 export function collectAttachmentReferenceIds(content: JSONContent): string[] {
+  return collectSettledAttachmentIds(content, () => true)
+}
+
+export function collectInlineAttachmentIds(content: JSONContent): string[] {
+  return collectSettledAttachmentIds(content, (node) => node.attrs?.display === "inline")
+}
+
+function collectSettledAttachmentIds(content: JSONContent, include: (node: JSONContent) => boolean): string[] {
   const seen = new Set<string>()
   const ordered: string[] = []
 
   const walk = (node: JSONContent): void => {
-    if (node.type === "attachmentReference") {
+    if (node.type === "attachmentReference" && include(node)) {
       const status = node.attrs?.status
       const id = node.attrs?.id
       if (typeof id === "string" && id.length > 0 && status !== "uploading" && status !== "error") {

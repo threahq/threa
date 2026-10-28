@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test"
 import type { JSONContent } from "@threahq/types"
 import {
   collectAttachmentReferenceIds,
+  collectInlineAttachmentIds,
   collectChannelStreamIds,
   collectGiphyEmbeds,
   collectLinkUrls,
@@ -128,6 +129,33 @@ describe("collectAttachmentReferenceIds", () => {
     }
 
     expect(collectAttachmentReferenceIds(doc)).toEqual(["attach_real"])
+  })
+})
+
+describe("collectInlineAttachmentIds", () => {
+  it("returns only settled inline-display references, deduped in document order", () => {
+    const inline = (id: string, status = "uploaded"): JSONContent => ({
+      type: "attachmentReference",
+      attrs: { id, status, display: "inline" },
+    })
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            reference("attach_pill"),
+            inline("attach_a"),
+            inline("attach_pending", "uploading"),
+            inline("attach_failed", "error"),
+            inline("attach_b"),
+            inline("attach_a"),
+          ],
+        },
+      ],
+    }
+
+    expect(collectInlineAttachmentIds(doc)).toEqual(["attach_a", "attach_b"])
   })
 })
 

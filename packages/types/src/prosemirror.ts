@@ -40,6 +40,13 @@ export interface ThreaDocument {
   content: ThreaBlockNode[]
 }
 
+/** Stable per-block identity (`blk_<ULID>`), minted server-side on write. */
+export const BLOCK_ID_PATTERN = /^blk_[0-9A-HJKMNP-TV-Z]{26}$/
+
+export type ThreaBlockIdAttrs = {
+  blockId?: string | null
+}
+
 /**
  * Block-level nodes that can appear at the document level.
  */
@@ -53,6 +60,7 @@ export type ThreaBlockNode =
   | ThreaSharedMessage
   | ThreaBulletList
   | ThreaOrderedList
+  | ThreaTaskList
   | ThreaHorizontalRule
 
 /**
@@ -60,6 +68,7 @@ export type ThreaBlockNode =
  */
 export interface ThreaParagraph {
   type: "paragraph"
+  attrs?: ThreaBlockIdAttrs
   content?: ThreaInlineNode[]
 }
 
@@ -68,7 +77,7 @@ export interface ThreaParagraph {
  */
 export interface ThreaHeading {
   type: "heading"
-  attrs: {
+  attrs: ThreaBlockIdAttrs & {
     level: 1 | 2 | 3
   }
   content?: ThreaInlineNode[]
@@ -79,7 +88,7 @@ export interface ThreaHeading {
  */
 export interface ThreaCodeBlock {
   type: "codeBlock"
-  attrs?: {
+  attrs?: ThreaBlockIdAttrs & {
     language?: string
   }
   content?: ThreaTextNode[]
@@ -90,6 +99,7 @@ export interface ThreaCodeBlock {
  */
 export interface ThreaBlockquote {
   type: "blockquote"
+  attrs?: ThreaBlockIdAttrs
   content: ThreaBlockNode[]
 }
 
@@ -112,7 +122,7 @@ export interface ContentRange {
  */
 export interface ThreaAgentBlock {
   type: "agentBlock"
-  attrs: {
+  attrs: ThreaBlockIdAttrs & {
     /** `persona_…` or `bot_…` — the agent credited with the text (INV-64). */
     authorId: string
     /** Display name at insertion time (denormalized). */
@@ -127,7 +137,7 @@ export interface ThreaAgentBlock {
  */
 export interface ThreaQuoteReply {
   type: "quoteReply"
-  attrs: {
+  attrs: ThreaBlockIdAttrs & {
     /** The ID of the quoted message */
     messageId: string
     /** The stream containing the quoted message */
@@ -160,7 +170,7 @@ export interface ThreaQuoteReply {
  */
 export interface ThreaSharedMessage {
   type: "sharedMessage"
-  attrs: {
+  attrs: ThreaBlockIdAttrs & {
     /** The ID of the referenced source message */
     messageId: string
     /** The stream containing the referenced message (for access validation) */
@@ -183,6 +193,7 @@ export interface ThreaSharedMessage {
  */
 export interface ThreaBulletList {
   type: "bulletList"
+  attrs?: ThreaBlockIdAttrs
   content: ThreaListItem[]
 }
 
@@ -191,7 +202,7 @@ export interface ThreaBulletList {
  */
 export interface ThreaOrderedList {
   type: "orderedList"
-  attrs?: {
+  attrs?: ThreaBlockIdAttrs & {
     start?: number
   }
   content: ThreaListItem[]
@@ -206,10 +217,31 @@ export interface ThreaListItem {
 }
 
 /**
+ * Task (checkbox) list.
+ */
+export interface ThreaTaskList {
+  type: "taskList"
+  attrs?: ThreaBlockIdAttrs
+  content: ThreaTaskItem[]
+}
+
+/**
+ * Task item - a checkable list item; first child is a paragraph.
+ */
+export interface ThreaTaskItem {
+  type: "taskItem"
+  attrs: {
+    checked: boolean
+  }
+  content: ThreaBlockNode[]
+}
+
+/**
  * Horizontal rule / divider.
  */
 export interface ThreaHorizontalRule {
   type: "horizontalRule"
+  attrs?: ThreaBlockIdAttrs
 }
 
 /**
@@ -281,6 +313,7 @@ export interface ThreaAttachmentReference {
     status: "uploading" | "uploaded" | "error"
     imageIndex?: number | null
     error?: string | null
+    display?: "pill" | "inline"
   }
 }
 
@@ -450,6 +483,7 @@ const attachmentReferenceNodeSchema = z.object({
     status: z.enum(["uploading", "uploaded", "error"]),
     imageIndex: z.number().nullable().optional(),
     error: z.string().nullable().optional(),
+    display: z.enum(["pill", "inline"]).optional(),
   }),
 })
 
@@ -508,15 +542,20 @@ const inlineNodeSchema: z.ZodType<ThreaInlineNode> = z.union([
   hardBreakNodeSchema,
 ])
 
+const blockIdAttr = { blockId: z.string().regex(BLOCK_ID_PATTERN).nullish() }
+const blockIdAttrsSchema = z.object(blockIdAttr).optional()
+
 // Block nodes (forward declared for recursion)
 const paragraphNodeSchema = z.object({
   type: z.literal("paragraph"),
+  attrs: blockIdAttrsSchema,
   content: z.array(inlineNodeSchema).optional(),
 })
 
 const headingNodeSchema = z.object({
   type: z.literal("heading"),
   attrs: z.object({
+    ...blockIdAttr,
     level: z.union([z.literal(1), z.literal(2), z.literal(3)]).default(1),
   }),
   content: z.array(inlineNodeSchema).optional(),
@@ -526,6 +565,7 @@ const codeBlockNodeSchema = z.object({
   type: z.literal("codeBlock"),
   attrs: z
     .object({
+      ...blockIdAttr,
       language: z.string().optional(),
     })
     .optional(),
@@ -534,6 +574,7 @@ const codeBlockNodeSchema = z.object({
 
 const horizontalRuleNodeSchema = z.object({
   type: z.literal("horizontalRule"),
+  attrs: blockIdAttrsSchema,
 })
 
 // For recursive structures, we need to use z.lazy()
@@ -550,6 +591,7 @@ const blockNodeSchema = z.lazy(() =>
     sharedMessageNodeSchema,
     bulletListNodeSchema,
     orderedListNodeSchema,
+    taskListNodeSchema,
     horizontalRuleNodeSchema,
   ])
 ) as unknown as z.ZodType<ThreaBlockNode>
@@ -561,6 +603,7 @@ const listItemNodeSchema = z.object({
 
 const blockquoteNodeSchema = z.object({
   type: z.literal("blockquote"),
+  attrs: blockIdAttrsSchema,
   content: z.array(blockNodeSchema),
 })
 
@@ -581,6 +624,7 @@ const quoteReplyNodeSchema = z.object({
   type: z.literal("quoteReply"),
   attrs: z
     .object({
+      ...blockIdAttr,
       messageId: z.string(),
       streamId: z.string(),
       authorName: z.string(),
@@ -595,6 +639,7 @@ const quoteReplyNodeSchema = z.object({
 const agentBlockNodeSchema = z.object({
   type: z.literal("agentBlock"),
   attrs: z.object({
+    ...blockIdAttr,
     // An agent id, never a human's (INV-64): the frame credits an agent.
     authorId: z.string().regex(/^(persona_|bot_)[\w-]{1,56}$/),
     authorName: z.string().min(1).max(200),
@@ -606,6 +651,7 @@ const sharedMessageNodeSchema = z.object({
   type: z.literal("sharedMessage"),
   attrs: z
     .object({
+      ...blockIdAttr,
       messageId: z.string(),
       streamId: z.string(),
       authorName: z.string().optional(),
@@ -618,6 +664,7 @@ const sharedMessageNodeSchema = z.object({
 
 const bulletListNodeSchema = z.object({
   type: z.literal("bulletList"),
+  attrs: blockIdAttrsSchema,
   content: z.array(listItemNodeSchema),
 })
 
@@ -625,10 +672,27 @@ const orderedListNodeSchema = z.object({
   type: z.literal("orderedList"),
   attrs: z
     .object({
+      ...blockIdAttr,
       start: z.number().optional(),
     })
     .optional(),
   content: z.array(listItemNodeSchema),
+})
+
+const taskItemNodeSchema = z.object({
+  type: z.literal("taskItem"),
+  attrs: z
+    .object({
+      checked: z.boolean().default(false),
+    })
+    .default({ checked: false }),
+  content: z.array(blockNodeSchema),
+})
+
+const taskListNodeSchema = z.object({
+  type: z.literal("taskList"),
+  attrs: blockIdAttrsSchema,
+  content: z.array(taskItemNodeSchema),
 })
 
 /**

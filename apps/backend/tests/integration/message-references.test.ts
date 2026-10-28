@@ -27,6 +27,7 @@ import {
   hydrateSharedMessageRefs,
   sliceReferenceContent,
 } from "../../src/features/messaging"
+import { parseMarkdown, privateQuoteAttrs } from "@threahq/prosemirror"
 import { userId, workspaceId, streamId, messageId } from "../../src/lib/id"
 
 function docOf(text: string): JSONContent {
@@ -45,6 +46,11 @@ function quoteNode(attrs: Record<string, unknown>): JSONContent {
     },
   }
 }
+
+const anyBlockId = expect.stringMatching(/^blk_/)
+const QUOTE_BLOCK_ID = "blk_01JQV0TE0000000000000000Q0"
+const SHARE_BLOCK_ID = "blk_01JSHARE0000000000000000S0"
+const EDITED_QUOTE_BLOCK_ID = "blk_01JQV0TE0000000000000000Q1"
 
 function quoteAttrs(message: { contentJson: JSONContent }): Record<string, unknown> {
   const node = (message.contentJson.content ?? []).find((n) => n.type === "quoteReply")
@@ -147,6 +153,7 @@ describe("message reference resolution", () => {
 
     const stored = await MessageRepository.findById(pool, testWorkspaceId, quoting.id)
     expect(quoteAttrs(stored!)).toEqual({
+      blockId: anyBlockId,
       messageId: src.id,
       streamId: source,
       authorName: expect.any(String),
@@ -157,6 +164,130 @@ describe("message reference resolution", () => {
       range,
     })
     expect(quoteAttrs(stored!).snippet).toBe("first")
+  })
+
+  test("should mint block ids on every stored body and keep them across an edit", async () => {
+    const created = await eventService.createMessage({
+      workspaceId: testWorkspaceId,
+      streamId: source,
+      authorId: author,
+      authorType: "user",
+      contentJson: {
+        type: "doc",
+        content: [
+          ...docOf("first").content!,
+          { type: "bulletList", content: [{ type: "listItem", content: docOf("item").content }] },
+        ],
+      },
+      contentMarkdown: "first\n\n- item",
+    })
+    const stored = (await MessageRepository.findById(pool, testWorkspaceId, created.id))!
+    expect(stored.contentJson).toEqual({
+      type: "doc",
+      content: [
+        { type: "paragraph", attrs: { blockId: anyBlockId }, content: [{ type: "text", text: "first" }] },
+        {
+          type: "bulletList",
+          attrs: { blockId: anyBlockId },
+          content: [
+            {
+              type: "listItem",
+              content: [
+                { type: "paragraph", attrs: { blockId: anyBlockId }, content: [{ type: "text", text: "item" }] },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    expect(stored.contentMarkdown).not.toContain("blk_")
+
+    await eventService.editMessageInternal({
+      workspaceId: testWorkspaceId,
+      messageId: created.id,
+      streamId: source,
+      actorId: author,
+      contentJson: { ...stored.contentJson, content: [stored.contentJson.content![0], ...docOf("added").content!] },
+      contentMarkdown: "first\n\nadded",
+    })
+    const edited = (await MessageRepository.findById(pool, testWorkspaceId, created.id))!
+    expect(edited.contentJson.content!.map((node) => node.attrs?.blockId)).toEqual([
+      stored.contentJson.content![0].attrs!.blockId,
+      anyBlockId,
+    ])
+  })
+
+  test("should keep the ids of unchanged blocks when an edit arrives as markdown", async () => {
+    const created = await eventService.createMessage({
+      workspaceId: testWorkspaceId,
+      streamId: source,
+      authorId: author,
+      authorType: "user",
+      contentJson: parseMarkdown("one\n\ntwo\n\nthree"),
+      contentMarkdown: "one\n\ntwo\n\nthree",
+    })
+    const stored = (await MessageRepository.findById(pool, testWorkspaceId, created.id))!
+    const [one, two, three] = stored.contentJson.content!.map((node) => node.attrs!.blockId as string)
+
+    await eventService.editMessageInternal({
+      workspaceId: testWorkspaceId,
+      messageId: created.id,
+      streamId: source,
+      actorId: author,
+      contentJson: parseMarkdown("one\n\ntwo, edited\n\nthree"),
+      contentMarkdown: "one\n\ntwo, edited\n\nthree",
+    })
+    const edited = (await MessageRepository.findById(pool, testWorkspaceId, created.id))!
+    const editedTwo = edited.contentJson.content![1].attrs!.blockId
+
+    expect({ edited: edited.contentJson, distinct: new Set([one, two, three, editedTwo]).size }).toEqual({
+      edited: {
+        type: "doc",
+        content: [
+          { type: "paragraph", attrs: { blockId: one }, content: [{ type: "text", text: "one" }] },
+          { type: "paragraph", attrs: { blockId: anyBlockId }, content: [{ type: "text", text: "two, edited" }] },
+          { type: "paragraph", attrs: { blockId: three }, content: [{ type: "text", text: "three" }] },
+        ],
+      },
+      distinct: 4,
+    })
+  })
+
+  test("should keep reference block ids when the resolver re-pins quotes and shares on create and edit", async () => {
+    const src = await seedEditedSource()
+    const range = { from: 1, to: 6 }
+    const body = (text: string): JSONContent => ({
+      type: "doc",
+      content: [
+        quoteNode({ messageId: src.id, streamId: source, version: 1, range, blockId: QUOTE_BLOCK_ID }),
+        { type: "sharedMessage", attrs: { messageId: src.id, streamId: source, blockId: SHARE_BLOCK_ID } },
+        ...docOf(text).content!,
+      ],
+    })
+
+    const quoting = await eventService.createMessage({
+      workspaceId: testWorkspaceId,
+      streamId: source,
+      authorId: author,
+      authorType: "user",
+      contentJson: body("agreed"),
+      contentMarkdown: "agreed",
+    })
+    await eventService.editMessageInternal({
+      workspaceId: testWorkspaceId,
+      messageId: quoting.id,
+      streamId: source,
+      actorId: author,
+      contentJson: body("agreed again"),
+      contentMarkdown: "agreed again",
+    })
+
+    const stored = await MessageRepository.findById(pool, testWorkspaceId, quoting.id)
+    expect({
+      quote: quoteAttrs(stored!).blockId,
+      share: shareAttrs(stored!).blockId,
+      revision: stored!.revision,
+    }).toEqual({ quote: QUOTE_BLOCK_ID, share: SHARE_BLOCK_ID, revision: 2 })
   })
 
   test("(b) a forged snippet is replaced by the slice the range names", async () => {
@@ -338,6 +469,73 @@ describe("message reference resolution", () => {
     }
   })
 
+  test("should keep reference block ids through the private-quote and trimmed-share rewrites, including an id the edit sends", async () => {
+    const walled = streamId()
+    let stranger = userId()
+    await withTransaction(pool, async (client) => {
+      stranger = (await addTestMember(client, testWorkspaceId, stranger)).id
+      await StreamRepository.insert(client, {
+        id: walled,
+        workspaceId: testWorkspaceId,
+        type: "channel",
+        visibility: "private",
+        slug: `walled-${walled.slice(-8)}`,
+        createdBy: stranger,
+      })
+      await StreamMemberRepository.insert(client, testWorkspaceId, walled, stranger)
+    })
+    const secret = await eventService.createMessage({
+      workspaceId: testWorkspaceId,
+      streamId: walled,
+      authorId: stranger,
+      authorType: "user",
+      contentJson: docOf("the secret body"),
+      contentMarkdown: "the secret body",
+    })
+    const quote = quoteNode({ messageId: secret.id, streamId: walled, snippet: "the secret", blockId: QUOTE_BLOCK_ID })
+    const share: JSONContent = {
+      type: "sharedMessage",
+      attrs: { messageId: secret.id, streamId: walled, authorId: stranger, blockId: SHARE_BLOCK_ID },
+    }
+
+    const quoting = await eventService.createMessage({
+      workspaceId: testWorkspaceId,
+      streamId: target,
+      authorId: author,
+      authorType: "user",
+      contentJson: { type: "doc", content: [quote, share] },
+      contentMarkdown: "> the secret",
+      consentedShareSourceIds: new Set(),
+    })
+    const created = (await MessageRepository.findById(pool, testWorkspaceId, quoting.id))!
+
+    await eventService.editMessageInternal({
+      workspaceId: testWorkspaceId,
+      messageId: quoting.id,
+      streamId: target,
+      actorId: author,
+      contentJson: {
+        type: "doc",
+        content: [
+          { ...quote, attrs: { ...quoteAttrs(created), authorName: "Forged", blockId: EDITED_QUOTE_BLOCK_ID } },
+        ],
+      },
+      contentMarkdown: "> the secret",
+    })
+    const edited = (await MessageRepository.findById(pool, testWorkspaceId, quoting.id))!
+
+    const privateQuote = { ...privateQuoteAttrs({ streamId: walled, messageId: secret.id }), blockId: QUOTE_BLOCK_ID }
+    expect({
+      createdQuote: quoteAttrs(created),
+      createdShare: shareAttrs(created),
+      editedQuote: quoteAttrs(edited),
+    }).toEqual({
+      createdQuote: privateQuote,
+      createdShare: { messageId: secret.id, streamId: walled, blockId: SHARE_BLOCK_ID },
+      editedQuote: { ...privateQuote, blockId: EDITED_QUOTE_BLOCK_ID },
+    })
+  })
+
   test("(l) a client-sent private quote of a readable source resolves as an ordinary quote", async () => {
     const src = await seedEditedSource()
     const quoting = await eventService.createMessage({
@@ -353,6 +551,7 @@ describe("message reference resolution", () => {
     })
 
     expect(quoteAttrs((await MessageRepository.findById(pool, testWorkspaceId, quoting.id))!)).toEqual({
+      blockId: anyBlockId,
       messageId: src.id,
       streamId: source,
       authorName: expect.any(String),
@@ -504,7 +703,7 @@ describe("message reference resolution", () => {
 
       expect(edited).not.toBeNull()
       const stored = (await MessageRepository.findById(pool, testWorkspaceId, legacy.id))!
-      expect(quoteAttrs(stored)).toEqual(before)
+      expect(quoteAttrs(stored)).toEqual({ ...before, blockId: anyBlockId })
       expect(stored.contentMarkdown).toContain("and one more thing")
     })
 

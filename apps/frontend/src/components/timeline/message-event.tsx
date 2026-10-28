@@ -607,7 +607,11 @@ function MessageLayout({
   const runFold = useRunFoldBody(payload.messageId)
   const messageBody = children ?? (
     <LinkPreviewProvider>
-      <AttachmentProvider workspaceId={workspaceId} attachments={payload.attachments ?? NO_ATTACHMENTS}>
+      <AttachmentProvider
+        workspaceId={workspaceId}
+        attachments={payload.attachments ?? NO_ATTACHMENTS}
+        contentMarkdown={payload.contentMarkdown}
+      >
         <MarkdownBlockProvider messageId={payload.messageId}>
           <CollapsibleBody
             kind="message"

@@ -57,10 +57,12 @@ export {
   type ResolvedMessageReference,
 } from "./message-reference-repair"
 export { LEAF_NODE_TYPES, CONTAINER_NODE_TYPES, UnknownNodeTypeError, nodeSize, docContentSize } from "./positions"
+export { ensureBlockIds } from "./block-ids"
 export { sliceContent, isRangeValid, normalizeRange, isEmptySlice } from "./slice"
 export { resolveSelectionRange, type SelectionRangeInput } from "./selection-range"
 export {
   collectAttachmentReferenceIds,
+  collectInlineAttachmentIds,
   collectGiphyEmbeds,
   collectLinkUrls,
   collectQuoteReplyMessageIds,

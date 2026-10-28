@@ -7,7 +7,15 @@ import History from "@tiptap/extension-history"
 import Gapcursor from "@tiptap/extension-gapcursor"
 import Placeholder from "@tiptap/extension-placeholder"
 
-import { ThreaHeading, ThreaLink, ThreaTable, codeBlockOptions } from "@threahq/prosemirror/schema"
+import {
+  BlockIdAttribute,
+  TaskList,
+  ThreaHeading,
+  ThreaLink,
+  ThreaTable,
+  ThreaTaskItem,
+  codeBlockOptions,
+} from "@threahq/prosemirror/schema"
 import { AtomAwareBold, AtomAwareItalic, AtomAwareStrike, AtomAwareCode } from "./atom-aware-marks"
 
 import Blockquote from "@tiptap/extension-blockquote"
@@ -41,6 +49,16 @@ import { DictationChunkExtension } from "./dictation-chunk-extension"
 import { ComposerPillDragExtension } from "./composer-pill-drag-extension"
 
 const lowlight = createLowlight(common)
+
+// Schema members only — no input rule, shortcut, command or HTML paste parse: a
+// client deployed ahead of the backend must not be able to emit a node the
+// backend still rejects.
+const InertTaskList = TaskList.extend({
+  parseHTML: () => [],
+  addKeyboardShortcuts: () => ({}),
+  addCommands: () => ({}),
+})
+const InertTaskItem = ThreaTaskItem.extend({ parseHTML: () => [], addInputRules: () => [] })
 
 interface CreateEditorExtensionsOptions {
   placeholder: string
@@ -91,6 +109,8 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     BulletList,
     OrderedList,
     ListItem,
+    InertTaskList,
+    InertTaskItem,
     Blockquote,
     HorizontalRule,
     CodeBlockLowlight.configure({ lowlight, ...codeBlockOptions }),
@@ -160,6 +180,8 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     config.memoSearchSuggestion
       ? MemoSearchExtension.configure({ suggestion: config.memoSearchSuggestion })
       : MemoSearchExtension,
+
+    BlockIdAttribute,
   ]
 
   return extensions

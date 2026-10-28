@@ -127,3 +127,82 @@ describe("math validation", () => {
     ).toBeNull()
   })
 })
+
+const blockId = (n: number) => `blk_${String(n).padStart(26, "0")}`
+
+describe("block ids and task lists", () => {
+  it("should keep block ids, task items and inline attachment display when validating", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          attrs: { blockId: blockId(1) },
+          content: [
+            {
+              type: "attachmentReference",
+              attrs: {
+                id: "attach_1",
+                filename: "a.png",
+                mimeType: "image/png",
+                sizeBytes: 1,
+                status: "uploaded",
+                display: "inline",
+              },
+            },
+          ],
+        },
+        {
+          type: "taskList",
+          attrs: { blockId: blockId(2) },
+          content: [
+            {
+              type: "taskItem",
+              attrs: { checked: true },
+              content: [
+                { type: "paragraph", attrs: { blockId: blockId(3) }, content: [{ type: "text", text: "done" }] },
+              ],
+            },
+          ],
+        },
+        { type: "heading", attrs: { blockId: blockId(4), level: 2 }, content: [{ type: "text", text: "h" }] },
+      ],
+    }
+    expect(validateContent(doc) as JSONContent).toEqual(doc)
+  })
+
+  it("should default a task item without checked to unchecked", () => {
+    const paragraph = { type: "paragraph", content: [{ type: "text", text: "x" }] }
+    const taskList = (item: Record<string, unknown>): JSONContent => ({
+      type: "doc",
+      content: [{ type: "taskList", content: [item] }],
+    })
+
+    expect(validateContent(taskList({ type: "taskItem", content: [paragraph] })) as JSONContent).toEqual(
+      taskList({ type: "taskItem", attrs: { checked: false }, content: [paragraph] })
+    )
+  })
+
+  it("should reject a malformed block id or an unknown display", () => {
+    const paragraph = { type: "paragraph", content: [{ type: "text", text: "x" }] }
+    for (const malformed of [7, "", "blk_kept", `blk_${"I".repeat(26)}`]) {
+      expect(tryValidateContent({ type: "doc", content: [{ ...paragraph, attrs: { blockId: malformed } }] })).toBeNull()
+    }
+    expect(
+      tryValidateContent({
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              {
+                type: "attachmentReference",
+                attrs: { id: "a", filename: "a", mimeType: "x", sizeBytes: 1, status: "uploaded", display: "huge" },
+              },
+            ],
+          },
+        ],
+      })
+    ).toBeNull()
+  })
+})

@@ -89,6 +89,11 @@ export function serializeToMarkdown(content: JSONContent): string {
   return out.join("\n\n")
 }
 
+function listItemMarker(node: JSONContent, listIndex?: number): string {
+  if (node.type === "taskItem") return node.attrs?.checked ? "- [x] " : "- [ ] "
+  return typeof listIndex === "number" ? `${listIndex}. ` : "- "
+}
+
 function serializeNode(node: JSONContent, listDepth = 0, listIndex?: number): string {
   if (!node) return ""
 
@@ -175,6 +180,7 @@ function serializeNode(node: JSONContent, listDepth = 0, listIndex?: number): st
     }
 
     case "bulletList":
+    case "taskList":
       return (
         node.content
           ?.map((item) => serializeNode(item, listDepth))
@@ -190,9 +196,10 @@ function serializeNode(node: JSONContent, listDepth = 0, listIndex?: number): st
           .join("\n") ?? ""
       )
 
+    case "taskItem":
     case "listItem": {
       const indent = "  ".repeat(listDepth)
-      const marker = typeof listIndex === "number" ? `${listIndex}. ` : "- "
+      const marker = listItemMarker(node, listIndex)
       const content =
         node.content
           ?.map((n) => serializeNode(n, listDepth + 1))
@@ -640,17 +647,38 @@ interface ParseOptions extends ParseMarkdownOptions {
 
 const LIST_LINE_PATTERN = /^(\s*)([-*]|\d+\.)\s(.*)$/
 
-interface ListLine {
-  indent: number
-  ordered: boolean
-  text: string
+const TASK_ITEM_PATTERN = /^\[([ xX])\](?: (.*))?$/
+
+type ListKind = "bullet" | "ordered" | "task"
+
+type ListLine =
+  | { indent: number; kind: "bullet" | "ordered"; text: string }
+  | { indent: number; kind: "task"; checked: boolean; text: string }
+
+const LIST_NODE_TYPES: Record<ListKind, string> = {
+  bullet: "bulletList",
+  ordered: "orderedList",
+  task: "taskList",
+}
+
+function listItemNode(line: ListLine, content: JSONContent[]): JSONContent {
+  if (line.kind === "task") return { type: "taskItem", attrs: { checked: line.checked }, content }
+  return { type: "listItem", content }
+}
+
+function parseListLine(match: RegExpMatchArray): ListLine {
+  const indent = match[1].length
+  if (match[2] !== "-" && match[2] !== "*") return { indent, kind: "ordered", text: match[3] }
+  const task = match[3].match(TASK_ITEM_PATTERN)
+  if (task) return { indent, kind: "task", checked: task[1] !== " ", text: task[2] ?? "" }
+  return { indent, kind: "bullet", text: match[3] }
 }
 
 /**
  * Build one list node starting at `startIndex`, consuming every line indented
  * at least `baseIndent`. A line indented deeper than the current level becomes
  * a nested list inside the preceding item; a marker-type switch at the same
- * level ends the list so bullet and ordered runs stay separate nodes.
+ * level ends the list so bullet, ordered and task runs stay separate nodes.
  */
 function buildListNode(
   listLines: ListLine[],
@@ -658,7 +686,7 @@ function buildListNode(
   baseIndent: number,
   options: ParseOptions
 ): { node: JSONContent; nextIndex: number } {
-  const ordered = listLines[startIndex].ordered
+  const kind = listLines[startIndex].kind
   const items: JSONContent[] = []
   let i = startIndex
 
@@ -668,26 +696,19 @@ function buildListNode(
     if (listLine.indent > baseIndent) {
       const nested = buildListNode(listLines, i, listLine.indent, options)
       const lastItem = items[items.length - 1]
-      if (lastItem) {
-        lastItem.content = [...(lastItem.content ?? []), nested.node]
-      } else {
-        items.push({ type: "listItem", content: [{ type: "paragraph" }, nested.node] })
-      }
+      lastItem.content = [...(lastItem.content ?? []), nested.node]
       i = nested.nextIndex
       continue
     }
 
-    if (listLine.ordered !== ordered) break
+    if (listLine.kind !== kind) break
 
-    items.push({
-      type: "listItem",
-      content: [{ type: "paragraph", content: parseInlineMarkdown(listLine.text, options) }],
-    })
+    items.push(listItemNode(listLine, [{ type: "paragraph", content: parseInlineMarkdown(listLine.text, options) }]))
     i++
   }
 
   return {
-    node: { type: ordered ? "orderedList" : "bulletList", content: items },
+    node: { type: LIST_NODE_TYPES[kind], content: items },
     nextIndex: i,
   }
 }
@@ -818,18 +839,14 @@ export function parseMarkdown(
       continue
     }
 
-    // Bullet / ordered list, including nested items indented under a parent
+    // Bullet, ordered or task list, including nested items indented under a parent
     // item (the serializer emits two spaces per nesting level).
     if (LIST_LINE_PATTERN.test(line)) {
       const listLines: ListLine[] = []
       while (i < lines.length) {
         const match = lines[i].match(LIST_LINE_PATTERN)
         if (!match) break
-        listLines.push({
-          indent: match[1].length,
-          ordered: match[2] !== "-" && match[2] !== "*",
-          text: match[3],
-        })
+        listLines.push(parseListLine(match))
         i++
       }
 
@@ -1308,6 +1325,7 @@ function parseInlineTokens(text: string, options: ParseOptions = {}): JSONConten
           status: "uploaded",
           imageIndex,
           error: null,
+          display: metadata.display ?? "pill",
         },
       })
     } else if (match[5]) {

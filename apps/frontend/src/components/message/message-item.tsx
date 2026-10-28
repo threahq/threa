@@ -695,7 +695,11 @@ export function MessageItem({
     <>
       <LinkPreviewProvider>
         {attachments.length > 0 ? (
-          <AttachmentProvider workspaceId={workspaceId} attachments={attachments}>
+          <AttachmentProvider
+            workspaceId={workspaceId}
+            attachments={attachments}
+            contentMarkdown={message.contentMarkdown}
+          >
             {richBody}
           </AttachmentProvider>
         ) : (

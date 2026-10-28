@@ -117,7 +117,11 @@ export function SharedMessageCardBody({
         trailing={editedSince ? <EditedSinceMarker href={sourceHref} /> : null}
       />
       {hasAttachments ? (
-        <AttachmentProvider workspaceId={workspaceId} attachments={attachments}>
+        <AttachmentProvider
+          workspaceId={workspaceId}
+          attachments={attachments}
+          contentMarkdown={source.contentMarkdown}
+        >
           {body}
           <AttachmentList attachments={attachments} workspaceId={workspaceId} />
         </AttachmentProvider>

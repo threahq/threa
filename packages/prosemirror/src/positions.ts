@@ -45,6 +45,8 @@ export const CONTAINER_NODE_TYPES: ReadonlySet<string> = new Set([
   "bulletList",
   "orderedList",
   "listItem",
+  "taskList",
+  "taskItem",
   "table",
   "tableRow",
   "tableHeader",

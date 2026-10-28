@@ -90,6 +90,7 @@ export {
   pushReceiptId,
   avatarUploadId,
   messageVersionId,
+  blockId,
   taskId,
   pushSubscriptionId,
   userSessionId,

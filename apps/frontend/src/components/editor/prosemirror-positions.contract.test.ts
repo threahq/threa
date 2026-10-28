@@ -113,6 +113,16 @@ const fixture: JSONContent = {
       content: [{ type: "paragraph", content: [{ type: "text", text: "Two options." }] }],
     },
     { type: "paragraph", content: [{ type: "math", attrs: { tex: "e^{i\\pi}", display: false } }] },
+    {
+      type: "taskList",
+      content: [
+        {
+          type: "taskItem",
+          attrs: { checked: true },
+          content: [{ type: "paragraph", content: [{ type: "text", text: "todo" }] }],
+        },
+      ],
+    },
   ],
 }
 
@@ -160,13 +170,13 @@ describe("sliceContent", () => {
     ["across an inline atom", 30, 40],
     ["across two list items", 60, 80],
     ["from a block leaf into the table after it", 143, 150],
-    ["the whole document", 0, 195],
+    ["the whole document", 0, 205],
   ])("matches Node.cut for a range %s", (_name, from, to) => {
     expect(sliceContent(doc, from, to)).toEqual(cut(from, to))
   })
 
-  it("reads the fixture as 195 positions, so the ranges above stay meaningful", () => {
-    expect(node.content.size).toBe(195)
+  it("reads the fixture as 205 positions, so the ranges above stay meaningful", () => {
+    expect(node.content.size).toBe(205)
   })
 
   it("matches Node.cut for every range in the document", () => {

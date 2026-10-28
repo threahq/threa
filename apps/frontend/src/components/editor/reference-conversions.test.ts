@@ -24,7 +24,7 @@ function createEditor(content: JSONContent[]): Editor {
 }
 
 const text = (value: string): JSONContent => ({ type: "text", text: value })
-const paragraph = (...content: JSONContent[]): JSONContent => ({ type: "paragraph", content })
+const paragraph = (...content: JSONContent[]): JSONContent => ({ type: "paragraph", attrs: { blockId: null }, content })
 
 function chip(streamId: string, messageId: string | null): JSONContent {
   const url = messageId ? buildMessageLink(WS, streamId, messageId) : buildStreamLink(WS, streamId)
@@ -33,6 +33,7 @@ function chip(streamId: string, messageId: string | null): JSONContent {
 
 const list = (...items: JSONContent[]): JSONContent => ({
   type: "bulletList",
+  attrs: { blockId: null },
   content: items.map((item) => ({ type: "listItem", content: [item] })),
 })
 
@@ -58,6 +59,7 @@ function sharedAttrs(streamId: string, messageId: string) {
       conversationId: null,
       version: null,
       range: null,
+      blockId: null,
     },
   }
 }
@@ -76,14 +78,14 @@ describe("linksToShares", () => {
   it("moves shares for links nested in a list or quote after the outer block, in order", () => {
     const editor = createEditor([
       list(paragraph(text("x "), chip("stream_a", "msg_1")), paragraph(chip("stream_a", "msg_2"), text(" y"))),
-      { type: "blockquote", content: [paragraph(text("q "), chip("stream_a", "msg_3"))] },
+      { type: "blockquote", attrs: { blockId: null }, content: [paragraph(text("q "), chip("stream_a", "msg_3"))] },
     ])
     linksToShares(editor, ["stream_a"])
     expect(docContent(editor)).toEqual([
       list(paragraph(text("x ")), paragraph(text(" y"))),
       sharedAttrs("stream_a", "msg_1"),
       sharedAttrs("stream_a", "msg_2"),
-      { type: "blockquote", content: [paragraph(text("q "))] },
+      { type: "blockquote", attrs: { blockId: null }, content: [paragraph(text("q "))] },
       sharedAttrs("stream_a", "msg_3"),
     ])
   })
@@ -91,7 +93,7 @@ describe("linksToShares", () => {
   it("drops a list item a chip filled, and replaces a quote a chip filled with the share in place", () => {
     const editor = createEditor([
       list(paragraph(chip("stream_a", "msg_1")), paragraph(text("kept"))),
-      { type: "blockquote", content: [paragraph(chip("stream_a", "msg_2"))] },
+      { type: "blockquote", attrs: { blockId: null }, content: [paragraph(chip("stream_a", "msg_2"))] },
       paragraph(text("end")),
     ])
     linksToShares(editor, ["stream_a"])
@@ -122,7 +124,11 @@ describe("linksToShares", () => {
     ])
     linksToShares(editor, ["stream_a"])
     expect(docContent(editor)).toEqual([
-      { type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph" }, nested] }] },
+      {
+        type: "bulletList",
+        attrs: { blockId: null },
+        content: [{ type: "listItem", content: [{ type: "paragraph", attrs: { blockId: null } }, nested] }],
+      },
       sharedAttrs("stream_a", "msg_1"),
     ])
   })

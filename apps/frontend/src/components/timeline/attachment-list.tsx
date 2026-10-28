@@ -1,20 +1,18 @@
-import React, { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react"
-import { Download, FileText, File, Loader2, Copy, Play, Globe, Check, RotateCcw, ShieldAlert } from "lucide-react"
+import React, { useState, useCallback, useMemo, useSyncExternalStore } from "react"
+import { Download, FileText, File, Loader2, Play, Globe, RotateCcw, ShieldAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { PillProgressBar } from "@/components/composer/attachment-pill"
 import { attachmentPendingState, PENDING_STATE_LABELS } from "@/lib/attachments/pending-state"
-import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
 import { useGalleryAttachmentUrls, type GalleryUrlKind } from "@/components/gallery/use-gallery-attachment-urls"
 import { Skeleton } from "@/components/ui/skeleton"
 import { attachmentsApi, attachmentContentUrl } from "@/api"
 import { cn } from "@/lib/utils"
-import { downloadImage, copyImage, triggerDownload } from "@/lib/image-utils"
+import { triggerDownload } from "@/lib/image-utils"
 import { formatFileSize } from "@/lib/file-size"
 import { useAttachmentContext } from "@/lib/markdown/attachment-context"
 import { useMediaGallery } from "@/contexts"
-import { useTouchCapable } from "@/hooks/use-touch-capable"
-import { useLongPress } from "@/hooks/use-long-press"
+import { ThumbnailImg, thumbnailBox, useImageLongPressDrawer, useThumbnailLoadState } from "./attachment-thumbnail"
 import {
   isHtmlAttachment,
   isMarkdownAttachment,
@@ -53,123 +51,11 @@ interface VideoAttachmentItemProps {
   deferHydration?: boolean
 }
 
-// Inline images render at a fixed height; width is derived from the
-// attachment's intrinsic aspect ratio (when known) so the box is reserved
-// before any bytes load. Falls back to a square when dimensions are absent
-// (legacy attachments / thumbnail worker hasn't run yet).
-const INLINE_IMAGE_HEIGHT = 128 // h-32
-const INLINE_IMAGE_MAX_WIDTH = 320 // max-w-xs
-
-function inlineImageBox(width?: number, height?: number): { width: number; height: number } {
-  if (!width || !height || height <= 0) {
-    return { width: INLINE_IMAGE_HEIGHT, height: INLINE_IMAGE_HEIGHT }
-  }
-  const scaled = Math.round((INLINE_IMAGE_HEIGHT * width) / height)
-  return { width: Math.min(Math.max(scaled, 1), INLINE_IMAGE_MAX_WIDTH), height: INLINE_IMAGE_HEIGHT }
-}
-
 function getFileIcon(mimeType: string) {
   if (mimeType.startsWith("text/") || mimeType === "application/pdf") {
     return FileText
   }
   return File
-}
-
-function ImageActionDrawer({
-  open,
-  onOpenChange,
-  filename,
-  workspaceId,
-  attachmentId,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  filename: string
-  workspaceId: string
-  attachmentId: string
-}) {
-  // Confirm in place: the row's icon swaps to a checkmark for a beat, then the
-  // drawer dismisses itself — no toast (the source field stays visible on
-  // mobile). Failures fall back to closing; copyImage/downloadImage surface
-  // their own error toast.
-  const [downloadDone, setDownloadDone] = useState(false)
-  const [copyDone, setCopyDone] = useState(false)
-  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => {
-    if (open) {
-      setDownloadDone(false)
-      setCopyDone(false)
-    }
-    return () => {
-      if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
-    }
-  }, [open])
-
-  const handleDownload = useCallback(async () => {
-    const ok = await downloadImage(workspaceId, attachmentId, filename)
-    if (!ok) {
-      onOpenChange(false)
-      return
-    }
-    setDownloadDone(true)
-    closeTimerRef.current = setTimeout(() => onOpenChange(false), 700)
-  }, [workspaceId, attachmentId, filename, onOpenChange])
-
-  // Copy the full-resolution original, not the inline thumbnail.
-  const handleCopy = useCallback(async () => {
-    try {
-      const url = await attachmentsApi.getDownloadUrl(workspaceId, attachmentId)
-      const ok = await copyImage(url)
-      if (!ok) {
-        onOpenChange(false)
-        return
-      }
-      setCopyDone(true)
-      closeTimerRef.current = setTimeout(() => onOpenChange(false), 700)
-    } catch {
-      // Guards the URL fetch; copyImage surfaces its own failure toast.
-      onOpenChange(false)
-    }
-  }, [workspaceId, attachmentId, onOpenChange])
-
-  return (
-    <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="max-h-[85dvh]">
-        <DrawerTitle className="sr-only">Image actions</DrawerTitle>
-        <div className="px-4 pt-1 pb-3">
-          <div className="rounded-xl bg-muted/60 px-3.5 py-2.5">
-            <p className="text-sm text-foreground/80 truncate">{filename}</p>
-          </div>
-        </div>
-        <div className="px-2 pb-[max(12px,env(safe-area-inset-bottom))]">
-          <button
-            type="button"
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm active:bg-muted/80 transition-colors"
-            onClick={handleDownload}
-          >
-            {downloadDone ? (
-              <Check className="h-[18px] w-[18px] text-primary shrink-0" />
-            ) : (
-              <Download className="h-[18px] w-[18px] text-muted-foreground shrink-0" />
-            )}
-            <span>{downloadDone ? "Download started" : "Save image"}</span>
-          </button>
-          <button
-            type="button"
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm active:bg-muted/80 transition-colors"
-            onClick={handleCopy}
-          >
-            {copyDone ? (
-              <Check className="h-[18px] w-[18px] text-primary shrink-0" />
-            ) : (
-              <Copy className="h-[18px] w-[18px] text-muted-foreground shrink-0" />
-            )}
-            <span>{copyDone ? "Copied" : "Copy image"}</span>
-          </button>
-        </div>
-      </DrawerContent>
-    </Drawer>
-  )
 }
 
 function ImageAttachment({
@@ -185,28 +71,15 @@ function ImageAttachment({
   const thumbnailUrl = deferHydration
     ? null
     : attachmentContentUrl(workspaceId, attachment.id, { variant: "thumbnail" })
-  const [imgDecoded, setImgDecoded] = useState(false)
-  const [error, setError] = useState(false)
-  // Bumped to remount the <img> after a failed load — the sticky error state
-  // would otherwise outlive the connectivity blip that caused it (an offline
-  // sender's own just-settled image is the common case with background
-  // uploads).
-  const [retryNonce, setRetryNonce] = useState(0)
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const touchCapable = useTouchCapable()
+  const load = useThumbnailLoadState()
+  const longPress = useImageLongPressDrawer({
+    workspaceId,
+    attachmentId: attachment.id,
+    filename: attachment.filename,
+    enabled: !!thumbnailUrl,
+  })
 
-  const retryLoad = useCallback(() => {
-    setError(false)
-    setImgDecoded(false)
-    setRetryNonce((n) => n + 1)
-  }, [])
-  useEffect(() => {
-    if (!error) return
-    window.addEventListener("online", retryLoad)
-    return () => window.removeEventListener("online", retryLoad)
-  }, [error, retryLoad])
-
-  const box = inlineImageBox(attachment.width, attachment.height)
+  const box = thumbnailBox(attachment.width, attachment.height)
 
   // The box is interactable as soon as it mounts — the gallery fetches the
   // full-resolution image itself, so opening it never depends on the inline
@@ -214,30 +87,6 @@ function ImageAttachment({
   const handleClick = useCallback(() => {
     onImageClick?.(attachment.id)
   }, [onImageClick, attachment.id])
-
-  const openDrawer = useCallback(() => setDrawerOpen(true), [])
-  const longPressRaw = useLongPress({
-    onLongPress: openDrawer,
-    enabled: touchCapable && !!thumbnailUrl,
-  })
-
-  // Wrap touch handlers to stop propagation — prevents the message-level
-  // long-press from firing when the user holds on an image.
-  const longPress = {
-    isPressed: longPressRaw.isPressed,
-    handlers: {
-      onTouchStart: (e: React.TouchEvent) => {
-        e.stopPropagation()
-        longPressRaw.handlers.onTouchStart(e)
-      },
-      onTouchEnd: () => longPressRaw.handlers.onTouchEnd(),
-      onTouchMove: (e: React.TouchEvent) => longPressRaw.handlers.onTouchMove(e),
-      onContextMenu: (e: React.MouseEvent) => {
-        e.stopPropagation()
-        longPressRaw.handlers.onContextMenu(e)
-      },
-    },
-  }
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -250,11 +99,11 @@ function ImageAttachment({
     [handleClick]
   )
 
-  if (error) {
+  if (load.error) {
     return (
       <button
         type="button"
-        onClick={retryLoad}
+        onClick={load.retryLoad}
         className="rounded-lg border bg-muted/50 p-2 text-xs text-muted-foreground hover:border-primary"
       >
         Failed to load image — tap to retry
@@ -271,7 +120,7 @@ function ImageAttachment({
         onClick={handleClick}
         onKeyDown={handleKeyDown}
         data-highlighted={isHighlighted || undefined}
-        {...(touchCapable ? longPress.handlers : {})}
+        {...longPress.handlers}
         style={{ width: box.width, height: box.height }}
         className={cn(
           "group/image relative overflow-hidden rounded-lg border bg-muted/30 transition-all cursor-pointer",
@@ -281,39 +130,10 @@ function ImageAttachment({
           longPress.isPressed && "opacity-70 transition-opacity duration-100"
         )}
       >
-        {!imgDecoded && <Skeleton className="absolute inset-0 rounded-none" />}
-        {thumbnailUrl && (
-          <img
-            // Remount on retry so the browser re-requests the same URL.
-            key={retryNonce}
-            // Cache fast path: when the browser already has the bytes (warm
-            // remount — virtua unmount/remount, bootstrap rewrite), the image
-            // is complete before onLoad ever fires. Flip imgDecoded during
-            // commit so the row paints at full opacity instead of replaying
-            // the skeleton → fade-in cycle on content that never left cache.
-            ref={(node) => {
-              if (node?.complete && node.naturalWidth > 0) setImgDecoded(true)
-            }}
-            src={thumbnailUrl}
-            alt={attachment.filename}
-            onLoad={() => setImgDecoded(true)}
-            onError={() => setError(true)}
-            className={cn(
-              "absolute inset-0 h-full w-full object-cover transition-opacity duration-300",
-              imgDecoded ? "opacity-100" : "opacity-0"
-            )}
-          />
-        )}
+        {!load.decoded && <Skeleton className="absolute inset-0 rounded-none" />}
+        {thumbnailUrl && <ThumbnailImg src={thumbnailUrl} alt={attachment.filename} load={load} />}
       </div>
-      {touchCapable && thumbnailUrl && (
-        <ImageActionDrawer
-          open={drawerOpen}
-          onOpenChange={setDrawerOpen}
-          filename={attachment.filename}
-          workspaceId={workspaceId}
-          attachmentId={attachment.id}
-        />
-      )}
+      {longPress.drawer}
     </>
   )
 }
@@ -549,11 +369,11 @@ export function PendingAttachmentChip({ attachment, state, progress, canRetry }:
 /**
  * In-flight image upload rendered at the size its settled thumbnail will
  * occupy (intrinsic aspect when the summary carries dimensions, square
- * fallback like `inlineImageBox`), so the uploading→settled transition swaps
+ * fallback like `thumbnailBox`), so the uploading→settled transition swaps
  * content in place instead of reshaping the message (INV-21).
  */
 function PendingImagePlaceholder({ attachment, state, progress }: PendingChipInfo) {
-  const box = inlineImageBox(attachment.width, attachment.height)
+  const box = thumbnailBox(attachment.width, attachment.height)
   return (
     <div
       className="relative flex items-center justify-center overflow-hidden rounded-lg border bg-muted/40"
@@ -618,6 +438,7 @@ export function isGalleryPreviewableAttachment(a: AttachmentSummary): boolean {
 
 export function AttachmentList({ attachments, workspaceId, className, deferHydration = false }: AttachmentListProps) {
   const attachmentContext = useAttachmentContext()
+  const inlineImages = attachmentContext?.inlineImages
   const hoveredAttachmentId = attachmentContext?.hoveredAttachmentId ?? null
   const { mediaAttachmentId, openMedia, closeMedia } = useMediaGallery()
 
@@ -661,6 +482,12 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
   const imageAttachments = useMemo(
     () => settledAttachments.filter((a) => a.mimeType.startsWith("image/")),
     [settledAttachments]
+  )
+  // The message body renders inline images in place; the gallery below still
+  // owns them, so only their strip tiles drop.
+  const visibleImages = useMemo(
+    () => imageAttachments.filter((a) => !inlineImages?.has(a.id)),
+    [imageAttachments, inlineImages]
   )
   // Use processingStatus as the video discriminator — the backend sets it for
   // all video attachments, including application/octet-stream files with video
@@ -822,97 +649,101 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
   }
 
   const allFileAttachments = [...fileAttachments, ...failedVideoAttachments]
+  const hiddenInlineCount = imageAttachments.length - visibleImages.length
+  const hasVisibleStrip = attachments.length > hiddenInlineCount
 
   return (
     <>
-      <div className={cn("flex flex-col gap-2 mt-2", className)}>
-        {pendingUploadChips.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {pendingUploadChips.map((chip) => (
-              <PendingAttachmentChip key={chip.attachment.id} {...chip} />
-            ))}
-          </div>
-        )}
-        {(imageAttachments.length > 0 || videoAttachments.length > 0 || pendingImagePlaceholders.length > 0) && (
-          <div className="flex flex-wrap gap-2">
-            {pendingImagePlaceholders.map((chip) => (
-              <PendingImagePlaceholder key={chip.attachment.id} {...chip} />
-            ))}
-            {imageAttachments.map((attachment) => (
-              <ImageAttachment
-                key={attachment.id}
-                attachment={attachment}
-                workspaceId={workspaceId}
-                onImageClick={handleImageClick}
-                isHighlighted={attachment.id === hoveredAttachmentId}
-                deferHydration={deferHydration}
-              />
-            ))}
-            {videoAttachments.map((attachment) => (
-              <VideoAttachment
-                key={attachment.id}
-                attachment={attachment}
-                workspaceId={workspaceId}
-                onVideoClick={handleVideoClick}
-                isHighlighted={attachment.id === hoveredAttachmentId}
-                deferHydration={deferHydration}
-              />
-            ))}
-          </div>
-        )}
-        {(allFileAttachments.length > 0 ||
-          markdownAttachments.length > 0 ||
-          htmlAttachments.length > 0 ||
-          pdfAttachments.length > 0 ||
-          textAttachments.length > 0) && (
-          <div className="flex flex-wrap gap-2">
-            {markdownAttachments.map((attachment) => (
-              <OpenableFileChip
-                key={attachment.id}
-                attachment={attachment}
-                isHighlighted={attachment.id === hoveredAttachmentId}
-                icon={FileText}
-                onOpen={handleTextOpen}
-              />
-            ))}
-            {htmlAttachments.map((attachment) => (
-              <OpenableFileChip
-                key={attachment.id}
-                attachment={attachment}
-                isHighlighted={attachment.id === hoveredAttachmentId}
-                icon={Globe}
-                onOpen={handleTextOpen}
-              />
-            ))}
-            {pdfAttachments.map((attachment) => (
-              <OpenableFileChip
-                key={attachment.id}
-                attachment={attachment}
-                isHighlighted={attachment.id === hoveredAttachmentId}
-                icon={FileText}
-                onOpen={handleTextOpen}
-              />
-            ))}
-            {textAttachments.map((attachment) => (
-              <OpenableFileChip
-                key={attachment.id}
-                attachment={attachment}
-                isHighlighted={attachment.id === hoveredAttachmentId}
-                icon={FileText}
-                onOpen={handleTextOpen}
-              />
-            ))}
-            {allFileAttachments.map((attachment) => (
-              <FileAttachment
-                key={attachment.id}
-                attachment={attachment}
-                workspaceId={workspaceId}
-                isHighlighted={attachment.id === hoveredAttachmentId}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      {hasVisibleStrip && (
+        <div className={cn("flex flex-col gap-2 mt-2", className)}>
+          {pendingUploadChips.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {pendingUploadChips.map((chip) => (
+                <PendingAttachmentChip key={chip.attachment.id} {...chip} />
+              ))}
+            </div>
+          )}
+          {(visibleImages.length > 0 || videoAttachments.length > 0 || pendingImagePlaceholders.length > 0) && (
+            <div className="flex flex-wrap gap-2">
+              {pendingImagePlaceholders.map((chip) => (
+                <PendingImagePlaceholder key={chip.attachment.id} {...chip} />
+              ))}
+              {visibleImages.map((attachment) => (
+                <ImageAttachment
+                  key={attachment.id}
+                  attachment={attachment}
+                  workspaceId={workspaceId}
+                  onImageClick={handleImageClick}
+                  isHighlighted={attachment.id === hoveredAttachmentId}
+                  deferHydration={deferHydration}
+                />
+              ))}
+              {videoAttachments.map((attachment) => (
+                <VideoAttachment
+                  key={attachment.id}
+                  attachment={attachment}
+                  workspaceId={workspaceId}
+                  onVideoClick={handleVideoClick}
+                  isHighlighted={attachment.id === hoveredAttachmentId}
+                  deferHydration={deferHydration}
+                />
+              ))}
+            </div>
+          )}
+          {(allFileAttachments.length > 0 ||
+            markdownAttachments.length > 0 ||
+            htmlAttachments.length > 0 ||
+            pdfAttachments.length > 0 ||
+            textAttachments.length > 0) && (
+            <div className="flex flex-wrap gap-2">
+              {markdownAttachments.map((attachment) => (
+                <OpenableFileChip
+                  key={attachment.id}
+                  attachment={attachment}
+                  isHighlighted={attachment.id === hoveredAttachmentId}
+                  icon={FileText}
+                  onOpen={handleTextOpen}
+                />
+              ))}
+              {htmlAttachments.map((attachment) => (
+                <OpenableFileChip
+                  key={attachment.id}
+                  attachment={attachment}
+                  isHighlighted={attachment.id === hoveredAttachmentId}
+                  icon={Globe}
+                  onOpen={handleTextOpen}
+                />
+              ))}
+              {pdfAttachments.map((attachment) => (
+                <OpenableFileChip
+                  key={attachment.id}
+                  attachment={attachment}
+                  isHighlighted={attachment.id === hoveredAttachmentId}
+                  icon={FileText}
+                  onOpen={handleTextOpen}
+                />
+              ))}
+              {textAttachments.map((attachment) => (
+                <OpenableFileChip
+                  key={attachment.id}
+                  attachment={attachment}
+                  isHighlighted={attachment.id === hoveredAttachmentId}
+                  icon={FileText}
+                  onOpen={handleTextOpen}
+                />
+              ))}
+              {allFileAttachments.map((attachment) => (
+                <FileAttachment
+                  key={attachment.id}
+                  attachment={attachment}
+                  workspaceId={workspaceId}
+                  isHighlighted={attachment.id === hoveredAttachmentId}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <MediaGallery
         isOpen={selectedAttachmentId !== null && galleryIndex !== -1}

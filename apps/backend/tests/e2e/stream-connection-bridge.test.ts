@@ -929,6 +929,7 @@ describe("Stream connection bridge", () => {
         status: "uploaded",
         imageIndex: null,
         error: null,
+        display: "pill",
       },
     })
     const inAppLink = (stream: string, name: string, messageId: string | null = null) => ({
@@ -969,24 +970,28 @@ describe("Stream connection bridge", () => {
       const page = await events(partner, channel.id, { after: carrier.sequence })
       return (page.changes[0] as Extract<BridgeChange, { kind: "message" }>).message.contentJson
     }
+    const blockId = expect.stringMatching(/^blk_/)
+    const withBlockId = (node: JSONContent) => ({ ...node, attrs: { ...node.attrs, blockId } })
     const expectedContent = (...files: Array<{ id: string; filename: string }>) =>
       doc(
-        paragraph(
-          channelLink(channel),
-          text(" "),
-          text(`#${other.slug}`),
-          text(" "),
-          inAppLink(channel.id, "Target", target.id),
-          text(" "),
-          text("Secret", bold),
-          text(" "),
-          text("Moved off", bold),
-          text(" "),
-          text("Q3 plan")
+        withBlockId(
+          paragraph(
+            channelLink(channel),
+            text(" "),
+            text(`#${other.slug}`),
+            text(" "),
+            inAppLink(channel.id, "Target", target.id),
+            text(" "),
+            text("Secret", bold),
+            text(" "),
+            text("Moved off", bold),
+            text(" "),
+            text("Q3 plan")
+          )
         ),
-        share(target),
-        quote(target),
-        paragraph(...files.map(fileRef))
+        withBlockId(share(target)),
+        withBlockId(quote(target)),
+        withBlockId(paragraph(...files.map(fileRef)))
       )
 
     // Referencing a file in the channel lets the channel's readers open it, partners included.

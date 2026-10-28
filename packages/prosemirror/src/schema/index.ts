@@ -1,4 +1,4 @@
-import { getSchema, type AnyExtension, type JSONContent } from "@tiptap/core"
+import { Extension, getSchema, type AnyExtension, type JSONContent } from "@tiptap/core"
 import type { Schema } from "@tiptap/pm/model"
 import Document from "@tiptap/extension-document"
 import Paragraph from "@tiptap/extension-paragraph"
@@ -8,6 +8,7 @@ import Heading from "@tiptap/extension-heading"
 import BulletList from "@tiptap/extension-bullet-list"
 import OrderedList from "@tiptap/extension-ordered-list"
 import ListItem from "@tiptap/extension-list-item"
+import { TaskList, TaskItem } from "@tiptap/extension-list"
 import Blockquote from "@tiptap/extension-blockquote"
 import HorizontalRule from "@tiptap/extension-horizontal-rule"
 import CodeBlock from "@tiptap/extension-code-block"
@@ -28,9 +29,11 @@ import {
   EmojiNode,
 } from "./nodes"
 import { MentionNode, ChannelLinkNode, SlashCommandNode } from "./triggers"
+import { BLOCK_ID_NODE_TYPES } from "./attributes"
+export { BLOCK_ID_NODE_TYPES } from "./attributes"
 
 export { ThreaCode, ThreaLink } from "./marks"
-export { ThreaHeading, ThreaTable, codeBlockOptions }
+export { ThreaHeading, ThreaTable, TaskList, ThreaTaskItem, BlockIdAttribute, codeBlockOptions }
 export {
   AttachmentReferenceNode,
   QuoteReplyNode,
@@ -46,7 +49,26 @@ export { MentionNode, ChannelLinkNode, SlashCommandNode } from "./triggers"
 
 const ThreaHeading = Heading.configure({ levels: [1, 2, 3] })
 const ThreaTable = Table.configure({ resizable: false })
+const ThreaTaskItem = TaskItem.configure({ nested: true })
 const codeBlockOptions = { defaultLanguage: "plaintext" }
+
+const BlockIdAttribute = Extension.create({
+  name: "blockId",
+  addGlobalAttributes() {
+    return [
+      {
+        types: [...BLOCK_ID_NODE_TYPES],
+        attributes: {
+          // JSON-only: `rendered: false` keeps ids out of HTML, so a paste never
+          // carries one; `keepOnSplit: false` only covers an end-of-block Enter,
+          // a mid-block split still copies the id. The write sink is what keeps
+          // ids unique per document.
+          blockId: { default: null, rendered: false, keepOnSplit: false },
+        },
+      },
+    ]
+  },
+})
 
 function createSchemaExtensions(): AnyExtension[] {
   return [
@@ -63,6 +85,8 @@ function createSchemaExtensions(): AnyExtension[] {
     BulletList,
     OrderedList,
     ListItem,
+    TaskList,
+    ThreaTaskItem,
     Blockquote,
     HorizontalRule,
     CodeBlock.configure(codeBlockOptions),
@@ -82,6 +106,7 @@ function createSchemaExtensions(): AnyExtension[] {
     ChannelLinkNode,
     SlashCommandNode,
     EmojiNode,
+    BlockIdAttribute,
   ]
 }
 
