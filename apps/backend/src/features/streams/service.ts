@@ -92,6 +92,7 @@ import {
   isOpenVisibility,
   type StreamDirectoryStats,
   type ReferenceAudience,
+  STREAM_DISPLAY_NAME_MAX_LENGTH,
 } from "@threahq/types"
 import { ContextBagRepository, PersonaRepository, assertAssignablePersona } from "../agents"
 import { draftStreamUniquenessKey } from "../drafts"
@@ -240,7 +241,7 @@ const createThreadParamsSchema = z.object({
    * anchor to read and never receives a user message, so dynamic naming can
    * never reach it — the caller's own name is the only one it will ever have.
    */
-  displayName: z.string().trim().min(1).max(100).optional(),
+  displayName: z.string().trim().min(1).max(STREAM_DISPLAY_NAME_MAX_LENGTH).optional(),
   /**
    * Caller-supplied stream id, for a create that must name the thread before it
    * exists — a subagent's `subagent:created` card carries `threadStreamId` in

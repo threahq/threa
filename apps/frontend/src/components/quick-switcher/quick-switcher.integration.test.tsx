@@ -56,7 +56,8 @@ const mockOpenStreamSettings = vi.fn()
 // palette created the scratchpad directly or routed through the unlock modal
 // first.
 const mockCreateEncryptedScratchpad = vi.fn(async () => "stream_e2e_test")
-let mockCreateDoc: { enabled: boolean; run: Mock<ReturnType<typeof createDocModule.useCreateDoc>["run"]> }
+type CreateDoc = ReturnType<typeof createDocModule.useCreateDoc>
+let mockCreateDoc: Omit<CreateDoc, "run"> & { run: Mock<CreateDoc["run"]> }
 
 const mockWorkspaceBootstrap = {
   data: {} as {
@@ -242,7 +243,13 @@ function installSpies() {
     >
   )
   // `useCreateDoc` also reaches into `useSyncEngine`; its gating is covered in `use-create-doc.test.ts`.
-  mockCreateDoc = { enabled: false, run: vi.fn(async (_title?: string) => null) }
+  mockCreateDoc = {
+    enabled: false,
+    pending: false,
+    create: vi.fn(async (_title?: string) => null),
+    open: vi.fn(),
+    run: vi.fn(async (_title?: string) => null),
+  }
   vi.spyOn(createDocModule, "useCreateDoc").mockImplementation(() => mockCreateDoc)
   vi.spyOn(hooksModule, "useSearch").mockImplementation(
     () =>

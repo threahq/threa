@@ -1,4 +1,5 @@
 export { RichEditor } from "./rich-editor"
+export { isDocCreatePending } from "./triggers"
 export type { RichEditorHandle } from "./rich-editor"
 export { EditorToolbar } from "./editor-toolbar"
 export { EditorActionBar } from "./editor-action-bar"

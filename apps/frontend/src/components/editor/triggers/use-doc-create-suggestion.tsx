@@ -1,13 +1,12 @@
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useMemo } from "react"
 import { useParams } from "react-router-dom"
-import type { Editor } from "@tiptap/core"
 import { useCreateDoc } from "@/hooks/use-create-doc"
 import { useStableCallback } from "@/hooks/use-stable-callback"
 import { useWorkspaceStream, useWorkspaceStreamsSelect, type CachedStream } from "@/stores/workspace-store"
 import { DocSuggestionList } from "./doc-suggestion-list"
 import { isNewDoc, rankDocs, selectActiveDocs, type DocSuggestionItem, type NewDocItem } from "./use-doc-suggestion"
 import { useSuggestion } from "./use-suggestion"
-import { linkNewDoc, type DocCreateOptions } from "./doc-create-extension"
+import { takeOverNewDoc, type DocCreateOptions } from "./doc-create-extension"
 
 type DocCreateItem = DocSuggestionItem | NewDocItem
 
@@ -35,7 +34,6 @@ export function useDocCreateSuggestion(hostStreamId?: string, excludeDocId?: str
   const host = useWorkspaceStream(workspaceId, hostStreamId, pickDocHost)
   const createDoc = useCreateDoc(workspaceId ?? "", host)
   const canCreate = createDoc.enabled
-  const [creating, setCreating] = useState(false)
 
   const filterItems = useCallback(
     (items: DocCreateItem[], query: string): DocCreateItem[] => {
@@ -59,11 +57,11 @@ export function useDocCreateSuggestion(hostStreamId?: string, excludeDocId?: str
         items={props.items}
         clientRect={props.clientRect}
         command={props.command}
-        creatingNewDoc={creating}
+        creatingNewDoc={createDoc.pending}
         emptyState="Docs can't be created here"
       />
     ),
-    [creating]
+    [createDoc.pending]
   )
 
   const { suggestionConfig, renderSuggestionList } = useSuggestion<DocCreateItem>({
@@ -74,14 +72,8 @@ export function useDocCreateSuggestion(hostStreamId?: string, excludeDocId?: str
     rendersEmptyState: true,
   })
 
-  // The picker stays open on the typed `/doc` while the doc is created, so Enter can't send the message without it.
-  const takeOver = useStableCallback(({ editor, item }: { editor: Editor; item: DocCreateItem }) => {
-    if (!isNewDoc(item)) return false
-    if (creating) return true
-    setCreating(true)
-    void linkNewDoc(editor, () => createDoc.run(item.title)).finally(() => setCreating(false))
-    return true
-  })
+  // Stable, so a create flipping `pending` doesn't hand the editor new extension options mid-create.
+  const takeOver = useStableCallback(takeOverNewDoc(createDoc.create, createDoc.open))
   const docCreateOptions = useMemo<DocCreateOptions>(
     () => ({ suggestion: suggestionConfig, takeOver }),
     [suggestionConfig, takeOver]

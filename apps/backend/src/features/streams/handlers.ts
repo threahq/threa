@@ -26,6 +26,7 @@ import {
   TOOL_PRIVACY_CATEGORIES,
   threaDocumentSchema,
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
+  STREAM_DISPLAY_NAME_MAX_LENGTH,
 } from "@threahq/types"
 import type { Pool } from "pg"
 import {
@@ -70,7 +71,7 @@ const createStreamSchema = z
         message: "Slug must start with a letter and contain only lowercase letters, numbers, hyphens, or underscores",
       })
       .optional(),
-    displayName: z.string().min(1).max(100).optional(),
+    displayName: z.string().min(1).max(STREAM_DISPLAY_NAME_MAX_LENGTH).optional(),
     description: z.string().optional(),
     visibility: visibilitySchema.optional(),
     companionMode: companionModeSchema.optional(),
@@ -208,7 +209,7 @@ const sealedNameEnvelopeSchema = z.object({
 
 const updateStreamSchema = z
   .object({
-    displayName: z.string().min(1).max(100).optional(),
+    displayName: z.string().min(1).max(STREAM_DISPLAY_NAME_MAX_LENGTH).optional(),
     slug: z
       .string()
       .regex(SLUG_PATTERN, {

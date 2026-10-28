@@ -50,6 +50,7 @@ export {
   DocErrorCodes,
   DOC_FRAGMENT,
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
+  STREAM_DISPLAY_NAME_MAX_LENGTH,
   STREAM_BRIEF_MAX_CHARS,
   // Stream purpose (system-purpose marker; NULL = ordinary stream)
   STREAM_PURPOSES,

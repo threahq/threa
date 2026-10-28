@@ -1,9 +1,9 @@
 import { afterEach, describe, it, expect } from "vitest"
 import { Editor } from "@tiptap/core"
 import { createEditorExtensions } from "../editor-extensions"
-import { DocCreatePluginKey, isDocCreatePending, linkNewDoc } from "./doc-create-extension"
+import { DocCreatePluginKey, isDocCreatePending, takeOverNewDoc } from "./doc-create-extension"
 import { DocSearchPluginKey } from "./doc-search-extension"
-import { isNewDoc, type DocSuggestionItem, type NewDocItem } from "./use-doc-suggestion"
+import type { DocSuggestionItem, NewDocItem } from "./use-doc-suggestion"
 
 type Item = DocSuggestionItem | NewDocItem
 
@@ -24,7 +24,7 @@ function deferred<T>() {
 
 function makeEditor(create: (title: string) => Promise<{ id: string; displayName: string | null } | null>) {
   let pick: ((item: Item) => void) | null = null
-  const links: Promise<void>[] = []
+  const opened: { docId: string; text: string }[] = []
   const capture = (props: { command: (item: Item) => void }) => {
     pick = props.command
   }
@@ -39,11 +39,7 @@ function makeEditor(create: (title: string) => Promise<{ id: string; displayName
         items: () => [],
         render: () => ({ onStart: capture, onUpdate: capture, onExit() {}, onKeyDown: () => false }),
       },
-      takeOver: ({ editor, item }) => {
-        if (!isNewDoc(item)) return false
-        links.push(linkNewDoc(editor, () => create(item.title)))
-        return true
-      },
+      takeOver: takeOverNewDoc(create, (docId) => opened.push({ docId, text: editor.getText() })),
     },
   })
 
@@ -52,7 +48,7 @@ function makeEditor(create: (title: string) => Promise<{ id: string; displayName
   const editor = new Editor({ element: el, extensions, content: "" })
   editor.on("destroy", () => el.remove())
   editors.push(editor)
-  return { editor, pick: (item: Item) => pick!(item), settled: () => Promise.all(links) }
+  return { editor, opened, pick: (item: Item) => pick!(item), settled: () => new Promise((r) => setTimeout(r, 0)) }
 }
 
 afterEach(() => {
@@ -108,7 +104,7 @@ describe("DocCreateExtension", () => {
   it("should keep the typed /doc while the doc is created, then put its chip in place of it", async () => {
     const creation = deferred<{ id: string; displayName: string | null }>()
     const titles: string[] = []
-    const { editor, pick, settled } = makeEditor((title) => {
+    const { editor, opened, pick, settled } = makeEditor((title) => {
       titles.push(title)
       return creation.promise
     })
@@ -121,9 +117,10 @@ describe("DocCreateExtension", () => {
     creation.resolve({ id: "stream_new", displayName: "Q4 findings" })
     await settled()
 
-    expect({ titles, whileCreating, content: editor.getJSON().content?.[0]?.content }).toEqual({
+    expect({ titles, whileCreating, opened, content: editor.getJSON().content?.[0]?.content }).toEqual({
       titles: ["Q4 findings"],
       whileCreating: "see /doc Q4 findings",
+      opened: [{ docId: "stream_new", text: "see Q4 findings " }],
       content: [{ type: "text", text: "see " }, chip("stream_new", "Q4 findings"), { type: "text", text: " " }],
     })
   })
@@ -198,6 +195,40 @@ describe("DocCreateExtension", () => {
     await settled()
 
     expect(editor.getText()).toBe("see /doc Q4 finding")
+  })
+
+  it("should link nothing when characters were appended to the title while the doc was created", async () => {
+    const creation = deferred<{ id: string; displayName: string | null }>()
+    const { editor, pick, settled } = makeEditor(() => creation.promise)
+    editor.commands.focus()
+    typeText(editor, "see /doc Q4")
+    await new Promise((r) => setTimeout(r, 0))
+
+    pick({ kind: "new-doc", title: "Q4" })
+    typeText(editor, "x")
+    creation.resolve({ id: "stream_new", displayName: "Q4" })
+    await settled()
+
+    expect(editor.getText()).toBe("see /doc Q4x")
+  })
+
+  it("should ignore a pick of an existing doc while the new doc is created", async () => {
+    const creation = deferred<{ id: string; displayName: string | null }>()
+    const { editor, pick, settled } = makeEditor(() => creation.promise)
+    editor.commands.focus()
+    typeText(editor, "see /doc Q4")
+    await new Promise((r) => setTimeout(r, 0))
+
+    pick({ kind: "new-doc", title: "Q4" })
+    pick(PLAN)
+    creation.resolve({ id: "stream_new", displayName: "Q4" })
+    await settled()
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([
+      { type: "text", text: "see " },
+      chip("stream_new", "Q4"),
+      { type: "text", text: " " },
+    ])
   })
 
   it("should report a pending create only until the doc is linked", async () => {

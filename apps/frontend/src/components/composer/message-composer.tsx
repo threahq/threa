@@ -25,7 +25,7 @@ import { useStableCallback } from "@/hooks/use-stable-callback"
 import { useComposerActionSide } from "@/hooks/use-composer-action-side"
 import { usePreferencesOptional } from "@/contexts"
 import { getEffectiveKeyBinding, matchesKeyBinding } from "@/lib/keyboard-shortcuts"
-import { RichEditor, EditorToolbar, EditorActionBar } from "@/components/editor"
+import { RichEditor, EditorToolbar, EditorActionBar, isDocCreatePending } from "@/components/editor"
 import { getDictationMarkdownContext } from "@/components/editor/dictation-markdown"
 import { VOICE_DRAFT_CONTEXT_MAX_CHARS, type ReferenceAudience } from "@threahq/types"
 import type { RichEditorHandle } from "@/components/editor"
@@ -1030,6 +1030,8 @@ export function MessageComposer({
 
   const handleSubmit = useCallback(() => {
     if (!canSubmit) return
+    const editor = richEditorRef.current?.getEditor()
+    if (editor && isDocCreatePending(editor)) return
     if (question) {
       answerQuestion()
       return
