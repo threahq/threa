@@ -57,6 +57,10 @@ const COPY_TREATMENT: Record<string, { treatment: Treatment; why: string }> = {
     treatment: "inert",
     why: "the bridge withholds docs, and a copy's write authority refuses creating one under it",
   },
+  "features/docs/mention-outbox-handler.ts": {
+    treatment: "inert",
+    why: "the bridge withholds docs, and a copy's write authority refuses creating one under it",
+  },
   "features/dynamic-naming/outbox-handler.ts": { treatment: "skips", why: "a copy takes its name from the host" },
   "features/emoji/usage-outbox-handler.ts": {
     treatment: "skips",
