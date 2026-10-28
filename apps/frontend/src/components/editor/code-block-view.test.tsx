@@ -13,6 +13,8 @@ import * as giphyModule from "@/hooks/use-giphy-enabled"
 import * as streamCommandsModule from "@/hooks/use-stream-commands"
 import * as contextsModule from "@/contexts"
 import { RichEditor, type RichEditorHandle } from "./rich-editor"
+import { DecorationSet } from "@tiptap/pm/view"
+import { codeBlockHighlightKey } from "./code-block-highlight"
 
 const NO_MENTIONABLES = { mentionables: [], isLoading: false }
 const NO_EMOJI = { emojis: [], emojiWeights: {}, toEmoji: () => null, toShortcode: () => null }
@@ -102,6 +104,24 @@ describe("code block language chip", () => {
         light: keyToken?.style.getPropertyValue("--shiki-light"),
         dark: keyToken?.style.getPropertyValue("--shiki-dark"),
       }).toEqual({ light: expect.stringMatching(/^#[0-9a-f]{6}$/i), dark: expect.stringMatching(/^#[0-9a-f]{6}$/i) })
+    })
+  })
+
+  it("re-decorates only the block that was edited", async () => {
+    const { editor } = mountEditor("```yaml\na: 1\n```\n\n```yaml\nb: 2\n```")
+    // The decoration subtree ProseMirror hands the second block's node view.
+    const secondBlockDecorations = () => {
+      const { doc } = editor.state
+      return codeBlockHighlightKey.getState(editor.state)!.forChild(doc.child(0).nodeSize, doc.child(1))
+    }
+    await waitFor(() => expect(secondBlockDecorations()).not.toBe(DecorationSet.empty))
+    const before = secondBlockDecorations()
+
+    editor.commands.insertContentAt(2, "x")
+
+    expect({ text: editor.state.doc.child(0).textContent, same: secondBlockDecorations() === before }).toEqual({
+      text: "ax: 1",
+      same: true,
     })
   })
 })

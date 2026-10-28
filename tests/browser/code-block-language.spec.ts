@@ -97,6 +97,18 @@ test("Escape closes the picker and returns the caret to the code", async ({ page
   await expect(editor.locator("pre code")).toHaveText("ab")
 })
 
+test("a long line wraps, so the chip never scrolls out of view", async ({ page }) => {
+  await openScratchpad(page)
+  const editor = composerEditor(page)
+  await editor.click()
+  await page.keyboard.type("``` ")
+  await page.keyboard.insertText(`const id = "${"0123456789abcdef".repeat(30)}"`)
+
+  const scrollsSideways = await editor.locator("pre").evaluate((pre) => pre.scrollWidth > pre.clientWidth)
+  expect(scrollsSideways).toBe(false)
+  await expect(editor.getByRole("button", { name: "Code language: Plain text" })).toBeInViewport()
+})
+
 test("on a phone the chip opens the language drawer", async ({ page: setupPage, browser }) => {
   const url = await openScratchpad(setupPage)
   const context = await browser.newContext({
@@ -121,7 +133,7 @@ test("on a phone the chip opens the language drawer", async ({ page: setupPage, 
   const box = await chip.boundingBox()
   // The visible chip is small; its tap target is not.
   const hitHeight = await chip.evaluate((el) => parseFloat(getComputedStyle(el, "::after").height))
-  expect({ chipShort: (box?.height ?? 0) < 24, hitHeight: hitHeight >= 32 }).toEqual({
+  expect({ chipShort: (box?.height ?? 0) < 24, hitHeight: hitHeight >= 40 }).toEqual({
     chipShort: true,
     hitHeight: true,
   })

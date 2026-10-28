@@ -83,7 +83,7 @@ export function CodeBlockView({ node, editor, getPos, updateAttributes }: NodeVi
                     CHIP_CLASS,
                     "relative hover:bg-background/70 hover:text-foreground",
                     // Widens the hit area to a thumb-sized target without moving the chip.
-                    "after:absolute after:-inset-x-1.5 after:-inset-y-2"
+                    "after:absolute after:-inset-x-1.5 after:-inset-y-3"
                   )}
                 >
                   {chipContent}
