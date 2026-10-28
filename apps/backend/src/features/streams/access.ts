@@ -296,7 +296,7 @@ export async function countDocMoveReaders(
       COUNT(*) FILTER (WHERE reads_target AND NOT reads_doc)::int AS gaining
     FROM reach
   `)
-  return result.rows[0] ?? { losing: 0, gaining: 0 }
+  return result.rows[0]!
 }
 
 /**

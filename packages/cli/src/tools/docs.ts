@@ -146,8 +146,8 @@ export function registerDocTools(server: McpServer, client: ThreaApiClient, reso
       title: "Move a doc",
       description:
         "Move a doc to another host stream; content, history and threads come with it. `to_stream_id` takes a " +
-        "`stream_…` id or `#channel-slug`. Only the doc's creator or a workspace admin can move it (403 " +
-        "DOC_MOVE_FORBIDDEN otherwise). The result is the doc with its new `hostStreamId`.",
+        "`stream_…` id or `#channel-slug`. Only the doc's creator or a workspace admin can move it, so a " +
+        "bot key moves only docs its bot created (403 DOC_MOVE_FORBIDDEN otherwise). The result is the doc with its new `hostStreamId`.",
       inputSchema: {
         doc_id: z.string(),
         to_stream_id: z.string(),

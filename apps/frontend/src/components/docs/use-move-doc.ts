@@ -1,4 +1,5 @@
-import { useCallback, useState } from "react"
+import { useCallback, useRef, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
   DocErrorCodes,
@@ -13,10 +14,11 @@ import { useViewerPermissions } from "@/hooks/use-workspaces"
 import { useCurrentWorkspaceUserId } from "@/hooks/use-current-workspace-user-id"
 import { hasPermission } from "@/lib/permissions"
 import type { CachedStream } from "@/stores/workspace-store"
+import { applyDocMove } from "@/sync/workspace-sync"
 
 interface MovableDoc {
   id: string
-  createdBy?: string | null
+  createdBy: string
   parentStreamId?: string | null
   archivedAt?: string | null
 }
@@ -41,19 +43,26 @@ const toastMoveError = (err: unknown) => {
 
 /**
  * Move a doc to another host. `pick` previews the access change and moves at once when nobody gains or loses
- * read access; otherwise it holds the move in `pending` until `confirm`. The new host shows through the stream
- * caches the move's socket event rewrites, so success says nothing.
+ * read access; otherwise it holds the move in `pending` until `confirm`. `reset` drops a preview still in flight.
+ * The move's response re-homes the doc in the caches, so success says nothing. `canMove` carries the pane's
+ * write and archive gates.
  */
-export function useMoveDoc(workspaceId: string, doc: MovableDoc | undefined) {
+export function useMoveDoc(workspaceId: string, doc: MovableDoc | undefined, canMove: boolean) {
+  const queryClient = useQueryClient()
   const currentUserId = useCurrentWorkspaceUserId(workspaceId)
   const isAdmin = hasPermission(useViewerPermissions(workspaceId), WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
   const [pending, setPending] = useState<PendingDocMove | null>(null)
   const [busy, setBusy] = useState(false)
+  const attemptRef = useRef(0)
 
   const docId = doc?.id
   const fromStreamId = doc?.parentStreamId ?? null
   const enabled = Boolean(
-    doc && fromStreamId && !doc.archivedAt && ((currentUserId !== null && doc.createdBy === currentUserId) || isAdmin)
+    canMove &&
+    doc &&
+    fromStreamId &&
+    !doc.archivedAt &&
+    ((currentUserId !== null && doc.createdBy === currentUserId) || isAdmin)
   )
 
   const isTarget = useCallback(
@@ -69,54 +78,66 @@ export function useMoveDoc(workspaceId: string, doc: MovableDoc | undefined) {
   const move = useCallback(
     async (toStreamId: string): Promise<boolean> => {
       if (!docId || !fromStreamId) return false
-      setBusy(true)
       try {
-        await docsApi.move(workspaceId, docId, { fromStreamId, toStreamId })
+        const { stream } = await docsApi.move(workspaceId, docId, { fromStreamId, toStreamId })
+        await applyDocMove(queryClient, workspaceId, { doc: stream, movedStreamIds: [stream.id] })
         return true
       } catch (err) {
         toastMoveError(err)
         return false
-      } finally {
-        setBusy(false)
       }
     },
-    [workspaceId, docId, fromStreamId]
+    [queryClient, workspaceId, docId, fromStreamId]
   )
 
-  /** Resolves true once the doc moved, false when it waits on `confirm` or failed. */
+  /** Resolves true once the doc moved, false when it waits on `confirm`, failed, or was reset meanwhile. */
   const pick = useCallback(
     async (toStreamId: string): Promise<boolean> => {
       if (!docId) return false
+      const attempt = ++attemptRef.current
+      const isCurrent = () => attemptRef.current === attempt
       setBusy(true)
-      let preview: DocMovePreviewResponse
       try {
-        preview = await docsApi.previewMove(workspaceId, docId, toStreamId)
+        const preview = await docsApi.previewMove(workspaceId, docId, toStreamId)
+        if (!isCurrent()) return false
+        if (preview.losing > 0 || preview.gaining > 0) {
+          setPending({ toStreamId, preview })
+          return false
+        }
+        return await move(toStreamId)
       } catch (err) {
-        setBusy(false)
-        toastMoveError(err)
+        if (isCurrent()) toastMoveError(err)
         return false
+      } finally {
+        if (isCurrent()) setBusy(false)
       }
-      if (preview.losing > 0 || preview.gaining > 0) {
-        setBusy(false)
-        setPending({ toStreamId, preview })
-        return false
-      }
-      return move(toStreamId)
     },
     [workspaceId, docId, move]
   )
 
   const confirm = useCallback(async (): Promise<boolean> => {
     if (!pending) return false
-    const moved = await move(pending.toStreamId)
-    setPending(null)
-    return moved
+    setBusy(true)
+    try {
+      return await move(pending.toStreamId)
+    } finally {
+      setBusy(false)
+      setPending(null)
+    }
   }, [pending, move])
 
   const cancel = useCallback(() => setPending(null), [])
 
-  return { enabled, isTarget, pick, pending, confirm, cancel, busy }
+  const reset = useCallback(() => {
+    attemptRef.current++
+    setPending(null)
+    setBusy(false)
+  }, [])
+
+  return { enabled, isTarget, pick, pending, confirm, cancel, reset, busy }
 }
+
+export type DocMove = ReturnType<typeof useMoveDoc>
 
 /** "3 people will lose access and 5 will gain it." */
 export function describeAccessChange({ losing, gaining }: DocMovePreviewResponse): string {

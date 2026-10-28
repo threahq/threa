@@ -72,7 +72,7 @@ A doc is a markdown document hosted by a stream. `threa docs list [<stream-ref>]
 - `threa docs create <stream-ref> --title t --body - --reason r` (tool `create_doc`) starts one; `--reason` is required with a body.
 - `threa docs check <doc-id> --item "<task text>" --reason r [--uncheck] [--block blk_…] [--nth N]` (tool `check_doc_task`) ticks or unticks one `- [ ]` item by its exact text, rewriting its whole block so `foo` never hits `foo bar`; `DOC_TASK_AMBIGUOUS` lists duplicates as `{blockId, nth, line}` for `--nth`/`--block`; needs `docs:read` and `docs:write`.
 - `threa docs comment <doc-id> --block blk_… --body <text|->` (tool `comment_on_doc`) posts a comment into that block's thread, starting the thread on the first comment; needs `docs:read` and `messages:write`. A 404 `DOC_SECTION_NOT_FOUND` means the block is gone: re-read for current ids.
-- `threa docs move <doc-id> --to <stream-ref>` (tool `move_doc`) rehosts a doc; only its creator or a workspace admin (403 `DOC_MOVE_FORBIDDEN`). Needs `docs:write`.
+- `threa docs move <doc-id> --to <stream-ref>` (tool `move_doc`) rehosts a doc; only its creator or a workspace admin, so a bot key moves only docs its bot created (403 `DOC_MOVE_FORBIDDEN`). Needs `docs:write`.
 
 ## Conversation create and resume
 

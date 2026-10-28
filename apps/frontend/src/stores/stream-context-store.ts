@@ -5,7 +5,6 @@ import { getPerfCapture } from "@/lib/perf/capture"
 import {
   MESSAGE_BODY_CONTEXT_CATEGORIES,
   streamContextItemKey,
-  type DocMovedEventPayload,
   type StreamContextItem,
   type StreamContextScope,
 } from "@threahq/types"
@@ -232,23 +231,40 @@ export async function putLocalContextRows(rows: CachedStreamContextItem[]): Prom
 }
 
 /**
- * A moved doc's hosted row: one row per doc (`key` is not stream-scoped), so the new host's row replaces it
- * outright, reconciled or not, and the old host drops it only while it still points there.
+ * A moved doc's hosted row is one row per doc (`key` is not stream-scoped), written by whichever `doc:created` or
+ * `doc:moved` event placed the doc last. Event ids are ULIDs, so a replayed (catch-up, resume) older event can
+ * neither re-point the row at an earlier host nor downgrade the row its own event already reconciled.
  */
-export async function moveHostedDocContextRow(
+function supersedes(row: Pick<CachedStreamContextItem, "anchorEventId">, prior: CachedStreamContextItem | undefined) {
+  if (!prior?.anchorEventId || !row.anchorEventId) return true
+  if (row.anchorEventId === prior.anchorEventId) return prior._status === "pending"
+  return row.anchorEventId > prior.anchorEventId
+}
+
+/** The new host's row for a moved doc, from its `doc:moved` event. */
+export async function putMovedDocContextRows(rows: CachedStreamContextItem[]): Promise<void> {
+  if (rows.length === 0) return
+  await db.transaction("rw", db.streamContextItems, async () => {
+    const existing = await db.streamContextItems.bulkGet(rows.map((row) => [row.workspaceId, row.key]))
+    const writable = rows.filter((row, index) => supersedes(row, existing[index]))
+    if (writable.length === 0) return
+    await db.streamContextItems.bulkPut(writable.map((row) => ({ ...row, _status: "pending" as const })))
+  })
+}
+
+/** The old host's side of a move: drop the doc's row while it still points here from an older event. */
+export async function dropMovedDocContextRow(
   workspaceId: string,
-  streamId: string,
-  payload: DocMovedEventPayload,
-  rows: CachedStreamContextItem[]
+  hostStreamId: string,
+  docId: string,
+  movedEventId: string
 ): Promise<void> {
-  if (payload.toStreamId === streamId) {
-    await db.streamContextItems.bulkPut(rows.map((row) => ({ ...row, _status: "pending" as const })))
-    return
-  }
-  const key = streamContextItemKey({ category: "doc", refId: payload.docId, sourceMessageId: null })
+  const key = streamContextItemKey({ category: "doc", refId: docId, sourceMessageId: null })
   await db.transaction("rw", db.streamContextItems, async () => {
     const row = await db.streamContextItems.get([workspaceId, key])
-    if (row?.streamId === streamId) await db.streamContextItems.delete([workspaceId, key])
+    if (row?.streamId === hostStreamId && supersedes({ anchorEventId: movedEventId }, row)) {
+      await db.streamContextItems.delete([workspaceId, key])
+    }
   })
 }
 

@@ -846,6 +846,49 @@ describe("public API doc moves", () => {
     })
   })
 
+  test("should let an admin's user key move a doc another member created", async () => {
+    const admin = await withTransaction(pool, async (client) => (await addTestMember(client, ws, userId(), "admin")).id)
+    const from = await privateChannel([outsider, admin])
+    const to = await privateChannel([outsider, admin])
+    const created = await createDoc(asMember(outsider, { body: { streamId: from } }))
+
+    const moved = await moveDoc(
+      userReq(admin, {
+        user: { id: admin, role: "admin" },
+        params: { docId: created.data.id },
+        body: { toStreamId: to },
+      })
+    )
+
+    expect({ status: moved.status, hostStreamId: moved.data.hostStreamId }).toEqual({ status: 200, hostStreamId: to })
+  })
+
+  test("should refuse an end-to-end encrypted target, a public channel the key's user is not in, and an unreadable one", async () => {
+    const from = await privateChannel([owner, outsider])
+    const created = await createDoc(asMember(outsider, { body: { streamId: from } }))
+    const sealed = await streamService.createScratchpad({
+      workspaceId: ws,
+      createdBy: outsider,
+      e2e: { ownerKeyId: "e2ek_public_api_move" },
+    })
+    const unreadable = await privateChannel([owner])
+    const attempt = (toStreamId: string) =>
+      moveDoc(asMember(outsider, { params: { docId: created.data.id }, body: { toStreamId } })).then(
+        () => null,
+        (error: { status?: number; code?: string }) => ({ status: error.status, code: error.code })
+      )
+
+    expect({
+      sealed: await attempt(sealed.id),
+      publicNotMember: await attempt(publicChannelId),
+      unreadable: await attempt(unreadable),
+    }).toEqual({
+      sealed: { status: 400, code: DocErrorCodes.E2E_HOST_NOT_ALLOWED },
+      publicNotMember: { status: 403, code: StreamErrorCodes.READ_ONLY },
+      unreadable: { status: 404, code: "NOT_FOUND" },
+    })
+  })
+
   test("should let a bot key move a doc the bot created", async () => {
     const from = await privateChannel([owner], [grantedBotId])
     const to = await privateChannel([owner], [grantedBotId])

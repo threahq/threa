@@ -37,6 +37,7 @@ import type {
   CallTransferPhase,
   StreamConnectionUpdatedPayload,
   DocUpdatedPayload,
+  CompanionMode,
 } from "@threahq/types"
 
 export type OutboxEventType =
@@ -766,13 +767,15 @@ export interface StreamDocRowOutboxPayload extends StreamScopedPayload {
 }
 
 /**
- * One host's `doc:moved` row; `streamId` is that host. Carries the doc as it stands after the move and
- * every stream that took the new root, so open clients re-home their cached copies without a fetch.
+ * One host's `doc:moved` row; `streamId` is that host. Carries the doc as it stands after the move, every
+ * stream that took the new root, and the companion each moved thread now carries, so open clients re-home
+ * their cached copies without a fetch.
  */
 export interface StreamDocMovedOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
   doc: Stream
   movedStreamIds: string[]
+  threadCompanion: { companionMode: CompanionMode; companionPersonaId: string | null }
 }
 
 interface AgentSessionOutboxPayload extends StreamScopedPayload {

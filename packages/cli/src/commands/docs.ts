@@ -270,7 +270,8 @@ const moveVerb: VerbSpec = {
   help:
     "threa docs move <doc-id> --to <stream-ref> [flags]\n\n" +
     "Move a doc to another stream; its content, history and threads come with it. Only the doc's creator or a " +
-    "workspace admin can move it. A 403 DOC_MOVE_FORBIDDEN means the key's user is neither; 400 " +
+    "workspace admin can move it, so a bot key moves only docs its bot created. A 403 DOC_MOVE_FORBIDDEN means " +
+    "the key's user or bot is neither; 400 " +
     "DOC_HOST_TYPE_INVALID or DOC_E2E_HOST_NOT_ALLOWED means the target cannot host docs.\n\n" +
     "Flags:\n" +
     "  --to ref   the new host: a stream_… id or #channel-slug (required)\n" +

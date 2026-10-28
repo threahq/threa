@@ -224,7 +224,11 @@ export function StreamPane({
     fallbackArchived: null,
   })
   const canChangeDocArchive = isDoc && offersArchiveToggle(currentUserId, docRow, docRoot, ancestorArchived)
-  const docMove = useMoveDoc(workspaceId, isDoc ? stream : undefined)
+  const docMove = useMoveDoc(
+    workspaceId,
+    isDoc && docRow ? { ...docRow, parentStreamId: stream?.parentStreamId } : undefined,
+    canWriteDoc === true && !ancestorArchived
+  )
   // Only the stream page sets a list beside its stream; under an aside it would land out of sight.
   const offersList = (isChannel || isDm) && hasTabs && offersContext
   const dmPeerUserId = isDm ? dmPeers.find((p) => p.streamId === streamId)?.userId : null

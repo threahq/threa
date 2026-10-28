@@ -49,7 +49,8 @@ import { isAgentSessionLifecycleEvent } from "@/lib/agent-session-lifecycle"
 import { contextItemsFromEvent, type ContextRowsContext } from "@/lib/stream-context/rows"
 import {
   deleteContextRowsForMessage,
-  moveHostedDocContextRow,
+  dropMovedDocContextRow,
+  putMovedDocContextRows,
   putLocalContextRows,
   reparentContextRows,
   replaceContextRowsForMessage,
@@ -1971,12 +1972,14 @@ function bindStreamSocketHandlers(
       await applyContextRowsForEvent(workspaceId, streamId, cachedEvent)
     }
     if (payload.event.eventType === "doc:moved") {
-      await moveHostedDocContextRow(
-        workspaceId,
-        streamId,
-        payload.event.payload as DocMovedEventPayload,
-        contextItemsFromEvent(cachedEvent, await resolveContextScope(workspaceId, streamId))
-      )
+      const move = payload.event.payload as DocMovedEventPayload
+      if (move.toStreamId === streamId) {
+        await putMovedDocContextRows(
+          contextItemsFromEvent(cachedEvent, await resolveContextScope(workspaceId, streamId))
+        )
+      } else {
+        await dropMovedDocContextRow(workspaceId, streamId, move.docId, cachedEvent.id)
+      }
     }
     if (isAgentSessionLifecycleEvent(payload.event)) {
       await reconcileAppendedAgentActivity(workspaceId, streamId, payload.event)

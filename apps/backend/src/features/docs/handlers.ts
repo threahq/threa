@@ -1,15 +1,16 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import type {
-  DocMovePreviewResponse,
-  DocBacklinksResponse,
-  DocListResponse,
-  DocSectionResponse,
-  DocThreadsResponse,
-  DocUpdatesResponse,
+import {
+  WORKSPACE_PERMISSION_SCOPES,
+  type DocMovePreviewResponse,
+  type DocBacklinksResponse,
+  type DocListResponse,
+  type DocSectionResponse,
+  type DocThreadsResponse,
+  type DocUpdatesResponse,
 } from "@threahq/types"
 import { validateRequest } from "../../lib/validation"
-import { callerIsWorkspaceAdmin } from "../../middleware/workspace-admin"
+import { sessionHasPermission } from "../../middleware/workspace-permission"
 import type { StreamService } from "../streams"
 import type { DocService } from "./service"
 
@@ -114,7 +115,7 @@ export function createDocHandlers({ docService, streamService }: Dependencies) {
         fromStreamId,
         toStreamId,
         principal: { kind: "user", userId: req.user!.id },
-        isWorkspaceAdmin: callerIsWorkspaceAdmin(req),
+        isWorkspaceAdmin: sessionHasPermission(req, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
       })
       res.json({ stream })
     },

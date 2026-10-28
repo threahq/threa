@@ -1,10 +1,10 @@
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { DocErrorCodes, StreamErrorCodes, StreamTypes } from "@threahq/types"
-import { HttpError } from "../../lib/errors"
+import { DocErrorCodes, StreamErrorCodes, StreamTypes, WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
+import { HttpError, StreamNotFoundError } from "../../lib/errors"
 import { DocRepository } from "../docs"
 import { StreamRepository, type Stream, type StreamService } from "../streams"
-import { callerIsWorkspaceAdmin } from "../../middleware/workspace-admin"
+import { sessionHasPermission } from "../../middleware/workspace-permission"
 import { validateRequest } from "../../lib/validation"
 import type {
   DocAgentAccessRefusal,
@@ -230,14 +230,18 @@ export function createDocPublicApiHandlers({
       const { docId } = validateRequest(docIdParamSchema, req.params)
       const { fromStreamId, toStreamId } = validateRequest(moveDocSchema, req.body)
       const workspaceId = req.workspaceId!
-      const doc = await streamService.moveDoc({
-        workspaceId,
-        docId,
-        fromStreamId,
-        toStreamId,
-        principal: apiKeyPrincipal(req),
-        isWorkspaceAdmin: callerIsWorkspaceAdmin(req),
-      })
+      const doc = await streamService
+        .moveDoc({
+          workspaceId,
+          docId,
+          fromStreamId,
+          toStreamId,
+          principal: apiKeyPrincipal(req),
+          isWorkspaceAdmin: sessionHasPermission(req, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+        })
+        .catch((error: unknown) => {
+          throw error instanceof StreamNotFoundError ? notFound() : error
+        })
       const [head] = await DocRepository.listHeads(pool, workspaceId, [doc.id])
       if (!head) throw new Error(`Doc ${doc.id} has no head row`)
       res.json({ data: serializeDocStream(doc, head.updateSeq) })

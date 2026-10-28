@@ -60,11 +60,14 @@ describe("DocAnchorEvent", () => {
     })
   })
 
-  it("shows Untitled when the doc row is not cached", () => {
+  it("renders without a link or title when the viewer can no longer resolve the doc", () => {
     cacheStreams([])
     renderRow()
 
-    expect(screen.getByRole("link")).toHaveTextContent("Untitled")
+    expect({ link: screen.queryByRole("link"), text: document.body.textContent }).toEqual({
+      link: null,
+      text: expect.stringMatching(/^Kris created a doc\d/),
+    })
   })
 
   it("shows the doc's cached name", () => {

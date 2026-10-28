@@ -97,7 +97,8 @@ export class DocActivityService {
   }
 
   private async fold(db: Querier, workspaceId: string, docId: string): Promise<DocActivityRollUpResult> {
-    const doc = await StreamRepository.findById(db, workspaceId, docId)
+    // Share-locked so a doc move waits for this row to land in the host read here, or lands first.
+    const doc = await StreamRepository.findByIdForShare(db, workspaceId, docId)
     if (!doc?.parentStreamId) {
       logger.warn({ workspaceId, docId }, "Doc activity roll-up found no doc to fold")
       return { status: "nothing" }
@@ -170,9 +171,10 @@ export class DocActivityService {
     await OutboxRepository.insert(db, "stream:doc_activity", { workspaceId, streamId: host.id, event })
     return { status: "appended", eventId: event.id }
   }
+
   /**
    * The edit authors the host's row may name: a doc moved since an edit takes it to a host its author may
-   * not read. Users and bots are checked against the doc as it stands; a persona has no access of its own.
+   * not read. Checked against the doc as it stands.
    */
   private async actorsReadingDoc(
     db: Querier,
@@ -181,15 +183,23 @@ export class DocActivityService {
     edits: readonly StreamEvent[]
   ): Promise<Set<string>> {
     const readers = new Set<string>()
-    for (const key of new Set(edits.map((edit) => `${edit.actorType}:${edit.actorId}`))) {
-      const [actorType, actorId] = key.split(":") as [string, string]
-      const reads =
-        actorType === AuthorTypes.USER
-          ? (await listAccessibleStreamIds(db, workspaceId, actorId, [docId])).has(docId)
-          : actorType !== AuthorTypes.BOT ||
-            (await this.botChannelService.isStreamAccessibleForBot(workspaceId, actorId, docId))
-      if (reads) readers.add(key)
+    const byActor = new Map(edits.map((edit) => [`${edit.actorType}:${edit.actorId}`, edit]))
+    for (const [key, edit] of byActor) {
+      if (await this.actorReadsDoc(db, workspaceId, docId, edit)) readers.add(key)
     }
     return readers
+  }
+
+  private async actorReadsDoc(db: Querier, workspaceId: string, docId: string, edit: StreamEvent): Promise<boolean> {
+    const actorId = edit.actorId!
+    switch (edit.actorType) {
+      case AuthorTypes.USER:
+        return (await listAccessibleStreamIds(db, workspaceId, actorId, [docId])).has(docId)
+      case AuthorTypes.BOT:
+        return this.botChannelService.isStreamAccessibleForBot(workspaceId, actorId, docId)
+      default:
+        // A persona has no access of its own to check.
+        return true
+    }
   }
 }

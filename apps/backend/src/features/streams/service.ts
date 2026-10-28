@@ -364,6 +364,35 @@ function buildDmUniquenessKey(userOneId: string, userTwoId: string): string {
   return `${DM_UNIQUENESS_KEY_PREFIX}:${userAId}:${userBId}`
 }
 
+/** The companion a thread under `root` carries: a scratchpad's or aside's own setting, otherwise off. */
+function threadCompanionFrom(
+  root: Pick<Stream, "type" | "companionMode" | "companionPersonaId"> | null
+): Pick<Stream, "companionMode" | "companionPersonaId"> {
+  if (root?.type === StreamTypes.SCRATCHPAD || root?.type === StreamTypes.ASIDE) {
+    return { companionMode: root.companionMode, companionPersonaId: root.companionPersonaId }
+  }
+  return { companionMode: CompanionModes.OFF, companionPersonaId: null }
+}
+
+/**
+ * Refuses a host that cannot carry a doc. The doc body is projected server-side as plaintext, so no E2E host;
+ * a locked row carries no E2E join, so the check reads `e2e_streams`.
+ */
+async function assertCanHostDocs(db: Querier, workspaceId: string, host: Pick<Stream, "id" | "type">): Promise<void> {
+  if (!STREAM_TYPE_CAPABILITIES[host.type].hostsDocs) {
+    throw new HttpError("Docs cannot live on this stream type", {
+      status: 400,
+      code: DocErrorCodes.HOST_TYPE_INVALID,
+    })
+  }
+  if (await E2eStreamsRepository.isE2eStream(db, workspaceId, host.id)) {
+    throw new HttpError("Docs cannot live under an end-to-end encrypted stream", {
+      status: 400,
+      code: DocErrorCodes.E2E_HOST_NOT_ALLOWED,
+    })
+  }
+}
+
 async function lockLifecycleStreams(
   client: Querier,
   workspaceId: string,
@@ -1037,20 +1066,7 @@ export class StreamService {
       if (!authority) throw new StreamNotFoundError()
       const { target: host, root, state } = authority
 
-      if (!STREAM_TYPE_CAPABILITIES[host.type].hostsDocs) {
-        throw new HttpError("A doc cannot be created on this stream type", {
-          status: 400,
-          code: DocErrorCodes.HOST_TYPE_INVALID,
-        })
-      }
-      // The doc body is projected server-side as plaintext; the locked row carries no E2E join.
-      if (await E2eStreamsRepository.isE2eStream(client, params.workspaceId, host.id)) {
-        throw new HttpError("Docs cannot be created on an end-to-end encrypted stream", {
-          status: 400,
-          code: DocErrorCodes.E2E_HOST_NOT_ALLOWED,
-        })
-      }
-
+      await assertCanHostDocs(client, params.workspaceId, host)
       assertViewerStreamWritable(state)
 
       const stream = await StreamRepository.insert(client, {
@@ -1109,9 +1125,16 @@ export class StreamService {
   async moveDoc(params: MoveDocParams): Promise<Stream> {
     const { workspaceId, docId, toStreamId, principal } = params
     return withTransaction(this.pool, async (client) => {
+      // The subtree's rows join the ordered lock so the re-root below takes no lock out of order.
+      const seen = await StreamRepository.findById(client, workspaceId, docId)
+      const seenSubtreeIds =
+        seen?.type === StreamTypes.DOC && seen.rootStreamId
+          ? await StreamRepository.listDocSubtreeIds(client, workspaceId, docId, seen.rootStreamId)
+          : []
       const authorities = await resolveLockedStreamAuthorities(client, {
         workspaceId,
         streamIds: [docId, toStreamId],
+        alsoLockIds: seenSubtreeIds,
         principal,
         // Hosting types post messages freely; the doc itself takes Yjs writes, never messages.
         typeReadOnly: "none",
@@ -1121,7 +1144,8 @@ export class StreamService {
       if (docAuthority?.target.type !== StreamTypes.DOC || !targetAuthority) throw new StreamNotFoundError()
       const doc = docAuthority.target
       const oldHostId = doc.parentStreamId
-      if (!oldHostId) throw new Error(`Doc ${doc.id} has no host stream`)
+      const oldRootId = doc.rootStreamId
+      if (!oldHostId || !oldRootId) throw new Error(`Doc ${doc.id} has no host stream`)
 
       const mover = principalActorId(principal)
       if (doc.createdBy !== mover && !(principal.kind === "user" && params.isWorkspaceAdmin)) {
@@ -1140,27 +1164,26 @@ export class StreamService {
       if (oldHostId === toStreamId) return doc
 
       const { target, root } = targetAuthority
-      if (!STREAM_TYPE_CAPABILITIES[target.type].hostsDocs) {
-        throw new HttpError("A doc cannot be moved to this stream type", {
-          status: 400,
-          code: DocErrorCodes.HOST_TYPE_INVALID,
-        })
-      }
-      if (await E2eStreamsRepository.isE2eStream(client, workspaceId, target.id)) {
-        throw new HttpError("Docs cannot live under an end-to-end encrypted stream", {
-          status: 400,
-          code: DocErrorCodes.E2E_HOST_NOT_ALLOWED,
-        })
-      }
+      await assertCanHostDocs(client, workspaceId, target)
       assertViewerStreamWritable(docAuthority.state)
       assertViewerStreamWritable(targetAuthority.state)
 
+      // A thread committed under the doc after the unlocked read: lock it now, after the ordered set. A
+      // cycle that opens is a deadlock, which withTransaction retries.
+      const seenIds = new Set(seenSubtreeIds)
+      const lateIds = (await StreamRepository.listDocSubtreeIds(client, workspaceId, docId, oldRootId)).filter(
+        (id) => !seenIds.has(id)
+      )
+      await StreamRepository.findByIdsForUpdateBlocking(client, workspaceId, lateIds)
+
+      const threadCompanion = threadCompanionFrom(root)
       const movedStreamIds = await StreamRepository.moveDocSubtree(client, {
         workspaceId,
         docId,
+        fromRootStreamId: oldRootId,
         parentStreamId: target.id,
         root,
-        threadsTakeCompanion: root.type === StreamTypes.SCRATCHPAD || root.type === StreamTypes.ASIDE,
+        threadCompanion,
       })
       const moved = await StreamRepository.findById(client, workspaceId, docId)
       if (!moved) throw new StreamNotFoundError()
@@ -1170,7 +1193,7 @@ export class StreamService {
       await endSessionLinksForStreams(client, { workspaceId, streamIds: movedStreamIds, cause: "doc_moved" })
 
       const payload = { docId, fromStreamId: oldHostId, toStreamId: target.id } satisfies DocMovedEventPayload
-      for (const hostId of [oldHostId, target.id]) {
+      const appendMoved = async (hostId: string) => {
         const event = await StreamEventRepository.insert(client, {
           id: eventId(),
           workspaceId,
@@ -1186,19 +1209,21 @@ export class StreamService {
           event,
           doc: moved,
           movedStreamIds,
+          threadCompanion,
         })
-        if (hostId === target.id) {
-          await StreamContextRepository.insertMany(client, [
-            hostedDocContextRow({
-              workspaceId,
-              hostStreamId: hostId,
-              rootStreamId: root.id,
-              docId,
-              createdEvent: event,
-            }),
-          ])
-        }
+        return event
       }
+      await appendMoved(oldHostId)
+      const targetEvent = await appendMoved(target.id)
+      await StreamContextRepository.insertMany(client, [
+        hostedDocContextRow({
+          workspaceId,
+          hostStreamId: target.id,
+          rootStreamId: root.id,
+          docId,
+          createdEvent: targetEvent,
+        }),
+      ])
       await OutboxRepository.insert(client, "access:narrowed", { workspaceId, streamId: docId })
       return moved
     })
@@ -1424,10 +1449,7 @@ export class StreamService {
         ? parentStream
         : await StreamRepository.findById(client, params.workspaceId, rootStreamId)
     const inheritedVisibility = rootStream?.visibility ?? Visibilities.PRIVATE
-    const companionRoot =
-      rootStream?.type === StreamTypes.SCRATCHPAD || rootStream?.type === StreamTypes.ASIDE ? rootStream : null
-    const inheritedCompanionMode = companionRoot?.companionMode ?? CompanionModes.OFF
-    const inheritedCompanionPersonaId = companionRoot?.companionPersonaId ?? undefined
+    const inheritedCompanion = threadCompanionFrom(rootStream)
     // Threads carry no memory setting of their own — the memo gate resolves to
     // the root (INV-62) — but copy the root's value onto the thread row at
     // creation so the persisted row matches its effective behavior.
@@ -1441,8 +1463,8 @@ export class StreamService {
       parentAnchorId: anchorId,
       rootStreamId,
       visibility: inheritedVisibility,
-      companionMode: inheritedCompanionMode,
-      companionPersonaId: inheritedCompanionPersonaId,
+      companionMode: inheritedCompanion.companionMode,
+      companionPersonaId: inheritedCompanion.companionPersonaId ?? undefined,
       memoryMode: inheritedMemoryMode,
       displayName: params.displayName,
       createdBy: params.createdBy,

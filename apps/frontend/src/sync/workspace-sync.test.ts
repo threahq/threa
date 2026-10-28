@@ -5799,12 +5799,19 @@ describe("stream:doc_moved", () => {
     rootStreamId: "chan_a",
     archivedAt: "2026-10-01T00:00:00.000Z",
   })
-  const movedDoc = { ...doc, parentStreamId: "chan_b", rootStreamId: "chan_b", visibility: "private" as const }
+  const movedDoc = {
+    ...doc,
+    parentStreamId: "chan_b",
+    rootStreamId: "chan_b",
+    visibility: "private" as const,
+    memoryMode: "off" as const,
+  }
   const moved = {
     workspaceId: "ws_1",
     streamId: "chan_a",
     doc: movedDoc,
     movedStreamIds: ["doc_d", "thread_s", "thread_old"],
+    threadCompanion: { companionMode: "on" as const, companionPersonaId: "persona_ariadne" },
   }
 
   async function seed(hosts: Stream[], cachedDoc: boolean) {
@@ -5830,7 +5837,15 @@ describe("stream:doc_moved", () => {
   const snapshot = async (queryClient: QueryClient) => {
     const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))!
     const pick = (s: Partial<Stream> | undefined) =>
-      s && { id: s.id, parentStreamId: s.parentStreamId, rootStreamId: s.rootStreamId, visibility: s.visibility }
+      s && {
+        id: s.id,
+        parentStreamId: s.parentStreamId,
+        rootStreamId: s.rootStreamId,
+        visibility: s.visibility,
+        memoryMode: s.memoryMode,
+        companionMode: s.companionMode,
+        companionPersonaId: s.companionPersonaId,
+      }
     const stored = await db.streams.where("workspaceId").equals("ws_1").sortBy("id")
     return {
       cached: bootstrap.streams.filter((s) => s.id === "doc_d" || s.id.startsWith("thread_")).map(pick),
@@ -5854,12 +5869,20 @@ describe("stream:doc_moved", () => {
       parentStreamId,
       rootStreamId: "chan_b",
       visibility: "private",
+      memoryMode: "off",
+      companionMode: "off",
+      companionPersonaId: null,
+    })
+    const thread = (id: string) => ({
+      ...rehosted(id, "doc_d"),
+      companionMode: "on",
+      companionPersonaId: "persona_ariadne",
     })
     expect(await snapshot(queryClient)).toEqual({
-      cached: [rehosted("thread_s", "doc_d"), rehosted("doc_d", "chan_b")],
-      archived: [rehosted("thread_old", "doc_d")],
-      stored: [rehosted("doc_d", "chan_b"), rehosted("thread_old", "doc_d"), rehosted("thread_s", "doc_d")],
-      detail: rehosted("thread_s", "doc_d"),
+      cached: [thread("thread_s"), rehosted("doc_d", "chan_b")],
+      archived: [thread("thread_old")],
+      stored: [rehosted("doc_d", "chan_b"), thread("thread_old"), thread("thread_s")],
+      detail: thread("thread_s"),
       listed: ["doc_d", "doc_other"],
     })
     cleanup()
@@ -5879,9 +5902,50 @@ describe("stream:doc_moved", () => {
       cached: [],
       archived: [],
       stored: [],
-      detail: { id: "thread_s", parentStreamId: "doc_d", rootStreamId: "chan_a", visibility: "public" },
+      detail: {
+        id: "thread_s",
+        parentStreamId: "doc_d",
+        rootStreamId: "chan_a",
+        visibility: "public",
+        memoryMode: undefined,
+        companionMode: "off",
+        companionPersonaId: null,
+      },
       listed: ["doc_other"],
     })
+    cleanup()
+  })
+
+  it("asks the server to re-list a pruned doc, which a share grant's reader gets back", async () => {
+    const queryClient = await seed([makeStream("chan_a")], true)
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    await emitAsync("stream:doc_moved", moved)
+    await vi.waitFor(async () => {
+      expect(await db.streams.get(["ws_1", "doc_d"])).toBeUndefined()
+    })
+    const invalidatedKeys = invalidate.mock.calls.map(([filters]) => filters?.queryKey)
+
+    // The refetch the invalidation triggers: the server lists the doc through the grant, without its root.
+    const { bootstrap: refetched } = await applyWorkspaceBootstrap(
+      "ws_1",
+      makeBootstrap({
+        streams: [
+          { ...makeStream("chan_a"), lastMessagePreview: null },
+          { ...movedDoc, lastMessagePreview: null },
+        ],
+      })
+    )
+
+    expect({
+      invalidatedBootstrap: invalidatedKeys.some(
+        (key) => JSON.stringify(key) === JSON.stringify(workspaceKeys.bootstrap("ws_1"))
+      ),
+      listed: refetched.streams.map((s) => s.id),
+      stored: (await db.streams.get(["ws_1", "doc_d"]))?.rootStreamId,
+    }).toEqual({ invalidatedBootstrap: true, listed: ["chan_a", "doc_d"], stored: "chan_b" })
     cleanup()
   })
 })

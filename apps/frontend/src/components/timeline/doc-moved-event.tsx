@@ -1,17 +1,11 @@
-import { Link } from "react-router-dom"
 import { StreamTypes, type DocMovedEventPayload, type StreamEvent } from "@threahq/types"
 import { useActors } from "@/hooks"
-import { usePanel } from "@/contexts"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { STREAM_ICONS, streamFallbackLabel } from "@/lib/streams"
 import { formatRelativeTime } from "@/lib/dates"
-import { cn } from "@/lib/utils"
+import { DocEventRow } from "./doc-event-row"
 
 const DocGlyph = STREAM_ICONS[StreamTypes.DOC]
-const ROW_CLASS =
-  "group flex min-h-11 w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground sm:min-h-0 sm:px-6"
-const LINK_CLASS =
-  "transition-colors hover:bg-primary/[0.04] focus-visible:bg-primary/[0.04] focus-visible:outline-none"
 
 interface DocMovedEventProps {
   event: StreamEvent
@@ -25,7 +19,6 @@ export function DocMovedEvent({ event, workspaceId, streamId }: DocMovedEventPro
   const docId = payload?.docId ?? ""
   const movedHere = payload?.toStreamId === streamId
   const otherHostId = (movedHere ? payload?.fromStreamId : payload?.toStreamId) ?? ""
-  const { getPanelUrl } = usePanel()
   const { getActorName } = useActors(workspaceId)
   const docName = useStreamName(workspaceId, docId)
   const otherHost = useStreamName(workspaceId, otherHostId) ?? "another stream"
@@ -55,11 +48,9 @@ export function DocMovedEvent({ event, workspaceId, streamId }: DocMovedEventPro
     </>
   )
 
-  // A doc the viewer can no longer read is not in the cache, and its link would only open a dead pane.
-  if (!docName) return <div className={ROW_CLASS}>{content}</div>
   return (
-    <Link to={getPanelUrl(docId)} data-doc-id={docId} className={cn(ROW_CLASS, LINK_CLASS)}>
+    <DocEventRow docId={docId} readable={docName !== null}>
       {content}
-    </Link>
+    </DocEventRow>
   )
 }

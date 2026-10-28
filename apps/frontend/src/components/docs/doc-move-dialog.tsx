@@ -15,31 +15,37 @@ import {
   ResponsiveAlertDialogHeader,
   ResponsiveAlertDialogTitle,
 } from "@/components/ui/responsive-alert-dialog"
-import { describeAccessChange, type useMoveDoc } from "./use-move-doc"
+import { cn } from "@/lib/utils"
+import { describeAccessChange, type DocMove } from "./use-move-doc"
 
 interface DocMoveDialogProps {
   workspaceId: string
   docTitle: string
   open: boolean
   onOpenChange: (open: boolean) => void
-  docMove: ReturnType<typeof useMoveDoc>
+  docMove: DocMove
 }
 
 /** Pick the doc's new host; a move that changes who can read the doc asks first. */
 export function DocMoveDialog({ workspaceId, docTitle, open, onOpenChange, docMove }: DocMoveDialogProps) {
-  const { isTarget, pick, pending, confirm, cancel, busy } = docMove
+  const { isTarget, pick, pending, confirm, cancel, reset, busy } = docMove
+
+  const handleOpenChange = (next: boolean) => {
+    if (!next) reset()
+    onOpenChange(next)
+  }
 
   const handleSelect = async (toStreamId: string) => {
     if (busy) return
-    if (await pick(toStreamId)) onOpenChange(false)
+    if (await pick(toStreamId)) handleOpenChange(false)
   }
 
   const handleConfirm = async () => {
-    if (await confirm()) onOpenChange(false)
+    if (await confirm()) handleOpenChange(false)
   }
 
   return (
-    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+    <ResponsiveDialog open={open} onOpenChange={handleOpenChange}>
       <ResponsiveDialogContent
         className="overflow-hidden p-0"
         desktopClassName="sm:max-w-lg"
@@ -48,12 +54,17 @@ export function DocMoveDialog({ workspaceId, docTitle, open, onOpenChange, docMo
         <ResponsiveDialogHeader className="border-b px-4 py-3">
           <ResponsiveDialogTitle className="truncate text-base">Move {docTitle} to…</ResponsiveDialogTitle>
         </ResponsiveDialogHeader>
-        <StreamTargetList
-          workspaceId={workspaceId}
-          onSelect={handleSelect}
-          filter={isTarget}
-          searchPlaceholder="Search streams…"
-        />
+        <div
+          aria-busy={busy}
+          className={cn("flex min-h-0 flex-1 flex-col transition-opacity", busy && "pointer-events-none opacity-60")}
+        >
+          <StreamTargetList
+            workspaceId={workspaceId}
+            onSelect={handleSelect}
+            filter={isTarget}
+            searchPlaceholder="Search streams…"
+          />
+        </div>
       </ResponsiveDialogContent>
 
       <ResponsiveAlertDialog

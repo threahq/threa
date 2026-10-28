@@ -99,6 +99,7 @@ import type {
   PersonaListItem,
   StreamConnectionUpdatedPayload,
   DocListResponse,
+  CompanionMode,
 } from "@threahq/types"
 import { cachedPersonaFromListItem } from "@/lib/personas"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
@@ -193,11 +194,9 @@ interface WorkspaceUserPayload {
   joinedAt: string
 }
 
-interface StreamDocMovedPayload {
+interface StreamDocMovedPayload extends Required<MovedDocSubtree> {
   workspaceId: string
   streamId: string
-  doc: Stream
-  movedStreamIds: string[]
 }
 
 interface StreamPayload {
@@ -1739,41 +1738,10 @@ export function registerWorkspaceSocketHandlers(
       removeAgentSession(workspaceId, sessionId)
     })
 
-  const mergeIntoStreamCaches = async (streamId: string, incoming: Partial<Stream>) => {
-    const merge = <T extends Partial<Stream>>(old: T): T => mergeStreamByRevision(old, incoming)
-    queryClient.setQueryData(streamKeys.detail(workspaceId, streamId), (old: unknown) => {
-      if (!old || typeof old !== "object") return old
-      return merge(old as Stream)
-    })
-
-    queryClient.setQueryData(streamKeys.bootstrap(workspaceId, streamId), (old: unknown) => {
-      if (!old || typeof old !== "object") return old
-      const bootstrap = old as { stream?: Stream }
-      if (!bootstrap.stream) return old
-      return { ...old, stream: merge(bootstrap.stream) }
-    })
-
-    queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), (old: unknown) => {
-      if (!old || typeof old !== "object") return old
-      const bootstrap = old as { streams?: Stream[] }
-      if (!bootstrap.streams) return old
-      return {
-        ...bootstrap,
-        streams: bootstrap.streams.map((s) => (s.id === streamId ? merge(s) : s)),
-      }
-    })
-
-    await db.transaction("rw", [db.streams], async () => {
-      const old = await db.streams.get([workspaceId, streamId])
-      if (!old) return
-      await db.streams.update([workspaceId, streamId], { ...merge(old), _cachedAt: Date.now() })
-    })
-  }
-
   // Handle stream display name updated (from auto-naming service)
   const handleStreamDisplayNameUpdated = async (payload: StreamDisplayNameUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
-    await mergeIntoStreamCaches(payload.streamId, {
+    await mergeIntoStreamCaches(queryClient, workspaceId, payload.streamId, {
       displayName: payload.displayName,
       displayNameSource: payload.source,
       displayNameRevision: payload.revision,
@@ -1782,7 +1750,7 @@ export function registerWorkspaceSocketHandlers(
 
   const handleStreamMessageCount = async (payload: StreamMessageCountPayload) => {
     if (payload.workspaceId !== workspaceId) return
-    await mergeIntoStreamCaches(payload.streamId, {
+    await mergeIntoStreamCaches(queryClient, workspaceId, payload.streamId, {
       messageCount: payload.messageCount,
       messageCountRevision: payload.messageCountRevision,
     })
@@ -1963,39 +1931,13 @@ export function registerWorkspaceSocketHandlers(
         old ? { ...old, docs: old.docs.filter((item) => !movedIds.has(item.id)) } : old
       )
       await pruneUnreadableStreams((s) => movedIds.has(s.id))
+      // A share grant or an unjoined public root still reads the doc without its root cached; the server re-lists it.
+      void queryClient.invalidateQueries({ queryKey: workspaceKeys.bootstrap(workspaceId) })
+      void queryClient.invalidateQueries({ queryKey: docKeys.list(workspaceId) })
       return
     }
 
-    const rehost = <T extends Partial<Stream> & { id: string }>(stream: T): T =>
-      stream.id === doc.id
-        ? mergeStreamByRevision(stream, doc)
-        : { ...stream, rootStreamId: doc.rootStreamId, visibility: doc.visibility }
-
-    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
-      if (!old) return old
-      const hasDoc = old.streams.some((s) => s.id === doc.id)
-      const streams = old.streams.map((s) => (movedIds.has(s.id) ? rehost(s) : s))
-      return {
-        ...old,
-        streams: hasDoc ? streams : [...streams, { ...doc, lastMessagePreview: null }],
-        archivedStreams: old.archivedStreams?.map((s) => (movedIds.has(s.id) ? rehost(s) : s)),
-      }
-    })
-    for (const id of movedStreamIds) {
-      queryClient.setQueryData<Stream>(streamKeys.detail(workspaceId, id), (old) => (old ? rehost(old) : old))
-      queryClient.setQueryData<StreamBootstrap>(streamKeys.bootstrap(workspaceId, id), (old) =>
-        old ? { ...old, stream: rehost(old.stream) } : old
-      )
-    }
-    void queryClient.invalidateQueries({ queryKey: docKeys.list(workspaceId) })
-
-    const now = Date.now()
-    await db.transaction("rw", db.streams, async () => {
-      const cached = await db.streams.bulkGet(movedStreamIds.map((id) => [workspaceId, id] as [string, string]))
-      const rows = cached.flatMap((row) => (row ? [{ ...rehost(row), _cachedAt: now }] : []))
-      if (!rows.some((row) => row.id === doc.id)) rows.push({ ...doc, lastMessagePreview: null, _cachedAt: now })
-      await db.streams.bulkPut(rows)
-    })
+    await applyDocMove(queryClient, workspaceId, payload)
   }
 
   const handleStreamMemberRemoved = async (payload: { workspaceId: string; streamId: string; memberId: string }) => {
@@ -2922,6 +2864,80 @@ async function hasArchivedAncestorInCache(workspaceId: string, stream: Stream): 
   const rows = await db.streams.where("workspaceId").equals(workspaceId).toArray()
   const byId = new Map(rows.map((row) => [row.id, row]))
   return findArchivedAncestor(stream, (id) => byId.get(id)).sealedBy !== null
+}
+
+/**
+ * Merge a stream change into every cache that holds the stream, by revision. `incoming` may derive the change from
+ * the cached row, for a change that depends on the stream's type.
+ */
+async function mergeIntoStreamCaches(
+  queryClient: QueryClient,
+  workspaceId: string,
+  streamId: string,
+  incoming: Partial<Stream> | ((cached: Partial<Stream>) => Partial<Stream>)
+): Promise<void> {
+  const merge = <T extends Partial<Stream>>(old: T): T =>
+    mergeStreamByRevision(old, typeof incoming === "function" ? incoming(old) : incoming)
+  queryClient.setQueryData(streamKeys.detail(workspaceId, streamId), (old: unknown) => {
+    if (!old || typeof old !== "object") return old
+    return merge(old as Stream)
+  })
+
+  queryClient.setQueryData(streamKeys.bootstrap(workspaceId, streamId), (old: unknown) => {
+    if (!old || typeof old !== "object") return old
+    const bootstrap = old as { stream?: Stream }
+    if (!bootstrap.stream) return old
+    return { ...old, stream: merge(bootstrap.stream) }
+  })
+
+  queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+    if (!old?.streams) return old
+    const mergeRow = <T extends Partial<Stream>>(s: T): T => (s.id === streamId ? merge(s) : s)
+    return { ...old, streams: old.streams.map(mergeRow), archivedStreams: old.archivedStreams?.map(mergeRow) }
+  })
+
+  await db.transaction("rw", [db.streams], async () => {
+    const old = await db.streams.get([workspaceId, streamId])
+    if (!old) return
+    await db.streams.update([workspaceId, streamId], { ...merge(old), _cachedAt: Date.now() })
+  })
+}
+
+export interface MovedDocSubtree {
+  doc: Stream
+  movedStreamIds: string[]
+  /** The companion every moved thread takes; absent when only the doc itself is known to have moved. */
+  threadCompanion?: { companionMode: CompanionMode; companionPersonaId: string | null }
+}
+
+/**
+ * Re-home a moved doc and its subtree in every stream cache: the doc takes the server's row, the streams below it the
+ * new root's access settings. Idempotent, so the mover's own response and the later socket event apply alike.
+ */
+export async function applyDocMove(
+  queryClient: QueryClient,
+  workspaceId: string,
+  move: MovedDocSubtree
+): Promise<void> {
+  const { doc, movedStreamIds, threadCompanion } = move
+  const rootFields = { rootStreamId: doc.rootStreamId, visibility: doc.visibility, memoryMode: doc.memoryMode }
+  const threadFields = { ...rootFields, ...threadCompanion }
+
+  queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) =>
+    old && !old.streams.some((s) => s.id === doc.id)
+      ? { ...old, streams: [...old.streams, { ...doc, lastMessagePreview: null }] }
+      : old
+  )
+  await upsertStreamRow(doc)
+  await Promise.all(
+    movedStreamIds.map((id) =>
+      mergeIntoStreamCaches(queryClient, workspaceId, id, (cached) => {
+        if (id === doc.id) return doc
+        return cached.type === StreamTypes.THREAD ? threadFields : rootFields
+      })
+    )
+  )
+  void queryClient.invalidateQueries({ queryKey: docKeys.list(workspaceId) })
 }
 
 async function upsertStreamRow(stream: Stream): Promise<void> {

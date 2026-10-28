@@ -35,7 +35,7 @@ import { BotRuntimeSessionLinkRepository } from "../../src/features/bot-runtimes
 import { EventService } from "../../src/features/messaging/event-service"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { blockId, botRuntimeSessionLinkId, userId, workspaceId } from "../../src/lib/id"
-import { addTestMember, setupIsolatedTestDatabase, withTransaction } from "./setup"
+import { addTestMember, setupIsolatedTestDatabase, testMessageContent, withTransaction } from "./setup"
 
 let pool: Pool
 let cleanup: () => Promise<void>
@@ -259,10 +259,105 @@ describe("moving a doc", () => {
       "SELECT payload FROM outbox WHERE event_type = 'bot:session_archived' AND payload->>'runtimeSessionId' = $1",
       ["sess_docs_move"]
     )
-    expect({ status: status.rows[0]?.status, notified: notified.rows.map((row) => row.payload.rootStreamId) }).toEqual({
-      status: "archived",
+    const identity = {
+      workspaceId: wsId,
+      botId: "bot_docs_move",
+      runtimeKind: "pi-local" as const,
+      instanceId: "inst_docs_move",
+      runtimeSessionId: "sess_docs_move",
+    }
+    // Neither the unarchive path nor a session reattach may revive a link whose root no longer routes.
+    const revived = await withTransaction(pool, async (client) => ({
+      byStreams: await BotRuntimeSessionLinkRepository.reactivateArchivedByStreams(client, {
+        workspaceId: wsId,
+        streamIds: [thread.id],
+      }),
+      byRuntimeSession: await BotRuntimeSessionLinkRepository.reactivateArchivedByRuntimeSession(client, identity),
+    }))
+    expect({
+      status: status.rows[0]?.status,
+      notified: notified.rows.map((row) => row.payload.rootStreamId),
+      revived,
+    }).toEqual({
+      status: "ended",
       notified: [a.id],
+      revived: { byStreams: [], byRuntimeSession: null },
     })
+  })
+
+  test("should leave a private aside on a section thread, and its threads, on their own root", async () => {
+    const { a, doc, thread } = await seed()
+    const target = await createChannel([], "public")
+    const aside = await streamService.createAside({ workspaceId: wsId, parentStreamId: thread.id, createdBy: owner })
+    const asideMessage = await eventService.createMessage({
+      workspaceId: wsId,
+      streamId: aside.id,
+      authorId: owner,
+      authorType: "user",
+      ...testMessageContent("a private thought"),
+    })
+    const asideThread = await streamService.createThread({
+      workspaceId: wsId,
+      parentStreamId: aside.id,
+      parentAnchorId: asideMessage.id,
+      createdBy: owner,
+      principal: { kind: "user", userId: owner },
+    })
+    const shape = async (id: string) => {
+      const row = await streamService.getStreamById(wsId, id)
+      return {
+        parentStreamId: row?.parentStreamId,
+        rootStreamId: row?.rootStreamId,
+        visibility: row?.visibility,
+        memoryMode: row?.memoryMode,
+      }
+    }
+    const before = { aside: await shape(aside.id), asideThread: await shape(asideThread.id) }
+
+    await move({ docId: doc.id, fromStreamId: a.id, toStreamId: target.id })
+
+    const [docMoved] = await outbox("stream:doc_moved", doc.id)
+    expect({
+      moved: [...(docMoved?.movedStreamIds as string[])].sort(),
+      aside: await shape(aside.id),
+      asideThread: await shape(asideThread.id),
+      bobReads: [...(await listAccessibleStreamIds(pool, wsId, bob, [doc.id, aside.id, asideThread.id]))],
+    }).toEqual({
+      moved: [doc.id, thread.id].sort(),
+      ...before,
+      bobReads: [doc.id],
+    })
+    expect(before.aside).toEqual({
+      parentStreamId: thread.id,
+      rootStreamId: null,
+      visibility: "private",
+      memoryMode: "off",
+    })
+  })
+
+  test("should refuse the second of two racing moves with DOC_MOVED_CONCURRENTLY, not a 404", async () => {
+    const { a, b, doc } = await seed()
+    const c = await createChannel([])
+    const first = await pool.connect()
+    try {
+      await first.query("BEGIN")
+      await new StreamService(first as unknown as Pool).moveDoc({
+        workspaceId: wsId,
+        docId: doc.id,
+        fromStreamId: a.id,
+        toStreamId: b.id,
+        principal: { kind: "user", userId: owner },
+        isWorkspaceAdmin: false,
+      })
+      const second = refusal(move({ docId: doc.id, fromStreamId: a.id, toStreamId: c.id }))
+      expect(await Promise.race([second.then(() => "settled"), Bun.sleep(100).then(() => "blocked")])).toBe("blocked")
+      await first.query("COMMIT")
+      expect(await second).toEqual({ status: 409, code: DocErrorCodes.MOVED_CONCURRENTLY })
+    } finally {
+      await first.query("ROLLBACK").catch(() => {})
+      first.release()
+    }
+    expect((await streamService.getStreamById(wsId, doc.id))?.parentStreamId).toBe(b.id)
   })
 
   test("should keep a reader whose access rides a share grant", async () => {
