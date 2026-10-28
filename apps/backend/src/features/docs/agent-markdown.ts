@@ -30,12 +30,18 @@ export function stripMarkers(text: string): string {
   return text.replace(MARKER_PATTERN, "")
 }
 
+/** Also drops `\r`, so CRLF input lines up with stored LF markdown, and NBSP, which `docs read` shows as a space. */
 export function normalizeTrailingWs(text: string): string {
   return text
     .split("\n")
-    .map((line) => line.replace(/[ \t]+$/, ""))
+    .map((line) => line.replace(/[ \t\r\u00a0]+$/, ""))
     .join("\n")
 }
+
+const trimNewlines = (text: string) => text.replace(/^\n+|\n+$/g, "")
+
+/** A lone newline stands for a hard break, which stored markdown writes as a trailing backslash. */
+const asHardBreaks = (text: string) => text.replace(/(?<![\\\n])\n(?!\n)/g, "\\\n")
 
 function keep({ blockId, markdown, contentJson }: AgentSection): NextSection {
   return { changed: false, blockId, markdown, contentJson }
@@ -92,7 +98,9 @@ function spliceNormalized(text: string, at: number, length: number, replacement:
 /**
  * Applies `edits` in order against `sections` (the doc's current state). Each
  * `old` must occur exactly once in its scope, the named block or else any one
- * block; a match never spans two blocks. Matching ignores trailing whitespace.
+ * block; a match never spans two blocks. Matching ignores trailing whitespace,
+ * then surrounding newlines, then a hard break's backslash, each tier tried only
+ * when the stricter ones found nothing.
  * The first failing edit refuses the whole call with the scope's current
  * markdown.
  */
@@ -102,19 +110,30 @@ export function resolveEdits(sections: readonly AgentSection[], edits: readonly 
     const scope = scopeOf(sections, edit.blockId)
     if (!scope) return refuse(sections, "unknown_block", { editIndex })
 
-    const old = normalizeTrailingWs(stripMarkers(edit.old))
+    const exact = normalizeTrailingWs(stripMarkers(edit.old))
+    const trimmed = trimNewlines(exact)
     const replacement = normalizeTrailingWs(stripMarkers(edit.new))
-    const matches =
-      old === ""
-        ? []
-        : scope.flatMap((index) =>
-            findOccurrences(normalizeTrailingWs(working[index]), old).map((at) => ({ index, at }))
-          )
-    if (matches.length !== 1) {
+    // Each looser needle runs only when the stricter ones found nothing, so a unique match never turns ambiguous.
+    const attempts = [
+      { old: exact, new: replacement },
+      { old: trimmed, new: trimNewlines(replacement) },
+      { old: asHardBreaks(trimmed), new: asHardBreaks(trimNewlines(replacement)) },
+    ]
+    let found: { old: string; new: string; matches: { index: number; at: number }[] } | undefined
+    for (const attempt of attempts) {
+      if (attempt.old === "" || found?.old === attempt.old) continue
+      const matches = scope.flatMap((index) =>
+        findOccurrences(normalizeTrailingWs(working[index]), attempt.old).map((at) => ({ index, at }))
+      )
+      found = { ...attempt, matches }
+      if (matches.length > 0) break
+    }
+    const matches = found?.matches ?? []
+    if (!found || matches.length !== 1) {
       return refuse(sections, matches.length === 0 ? "not_found" : "ambiguous", { blockId: edit.blockId, editIndex })
     }
     const [{ index, at }] = matches
-    working[index] = spliceNormalized(working[index], at, old.length, replacement)
+    working[index] = spliceNormalized(working[index], at, found.old.length, found.new)
   }
   return {
     ok: true,

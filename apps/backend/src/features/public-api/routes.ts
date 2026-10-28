@@ -1978,7 +1978,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     summary: "Edit a doc by text anchors",
     description:
       "Replace exact text inside blocks: each edit's `old` must match once, within `blockId` when given or " +
-      "anywhere in the doc otherwise. All edits apply together or none do; a miss is 409 " +
+      "anywhere in the doc otherwise. Trailing whitespace and surrounding blank lines are ignored. All edits apply together or none do; a miss is 409 " +
       "(DOC_EDIT_TEXT_NOT_FOUND, DOC_EDIT_TEXT_AMBIGUOUS or DOC_SECTION_NOT_FOUND) whose `details.scope.markdown` " +
       "is the current text to retry against. `reason` is shown on the host's timeline.",
     tags: ["Docs"],

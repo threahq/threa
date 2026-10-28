@@ -39,7 +39,8 @@ export function registerDocTools(server: McpServer, client: ThreaApiClient, reso
       title: "Edit a doc",
       description:
         "Replace text in a doc. Read it first with read_doc, then copy each edit's `old` exactly (verbatim, " +
-        "without the marker lines) from a single block; `block_id` confines that edit to one block. All edits " +
+        "without the marker lines) from a single block; trailing whitespace and surrounding blank lines are " +
+        "ignored. `block_id` confines that edit to one block. All edits " +
         "apply together or not at all: if any `old` fails to match, nothing is written. " +
         REASON +
         " A 409 (DOC_EDIT_TEXT_NOT_FOUND, DOC_EDIT_TEXT_AMBIGUOUS, DOC_SECTION_NOT_FOUND) means the text moved or " +
