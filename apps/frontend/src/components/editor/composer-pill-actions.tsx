@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react"
 import { createPortal } from "react-dom"
-import { Check, Copy, Image, Maximize2, Tag } from "lucide-react"
+import { Check, Copy, Film, Image, Maximize2, Tag } from "lucide-react"
 import { toast } from "sonner"
 import type { Editor } from "@tiptap/react"
 import { NodeSelection } from "@tiptap/pm/state"
@@ -9,12 +9,15 @@ import { useInputMode } from "@/hooks/use-input-mode"
 import { cn } from "@/lib/utils"
 import { serializeClipboardSlice } from "./clipboard-copy"
 import { ComposerPillDragPluginKey, isComposerPillNode } from "./composer-pill-drag-extension"
-import { useImageViewer, type ImageViewer } from "./image-viewer-context"
+import { uploadGalleryType } from "@/components/gallery/upload-preview"
+import { isVideoAttachment } from "@/lib/attachment-kind"
+import { useMediaViewer, type MediaViewer } from "./media-viewer-context"
 import {
-  DISPLAY_TOGGLE_LABEL,
-  imageReferenceDisplay,
+  displayToggleLabel,
+  mediaReferenceDisplay,
   toggledDisplay,
   type AttachmentDisplay,
+  type AttachmentReferenceAttrs,
 } from "./attachment-reference-extension"
 
 const COPY_CONFIRMATION_MS = 1_200
@@ -27,8 +30,9 @@ interface ActionBarAnchor {
   left: number
   top: number
   below: boolean
-  imageDisplay: AttachmentDisplay | null
-  canOpenImage: boolean
+  display: AttachmentDisplay | null
+  video: boolean
+  canOpen: boolean
 }
 
 function pillRect(editor: Editor, pos: number): DOMRect | null {
@@ -58,7 +62,7 @@ function selectedPillPos(editor: Editor): number | null {
   return selection.from
 }
 
-function actionBarAnchor(editor: Editor, viewer: ImageViewer | null): ActionBarAnchor | null {
+function actionBarAnchor(editor: Editor, viewer: MediaViewer | null): ActionBarAnchor | null {
   if (editor.isDestroyed || ComposerPillDragPluginKey.getState(editor.state)) return null
   const pos = selectedPillPos(editor)
   if (pos === null) return null
@@ -66,9 +70,10 @@ function actionBarAnchor(editor: Editor, viewer: ImageViewer | null): ActionBarA
   const rect = pillRect(editor, pos)
   if (!rect || rect.bottom < 0 || rect.top > window.innerHeight) return null
   const node = editor.state.doc.nodeAt(pos)
-  const imageDisplay = node ? imageReferenceDisplay(node) : null
-  const canOpenImage = !!viewer && !!imageDisplay && node?.attrs.status === "uploaded"
-  const buttonCount = 1 + (imageDisplay ? 1 : 0) + (canOpenImage ? 1 : 0)
+  const attrs = node?.type.name === "attachmentReference" ? (node.attrs as AttachmentReferenceAttrs) : null
+  const display = node ? mediaReferenceDisplay(node, { videos: !!viewer }) : null
+  const canOpen = !!viewer && !!attrs && attrs.status === "uploaded" && !!uploadGalleryType(attrs)
+  const buttonCount = 1 + (display ? 1 : 0) + (canOpen ? 1 : 0)
   const barWidth = buttonCount * ACTION_BUTTON_SIZE_PX + (buttonCount - 1) * ACTION_BUTTON_GAP_PX
   const half = barWidth / 2
   const left = Math.min(Math.max(rect.left + rect.width / 2, half), Math.max(half, window.innerWidth - half))
@@ -78,8 +83,9 @@ function actionBarAnchor(editor: Editor, viewer: ImageViewer | null): ActionBarA
     left,
     top: below ? rect.bottom + ACTION_BAR_OFFSET_PX : rect.top - ACTION_BAR_OFFSET_PX,
     below,
-    imageDisplay,
-    canOpenImage,
+    display,
+    video: !!attrs && isVideoAttachment(attrs),
+    canOpen,
   }
 }
 
@@ -91,21 +97,22 @@ function sameAnchor(left: ActionBarAnchor | null, right: ActionBarAnchor | null)
     left.left === right.left &&
     left.top === right.top &&
     left.below === right.below &&
-    left.imageDisplay === right.imageDisplay &&
-    left.canOpenImage === right.canOpenImage
+    left.display === right.display &&
+    left.video === right.video &&
+    left.canOpen === right.canOpen
   )
 }
 
 /**
- * Touch-owned actions for a selected composer pill (copy, and for an image the
- * display toggle and, where the surface has a gallery, opening it). Blink resolves a long press inside a contenteditable against its
+ * Touch-owned actions for a selected composer pill (copy, the chip/media toggle for an
+ * image or a doc's video, and, where the surface has a gallery, opening what it previews). Blink resolves a long press inside a contenteditable against its
  * own editing heuristics, so a native selection can neither be pinned to one atom
  * nor share the gesture with the app's drag; the pill's exact `NodeSelection`
  * gets its own control instead.
  */
 export function ComposerPillActions({ editor }: { editor: Editor | null }) {
   const inputMode = useInputMode()
-  const viewer = useImageViewer()
+  const viewer = useMediaViewer()
   const [anchor, setAnchor] = useState<ActionBarAnchor | null>(null)
   const [copied, setCopied] = useState(false)
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -174,13 +181,13 @@ export function ComposerPillActions({ editor }: { editor: Editor | null }) {
     if (!editor || editor.isDestroyed) return
     const pos = selectedPillPos(editor)
     const node = pos === null ? null : editor.state.doc.nodeAt(pos)
-    const current = node ? imageReferenceDisplay(node) : null
+    const current = node ? mediaReferenceDisplay(node, { videos: !!viewer }) : null
     if (pos === null || !node || !current) return
     const tr = editor.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, display: toggledDisplay(current) })
     editor.view.dispatch(tr.setSelection(NodeSelection.create(tr.doc, pos)))
-  }, [editor])
+  }, [editor, viewer])
 
-  const openImage = useCallback(() => {
+  const openAttachment = useCallback(() => {
     if (!editor || editor.isDestroyed || !viewer) return
     const pos = selectedPillPos(editor)
     const node = pos === null ? null : editor.state.doc.nodeAt(pos)
@@ -215,20 +222,20 @@ export function ComposerPillActions({ editor }: { editor: Editor | null }) {
       >
         {copied ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
       </Button>
-      {anchor.canOpenImage && (
+      {anchor.canOpen && (
         <Button
           type="button"
           variant="outline"
           size="icon"
           className={buttonClass}
           onPointerDown={keepSelection}
-          onClick={openImage}
-          aria-label="Open image"
+          onClick={openAttachment}
+          aria-label="Open"
         >
           <Maximize2 className="size-4" />
         </Button>
       )}
-      {anchor.imageDisplay && (
+      {anchor.display && (
         <Button
           type="button"
           variant="outline"
@@ -236,9 +243,10 @@ export function ComposerPillActions({ editor }: { editor: Editor | null }) {
           className={buttonClass}
           onPointerDown={keepSelection}
           onClick={toggleDisplay}
-          aria-label={DISPLAY_TOGGLE_LABEL[anchor.imageDisplay]}
+          aria-label={displayToggleLabel(anchor.display, anchor.video)}
         >
-          {anchor.imageDisplay === "inline" ? <Tag className="size-4" /> : <Image className="size-4" />}
+          {anchor.display === "inline" && <Tag className="size-4" />}
+          {anchor.display === "pill" && (anchor.video ? <Film className="size-4" /> : <Image className="size-4" />)}
         </Button>
       )}
     </div>,

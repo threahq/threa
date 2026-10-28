@@ -1,17 +1,12 @@
 import { AttachmentReferenceNode } from "@threahq/prosemirror/schema"
 import { ReactNodeViewRenderer } from "@tiptap/react"
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model"
-import { isImageAttachment } from "@/lib/attachment-kind"
+import { isImageAttachment, isVideoAttachment } from "@/lib/attachment-kind"
 import { AttachmentReferenceView } from "./attachment-reference-view"
 
 export type AttachmentStatus = "uploading" | "uploaded" | "error"
 
 export type AttachmentDisplay = "pill" | "inline"
-
-export const DISPLAY_TOGGLE_LABEL: Record<AttachmentDisplay, string> = {
-  pill: "Show as image",
-  inline: "Show as chip",
-}
 
 export interface AttachmentReferenceAttrs {
   /** Attachment ID (temp ID while uploading, real ID after) */
@@ -32,16 +27,27 @@ export interface AttachmentReferenceAttrs {
   display?: AttachmentDisplay
 }
 
-/** The current display of an image reference; null for any other node. */
-export function imageReferenceDisplay(node: ProseMirrorNode): AttachmentDisplay | null {
+/**
+ * The current display of a reference its surface can draw as media; null for any other node. Images toggle on every
+ * surface, videos only where `videos` is set: a message draws a rendered video as its chip.
+ */
+export function mediaReferenceDisplay(
+  node: ProseMirrorNode,
+  { videos }: { videos: boolean }
+): AttachmentDisplay | null {
   if (node.type.name !== "attachmentReference") return null
   const attrs = node.attrs as AttachmentReferenceAttrs
-  if (!isImageAttachment(attrs)) return null
+  if (!isImageAttachment(attrs) && !(videos && isVideoAttachment(attrs))) return null
   return attrs.display === "inline" ? "inline" : "pill"
 }
 
 export function toggledDisplay(display: AttachmentDisplay): AttachmentDisplay {
   return display === "inline" ? "pill" : "inline"
+}
+
+export function displayToggleLabel(display: AttachmentDisplay, video: boolean): string {
+  if (display === "inline") return "Show as chip"
+  return video ? "Show as video" : "Show as image"
 }
 
 declare module "@tiptap/core" {

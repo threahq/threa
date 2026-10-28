@@ -30,6 +30,7 @@ import { TableCell } from "@tiptap/extension-table/cell"
 import { MarkdownTableInputRule } from "./markdown-table-input-rule"
 import { BlockIdClipboard } from "./block-id-clipboard"
 import { DocBlockLanding } from "./doc-block-landing-extension"
+import { MediaRows } from "./media-rows-extension"
 
 import { MentionExtension, type MentionOptions } from "./triggers/mention-extension"
 import { ChannelExtension, type ChannelOptions } from "./triggers/channel-extension"
@@ -212,7 +213,7 @@ function buildExtensions(config: Partial<CreateEditorExtensionsOptions>, surface
       : DocSearchExtension,
 
     BlockIdAttribute,
-    ...documentOnly(BlockIdClipboard, DocBlockLanding),
+    ...documentOnly(BlockIdClipboard, DocBlockLanding, MediaRows),
   ]
 
   return extensions

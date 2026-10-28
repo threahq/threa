@@ -26,11 +26,10 @@ import { tryInsertDocChip } from "@/components/editor/in-app-link-chip"
 import { EditorToolbar } from "@/components/editor/editor-toolbar"
 import { ComposerPillDndProvider } from "@/components/editor/composer-pill-dnd"
 import { ComposerPillActions } from "@/components/editor/composer-pill-actions"
-import {
-  imageReferenceDisplay,
-  type AttachmentReferenceAttrs,
-} from "@/components/editor/attachment-reference-extension"
-import { ImageViewerContext, type ImageViewer } from "@/components/editor/image-viewer-context"
+import type { AttachmentReferenceAttrs } from "@/components/editor/attachment-reference-extension"
+import { uploadGalleryType, type UploadGalleryType } from "@/components/gallery/upload-preview"
+import { useGalleryAttachmentUrls, type GalleryUrlKind } from "@/components/gallery/use-gallery-attachment-urls"
+import { MediaViewerContext, type MediaViewer } from "@/components/editor/media-viewer-context"
 import { HistoryBackClose } from "@/components/ui/history-back-close"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
 import { attachmentContentUrl } from "@/api"
@@ -132,7 +131,7 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
   const isMobile = useIsMobile()
   const isTouch = useInputMode() === "touch"
   const { openMedia } = useMediaGallery()
-  const imageViewer = useMemo<ImageViewer>(() => ({ open: openMedia, readOnly: !canWrite }), [openMedia, canWrite])
+  const mediaViewer = useMemo<MediaViewer>(() => ({ open: openMedia, readOnly: !canWrite }), [openMedia, canWrite])
   const threads = useDocBlockThreads(workspaceId, docId, joinCount)
   const [column, setColumn] = useState<HTMLDivElement | null>(null)
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
@@ -161,6 +160,7 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
     const editor = editorRef.current
     if (!editor?.isEditable) return false
     return insertFilesIntoEditor(editor, files, (file) => latestUpload().uploadFile(file), {
+      mediaDisplay: "inline",
       onPlaceholdersInserted: (tempIds) => tempIds.forEach((id) => placeholderIdsRef.current.add(id)),
       // An error chip would persist the uploader's failure into every reader's copy of the doc,
       // and undo must not bring the dead placeholder back.
@@ -320,7 +320,7 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
   }
 
   return (
-    <ImageViewerContext.Provider value={imageViewer}>
+    <MediaViewerContext.Provider value={mediaViewer}>
       <ComposerPillDndProvider editor={editor}>
         <div className="flex h-full flex-col" data-suppress-pull-refresh="true">
           {/* Back drops the caret before it leaves the doc; while the keyboard is up, Android spends that Back closing it. */}
@@ -377,46 +377,75 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
           </div>
         </div>
         {canWrite && <ComposerPillActions editor={editor} />}
-        <DocImageGallery editor={editor} workspaceId={workspaceId} />
+        <DocGallery editor={editor} workspaceId={workspaceId} />
       </ComposerPillDndProvider>
-    </ImageViewerContext.Provider>
+    </MediaViewerContext.Provider>
   )
 }
 
-function docImageItems(doc: ProseMirrorNode, workspaceId: string): GalleryItem[] {
+/** Every attachment the gallery previews, in document order, whether it shows as media or as a chip. */
+function docGalleryItems(doc: ProseMirrorNode, workspaceId: string, urls: Map<string, string>): GalleryItem[] {
   const items: GalleryItem[] = []
   const seen = new Set<string>()
   doc.descendants((node) => {
+    if (node.type.name !== "attachmentReference") return
     const attrs = node.attrs as AttachmentReferenceAttrs
-    if (!imageReferenceDisplay(node) || attrs.status !== "uploaded" || seen.has(attrs.id)) return
+    const type = uploadGalleryType(attrs)
+    if (!type || attrs.status !== "uploaded" || seen.has(attrs.id)) return
     seen.add(attrs.id)
-    items.push({
-      type: "image",
-      url: attachmentContentUrl(workspaceId, attrs.id),
-      thumbnailUrl: attachmentContentUrl(workspaceId, attrs.id, { variant: "thumbnail" }),
-      filename: attrs.filename,
-      attachmentId: attrs.id,
-    })
+    const base = { filename: attrs.filename, attachmentId: attrs.id }
+    if (type === "image") {
+      const thumbnailUrl = attachmentContentUrl(workspaceId, attrs.id, { variant: "thumbnail" })
+      items.push({ ...base, type, url: attachmentContentUrl(workspaceId, attrs.id), thumbnailUrl })
+    }
+    // A reference does not carry the video's processing status, and until a thumbnail exists its variant URL serves
+    // the video bytes, which an <img> cannot draw. The gallery shows its own play placeholder instead.
+    else if (type === "video") items.push({ ...base, type, url: urls.get(attrs.id) ?? "", thumbnailUrl: "" })
+    else items.push({ ...base, type, url: urls.get(attrs.id) ?? "" })
   })
   return items
 }
 
-/** The doc's images in document order, opened through the shared `?media=` param so Back closes them. */
-function DocImageGallery({ editor, workspaceId }: { editor: Editor | null; workspaceId: string }) {
+/** Images load from content URLs; a video or a document needs a presigned URL for its bytes. */
+function galleryUrlKind(type: UploadGalleryType | null): GalleryUrlKind {
+  if (!type || type === "image") return null
+  return type === "video" ? "video" : "document"
+}
+
+/** The doc's attachments, opened through the shared `?media=` param so Back closes them. */
+function DocGallery({ editor, workspaceId }: { editor: Editor | null; workspaceId: string }) {
   const { mediaAttachmentId, openMedia, closeMedia } = useMediaGallery()
-  const [items, setItems] = useState<GalleryItem[]>([])
+  const [doc, setDoc] = useState<ProseMirrorNode | null>(null)
   const open = mediaAttachmentId !== null
 
   useEffect(() => {
     if (!editor || !open) return
-    const sync = () => setItems(docImageItems(editor.state.doc, workspaceId))
+    const sync = () => setDoc(editor.state.doc)
     sync()
     editor.on("update", sync)
     return () => {
       editor.off("update", sync)
     }
-  }, [editor, open, workspaceId])
+  }, [editor, open])
 
+  const selected = useMemo(() => {
+    if (!doc || !mediaAttachmentId) return null
+    let found: AttachmentReferenceAttrs | null = null
+    doc.descendants((node) => {
+      if (!found && node.type.name === "attachmentReference" && node.attrs.id === mediaAttachmentId) {
+        found = node.attrs as AttachmentReferenceAttrs
+      }
+      return !found
+    })
+    return found
+  }, [doc, mediaAttachmentId])
+  const urls = useGalleryAttachmentUrls(
+    workspaceId,
+    mediaAttachmentId,
+    galleryUrlKind(selected && uploadGalleryType(selected))
+  )
+
+  const items = useMemo(() => (doc ? docGalleryItems(doc, workspaceId, urls) : []), [doc, workspaceId, urls])
   const index = items.findIndex((item) => item.attachmentId === mediaAttachmentId)
   return (
     <MediaGallery

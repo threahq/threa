@@ -37,6 +37,7 @@ import * as hooksModule from "@/hooks"
 import * as renameModule from "@/hooks/use-rename-stream"
 import * as regenerateModule from "@/hooks/use-regenerate-title"
 import * as attachmentsModule from "@/hooks/use-attachments"
+import { attachmentsApi } from "@/api"
 import * as mentionablesModule from "@/hooks/use-mentionables"
 import * as workspaceEmojiModule from "@/hooks/use-workspace-emoji"
 import * as socketRoomModule from "@/lib/socket-room"
@@ -702,6 +703,126 @@ describe("DocPaneBody", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Open" }))
 
     expect(await screen.findByRole("dialog", { name: "shot.png" })).toBeTruthy()
+  })
+
+  it("should browse every image, video and previewable file in the doc from one gallery", async () => {
+    const reference = (id: string, filename: string, mimeType: string, display: "inline" | "pill") => ({
+      type: "attachmentReference",
+      attrs: { id, filename, mimeType, sizeBytes: 3, status: "uploaded", display },
+    })
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [reference("attach_shot", "shot.png", "image/png", "inline")] },
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "Notes " },
+            reference("attach_notes", "notes.pdf", "application/pdf", "pill"),
+          ],
+        },
+        { type: "paragraph", content: [reference("attach_clip", "clip.mp4", "video/mp4", "inline")] },
+        { type: "paragraph", content: [reference("attach_zip", "bundle.zip", "application/zip", "pill")] },
+      ],
+    }
+    vi.spyOn(attachmentsApi, "getDownloadUrl").mockResolvedValue("https://files.test/presigned")
+    serverDoc = prosemirrorJSONToYDoc(getThreaSchema(), doc, DOC_FRAGMENT)
+    mount(false)
+
+    fireEvent.click(await screen.findByRole("button", { name: "shot.png" }))
+    await screen.findByRole("dialog", { name: "shot.png" })
+    const strip = screen.getAllByRole("button", { name: /^View / }).map((button) => button.getAttribute("aria-label"))
+    fireEvent.keyDown(window, { key: "ArrowRight" })
+    const next = await screen.findByRole("dialog", { name: "notes.pdf" }).then(() => true)
+    fireEvent.keyDown(window, { key: "ArrowRight" })
+    const clip = await screen.findByRole("dialog", { name: "clip.mp4" })
+    await waitFor(() => expect(clip.querySelector("video")?.getAttribute("src")).toBeTruthy())
+
+    expect({
+      strip,
+      next,
+      video: clip.querySelector("video")?.getAttribute("src"),
+      zipOpens: screen.queryByRole("button", { name: "bundle.zip" }),
+    }).toEqual({
+      strip: ["View shot.png", "View notes.pdf", "View clip.mp4"],
+      next: true,
+      video: "https://files.test/presigned",
+      zipOpens: null,
+    })
+  })
+
+  it("should lay a lone image across the doc and side-by-side media out as a row that widens as media joins", async () => {
+    const image = (id: string) => ({
+      type: "attachmentReference",
+      attrs: { id, filename: `${id}.png`, mimeType: "image/png", sizeBytes: 3, status: "uploaded", display: "inline" },
+    })
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [image("attach_alone")] },
+        { type: "paragraph", content: [image("attach_left"), { type: "text", text: " " }, image("attach_right")] },
+      ],
+    }
+    serverDoc = prosemirrorJSONToYDoc(getThreaSchema(), doc, DOC_FRAGMENT)
+    mount(true)
+
+    const widthOf = async (name: string) =>
+      (await screen.findByRole("button", { name })).closest<HTMLElement>(".react-renderer")!.style.width
+    const before = {
+      alone: await widthOf("attach_alone.png"),
+      left: await widthOf("attach_left.png"),
+      right: await widthOf("attach_right.png"),
+    }
+    const { editor } = proseMirror()
+    editor.commands.insertContentAt(editor.state.doc.content.size - 1, [
+      { type: "text", text: " " },
+      image("attach_third"),
+    ])
+    await screen.findByRole("button", { name: "attach_third.png" })
+
+    expect({
+      before,
+      after: {
+        left: await widthOf("attach_left.png"),
+        right: await widthOf("attach_right.png"),
+        third: await widthOf("attach_third.png"),
+      },
+    }).toEqual({
+      before: {
+        alone: "calc(1 * (100% - 0.5rem))",
+        left: "calc(0.5 * (100% - 1rem))",
+        right: "calc(0.5 * (100% - 1rem))",
+      },
+      after: {
+        left: "calc(0.3333333333333333 * (100% - 1.5rem))",
+        right: "calc(0.3333333333333333 * (100% - 1.5rem))",
+        third: "calc(0.3333333333333333 * (100% - 1.5rem))",
+      },
+    })
+  })
+
+  it("should add picked images and videos to the doc as media, and other files as chips", async () => {
+    const uploadFile = vi.fn(() => new Promise<never>(() => {}))
+    vi.spyOn(attachmentsModule, "useAttachments").mockReturnValue({
+      uploadFile,
+      imageCount: 0,
+    } as unknown as ReturnType<typeof attachmentsModule.useAttachments>)
+    await mountLoaded()
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
+    const files = [
+      new File(["png"], "shot.png", { type: "image/png" }),
+      new File(["mp4"], "clip.mp4", { type: "video/mp4" }),
+      new File(["pdf"], "notes.pdf", { type: "application/pdf" }),
+    ]
+
+    fireEvent.change(input, { target: { files } })
+
+    await waitFor(() => expect(uploadFile).toHaveBeenCalledTimes(3))
+    const displays: Record<string, unknown> = {}
+    proseMirror().editor.state.doc.descendants((node) => {
+      if (node.type.name === "attachmentReference") displays[node.attrs.filename as string] = node.attrs.display
+    })
+    expect(displays).toEqual({ "shot.png": "inline", "clip.mp4": "inline", "notes.pdf": "pill" })
   })
 
   it("should leave a downward swipe in a short doc to the doc instead of pulling to refresh", async () => {
