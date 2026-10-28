@@ -1,6 +1,6 @@
 import { SLUG_MAX_LENGTH, StreamTypes, streamTypeCapabilities } from "@threahq/types"
 import type { StreamType } from "@threahq/types"
-import { Bell, FileText, Hash, MessageSquare, MessageSquareDashed, NotebookPen } from "lucide-react"
+import { Bell, File, FileText, Hash, MessageSquare, MessageSquareDashed, NotebookPen } from "lucide-react"
 import type { ComponentType } from "react"
 
 /**
@@ -15,6 +15,7 @@ export const STREAM_ICONS: Record<StreamType, ComponentType<{ className?: string
   [StreamTypes.THREAD]: MessageSquare,
   [StreamTypes.SYSTEM]: Bell,
   [StreamTypes.ASIDE]: MessageSquareDashed,
+  [StreamTypes.DOC]: File,
 }
 
 /**

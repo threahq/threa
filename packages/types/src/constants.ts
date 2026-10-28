@@ -14,7 +14,7 @@ export const TitleSources = {
   LEGACY: "legacy",
 } as const satisfies Record<string, TitleSource>
 
-export const STREAM_TYPES = ["scratchpad", "channel", "dm", "thread", "system", "aside"] as const
+export const STREAM_TYPES = ["scratchpad", "channel", "dm", "thread", "system", "aside", "doc"] as const
 export type StreamType = (typeof STREAM_TYPES)[number]
 
 export const StreamTypes = {
@@ -24,6 +24,7 @@ export const StreamTypes = {
   THREAD: "thread",
   SYSTEM: "system",
   ASIDE: "aside",
+  DOC: "doc",
 } as const satisfies Record<string, StreamType>
 
 /**
@@ -49,6 +50,7 @@ export const STREAM_READ_ONLY_REASONS = [
   "disconnected",
   "not_a_member",
   "guest_dm_policy",
+  "doc_stream",
 ] as const
 export type StreamReadOnlyReason = (typeof STREAM_READ_ONLY_REASONS)[number]
 
@@ -61,6 +63,8 @@ export const StreamReadOnlyReasons = {
   DISCONNECTED: "disconnected",
   NOT_A_MEMBER: "not_a_member",
   GUEST_DM_POLICY: "guest_dm_policy",
+  /** A doc is edited through Yjs updates, never through messages. */
+  DOC_STREAM: "doc_stream",
 } as const satisfies Record<string, StreamReadOnlyReason>
 
 const THREAD_ANCHOR_PREFIXES = ["msg_", "event_"] as const
@@ -76,6 +80,7 @@ export interface StreamTypeCapabilities {
   sidebarSection: SidebarTypeSection | "root" | null
   threadAnchorPrefixes: readonly ThreadAnchorPrefix[]
   hostsAsides: boolean
+  hostsDocs: boolean
 }
 
 export const STREAM_TYPE_CAPABILITIES = {
@@ -85,6 +90,7 @@ export const STREAM_TYPE_CAPABILITIES = {
     sidebarSection: "scratchpad",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
     hostsAsides: true,
+    hostsDocs: true,
   },
   channel: {
     messagesReadOnly: null,
@@ -92,6 +98,7 @@ export const STREAM_TYPE_CAPABILITIES = {
     sidebarSection: "channel",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
     hostsAsides: true,
+    hostsDocs: true,
   },
   dm: {
     messagesReadOnly: null,
@@ -99,6 +106,7 @@ export const STREAM_TYPE_CAPABILITIES = {
     sidebarSection: "dm",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
     hostsAsides: true,
+    hostsDocs: true,
   },
   thread: {
     messagesReadOnly: null,
@@ -106,6 +114,7 @@ export const STREAM_TYPE_CAPABILITIES = {
     sidebarSection: "root",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
     hostsAsides: true,
+    hostsDocs: false,
   },
   system: {
     messagesReadOnly: StreamReadOnlyReasons.SYSTEM_STREAM,
@@ -113,6 +122,7 @@ export const STREAM_TYPE_CAPABILITIES = {
     sidebarSection: "dm",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
     hostsAsides: false,
+    hostsDocs: false,
   },
   aside: {
     messagesReadOnly: null,
@@ -120,6 +130,15 @@ export const STREAM_TYPE_CAPABILITIES = {
     sidebarSection: null,
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
     hostsAsides: false,
+    hostsDocs: false,
+  },
+  doc: {
+    messagesReadOnly: StreamReadOnlyReasons.DOC_STREAM,
+    listed: false,
+    sidebarSection: null,
+    threadAnchorPrefixes: [],
+    hostsAsides: false,
+    hostsDocs: false,
   },
 } as const satisfies Record<StreamType, StreamTypeCapabilities>
 
@@ -130,6 +149,7 @@ const UNKNOWN_STREAM_TYPE_CAPABILITIES: StreamTypeCapabilities = {
   sidebarSection: null,
   threadAnchorPrefixes: [],
   hostsAsides: false,
+  hostsDocs: false,
 }
 
 export function streamTypeCapabilities(type: string): StreamTypeCapabilities {
@@ -292,6 +312,8 @@ export const EVENT_TYPES = [
   "call_started",
   "call_ended",
   "aside:anchored",
+  "doc:created",
+  "doc:edited",
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 
@@ -380,6 +402,9 @@ export const TIMELINE_BROADCAST_EVENT_TYPES = [
   // deliberately NOT here — it is a patch on the call card (carrying the end
   // summary), like the delegation status change below.
   "call_started",
+  // A doc was created under this stream: every member sees the doc row.
+  // `doc:edited` is deliberately NOT here — it lives in the doc stream's own log.
+  "doc:created",
   // `agent:follow_up_cancelled` and `delegation:status_changed` are deliberately
   // NOT here: each is a patch on its originating card (cancel flips the
   // scheduled card; a delegation status change flips the created card), not a
@@ -423,6 +448,8 @@ export const NOTIFICATION_CONFIG: Record<StreamType, NotificationConfig> = {
   thread: { defaultLevel: "activity", allowedLevels: ["everything", "activity", "mentions", "muted"] },
   // Asides are a silent pull surface: the anchor row is the whole signal.
   aside: { defaultLevel: "muted", allowedLevels: ["muted"] },
+  // Docs carry no messages; the host's doc:created row is the signal.
+  doc: { defaultLevel: "muted", allowedLevels: ["muted"] },
 }
 
 export const ACTIVITY_TYPES = [

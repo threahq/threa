@@ -113,6 +113,7 @@ import { createApiVersionGate } from "./middleware/api-version"
 import { WORKSPACE_PERMISSION_SCOPES, isPushRequestPath } from "@threahq/types"
 import type { WorkspaceService } from "./features/workspaces"
 import type { StreamService } from "./features/streams"
+import { DocService, createDocHandlers } from "./features/docs"
 import type { EventService } from "./features/messaging"
 import type { AttachmentService } from "./features/attachments"
 import type { SearchService, SearchQueryLogService } from "./features/search"
@@ -384,6 +385,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     pool,
     analytics: posthog ? { posthogToken: posthog.projectToken, posthogHost: posthog.host } : null,
   })
+  const docs = createDocHandlers({ docService: new DocService({ pool }) })
   const streamBriefService = new StreamBriefService({ pool })
   const streamBrief = createStreamBriefHandlers({ pool, streamBriefService })
   const stream = createStreamHandlers({
@@ -913,6 +915,19 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     stream.previewHistory
   )
   app.get("/api/workspaces/:workspaceId/streams/:streamId", ...authed, audit("streams.get", "read"), stream.get)
+  app.get("/api/workspaces/:workspaceId/docs/:docId", ...authed, audit("docs.get", "read"), docs.get)
+  app.get(
+    "/api/workspaces/:workspaceId/docs/:docId/updates",
+    ...authed,
+    audit("docs.list_updates", "read"),
+    docs.listUpdates
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/docs/:docId/updates",
+    ...authed,
+    audit("docs.post_update", "write"),
+    docs.postUpdate
+  )
   app.patch(
     "/api/workspaces/:workspaceId/streams/:streamId",
     ...authed,

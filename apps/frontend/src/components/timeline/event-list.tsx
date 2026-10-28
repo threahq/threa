@@ -383,6 +383,8 @@ const ZERO_HEIGHT_EVENT_TYPES = new Set([
   "decision:resolved",
   // The end summary patches the call card (collectCallEndedPatches).
   "call_ended",
+  "doc:created",
+  "doc:edited",
 ])
 
 /**

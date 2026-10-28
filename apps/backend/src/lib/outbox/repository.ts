@@ -35,6 +35,7 @@ import type {
   StreamReadFrontierSnapshot,
   CallTransferPhase,
   StreamConnectionUpdatedPayload,
+  DocEditedEventPayload,
 } from "@threahq/types"
 
 export type OutboxEventType =
@@ -79,6 +80,8 @@ export type OutboxEventType =
   | "command:failed"
   | "command:progress"
   | "stream:aside_anchored"
+  | "stream:doc_created"
+  | "doc:updated"
   | "agent_session:started"
   | "agent_session:completed"
   | "agent_session:failed"
@@ -189,6 +192,8 @@ export type StreamScopedEventType =
   | "stream:bot_access_status_changed"
   | "stream:decision_requested"
   | "stream:decision_resolved"
+  | "stream:doc_created"
+  | "doc:updated"
   | "stream:call_started"
   | "stream:call_ended"
   | "call:participants_changed"
@@ -746,6 +751,19 @@ export interface CommandProgressOutboxPayload extends StreamScopedPayload {
 export interface StreamAsideAnchoredOutboxPayload extends StreamScopedPayload {
   authorId: string
   event: StreamEvent
+}
+
+/** The host stream's `doc:created` row; `streamId` is the host. */
+export interface StreamDocCreatedOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+}
+
+/** One applied Yjs update, delivered to the doc stream's room; `streamId` is the doc. */
+export interface DocUpdatedOutboxPayload extends StreamScopedPayload, DocEditedEventPayload {
+  /** Base64 Yjs update. */
+  update: string
+  actorId: string
+  actorType: AuthorType
 }
 
 interface AgentSessionOutboxPayload extends StreamScopedPayload {
@@ -1491,6 +1509,8 @@ export interface OutboxEventPayloadMap {
   "command:failed": CommandFailedOutboxPayload
   "command:progress": CommandProgressOutboxPayload
   "stream:aside_anchored": StreamAsideAnchoredOutboxPayload
+  "stream:doc_created": StreamDocCreatedOutboxPayload
+  "doc:updated": DocUpdatedOutboxPayload
   "agent_session:started": AgentSessionStartedOutboxPayload
   "agent_session:completed": AgentSessionCompletedOutboxPayload
   "agent_session:failed": AgentSessionFailedOutboxPayload
@@ -1619,6 +1639,8 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "stream:bot_access_status_changed",
   "stream:decision_requested",
   "stream:decision_resolved",
+  "stream:doc_created",
+  "doc:updated",
   "call:participants_changed",
   "call:transport_transfer_changed",
   "stream:activity",

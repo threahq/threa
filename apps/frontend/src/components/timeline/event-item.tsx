@@ -338,6 +338,11 @@ export function EventItem({
         </div>
       )
 
+    case "doc:created":
+    case "doc:edited":
+      // No doc surface yet (S5): doc:created holds its host broadcast slot, doc:edited lives in the doc stream.
+      return null
+
     case "agent:follow_up_cancelled":
       // Patch, not a row: it flips the matching scheduled card to "Cancelled"
       // via cancelledFollowUpIds (collected in event-list), so it renders nothing

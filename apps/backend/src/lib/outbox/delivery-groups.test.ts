@@ -85,6 +85,37 @@ describe("resolveDeliveryGroups — stream:created thread routing", () => {
   })
 })
 
+describe("resolveDeliveryGroups — docs", () => {
+  it("routes a created doc to its host's stream group, like a thread", () => {
+    const groups = resolveDeliveryGroups(
+      event("stream:created", {
+        workspaceId: "ws_1",
+        streamId: "stream_doc",
+        stream: {
+          id: "stream_doc",
+          type: StreamTypes.DOC,
+          parentAnchorId: null,
+          parentStreamId: "stream_host",
+          visibility: Visibilities.PUBLIC,
+          createdBy: "usr_creator",
+        },
+      })
+    )
+    expect(groups).toEqual([streamGroup("stream_host")])
+  })
+
+  it("routes the host's doc:created row to the host and a doc update to the doc", () => {
+    expect({
+      created: resolveDeliveryGroups(
+        event("stream:doc_created", { workspaceId: "ws_1", streamId: "stream_host", event: {} })
+      ),
+      updated: resolveDeliveryGroups(
+        event("doc:updated", { workspaceId: "ws_1", streamId: "stream_doc", seq: 1, update: "AA==" })
+      ),
+    }).toEqual({ created: [streamGroup("stream_host")], updated: [streamGroup("stream_doc")] })
+  })
+})
+
 describe("resolveDeliveryGroups — stream:created audience", () => {
   for (const visibility of VISIBILITIES) {
     it(`should reach the open audience and the creator when the channel is ${visibility}`, () => {

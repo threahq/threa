@@ -2408,6 +2408,18 @@ export interface AsideAnchoredEventPayload {
   conversationId?: string
 }
 
+/** Payload for `doc:created` in the host stream (broadcast, INV-61). */
+export interface DocCreatedEventPayload {
+  docId: string
+  createdBy: string
+}
+
+/** Payload for `doc:edited` in the doc stream: one applied Yjs update; the event row carries the actor. */
+export interface DocEditedEventPayload {
+  seq: number
+  touchedBlockIds: string[]
+}
+
 export interface AIUsageSummary {
   totalCostUsd: number
   promptTokens: number

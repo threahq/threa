@@ -260,12 +260,15 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
   // two participants; private streams (scratchpads, asides, private channels)
   // to the creator only (additional members learn via stream:member_added);
   // open streams to their audience plus the creator, who may be a guest outside
-  // it. The anchored branch is thread-only: an aside is anchored too, but routing
-  // it to the parent's audience would broadcast a private stream to every
-  // host-stream member.
+  // it. Docs go to their host's audience like threads. The anchored branch is
+  // thread-only: an aside is anchored too, but routing it to the parent's
+  // audience would broadcast a private stream to every host-stream member.
   if (isOutboxEventType(event, "stream:created")) {
     const payload = event.payload as StreamCreatedOutboxPayload
-    if (payload.stream.parentAnchorId && payload.stream.type === StreamTypes.THREAD) {
+    const sharesParentAudience =
+      (payload.stream.parentAnchorId && payload.stream.type === StreamTypes.THREAD) ||
+      payload.stream.type === StreamTypes.DOC
+    if (sharesParentAudience) {
       return [streamGroup(payload.stream.parentStreamId ?? payload.streamId)]
     }
     if (payload.stream.type === StreamTypes.DM && payload.dmUserIds?.length === 2) {

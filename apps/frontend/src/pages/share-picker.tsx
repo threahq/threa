@@ -1,19 +1,6 @@
 import { useState, useMemo, useCallback, useEffect } from "react"
 import { useNavigate, useParams, useLocation } from "react-router-dom"
-import {
-  FileText,
-  Hash,
-  MessageSquare,
-  MessageSquareDashed,
-  Bell,
-  Search,
-  Plus,
-  Link as LinkIcon,
-  Image,
-  Paperclip,
-  Clock,
-  ArrowDownAZ,
-} from "lucide-react"
+import { Search, Plus, Link as LinkIcon, Image, Paperclip, Clock, ArrowDownAZ } from "lucide-react"
 import { StreamTypes, getAvatarUrl } from "@threahq/types"
 import type { StreamType } from "@threahq/types"
 import {
@@ -25,22 +12,13 @@ import {
 import { useShareTarget, ShareAccountChangedError, type ShareData } from "@/hooks/use-share-target"
 import { clearShareStash, readShareStashFiles, type ShareMeta, type ShareTargetRead } from "@/lib/share-target-storage"
 import { useAuth } from "@/auth"
-import { streamLabel } from "@/lib/streams"
+import { STREAM_ICONS, streamLabel } from "@/lib/streams"
 import { Input } from "@/components/ui/input"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { ItemList } from "@/components/quick-switcher/item-list"
 import type { QuickSwitcherItem } from "@/components/quick-switcher/types"
 import { compareStreamEntries, scoreStreamMatch, useStoredStreamSortMode } from "@/lib/stream-sort"
 import { calculateUrgency } from "@/components/layout/sidebar/utils"
-
-const STREAM_ICONS: Record<StreamType, React.ComponentType<{ className?: string }>> = {
-  [StreamTypes.SCRATCHPAD]: FileText,
-  [StreamTypes.CHANNEL]: Hash,
-  [StreamTypes.DM]: MessageSquare,
-  [StreamTypes.THREAD]: MessageSquare,
-  [StreamTypes.SYSTEM]: Bell,
-  [StreamTypes.ASIDE]: MessageSquareDashed,
-}
 
 const TYPE_LABELS: Partial<Record<StreamType, string>> = {
   [StreamTypes.SCRATCHPAD]: "Scratchpad",

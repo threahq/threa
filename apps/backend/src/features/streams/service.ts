@@ -78,6 +78,7 @@ import {
   type E2eActorRewrapInput,
   type ToolPrivacyPolicy,
   type AsideAnchoredEventPayload,
+  type DocCreatedEventPayload,
   type JSONContent,
   type AuthorType,
   type DescriptionSetEventPayload,
@@ -92,6 +93,7 @@ import {
 } from "@threahq/types"
 import { ContextBagRepository, PersonaRepository, assertAssignablePersona } from "../agents"
 import { draftStreamUniquenessKey } from "../drafts"
+import { DocRepository } from "../docs"
 import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
 import { DynamicNamingStateRepository } from "../dynamic-naming/state-repository"
 import type { E2eStream, StreamE2eKeyWrap } from "../e2e-streams"
@@ -255,6 +257,12 @@ const createAsideParamsSchema = z.object({
   companionPersonaId: z.string().optional(),
   createdBy: z.string(),
 })
+
+export interface CreateDocParams {
+  workspaceId: string
+  parentStreamId: string
+  createdBy: string
+}
 
 export type CreateAsideParams = z.infer<typeof createAsideParamsSchema> & {
   contextBag?: ContextBag
@@ -703,6 +711,16 @@ export class StreamService {
           allowedToolCategories: params.allowedToolCategories,
         })
       }
+      case StreamTypes.DOC: {
+        if (!params.parentStreamId) {
+          throw new Error("parentStreamId is required for docs")
+        }
+        return this.createDoc({
+          workspaceId: params.workspaceId,
+          parentStreamId: params.parentStreamId,
+          createdBy: params.createdBy,
+        })
+      }
       default:
         throw new Error(`Unsupported stream type for create: ${params.type}`)
     }
@@ -974,6 +992,72 @@ export class StreamService {
         streamId: params.parentStreamId,
         authorId: params.createdBy,
         event: anchorEvent,
+      })
+
+      return stream
+    })
+  }
+
+  /**
+   * A doc lives under its host like a thread: `root_stream_id` is the host's
+   * root, so access and write authority resolve through it unchanged (INV-62).
+   */
+  async createDoc(params: CreateDocParams): Promise<Stream> {
+    return withTransaction(this.pool, async (client) => {
+      const host = await checkStreamAccess(client, params.parentStreamId, params.workspaceId, params.createdBy)
+      if (!host) throw new StreamNotFoundError()
+
+      if (!STREAM_TYPE_CAPABILITIES[host.type].hostsDocs) {
+        throw new HttpError("A doc cannot be created on this stream type", {
+          status: 400,
+          code: "DOC_HOST_TYPE_INVALID",
+        })
+      }
+      // The doc body is projected server-side as plaintext.
+      if (host.e2eEnabled === true) {
+        throw new HttpError("Docs cannot be created on an end-to-end encrypted stream", {
+          status: 400,
+          code: "DOC_E2E_HOST_NOT_ALLOWED",
+        })
+      }
+
+      const { root } = await assertStreamWritable(client, {
+        workspaceId: params.workspaceId,
+        streamId: params.parentStreamId,
+        principal: { kind: "user", userId: params.createdBy },
+      })
+
+      const stream = await StreamRepository.insert(client, {
+        id: streamId(),
+        workspaceId: params.workspaceId,
+        type: StreamTypes.DOC,
+        parentStreamId: host.id,
+        rootStreamId: root.id,
+        visibility: root.visibility,
+        memoryMode: root.memoryMode,
+        createdBy: params.createdBy,
+      })
+      await DocRepository.insertHead(client, { workspaceId: params.workspaceId, streamId: stream.id })
+
+      await OutboxRepository.insert(client, "stream:created", {
+        workspaceId: params.workspaceId,
+        streamId: stream.id,
+        stream,
+      })
+
+      const createdEvent = await StreamEventRepository.insert(client, {
+        id: eventId(),
+        workspaceId: params.workspaceId,
+        streamId: host.id,
+        eventType: "doc:created",
+        payload: { docId: stream.id, createdBy: params.createdBy } satisfies DocCreatedEventPayload,
+        actorId: params.createdBy,
+        actorType: "user",
+      })
+      await OutboxRepository.insert(client, "stream:doc_created", {
+        workspaceId: params.workspaceId,
+        streamId: host.id,
+        event: createdEvent,
       })
 
       return stream

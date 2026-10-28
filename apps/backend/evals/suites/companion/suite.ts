@@ -114,6 +114,7 @@ const STREAM_TYPE_TO_DB_STREAM_TYPE: Record<
   dm: StreamTypes.DM,
   system: StreamTypes.SYSTEM,
   aside: StreamTypes.ASIDE,
+  doc: StreamTypes.DOC,
 }
 
 function mapStreamTypeToDbStreamType(

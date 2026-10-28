@@ -51,9 +51,20 @@ import {
 /** Client-minted scratchpad draft ids: `draft_` + a short base36/ULID tail. */
 const DRAFT_ID_PATTERN = /^draft_[A-Za-z0-9]{1,64}$/
 
+const DOC_UNSUPPORTED_CREATE_FIELDS = [
+  "slug",
+  "displayName",
+  "description",
+  "visibility",
+  "companionMode",
+  "companionPersonaId",
+  "memberIds",
+  "e2eOwnerKeyId",
+] as const
+
 const createStreamSchema = z
   .object({
-    type: streamTypeSchema.extract(["scratchpad", "channel", "thread", "aside"]),
+    type: streamTypeSchema.extract(["scratchpad", "channel", "thread", "aside", "doc"]),
     slug: z
       .string()
       .regex(SLUG_PATTERN, {
@@ -129,6 +140,18 @@ const createStreamSchema = z
   .refine((data) => data.type !== "aside" || !!data.parentStreamId, {
     message: "parentStreamId is required for asides",
     path: ["parentStreamId"],
+  })
+  .refine((data) => data.type !== "doc" || !!data.parentStreamId, {
+    message: "parentStreamId is required for docs",
+    path: ["parentStreamId"],
+  })
+  .refine((data) => data.type !== "doc" || data.parentAnchorId === undefined, {
+    message: "A doc has no anchor",
+    path: ["parentAnchorId"],
+  })
+  .refine((data) => data.type !== "doc" || DOC_UNSUPPORTED_CREATE_FIELDS.every((field) => data[field] === undefined), {
+    message: `Docs do not support ${DOC_UNSUPPORTED_CREATE_FIELDS.join(", ")} on creation`,
+    path: ["type"],
   })
   .refine((data) => data.conversationId === undefined || data.type === "aside", {
     message: "conversationId is only supported on aside creation",
@@ -398,6 +421,7 @@ const addMemberAllowed: Record<StreamType, boolean> = {
   [StreamTypes.DM]: false,
   [StreamTypes.SYSTEM]: false,
   [StreamTypes.ASIDE]: false,
+  [StreamTypes.DOC]: false,
 }
 
 const disallowedUpdateFields: Record<StreamType, Record<string, string> | null> = {
@@ -419,6 +443,7 @@ const disallowedUpdateFields: Record<StreamType, Record<string, string> | null> 
     visibility: "Asides are always private",
     memoryMode: "Asides never extract memory",
   },
+  [StreamTypes.DOC]: null,
 }
 
 function updateSchemaForType(streamType: StreamType) {
