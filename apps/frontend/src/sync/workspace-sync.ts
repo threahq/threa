@@ -1952,8 +1952,9 @@ export function registerWorkspaceSocketHandlers(
     if (!currentMember || payload.memberId !== currentMember.id) return
 
     const removedStream = old.streams?.find((s) => s.id === payload.streamId)
-    const shouldRemoveFromSidebar = removedStream?.visibility === "private"
-    // Threads carry no access of their own (INV-62): a private root's revocation takes them along.
+    // Threads carry no access of their own (INV-62): leaving one revokes nothing, and a private root's revocation
+    // takes them along.
+    const shouldRemoveFromSidebar = removedStream?.visibility === "private" && removedStream.type !== StreamTypes.THREAD
     // Archived threads live only in IndexedDB and `archivedStreams`, so the active cache alone would miss them.
     const candidates = shouldRemoveFromSidebar
       ? [
@@ -1974,12 +1975,23 @@ export function registerWorkspaceSocketHandlers(
         archivedStreams: current.archivedStreams?.filter((s) => !unreadableIds.has(s.id)),
       }
     })
+    if (unreadableIds.size > 0) {
+      commitCounter((state) => {
+        const dropped = [...unreadableIds].reduce(dropActivitiesForStream, state)
+        const unreadCounts = Object.fromEntries(
+          Object.entries(dropped.unreadCounts).filter(([streamId]) => !unreadableIds.has(streamId))
+        )
+        return { ...dropped, unreadCounts }
+      })
+      invalidateActivityFeed(true)
+    }
 
     await Promise.all([
       db.streamMemberships.delete(`${workspaceId}:${payload.streamId}`),
       db.streamReadState.delete(`${workspaceId}:${payload.streamId}`),
       ...[...unreadableIds].flatMap((streamId) => [
         db.streams.delete([workspaceId, streamId]),
+        db.streamReadState.delete(`${workspaceId}:${streamId}`),
         deleteStreamSlots(db, workspaceId, streamId),
       ]),
       // The cards this stream contributed are unreadable now — drop them
