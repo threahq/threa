@@ -185,6 +185,7 @@ export const DocErrorCodes = {
   E2E_HOST_NOT_ALLOWED: "DOC_E2E_HOST_NOT_ALLOWED",
   UPDATE_NOT_APPLICABLE: "DOC_UPDATE_NOT_APPLICABLE",
   UPDATE_INVALID: "DOC_UPDATE_INVALID",
+  STATE_VECTOR_INVALID: "DOC_STATE_VECTOR_INVALID",
 } as const
 
 // A stream's system purpose, when it exists to power a feature rather than to be

@@ -77,6 +77,7 @@ export function DocPaneBody({ workspaceId, canWrite, view }: DocPaneBodyProps) {
       ydoc={view.ydoc}
       awareness={view.presence.awareness}
       canWrite={canWrite}
+      onBlur={view.flush}
     />
   )
 }
@@ -86,9 +87,10 @@ interface DocEditorProps {
   ydoc: Y.Doc
   awareness: Awareness
   canWrite: boolean
+  onBlur: () => void
 }
 
-function DocEditor({ workspaceId, ydoc, awareness, canWrite }: DocEditorProps) {
+function DocEditor({ workspaceId, ydoc, awareness, canWrite, onBlur }: DocEditorProps) {
   const isMobile = useIsMobile()
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
 
@@ -171,6 +173,7 @@ function DocEditor({ workspaceId, ydoc, awareness, canWrite }: DocEditorProps) {
   const editor = useEditor({
     extensions,
     editable: canWrite,
+    onBlur,
     editorProps: {
       attributes: { class: EDITOR_SURFACE_CLASS, "aria-label": "Doc" },
       clipboardTextSerializer: serializeClipboardSlice,

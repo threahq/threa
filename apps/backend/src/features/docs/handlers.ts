@@ -10,8 +10,12 @@ interface Dependencies {
 
 /** ~3 MB decoded, under the 10 MB JSON body limit with room for a pasted long document. */
 const MAX_UPDATE_BASE64_LENGTH = 4_000_000
+/** A Yjs state vector: two varints per client that ever wrote to the doc. */
+const MAX_STATE_VECTOR_BASE64_LENGTH = 65_536
 
 const paramsSchema = z.object({ docId: z.string().min(1) })
+
+const getQuerySchema = z.object({ sv: z.base64().max(MAX_STATE_VECTOR_BASE64_LENGTH).optional() })
 
 const listUpdatesQuerySchema = z.object({
   after: z.coerce.number().int().min(0).max(2_147_483_647),
@@ -25,10 +29,12 @@ export function createDocHandlers({ docService }: Dependencies) {
   return {
     async get(req: Request, res: Response) {
       const { docId } = validateRequest(paramsSchema, req.params)
+      const { sv } = validateRequest(getQuerySchema, req.query)
       const doc = await docService.get({
         workspaceId: req.workspaceId!,
         userId: req.user!.id,
         docId,
+        stateVector: sv,
       })
       res.json(doc)
     },

@@ -1,4 +1,5 @@
 import type { Pool } from "pg"
+import * as Y from "yjs"
 import {
   AuthorTypes,
   DocErrorCodes,
@@ -31,6 +32,7 @@ import {
   decodeUpdateBase64,
   encodeFullState,
   encodeUpdateBase64,
+  isDecodableStateVector,
   loadDocState,
 } from "./yjs"
 
@@ -91,12 +93,25 @@ export class DocService {
     this.pool = deps.pool
   }
 
-  async get(params: { workspaceId: string; userId: string; docId: string }): Promise<LoadedDocState> {
+  /** With `stateVector` (base64), `state` holds only what that vector lacks. */
+  async get(params: {
+    workspaceId: string
+    userId: string
+    docId: string
+    stateVector?: string
+  }): Promise<LoadedDocState> {
+    const stateVector = params.stateVector === undefined ? undefined : decodeUpdateBase64(params.stateVector)
+    if (stateVector && !isDecodableStateVector(stateVector)) {
+      throw new HttpError("State vector is not a valid Yjs state vector", {
+        status: 400,
+        code: DocErrorCodes.STATE_VECTOR_INVALID,
+      })
+    }
     return withClient(this.pool, async (client) => {
       const stream = await this.findReadableDoc(client, params)
       const { ydoc, seq } = await loadStoredState(client, params.workspaceId, params.docId)
       const sections = await DocRepository.listSections(client, params.workspaceId, params.docId)
-      return { stream, seq, state: encodeUpdateBase64(encodeFullState(ydoc)), sections }
+      return { stream, seq, state: encodeUpdateBase64(Y.encodeStateAsUpdate(ydoc, stateVector)), sections }
     })
   }
 
@@ -144,14 +159,16 @@ export class DocService {
       const head = await lockWritableDoc(client, { workspaceId, docId, userId })
       const { ydoc } = await loadStoredState(client, workspaceId, docId)
       ydoc.clientID = DOC_SERVER_CLIENT_ID
-      const { content, serverUpdate } = applyOrRefuse(ydoc, clientUpdate, head.bodyJson)
+      const write = applyOrRefuse(ydoc, clientUpdate, head.bodyJson)
+      if (!write.applied) return { seq: head.updateSeq, applied: false, touchedBlockIds: [] }
+      const { stored: clientWrite, content, serverUpdate } = write
 
       const projection = projectDoc(content)
       const previousSections = await DocRepository.listSections(client, workspaceId, docId)
       const touchedBlockIds = diffSections(previousSections, projection.sections)
 
       const writes: Omit<StoredUpdate, "seq">[] = [
-        { update: clientUpdate, actorId: userId, actorType: AuthorTypes.USER, touchedBlockIds },
+        { update: clientWrite, actorId: userId, actorType: AuthorTypes.USER, touchedBlockIds },
       ]
       if (serverUpdate) {
         writes.push({
@@ -207,7 +224,7 @@ export class DocService {
         })
       }
 
-      return { seq, touchedBlockIds }
+      return { seq, applied: true, touchedBlockIds }
     })
   }
 

@@ -22,7 +22,7 @@ import { ApiError } from "@/api/client"
 import { docsApi } from "@/api/docs"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { RevealOnReady } from "@/contexts/coordinated-loading-context"
-import { DocSync, FLUSH_DEBOUNCE_MS } from "@/lib/docs/doc-sync"
+import { DocSync, FLUSH_CAP_MS } from "@/lib/docs/doc-sync"
 import { PRESENCE_SEND_WINDOW_MS } from "@/lib/docs/doc-presence"
 import { getPresenceColor } from "@/lib/avatar-color"
 import * as contextsModule from "@/contexts"
@@ -31,6 +31,7 @@ import * as attachmentsModule from "@/hooks/use-attachments"
 import * as mentionablesModule from "@/hooks/use-mentionables"
 import * as workspaceEmojiModule from "@/hooks/use-workspace-emoji"
 import * as socketRoomModule from "@/lib/socket-room"
+import * as operationQueueModule from "@/sync/operation-queue"
 import * as syncEngineModule from "@/sync/sync-engine"
 import { SocketEventGate } from "@/sync/socket-event-gate"
 import * as triggersModule from "@/components/editor/triggers"
@@ -64,6 +65,7 @@ describe("DocPaneBody", () => {
   let serverDoc: Y.Doc
   let queryClient: QueryClient
   let joinRoom: MockInstance<typeof socketRoomModule.joinRoomWithAck>
+  let kickOperationQueue: ReturnType<typeof vi.fn>
   let socket: { on: MockInstance; off: MockInstance; emit: MockInstance; connected: boolean }
 
   beforeEach(() => {
@@ -83,9 +85,11 @@ describe("DocPaneBody", () => {
       name: "Viewer",
     } as unknown as ReturnType<typeof hooksModule.useCurrentWorkspaceUser>)
     joinRoom = vi.spyOn(socketRoomModule, "joinRoomWithAck").mockResolvedValue(undefined)
+    kickOperationQueue = vi.fn()
     vi.spyOn(syncEngineModule, "useOptionalSyncEngine").mockReturnValue({
       getLiveEventSource: () => gate,
       backfillStreamGap: vi.fn(),
+      kickOperationQueue,
     } as unknown as ReturnType<typeof syncEngineModule.useOptionalSyncEngine>)
     vi.spyOn(mentionablesModule, "useMentionables").mockReturnValue({
       mentionables: [],
@@ -109,7 +113,7 @@ describe("DocPaneBody", () => {
     } as unknown as ReturnType<typeof triggersModule.useEmojiSuggestion>)
     vi.spyOn(docsApi, "get").mockImplementation(async () => docState(serverDoc, 1))
     vi.spyOn(docsApi, "listUpdates").mockResolvedValue({ updates: [] })
-    vi.spyOn(docsApi, "postUpdate").mockResolvedValue({ seq: 2, touchedBlockIds: [] })
+    vi.spyOn(docsApi, "postUpdate").mockResolvedValue({ seq: 2, applied: true, touchedBlockIds: [] })
   })
 
   afterEach(() => {
@@ -198,11 +202,11 @@ describe("DocPaneBody", () => {
     }).toEqual({ editable: "true", toolbar: true })
   })
 
-  it("posts a local edit once after the debounce", async () => {
+  it("posts a local edit once it ends a word", async () => {
     await mountLoaded()
 
     act(() => {
-      proseMirror().editor.chain().focus("end").insertContent(" for March").run()
+      proseMirror().editor.chain().focus("end").insertContent(" for March ").run()
     })
 
     await waitFor(() => expect(docsApi.postUpdate).toHaveBeenCalledTimes(1), { timeout: 2000 })
@@ -215,6 +219,51 @@ describe("DocPaneBody", () => {
       docId: DOC_ID,
       text: expect.stringContaining("Rotation tracker for March"),
     })
+  })
+
+  it("should save unsent edits when the editor loses focus", async () => {
+    await mountLoaded()
+
+    act(() => {
+      proseMirror().editor.chain().focus("end").insertContent(" draft").run()
+    })
+    fireEvent.blur(proseMirror())
+
+    await waitFor(() => expect(docsApi.postUpdate).toHaveBeenCalledTimes(1), { timeout: FLUSH_CAP_MS - 200 })
+    const posted = new Y.Doc()
+    Y.applyUpdate(posted, Y.encodeStateAsUpdate(serverDoc))
+    Y.applyUpdate(posted, base64ToBytes(vi.mocked(docsApi.postUpdate).mock.calls[0][2]))
+    expect(posted.getXmlFragment(DOC_FRAGMENT).toString()).toContain("Rotation tracker draft")
+  })
+
+  it("should queue unsent edits when the page hides", async () => {
+    const enqueue = vi.spyOn(operationQueueModule, "enqueueDocUpdate").mockResolvedValue()
+    await mountLoaded()
+
+    act(() => {
+      proseMirror().editor.chain().focus("end").insertContent(" draft").run()
+    })
+    window.dispatchEvent(new Event("pagehide"))
+
+    await waitFor(() => expect(enqueue).toHaveBeenCalledTimes(1))
+    const queued = new Y.Doc()
+    Y.applyUpdate(queued, Y.encodeStateAsUpdate(serverDoc))
+    Y.applyUpdate(queued, base64ToBytes(enqueue.mock.calls[0]![2]))
+    expect({
+      queued: queued.getXmlFragment(DOC_FRAGMENT).toString(),
+      posts: vi.mocked(docsApi.postUpdate).mock.calls.length,
+    }).toEqual({ queued: expect.stringContaining("Rotation tracker draft"), posts: 0 })
+  })
+
+  it("should send unsent edits when the browser comes back online", async () => {
+    await mountLoaded()
+
+    act(() => {
+      proseMirror().editor.chain().focus("end").insertContent(" draft").run()
+    })
+    window.dispatchEvent(new Event("online"))
+
+    await waitFor(() => expect(docsApi.postUpdate).toHaveBeenCalledTimes(1), { timeout: FLUSH_CAP_MS - 200 })
   })
 
   it("shows a remote update delivered through the live event source", async () => {
@@ -243,7 +292,7 @@ describe("DocPaneBody", () => {
     const firstEditor = proseMirror().editor
 
     act(() => {
-      firstEditor.chain().focus("end").insertContent(" refused").run()
+      firstEditor.chain().focus("end").insertContent(" refused.").run()
     })
 
     await waitFor(() => expect(proseMirror().editor).not.toBe(firstEditor), { timeout: 2000 })
@@ -272,13 +321,13 @@ describe("DocPaneBody", () => {
     await mountLoaded(true, { strict: true })
 
     act(() => {
-      proseMirror().editor.chain().focus("end").insertContent(" for March").run()
+      proseMirror().editor.chain().focus("end").insertContent(" for March ").run()
     })
     await waitFor(() => expect(docsApi.postUpdate).toHaveBeenCalledTimes(1), { timeout: 2000 })
     await act(() => gate.dispatch("doc:updated", remoteParagraph("Second shift", 3)))
 
-    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker for MarchSecond shift"))
-    await new Promise((resolve) => setTimeout(resolve, FLUSH_DEBOUNCE_MS + 200))
+    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker for March Second shift"))
+    await new Promise((resolve) => setTimeout(resolve, FLUSH_CAP_MS + 200))
     expect(docsApi.postUpdate).toHaveBeenCalledTimes(1)
   })
 
@@ -367,7 +416,7 @@ describe("DocPaneBody", () => {
     await mountLoaded()
 
     act(() => {
-      proseMirror().editor.chain().focus("end").insertContent(" refused").run()
+      proseMirror().editor.chain().focus("end").insertContent(" refused.").run()
     })
 
     await waitFor(() => expect(toastError).toHaveBeenCalled(), { timeout: 2000 })
@@ -387,7 +436,8 @@ describe("DocPaneBody", () => {
     }).toEqual({ sameEditor: true, toolbar: false })
   })
 
-  it("sends unsaved edits and stops listening when the pane closes", async () => {
+  it("queues unsaved edits and stops listening when the pane closes", async () => {
+    const enqueue = vi.spyOn(operationQueueModule, "enqueueDocUpdate").mockResolvedValue()
     const off = vi.spyOn(gate, "off")
     const view = await mountLoaded()
 
@@ -396,8 +446,19 @@ describe("DocPaneBody", () => {
     })
     view.unmount()
 
-    await waitFor(() => expect(docsApi.postUpdate).toHaveBeenCalledTimes(1))
-    expect(off.mock.calls.map(([event]) => event)).toContain("doc:updated")
+    await waitFor(() => expect(kickOperationQueue).toHaveBeenCalledTimes(1))
+    const [workspaceId, docId] = enqueue.mock.calls[0]
+    expect({
+      queued: { workspaceId, docId },
+      enqueues: enqueue.mock.calls.length,
+      posts: vi.mocked(docsApi.postUpdate).mock.calls.length,
+      listening: off.mock.calls.map(([event]) => event),
+    }).toEqual({
+      queued: { workspaceId: WORKSPACE_ID, docId: DOC_ID },
+      enqueues: 1,
+      posts: 0,
+      listening: expect.arrayContaining(["doc:updated"]),
+    })
   })
 
   it("announces the viewer to the doc room and withdraws them when the pane closes", async () => {

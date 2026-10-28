@@ -479,6 +479,7 @@ export interface PendingOperation {
     | "cancel_scheduled_message"
     | "send_scheduled_now"
     | "dispatch_command"
+    | "doc_update"
     // Centralized-draft sync: mirror a local draft to the backend `drafts`
     // table. All retry silently with no error surface — a failed remote draft
     // save is invisible by design because the local copy stands. `upsert_draft`

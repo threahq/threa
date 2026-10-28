@@ -258,6 +258,73 @@ test.describe("Doc pane", () => {
     }
   })
 
+  test("should merge edits made offline when the member reconnects, and ship edits from a pane closed offline", async ({
+    browser,
+  }) => {
+    const ownerContext = await browser.newContext()
+    const owner = await ownerContext.newPage()
+    const { testId } = await loginAndCreateWorkspace(owner, "doc-offline")
+    const workspaceId = workspaceIdFromUrl(owner)
+    const channelId = await createChannelViaApi(owner, workspaceId, `offline-docs-${testId}`, "private")
+    const member = await joinWorkspace(browser, workspaceId, "doc-offline-member", testId)
+    const sentences = ["Shared line.", "Member offline words.", "Owner meanwhile.", "Typed then closed"]
+
+    try {
+      await expectApiOk(
+        await owner.request.post(`/api/workspaces/${workspaceId}/streams/${channelId}/members`, {
+          data: { memberId: await userIdByEmail(owner, workspaceId, member.email) },
+        }),
+        "Add member to channel"
+      )
+      const docId = await createDoc(owner, workspaceId, channelId)
+
+      await openChannel(owner, workspaceId, channelId)
+      await anchorRow(owner, docId).click()
+      const ownerEditor = docEditor(owner, docId)
+      await expect(ownerEditor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+
+      await openChannel(member.page, workspaceId, channelId)
+      await anchorRow(member.page, docId).click()
+      const memberEditor = docEditor(member.page, docId)
+      await expect(memberEditor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+
+      await typeAtEnd(owner, ownerEditor, "Shared line. ")
+      await expect(memberEditor).toContainText("Shared line.", { timeout: 15000 })
+
+      await member.page.context().setOffline(true)
+      await typeAtEnd(member.page, memberEditor, "Member offline words. ")
+      await typeAtEnd(owner, ownerEditor, "Owner meanwhile. ")
+      await expect(memberEditor).toContainText("Member offline words.")
+
+      await member.page.context().setOffline(false)
+      await expect
+        .poll(
+          async () => {
+            const [a, b] = [await docText(ownerEditor), await docText(memberEditor)]
+            return a === b && sentences.slice(0, 3).every((sentence) => a.includes(sentence))
+          },
+          { timeout: 20000, message: "both editors should converge on the online and offline edits" }
+        )
+        .toBe(true)
+
+      // No boundary after the last word: only closing the pane can hand it off.
+      await member.page.context().setOffline(true)
+      await typeAtEnd(member.page, memberEditor, "Typed then closed")
+      await pane(member.page, docId).getByRole("button", { name: "Close", exact: true }).click()
+      await expect(pane(member.page, docId)).toHaveCount(0)
+      await member.page.context().setOffline(false)
+      await expect(ownerEditor).toContainText("Typed then closed", { timeout: 20000 })
+
+      await anchorRow(member.page, docId).click()
+      for (const sentence of sentences) {
+        await expect(memberEditor).toContainText(sentence, { timeout: 15000 })
+      }
+    } finally {
+      await ownerContext.close()
+      await member.context.close()
+    }
+  })
+
   test.describe("phone", () => {
     test.use({ hasTouch: true })
 

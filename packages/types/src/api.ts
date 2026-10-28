@@ -2434,7 +2434,7 @@ export interface DocSection {
 export interface DocState {
   stream: Stream
   seq: number
-  /** Base64 Yjs update holding the full state at `seq`. */
+  /** Base64 Yjs update holding the full state at `seq`, or only what the request's `sv` state vector lacks. */
   state: string
   sections: DocSection[]
 }
@@ -2455,7 +2455,10 @@ export interface DocUpdatesResponse {
 
 /** `POST /workspaces/:ws/docs/:docId/updates`. */
 export interface DocPostUpdateResult {
+  /** The head seq after the write; unchanged when `applied` is false. */
   seq: number
+  /** False when the doc already held every byte: nothing was stored or broadcast. */
+  applied: boolean
   touchedBlockIds: string[]
 }
 
