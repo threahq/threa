@@ -9,13 +9,8 @@ import { commands, paneCommands, type Command, type CommandContext } from "./com
 import { draftStreamCommands, streamCommands } from "./stream-commands"
 import type { ModeResult, QuickSwitcherItem } from "./types"
 
-/** A doc's body is its editor: no composer for a snippet, no settings, files or agent agenda of its own. */
-const TIMELINE_STREAM_COMMAND_IDS = new Set([
-  "stream-create-snippet",
-  "stream-settings",
-  "stream-files",
-  "stream-agenda",
-])
+/** A doc's body is its editor: no composer for a snippet, no settings or agent agenda of its own. */
+const TIMELINE_STREAM_COMMAND_IDS = new Set(["stream-create-snippet", "stream-settings", "stream-agenda"])
 
 interface UseCommandItemsParams {
   query: string
