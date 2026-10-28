@@ -1877,9 +1877,10 @@ export function registerWorkspaceSocketHandlers(
       refs.subscribeStream(payload.streamId)
     }
     // A host this viewer could not see before arrives without its docs (their stream:created went to the host's
-    // room); the bootstrap lists them through the root's access.
+    // room) or the activity hidden while it was unreadable; the bootstrap lists both through the root's access.
     if (hostArrived && streamTypeCapabilities(payload.stream.type).hostsDocs) {
       void queryClient.invalidateQueries({ queryKey: workspaceKeys.bootstrap(workspaceId) })
+      invalidateActivityFeed(true)
     }
     await Promise.all(writes)
   }

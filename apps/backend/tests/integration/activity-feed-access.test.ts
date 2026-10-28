@@ -140,6 +140,24 @@ describe("activity feed access", () => {
     expect(await view(ws, reader, room.id)).toEqual(shown(room.id, [first, second]))
   })
 
+  test("should decide push-payload counts per user, not per stream", async () => {
+    const { ws, owner, reader } = await workspaceWithUsers()
+    const room = await channel(ws, owner, Visibilities.PRIVATE)
+    await StreamMemberRepository.insertMany(pool, ws, room.id, [owner, reader])
+    await mention(ws, reader, room.id, owner)
+    await mention(ws, owner, room.id, reader)
+    await StreamMemberRepository.delete(pool, ws, room.id, reader)
+
+    const pairs = await ActivityRepository.countUnreadForPairs(pool, ws, [
+      { userId: owner, streamId: room.id },
+      { userId: reader, streamId: room.id },
+    ])
+    expect(Object.fromEntries(pairs)).toEqual({
+      [`${owner}:${room.id}`]: { mentionCount: 1, totalCount: 1 },
+      [`${reader}:${room.id}`]: { mentionCount: 0, totalCount: 0 },
+    })
+  })
+
   test("should show a thread's rows to a non-member of the thread inside a channel they belong to", async () => {
     const { ws, owner, reader } = await workspaceWithUsers()
     const room = await channel(ws, owner, Visibilities.PRIVATE)

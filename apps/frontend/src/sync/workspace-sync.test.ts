@@ -3750,7 +3750,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     ["refetches", "a private channel the viewer could not see", "private", true],
     ["keeps", "a channel already in the cache", "public", false],
   ])(
-    "%s the bootstrap, which lists a host's docs, when the viewer is added to %s",
+    "%s the bootstrap and activity feed, which list a host's docs and hidden activity, when the viewer is added to %s",
     async (_verb, _host, visibility, invalidated) => {
       const queryClient = new QueryClient()
       const cached = visibility === "public"
@@ -3762,6 +3762,7 @@ describe("registerWorkspaceSocketHandlers", () => {
           streams: cached ? [{ ...host, lastMessagePreview: null }] : [],
         })
       )
+      queryClient.setQueryData(activityKeys.list("ws_1"), [])
       const { socket, emit } = createTestSocket()
       const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
         getCurrentStreamId: () => undefined,
@@ -3772,7 +3773,10 @@ describe("registerWorkspaceSocketHandlers", () => {
       emit("stream:member_added", { workspaceId: "ws_1", streamId: host.id, memberId: "member_1", stream: host })
       await Promise.resolve()
 
-      expect(queryClient.getQueryState(workspaceKeys.bootstrap("ws_1"))?.isInvalidated).toBe(invalidated)
+      expect({
+        bootstrap: queryClient.getQueryState(workspaceKeys.bootstrap("ws_1"))?.isInvalidated,
+        feed: queryClient.getQueryState(activityKeys.list("ws_1"))?.isInvalidated,
+      }).toEqual({ bootstrap: invalidated, feed: invalidated })
       cleanup()
     }
   )
