@@ -1,6 +1,12 @@
 import { useCallback } from "react"
 import { toast } from "sonner"
-import { DocErrorCodes, StreamErrorCodes, StreamTypes, streamTypeCapabilities } from "@threahq/types"
+import {
+  DocErrorCodes,
+  STREAM_DISPLAY_NAME_MAX_LENGTH,
+  StreamErrorCodes,
+  StreamTypes,
+  streamTypeCapabilities,
+} from "@threahq/types"
 import { ApiError } from "@/api/client"
 import { useRootWriteAccess } from "@/components/docs/use-doc-can-write"
 import { usePanel } from "@/contexts"
@@ -19,7 +25,18 @@ const CREATE_ERROR_BY_CODE: Record<string, string> = {
   [StreamErrorCodes.READ_ONLY]: "You can't create docs here.",
 }
 
-/** Create a doc under `host` and open it in a pane beside it. `enabled` is false where the backend would refuse the doc. */
+/** Cuts at the cap without leaving half of a surrogate pair behind. */
+const toDocTitle = (title: string) =>
+  title
+    .trim()
+    .slice(0, STREAM_DISPLAY_NAME_MAX_LENGTH)
+    .replace(/[\uD800-\uDBFF]$/, "")
+
+/**
+ * Create a doc under `host`, titled `title` when given. `create` resolves to the doc, or null when nothing was
+ * created; `open` shows a doc in a pane beside the host, and `run` does both. `enabled` is false where the backend
+ * would refuse the doc.
+ */
 export function useCreateDoc(workspaceId: string, host: DocHost | undefined) {
   const { mutateAsync: createStream, isPending } = useCreateStream(workspaceId)
   const { openPanel } = usePanel()
@@ -30,18 +47,42 @@ export function useCreateDoc(workspaceId: string, host: DocHost | undefined) {
   )
   const hostId = host?.id
 
-  const run = useCallback(async () => {
-    if (!hostId || isPending) return
-    let doc
-    try {
-      doc = await createStream({ type: StreamTypes.DOC, parentStreamId: hostId })
-    } catch (err) {
-      const code = ApiError.isApiError(err) ? err.code : undefined
-      toast.error((code && CREATE_ERROR_BY_CODE[code]) ?? "Couldn't create the doc. Please try again.")
-      return
-    }
-    openPanel(doc.id, { beside: hostId })
-  }, [createStream, hostId, isPending, openPanel])
+  const create = useCallback(
+    async (title?: string) => {
+      if (!hostId || isPending) return null
+      const displayName = title ? toDocTitle(title) : undefined
+      let doc
+      try {
+        doc = await createStream({
+          type: StreamTypes.DOC,
+          parentStreamId: hostId,
+          ...(displayName && { displayName }),
+        })
+      } catch (err) {
+        const code = ApiError.isApiError(err) ? err.code : undefined
+        toast.error((code && CREATE_ERROR_BY_CODE[code]) ?? "Couldn't create the doc. Please try again.")
+        return null
+      }
+      return doc
+    },
+    [createStream, hostId, isPending]
+  )
 
-  return { enabled, run }
+  const open = useCallback(
+    (docId: string) => {
+      if (hostId) openPanel(docId, { beside: hostId })
+    },
+    [hostId, openPanel]
+  )
+
+  const run = useCallback(
+    async (title?: string) => {
+      const doc = await create(title)
+      if (doc) open(doc.id)
+      return doc
+    },
+    [create, open]
+  )
+
+  return { enabled, pending: isPending, create, open, run }
 }

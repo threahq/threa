@@ -233,6 +233,9 @@ export const StreamPurposes = {
  */
 export const STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH = 10_000
 
+/** A stream's `displayName` cap, shared by the create/update schemas and the clients that title a stream. */
+export const STREAM_DISPLAY_NAME_MAX_LENGTH = 100
+
 /**
  * Hard cap on a stream brief's markdown (roadmap 4.1). The brief is a prompt
  * insert carried verbatim into every companion turn, not a document store, so

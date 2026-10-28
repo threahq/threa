@@ -25,7 +25,7 @@ import { useStableCallback } from "@/hooks/use-stable-callback"
 import { useComposerActionSide } from "@/hooks/use-composer-action-side"
 import { usePreferencesOptional } from "@/contexts"
 import { getEffectiveKeyBinding, matchesKeyBinding } from "@/lib/keyboard-shortcuts"
-import { RichEditor, EditorToolbar, EditorActionBar } from "@/components/editor"
+import { RichEditor, EditorToolbar, EditorActionBar, isDocCreatePending } from "@/components/editor"
 import { getDictationMarkdownContext } from "@/components/editor/dictation-markdown"
 import { VOICE_DRAFT_CONTEXT_MAX_CHARS, type ReferenceAudience } from "@threahq/types"
 import type { RichEditorHandle } from "@/components/editor"
@@ -152,7 +152,7 @@ export interface MessageComposerProps {
   /** Stream id; required only when `contextRefs` is non-empty so the strip can build deep-links. */
   streamId?: string
   /**
-   * Access anchor for the `/memo` picker. Defaults to `streamId`; pass it
+   * Access anchor for the `/memos` picker. Defaults to `streamId`; pass it
    * explicitly when the composer has no real `streamId` yet (e.g. a draft thread
    * anchors to its parent stream). May be a thread or root — the backend resolves
    * the root.
@@ -1030,6 +1030,8 @@ export function MessageComposer({
 
   const handleSubmit = useCallback(() => {
     if (!canSubmit) return
+    const editor = richEditorRef.current?.getEditor()
+    if (editor && isDocCreatePending(editor)) return
     if (question) {
       answerQuestion()
       return

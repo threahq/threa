@@ -21,6 +21,7 @@ import {
   useChannelSuggestion,
   useEmojiSuggestion,
   useDocSuggestion,
+  useDocCreateSuggestion,
 } from "@/components/editor/triggers"
 import { tryInsertDocChip } from "@/components/editor/in-app-link-chip"
 import { EditorToolbar } from "@/components/editor/editor-toolbar"
@@ -144,6 +145,7 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
   const { suggestionConfig: emojiConfig, renderEmojiGrid } = useEmojiSuggestion({ emojis, emojiWeights })
   const docHost = useWorkspaceStream(workspaceId, docId, pickDocHost)?.parentStreamId ?? undefined
   const { suggestionConfig: docConfig, renderDocList } = useDocSuggestion(docHost, docId)
+  const { docCreateOptions, renderDocCreateList } = useDocCreateSuggestion(docHost, docId)
   const { uploadFile, imageCount } = useAttachments(workspaceId, { e2eEnabled: false })
 
   const markdownParseOptions = useMemo(() => ({ emojiAsText: true, isKnownChannel }), [isKnownChannel])
@@ -209,11 +211,12 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
         channelSuggestion: channelConfig,
         emojiSuggestion: emojiConfig,
         docSearchSuggestion: docConfig,
+        docCreate: docCreateOptions,
         toEmoji,
       }),
       EditorBehaviors.configure({ sendModeRef: DOC_SEND_MODE, onSubmitRef: NO_SUBMIT, keyBindingsRef }),
     ],
-    [ydoc, awareness, mentionConfig, channelConfig, emojiConfig, docConfig, toEmoji]
+    [ydoc, awareness, mentionConfig, channelConfig, emojiConfig, docConfig, docCreateOptions, toEmoji]
   )
 
   const editor = useEditor({
@@ -363,6 +366,7 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
               {renderChannelList()}
               {renderEmojiGrid()}
               {renderDocList()}
+              {renderDocCreateList()}
               {canWrite && (
                 <div
                   className="min-h-24 flex-1 cursor-text"

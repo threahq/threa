@@ -1,22 +1,28 @@
 import { forwardRef, type ReactNode } from "react"
 import { useParams } from "react-router-dom"
 import type { Placement } from "@floating-ui/react"
+import { FilePlus, Loader2 } from "lucide-react"
 import { StreamTypes } from "@threahq/types"
 import { STREAM_ICONS, streamLabel } from "@/lib/streams"
+import { cn } from "@/lib/utils"
 import { indexStreams, useWorkspaceStreams, type CachedStream } from "@/stores/workspace-store"
 import { SuggestionList, type SuggestionListRef } from "./suggestion-list"
-import type { DocSuggestionItem } from "./use-doc-suggestion"
+import { isNewDoc, type DocSuggestionItem, type NewDocItem } from "./use-doc-suggestion"
 
 const DocGlyph = STREAM_ICONS[StreamTypes.DOC]
 
 export type DocSuggestionListRef = SuggestionListRef
 
+type DocListItem = DocSuggestionItem | NewDocItem
+
 interface DocSuggestionListProps {
-  items: DocSuggestionItem[]
+  items: DocListItem[]
   clientRect: (() => DOMRect | null) | null
-  command: (item: DocSuggestionItem) => void
+  command: (item: DocListItem) => void
   placement?: Placement
   emptyState?: ReactNode
+  /** The "New doc" row's doc is being created. */
+  creatingNewDoc?: boolean
 }
 
 function DocSuggestionRow({ item, host }: { item: DocSuggestionItem; host: CachedStream | undefined }) {
@@ -31,9 +37,23 @@ function DocSuggestionRow({ item, host }: { item: DocSuggestionItem; host: Cache
   )
 }
 
-/** Autocomplete list for the inline `/doc` trigger: each doc's title, with the stream that hosts it. */
+function NewDocRow({ item, creating }: { item: NewDocItem; creating: boolean }) {
+  const Glyph = creating ? Loader2 : FilePlus
+  return (
+    <>
+      <Glyph className={cn("h-4 w-4 shrink-0 text-muted-foreground", creating && "animate-spin")} aria-hidden="true" />
+      <span className="shrink-0 text-[13px] font-medium">New doc</span>
+      {item.title && <span className="min-w-0 truncate text-[13px] text-muted-foreground">{item.title}</span>}
+    </>
+  )
+}
+
+/**
+ * Autocomplete list for the inline `/docs` and `/doc` triggers: each doc's title with the stream that hosts it,
+ * and for `/doc` the row that creates one.
+ */
 export const DocSuggestionList = forwardRef<DocSuggestionListRef, DocSuggestionListProps>(function DocSuggestionList(
-  { items, clientRect, command, placement, emptyState = "No docs found" },
+  { items, clientRect, command, placement, emptyState = "No docs found", creatingNewDoc = false },
   ref
 ) {
   const { workspaceId } = useParams<{ workspaceId: string }>()
@@ -44,11 +64,15 @@ export const DocSuggestionList = forwardRef<DocSuggestionListRef, DocSuggestionL
       items={items}
       clientRect={clientRect}
       command={command}
-      getKey={(item) => item.id}
+      getKey={(item) => (isNewDoc(item) ? "new-doc" : item.id)}
       ariaLabel="Doc suggestions"
-      renderItem={(item) => (
-        <DocSuggestionRow item={item} host={item.parentStreamId ? streamsById.get(item.parentStreamId) : undefined} />
-      )}
+      renderItem={(item) =>
+        isNewDoc(item) ? (
+          <NewDocRow item={item} creating={creatingNewDoc} />
+        ) : (
+          <DocSuggestionRow item={item} host={item.parentStreamId ? streamsById.get(item.parentStreamId) : undefined} />
+        )
+      }
       placement={placement}
       width="w-80"
       emptyState={emptyState}

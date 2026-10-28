@@ -57,7 +57,7 @@ export interface MemoSearchRequest {
   exact?: boolean
   limit?: number
   /**
-   * Access anchor: the stream the search is being run from (e.g. the `/memo`
+   * Access anchor: the stream the search is being run from (e.g. the `/memos`
    * picker in a composer). Not a "memos in this stream" filter — when set,
    * results are scoped to what is shareable into that stream so memos from
    * unrelated streams can't leak in. May be a thread or its root; the backend

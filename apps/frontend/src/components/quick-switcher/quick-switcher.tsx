@@ -50,6 +50,7 @@ import { useInputMode } from "@/hooks/use-input-mode"
 import { useCurrentPane, usePaneFocusLanding, usePanel, useSettings } from "@/contexts"
 import { useUser } from "@/auth"
 import { useCreateEncryptedScratchpad } from "@/hooks/use-create-encrypted-scratchpad"
+import { useCreateDoc } from "@/hooks/use-create-doc"
 import { useE2eUnlockOptional } from "@/components/encryption/e2e-unlock-provider"
 import { getE2eSessionState } from "@/stores/e2e-session-store"
 import { useCreateChannel } from "@/components/create-channel"
@@ -349,6 +350,7 @@ function QuickSwitcherBody({
     stream: currentStream,
     fallbackArchived: streamBootstrap?.archivedAncestor,
   })
+  const { enabled: canCreateDoc, run: runCreateDoc } = useCreateDoc(workspaceId, currentStream)
   const canOpenAside =
     !!openAside &&
     isAsideHostType(currentStream?.type ?? "") &&
@@ -599,6 +601,7 @@ function QuickSwitcherBody({
       openLabelPicker: onOpenLabelPicker,
       createSavedTodo,
       openAside: canOpenAside ? openAside : undefined,
+      createDoc: canCreateDoc ? runCreateDoc : undefined,
       settleStream: canSettle ? settleStream : undefined,
       closePane,
       closeOtherPanes,
@@ -613,6 +616,8 @@ function QuickSwitcherBody({
       settleStream,
       canOpenAside,
       openAside,
+      canCreateDoc,
+      runCreateDoc,
       workspaceId,
       navigate,
       handleClose,

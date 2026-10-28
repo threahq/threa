@@ -39,6 +39,7 @@ type MockEditorInstance = {
   isActive: () => boolean
   on: () => void
   off: () => void
+  storage: Record<string, unknown>
 }
 
 const MockRichEditor = forwardRef<
@@ -82,6 +83,7 @@ const MockRichEditor = forwardRef<
           isActive: () => false,
           on: () => undefined,
           off: () => undefined,
+          storage: {},
         }),
       0
     )

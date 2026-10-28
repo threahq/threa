@@ -6,10 +6,10 @@ export const MemoSearchPluginKey = new PluginKey("memoSearch")
 
 export type MemoSearchOptions = InlineSearchOptions<Memo>
 
-/** `/memo <query>`: picks a memo from workspace memory and inserts an inline `memoEmbed` chip. */
+/** `/memos <query>`: picks a memo from workspace memory and inserts an inline `memoEmbed` chip. */
 export const MemoSearchExtension = createInlineSearchExtension<Memo>({
   name: "memoSearch",
-  trigger: "/memo",
+  trigger: "/memos",
   pluginKey: MemoSearchPluginKey,
   insert: (chain, memo) => chain.insertMemoEmbed({ memoId: memo.id, title: memo.title }),
 })

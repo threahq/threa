@@ -80,7 +80,8 @@ export function isSuggestionActive(editor: Editor): boolean {
     s.slashCommand?.popupVisible ||
     s.emoji?.popupVisible ||
     s.memoSearch?.popupVisible ||
-    s.docSearch?.popupVisible
+    s.docSearch?.popupVisible ||
+    s.docCreate?.popupVisible
   )
 }
 

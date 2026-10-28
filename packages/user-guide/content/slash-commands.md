@@ -31,7 +31,9 @@ While a linked session is live, it can add session-control commands to the list,
 
 These add something to your message instead of sending a command. They work in the middle of a sentence too.
 
-- `/memo` ("Search and embed a memo") searches [memory](app:memory) and embeds a memo in your message. See [Using memory in chat](/guide/memory-in-conversations).
+- `/memos` ("Search and embed a memo") searches [memory](app:memory) and embeds a memo in your message. See [Using memory in chat](/guide/memory-in-conversations).
+- `/docs` ("Link a doc") searches the workspace's docs and links one in your message as a doc chip.
+- `/doc` ("New doc") creates a doc in the stream you are writing in, titled with the words after it, links it in your message and opens it beside the stream. Docs whose title already matches are listed under **New doc**, so you can link one of those instead. It is not offered where a doc can't be created, such as encrypted or archived streams.
 - `/snippet` ("Attach a block of text or code") opens the snippet editor and attaches the result as a file. It needs a composer that can upload files.
 - `/attachment` ("Place an attached file at the cursor") places a reference to one of your attached files where the cursor is, or lets you upload a new file. It only appears when the composer has a file to place or can upload one. See [Attachments and the Files page](/guide/attachments-and-files).
 - `/giphy` ("Search and attach a GIF") opens a GIF search. It is only available in workspaces where a Giphy key has been set up. See [Snippets, GIFs and link previews](/guide/snippets-gifs-and-previews).

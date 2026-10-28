@@ -7,6 +7,7 @@ import { CommandList } from "./command-list"
 import {
   MEMO_SEARCH_SLASH_ACTION,
   DOC_SEARCH_SLASH_ACTION,
+  DOC_CREATE_SLASH_ACTION,
   GIPHY_SLASH_ACTION,
   SNIPPET_SLASH_ACTION,
   ATTACHMENT_SLASH_ACTION,
@@ -64,21 +65,29 @@ export function filterCommands(items: CommandItem[], query: string, editor?: Edi
 /**
  * Discovery shortcut surfaced in the `/` menu when memo embeds are enabled.
  * Picking it doesn't insert a chip — `CommandExtension.onSelectItem` types
- * `/memo ` to hand off to the memo-search trigger.
+ * `/memos ` to hand off to the memo-search trigger.
  */
 const MEMO_SLASH_ITEM: CommandItem = {
-  name: "memo",
+  name: "memos",
   description: "Search and embed a memo",
   clientActionId: MEMO_SEARCH_SLASH_ACTION,
   // Memo embeds drop into prose, so the discovery entry surfaces mid-sentence too.
   placement: "inline",
 }
 
-/** Discovery shortcut into the `/doc` trigger, the doc counterpart of the memo entry. */
+/** Discovery shortcut into the `/docs` trigger, the doc counterpart of the memos entry. */
 const DOC_SLASH_ITEM: CommandItem = {
-  name: "doc",
+  name: "docs",
   description: "Link a doc",
   clientActionId: DOC_SEARCH_SLASH_ACTION,
+  placement: "inline",
+}
+
+/** Discovery shortcut into the `/doc` trigger, which creates a doc and links it in place. */
+const DOC_CREATE_SLASH_ITEM: CommandItem = {
+  name: "doc",
+  description: "New doc",
+  clientActionId: DOC_CREATE_SLASH_ACTION,
   placement: "inline",
 }
 
@@ -86,7 +95,7 @@ const DOC_SLASH_ITEM: CommandItem = {
  * Discovery shortcut for the GIF picker. Like the memo entry it inserts no chip;
  * selecting it opens the picker (see the `command` wrapper in `renderList`) and
  * the chosen GIF is attached to the message. Inline placement so it's available
- * everywhere — mid-sentence too — the same way `/memo` is.
+ * everywhere — mid-sentence too — the same way `/memos` is.
  */
 const GIPHY_SLASH_ITEM: CommandItem = {
   name: "giphy",
@@ -112,7 +121,7 @@ const SNIPPET_SLASH_ITEM: CommandItem = {
  * Discovery shortcut for placing an attachment at the caret. Inserts no chip —
  * selecting it removes the typed `/attachment` and the React layer (see
  * `renderList`) opens the attachment picker. Inline placement: a reference
- * belongs mid-sentence, the same way `/memo` does.
+ * belongs mid-sentence, the same way `/memos` does.
  */
 const ATTACHMENT_SLASH_ITEM: CommandItem = {
   name: "attachment",
@@ -131,6 +140,7 @@ const ATTACHMENT_SLASH_ITEM: CommandItem = {
 export function useCommandSuggestion({
   includeMemoSearch = false,
   includeDocSearch = false,
+  includeDocCreate = false,
   includeGiphy = false,
   includeSnippet = false,
   includeAttachment = false,
@@ -142,6 +152,8 @@ export function useCommandSuggestion({
 }: {
   includeMemoSearch?: boolean
   includeDocSearch?: boolean
+  /** Offer the `/doc` entry; only where the stream composed in can host a doc. */
+  includeDocCreate?: boolean
   includeGiphy?: boolean
   includeSnippet?: boolean
   includeAttachment?: boolean
@@ -196,6 +208,7 @@ export function useCommandSuggestion({
     return [
       ...(includeMemoSearch ? [MEMO_SLASH_ITEM] : []),
       ...(includeDocSearch ? [DOC_SLASH_ITEM] : []),
+      ...(includeDocCreate ? [DOC_CREATE_SLASH_ITEM] : []),
       ...(includeGiphy ? [GIPHY_SLASH_ITEM] : []),
       ...(includeSnippet ? [SNIPPET_SLASH_ITEM] : []),
       ...(includeAttachment ? [ATTACHMENT_SLASH_ITEM] : []),
@@ -206,6 +219,7 @@ export function useCommandSuggestion({
     streamId,
     includeMemoSearch,
     includeDocSearch,
+    includeDocCreate,
     includeGiphy,
     includeSnippet,
     includeAttachment,

@@ -12,7 +12,7 @@ afterEach(() => {
 })
 
 const DOC_ITEM: CommandItem = {
-  name: "doc",
+  name: "docs",
   description: "Link a doc",
   clientActionId: DOC_SEARCH_SLASH_ACTION,
 }
@@ -59,12 +59,12 @@ function typeText(editor: Editor, text: string) {
   for (const ch of text) editor.view.dispatch(editor.state.tr.insertText(ch))
 }
 
-describe("/doc slash-menu discovery handoff", () => {
-  it("should type '/doc ' and activate the doc picker when the doc slash item is selected", async () => {
+describe("/docs slash-menu discovery handoff", () => {
+  it("should type '/docs ' and activate the doc picker when the docs slash item is selected", async () => {
     const { editor, getSlashCommand, docStarts } = makeEditor()
     editor.commands.focus()
 
-    typeText(editor, "/doc")
+    typeText(editor, "/docs")
     expect((DocSearchPluginKey.getState(editor.state) as { active: boolean }).active).toBe(false)
 
     // The suggestion plugin renders on a microtask, after its internal `await items()`.
@@ -75,7 +75,7 @@ describe("/doc slash-menu discovery handoff", () => {
     command!(DOC_ITEM)
     await new Promise((r) => setTimeout(r, 0))
 
-    expect(editor.getText()).toBe("/doc ")
+    expect(editor.getText()).toBe("/docs ")
     const docState = DocSearchPluginKey.getState(editor.state) as { active: boolean; query: string | null }
     expect({ active: docState.active, query: docState.query, lastStart: docStarts.at(-1)?.query }).toEqual({
       active: true,

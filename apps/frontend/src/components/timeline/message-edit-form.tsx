@@ -9,7 +9,13 @@ import { Expand } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
-import { RichEditor, EditorToolbar, EditorActionBar, DocumentEditorModal } from "@/components/editor"
+import {
+  RichEditor,
+  EditorToolbar,
+  EditorActionBar,
+  DocumentEditorModal,
+  isDocCreatePending,
+} from "@/components/editor"
 import type { RichEditorHandle } from "@/components/editor"
 import { inAppLinkMarksToNodes } from "@/components/editor/in-app-link-marks"
 import { AskOverlay, SendAskRow, SendWarningBadge } from "@/components/composer/send-ask"
@@ -34,7 +40,7 @@ const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Comman
 interface MessageEditFormProps {
   messageId: string
   workspaceId: string
-  /** The stream this message belongs to — scopes the `/memo` picker. */
+  /** The stream this message belongs to — scopes the `/memos` picker. */
   streamId: string
   initialContentJson?: JSONContent
   onSave: () => void
@@ -177,6 +183,8 @@ export function MessageEditForm({
 
   // Stable, so an answer given after a rerender saves through the current `saveEdit`.
   const save = useStableCallback((options?: ComposerSubmitOptions) => {
+    const editor = richEditorRef.current?.getEditor()
+    if (editor && isDocCreatePending(editor)) return
     setFormatOpen(false)
     setMobileExpanded(false)
     setMobileLinkPopoverOpen(false)

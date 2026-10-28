@@ -40,24 +40,24 @@ function memoState(editor: Editor) {
 }
 
 describe("MemoSearchExtension trigger matching", () => {
-  it("does NOT activate on a bare /memo at the start of a block (deferred to slash palette)", () => {
+  it("does NOT activate on a bare /memos at the start of a block (deferred to slash palette)", () => {
     const editor = makeEditor()
     editor.commands.focus()
-    typeText(editor, "/memo")
+    typeText(editor, "/memos")
     expect(memoState(editor).active).toBe(false)
   })
 
-  it("does NOT activate on a bare /memo mid-sentence (deferred to slash palette until a space follows)", () => {
+  it("does NOT activate on a bare /memos mid-sentence (deferred to slash palette until a space follows)", () => {
     const editor = makeEditor()
     editor.commands.focus()
-    typeText(editor, "hello /memo")
+    typeText(editor, "hello /memos")
     expect(memoState(editor).active).toBe(false)
   })
 
-  it("never reactivates when the caret merely moves back onto a /memo query", () => {
+  it("never reactivates when the caret merely moves back onto a /memos query", () => {
     const editor = makeEditor()
     editor.commands.focus()
-    typeText(editor, "hello /memo auth")
+    typeText(editor, "hello /memos auth")
     expect(memoState(editor).active).toBe(true)
 
     editor.commands.setTextSelection(2)
@@ -67,19 +67,19 @@ describe("MemoSearchExtension trigger matching", () => {
     expect(memoState(editor).active).toBe(false)
   })
 
-  it("activates on /memo followed by a query and captures the multi-word query", () => {
+  it("activates on /memos followed by a query and captures the multi-word query", () => {
     const editor = makeEditor()
     editor.commands.focus()
-    typeText(editor, "hello /memo auth rewrite")
+    typeText(editor, "hello /memos auth rewrite")
     const state = memoState(editor)
     expect(state.active).toBe(true)
     expect(state.query).toBe("auth rewrite")
   })
 
-  it("activates after the trailing-space handoff from a start-of-block /memo", () => {
+  it("activates after the trailing-space handoff from a start-of-block /memos", () => {
     const editor = makeEditor()
     editor.commands.focus()
-    typeText(editor, "/memo ")
+    typeText(editor, "/memos ")
     const state = memoState(editor)
     expect(state.active).toBe(true)
     expect(state.query).toBe("")
@@ -89,14 +89,14 @@ describe("MemoSearchExtension trigger matching", () => {
     const editor = makeEditor()
     editor.commands.focus()
     editor.chain().focus().setMark("code").run()
-    typeText(editor, "/memo auth")
+    typeText(editor, "/memos auth")
     expect(memoState(editor).active).toBe(false)
   })
 
-  it("does NOT activate when a backtick sits directly before /memo (`` `/memo`` )", () => {
+  it("does NOT activate when a backtick sits directly before /memos (`` `/memos`` )", () => {
     const editor = makeEditor()
     editor.commands.focus()
-    typeText(editor, "see `/memo auth")
+    typeText(editor, "see `/memos auth")
     expect(memoState(editor).active).toBe(false)
   })
 })

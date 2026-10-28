@@ -1,5 +1,5 @@
 /**
- * Factory for mid-sentence search triggers like `/memo <query>` and `/doc <query>`.
+ * Factory for mid-sentence search triggers like `/memos <query>` and `/docs <query>`.
  *
  * The query may contain spaces, so a custom `findSuggestionMatch` captures
  * everything after the trigger and its space rather than stopping at the first
@@ -9,7 +9,7 @@
  * palette hands off. Picking a result deletes the typed trigger and runs the
  * caller's insert command in its place, so the caret's marks carry over.
  */
-import { Extension, type ChainedCommands } from "@tiptap/core"
+import { Extension, type ChainedCommands, type Editor } from "@tiptap/core"
 import Suggestion from "@tiptap/suggestion"
 import type { PluginKey } from "@tiptap/pm/state"
 import type { ResolvedPos } from "@tiptap/pm/model"
@@ -27,11 +27,13 @@ export interface InlineSearchOptions<T> {
       onKeyDown: (props: SuggestionKeyDownProps) => boolean
     }
   }
+  /** Handles a pick itself and returns true, leaving the typed trigger in place; otherwise the default insert runs. */
+  takeOver?: (pick: { editor: Editor; item: T }) => boolean
 }
 
 interface InlineSearchConfig<T> {
   name: string
-  /** The typed trigger, e.g. `/memo`; used verbatim in a RegExp, so no metacharacters. */
+  /** The typed trigger, e.g. `/memos`; used verbatim in a RegExp, so no metacharacters. */
   trigger: string
   pluginKey: PluginKey
   /** Inserts the picked item at the caret, chained after the trigger is deleted. */
@@ -79,6 +81,7 @@ export function createInlineSearchExtension<T>({ name, trigger, pluginKey, inser
     },
 
     addProseMirrorPlugins() {
+      const { takeOver } = this.options
       return [
         Suggestion<T>({
           editor: this.editor,
@@ -100,6 +103,7 @@ export function createInlineSearchExtension<T>({ name, trigger, pluginKey, inser
           },
           ...this.options.suggestion,
           command: ({ editor, range, props }) => {
+            if (takeOver?.({ editor, item: props as T })) return
             // Removing the typed trigger clears the suggestion match, so the plugin
             // fires `onExit` and the popup closes instead of lingering.
             insert(editor.chain().focus().deleteRange(range), props as T).run()

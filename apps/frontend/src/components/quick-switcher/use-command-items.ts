@@ -78,6 +78,7 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
           (c.id !== "stream-archive" || commandContext.currentStreamArchived === false) &&
           (c.id !== "stream-unarchive" || commandContext.currentStreamArchived === true) &&
           (c.id !== "stream-open-aside" || !!commandContext.openAside) &&
+          (c.id !== "stream-new-doc" || !!commandContext.createDoc) &&
           (c.id !== "stream-settle" || !!commandContext.settleStream)
       )
     }

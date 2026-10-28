@@ -49,7 +49,7 @@ function viewerPermissions(accessibleStreamIds: string[], userId: string): MemoE
  *
  * `anchorStreamId` is not a "memos in this stream" filter — it is the access
  * anchor: the stream the search is being run from. The memory explorer has no
- * anchor and browses everything the user can access. The inline `/memo` picker
+ * anchor and browses everything the user can access. The inline `/memos` picker
  * anchors to the stream being composed in, and must be scoped exactly like an
  * agent invoked there (`computeAgentAccessSpec`): a channel sees what every reader
  * of it can read, a DM what both parties can. Without this, a memo from an unrelated private stream could be surfaced —

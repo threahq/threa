@@ -61,4 +61,21 @@ describe("doc title over HTTP", () => {
       stored: { display_name: "Launch plan" },
     })
   })
+
+  test("should create a doc with the title it is given as an explicit name", async () => {
+    const host = await createChannel(owner, workspaceId, `titled-${runId}`)
+    const created = await owner.post<{ stream: { id: string; displayName: string; displayNameSource: string } }>(
+      `/api/workspaces/${workspaceId}/streams`,
+      { type: "doc", parentStreamId: host.id, displayName: "Q4 findings" }
+    )
+    const row = await pool.query("SELECT display_name FROM streams WHERE workspace_id = $1 AND id = $2", [
+      workspaceId,
+      created.data.stream.id,
+    ])
+    expect({ status: created.status, stream: created.data.stream, stored: row.rows[0] }).toMatchObject({
+      status: 201,
+      stream: { displayName: "Q4 findings", displayNameSource: "explicit" },
+      stored: { display_name: "Q4 findings" },
+    })
+  })
 })

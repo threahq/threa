@@ -4,7 +4,13 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
-import { RichEditor, EditorToolbar, EditorActionBar, DocumentEditorModal } from "@/components/editor"
+import {
+  RichEditor,
+  EditorToolbar,
+  EditorActionBar,
+  DocumentEditorModal,
+  isDocCreatePending,
+} from "@/components/editor"
 import type { RichEditorHandle } from "@/components/editor"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { usePaneCovered } from "@/components/panes/pane-host"
@@ -24,7 +30,7 @@ const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Comman
 interface UnsentMessageEditFormProps {
   messageId: string
   workspaceId: string
-  /** The stream this message belongs to — scopes the `/memo` picker. */
+  /** The stream this message belongs to — scopes the `/memos` picker. */
   streamId: string
   initialContentJson?: JSONContent
   onDone: () => void
@@ -110,6 +116,8 @@ export function UnsentMessageEditForm({
   )
 
   const handleSave = useCallback(async () => {
+    const editor = richEditorRef.current?.getEditor()
+    if (editor && isDocCreatePending(editor)) return
     const contentMarkdown = serializeToMarkdown(contentJson).trim()
     if (!contentMarkdown || contentMarkdown === initialMarkdown) {
       await cancelEditing(messageId)

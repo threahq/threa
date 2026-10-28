@@ -173,6 +173,10 @@ describe("DocPaneBody", () => {
       suggestionConfig: null,
       renderEmojiGrid: () => null,
     } as unknown as ReturnType<typeof triggersModule.useEmojiSuggestion>)
+    vi.spyOn(triggersModule, "useDocCreateSuggestion").mockReturnValue({
+      docCreateOptions: undefined,
+      renderDocCreateList: () => null,
+    } as unknown as ReturnType<typeof triggersModule.useDocCreateSuggestion>)
     vi.spyOn(docsApi, "get").mockImplementation(async () => docState(serverDoc, 1))
     vi.spyOn(docsApi, "listUpdates").mockResolvedValue({ updates: [], hasMore: false })
     vi.spyOn(docsApi, "listThreads").mockResolvedValue({ threads: [] })
