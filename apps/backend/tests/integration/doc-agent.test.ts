@@ -14,7 +14,7 @@ import {
 } from "../../src/features/docs"
 import { BotChannelService } from "../../src/features/api-keys"
 import { StreamEventRepository, StreamService } from "../../src/features/streams"
-import { WorkspaceRepository } from "../../src/features/workspaces"
+import { UserRepository, WorkspaceRepository } from "../../src/features/workspaces"
 import { blockId, personaId, userId, workspaceId } from "../../src/lib/id"
 import { addTestMember, setupIsolatedTestDatabase, withTransaction } from "./setup"
 
@@ -115,6 +115,36 @@ async function docUpdatedOutbox(docId: string) {
 }
 
 describe("doc agent service", () => {
+  test("should store an agent's bare @slug as the user's id", async () => {
+    const kim = await withTransaction(pool, (client) =>
+      UserRepository.insert(client, {
+        id: userId(),
+        workspaceId: wsId,
+        workosUserId: userId(),
+        email: "kim-mention@test.local",
+        name: "Kim",
+        role: "member",
+        slug: "kim-mention",
+      })
+    )
+    const { doc, ctx } = await createHostedDoc([paragraph("AWS key is live")])
+
+    const result = await agent.editDoc(ctx, {
+      docId: doc.id,
+      reason: "Name the owner",
+      edits: [{ old: "AWS key is live", new: "AWS key is live, ask @kim-mention" }],
+    })
+    const { state } = await docService.get({ workspaceId: wsId, userId: owner, docId: doc.id })
+    const ydoc = new Y.Doc()
+    Y.applyUpdate(ydoc, decodeUpdateBase64(state))
+    const mentions = (ydocToContentJson(ydoc).content?.[0]?.content ?? []).filter((node) => node.type === "mention")
+
+    expect({ status: result.status, mentions: mentions.map((node) => node.attrs) }).toEqual({
+      status: "applied",
+      mentions: [expect.objectContaining({ id: kim.id, slug: "kim-mention" })],
+    })
+  })
+
   test("should converge an agent edit with a human update drafted before it on another block", async () => {
     const aws = paragraph("AWS key is live")
     const gcp = paragraph("GCP key is live")

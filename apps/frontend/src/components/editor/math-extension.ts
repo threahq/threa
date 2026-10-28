@@ -86,6 +86,7 @@ export const MathExtension = MathNode.extend({
       openMathEditor:
         (pos, caret = "end") =>
         ({ state, dispatch }) => {
+          if (!this.editor.isEditable) return false
           const node = state.doc.nodeAt(pos)
           if (!node || node.type !== this.type) return false
           if (dispatch) {

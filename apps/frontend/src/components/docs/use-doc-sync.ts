@@ -92,14 +92,23 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
       sync.queueUnsent()
       presence.withdraw()
     }
-    // The socket can outlive an offline spell, so its reconnect flush is not enough.
-    const onOnline = () => void sync.flush()
+    // A phone may discard a backgrounded tab without ever firing pagehide.
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") sync.queueUnsent()
+    }
+    // The socket can outlive an offline spell, so its reconnect catch-up and flush are not enough.
+    const onOnline = () => {
+      void sync.catchUp()
+      void sync.flush()
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange)
     window.addEventListener("pagehide", onPageHide)
     window.addEventListener("pageshow", presence.restore)
     window.addEventListener("online", onOnline)
     setJoinCount(0)
     setCreated({ key, ydoc, sync, presence, loaded: sync.start() })
     return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange)
       window.removeEventListener("pagehide", onPageHide)
       window.removeEventListener("pageshow", presence.restore)
       window.removeEventListener("online", onOnline)

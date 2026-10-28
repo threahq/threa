@@ -398,15 +398,15 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
         return res.status(404).json({ error: "Attachment not found" })
       }
 
-      if (attachment.messageId) {
-        return res.status(403).json({ error: "Cannot delete attached files" })
-      }
-
       if (attachment.uploadedBy && attachment.uploadedBy !== userId) {
         return res.status(403).json({ error: "Cannot delete files uploaded by other users" })
       }
 
-      await attachmentService.delete(workspaceId, attachmentId)
+      // A file a message or a doc holds belongs to that stream's readers, not to its uploader.
+      const { deleted } = await attachmentService.deleteIfUnbound(workspaceId, attachmentId)
+      if (!deleted) {
+        return res.status(403).json({ error: "Cannot delete attached files" })
+      }
       res.status(204).send()
     },
 

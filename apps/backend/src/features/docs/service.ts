@@ -20,6 +20,8 @@ import { HttpError, StreamNotFoundError } from "../../lib/errors"
 import { blockId, eventId } from "../../lib/id"
 import { OutboxRepository } from "../../lib/outbox"
 import { AttachmentRepository } from "../attachments"
+import { resolveMentionContent } from "../mentions"
+import { peopleViewerForActor } from "../workspaces"
 import {
   StreamEventRepository,
   StreamRepository,
@@ -227,7 +229,13 @@ export class DocService {
 
         const { ydoc } = await loadStoredState(client, workspaceId, docId)
         ydoc.clientID = DOC_SERVER_CLIENT_ID
-        const json = buildContent(next.sections, head.bodyJson, blockId)
+        // INV-64: an agent or API writes markdown, whose bare @slug and #slug must land as ids.
+        const { contentJson: json } = await resolveMentionContent(
+          client,
+          workspaceId,
+          buildContent(next.sections, head.bodyJson, blockId),
+          peopleViewerForActor(actor.actorType, actor.actorId)
+        )
         const staging =
           next.reinserted === undefined
             ? undefined

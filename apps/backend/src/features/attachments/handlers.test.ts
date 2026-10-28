@@ -1111,3 +1111,49 @@ describe("attachment content handler", () => {
     expect(res.statusCode).toBe(200)
   })
 })
+
+describe("attachment handlers delete", () => {
+  const request = { user: { id: "usr_1" }, workspaceId: "ws_1", params: { attachmentId: "attach_1" } } as any
+
+  it("should refuse to delete a file a doc holds", async () => {
+    const attachmentService = {
+      getById: mock(() =>
+        Promise.resolve({ ...buildAttachment(AttachmentSafetyStatuses.CLEAN), streamId: "stream_doc" })
+      ),
+      deleteIfUnbound: mock(() => Promise.resolve({ deleted: false })),
+      delete: mock(() => Promise.resolve(true)),
+    } as any
+    const handlers = createAttachmentHandlers({
+      attachmentService,
+      streamService: {} as any,
+      storage: {} as any,
+      pool: {} as any,
+    })
+    const res = createResponse()
+
+    await handlers.delete(request, res)
+
+    expect({ status: res.statusCode, unconditionalDeletes: attachmentService.delete.mock.calls.length }).toEqual({
+      status: 403,
+      unconditionalDeletes: 0,
+    })
+  })
+
+  it("should delete the uploader's free-floating file", async () => {
+    const attachmentService = {
+      getById: mock(() => Promise.resolve(buildAttachment(AttachmentSafetyStatuses.CLEAN))),
+      deleteIfUnbound: mock(() => Promise.resolve({ deleted: true })),
+    } as any
+    const handlers = createAttachmentHandlers({
+      attachmentService,
+      streamService: {} as any,
+      storage: {} as any,
+      pool: {} as any,
+    })
+    const res = createResponse()
+
+    await handlers.delete(request, res)
+
+    expect(res.status).toHaveBeenCalledWith(204)
+  })
+})

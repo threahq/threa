@@ -318,6 +318,33 @@ describe("DocPaneBody", () => {
     }).toEqual({ queued: expect.stringContaining("Rotation tracker draft"), posts: 0 })
   })
 
+  it("should queue unsent edits when the page goes to the background", async () => {
+    const enqueue = vi.spyOn(operationQueueModule, "enqueueDocUpdate").mockResolvedValue()
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden")
+    await mountLoaded()
+
+    act(() => {
+      proseMirror().editor.chain().focus("end").insertContent(" draft").run()
+    })
+    document.dispatchEvent(new Event("visibilitychange"))
+    visibility.mockRestore()
+
+    await waitFor(() => expect(enqueue).toHaveBeenCalledTimes(1))
+    const queued = new Y.Doc()
+    Y.applyUpdate(queued, Y.encodeStateAsUpdate(serverDoc))
+    Y.applyUpdate(queued, base64ToBytes(enqueue.mock.calls[0]![2]))
+    expect(queued.getXmlFragment(DOC_FRAGMENT).toString()).toContain("Rotation tracker draft")
+  })
+
+  it("should fetch missed edits when the browser comes back online", async () => {
+    await mountLoaded()
+    await waitFor(() => expect(docsApi.listUpdates).toHaveBeenCalledTimes(1))
+
+    window.dispatchEvent(new Event("online"))
+
+    await waitFor(() => expect(docsApi.listUpdates).toHaveBeenCalledTimes(2))
+  })
+
   it("should send unsent edits when the browser comes back online", async () => {
     await mountLoaded()
 
@@ -601,6 +628,41 @@ describe("DocPaneBody", () => {
       afterFailure: JSON.stringify(proseMirror().editor.getJSON()).includes('"type":"attachmentReference"'),
       toasts: toastError.mock.calls.map(([message]) => message),
     }).toEqual({ withPlaceholder: true, afterFailure: false, toasts: ["Couldn't upload the file"] })
+  })
+
+  it("should remove the placeholder when the upload is refused before any bytes are sent", async () => {
+    const toastError = vi.spyOn(toast, "error").mockReturnValue("toast")
+    const uploadFile = vi.fn((file: File) =>
+      Promise.resolve({
+        attachment: {
+          id: "temp_refused",
+          filename: file.name,
+          mimeType: file.type,
+          sizeBytes: file.size,
+          status: "error",
+          error: "Too large",
+        },
+        imageIndex: null,
+        tempId: "temp_refused",
+      })
+    )
+    vi.spyOn(attachmentsModule, "useAttachments").mockReturnValue({
+      uploadFile,
+      imageCount: 0,
+    } as unknown as ReturnType<typeof attachmentsModule.useAttachments>)
+    await mountLoaded()
+    act(() => {
+      proseMirror().editor.commands.focus("end")
+    })
+
+    const file = new File(["zip"], "archive.zip", { type: "application/zip" })
+    fireEvent.paste(proseMirror(), { clipboardData: { files: [file], types: ["Files"], getData: () => "" } })
+
+    await waitFor(() => expect(toastError).toHaveBeenCalled())
+    expect({
+      afterFailure: JSON.stringify(proseMirror().editor.getJSON()).includes('"type":"attachmentReference"'),
+      toasts: toastError.mock.calls.map(([message, options]) => [message, options?.description]),
+    }).toEqual({ afterFailure: false, toasts: [["Couldn't upload the file", "Too large"]] })
   })
 
   it("should upload files picked from the attach button into the doc", async () => {

@@ -67,6 +67,19 @@ describe("math node", () => {
     expect(selectionIsAfter(editor, { attrs: { tex: "e^{i\\pi}+1=0" } })).toBe(true)
   })
 
+  it("should not open an equation for editing when the editor is read-only", () => {
+    editor = createEditorWith([
+      { type: "text", text: "a " },
+      { type: "math", attrs: { tex: "x^2", display: false } },
+    ])
+    editor.setEditable(false)
+
+    expect({ opened: editor.commands.openMathEditor(3), editing: mathEditingState(editor.state) }).toEqual({
+      opened: false,
+      editing: null,
+    })
+  })
+
   it("leaves prices as prose", () => {
     editor = createEditorWith()
     type(editor, "costs $5 and $10")
