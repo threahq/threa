@@ -1,4 +1,4 @@
-import { StreamTypes, streamTypeCapabilities, type StreamType } from "@threahq/types"
+import { markdownLines, StreamTypes, streamTypeCapabilities, type StreamType } from "@threahq/types"
 import type { Querier } from "../../db"
 import { truncateCodePoints } from "../../lib/truncate"
 import { StreamRepository, resolveBriefStreamId, type Stream } from "../streams"
@@ -60,9 +60,6 @@ export async function listHostedDocs(
 }
 
 export function docFirstLine(markdown: string | undefined): string | null {
-  const line = markdown
-    ?.split("\n")
-    .map((l) => l.trim())
-    .find((l) => l.length > 0)
+  const line = (markdown === undefined ? [] : markdownLines(markdown)).map((l) => l.trim()).find((l) => l.length > 0)
   return line === undefined ? null : truncateCodePoints(line, MAX_DOC_FIRST_LINE_CHARS, "…")
 }

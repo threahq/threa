@@ -7,7 +7,13 @@
  */
 
 import type { ContentRange, JSONContent, JSONContentMark } from "@threahq/types"
-import { actorTypeFromMentionId, isResolvedChannelLinkId, MENTION_PATTERN, CHANNEL_PATTERN } from "@threahq/types"
+import {
+  actorTypeFromMentionId,
+  readLineEnd,
+  isResolvedChannelLinkId,
+  MENTION_PATTERN,
+  CHANNEL_PATTERN,
+} from "@threahq/types"
 import {
   escapeMarkdownLinkText,
   parseAttachmentMetadata,
@@ -30,6 +36,16 @@ import {
   privateQuoteAttrs,
   type ReferencePin,
 } from "./pointer-urls"
+
+/**
+ * CommonMark's hard break: a backslash ending the line. The parser reads one
+ * block per line, so `joinHardBreaks` folds a broken line and its continuation
+ * into one line with `HARD_BREAK_TOKEN` where the break was. A backslash the
+ * text itself ends a line with is escaped, so it never reads as a break.
+ */
+const HARD_BREAK_MARKDOWN = "\\\n"
+// U+E000 and U+E001 already delimit the math and link tokens.
+const HARD_BREAK_TOKEN = "\uE002"
 
 /** A memo/doc pointer's link text: its cached title (or the fallback) with only `\\` and `]` escaped. */
 function pointerLinkLabel(title: unknown, fallback: string): string {
@@ -107,11 +123,11 @@ function serializeNode(node: JSONContent, listDepth = 0, listIndex?: number): st
 
   switch (node.type) {
     case "paragraph":
-      return serializeInline(node.content)
+      return serializeInlineLines(node.content)
 
     case "heading": {
       const level = (node.attrs?.level as number) ?? 1
-      return "#".repeat(level) + " " + serializeInline(node.content)
+      return "#".repeat(level) + " " + serializeInlineLines(node.content)
     }
 
     case "codeBlock": {
@@ -220,13 +236,13 @@ function serializeNode(node: JSONContent, listDepth = 0, listIndex?: number): st
       return "---"
 
     case "hardBreak":
-      return "\n"
+      return HARD_BREAK_MARKDOWN
 
     case "table":
       return serializeTable(node)
 
     default:
-      return serializeInline(node.content)
+      return serializeInlineLines(node.content)
   }
 }
 
@@ -288,7 +304,11 @@ function serializeTableCell(cell: JSONContent): string {
   // Escape pipes so they don't terminate the cell, and collapse hard-break
   // newlines into `<br>` for the same reason. Leading/trailing whitespace
   // inside a cell is meaningless in GFM, so trim.
-  return joined.replace(/\|/g, "\\|").replace(/\n/g, "<br>").trim()
+  return joined
+    .replace(/\|/g, "\\|")
+    .replaceAll(HARD_BREAK_TOKEN + "\n", "<br>")
+    .replace(/\n/g, "<br>")
+    .trim()
 }
 
 /**
@@ -310,7 +330,8 @@ export function attachmentReferenceLabel(attrs: { filename?: unknown; imageIndex
 }
 
 function getNodeText(node: JSONContent): string {
-  if (node.type === "hardBreak") return "\n"
+  // A token, not the backslash: a newline in the text itself is no break.
+  if (node.type === "hardBreak") return HARD_BREAK_TOKEN + "\n"
   if (node.type === "mention") {
     const slug = node.attrs?.slug as string
     if (!slug) return ""
@@ -390,7 +411,7 @@ function getNodeText(node: JSONContent): string {
     const height = node.attrs?.height as number | undefined
     return `[${safeTitle}](${buildGiphyHref({ giphyUrl, width, height })})`
   }
-  if (node.type === "text") return node.text ?? ""
+  if (node.type === "text") return (node.text ?? "").replaceAll(HARD_BREAK_TOKEN, "")
   return ""
 }
 
@@ -581,8 +602,26 @@ function serializeMath(node: JSONContent, before: string, after: string): string
   return ambiguous ? `\\(${tex}\\)` : `$${tex}$`
 }
 
-function serializeInline(nodes: JSONContent[] | undefined): string {
-  if (!nodes) return ""
+/** {@link serializeInline} with each line-ending backslash of the text escaped, for blocks written as lines. */
+function serializeInlineLines(nodes: JSONContent[] | undefined): string {
+  const escape = (text: string) => text.replace(/\\+$/, (run) => run + run)
+  return serializeInline(nodes)
+    .split("\n")
+    .map((line) => {
+      const breakAt = line.indexOf(HARD_BREAK_TOKEN)
+      if (breakAt === -1) return escape(line)
+      // Mark closers may follow the break's token on its line; the backslash goes after them.
+      return escape(line.slice(0, breakAt)) + line.slice(breakAt + 1) + "\\"
+    })
+    .join("\n")
+}
+
+function serializeInline(content: JSONContent[] | undefined): string {
+  if (!content) return ""
+  // A break ending the block has no line to break onto; CommonMark would read its backslash as text.
+  let end = content.length
+  while (end > 0 && content[end - 1].type === "hardBreak") end--
+  const nodes = content.slice(0, end)
 
   const texts = nodes.map((node) => (node.type === "math" ? "" : getNodeText(node)))
   for (let i = 0; i < nodes.length; i++) {
@@ -740,7 +779,8 @@ export function parseMarkdown(
   // same reason the renderer does it (`extractMath`): a TeX body is not
   // markdown. It also collapses a `$$` block written across lines into one
   // token, so the line-based loop below never has to know about fences.
-  const lines = extractMath(normalizeMarkdownTables(markdown)).split("\n")
+  const source = markdown.replaceAll(HARD_BREAK_TOKEN, "")
+  const lines = joinHardBreaks(extractMath(normalizeMarkdownTables(source)).split("\n"))
   const content: JSONContent[] = []
   let i = 0
 
@@ -822,7 +862,7 @@ export function parseMarkdown(
         while (snippetLines.length > 0 && snippetLines[snippetLines.length - 1] === "") {
           snippetLines.pop()
         }
-        const snippet = snippetLines.join("\n")
+        const snippet = snippetLines.join("\n").replaceAll(HARD_BREAK_TOKEN, HARD_BREAK_MARKDOWN)
         content.push({
           type: "quoteReply",
           attrs: {
@@ -1254,6 +1294,45 @@ function tokenizeBalancedLinkDestinations(
   return { text: tokenized, hrefByToken }
 }
 
+function joinHardBreaks(lines: string[]): string[] {
+  const joined: string[] = []
+  let inFence = false
+  // The last joined line ended in a hard break, its marker already dropped.
+  let broken = false
+  for (const line of lines) {
+    const fence = /^(> )?```/.test(line)
+    if (inFence) {
+      if (fence) inFence = false
+      joined.push(line)
+      continue
+    }
+    const { text, hardBreak } = readLineEnd(line)
+    // A broken line inside a blockquote continues on the next `> ` line.
+    const continuation = broken && joined.at(-1)!.startsWith(">") ? text.replace(/^>\s?/, "") : text
+    if (broken && !fence && (continuation.length > 0 || hardBreak)) {
+      joined[joined.length - 1] += HARD_BREAK_TOKEN + continuation
+    } else {
+      // A break with no line after it is a literal backslash.
+      if (broken) joined[joined.length - 1] += "\\"
+      if (fence) inFence = true
+      joined.push(fence ? line : text)
+    }
+    broken = !fence && hardBreak
+  }
+  if (broken) joined[joined.length - 1] += "\\"
+  return joined
+}
+
+function splitHardBreaks(node: JSONContent): JSONContent[] {
+  if (node.type !== "text" || !node.text?.includes(HARD_BREAK_TOKEN)) return [node]
+  return node.text
+    .split(HARD_BREAK_TOKEN)
+    .flatMap((text, index): JSONContent[] => [
+      ...(index > 0 ? [{ type: "hardBreak" }] : []),
+      ...(text ? [{ ...node, text }] : []),
+    ])
+}
+
 /**
  * Math tokens stay opaque through the whole mark and link parse and are
  * expanded once, here: splitting first would hand the two halves of
@@ -1261,15 +1340,19 @@ function tokenizeBalancedLinkDestinations(
  * that mark on a node whose schema allows none.
  */
 function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONContent[] {
-  return parseInlineTokens(text, options).flatMap((node) => {
-    const parts = node.type === "text" && node.text ? splitMathTokens(node.text) : null
-    if (!parts) return [node]
-    return parts
-      .filter((part) => "tex" in part || part.text)
-      .map((part) =>
-        "tex" in part ? { type: "math", attrs: { tex: part.tex, display: part.display } } : { ...node, text: part.text }
-      )
-  })
+  return parseInlineTokens(text, options)
+    .flatMap(splitHardBreaks)
+    .flatMap((node) => {
+      const parts = node.type === "text" && node.text ? splitMathTokens(node.text) : null
+      if (!parts) return [node]
+      return parts
+        .filter((part) => "tex" in part || part.text)
+        .map((part) =>
+          "tex" in part
+            ? { type: "math", attrs: { tex: part.tex, display: part.display } }
+            : { ...node, text: part.text }
+        )
+    })
 }
 
 function parseInlineTokens(text: string, options: ParseOptions = {}): JSONContent[] {

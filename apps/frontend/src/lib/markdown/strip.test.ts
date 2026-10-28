@@ -44,6 +44,10 @@ describe("stripMarkdown", () => {
 })
 
 describe("stripMarkdownToInline", () => {
+  it("should drop the backslash of a hard break", () => {
+    expect(stripMarkdownToInline("line one\\\nline two")).toBe("line one line two")
+  })
+
   it("collapses newlines so the result is a single line", () => {
     expect(stripMarkdownToInline("line one\n\nline two\nline three")).toBe("line one line two line three")
   })

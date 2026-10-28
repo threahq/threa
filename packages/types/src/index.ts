@@ -419,6 +419,8 @@ export type { StreamRowSpec, ConversationRef } from "./stream-rows"
 
 // Markdown → plain-text stripping for preview surfaces (shared FE/BE, INV-60)
 export {
+  markdownLines,
+  readLineEnd,
   stripMarkdown,
   stripMarkdownKeepingCode,
   stripMarkdownToInline,

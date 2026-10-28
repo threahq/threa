@@ -1,5 +1,6 @@
 import { collectGiphyEmbeds, collectLinkUrls } from "@threahq/prosemirror"
 import {
+  markdownLines,
   BLOCKED_HOSTNAMES,
   BLOCKED_IP_PATTERNS,
   categoryFromMime,
@@ -45,7 +46,7 @@ export interface ContextRowsContext {
 
 function snippetOf(markdown: string | undefined): string {
   if (!markdown) return ""
-  const firstLine = markdown.split("\n").find((line) => line.trim().length > 0) ?? ""
+  const firstLine = markdownLines(markdown).find((line) => line.trim().length > 0) ?? ""
   const inline = stripMarkdownToInline(firstLine).trim()
   return inline.length > SNIPPET_MAX ? `${inline.slice(0, SNIPPET_MAX)}…` : inline
 }
