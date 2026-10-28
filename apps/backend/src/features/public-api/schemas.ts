@@ -704,6 +704,16 @@ export const createDocSchema = z
     path: ["reason"],
   })
 
+export const docSectionParamSchema = docIdParamSchema.extend({
+  blockId: z.string().startsWith("blk_").max(64),
+})
+
+export const commentOnDocSectionSchema = z.object({
+  content: z.string().min(1, "content is required"),
+  clientMessageId: z.string().max(128).optional(),
+  metadata: messageMetadataSchema.optional(),
+})
+
 // Edits apply together: if one fails to match, nothing is written.
 export const editDocSchema = z.object({
   reason: docReason,

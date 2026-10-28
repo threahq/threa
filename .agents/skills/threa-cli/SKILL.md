@@ -70,6 +70,7 @@ A doc is a markdown document hosted by a stream. `threa docs list <stream-ref>` 
 - `--reason` is one line shown to people on the stream's timeline: what changed and why.
 - A 409 (`DOC_EDIT_TEXT_NOT_FOUND`, `DOC_EDIT_TEXT_AMBIGUOUS`, `DOC_SECTION_NOT_FOUND`) means the text moved or matched twice. Re-read the doc (`details.scope.markdown` holds the current text) and retry with a tighter anchor.
 - `threa docs create <stream-ref> --title t --body - --reason r` (tool `create_doc`) starts one; `--reason` is required with a body.
+- `threa docs comment <doc-id> --block blk_… --body <text|->` (tool `comment_on_doc`) posts a comment into that block's thread, starting the thread on the first comment; needs `docs:read` and `messages:write`. A 404 `DOC_SECTION_NOT_FOUND` means the block is gone: re-read for current ids.
 
 ## Conversation create and resume
 

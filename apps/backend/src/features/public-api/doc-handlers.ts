@@ -1,4 +1,5 @@
 import type { Request, Response } from "express"
+import type { Pool } from "pg"
 import { DocErrorCodes, StreamErrorCodes } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
@@ -11,8 +12,17 @@ import type {
   DocAgentWriteResult,
 } from "../docs"
 import { principalActorId } from "../streams"
+import type { EventService } from "../messaging"
+import { createMessageAsKey, plaintextMessageBody } from "./handlers"
 import { apiKeyPrincipal } from "./principal"
-import { createDocSchema, docIdParamSchema, editDocSchema, listDocsQuerySchema } from "./schemas"
+import {
+  commentOnDocSectionSchema,
+  createDocSchema,
+  docIdParamSchema,
+  docSectionParamSchema,
+  editDocSchema,
+  listDocsQuerySchema,
+} from "./schemas"
 
 function keyContext<Host extends string | null>(
   req: Request,
@@ -92,7 +102,15 @@ function serializeDoc(doc: DocAgentDocSummary) {
  * key's principal (user keys as the owner, workspace keys as the bot), with the
  * service's refusals mapped to HTTP errors. A doc the key cannot reach is 404.
  */
-export function createDocPublicApiHandlers({ docAgentService }: { docAgentService: DocAgentService }) {
+export function createDocPublicApiHandlers({
+  docAgentService,
+  pool,
+  eventService,
+}: {
+  docAgentService: DocAgentService
+  pool: Pool
+  eventService: EventService
+}) {
   return {
     async listDocs(req: Request, res: Response) {
       const { streamId } = validateRequest(listDocsQuerySchema, req.query)
@@ -152,6 +170,23 @@ export function createDocPublicApiHandlers({ docAgentService }: { docAgentServic
         default:
           throw writeError(result)
       }
+    },
+
+    async commentOnDocSection(req: Request, res: Response) {
+      const { docId, blockId } = validateRequest(docSectionParamSchema, req.params)
+      const body = validateRequest(commentOnDocSectionSchema, req.body)
+      const opened = await docAgentService.openSectionThread(keyContext(req, null), { docId, blockId })
+      if (opened.status === "unknown_block") {
+        throw new HttpError("Block not found in this doc", { status: 404, code: DocErrorCodes.SECTION_NOT_FOUND })
+      }
+      if (opened.status !== "ok") throw accessError(opened)
+      const sent = await createMessageAsKey({ pool, eventService }, req, {
+        streamId: opened.threadId,
+        body: plaintextMessageBody(body.content),
+        clientMessageId: body.clientMessageId,
+        metadata: body.metadata,
+      })
+      res.status(201).json({ data: { threadId: opened.threadId, message: sent.data } })
     },
   }
 }

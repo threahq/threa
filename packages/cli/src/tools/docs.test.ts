@@ -103,3 +103,26 @@ test("create_doc resolves the stream and posts title, markdown, and reason", asy
     body: { streamId: "stream_1", title: "Notes", markdown: "# Notes", reason: "start notes" },
   })
 })
+
+test("comment_on_doc posts the content to the block's comments with a generated client message id", async () => {
+  const response = { data: { threadId: "stream_t1", message: { id: "msg_1", content: "Looks good" } } }
+  fetchSpy.mockResolvedValue(jsonResponse(201, response))
+  const client = await connectClient()
+
+  const result = (await client.callTool({
+    name: "comment_on_doc",
+    arguments: { doc_id: "stream_d1", block_id: "blk_1", content: "Looks good" },
+  })) as CallToolResult
+  expect(result.isError).toBeFalsy()
+
+  const call = lastCall()
+  expect({ method: call.method, path: call.path, body: call.body, payload: textPayload(result) }).toEqual({
+    method: "POST",
+    path: `${DOCS}/stream_d1/sections/blk_1/comments`,
+    body: { content: "Looks good", clientMessageId: expect.stringMatching(/^mcp-/) },
+    payload: {
+      ...response,
+      clientMessageId: (call.body as { clientMessageId: string }).clientMessageId,
+    },
+  })
+})

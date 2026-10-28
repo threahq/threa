@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
-import { createDoc, editDoc, listDocs, readDoc } from "../ops"
+import { commentOnDoc, createDoc, editDoc, listDocs, readDoc } from "../ops"
 import type { RefResolver } from "../resolver"
 import { runTool } from "./result"
 
@@ -78,5 +78,27 @@ export function registerDocTools(server: McpServer, client: ThreaApiClient, reso
     },
     async ({ stream_id, title, markdown, reason }) =>
       runTool(() => createDoc(client, resolver, { streamRef: stream_id, title, markdown, reason }))
+  )
+
+  server.registerTool(
+    "comment_on_doc",
+    {
+      title: "Comment on a doc block",
+      description:
+        "Post a markdown comment into a doc block's thread, starting the thread on the first comment. `block_id` " +
+        "is a `<!-- blk_… -->` marker id from read_doc. `client_message_id` is auto-generated (`mcp-<uuid>`) when you " +
+        "omit one so a retried call never double-posts. The result holds `threadId` and the posted message. A 404 " +
+        "DOC_SECTION_NOT_FOUND means the doc has no such block: re-read it for the current ids.",
+      inputSchema: {
+        doc_id: z.string(),
+        block_id: z.string(),
+        content: z.string().min(1),
+        client_message_id: z.string().max(128).optional(),
+      },
+    },
+    async ({ doc_id, block_id, content, client_message_id }) =>
+      runTool(() =>
+        commentOnDoc(client, { docId: doc_id, blockId: block_id, content, clientMessageId: client_message_id })
+      )
   )
 }

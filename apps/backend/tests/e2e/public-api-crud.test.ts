@@ -697,6 +697,43 @@ describe("Public API v1 — CRUD Endpoints", () => {
     })
   })
 
+  describe("Comment on a doc section", () => {
+    test("should 404 a key without docs:read and post with docs:read and messages:write", async () => {
+      const client = new TestClient()
+      await loginAs(client, testEmail("setup"), `CrudUser ${testRunId}`)
+      const botRes = await client.post(`/api/workspaces/${ctx.workspaceId}/bots`, {
+        type: "shared",
+        name: `Doc Bot ${testRunId}`,
+        slug: `doc-bot-${testRunId}`,
+      })
+      const docBotId = (botRes.data as { data: { id: string } }).data.id
+      await client.post(`/api/workspaces/${ctx.workspaceId}/bots/${docBotId}/streams/${ctx.publicChannelId}/grant`, {})
+      const docsWriteKey = await createBotKey(client, ctx.workspaceId, docBotId, "docs-write", ["docs:write"])
+      const writeOnlyKey = await createBotKey(client, ctx.workspaceId, docBotId, "write-only", ["messages:write"])
+      const commentKey = await createBotKey(client, ctx.workspaceId, docBotId, "comment", [
+        "docs:read",
+        "messages:write",
+      ])
+      const created = await apiPost(
+        `/api/v1/workspaces/${ctx.workspaceId}/docs`,
+        { streamId: ctx.publicChannelId, markdown: "Rotate keys", reason: "Seed" },
+        docsWriteKey
+      )
+      const doc = ((await created.json()) as { data: { id: string; markdown: string } }).data
+      const [blockId] = [...doc.markdown.matchAll(/<!-- (blk_\w+) -->/g)].map((m) => m[1])
+      const path = `/api/v1/workspaces/${ctx.workspaceId}/docs/${doc.id}/sections/${blockId}/comments`
+
+      const missingDocsRead = await apiPost(path, { content: "Hi" }, writeOnlyKey)
+      const both = await apiPost(path, { content: "Hi" }, commentKey)
+
+      expect({ created: created.status, missingDocsRead: missingDocsRead.status, both: both.status }).toEqual({
+        created: 201,
+        missingDocsRead: 404,
+        both: 201,
+      })
+    })
+  })
+
   describe("Bootstrap includes bots", () => {
     test("should include bots array in workspace bootstrap after bot is created", async () => {
       const client = new TestClient()

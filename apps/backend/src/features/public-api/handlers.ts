@@ -7,7 +7,7 @@ import type { FeatureFlagService } from "../feature-flags"
 import { setAuditSubjects } from "../access-log"
 import { serializeSearchResult, resolveUserAccessibleStreamIds, SearchRepository } from "../search"
 import { BotChannelAccessRepository, type BotChannelService } from "../api-keys"
-import { MessageRepository, type EventService, type Message } from "../messaging"
+import { MessageRepository, type CreateMessageParams, type EventService, type Message } from "../messaging"
 import {
   resolveDeliveryVerdict,
   TrustTiers,
@@ -308,6 +308,93 @@ function serializeMessage(
     createdAt: message.createdAt.toISOString(),
     ...(sealed != null && { sealed }),
   }
+}
+
+export type KeyMessageBody = Pick<
+  CreateMessageParams,
+  "contentJson" | "contentMarkdown" | "attachmentIds" | "ciphertext" | "envelope" | "e2eVersion"
+>
+
+/** A plaintext public-API body: normalized markdown, its contentJson, and the inline attachments it references. */
+export function plaintextMessageBody(content: string): KeyMessageBody {
+  const contentMarkdown = normalizeMessage(content)
+  const contentJson = parseMarkdown(contentMarkdown, undefined, toEmoji)
+  // Derive inline `attachment:` ids from the parsed contentJson so the
+  // create-time access gate runs and the attachment_references projection
+  // gets written. Public-API senders can post markdown like `[Image
+  // #1](attachment:att_x)`; without this they'd persist a message that
+  // references an attachment without ever validating read access. The
+  // schema doesn't accept fresh-upload ids today, so this list IS the
+  // full set.
+  const attachmentIds = collectAttachmentReferenceIds(contentJson)
+  return { contentJson, contentMarkdown, attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined }
+}
+
+/**
+ * Create a message as the key's principal: user keys as the user, bot keys as
+ * the bot entity; both record the key in sentVia. A retry with the same
+ * `clientMessageId` on the same stream returns the first message.
+ */
+export async function createMessageAsKey(
+  { pool, eventService }: { pool: Pool; eventService: EventService },
+  req: Request,
+  params: { streamId: string; body: KeyMessageBody } & Pick<
+    CreateMessageParams,
+    "clientMessageId" | "metadata" | "conversation"
+  >
+): Promise<{ message: Message; data: WireMessage; conversationId?: string }> {
+  const workspaceId = req.workspaceId!
+  const { streamId, body, ...rest } = params
+
+  if (req.userApiKey) {
+    const user = req.user!
+    const { message, conversationId } = await eventService.createMessageForPrincipalReturningConversation(
+      { kind: "user", userId: user.id },
+      {
+        workspaceId,
+        streamId,
+        authorId: user.id,
+        authorType: AuthorTypes.USER,
+        ...body,
+        ...rest,
+        sentVia: sentViaApiKey(req.userApiKey.id),
+      }
+    )
+    return { message, data: serializeMessage(message, { authorDisplayName: user.name }), conversationId }
+  }
+
+  if (req.botApiKey) {
+    const bot = await BotRepository.findById(pool, workspaceId, req.botApiKey.botId)
+    if (!bot || bot.archivedAt) {
+      throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
+    }
+
+    // Stamp the message with the bot's running session so it deep-links to
+    // the trace (parity with the enclave path). Bot invocations register the
+    // session on `responseStreamId` under `personaId = bot.id` — a plaintext
+    // send with no active invocation stays unstamped (bots CAN post without a
+    // claim). Known limitation: if a prior invocation's session sticks at
+    // status='running' (missed terminal event), a later unrelated plaintext
+    // send by the same bot on this stream mis-stamps to that stale session.
+    const runningSession = await AgentSessionRepository.findRunningByStream(pool, workspaceId, streamId, bot.id)
+
+    const { message, conversationId } = await eventService.createMessageForPrincipalReturningConversation(
+      { kind: "bot", botId: bot.id },
+      {
+        workspaceId,
+        streamId,
+        authorId: bot.id,
+        authorType: AuthorTypes.BOT,
+        ...body,
+        ...rest,
+        sentVia: sentViaApiKey(req.botApiKey.id),
+        sessionId: runningSession?.id,
+      }
+    )
+    return { message, data: serializeMessage(message, { authorDisplayName: bot.name }), conversationId }
+  }
+
+  throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
 }
 
 function serializeConversation(
@@ -3549,117 +3636,36 @@ export function createPublicApiHandlers({
 
       const { content, sealed, clientMessageId, metadata, conversation } = validateRequest(sendMessageSchema, req.body)
 
-      let principal: { kind: "user"; userId: string } | { kind: "bot"; botId: string } | null = null
-      if (req.userApiKey) {
-        principal = { kind: "user", userId: req.user!.id }
-      } else if (req.botApiKey) {
-        principal = { kind: "bot", botId: req.botApiKey.botId }
-      }
-      if (!principal) throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
-      await eventService.assertStreamWritableForPrincipal(principal, workspaceId, streamId)
+      await eventService.assertStreamWritableForPrincipal(apiKeyPrincipal(req), workspaceId, streamId)
       await assertE2eMatchesStream(workspaceId, streamId, sealed != null)
 
       // A sealed body is opaque: nothing to normalize, no inline references to
       // gate, and the stored projection is the placeholder plaintext consumers
       // short-circuit on. `e2eVersion` comes off the envelope rather than a
       // third wire field that could disagree with it (INV-33).
-      let body: {
-        contentJson: JSONContent
-        contentMarkdown: string
-        attachmentIds?: string[]
-        ciphertext?: Buffer
-        envelope?: unknown
-        e2eVersion?: number
-      }
-      if (sealed) {
-        body = {
-          contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
-          contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
-          ciphertext: Buffer.from(sealed.ciphertext, "base64"),
-          envelope: sealed.envelope,
-          e2eVersion: sealed.envelope.v,
-        }
-      } else {
-        const contentMarkdown = normalizeMessage(content!)
-        const contentJson = parseMarkdown(contentMarkdown, undefined, toEmoji)
-        // Derive inline `attachment:` ids from the parsed contentJson so the
-        // create-time access gate runs and the attachment_references projection
-        // gets written. Public-API senders can post markdown like `[Image
-        // #1](attachment:att_x)`; without this they'd persist a message that
-        // references an attachment without ever validating read access. The
-        // schema doesn't accept fresh-upload ids today, so this list IS the
-        // full set.
-        const attachmentIds = collectAttachmentReferenceIds(contentJson)
-        body = { contentJson, contentMarkdown, attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined }
-      }
-
-      if (req.userApiKey) {
-        const user = req.user!
-
-        const { message, conversationId } = await eventService.createMessageForPrincipalReturningConversation(
-          { kind: "user", userId: user.id },
-          {
-            workspaceId,
-            streamId,
-            authorId: user.id,
-            authorType: AuthorTypes.USER,
-            ...body,
-            clientMessageId,
-            sentVia: sentViaApiKey(req.userApiKey.id),
-            metadata,
-            conversation,
+      const body: KeyMessageBody = sealed
+        ? {
+            contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
+            contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+            ciphertext: Buffer.from(sealed.ciphertext, "base64"),
+            envelope: sealed.envelope,
+            e2eVersion: sealed.envelope.v,
           }
-        )
+        : plaintextMessageBody(content!)
 
-        res.status(201).json({
-          data: serializeMessage(message, { authorDisplayName: user.name }),
-          ...(conversationId && { conversationId }),
-          slots: await resolveSlots(req, [message.contentJson]),
-        })
-        return
-      }
+      const sent = await createMessageAsKey({ pool, eventService }, req, {
+        streamId,
+        body,
+        clientMessageId,
+        metadata,
+        conversation,
+      })
 
-      if (req.botApiKey) {
-        const bot = await BotRepository.findById(pool, workspaceId, req.botApiKey.botId)
-        if (!bot || bot.archivedAt) {
-          throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
-        }
-
-        // Stamp the message with the bot's running session so it deep-links to
-        // the trace (parity with the enclave path). Bot invocations register the
-        // session on `responseStreamId` under `personaId = bot.id` — a plaintext
-        // send with no active invocation stays unstamped (bots CAN post without a
-        // claim). Known limitation: if a prior invocation's session sticks at
-        // status='running' (missed terminal event), a later unrelated plaintext
-        // send by the same bot on this stream mis-stamps to that stale session.
-        const runningSession = await AgentSessionRepository.findRunningByStream(pool, workspaceId, streamId, bot.id)
-        const sessionId = runningSession?.id
-
-        const { message, conversationId } = await eventService.createMessageForPrincipalReturningConversation(
-          { kind: "bot", botId: bot.id },
-          {
-            workspaceId,
-            streamId,
-            authorId: bot.id,
-            authorType: AuthorTypes.BOT,
-            ...body,
-            clientMessageId,
-            sentVia: sentViaApiKey(req.botApiKey.id),
-            metadata,
-            conversation,
-            sessionId,
-          }
-        )
-
-        res.status(201).json({
-          data: serializeMessage(message, { authorDisplayName: bot.name }),
-          ...(conversationId && { conversationId }),
-          slots: await resolveSlots(req, [message.contentJson]),
-        })
-        return
-      }
-
-      throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
+      res.status(201).json({
+        data: sent.data,
+        ...(sent.conversationId && { conversationId: sent.conversationId }),
+        slots: await resolveSlots(req, [sent.message.contentJson]),
+      })
     },
 
     async updateMessage(req: Request, res: Response) {

@@ -7952,6 +7952,224 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspaceId}/docs/{docId}/sections/{blockId}/comments": {
+      "post": {
+        "operationId": "commentOnDocSection",
+        "summary": "Comment on a doc block",
+        "tags": ["Docs"],
+        "description": "Post a message into the block's comment thread as the key's actor, creating the thread on the first comment. A retry with the same `clientMessageId` returns the first message in the same thread. 404 DOC_SECTION_NOT_FOUND when the doc has no such block, 404 NOT_FOUND when the doc is missing or out of the key's reach; 403 STREAM_READ_ONLY when the doc is archived or the key cannot write its threads.",
+        "security": [{ "apiKey": ["docs:read", "messages:write"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "docId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Doc ID (a stream_ ULID of type doc)"
+          },
+          {
+            "name": "blockId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Block ID (blk_…), as marked in the doc's markdown"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "content": { "type": "string", "minLength": 1 },
+                  "clientMessageId": { "type": "string", "maxLength": 128 },
+                  "metadata": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-zA-Z0-9_.\\-:]+$"
+                    },
+                    "additionalProperties": { "type": "string", "maxLength": 256 }
+                  }
+                },
+                "required": ["content"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "threadId": {
+                          "type": "string",
+                          "description": "The block's comment thread: created on the first comment, reused after."
+                        },
+                        "message": {
+                          "type": "object",
+                          "properties": {
+                            "id": { "type": "string" },
+                            "streamId": { "type": "string" },
+                            "sequence": { "type": "string", "description": "Numeric sequence as string" },
+                            "authorId": { "type": "string" },
+                            "authorType": { "type": "string", "enum": ["user", "persona", "system", "bot"] },
+                            "authorDisplayName": { "type": "string" },
+                            "content": { "type": "string" },
+                            "replyCount": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "threadStreamId": { "type": "string" },
+                            "clientMessageId": { "type": "string" },
+                            "sentVia": {
+                              "description": "Present when the message was sent through the API with a user or bot key; \"api_key:<id>\" names the key",
+                              "type": "string"
+                            },
+                            "metadata": {
+                              "type": "object",
+                              "propertyNames": { "type": "string" },
+                              "additionalProperties": { "type": "string" },
+                              "description": "External references attached by the sender. Always present; empty when unset."
+                            },
+                            "attachments": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": { "type": "string" },
+                                  "filename": { "type": "string" },
+                                  "mimeType": { "type": "string" },
+                                  "sizeBytes": {
+                                    "type": "integer",
+                                    "minimum": -9007199254740991,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "processingStatus": {
+                                    "type": "string",
+                                    "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                                  },
+                                  "width": {
+                                    "type": "integer",
+                                    "minimum": -9007199254740991,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "height": {
+                                    "type": "integer",
+                                    "minimum": -9007199254740991,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": ["id", "filename", "mimeType", "sizeBytes"],
+                                "additionalProperties": false
+                              }
+                            },
+                            "revision": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991,
+                              "description": "1 for the original body, +1 per edit"
+                            },
+                            "editedAt": { "type": "string", "format": "date-time" },
+                            "createdAt": { "type": "string", "format": "date-time" },
+                            "sealed": {
+                              "description": "Present only on messages in an end-to-end-encrypted stream. `content` is the placeholder the server stores in place of the body; this is the real one, which only a holder of a key the stream is wrapped to can open. Recover the stream key from GET /streams/{streamId}/e2e/key-wraps, then decrypt under the generation named in the envelope. Absent on the handful of messages sealed under the pre-stream-key scheme, which this wire does not describe.",
+                              "type": "object",
+                              "properties": {
+                                "ciphertext": { "type": "string" },
+                                "envelope": {
+                                  "type": "object",
+                                  "properties": {
+                                    "v": { "type": "number" },
+                                    "keyGeneration": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                                    "iv": { "type": "string" },
+                                    "aad": { "type": "string" }
+                                  },
+                                  "required": ["v", "keyGeneration", "iv", "aad"],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "required": ["ciphertext", "envelope"],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "streamId",
+                            "sequence",
+                            "authorId",
+                            "authorType",
+                            "content",
+                            "replyCount",
+                            "metadata",
+                            "revision",
+                            "createdAt"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": ["threadId", "message"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspaceId}/labels": {
       "get": {
         "operationId": "listLabels",
@@ -9028,7 +9246,7 @@
     { "name": "Attachments", "description": "Search attachments, inspect extracted content, and fetch download URLs" },
     { "name": "Users", "description": "List workspace users" },
     { "name": "Labels", "description": "List, create, edit, archive, join, and apply workspace labels" },
-    { "name": "Docs", "description": "List, read, create, and edit the docs hosted by a stream" },
+    { "name": "Docs", "description": "List, read, create, edit, and comment on the docs hosted by a stream" },
     {
       "name": "Bot runtimes",
       "description": "Register a runtime and keep its presence alive so it can be assigned work."
