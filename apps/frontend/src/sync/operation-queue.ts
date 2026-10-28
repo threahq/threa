@@ -57,6 +57,8 @@ async function reconcileRejectedOperation(op: PendingOperation, database: ThreaD
       break
     case "doc_update":
       console.warn("doc update rejected", { docId: op.payload.docId })
+      // The doc's local copy holds the refused bytes too; reopening would show edits the server never took.
+      await database.docStates.delete([op.workspaceId, op.payload.docId as string])
       break
   }
 }
@@ -216,11 +218,12 @@ export async function processOperationQueue(
           await database.pendingOperations.update(next.id, { blockedOnPrivacy: true })
           askBlockedSchedule(next, database, kick)
           skipped.add(next.id)
-        } else if (isPermanentApiError(error)) {
+        } else if (isPermanentApiError(error) && !(next.type === "doc_update" && error.status === 401)) {
           // A 4xx (minus 408/429) is the server's final answer for this
           // payload — replaying it can never succeed, so the op must die
           // here or it refires on every queue kick forever (the prod
-          // send-now denial loop of 2026-07-19).
+          // send-now denial loop of 2026-07-19). A doc edit's 401 is the
+          // session, not the payload: it waits for sign-in, being the only copy.
           await reconcileRejectedOperation(next, database)
           await database.pendingOperations.delete(next.id)
         } else {

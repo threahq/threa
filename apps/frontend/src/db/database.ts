@@ -1141,6 +1141,19 @@ export interface CachedStreamConnection extends StreamConnection {
   _cachedAt: number
 }
 
+/** The last Yjs state this device held for a doc, so the doc opens without the server. */
+export interface CachedDocState {
+  workspaceId: string
+  docId: string
+  /** Full Yjs state, local edits included. */
+  state: Uint8Array
+  /** Every server row up to this seq is in `state`. */
+  seq: number
+  /** Local edits in `state` the server had not acked when it was saved. */
+  unsent: Uint8Array | null
+  _cachedAt: number
+}
+
 /**
  * Which account's data a cached database holds. One row, written the first time
  * an account opens it: a database whose marker names somebody else is not this
@@ -1198,6 +1211,7 @@ export class ThreaDatabase extends Dexie {
   slots!: Table<CachedSlot, [string, string, string]>
   streamContextItems!: Table<CachedStreamContextItem, [string, string]>
   streamConnections!: Table<CachedStreamConnection, [string, string]>
+  docStates!: Table<CachedDocState, [string, string]>
   cacheOwnership!: EntityTable<CacheOwnership, "id">
 
   private upgradeRecoveryAvailable = true
@@ -1837,6 +1851,11 @@ export class ThreaDatabase extends Dexie {
       actorCopies: "[workspaceId+id], workspaceId",
     })
 
+    // v57: the last Yjs state of each opened doc, so a doc reopens offline.
+    this.version(57).stores({
+      docStates: "[workspaceId+docId], workspaceId",
+    })
+
     this.composerLoaded = this.table(COMPOSER_LOADED_STORE)
     this.composerTarget = this.table(COMPOSER_TARGET_STORE)
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE)
@@ -2018,6 +2037,7 @@ export async function clearAllCachedData(): Promise<void> {
       db.streamContextItems.clear(),
       db.slots.clear(),
       db.streamConnections.clear(),
+      db.docStates.clear(),
       // The persisted device key seals this identity's private key for
       // auto-resume — sign-out must drop it so the next account can't resume
       // this identity's unlocked session.

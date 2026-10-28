@@ -4,7 +4,8 @@ import { base64ToBytes, bytesToBase64 } from "@threahq/crypto"
 import type { DocState, DocUpdatedPayload, DocUpdateView, Stream } from "@threahq/types"
 import { ApiError } from "@/api/client"
 import * as operationQueueModule from "@/sync/operation-queue"
-import { DocSync, FLUSH_CAP_MS, REMOTE_ORIGIN } from "./doc-sync"
+import type { DocLocalCopies, DocLocalCopy } from "./doc-local-copy"
+import { DocSync, FLUSH_CAP_MS, LOCAL_COPY_SAVE_MS, REMOTE_ORIGIN } from "./doc-sync"
 
 const WORKSPACE_ID = "ws_1"
 const DOC_ID = "stream_doc"
@@ -137,6 +138,39 @@ function deferred(): Hold & { promise: Promise<void> } {
 /** What reached the operation queue, as the text each self-contained update produces. */
 let enqueued: { docId: string; text: string }[] = []
 
+/** This device's store, shared by every client a test connects; `queued` stands in for the queue's rows for the doc. */
+class MemoryLocalCopies implements DocLocalCopies {
+  copy: Omit<DocLocalCopy, "queuedIds"> | null = null
+  queued: { id: string; update: Uint8Array }[] = []
+
+  read = vi.fn(async (): Promise<DocLocalCopy | null> => {
+    if (!this.copy) return null
+    return {
+      ...this.copy,
+      unsent: [...this.copy.unsent, ...this.queued.map((row) => row.update)],
+      queuedIds: this.queued.map((row) => row.id),
+    }
+  })
+  write = vi.fn(
+    async (_ws: string, _doc: string, copy: { state: Uint8Array; seq: number; unsent: Uint8Array | null }) => {
+      this.copy = { state: copy.state, seq: copy.seq, unsent: copy.unsent ? [copy.unsent] : [] }
+    }
+  )
+  remove = vi.fn(async (_ws: string, _doc: string, queuedIds: string[] = []) => {
+    this.copy = null
+    this.queued = this.queued.filter((row) => !queuedIds.includes(row.id))
+  })
+
+  get text(): string | null {
+    if (!this.copy) return null
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, this.copy.state)
+    return doc.getText("t").toString()
+  }
+}
+
+let localCopies: MemoryLocalCopies
+
 function connect(server: FakeDocServer) {
   const ydoc = new Y.Doc()
   const rejections: string[] = []
@@ -147,6 +181,7 @@ function connect(server: FakeDocServer) {
     docId: DOC_ID,
     ydoc,
     api: server.api,
+    localCopies,
     onRejected: (refusal) => rejections.push(refusal.code),
     onLost: (error) => lost.push(error),
     kickOperationQueue: () => kicks.push(`after ${enqueued.length}`),
@@ -178,6 +213,7 @@ describe("DocSync", () => {
     vi.useFakeTimers()
     server = new FakeDocServer()
     enqueued = []
+    localCopies = new MemoryLocalCopies()
     vi.spyOn(operationQueueModule, "enqueueDocUpdate").mockImplementation(async (_ws, docId, update) => {
       enqueued.push({ docId, text: textOf(update) })
     })
@@ -224,6 +260,8 @@ describe("DocSync", () => {
     await vi.advanceTimersByTimeAsync(FLUSH_CAP_MS - 1000 - 1)
     expect(server.api.postUpdate).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
+    // Lets the local-copy save run; a leftover cap timer would still be pending.
+    await vi.advanceTimersByTimeAsync(LOCAL_COPY_SAVE_MS)
 
     expect({ posted: postedTexts(server), serverText: server.text, timers: vi.getTimerCount() }).toEqual({
       posted: ["ab"],
@@ -699,5 +737,181 @@ describe("DocSync", () => {
     await vi.advanceTimersByTimeAsync(FLUSH_CAP_MS)
 
     expect(seen).toEqual([{ phase: "loading" }, { phase: "ready" }])
+  })
+
+  describe("local copy", () => {
+    const offline = new TypeError("Failed to fetch")
+
+    /** Opens, types, and closes the doc, leaving its local copy behind. */
+    async function closeAfterTyping(text: string, options: { online: boolean }) {
+      const client = connect(server)
+      await client.sync.start()
+      const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(options.online)
+      type(client.ydoc, text)
+      await vi.advanceTimersByTimeAsync(0)
+      client.sync.stop()
+      await vi.advanceTimersByTimeAsync(0)
+      online.mockRestore()
+      server.clients.delete(client.sync)
+    }
+
+    it("should open from the local copy when the server cannot be reached", async () => {
+      await closeAfterTyping("saved ", { online: true })
+      server.api.get.mockRejectedValue(offline)
+
+      const client = connect(server)
+      await client.sync.start()
+
+      expect({ text: client.text(), status: client.sync.getStatus() }).toEqual({
+        text: "saved ",
+        status: { phase: "ready" },
+      })
+    })
+
+    it("should send edits typed offline before and after reopening once back online", async () => {
+      await closeAfterTyping("before ", { online: false })
+      server.api.get.mockRejectedValue(offline)
+      const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)
+      const client = connect(server)
+      await client.sync.start()
+      type(client.ydoc, "after ")
+      await vi.advanceTimersByTimeAsync(0)
+      online.mockRestore()
+
+      await client.sync.flush()
+
+      expect({ text: client.text(), server: server.text }).toEqual({ text: "before after ", server: "before after " })
+    })
+
+    it("should fill in what the server gained since the copy was saved", async () => {
+      await closeAfterTyping("mine ", { online: true })
+      server.writeElsewhere("theirs")
+
+      const client = connect(server)
+      await client.sync.start()
+      client.sync.receive(server.writeElsewhere(" later"))
+
+      expect({ text: client.text(), stateVectorSent: server.api.get.mock.calls.at(-1)?.[2] !== undefined }).toEqual({
+        text: "mine theirs later",
+        stateVectorSent: true,
+      })
+    })
+
+    it("should save the doc as it changes", async () => {
+      const client = connect(server)
+      await client.sync.start()
+
+      client.sync.receive(server.writeElsewhere("theirs "))
+      type(client.ydoc, "mine")
+      await vi.advanceTimersByTimeAsync(LOCAL_COPY_SAVE_MS)
+
+      expect(localCopies.text).toBe("theirs mine")
+    })
+
+    it("should remove the local copy and show the error when the doc is gone", async () => {
+      await closeAfterTyping("saved ", { online: true })
+      const gone = new ApiError(404, "STREAM_NOT_FOUND", "gone")
+      server.api.get.mockRejectedValue(gone)
+
+      const client = connect(server)
+      await client.sync.start()
+      client.sync.stop()
+
+      expect({ status: client.sync.getStatus(), copy: localCopies.copy }).toEqual({
+        status: { phase: "error", error: gone },
+        copy: null,
+      })
+    })
+
+    it("should remove the local copy and stop saving it when the server refuses its edits", async () => {
+      await closeAfterTyping("saved ", { online: true })
+      const client = connect(server)
+      await client.sync.start()
+      server.failNextPost(403, "FORBIDDEN")
+
+      type(client.ydoc, "refused ")
+      await vi.advanceTimersByTimeAsync(LOCAL_COPY_SAVE_MS)
+      client.sync.stop()
+
+      expect({ rejections: client.rejections, copy: localCopies.copy }).toEqual({
+        rejections: ["FORBIDDEN"],
+        copy: null,
+      })
+    })
+
+    it("should restore queued edits saved after the copy and send them with what is typed next", async () => {
+      await closeAfterTyping("copied ", { online: true })
+      const queuedDoc = new Y.Doc()
+      Y.applyUpdate(queuedDoc, localCopies.copy!.state)
+      const before = Y.encodeStateVector(queuedDoc)
+      type(queuedDoc, "queued ")
+      localCopies.queued = [{ id: "op_1", update: Y.encodeStateAsUpdate(queuedDoc, before) }]
+
+      const client = connect(server)
+      await client.sync.start()
+      type(client.ydoc, "next ")
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect({ text: client.text(), server: server.text }).toEqual({
+        text: "copied queued next ",
+        server: "copied queued next ",
+      })
+    })
+
+    it("should delete the restored queue rows with the copy when the server refuses the edits", async () => {
+      await closeAfterTyping("copied ", { online: true })
+      localCopies.queued = [{ id: "op_1", update: new Uint8Array([0, 0]) }]
+      const client = connect(server)
+      await client.sync.start()
+      server.failNextPost(403, "FORBIDDEN")
+
+      type(client.ydoc, "refused ")
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect({ copy: localCopies.copy, queued: localCopies.queued }).toEqual({ copy: null, queued: [] })
+    })
+
+    it("should keep edits and the copy when the session has expired, and send them once signed in", async () => {
+      await closeAfterTyping("copied ", { online: true })
+      const client = connect(server)
+      await client.sync.start()
+      server.failNextPost(401, "UNAUTHORIZED")
+      type(client.ydoc, "kept ")
+      await vi.advanceTimersByTimeAsync(0)
+      client.sync.stop()
+      server.clients.delete(client.sync)
+
+      const reopened = connect(server)
+      await reopened.sync.start()
+      await reopened.sync.flush()
+
+      expect({ rejections: client.rejections, server: server.text }).toEqual({ rejections: [], server: "copied kept " })
+    })
+
+    it("should catch up from the copy's seq once reachable again after opening offline", async () => {
+      await closeAfterTyping("mine ", { online: true })
+      server.api.get.mockRejectedValueOnce(offline)
+      const client = connect(server)
+      await client.sync.start()
+      server.writeElsewhere("theirs")
+
+      await client.sync.catchUp()
+
+      expect({ text: client.text(), after: server.api.listUpdates.mock.calls.map((call) => call[2]) }).toEqual({
+        text: "mine theirs",
+        after: [1],
+      })
+    })
+
+    it("should remove the local copy when catching up finds the doc gone", async () => {
+      const client = connect(server)
+      await client.sync.start()
+      await vi.advanceTimersByTimeAsync(LOCAL_COPY_SAVE_MS)
+      server.api.listUpdates.mockRejectedValue(new ApiError(404, "STREAM_NOT_FOUND", "gone"))
+
+      await client.sync.catchUp()
+
+      expect(localCopies.copy).toBeNull()
+    })
   })
 })

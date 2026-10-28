@@ -48,6 +48,8 @@ import * as triggersModule from "@/components/editor/triggers"
 import { DocPaneBody } from "./doc-pane-body"
 import { useDocSync } from "./use-doc-sync"
 import { BLOCK_HIGHLIGHT_MS } from "@/components/editor/doc-block-landing-extension"
+// eslint-disable-next-line no-restricted-imports -- test clears the doc local copies the real sync writes
+import { db } from "@/db"
 
 const WORKSPACE_ID = "ws_1"
 const DOC_ID = "stream_doc"
@@ -178,9 +180,10 @@ describe("DocPaneBody", () => {
     vi.spyOn(docsApi, "postUpdate").mockResolvedValue({ seq: 2, applied: true, touchedBlockIds: [] })
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup()
     vi.restoreAllMocks()
+    await db.docStates.clear()
   })
 
   function tree(canWrite: boolean | null, wrap: (body: ReactNode) => ReactNode = (body) => body) {
@@ -406,6 +409,30 @@ describe("DocPaneBody", () => {
 
     await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker"))
     expect(docsApi.get).toHaveBeenCalledTimes(2)
+  })
+
+  it("should reopen from this device's copy with edits made offline, and send them once back online", async () => {
+    vi.spyOn(operationQueueModule, "enqueueDocUpdate").mockResolvedValue()
+    const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)
+    const first = await mountLoaded()
+    act(() => {
+      proseMirror().editor.chain().focus("end").insertContent(" offline").run()
+    })
+    first.unmount()
+    vi.mocked(docsApi.get).mockRejectedValue(new TypeError("Failed to fetch"))
+
+    mount()
+
+    await waitFor(() => expect(proseMirror().textContent).toBe("Rotation tracker offline"))
+    online.mockReturnValue(true)
+    act(() => {
+      window.dispatchEvent(new Event("online"))
+    })
+    await waitFor(() => expect(docsApi.postUpdate).toHaveBeenCalledTimes(1))
+    const posted = new Y.Doc()
+    Y.applyUpdate(posted, Y.encodeStateAsUpdate(serverDoc))
+    Y.applyUpdate(posted, base64ToBytes(vi.mocked(docsApi.postUpdate).mock.calls[0]![2]))
+    expect(yDocToProsemirrorJSON(posted, DOC_FRAGMENT)).toEqual(paragraphs("Rotation tracker offline"))
   })
 
   it("keeps one live session under StrictMode: one load in use, one POST per edit, remote updates applied", async () => {
