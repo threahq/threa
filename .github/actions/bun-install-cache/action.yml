@@ -1,0 +1,21 @@
+name: Bun install cache
+description: Restores Bun's package cache before `bun install` and saves it after a miss, so installs link packages instead of downloading every tarball.
+inputs:
+  share-across-jobs:
+    description: Fall back to another job's cache on a miss. Off in a container, where `actions/cache` unpacks a runner-saved archive outside `$HOME`.
+    default: "true"
+runs:
+  using: composite
+  steps:
+    # Every job installing cold from the npm registry at once gets rate-limited
+    # ("registry asked to wait 60s before retrying"), and the install then stalls
+    # until the job times out. Jobs install different package sets, so each keeps
+    # its own cache; the prefix fallbacks keep a lockfile change to downloading
+    # only what changed.
+    - uses: actions/cache@v4
+      with:
+        path: ~/.bun/install/cache
+        key: bun-install-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/bun.lock') }}
+        restore-keys: |
+          bun-install-${{ runner.os }}-${{ github.job }}-
+          ${{ inputs.share-across-jobs == 'true' && format('bun-install-{0}-', runner.os) || '' }}
