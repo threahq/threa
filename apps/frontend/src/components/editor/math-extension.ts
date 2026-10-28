@@ -1,4 +1,5 @@
-import { InputRule, Node, mergeAttributes } from "@tiptap/core"
+import { InputRule } from "@tiptap/core"
+import { MathNode } from "@threahq/prosemirror/schema"
 import type { Editor } from "@tiptap/core"
 import type { Node as ProseMirrorNode, NodeType } from "@tiptap/pm/model"
 import { NodeSelection, Plugin, PluginKey, TextSelection, type EditorState } from "@tiptap/pm/state"
@@ -53,52 +54,8 @@ declare module "@tiptap/core" {
  * markdown, never characters in the document. KaTeX draws it, a tap or the
  * caret arriving opens its TeX in place, and backspace takes the whole equation
  * rather than silently breaking a hidden delimiter.
- *
- * Inline atom rather than a block: `$$…$$` sits inside a paragraph in markdown,
- * and the message renderer puts its display equation there too, so the node
- * that round-trips to it belongs in the same place. `display` decides how it
- * draws, not where it lives.
- *
- * `marks: ""` — the equation's appearance comes from its TeX, so bold or a link
- * on it would be a promise the sent message cannot keep.
  */
-export const MathExtension = Node.create({
-  name: "math",
-  group: "inline",
-  inline: true,
-  atom: true,
-  selectable: true,
-  marks: "",
-
-  addAttributes() {
-    return {
-      tex: {
-        default: "",
-        parseHTML: (element) => element.getAttribute("data-tex") ?? "",
-        renderHTML: (attrs) => ({ "data-tex": attrs.tex }),
-      },
-      display: {
-        default: false,
-        parseHTML: (element) => element.getAttribute("data-display") === "true",
-        renderHTML: (attrs) => ({ "data-display": attrs.display ? "true" : "false" }),
-      },
-    }
-  },
-
-  parseHTML() {
-    return [{ tag: 'span[data-type="math"]' }]
-  },
-
-  renderHTML({ HTMLAttributes }) {
-    return ["span", mergeAttributes(HTMLAttributes, { "data-type": "math" })]
-  },
-
-  /** Copied or read as plain text, an equation is the source that produced it. */
-  renderText({ node }) {
-    const { tex, display } = node.attrs as MathAttrs
-    return display ? `$$${tex}$$` : `$${tex}$`
-  },
-
+export const MathExtension = MathNode.extend({
   addCommands() {
     return {
       insertMath:

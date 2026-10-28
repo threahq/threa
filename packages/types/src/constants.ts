@@ -1359,7 +1359,6 @@ export const MessageReferenceErrorCodes = {
 
 export const MessageErrorCodes = {
   ENQUEUE_UNAVAILABLE: "ENQUEUE_UNAVAILABLE",
-  COMMAND_NOT_ENQUEUEABLE: "COMMAND_NOT_ENQUEUEABLE",
 } as const
 
 // Inter-service authentication header (control-plane ↔ regional backend ↔ workspace-router)

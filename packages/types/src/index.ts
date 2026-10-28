@@ -905,7 +905,6 @@ export type {
   ThreaTextNode,
   ThreaMention,
   ThreaChannelLink,
-  ThreaCommand,
   ThreaEmoji,
   ThreaAttachmentReference,
   ThreaHardBreak,

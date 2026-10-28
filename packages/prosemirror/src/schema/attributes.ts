@@ -1,6 +1,30 @@
 import type { ContentRange } from "@threahq/types"
 
-export function parseRangeAttribute(raw: string | null): ContentRange | null {
+export type Attrs = Record<string, unknown>
+
+export interface DataAttributeSpec {
+  default: unknown
+  parseHTML: (element: HTMLElement) => unknown
+  renderHTML: (attrs: Attrs) => Record<string, unknown>
+}
+
+export function dataAttr(attr: string, dataName: string, defaultValue: unknown): DataAttributeSpec {
+  return {
+    default: defaultValue,
+    parseHTML: (element) => element.getAttribute(dataName),
+    renderHTML: (attrs) => ({ [dataName]: attrs[attr] }),
+  }
+}
+
+export function optionalDataAttr(attr: string, dataName: string): DataAttributeSpec {
+  return {
+    default: null,
+    parseHTML: (element) => element.getAttribute(dataName),
+    renderHTML: (attrs) => (attrs[attr] ? { [dataName]: attrs[attr] } : {}),
+  }
+}
+
+function parseRangeAttribute(raw: string | null): ContentRange | null {
   const match = raw?.match(/^(\d+)-(\d+)$/)
   if (!match) return null
   const from = Number(match[1])
@@ -21,13 +45,12 @@ export const referencePinAttributes = {
       const parsed = Number(element.getAttribute("data-version"))
       return Number.isInteger(parsed) && parsed > 0 ? parsed : null
     },
-    renderHTML: (attrs: Record<string, unknown>) =>
-      attrs.version == null ? {} : { "data-version": String(attrs.version) },
+    renderHTML: (attrs: Attrs) => (attrs.version == null ? {} : { "data-version": String(attrs.version) }),
   },
   range: {
     default: null,
     parseHTML: (element: HTMLElement) => parseRangeAttribute(element.getAttribute("data-range")),
-    renderHTML: (attrs: Record<string, unknown>) => {
+    renderHTML: (attrs: Attrs) => {
       const range = attrs.range as ContentRange | null
       return range ? { "data-range": `${range.from}-${range.to}` } : {}
     },

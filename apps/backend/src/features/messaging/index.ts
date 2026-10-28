@@ -24,6 +24,7 @@ export {
 export { e2eEnvelopeV2Schema, sealedBodySchema, MAX_E2E_CIPHERTEXT_BASE64_BYTES } from "./e2e-schema"
 
 export { deriveContentMarkdown } from "./content"
+export { contentJsonSchema } from "./content-json-schema"
 
 export { MessageRepository, REPLY_COUNT_SUBQUERY } from "./repository"
 export type { Message, InsertMessageParams, InvocationSourceState } from "./repository"

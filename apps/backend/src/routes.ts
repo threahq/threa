@@ -403,7 +403,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     pool,
     eventService,
     streamService,
-    commandRegistry,
     enqueuedMessageService,
     streamConnectionForwardService,
   })

@@ -1,13 +1,9 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import { HttpError } from "../../lib/errors"
-import { deriveContentMarkdown, conversationDirectiveSchema } from "../messaging"
+import { validateRequest } from "../../lib/validation"
+import { contentJsonSchema, deriveContentMarkdown, conversationDirectiveSchema } from "../messaging"
 import type { ScheduledMessagesService } from "./service"
-
-const contentJsonSchema = z.object({
-  type: z.literal("doc"),
-  content: z.array(z.any()),
-})
 
 const scheduleSchema = z.object({
   streamId: z.string().min(1),
@@ -59,11 +55,7 @@ export function createScheduledMessagesHandlers({ scheduledMessagesService }: De
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const parsed = scheduleSchema.safeParse(req.body)
-      if (!parsed.success) {
-        throw new HttpError("Invalid schedule request", { status: 400, code: "VALIDATION_ERROR" })
-      }
-      const data = parsed.data
+      const data = validateRequest(scheduleSchema, req.body)
 
       const scheduled = await scheduledMessagesService.schedule({
         workspaceId,
@@ -87,18 +79,15 @@ export function createScheduledMessagesHandlers({ scheduledMessagesService }: De
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const parsed = listQuerySchema.safeParse(req.query)
-      if (!parsed.success) {
-        throw new HttpError("Invalid list request", { status: 400, code: "VALIDATION_ERROR" })
-      }
+      const query = validateRequest(listQuerySchema, req.query)
 
       const result = await scheduledMessagesService.list({
         workspaceId,
         userId,
-        status: parsed.data.status,
-        streamId: parsed.data.streamId,
-        limit: parsed.data.limit,
-        cursor: parsed.data.cursor,
+        status: query.status,
+        streamId: query.streamId,
+        limit: query.limit,
+        cursor: query.cursor,
       })
 
       res.json(result)
@@ -125,25 +114,22 @@ export function createScheduledMessagesHandlers({ scheduledMessagesService }: De
       const workspaceId = req.workspaceId!
       const id = req.params.id!
 
-      const parsed = updateSchema.safeParse(req.body)
-      if (!parsed.success) {
-        throw new HttpError("Invalid update request", { status: 400, code: "VALIDATION_ERROR" })
-      }
+      const data = validateRequest(updateSchema, req.body)
 
       const scheduled = await scheduledMessagesService.update({
         workspaceId,
         userId,
         id,
-        expectedVersion: parsed.data.expectedVersion,
-        contentJson: parsed.data.contentJson,
+        expectedVersion: data.expectedVersion,
+        contentJson: data.contentJson,
         // Markdown moves with the JSON: derive it when the content changes, and
         // leave it untouched (undefined) when this edit only touches scheduling
         // or attachments.
-        contentMarkdown: parsed.data.contentJson ? deriveContentMarkdown(parsed.data.contentJson) : undefined,
-        attachmentIds: parsed.data.attachmentIds,
-        metadata: parsed.data.metadata,
-        scheduledFor: parsed.data.scheduledFor ? new Date(parsed.data.scheduledFor) : undefined,
-        confirmedPrivacyWarning: parsed.data.confirmedPrivacyWarning,
+        contentMarkdown: data.contentJson ? deriveContentMarkdown(data.contentJson) : undefined,
+        attachmentIds: data.attachmentIds,
+        metadata: data.metadata,
+        scheduledFor: data.scheduledFor ? new Date(data.scheduledFor) : undefined,
+        confirmedPrivacyWarning: data.confirmedPrivacyWarning,
       })
 
       res.json({ scheduled })

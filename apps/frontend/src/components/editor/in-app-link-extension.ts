@@ -1,4 +1,4 @@
-import { Node, mergeAttributes } from "@tiptap/core"
+import { InAppLinkNode } from "@threahq/prosemirror/schema"
 import { ReactNodeViewRenderer } from "@tiptap/react"
 import { InAppLinkView } from "./in-app-link-view"
 
@@ -33,59 +33,13 @@ declare module "@tiptap/core" {
 
 /**
  * Inline atom node that replaces an in-app stream/message/conversation URL with a
- * compact chip (the name instead of a raw link). Mirrors the inline-atom shape of
- * `MemoEmbedExtension`. The wire format stays a normal markdown link
+ * compact chip (the name instead of a raw link). The wire format stays a normal markdown link
  * `[name](url)` (see `serializeToMarkdown`) so external/API consumers get a real
  * navigable URL and the timeline renders the same chip from the link alone —
  * the node is purely the compose-time representation. The cached `name` is the
  * pre-hydration label; the node-view resolves the live name and stamps it back.
  */
-export const InAppLinkExtension = Node.create({
-  name: "inAppLink",
-  group: "inline",
-  inline: true,
-  selectable: true,
-  atom: true,
-  marks: "_",
-
-  addAttributes() {
-    return {
-      url: {
-        default: null,
-        parseHTML: (element) => element.getAttribute("data-url"),
-        renderHTML: (attrs) => ({ "data-url": attrs.url }),
-      },
-      streamId: {
-        default: null,
-        parseHTML: (element) => element.getAttribute("data-stream-id"),
-        renderHTML: (attrs) => ({ "data-stream-id": attrs.streamId }),
-      },
-      messageId: {
-        default: null,
-        parseHTML: (element) => element.getAttribute("data-message-id"),
-        renderHTML: (attrs) => (attrs.messageId ? { "data-message-id": attrs.messageId } : {}),
-      },
-      name: {
-        default: "",
-        parseHTML: (element) => element.getAttribute("data-name"),
-        renderHTML: (attrs) => ({ "data-name": attrs.name }),
-      },
-    }
-  },
-
-  parseHTML() {
-    return [{ tag: 'span[data-type="in-app-link"]' }]
-  },
-
-  renderHTML({ HTMLAttributes }) {
-    return ["span", mergeAttributes(HTMLAttributes, { "data-type": "in-app-link" })]
-  },
-
-  renderText({ node }) {
-    const attrs = node.attrs as InAppLinkAttrs
-    return attrs.name || "Link"
-  },
-
+export const InAppLinkExtension = InAppLinkNode.extend({
   addCommands() {
     return {
       insertInAppLink:

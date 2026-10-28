@@ -1,4 +1,5 @@
-import { Node, ReactNodeViewRenderer, mergeAttributes, type Editor, type ReactNodeViewProps } from "@tiptap/react"
+import type { Node } from "@tiptap/core"
+import { ReactNodeViewRenderer, type Editor, type ReactNodeViewProps } from "@tiptap/react"
 import type { ComponentType } from "react"
 import Suggestion from "@tiptap/suggestion"
 import { PluginKey } from "@tiptap/pm/state"
@@ -7,21 +8,14 @@ import { currentWordContainsBacktick } from "../markdown-guards"
 import { showOnTypingOnly, withKeyboardCorrectionTolerance } from "./keyboard-correction-match"
 import { withSpacedQuery } from "./spaced-query-match"
 import { currentSuggestionRange } from "./suggestion-range"
-
-/**
- * Configuration for a single attribute on a trigger node.
- */
-interface AttributeConfig {
-  default?: unknown
-  dataAttr: string
-}
+import { withClassName } from "./with-class-name"
 
 /**
  * Configuration for creating a trigger extension.
  */
 export interface TriggerExtensionConfig<TItem, TAttrs extends object> {
-  /** Node name in the ProseMirror schema */
-  name: string
+  /** Shared schema node the trigger inserts */
+  node: Node
   /** Unique plugin key for the suggestion plugin */
   pluginKey: PluginKey
   /** Character that triggers the autocomplete (e.g., "@", "#", "/") */
@@ -41,12 +35,8 @@ export interface TriggerExtensionConfig<TItem, TAttrs extends object> {
    * mid-transaction whether the query still matches.
    */
   spacedQuery?: boolean
-  /** Attribute definitions for the node */
-  attributes: Record<keyof TAttrs, AttributeConfig>
   /** Returns the CSS class(es) for the rendered node */
   getClassName: (attrs: TAttrs) => string
-  /** Returns the text content for the rendered node (e.g., "@slug") */
-  getText: (attrs: TAttrs) => string
   /** Maps the selected autocomplete item to node attributes */
   mapPropsToAttrs: (item: TItem) => TAttrs
   /**
@@ -112,28 +102,21 @@ function hasItems<TItem>(items: (props: { query: string }) => TItem[] | Promise<
  */
 export function createTriggerExtension<TItem, TAttrs extends object>(config: TriggerExtensionConfig<TItem, TAttrs>) {
   const {
-    name,
+    node,
     pluginKey,
     char,
     startOfLine = false,
     allowToIncludeChar = false,
     spacedQuery = false,
-    attributes,
     getClassName,
-    getText,
     mapPropsToAttrs,
     nodeView,
     onSelectItem,
   } = config
 
-  return Node.create<TriggerExtensionOptions<TItem>>({
-    name,
-    group: "inline",
-    inline: true,
-    selectable: true,
-    atom: true,
-    marks: "_", // Allow all marks (bold, italic, code, strike) on this node
+  const name = node.name
 
+  return node.extend<TriggerExtensionOptions<TItem>>({
     addStorage() {
       return { popupVisible: false }
     },
@@ -152,36 +135,8 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
       }
     },
 
-    addAttributes() {
-      const attrConfig: Record<string, object> = {}
-      for (const [key, cfg] of Object.entries(attributes) as [string, AttributeConfig][]) {
-        attrConfig[key] = {
-          default: cfg.default ?? null,
-          parseHTML: (element: HTMLElement) => element.getAttribute(cfg.dataAttr),
-          renderHTML: (attrs: Record<string, unknown>) => ({ [cfg.dataAttr]: attrs[key] }),
-        }
-      }
-      return attrConfig
-    },
-
-    parseHTML() {
-      return [{ tag: `span[data-type="${name}"]` }]
-    },
-
-    renderHTML({ node, HTMLAttributes }) {
-      const attrs = node.attrs as TAttrs
-      return [
-        "span",
-        mergeAttributes(HTMLAttributes, {
-          "data-type": name,
-          class: `${pillBaseClassName} ${getClassName(attrs)}`,
-        }),
-        getText(attrs),
-      ]
-    },
-
-    renderText({ node }) {
-      return getText(node.attrs as TAttrs)
+    renderHTML(props) {
+      return withClassName(this.parent!(props), `${pillBaseClassName} ${getClassName(props.node.attrs as TAttrs)}`)
     },
 
     // A node view replaces the editor DOM, so `renderHTML`'s attributes never

@@ -1,4 +1,4 @@
-import { Node, mergeAttributes } from "@tiptap/core"
+import { GiphyEmbedNode } from "@threahq/prosemirror/schema"
 import { ReactNodeViewRenderer } from "@tiptap/react"
 import { GiphyEmbedView } from "./giphy-embed-view"
 
@@ -21,65 +21,12 @@ declare module "@tiptap/core" {
   }
 }
 
-/** Coerce a `data-*` attribute to a positive integer, or null when absent/invalid. */
-function parseDimensionAttr(raw: string | null): number | null {
-  if (raw === null) return null
-  const value = Number(raw)
-  return Number.isInteger(value) && value > 0 ? value : null
-}
-
 /**
  * Inline atom node that embeds a Giphy GIF by CDN URL — the GIF is served from
  * Giphy (not copied into our storage), matching how Giphy intends embeds to
- * work. Mirrors the inline-atom shape of `MemoEmbedExtension`; the node view
- * renders the live `<img>`.
+ * work. The node view renders the live `<img>`.
  */
-export const GiphyEmbedExtension = Node.create({
-  name: "giphyEmbed",
-  group: "inline",
-  inline: true,
-  selectable: true,
-  atom: true,
-  marks: "_",
-
-  addAttributes() {
-    return {
-      giphyUrl: {
-        default: null,
-        parseHTML: (element) => element.getAttribute("data-giphy-url"),
-        renderHTML: (attrs) => ({ "data-giphy-url": attrs.giphyUrl }),
-      },
-      title: {
-        default: "",
-        parseHTML: (element) => element.getAttribute("data-title"),
-        renderHTML: (attrs) => ({ "data-title": attrs.title }),
-      },
-      width: {
-        default: null,
-        parseHTML: (element) => parseDimensionAttr(element.getAttribute("data-width")),
-        renderHTML: (attrs) => (attrs.width ? { "data-width": String(attrs.width) } : {}),
-      },
-      height: {
-        default: null,
-        parseHTML: (element) => parseDimensionAttr(element.getAttribute("data-height")),
-        renderHTML: (attrs) => (attrs.height ? { "data-height": String(attrs.height) } : {}),
-      },
-    }
-  },
-
-  parseHTML() {
-    return [{ tag: 'span[data-type="giphy-embed"]' }]
-  },
-
-  renderHTML({ HTMLAttributes }) {
-    return ["span", mergeAttributes(HTMLAttributes, { "data-type": "giphy-embed" })]
-  },
-
-  renderText({ node }) {
-    const attrs = node.attrs as GiphyEmbedAttrs
-    return attrs.title || "GIF"
-  },
-
+export const GiphyEmbedExtension = GiphyEmbedNode.extend({
   addCommands() {
     return {
       insertGiphyEmbed:

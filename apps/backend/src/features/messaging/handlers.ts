@@ -1,30 +1,24 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool, PoolClient } from "pg"
-import { withTransaction } from "../../db"
 import type { EventService } from "./event-service"
 import type { Stream, StreamService } from "../streams"
 import type { Message } from "./repository"
-import { StreamEventRepository } from "../streams"
-import { OutboxRepository } from "../../lib/outbox"
-import type { CommandRegistry } from "../commands"
 import { copyWriteUnsupported, type StreamConnectionForwardService } from "../stream-connections"
 import {
-  type CommandDispatchedPayload,
   type ComposeTrace,
   type ConversationDirective,
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
-  MessageErrorCodes,
   REFERENCE_AUDIENCE_MAX_STREAM_IDS,
   StreamConnectionErrorCodes,
 } from "@threahq/types"
 import { serializeBigInt, HttpError } from "@threahq/backend-common"
 import { MessageNotFoundError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
-import { eventId, commandId as generateCommandId } from "../../lib/id"
 import { toShortcode, normalizeMessage, toEmoji } from "../emoji"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threahq/prosemirror"
 import { deriveContentMarkdown } from "./content"
+import { contentJsonSchema } from "./content-json-schema"
 import type {
   JSONContent,
   ReferenceAudienceInput,
@@ -93,11 +87,6 @@ const commonMessageOptionsSchema = {
   composeTrace: composeTraceSchema.optional(),
 }
 
-const contentJsonSchema = z.object({
-  type: z.literal("doc"),
-  content: z.array(z.any()),
-})
-
 // Schema for JSON input to an existing stream (from rich clients).
 // `contentMarkdown` is intentionally not accepted: the backend derives it from
 // `contentJson` (see `deriveContentMarkdown`) so the stored markdown can't
@@ -105,14 +94,18 @@ const contentJsonSchema = z.object({
 const createMessageJsonToStreamSchema = z.object({
   streamId: z.string().min(1, "streamId is required"),
   contentJson: contentJsonSchema,
+  content: z.never().optional(),
   enqueue: z.literal(true).optional(),
   ...commonMessageOptionsSchema,
 })
 
-// Schema for markdown input to an existing stream (from AI/external)
+// Schema for markdown input to an existing stream (from AI/external). A body
+// carrying both `content` and `contentJson` fails both variants instead of
+// silently storing one of them.
 const createMessageMarkdownToStreamSchema = z.object({
   streamId: z.string().min(1, "streamId is required"),
   content: z.string().min(1, "content is required"),
+  contentJson: z.never().optional(),
   enqueue: z.literal(true).optional(),
   ...commonMessageOptionsSchema,
 })
@@ -123,6 +116,7 @@ const createMessageMarkdownToStreamSchema = z.object({
 const createMessageJsonToDmSchema = z.object({
   dmUserId: z.string().min(1, "dmUserId is required"),
   contentJson: contentJsonSchema,
+  content: z.never().optional(),
   ...commonMessageOptionsSchema,
 })
 
@@ -130,6 +124,7 @@ const createMessageJsonToDmSchema = z.object({
 const createMessageMarkdownToDmSchema = z.object({
   dmUserId: z.string().min(1, "dmUserId is required"),
   content: z.string().min(1, "content is required"),
+  contentJson: z.never().optional(),
   ...commonMessageOptionsSchema,
 })
 
@@ -177,11 +172,13 @@ const createMessageSchema = z.union([
 // accept `contentMarkdown`; the backend derives it from `contentJson`.
 const updateMessageJsonSchema = z.object({
   contentJson: contentJsonSchema,
+  content: z.never().optional(),
   confirmedPrivacyWarning: z.boolean().optional(),
 })
 
 const updateMessageMarkdownSchema = z.object({
   content: z.string().min(1, "content is required"),
+  contentJson: z.never().optional(),
   confirmedPrivacyWarning: z.boolean().optional(),
 })
 
@@ -229,7 +226,7 @@ function normalizeContent(input: z.infer<typeof createPlaintextMessageSchema> | 
   contentJson: JSONContent
   contentMarkdown: string
 } {
-  if ("contentJson" in input) {
+  if (input.contentJson) {
     // Rich client: JSON is the canon. Always derive the markdown projection from
     // it rather than trusting any client-supplied markdown, so the stored
     // markdown (read by agents, mention-gating, search, and the API wire) can't
@@ -262,33 +259,10 @@ const E2E_PLACEHOLDER_CONTENT_JSON: JSONContent = {
   content: [{ type: "paragraph", content: [{ type: "text", text: E2E_PLACEHOLDER_CONTENT_MARKDOWN }] }],
 }
 
-interface DetectedCommand {
-  name: string
-  args: string
-}
-
-/** Detect whether the first inline node of the first paragraph is a command. */
-function detectCommand(contentJson: JSONContent): DetectedCommand | null {
-  const firstBlock = contentJson.content?.[0]
-  if (firstBlock?.type !== "paragraph") return null
-
-  const firstInline = firstBlock.content?.[0]
-  if (firstInline?.type !== "command") return null
-
-  const attrs = firstInline.attrs as { name: string; args?: string } | undefined
-  if (!attrs?.name) return null
-
-  return {
-    name: attrs.name,
-    args: attrs.args ?? "",
-  }
-}
-
 interface Dependencies {
   pool: Pool
   eventService: EventService
   streamService: StreamService
-  commandRegistry: CommandRegistry
   enqueuedMessageService: EnqueuedMessageService
   /** Absent when this deployment has no bridge to other regions, so a shared channel's host can't be reached. */
   streamConnectionForwardService: StreamConnectionForwardService | null
@@ -298,7 +272,6 @@ export function createMessageHandlers({
   pool,
   eventService,
   streamService,
-  commandRegistry,
   enqueuedMessageService,
   streamConnectionForwardService,
 }: Dependencies) {
@@ -408,10 +381,6 @@ export function createMessageHandlers({
         return res.status(201).json({ message: serializeMessage(message) })
       }
 
-      // Check for slash command in first node BEFORE normalization (normalization loses command nodes)
-      const originalContentJson = "contentJson" in data ? data.contentJson : undefined
-      const detectedCommand = originalContentJson ? detectCommand(originalContentJson) : null
-
       if (target.kind === "copy") {
         // The host dedupes a send by this id, which is what makes a retry across regions safe.
         if (!data.clientMessageId) throw copyWriteUnsupported("A send into a shared channel needs a clientMessageId")
@@ -420,9 +389,6 @@ export function createMessageHandlers({
         }
         if (data.metadata || data.conversation) {
           throw copyWriteUnsupported("Metadata and conversation directives aren't available in a shared channel")
-        }
-        if (detectedCommand && commandRegistry.has(detectedCommand.name)) {
-          throw copyWriteUnsupported("Commands aren't available in a shared channel")
         }
         const { contentJson } = normalizeContent(data)
         const message = await requireForwardService().sendMessage({
@@ -443,53 +409,6 @@ export function createMessageHandlers({
       // Merging both into the deduped union covers all flavors with one
       // gate run + one projection write (mirrors the edit path).
       const explicitAttachmentIds = data.attachmentIds ?? []
-
-      if (detectedCommand && commandRegistry.has(detectedCommand.name)) {
-        if (insertEnqueuedInvocation) {
-          throw new HttpError("A command can't be enqueued", {
-            status: 400,
-            code: MessageErrorCodes.COMMAND_NOT_ENQUEUEABLE,
-          })
-        }
-        const cmdId = generateCommandId()
-        const evtId = eventId()
-
-        const event = await withTransaction(pool, async (client) => {
-          const evt = await StreamEventRepository.insert(client, {
-            id: evtId,
-            workspaceId,
-            streamId,
-            eventType: "command_dispatched",
-            payload: {
-              commandId: cmdId,
-              name: detectedCommand.name,
-              args: detectedCommand.args,
-              status: "dispatched",
-            } satisfies CommandDispatchedPayload,
-            actorId: userId,
-            actorType: "user",
-          })
-
-          await OutboxRepository.insert(client, "command:dispatched", {
-            workspaceId,
-            streamId,
-            event: serializeBigInt(evt),
-            authorId: userId,
-          })
-
-          return evt
-        })
-
-        return res.status(202).json({
-          command: {
-            id: cmdId,
-            name: detectedCommand.name,
-            args: detectedCommand.args,
-            status: "dispatched",
-          },
-          event: serializeBigInt(event),
-        })
-      }
 
       const { contentJson, contentMarkdown } = normalizeContent(data)
       // Union of explicit fresh-upload ids and inline references parsed from

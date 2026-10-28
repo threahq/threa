@@ -219,7 +219,6 @@ export type ThreaInlineNode =
   | ThreaTextNode
   | ThreaMention
   | ThreaChannelLink
-  | ThreaCommand
   | ThreaEmoji
   | ThreaAttachmentReference
   | ThreaMemoEmbed
@@ -256,17 +255,6 @@ export interface ThreaChannelLink {
   attrs: {
     id: string
     slug: string
-  }
-}
-
-/**
- * /command node for slash commands.
- */
-export interface ThreaCommand {
-  type: "command"
-  attrs: {
-    name: string
-    args?: string
   }
 }
 
@@ -445,14 +433,6 @@ const channelLinkNodeSchema = z.object({
   }),
 })
 
-const commandNodeSchema = z.object({
-  type: z.literal("command"),
-  attrs: z.object({
-    name: z.string(),
-    args: z.string().optional(),
-  }),
-})
-
 const emojiNodeSchema = z.object({
   type: z.literal("emoji"),
   attrs: z.object({
@@ -520,7 +500,6 @@ const inlineNodeSchema: z.ZodType<ThreaInlineNode> = z.union([
   textNodeSchema,
   mentionNodeSchema,
   channelLinkNodeSchema,
-  commandNodeSchema,
   emojiNodeSchema,
   attachmentReferenceNodeSchema,
   memoEmbedNodeSchema,

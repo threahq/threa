@@ -1,6 +1,5 @@
-import { Node, mergeAttributes } from "@tiptap/core"
+import { AttachmentReferenceNode } from "@threahq/prosemirror/schema"
 import { ReactNodeViewRenderer } from "@tiptap/react"
-import { attachmentReferenceLabel } from "@threahq/prosemirror"
 import { AttachmentReferenceView } from "./attachment-reference-view"
 
 export type AttachmentStatus = "uploading" | "uploaded" | "error"
@@ -46,86 +45,7 @@ declare module "@tiptap/core" {
   }
 }
 
-export const AttachmentReferenceExtension = Node.create({
-  name: "attachmentReference",
-  group: "inline",
-  inline: true,
-  selectable: true,
-  atom: true,
-  marks: "_", // Allow all marks (bold, italic, etc.)
-
-  addAttributes() {
-    return {
-      id: {
-        default: null,
-        parseHTML: (element) => element.getAttribute("data-id"),
-        renderHTML: (attrs) => ({ "data-id": attrs.id }),
-      },
-      filename: {
-        default: "",
-        parseHTML: (element) => element.getAttribute("data-filename"),
-        renderHTML: (attrs) => ({ "data-filename": attrs.filename }),
-      },
-      mimeType: {
-        default: "application/octet-stream",
-        parseHTML: (element) => element.getAttribute("data-mime-type"),
-        renderHTML: (attrs) => ({ "data-mime-type": attrs.mimeType }),
-      },
-      sizeBytes: {
-        default: null,
-        parseHTML: (element) => {
-          const rawValue = element.getAttribute("data-size-bytes")
-          if (rawValue === null || rawValue === "") return null
-          if (!/^\d+$/.test(rawValue)) return null
-          const parsed = Number(rawValue)
-          return Number.isSafeInteger(parsed) ? parsed : null
-        },
-        renderHTML: (attrs) => (attrs.sizeBytes != null ? { "data-size-bytes": String(attrs.sizeBytes) } : {}),
-      },
-      status: {
-        default: "uploading" as AttachmentStatus,
-        parseHTML: (element) => element.getAttribute("data-status") as AttachmentStatus,
-        renderHTML: (attrs) => ({ "data-status": attrs.status }),
-      },
-      imageIndex: {
-        default: null,
-        parseHTML: (element) => {
-          const val = element.getAttribute("data-image-index")
-          return val ? parseInt(val, 10) : null
-        },
-        renderHTML: (attrs) => (attrs.imageIndex ? { "data-image-index": String(attrs.imageIndex) } : {}),
-      },
-      error: {
-        default: null,
-        parseHTML: (element) => element.getAttribute("data-error"),
-        renderHTML: (attrs) => (attrs.error ? { "data-error": attrs.error } : {}),
-      },
-    }
-  },
-
-  parseHTML() {
-    return [{ tag: 'span[data-type="attachment-reference"]' }]
-  },
-
-  // No content hole: the node is an atom, and ProseMirror's DOMSerializer
-  // throws on one ("Content hole not allowed in a leaf node spec"), taking
-  // down every copy of a selection that holds a chip.
-  renderHTML({ HTMLAttributes }) {
-    return ["span", mergeAttributes(HTMLAttributes, { "data-type": "attachment-reference" })]
-  },
-
-  // Plain text rendering for copy/paste out of editor
-  renderText({ node }) {
-    const attrs = node.attrs as AttachmentReferenceAttrs
-    if (attrs.status === "uploading") {
-      return "[Uploading...]"
-    }
-    if (attrs.status === "error") {
-      return "[Upload failed]"
-    }
-    return `[${attachmentReferenceLabel(attrs)}]`
-  },
-
+export const AttachmentReferenceExtension = AttachmentReferenceNode.extend({
   addNodeView() {
     return ReactNodeViewRenderer(AttachmentReferenceView)
   },

@@ -1,4 +1,5 @@
 import { PluginKey } from "@tiptap/pm/state"
+import { MentionNode } from "@threahq/prosemirror/schema"
 import { createTriggerExtension, type TriggerExtensionOptions } from "./create-trigger-extension"
 import type { Mentionable } from "./types"
 
@@ -25,16 +26,10 @@ const mentionTypeClasses: Record<string, string> = {
  * Creates an inline node that renders as a styled mention chip.
  */
 export const MentionExtension = createTriggerExtension<Mentionable, MentionNodeAttrs>({
-  name: "mention",
+  node: MentionNode,
   pluginKey: MentionPluginKey,
   char: "@",
-  attributes: {
-    id: { dataAttr: "data-id" },
-    slug: { dataAttr: "data-slug" },
-    mentionType: { dataAttr: "data-mention-type", default: "user" },
-  },
   getClassName: (attrs) => mentionTypeClasses[attrs.mentionType] ?? mentionTypeClasses.user,
-  getText: (attrs) => `@${attrs.slug}`,
   mapPropsToAttrs: (m) => ({
     id: m.id,
     slug: m.slug,

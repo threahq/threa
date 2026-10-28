@@ -47,12 +47,12 @@ describe("pasteLinkOverSelection", () => {
     expect(serializeToMarkdown(editor.getJSON())).toBe("Read **[the docs](https://example.com/docs)** today")
   })
 
-  it("links a mixed inline-code selection as one phrase by dropping the incompatible code mark", () => {
+  it("links a mixed inline-code selection as one phrase keeping the code mark", () => {
     const editor = createTestEditor("plain `code` tail")
     editor.commands.setTextSelection({ from: 1, to: editor.state.doc.content.size - 1 })
 
     expect(pasteLinkOverSelection(editor, "https://example.com")).toBe(true)
-    expect(serializeToMarkdown(editor.getJSON())).toBe("[plain code tail](https://example.com)")
+    expect(serializeToMarkdown(editor.getJSON())).toBe("[plain `code` tail](https://example.com)")
   })
 
   it("declines selections containing inline atoms instead of creating nested links", () => {

@@ -1,4 +1,5 @@
 import { PluginKey } from "@tiptap/pm/state"
+import { SlashCommandNode } from "@threahq/prosemirror/schema"
 import { commandChipStyle } from "@/lib/markdown/chip-styles"
 import { createTriggerExtension, type TriggerExtensionOptions } from "./create-trigger-extension"
 import type { CommandItem } from "./types"
@@ -68,16 +69,11 @@ export type CommandOptions = TriggerExtensionOptions<CommandItem>
  * (`placement: "inline"` — e.g. the memo embed) show anywhere.
  */
 export const CommandExtension = createTriggerExtension<CommandItem, CommandNodeAttrs>({
-  name: "slashCommand",
+  node: SlashCommandNode,
   pluginKey: CommandPluginKey,
   char: "/",
   startOfLine: false,
-  attributes: {
-    name: { dataAttr: "data-name" },
-    clientActionId: { dataAttr: "data-client-action-id", default: null },
-  },
   getClassName: () => `${commandChipStyle} ${commandNodeTextSize}`,
-  getText: (attrs) => `/${attrs.name}`,
   mapPropsToAttrs: (c) => ({
     name: c.name,
     clientActionId: c.clientActionId ?? null,

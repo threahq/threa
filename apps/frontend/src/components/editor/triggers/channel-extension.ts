@@ -1,4 +1,5 @@
 import { PluginKey } from "@tiptap/pm/state"
+import { ChannelLinkNode } from "@threahq/prosemirror/schema"
 import { triggerStyles } from "@/lib/markdown/chip-styles"
 import { createTriggerExtension, type TriggerExtensionOptions } from "./create-trigger-extension"
 import { ChannelLinkView } from "./channel-link-view"
@@ -18,12 +19,12 @@ export type ChannelOptions = TriggerExtensionOptions<ChannelItem>
  *
  * The node view draws the chip, so a scratchpad reads under its live name and
  * its own glyph rather than the folded slug baked into `attrs`.
- * `getClassName`/`getText` stay the plain-HTML fallback the copy, paste and
- * export paths render through — same neutral channel palette, so the two never
- * disagree about the chip's colour.
+ * `getClassName` and the shared node's text stay the plain-HTML fallback the
+ * copy, paste and export paths render through — same neutral channel palette,
+ * so the two never disagree about the chip's colour.
  */
 export const ChannelExtension = createTriggerExtension<ChannelItem, ChannelNodeAttrs>({
-  name: "channelLink",
+  node: ChannelLinkNode,
   pluginKey: ChannelPluginKey,
   char: "#",
   // `##` narrows the list to channels, so the second `#` has to reach the query
@@ -32,12 +33,7 @@ export const ChannelExtension = createTriggerExtension<ChannelItem, ChannelNodeA
   // Stream names are phrases ("CCH - Threa mention scratchpads"), and no single
   // word of one narrows the list to it.
   spacedQuery: true,
-  attributes: {
-    id: { dataAttr: "data-id" },
-    slug: { dataAttr: "data-slug" },
-  },
   getClassName: () => triggerStyles.channel,
-  getText: (attrs) => `#${attrs.slug}`,
   mapPropsToAttrs: (c) => ({
     id: c.id,
     slug: c.slug,

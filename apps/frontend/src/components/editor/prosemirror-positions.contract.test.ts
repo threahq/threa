@@ -14,9 +14,6 @@ import { createEditorExtensions } from "./editor-extensions"
 
 const schema = getSchema(createEditorExtensions({ placeholder: "" }))
 
-/** Wire-format alias for the editor's `slashCommand` node, accepted by the public API. */
-const NON_SCHEMA_LEAF_TYPES = ["command"]
-
 const fixture: JSONContent = {
   type: "doc",
   content: [
@@ -129,8 +126,7 @@ describe("LEAF_NODE_TYPES", () => {
     const schemaLeaves = Object.keys(schema.nodes)
       .filter((name) => schema.nodes[name].isLeaf)
       .sort()
-    expect([...LEAF_NODE_TYPES].filter((name) => name in schema.nodes).sort()).toEqual(schemaLeaves)
-    expect([...LEAF_NODE_TYPES].filter((name) => !(name in schema.nodes)).sort()).toEqual(NON_SCHEMA_LEAF_TYPES)
+    expect([...LEAF_NODE_TYPES].sort()).toEqual(schemaLeaves)
   })
 
   it("holds every non-leaf node of the real editor schema in the container set", () => {
