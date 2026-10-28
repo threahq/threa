@@ -82,6 +82,7 @@ export type OutboxEventType =
   | "command:progress"
   | "stream:aside_anchored"
   | "stream:doc_created"
+  | "stream:doc_activity"
   | "doc:updated"
   | "agent_session:started"
   | "agent_session:completed"
@@ -194,6 +195,7 @@ export type StreamScopedEventType =
   | "stream:decision_requested"
   | "stream:decision_resolved"
   | "stream:doc_created"
+  | "stream:doc_activity"
   | "doc:updated"
   | "stream:call_started"
   | "stream:call_ended"
@@ -754,8 +756,8 @@ export interface StreamAsideAnchoredOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
 }
 
-/** The host stream's `doc:created` row; `streamId` is the host. */
-export interface StreamDocCreatedOutboxPayload extends StreamScopedPayload {
+/** The host stream's `doc:created` or `doc:activity` row; `streamId` is the host. */
+export interface StreamDocRowOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
 }
 
@@ -1502,7 +1504,8 @@ export interface OutboxEventPayloadMap {
   "command:failed": CommandFailedOutboxPayload
   "command:progress": CommandProgressOutboxPayload
   "stream:aside_anchored": StreamAsideAnchoredOutboxPayload
-  "stream:doc_created": StreamDocCreatedOutboxPayload
+  "stream:doc_created": StreamDocRowOutboxPayload
+  "stream:doc_activity": StreamDocRowOutboxPayload
   "doc:updated": DocUpdatedPayload
   "agent_session:started": AgentSessionStartedOutboxPayload
   "agent_session:completed": AgentSessionCompletedOutboxPayload
@@ -1633,6 +1636,7 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "stream:decision_requested",
   "stream:decision_resolved",
   "stream:doc_created",
+  "stream:doc_activity",
   "doc:updated",
   "call:participants_changed",
   "call:transport_transfer_changed",

@@ -376,6 +376,10 @@ export function EventItem({
       // Agent session events are grouped and rendered in EventList, not here
       return null
 
+    case "doc:activity":
+      // Doc activity rows are merged and rendered in EventList, not here
+      return null
+
     default:
       // Unknown event type - render as system event
       return (

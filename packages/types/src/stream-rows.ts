@@ -47,10 +47,11 @@ export interface StreamRowSpec {
   rendersAsOwnRow: boolean
   /**
    * Grouped with adjacent same-group events into one rendered card before it
-   * draws: command lifecycle (dispatched/completed/failed) and agent-session
-   * lifecycle (started/completed/failed/deleted). `null` for ungrouped rows.
+   * draws: command lifecycle (dispatched/completed/failed), agent-session
+   * lifecycle (started/completed/failed/deleted) and one doc's adjacent
+   * activity roll-ups. `null` for ungrouped rows.
    */
-  grouping: "command" | "session" | null
+  grouping: "command" | "session" | "doc" | null
   /**
    * Participates in same-author continuation grouping (consecutive messages by
    * one actor within a short window collapse their repeated header). True only
@@ -364,6 +365,7 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
   },
 
   "doc:created": CHROME_BROADCAST,
+  "doc:activity": { ...CHROME_BROADCAST, rendersAsOwnRow: false, grouping: "doc" },
   // An edit in the doc stream's own log; no timeline row, no slot.
   "doc:edited": {
     rendersAsOwnRow: false,

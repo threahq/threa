@@ -96,6 +96,7 @@ import {
   type DynamicNamingTargetAdapter,
   type DynamicNamingTargetKind,
 } from "./features/dynamic-naming"
+import { DocActivityOutboxHandler, DocActivityService, createDocActivityWorker } from "./features/docs"
 import {
   AttachmentService,
   createAttachmentUploadSweepWorker,
@@ -1430,6 +1431,12 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
+  jobQueue.registerHandler(
+    JobQueues.DOC_ACTIVITY_ROLLUP,
+    createDocActivityWorker(new DocActivityService({ pool, jobQueue })),
+    { tier: QueueTiers.LIGHT, fairness: QueueFairness.NONE }
+  )
+
   const embeddingWorker = createEmbeddingWorker({ pool, embeddingService })
   jobQueue.registerHandler(JobQueues.EMBEDDING_GENERATE, embeddingWorker, {
     tier: QueueTiers.LIGHT,
@@ -1819,6 +1826,7 @@ export async function startServer(): Promise<ServerInstance> {
   const enclaveDispatchHandler = config.enclaveInternalApiKey ? new EnclaveDispatchHandler(pool) : null
   const contextBagPrecomputeHandler = new ContextBagPrecomputeHandler(pool, jobQueue)
   const dynamicNamingHandler = new DynamicNamingOutboxHandler(pool, dynamicNamingScheduler, dynamicNamingService)
+  const docActivityHandler = new DocActivityOutboxHandler(pool, jobQueue)
   const emojiUsageHandler = new EmojiUsageHandler(pool)
   const analyticsOutboxHandler = config.posthog ? new AnalyticsOutboxHandler(pool, analyticsReporter) : null
   const embeddingHandler = new EmbeddingHandler(pool, jobQueue)
@@ -1859,6 +1867,7 @@ export async function startServer(): Promise<ServerInstance> {
     companionHandler,
     contextBagPrecomputeHandler,
     dynamicNamingHandler,
+    docActivityHandler,
     emojiUsageHandler,
     embeddingHandler,
     boundaryExtractionHandler,

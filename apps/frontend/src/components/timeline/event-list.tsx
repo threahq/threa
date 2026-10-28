@@ -8,6 +8,7 @@ import {
   type BotAccessStatusChangedEventPayload,
   type DecisionResolvedEventPayload,
   type CallEndedEventPayload,
+  type DocActivityEventPayload,
 } from "@threahq/types"
 import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "./session-grouping"
 import { getCommandId, isOwnCommandEvent } from "./command-grouping"
@@ -21,6 +22,7 @@ import { RunFoldProvider } from "./run-fold-context"
 import { AsideAnchorEvent } from "./aside-anchor-event"
 import { AgentSessionEvent } from "./agent-session-event"
 import { CommandEvent } from "./command-event"
+import { DocActivityEvent } from "./doc-activity-event"
 import { UnreadDivider } from "./unread-divider"
 import { DayDivider } from "./day-divider"
 import { localStartOfDayMs } from "@/lib/dates"
@@ -126,6 +128,8 @@ export type TimelineItem =
       asideAnchors?: StreamEvent[]
     }
   | { type: "command_group"; commandId: string; events: StreamEvent[]; asideAnchors?: StreamEvent[] }
+  /** Adjacent `doc:activity` rows for one doc, rendered as one row (`mergeDocActivityRuns`). */
+  | { type: "doc_activity_group"; docId: string; events: StreamEvent[]; asideAnchors?: StreamEvent[] }
   | {
       type: "session_group"
       sessionId: string
@@ -357,6 +361,51 @@ export function annotateConversationRevivals(
   })
 }
 
+type EventGroupItem = Extract<TimelineItem, { type: "command_group" | "session_group" | "doc_activity_group" }>
+
+/** Items that render several events as one row; `groupAnchorIds` says which event ids address them. */
+function isEventGroup(item: TimelineItem): item is EventGroupItem {
+  return item.type === "command_group" || item.type === "session_group" || item.type === "doc_activity_group"
+}
+
+/**
+ * Ids a group answers to in divider and scroll lookups: its first event, or any event of a
+ * doc group, whose later roll-ups merge into a row the viewer may already have read.
+ */
+function groupAnchorIds(item: EventGroupItem): string[] {
+  const ids = item.events.map((event) => event.id)
+  return item.type === "doc_activity_group" ? ids : ids.slice(0, 1)
+}
+
+/** The last item that renders a row; zero-height events between two rows do not separate them. */
+function lastRenderedItem(items: TimelineItem[]): TimelineItem | undefined {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i]!
+    if (item.type !== "event" || !ZERO_HEIGHT_EVENT_TYPES.has(item.event.eventType)) return item
+  }
+  return undefined
+}
+
+/**
+ * Merge adjacent `doc:activity` rows of one doc into a `doc_activity_group`. Runs on the list
+ * as rendered, after `filterVisibleItems` and `attachAsideAnchors`, so a hidden session card or
+ * a folded aside row between two roll-ups never splits them into two rows.
+ */
+export function mergeDocActivityRuns(items: TimelineItem[]): TimelineItem[] {
+  const result: TimelineItem[] = []
+  for (const item of items) {
+    if (item.type !== "event" || item.event.eventType !== "doc:activity") {
+      result.push(item)
+      continue
+    }
+    const docId = (item.event.payload as DocActivityEventPayload).docId
+    const last = lastRenderedItem(result)
+    if (last?.type === "doc_activity_group" && last.docId === docId) last.events.push(item.event)
+    else result.push({ type: "doc_activity_group", docId, events: [item.event] })
+  }
+  return result
+}
+
 /** Event types that render as null in EventItem (handled elsewhere or invisible) */
 const ZERO_HEIGHT_EVENT_TYPES = new Set([
   "reaction_added",
@@ -403,9 +452,8 @@ export function collectDividerAnchorIds(items: TimelineItem[]): Set<string> {
     if (item.type === "event") {
       if (ZERO_HEIGHT_EVENT_TYPES.has(item.event.eventType)) continue
       ids.add(item.event.id)
-    } else if (item.type === "command_group" || item.type === "session_group") {
-      const firstEventId = item.events[0]?.id
-      if (firstEventId) ids.add(firstEventId)
+    } else if (isEventGroup(item)) {
+      for (const id of groupAnchorIds(item)) ids.add(id)
     }
   }
   return ids
@@ -579,7 +627,7 @@ export function findMessageItemIndex(items: TimelineItem[], messageId: string): 
 export function findEventItemIndex(items: TimelineItem[], eventId: string): number {
   return items.findIndex((item) => {
     if (item.type === "event") return item.event.id === eventId
-    if (item.type === "command_group" || item.type === "session_group") return item.events[0]?.id === eventId
+    if (isEventGroup(item)) return groupAnchorIds(item).includes(eventId)
     return false
   })
 }
@@ -603,6 +651,8 @@ export function getTimelineItemKey(item: TimelineItem): string {
       return item.commandId
     case "session_group":
       return item.sessionId
+    case "doc_activity_group":
+      return `doc_activity:${item.events[0]?.id}`
     case "gap":
       return `gap:${item.afterEventId}`
     case "skeleton":
@@ -638,6 +688,7 @@ function itemContainsEvent(item: TimelineItem, eventId: string): boolean {
   switch (item.type) {
     case "command_group":
     case "session_group":
+    case "doc_activity_group":
       return item.events.some((event) => event.id === eventId)
     case "gap":
     case "skeleton":
@@ -690,7 +741,8 @@ export function itemDayStartMs(item: TimelineItem): number | null {
       if (item.event.eventType === "aside:anchored") return null
       return localStartOfDayMs(new Date(item.event.createdAt))
     case "command_group":
-    case "session_group": {
+    case "session_group":
+    case "doc_activity_group": {
       const first = item.events[0]
       return first ? localStartOfDayMs(new Date(first.createdAt)) : null
     }
@@ -880,7 +932,7 @@ function itemAnchorIds(item: TimelineItem): string[] {
     const messageId = (item.event.payload as { messageId?: string })?.messageId
     return messageId ? [item.event.id, messageId] : [item.event.id]
   }
-  if (item.type === "command_group" || item.type === "session_group") return item.events.map((event) => event.id)
+  if (isEventGroup(item)) return item.events.map((event) => event.id)
   return []
 }
 
@@ -937,9 +989,7 @@ export interface TimelineItemRenderContext {
 function isFirstUnread(item: TimelineItem, firstUnreadEventId?: string): boolean {
   if (!firstUnreadEventId) return false
   if (item.type === "gap" || item.type === "skeleton" || item.type === "day_divider") return false
-  if (item.type === "command_group" || item.type === "session_group") {
-    return item.events[0]?.id === firstUnreadEventId
-  }
+  if (isEventGroup(item)) return groupAnchorIds(item).includes(firstUnreadEventId)
   return item.event.id === firstUnreadEventId
 }
 
@@ -1018,6 +1068,11 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
       {item.type === "command_group" && (
         <div className="px-3 sm:px-6" data-event-id={item.events[0]?.id}>
           <CommandEvent events={item.events} workspaceId={ctx.workspaceId} />
+        </div>
+      )}
+      {item.type === "doc_activity_group" && (
+        <div data-event-id={item.events[0]?.id}>
+          <DocActivityEvent events={item.events} workspaceId={ctx.workspaceId} />
         </div>
       )}
       {item.type === "gap" && (
@@ -1143,6 +1198,14 @@ export function timelineItemEqual(a: TimelineItem, b: TimelineItem): boolean {
       return (
         a.sessionId === other.sessionId &&
         a.sessionVersion === other.sessionVersion &&
+        eventsArrayEqual(a.events, other.events) &&
+        eventsArrayEqual(a.asideAnchors ?? NO_EVENTS, other.asideAnchors ?? NO_EVENTS)
+      )
+    }
+    case "doc_activity_group": {
+      const other = b as Extract<TimelineItem, { type: "doc_activity_group" }>
+      return (
+        a.docId === other.docId &&
         eventsArrayEqual(a.events, other.events) &&
         eventsArrayEqual(a.asideAnchors ?? NO_EVENTS, other.asideAnchors ?? NO_EVENTS)
       )

@@ -2171,6 +2171,7 @@ function bindStreamSocketHandlers(
   on("command:progress", handleAppendEvent)
   on("stream:aside_anchored", handleAppendEvent)
   on("stream:doc_created", handleAppendEvent)
+  on("stream:doc_activity", handleAppendEvent)
   on("agent_session:started", handleAppendEvent)
   on("agent_session:completed", handleAppendEvent)
   on("agent_session:failed", handleAppendEvent)
