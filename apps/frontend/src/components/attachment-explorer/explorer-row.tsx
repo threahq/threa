@@ -103,7 +103,7 @@ export function ExplorerRow({ workspaceId, item, isSelected, onSelect, onSelectA
           to={source.to}
           onClick={(e) => {
             e.stopPropagation()
-            source.onFollow?.()
+            source.onFollow?.(e)
           }}
           className="flex-none rounded p-1 text-muted-foreground reveal-actions hover:bg-background hover:text-foreground"
           aria-label={sourceLabel}

@@ -122,4 +122,17 @@ describe("ExplorerRow source link", () => {
 
     expect(takeBlockFocus("stream_doc")).toBe("blk_embed")
   })
+
+  it("leaves block focus alone when a modified click opens the doc elsewhere", async () => {
+    const user = userEvent.setup()
+    renderRow({
+      item: makeItem({ streamId: "stream_doc", messageId: null, docBlockId: "blk_embed", streamType: "doc" }),
+    })
+
+    await user.keyboard("{Meta>}")
+    await user.click(screen.getByRole("link", { name: /Open in/ }))
+    await user.keyboard("{/Meta}")
+
+    expect(takeBlockFocus("stream_doc")).toBeNull()
+  })
 })
