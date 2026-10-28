@@ -267,7 +267,10 @@ export async function lockEffectiveStreams(
   if (targetIds.length === 0) return []
   const requested = new Set(alsoLockIds)
   for (let attempt = 0; attempt < MAX_CHAIN_LOCK_ATTEMPTS; attempt++) {
+    const before = requested.size
     for (const id of await StreamRepository.listAncestorChainIds(db, workspaceId, targetIds)) requested.add(id)
+    // A re-read that finds nothing new means the missing link is gone, not moved.
+    if (attempt > 0 && requested.size === before) throw inaccessibleStream()
     const locked = await StreamRepository.findByIdsForUpdateBlocking(db, workspaceId, [...requested])
     const facts = factsFromLockedChains(
       workspaceId,

@@ -236,19 +236,26 @@ describe("moving a doc", () => {
     })
   })
 
-  test("should end a runtime session linked to a moved section thread", async () => {
+  test.each([
+    ["an active", false],
+    ["an archived", true],
+  ])("should end %s runtime session linked to a moved section thread for good", async (_kind, archived) => {
     const { a, b, doc, thread } = await seed()
+    const sessionId = `sess_docs_move_${archived ? "archived" : "active"}`
     const link = await BotRuntimeSessionLinkRepository.upsert(pool, {
       id: botRuntimeSessionLinkId(),
       workspaceId: wsId,
       botId: "bot_docs_move",
       runtimeKind: "pi-local",
       instanceId: "inst_docs_move",
-      runtimeSessionId: "sess_docs_move",
+      runtimeSessionId: sessionId,
       rootStreamId: a.id,
       activeStreamId: thread.id,
       linkedBy: owner,
     })
+    if (archived) {
+      await BotRuntimeSessionLinkRepository.archiveActiveByStreams(pool, { workspaceId: wsId, streamIds: [thread.id] })
+    }
 
     await move({ docId: doc.id, fromStreamId: a.id, toStreamId: b.id })
 
@@ -256,15 +263,15 @@ describe("moving a doc", () => {
       link.id,
     ])
     const notified = await pool.query<{ payload: Record<string, unknown> }>(
-      "SELECT payload FROM outbox WHERE event_type = 'bot:session_archived' AND payload->>'runtimeSessionId' = $1",
-      ["sess_docs_move"]
+      "SELECT payload FROM outbox WHERE event_type = 'bot:session_archived' AND payload->>'runtimeSessionId' = $1 AND payload->>'workspaceId' = $2",
+      [sessionId, wsId]
     )
     const identity = {
       workspaceId: wsId,
       botId: "bot_docs_move",
       runtimeKind: "pi-local" as const,
       instanceId: "inst_docs_move",
-      runtimeSessionId: "sess_docs_move",
+      runtimeSessionId: sessionId,
     }
     // Neither the unarchive path nor a session reattach may revive a link whose root no longer routes.
     const revived = await withTransaction(pool, async (client) => ({
@@ -280,7 +287,8 @@ describe("moving a doc", () => {
       revived,
     }).toEqual({
       status: "ended",
-      notified: [a.id],
+      // An archived link was already announced when its thread was archived.
+      notified: archived ? [] : [a.id],
       revived: { byStreams: [], byRuntimeSession: null },
     })
   })

@@ -701,31 +701,38 @@ export const BotRuntimeSessionLinkRepository = {
   },
 
   /**
-   * End every active link attached to one of `streamIds` for good: the terminal 'ended' status with the
+   * End every live link attached to one of `streamIds` for good: the terminal 'ended' status with the
    * `:retired:<id>` rename {@link endActiveByRuntimeSession} uses, so no unarchive or reattach revives a
-   * link whose `root_stream_id` no longer routes (a doc move re-rooted its stream). Returns each link as it
-   * stood before, so the runtime is notified under the session id it registered.
+   * link whose `root_stream_id` no longer routes (a doc move re-rooted its stream). Archived links end
+   * too, since unarchive would revive them. Returns each link as it stood before, so the runtime is
+   * notified under the session id it registered, and only for links that were still active.
    */
-  async endActiveByStreams(
+  async endLiveByStreams(
     db: Querier,
     params: { workspaceId: string; streamIds: readonly string[] }
-  ): Promise<BotRuntimeSessionLink[]> {
+  ): Promise<Array<BotRuntimeSessionLink & { wasActive: boolean }>> {
     if (params.streamIds.length === 0) return []
-    const result = await db.query<BotRuntimeSessionLinkRow & { ended_runtime_session_id: string }>(sql`
-      WITH active AS (
-        SELECT id, runtime_session_id FROM bot_runtime_session_links
+    const result = await db.query<
+      BotRuntimeSessionLinkRow & { ended_runtime_session_id: string; was_active: boolean }
+    >(sql`
+      WITH live AS (
+        SELECT id, runtime_session_id, status = 'active' AS was_active FROM bot_runtime_session_links
         WHERE workspace_id = ${params.workspaceId}
           AND active_stream_id = ANY(${params.streamIds as string[]})
-          AND status = 'active'
+          AND status IN ('active', 'archived')
         FOR UPDATE
       )
       UPDATE bot_runtime_session_links l
       SET status = 'ended', runtime_session_id = l.runtime_session_id || ':retired:' || l.id, updated_at = NOW()
-      FROM active
-      WHERE l.workspace_id = ${params.workspaceId} AND l.id = active.id
-      RETURNING l.*, active.runtime_session_id AS ended_runtime_session_id
+      FROM live
+      WHERE l.workspace_id = ${params.workspaceId} AND l.id = live.id
+      RETURNING l.*, live.runtime_session_id AS ended_runtime_session_id, live.was_active
     `)
-    return result.rows.map((row) => ({ ...mapSessionLink(row), runtimeSessionId: row.ended_runtime_session_id }))
+    return result.rows.map((row) => ({
+      ...mapSessionLink(row),
+      runtimeSessionId: row.ended_runtime_session_id,
+      wasActive: row.was_active,
+    }))
   },
 
   /**
