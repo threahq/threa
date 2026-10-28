@@ -1,8 +1,8 @@
 import type { MouseEvent } from "react"
 import { useParams, Link } from "react-router-dom"
-import { useOptionalPanel } from "@/contexts"
 import { requestBlockFocus } from "@/lib/docs/block-focus"
 import { DocChip } from "./doc-chip"
+import { useDocHref } from "./use-doc-href"
 import { useLiveDocTitle } from "./use-live-doc-title"
 
 interface DocChipLinkProps {
@@ -15,10 +15,10 @@ interface DocChipLinkProps {
 /** A `doc:` pointer in rendered content: the chip, opening the doc in a pane beside, or as a page outside one. */
 export function DocChipLink({ docId, blockId, fallbackTitle }: DocChipLinkProps) {
   const { workspaceId } = useParams<{ workspaceId: string }>()
-  const panel = useOptionalPanel()
+  const href = useDocHref(workspaceId, docId)
   const { label } = useLiveDocTitle(workspaceId, docId, fallbackTitle)
   const chip = <DocChip label={label} />
-  if (!workspaceId) return chip
+  if (!href) return chip
 
   const handleClick = (event: MouseEvent) => {
     if (!blockId || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
@@ -26,11 +26,7 @@ export function DocChipLink({ docId, blockId, fallbackTitle }: DocChipLinkProps)
   }
 
   return (
-    <Link
-      to={panel ? panel.getPanelUrl(docId) : `/w/${workspaceId}/s/${docId}`}
-      onClick={handleClick}
-      className="no-underline"
-    >
+    <Link to={href} onClick={handleClick} className="no-underline">
       {chip}
     </Link>
   )

@@ -15,6 +15,7 @@ export const CONTEXT_CATEGORIES = [
   "delegation",
   "follow_up",
   "thread",
+  "doc",
 ] as const
 export type ContextCategory = (typeof CONTEXT_CATEGORIES)[number]
 
@@ -22,9 +23,11 @@ export type ContextCategory = (typeof CONTEXT_CATEGORIES)[number]
  * Categories a message body owns, i.e. exactly what a message's context-row
  * derivation rebuilds. An edit refresh must not touch the other categories —
  * memo, delegation and thread landmarks are anchored on a message but written by
- * other paths and nothing re-creates them.
+ * other paths and nothing re-creates them. `doc` is both: a chip in a body is
+ * rebuilt with it, while the row a doc's creation writes on its host carries no
+ * source message, so a refresh keyed by message id never reaches it.
  */
-export const MESSAGE_BODY_CONTEXT_CATEGORIES = ["pull_request", "link", "media", "file"] as const
+export const MESSAGE_BODY_CONTEXT_CATEGORIES = ["pull_request", "link", "media", "file", "doc"] as const
 
 export const STREAM_CONTEXT_REF_KINDS = [
   "url",
@@ -34,6 +37,7 @@ export const STREAM_CONTEXT_REF_KINDS = [
   "delegation",
   "follow_up",
   "thread",
+  "doc",
 ] as const
 export type StreamContextRefKind = (typeof STREAM_CONTEXT_REF_KINDS)[number]
 
@@ -145,6 +149,11 @@ export interface StreamContextThreadDetail {
   anchorEventId: string | null
 }
 
+/** `title` is the doc's live `display_name`, null while untitled. */
+export interface StreamContextDocDetail {
+  title: string | null
+}
+
 export type StreamContextItemDetail =
   | StreamContextLinkDetail
   | StreamContextPullRequestDetail
@@ -153,6 +162,7 @@ export type StreamContextItemDetail =
   | StreamContextDelegationDetail
   | StreamContextFollowUpDetail
   | StreamContextThreadDetail
+  | StreamContextDocDetail
 
 export interface StreamContextItem {
   /** `${category}:${refId}:${sourceMessageId ?? ""}` — see {@link streamContextItemKey}. */
@@ -166,7 +176,8 @@ export interface StreamContextItem {
   sourceMessageId: string | null
   /**
    * The stream event to deep-link when the artifact has no source message —
-   * a delegation's `delegation:created` card, or a thread anchored on a card.
+   * a delegation's `delegation:created` card, a thread anchored on a card, or
+   * the `doc:created` row a doc's creation writes on its host.
    * `?m=` accepts either id (see `matchesDeepLinkTarget`), so a row jumps with
    * whichever of the two it has.
    */

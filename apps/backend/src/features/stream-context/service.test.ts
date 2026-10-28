@@ -93,6 +93,7 @@ describe("StreamContextService.list", () => {
       delegation: 0,
       follow_up: 0,
       thread: 0,
+      doc: 0,
     })
 
     const response = await service.list(listParams)
@@ -140,7 +141,7 @@ describe("StreamContextService.list", () => {
           },
         },
       ],
-      counts: { pull_request: 0, link: 1, media: 0, file: 0, memo: 0, delegation: 0, follow_up: 0, thread: 0 },
+      counts: { pull_request: 0, link: 1, media: 0, file: 0, memo: 0, delegation: 0, follow_up: 0, thread: 0, doc: 0 },
       nextCursor: null,
       mode: "index",
     })
@@ -158,6 +159,7 @@ describe("StreamContextService.list", () => {
       delegation: 0,
       follow_up: 0,
       thread: 0,
+      doc: 0,
     })
     spyOn(StreamContextReadRepository, "listFeed").mockResolvedValue([
       feedRow({ key: "a", id: "sctx_3", cursorOccurredAtKey: "2026-07-20T12:00:00.300400Z" }),
@@ -203,6 +205,7 @@ describe("StreamContextService.list", () => {
       delegation: 0,
       follow_up: 0,
       thread: 0,
+      doc: 0,
     })
 
     await service.list({
@@ -244,6 +247,7 @@ describe("StreamContextService.list", () => {
       delegation: 0,
       follow_up: 0,
       thread: 0,
+      doc: 0,
     })
 
     await service.list({ ...listParams, category: "link", queryText: "budget" })
@@ -291,7 +295,7 @@ describe("StreamContextService.list", () => {
 
     expect(response).toEqual({
       items: [],
-      counts: { pull_request: 0, link: 0, media: 0, file: 0, memo: 0, delegation: 0, follow_up: 0, thread: 0 },
+      counts: { pull_request: 0, link: 0, media: 0, file: 0, memo: 0, delegation: 0, follow_up: 0, thread: 0, doc: 0 },
       nextCursor: null,
       mode: "client",
     })

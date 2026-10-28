@@ -62,6 +62,7 @@ export const CATEGORY_LABELS: Record<ContextCategory, string> = {
   delegation: "Delegations",
   follow_up: "Follow-ups",
   thread: "Threads",
+  doc: "Docs",
 }
 
 export function parseFilter(raw: string | null): Filter {

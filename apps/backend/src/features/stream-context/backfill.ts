@@ -10,7 +10,7 @@ import { sql } from "../../db"
 import { chunkIds, registerBackfill, type BackfillContext } from "../../lib/backfill"
 import { streamContextItemId } from "../../lib/id"
 import { resolveMemoScopeForStreamId } from "../memos"
-import { contextRowsForMessage, contextSnippet } from "./extract"
+import { contextRowsForMessage, contextSnippet, hostedDocContextRow } from "./extract"
 import { StreamContextRepository } from "./repository"
 import type { NewStreamContextItem } from "./types"
 
@@ -32,6 +32,7 @@ export type StreamContextChunk =
   | ({ kind: "delegations" } & StreamRef)
   | ({ kind: "follow_ups" } & StreamRef)
   | ({ kind: "threads" } & StreamRef)
+  | ({ kind: "docs" } & StreamRef)
 
 interface MessageRow {
   id: string
@@ -74,6 +75,14 @@ interface FollowUpRow {
 interface ThreadRow {
   id: string
   parent_anchor_id: string
+}
+
+interface HostedDocRow {
+  doc_id: string
+  event_id: string
+  actor_id: string | null
+  created_at: Date
+  sequence: string | number | bigint
 }
 
 interface AnchorRow {
@@ -158,6 +167,12 @@ export async function plan(ctx: BackfillContext, workspaceId: string): Promise<S
       AND parent_anchor_id IS NOT NULL
       AND type = 'thread'
   `)
+  const docHosts = await ctx.pool.query<{ parent_stream_id: string }>(sql`
+    SELECT DISTINCT parent_stream_id FROM streams
+    WHERE workspace_id = ${workspaceId}
+      AND parent_stream_id = ANY(${streamIds})
+      AND type = ${StreamTypes.DOC}
+  `)
 
   const chunks: StreamContextChunk[] = []
   for (const stream of streams) {
@@ -183,6 +198,9 @@ export async function plan(ctx: BackfillContext, workspaceId: string): Promise<S
       streamId: row.parent_stream_id,
       rootStreamId: rootByStream.get(row.parent_stream_id)!,
     })
+  }
+  for (const row of docHosts.rows) {
+    chunks.push({ kind: "docs", streamId: row.parent_stream_id, rootStreamId: rootByStream.get(row.parent_stream_id)! })
   }
   return chunks
 }
@@ -582,6 +600,40 @@ async function processThreadsChunk(
   return threadChunkRows(chunk, workspaceId, threads.rows, anchors, eventAnchors)
 }
 
+async function processDocsChunk(
+  ctx: BackfillContext,
+  workspaceId: string,
+  chunk: StreamContextChunk & { kind: "docs" }
+): Promise<NewStreamContextItem[]> {
+  const docs = await ctx.pool.query<HostedDocRow>(sql`
+    SELECT d.id AS doc_id, e.id AS event_id, e.actor_id, e.created_at, e.sequence
+    FROM streams d
+    JOIN stream_events e
+      ON e.workspace_id = d.workspace_id
+     AND e.stream_id = d.parent_stream_id
+     AND e.event_type = 'doc:created'
+     AND e.payload->>'docId' = d.id
+    WHERE d.workspace_id = ${workspaceId}
+      AND d.parent_stream_id = ${chunk.streamId}
+      AND d.type = ${StreamTypes.DOC}
+    ORDER BY d.id
+  `)
+  return docs.rows.map((doc) =>
+    hostedDocContextRow({
+      workspaceId,
+      hostStreamId: chunk.streamId,
+      rootStreamId: chunk.rootStreamId,
+      docId: doc.doc_id,
+      createdEvent: {
+        id: doc.event_id,
+        actorId: doc.actor_id,
+        createdAt: doc.created_at,
+        sequence: BigInt(doc.sequence),
+      },
+    })
+  )
+}
+
 export async function processChunk(
   ctx: BackfillContext,
   workspaceId: string,
@@ -603,6 +655,9 @@ export async function processChunk(
       break
     case "threads":
       rows = await processThreadsChunk(ctx, workspaceId, chunk)
+      break
+    case "docs":
+      rows = await processDocsChunk(ctx, workspaceId, chunk)
       break
   }
   // `insertMany` is ON CONFLICT DO NOTHING on the identity index, so a re-run

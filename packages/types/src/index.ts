@@ -1457,6 +1457,7 @@ export {
   type StreamContextDelegationDetail,
   type StreamContextFollowUpDetail,
   type StreamContextThreadDetail,
+  type StreamContextDocDetail,
   type ListStreamContextResponse,
   type ListStreamContextOccurrencesResponse,
 } from "./stream-context"

@@ -8,7 +8,7 @@ export type {
 } from "./read-repository"
 export { createStreamContextService, type StreamContextService } from "./service"
 export { createStreamContextHandlers } from "./handlers"
-export { contextRowsForMessage, contextSnippet } from "./extract"
+export { contextRowsForMessage, contextSnippet, hostedDocContextRow } from "./extract"
 export type { ContextRowsForMessageParams } from "./extract"
 export { CONTEXT_CATEGORIES, STREAM_CONTEXT_REF_KINDS } from "./types"
 export type { ContextCategory, StreamContextRefKind, NewStreamContextItem } from "./types"

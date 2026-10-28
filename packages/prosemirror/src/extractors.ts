@@ -430,9 +430,15 @@ function unresolvedTriggerSigil(node: JSONContent): "@" | "#" | null {
   return null
 }
 
-/** Doc ids from inline `docEmbed` nodes, de-duplicated in first-seen order. */
-export function collectDocEmbedIds(content: JSONContent): string[] {
-  const ids: string[] = []
+export interface DocEmbedRef {
+  docId: string
+  /** The title the chip was sent with; empty when the doc was untitled. */
+  title: string
+}
+
+/** Inline `docEmbed` nodes, de-duplicated by doc id in first-seen order, first title wins. */
+export function collectDocEmbeds(content: JSONContent): DocEmbedRef[] {
+  const refs: DocEmbedRef[] = []
   const seen = new Set<string>()
 
   const walk = (node: JSONContent): void => {
@@ -440,7 +446,7 @@ export function collectDocEmbedIds(content: JSONContent): string[] {
       const docId = node.attrs?.docId
       if (typeof docId === "string" && docId.length > 0 && !seen.has(docId)) {
         seen.add(docId)
-        ids.push(docId)
+        refs.push({ docId, title: typeof node.attrs?.title === "string" ? node.attrs.title : "" })
       }
     }
     if (node.content) {
@@ -451,5 +457,10 @@ export function collectDocEmbedIds(content: JSONContent): string[] {
   }
 
   walk(content)
-  return ids
+  return refs
+}
+
+/** Doc ids from inline `docEmbed` nodes, de-duplicated in first-seen order. */
+export function collectDocEmbedIds(content: JSONContent): string[] {
+  return collectDocEmbeds(content).map((ref) => ref.docId)
 }

@@ -526,7 +526,7 @@ describe("stream context feed: collapse, display joins, filters", () => {
 
     expect({ items: response.items.map((item) => item.refId), counts: response.counts }).toEqual({
       items: [memoRefId],
-      counts: { pull_request: 0, link: 2, media: 1, file: 0, memo: 1, delegation: 0, follow_up: 0, thread: 0 },
+      counts: { pull_request: 0, link: 2, media: 1, file: 0, memo: 1, delegation: 0, follow_up: 0, thread: 0, doc: 0 },
     })
   })
 

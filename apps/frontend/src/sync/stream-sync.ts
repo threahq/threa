@@ -1963,9 +1963,9 @@ function bindStreamSocketHandlers(
       notifySequenceGap({ streamId, afterSequence: gapAfterSequence })
     }
 
-    // `memos:captured` is the only appended row that carries context artifacts
-    // (INV-69 — the capture broadcast names each memo and its source messages).
-    if (payload.event.eventType === "memos:captured") {
+    // The appended rows that carry context artifacts: `memos:captured` names each
+    // memo and its source messages (INV-69), `doc:created` the doc it hosts here.
+    if (payload.event.eventType === "memos:captured" || payload.event.eventType === "doc:created") {
       await applyContextRowsForEvent(workspaceId, streamId, {
         ...payload.event,
         workspaceId,

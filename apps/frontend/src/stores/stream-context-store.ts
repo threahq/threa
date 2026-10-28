@@ -21,6 +21,12 @@ function toCached(workspaceId: string, rootStreamId: string, item: StreamContext
   }
 }
 
+function scopeIndex(scope: StreamContextScope, streamId: string, rootStreamId: string) {
+  return scope === "tree"
+    ? (["[workspaceId+rootStreamId+occurredAt]", rootStreamId] as const)
+    : (["[workspaceId+streamId+occurredAt]", streamId] as const)
+}
+
 /**
  * Reactive "In this stream" feed, newest first — the panel's read authority,
  * mirroring how the timeline reads `events` from IDB. A live sync applier or a
@@ -43,10 +49,7 @@ export async function readStreamContextRows(
   rootStreamId: string,
   scope: StreamContextScope
 ): Promise<CachedStreamContextItem[]> {
-  const [index, anchor] =
-    scope === "tree"
-      ? (["[workspaceId+rootStreamId+occurredAt]", rootStreamId] as const)
-      : (["[workspaceId+streamId+occurredAt]", streamId] as const)
+  const [index, anchor] = scopeIndex(scope, streamId, rootStreamId)
   return db.streamContextItems
     .where(index)
     .between([workspaceId, anchor, Dexie.minKey], [workspaceId, anchor, Dexie.maxKey])
@@ -135,15 +138,66 @@ export function useStreamContextOccurrences(
  * upserts the fetched rows without touching rows the page didn't return, so a
  * locally derived row the server hasn't projected yet survives, and a row the
  * server does return reconciles over its local copy under the same `key` —
- * gaining the real `groupKey`/`detail` and losing `_status`.
+ * gaining the real `groupKey`/`detail` and losing `_status`. With a
+ * `docWindow`, doc rows the page omitted are dropped (see {@link dropOmittedDocRows}).
  */
 export async function seedStreamContextItems(
   workspaceId: string,
   rootStreamId: string,
-  items: StreamContextItem[]
+  items: StreamContextItem[],
+  docWindow?: StreamContextDocWindow
 ): Promise<void> {
-  if (items.length === 0) return
-  await db.streamContextItems.bulkPut(items.map((item) => toCached(workspaceId, rootStreamId, item)))
+  if (items.length === 0 && !docWindow) return
+  await db.transaction("rw", db.streamContextItems, async () => {
+    if (docWindow) await dropOmittedDocRows(workspaceId, rootStreamId, items, docWindow)
+    if (items.length > 0) {
+      await db.streamContextItems.bulkPut(items.map((item) => toCached(workspaceId, rootStreamId, item)))
+    }
+  })
+}
+
+/**
+ * The span an unfiltered feed page answered for: every group whose head falls
+ * inside it was eligible to be returned.
+ * `seenDocGroupRefs` carries the doc groups earlier pages returned, whose older
+ * occurrences sit below their head and so inside later windows.
+ */
+export interface StreamContextDocWindow {
+  streamId: string
+  scope: StreamContextScope
+  /** Bounds on `occurredAt`, null open-ended: the page's oldest head (exclusive) and the previous page's (inclusive). */
+  newerThan: string | null
+  atOrOlderThan: string | null
+  seenDocGroupRefs: readonly string[]
+  /** `Date.now()` before the request: a row cached at or after it may be news the page could not have listed. */
+  requestedAt: number
+}
+
+/**
+ * Doc rows are the one category the server hides by the target's state rather
+ * than by a delete event: archiving a doc or losing read access drops its whole
+ * group from the feed, and a locally derived chip of an unreadable doc is never
+ * confirmed. Without this, either stays cached (or pending) forever.
+ */
+async function dropOmittedDocRows(
+  workspaceId: string,
+  rootStreamId: string,
+  items: StreamContextItem[],
+  window: StreamContextDocWindow
+): Promise<void> {
+  const kept = new Set([...window.seenDocGroupRefs, ...items.map(contextGroupRef)])
+  const [index, anchor] = scopeIndex(window.scope, window.streamId, rootStreamId)
+  const stale = await db.streamContextItems
+    .where(index)
+    .between(
+      [workspaceId, anchor, window.newerThan ?? Dexie.minKey],
+      [workspaceId, anchor, window.atOrOlderThan ?? Dexie.maxKey],
+      false,
+      true
+    )
+    .filter((row) => row.category === "doc" && !kept.has(row.groupRef) && row._cachedAt < window.requestedAt)
+    .primaryKeys()
+  if (stale.length > 0) await db.streamContextItems.bulkDelete(stale)
 }
 
 /**

@@ -80,6 +80,7 @@ describe("deriveStreamContext", () => {
       delegation: 0,
       follow_up: 0,
       thread: 0,
+      doc: 0,
     })
   })
 
@@ -357,6 +358,33 @@ describe("deriveStreamContext", () => {
     expect(media[0].mediaKind).toBe("gif")
     expect(media[0].giphyUrl).toContain("giphy.com")
     expect(media[0].attachmentId).toBeNull()
+  })
+
+  it("derives one doc item per chipped doc, at its newest chip, counting every chip", () => {
+    const chipDoc = (docId: string): JSONContent => ({
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "docEmbed", attrs: { docId, title: "Plan" } }] }],
+    })
+    const events = [
+      messageEvent("2026-06-23T10:00:00.000Z", { contentJson: chipDoc("stream_doc1") }),
+      messageEvent("2026-06-23T11:00:00.000Z", { contentJson: chipDoc("stream_doc1"), contentMarkdown: "again" }),
+    ]
+    const { items, counts } = deriveStreamContext(events)
+    expect({ counts: counts.doc, items }).toEqual({
+      counts: 1,
+      items: [
+        {
+          key: "doc:stream_doc1",
+          category: "doc",
+          createdAt: "2026-06-23T11:00:00.000Z",
+          sourceMessageId: "msg_2",
+          snippet: "again",
+          docId: "stream_doc1",
+          title: "Plan",
+          refCount: 2,
+        },
+      ],
+    })
   })
 
   it("derives memories from memos:captured events", () => {

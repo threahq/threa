@@ -90,6 +90,18 @@ describe("contextRowsForMessage", () => {
     ])
   })
 
+  it("projects each doc chip once as a doc row keyed by the doc id, and never as a link", () => {
+    const docChip = (docId: string): JSONContent => ({ type: "docEmbed", attrs: { docId, title: "Plan" } })
+    const rows = run({
+      contentMarkdown: "see [Plan](doc:stream_doc1)",
+      contentJson: { type: "doc", content: [paragraph(docChip("stream_doc1"), docChip("stream_doc1"))] },
+    })
+
+    expect(
+      rows.map(({ category, refKind, refId, groupKey, detail }) => ({ category, refKind, refId, groupKey, detail }))
+    ).toEqual([{ category: "doc", refKind: "doc", refId: "stream_doc1", groupKey: "stream_doc1", detail: {} }])
+  })
+
   it("splits attachments into media and file, flagging gif and video media kinds", () => {
     const rows = run({
       attachments: [

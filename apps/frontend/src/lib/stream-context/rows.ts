@@ -1,4 +1,4 @@
-import { collectGiphyEmbeds, collectLinkUrls } from "@threahq/prosemirror"
+import { collectDocEmbeds, collectGiphyEmbeds, collectLinkUrls } from "@threahq/prosemirror"
 import {
   markdownLines,
   BLOCKED_HOSTNAMES,
@@ -10,6 +10,7 @@ import {
   type AttachmentSummary,
   type CapturedMemoSummary,
   type ContextCategory,
+  type DocCreatedEventPayload,
   type JSONContent,
   type StreamContextItemDetail,
   type StreamContextRefKind,
@@ -75,6 +76,7 @@ export function contextItemsFromEvent(
   sourceMessages?: ReadonlyMap<string, CachedEvent>
 ): CachedStreamContextItem[] {
   if (event.eventType === "memos:captured") return memoRows(event, ctx, sourceMessages)
+  if (event.eventType === "doc:created") return hostedDocRows(event, ctx)
   if (event.eventType !== "message_created") return []
 
   const payload = event.payload as MessageEventPayload
@@ -185,7 +187,31 @@ export function contextItemsFromEvent(
     })
   }
 
+  for (const embed of contentJson ? collectDocEmbeds(contentJson) : []) {
+    push("doc", "doc", embed.docId, { title: embed.title || null })
+  }
+
   return rows
+}
+
+/** The row `StreamService.createDoc` writes on the host: no source message, jumping by the event itself. */
+function hostedDocRows(event: CachedEvent, ctx: ContextRowsContext): CachedStreamContextItem[] {
+  const docId = (event.payload as DocCreatedEventPayload | undefined)?.docId
+  if (!docId) return []
+  return [
+    buildRow(ctx, {
+      category: "doc",
+      refKind: "doc",
+      refId: docId,
+      sourceMessageId: null,
+      anchorEventId: event.id,
+      authorId: event.actorId,
+      occurredAt: event.createdAt,
+      sequence: event.sequence,
+      snippet: "",
+      detail: { title: null },
+    }),
+  ]
 }
 
 /**
@@ -297,6 +323,8 @@ function buildRow(
     refKind: StreamContextRefKind
     refId: string
     sourceMessageId: string | null
+    /** Only a hosted doc's row, derived from its `doc:created` event. */
+    anchorEventId?: string
     authorId: string | null
     occurredAt: string
     sequence: string | null
@@ -305,10 +333,7 @@ function buildRow(
   }
 ): CachedStreamContextItem {
   return {
-    // Locally derived rows always come from a message, so they never carry an
-    // anchor event; the server fills one in for delegations and card-anchored
-    // threads, which this path does not derive.
-    anchorEventId: null,
+    anchorEventId: input.anchorEventId ?? null,
     key: streamContextItemKey({
       category: input.category,
       refId: input.refId,
