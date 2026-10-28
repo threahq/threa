@@ -1974,6 +1974,16 @@ export function registerWorkspaceSocketHandlers(
         archivedStreams: current.archivedStreams?.filter((s) => !unreadableIds.has(s.id)),
       }
     })
+    if (unreadableIds.size > 0) {
+      commitCounter((state) => {
+        const dropped = [...unreadableIds].reduce(dropActivitiesForStream, state)
+        const unreadCounts = Object.fromEntries(
+          Object.entries(dropped.unreadCounts).filter(([streamId]) => !unreadableIds.has(streamId))
+        )
+        return { ...dropped, unreadCounts }
+      })
+      invalidateActivityFeed(true)
+    }
 
     await Promise.all([
       db.streamMemberships.delete(`${workspaceId}:${payload.streamId}`),
