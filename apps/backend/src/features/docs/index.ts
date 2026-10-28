@@ -25,6 +25,7 @@ export type {
   DocAgentReadResult,
   DocAgentRefusalCode,
   DocAgentRewriteFailure,
+  DocAgentSectionThreadResult,
   DocAgentTitleResult,
   DocAgentWriteResult,
 } from "./agent-types"

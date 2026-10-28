@@ -69,3 +69,9 @@ export type DocAgentTitleResult = { status: "applied"; docId: string; title: str
 export type DocAgentCreateResult =
   | ({ status: "created"; markdown: string; body?: DocAgentRewriteFailure } & DocAgentDocSummary)
   | DocAgentAccessRefusal
+
+/** `unknown_block` when the doc has no block with that id. */
+export type DocAgentSectionThreadResult =
+  | { status: "ok"; threadId: string }
+  | { status: "unknown_block" }
+  | DocAgentAccessRefusal

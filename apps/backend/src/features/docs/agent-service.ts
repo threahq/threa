@@ -15,6 +15,7 @@ import type { BotChannelService } from "../api-keys"
 import {
   StreamRepository,
   checkStreamAccess,
+  principalActorId,
   type Stream,
   type StreamService,
   type StreamWritePrincipal,
@@ -36,6 +37,7 @@ import type {
   DocAgentListResult,
   DocAgentReadResult,
   DocAgentRefusalCode,
+  DocAgentSectionThreadResult,
   DocAgentTitleResult,
   DocAgentWriteResult,
 } from "./agent-types"
@@ -274,6 +276,31 @@ export class DocAgentService {
       default:
         return { ...result, body }
     }
+  }
+
+  /** The block's comment thread, found or created as the principal; the same thread every caller opens on that block. */
+  async openSectionThread(
+    ctx: DocAgentContext,
+    input: { docId: string; blockId: string }
+  ): Promise<DocAgentSectionThreadResult> {
+    const refusal = await this.hostedDocRefusal(ctx, input.docId)
+    if (refusal) return refusal
+    return orRefusal(async (): Promise<DocAgentSectionThreadResult> => {
+      try {
+        const thread = await this.streamService.createThread({
+          workspaceId: ctx.workspaceId,
+          parentStreamId: input.docId,
+          parentAnchorId: input.blockId,
+          createdBy: principalActorId(ctx.principal),
+          createdByType: ctx.principal.kind,
+          principal: ctx.principal,
+        })
+        return { status: "ok", threadId: thread.id }
+      } catch (error) {
+        if (error instanceof HttpError && error.code === "ANCHOR_NOT_FOUND") return { status: "unknown_block" }
+        throw error
+      }
+    })
   }
 
   private async write(

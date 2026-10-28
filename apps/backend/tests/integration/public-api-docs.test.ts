@@ -8,9 +8,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { AuthorTypes, DocErrorCodes, StreamErrorCodes, StreamTypes, Visibilities } from "@threahq/types"
+import { AuthorTypes, DocErrorCodes, StreamErrorCodes, StreamTypes, Visibilities, sentViaApiKey } from "@threahq/types"
 import { BotChannelAccessRepository, BotChannelService } from "../../src/features/api-keys"
 import { DocAgentService, DocRepository, DocService } from "../../src/features/docs"
+import { EventService, MessageRepository } from "../../src/features/messaging"
 import { BotRepository, createDocPublicApiHandlers } from "../../src/features/public-api"
 import {
   StreamEventRepository,
@@ -81,6 +82,16 @@ async function editDoc(req: Request) {
   return rec.last<{ id: string; title: string | null; seq: number; touchedBlockIds: string[]; markdown: string }>()
 }
 
+type Comment = { threadId: string; message: Record<string, unknown> }
+
+async function comment(req: Request) {
+  const rec = recorder()
+  await handlers.commentOnDocSection(req, rec.res)
+  return rec.last<Comment>()
+}
+
+const blockIds = (markdown: string) => [...markdown.matchAll(/<!-- (blk_\w+) -->/g)].map((m) => m[1])
+
 const unmarked = (markdown: string) => markdown.replace(/<!-- blk_\w+ -->\n/g, "")
 
 beforeAll(async () => {
@@ -96,6 +107,8 @@ beforeAll(async () => {
       streamService,
       botChannelService,
     }),
+    pool,
+    eventService: new EventService(pool),
   })
   ws = workspaceId()
   privateChannelId = streamId()
@@ -359,5 +372,193 @@ describe("public API docs", () => {
     expect(
       (await listDocs(userReq(owner, { query: { streamId: publicChannelId } }))).data.map((doc) => doc.id)
     ).not.toContain(created.data.id)
+  })
+
+  describe("commenting on a block", () => {
+    const ownerReq = (extra: Record<string, unknown>) =>
+      userReq(owner, { user: { id: owner, name: "Owner" }, ...extra })
+
+    async function seededDoc() {
+      const created = await createDoc(
+        userReq(owner, { body: { streamId: publicChannelId, markdown: "Rotate keys\n\nAudit logs", reason: "Seed" } })
+      )
+      return { docId: created.data.id, blocks: blockIds(created.data.markdown) }
+    }
+
+    test("should create the block's thread and post the comment when a block has no thread", async () => {
+      const { docId, blocks } = await seededDoc()
+      const posted = await comment(
+        ownerReq({
+          params: { docId, blockId: blocks[1] },
+          body: { content: "Who owns **this**?", clientMessageId: "cm-create", metadata: { source: "cli" } },
+        })
+      )
+      const thread = await StreamRepository.findById(pool, ws, posted.data.threadId)
+
+      expect({
+        posted,
+        thread: thread && {
+          type: thread.type,
+          parentStreamId: thread.parentStreamId,
+          parentAnchorId: thread.parentAnchorId,
+          rootStreamId: thread.rootStreamId,
+          createdBy: thread.createdBy,
+        },
+      }).toEqual({
+        posted: {
+          status: 201,
+          data: {
+            threadId: expect.stringMatching(/^stream_/),
+            message: {
+              id: expect.stringMatching(/^msg_/),
+              streamId: posted.data.threadId,
+              sequence: expect.any(String),
+              authorId: owner,
+              authorType: AuthorTypes.USER,
+              authorDisplayName: "Owner",
+              content: "Who owns **this**?",
+              replyCount: 0,
+              clientMessageId: "cm-create",
+              sentVia: sentViaApiKey("key_1"),
+              metadata: { source: "cli" },
+              revision: 1,
+              createdAt: expect.any(String),
+            },
+          },
+        },
+        thread: {
+          type: StreamTypes.THREAD,
+          parentStreamId: docId,
+          parentAnchorId: blocks[1],
+          rootStreamId: publicChannelId,
+          createdBy: owner,
+        },
+      })
+    })
+
+    test("should reuse the existing thread when the block already has one", async () => {
+      const { docId, blocks } = await seededDoc()
+      const existing = await streamService.createThread({
+        workspaceId: ws,
+        parentStreamId: docId,
+        parentAnchorId: blocks[0],
+        createdBy: owner,
+        principal: { kind: "user", userId: owner },
+      })
+
+      const posted = await comment(ownerReq({ params: { docId, blockId: blocks[0] }, body: { content: "Done" } }))
+
+      expect({ threadId: posted.data.threadId, streamId: posted.data.message.streamId }).toEqual({
+        threadId: existing.id,
+        streamId: existing.id,
+      })
+    })
+
+    test("should return the same message when retried with the same clientMessageId", async () => {
+      const { docId, blocks } = await seededDoc()
+      const send = () =>
+        comment(
+          ownerReq({ params: { docId, blockId: blocks[0] }, body: { content: "Ack", clientMessageId: "cm-retry" } })
+        )
+
+      const first = await send()
+      const retried = await send()
+      const messages = await MessageRepository.list(pool, ws, first.data.threadId)
+
+      expect({ retried, messageIds: messages.map((m) => m.id) }).toEqual({
+        retried: first,
+        messageIds: [first.data.message.id as string],
+      })
+    })
+
+    test("should 404 when the block is not in the doc", async () => {
+      const { docId } = await seededDoc()
+      const other = await seededDoc()
+
+      for (const blockId of ["blk_missing", other.blocks[0]]) {
+        await expect(comment(ownerReq({ params: { docId, blockId }, body: { content: "Hi" } }))).rejects.toMatchObject({
+          status: 404,
+          code: DocErrorCodes.SECTION_NOT_FOUND,
+        })
+      }
+    })
+
+    test("should 404 when the key cannot read the doc", async () => {
+      const hidden = await createDoc(
+        userReq(owner, { body: { streamId: privateChannelId, markdown: "Secret", reason: "Seed" } })
+      )
+      const [blockId] = blockIds(hidden.data.markdown)
+
+      await expect(
+        comment(userReq(outsider, { params: { docId: hidden.data.id, blockId }, body: { content: "Hi" } }))
+      ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" })
+    })
+
+    test("should create one thread when two first comments on a block race", async () => {
+      const { docId, blocks } = await seededDoc()
+      const send = (clientMessageId: string) =>
+        comment(
+          ownerReq({ params: { docId, blockId: blocks[0] }, body: { content: clientMessageId, clientMessageId } })
+        )
+
+      const [a, b] = await Promise.all([send("cm-race-a"), send("cm-race-b")])
+      const messages = await MessageRepository.list(pool, ws, a.data.threadId)
+
+      expect({ threadIds: [a.data.threadId, b.data.threadId], messageIds: new Set(messages.map((m) => m.id)) }).toEqual(
+        {
+          threadIds: [a.data.threadId, a.data.threadId],
+          messageIds: new Set([a.data.message.id as string, b.data.message.id as string]),
+        }
+      )
+    })
+
+    test("should refuse with STREAM_READ_ONLY when a non-member comments on a doc in a public channel", async () => {
+      const { docId, blocks } = await seededDoc()
+
+      await expect(
+        comment(userReq(outsider, { params: { docId, blockId: blocks[0] }, body: { content: "Hi" } }))
+      ).rejects.toMatchObject({ status: 403, code: StreamErrorCodes.READ_ONLY, details: { reason: "not_a_member" } })
+      expect(await StreamRepository.findByAnchor(pool, ws, docId, blocks[0])).toBeNull()
+    })
+
+    test("should refuse with STREAM_READ_ONLY when the doc is archived", async () => {
+      const { docId, blocks } = await seededDoc()
+      await streamService.archiveStream(docId, ws, owner)
+
+      await expect(
+        comment(ownerReq({ params: { docId, blockId: blocks[0] }, body: { content: "Hi" } }))
+      ).rejects.toMatchObject({ status: 403, code: StreamErrorCodes.READ_ONLY, details: { reason: "archived" } })
+      expect(await StreamRepository.findByAnchor(pool, ws, docId, blocks[0])).toBeNull()
+    })
+
+    test("should post as the bot when a bot key with a grant on the host comments", async () => {
+      const created = await createDoc(
+        userReq(owner, { body: { streamId: privateChannelId, markdown: "Rotate keys", reason: "Seed" } })
+      )
+      const [blockId] = blockIds(created.data.markdown)
+
+      const posted = await comment(
+        botReq(grantedBotId, { params: { docId: created.data.id, blockId }, body: { content: "On it" } })
+      )
+      const thread = await StreamRepository.findByAnchor(pool, ws, created.data.id, blockId)
+
+      expect({
+        status: posted.status,
+        author: { id: posted.data.message.authorId, type: posted.data.message.authorType },
+        thread: thread && { id: thread.id, createdBy: thread.createdBy, rootStreamId: thread.rootStreamId },
+      }).toEqual({
+        status: 201,
+        author: { id: grantedBotId, type: AuthorTypes.BOT },
+        thread: { id: posted.data.threadId, createdBy: grantedBotId, rootStreamId: privateChannelId },
+      })
+    })
+
+    test("should reject a block id that is not a blk_ id", async () => {
+      const { docId } = await seededDoc()
+
+      await expect(
+        comment(ownerReq({ params: { docId, blockId: "stream_abc" }, body: { content: "Hi" } }))
+      ).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" })
+    })
   })
 })

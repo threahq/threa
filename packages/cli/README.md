@@ -94,6 +94,7 @@ threa labels add urgent #eng --color '#ff0000' --emoji 🔥
 threa labels remove urgent #eng
 threa docs create #eng --title Plan --body - --reason "start the plan" < plan.md
 threa docs edit stream_abc --reason "fix date" --old "May 3" --new "May 4" --block blk_abc   # --old/--new repeat, pair by position; a value starting with - needs --old="- item"
+threa docs comment stream_abc --block blk_abc --body "Is May 4 confirmed?"   # posts in the block's thread, starting it on the first comment
 
 # delegations
 threa delegations list --since 2026-07-16T00:00:00Z # availability changed after this time
@@ -171,7 +172,7 @@ Claude Code maps every worktree of a repo to the same project entry, so a persis
 }
 ```
 
-The MCP tools mirror the commands: `whoami`, `list_streams`, `read_stream`, `list_users`, `search`, `list_conversations`, `read_conversation`, `find_messages_by_metadata`, `send_message`, `update_message`, `delete_message`, `list_labels`, `apply_label`, `remove_label`, `list_docs`, `read_doc`, `create_doc`, `edit_doc`, `get_memo`, `get_attachment`, `get_attachment_download_url`, `list_delegations`, `get_delegation`, `claim_delegation`, `release_delegation`, `update_delegation`, `finish_delegation`, `request_delegation_access`. Tool results are JSON in the API envelope. Failures return `isError` with `{ code, message, hint? }`.
+The MCP tools mirror the commands: `whoami`, `list_streams`, `read_stream`, `list_users`, `search`, `list_conversations`, `read_conversation`, `find_messages_by_metadata`, `send_message`, `update_message`, `delete_message`, `list_labels`, `apply_label`, `remove_label`, `list_docs`, `read_doc`, `create_doc`, `edit_doc`, `comment_on_doc`, `get_memo`, `get_attachment`, `get_attachment_download_url`, `list_delegations`, `get_delegation`, `claim_delegation`, `release_delegation`, `update_delegation`, `finish_delegation`, `request_delegation_access`. Tool results are JSON in the API envelope. Failures return `isError` with `{ code, message, hint? }`.
 
 ## Keys
 
@@ -192,13 +193,13 @@ The scopes on the key decide which areas work. A key without a scope does not ge
 | `users:read`        | `users list`                                                                                                         |
 | `messages:read`     | `streams read` (messages leg), `conversations read`, `conversations list`, `messages find-by-metadata`               |
 | `messages:search`   | `search --what messages`                                                                                             |
-| `messages:write`    | `messages send`, `messages edit`, `messages delete`                                                                  |
+| `messages:write`    | `messages send`, `messages edit`, `messages delete`, `docs comment`                                                  |
 | `memos:read`        | `search --what memos`, `memos list`, `memos get`                                                                     |
 | `attachments:read`  | `search --what attachments`, `attachments list`, `attachments get`, `attachments download`                           |
 | `attachments:write` | `attachments upload`                                                                                                 |
 | `labels:read`       | `labels list`                                                                                                        |
 | `labels:write`      | `labels add`, `labels remove`                                                                                        |
-| `docs:read`         | `docs list`, `docs read`                                                                                             |
+| `docs:read`         | `docs list`, `docs read`, `docs comment`                                                                             |
 | `docs:write`        | `docs create`, `docs edit`                                                                                           |
 | `delegations:read`  | `delegations list`, `delegations get`                                                                                |
 | `delegations:write` | `delegations claim`, `delegations release`, `delegations update`, `delegations finish`, `delegations request-access` |

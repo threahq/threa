@@ -1,4 +1,4 @@
-import { createDoc, editDoc, listDocs, readDoc } from "../ops"
+import { commentOnDoc, createDoc, editDoc, listDocs, readDoc } from "../ops"
 import { arrayFlag, stringFlag, UsageError, type NounSpec, type VerbSpec } from "../output"
 
 interface DocRow {
@@ -136,8 +136,51 @@ const createVerb: VerbSpec = {
   },
 }
 
+const commentVerb: VerbSpec = {
+  name: "comment",
+  summary: "Comment on a doc block, in that block's thread",
+  usage: "threa docs comment <doc-id> --block blk_x --body <text | -> [--client-message-id id]",
+  help:
+    "threa docs comment <doc-id> --block blk_x --body <text | -> [flags]\n\n" +
+    "Post a markdown comment into a block's thread, starting the thread on the first comment. Block ids are the " +
+    "`<!-- blk_… -->` markers in `threa docs read`; `--body -` reads the comment from stdin. A client message id is generated when " +
+    "you omit --client-message-id, so a retried post never double-posts. A 404 " +
+    "DOC_SECTION_NOT_FOUND means the doc has no such block: re-read it for the current ids.\n\n" +
+    "Flags:\n" +
+    "  --block blk_x  the block to comment on (required)\n" +
+    "  --body text    the comment as markdown, or - to read stdin (required)\n" +
+    "  --client-message-id id  set the idempotency key explicitly (<= 128 chars)\n" +
+    "  --json         print the envelope (threadId, the posted message, clientMessageId)\n" +
+    "  --help         show this help",
+  options: {
+    block: { type: "string" },
+    body: { type: "string" },
+    "client-message-id": { type: "string" },
+  },
+  run: async (ctx, positionals, values) => {
+    const docId = positionals[0]
+    if (!docId) throw new UsageError("docs comment requires a <doc-id>")
+    const blockId = stringFlag(values, "block")
+    if (!blockId) throw new UsageError("docs comment requires --block blk_x (a block id from `threa docs read`)")
+    const rawBody = stringFlag(values, "body")
+    if (rawBody === undefined) throw new UsageError("docs comment requires --body <text> (or `-` to read stdin)")
+    const content = rawBody === "-" ? await ctx.readStdin() : rawBody
+    if (content.trim() === "") throw new UsageError("comment body is empty")
+    return commentOnDoc(ctx.client, {
+      docId,
+      blockId,
+      content,
+      clientMessageId: stringFlag(values, "client-message-id"),
+    })
+  },
+  render: (payload) => {
+    const p = payload as { data?: { threadId?: string } }
+    return `commented in thread ${p.data?.threadId ?? "?"}`
+  },
+}
+
 export const docsNoun: NounSpec = {
   name: "docs",
-  summary: "List, read, create, and edit docs hosted by streams",
-  verbs: [listVerb, readVerb, editVerb, createVerb],
+  summary: "List, read, create, edit, and comment on docs hosted by streams",
+  verbs: [listVerb, readVerb, editVerb, createVerb, commentVerb],
 }

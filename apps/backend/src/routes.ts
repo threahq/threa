@@ -2409,7 +2409,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     io: deps.io,
   })
   const decisionPublicApi = createDecisionPublicApi({ decisionService })
-  const docPublicApi = createDocPublicApiHandlers({ docAgentService })
+  const docPublicApi = createDocPublicApiHandlers({ docAgentService, pool, eventService })
   const delegationPublicApi = createDelegationPublicApiHandlers({
     pool,
     delegationService,
@@ -2476,6 +2476,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     getDoc: docPublicApi.getDoc,
     createDoc: docPublicApi.createDoc,
     editDoc: docPublicApi.editDoc,
+    commentOnDocSection: docPublicApi.commentOnDocSection,
     updateStream: publicApi.updateStream,
     archiveStream: publicApi.archiveStream,
     unarchiveStream: publicApi.unarchiveStream,

@@ -408,6 +408,10 @@ export function sendConversationArgError(p: {
   return undefined
 }
 
+function effectiveClientMessageId(id?: string): string {
+  return id ?? `mcp-${crypto.randomUUID()}`
+}
+
 export async function sendMessage(
   client: ThreaApiClient,
   resolver: RefResolver,
@@ -429,7 +433,7 @@ export async function sendMessage(
       return { data: { id: sent.messageId }, clientMessageId: sent.clientMessageId, sealed: true }
     }
   }
-  const clientMessageId = p.clientMessageId ?? `mcp-${crypto.randomUUID()}`
+  const clientMessageId = effectiveClientMessageId(p.clientMessageId)
   const body: Record<string, unknown> = { content: p.content, clientMessageId }
   if (p.metadata) body.metadata = p.metadata
   if (p.conversationId) body.conversation = { intent: "existing", conversationId: p.conversationId }
@@ -507,6 +511,18 @@ export function editDoc(
   p: { docId: string; reason: string; edits: DocEditInput[] }
 ): Promise<unknown> {
   return client.post(`/docs/${encodeURIComponent(p.docId)}/edits`, { reason: p.reason, edits: p.edits })
+}
+
+export async function commentOnDoc(
+  client: ThreaApiClient,
+  p: { docId: string; blockId: string; content: string; clientMessageId?: string }
+): Promise<unknown> {
+  const clientMessageId = effectiveClientMessageId(p.clientMessageId)
+  const response = await client.post<{ data: { threadId: string; message: unknown } }>(
+    `/docs/${encodeURIComponent(p.docId)}/sections/${encodeURIComponent(p.blockId)}/comments`,
+    { content: p.content, clientMessageId }
+  )
+  return { ...response, clientMessageId }
 }
 
 export interface CreateDocParams {

@@ -134,3 +134,32 @@ test("docs create with --body but no --reason is a usage error before any HTTP",
   expect((JSON.parse(result.stderr) as { code: string }).code).toBe("USAGE")
   expect(fetchSpy).not.toHaveBeenCalled()
 })
+
+test("docs comment reads --body - from stdin and names the thread", async () => {
+  fetchSpy.mockResolvedValue(jsonResponse(201, { data: { threadId: "stream_t1", message: { id: "msg_1" } } }))
+
+  const result = await run(
+    ["docs", "comment", "stream_d1", "--block", "blk_1", "--body", "-", "--client-message-id", "retry-1", "-o", "text"],
+    {
+      config: TEST_CONFIG,
+      readStdin: () => Promise.resolve("Who owns this?\n"),
+    }
+  )
+
+  expect(result.exitCode).toBe(0)
+  const call = lastCall()
+  expect({ method: call.method, path: call.url.pathname, body: call.body }).toEqual({
+    method: "POST",
+    path: `${DOCS}/stream_d1/sections/blk_1/comments`,
+    body: { content: "Who owns this?\n", clientMessageId: "retry-1" },
+  })
+  expect(result.stdout).toContain("commented in thread stream_t1")
+})
+
+test("docs comment without --block is a usage error before any HTTP", async () => {
+  const result = await run(["docs", "comment", "stream_d1", "--body", "hi"], { config: TEST_CONFIG })
+
+  expect(result.exitCode).toBe(2)
+  expect((JSON.parse(result.stderr) as { code: string }).code).toBe("USAGE")
+  expect(fetchSpy).not.toHaveBeenCalled()
+})

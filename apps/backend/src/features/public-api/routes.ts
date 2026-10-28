@@ -84,6 +84,7 @@ import {
   listDocsQuerySchema,
   createDocSchema,
   editDocSchema,
+  commentOnDocSectionSchema,
 } from "./schemas"
 
 // Response schemas — the single source of truth for public API wire shapes.
@@ -868,6 +869,11 @@ const docEditSchema = z.object({
   markdown: z.string(),
 })
 
+const docCommentSchema = z.object({
+  threadId: z.string().describe("The block's comment thread: created on the first comment, reused after."),
+  message: messageSchema,
+})
+
 function dataEnvelope(itemSchema: z.ZodType) {
   return z.object({ data: itemSchema })
 }
@@ -882,6 +888,14 @@ const workspaceIdParam = {
   required: true,
   schema: { type: "string" as const },
   description: "Workspace ID (prefixed ULID)",
+}
+
+const blockIdParam = {
+  name: "blockId",
+  in: "path" as const,
+  required: true,
+  schema: { type: "string" as const },
+  description: "Block ID (blk_…), as marked in the doc's markdown",
 }
 
 const docIdParam = {
@@ -1039,6 +1053,7 @@ export type OperationId =
   | "getDoc"
   | "createDoc"
   | "editDoc"
+  | "commentOnDocSection"
   | "getMe"
   | "listMyBots"
   | "getMyE2eKey"
@@ -1974,6 +1989,25 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     responseSchema: dataEnvelope(docEditSchema),
     canReturn404: true,
     canReturn409: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/docs/{docId}/sections/{blockId}/comments",
+    operationId: "commentOnDocSection",
+    summary: "Comment on a doc block",
+    description:
+      "Post a message into the block's comment thread as the key's actor, creating the thread on the first " +
+      "comment. A retry with the same `clientMessageId` returns the first message in the same thread. 404 " +
+      "DOC_SECTION_NOT_FOUND when the doc has no such block, 404 NOT_FOUND when the doc is missing or out of " +
+      "the key's reach; 403 STREAM_READ_ONLY when the doc is archived or the key cannot write its threads.",
+    tags: ["Docs"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.DOCS_READ, WORKSPACE_PERMISSION_SCOPES.MESSAGES_WRITE],
+    parameters: [workspaceIdParam, docIdParam, blockIdParam],
+    requestSchema: commentOnDocSectionSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(docCommentSchema),
+    successStatus: 201,
+    canReturn404: true,
   },
   {
     method: "get",
