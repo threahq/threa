@@ -255,6 +255,58 @@ test.describe("Doc pane", () => {
     await expect(editor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
   })
 
+  test("should let the channel's creator archive a member's doc, and offer no archive once the channel is archived", async ({
+    browser,
+  }) => {
+    const ownerContext = await browser.newContext()
+    const owner = await ownerContext.newPage()
+    const { testId } = await loginAndCreateWorkspace(owner, "doc-host-owner")
+    const workspaceId = workspaceIdFromUrl(owner)
+    const channelId = await createChannelViaApi(owner, workspaceId, `host-docs-${testId}`, "private")
+    const member = await joinWorkspace(browser, workspaceId, "doc-author", testId)
+
+    try {
+      await expectApiOk(
+        await owner.request.post(`/api/workspaces/${workspaceId}/streams/${channelId}/members`, {
+          data: { memberId: await userIdByEmail(owner, workspaceId, member.email) },
+        }),
+        "Add member to channel"
+      )
+      const docId = await createDocViaApi(member.page, workspaceId, channelId)
+
+      await openChannel(owner, workspaceId, channelId)
+      await anchorRow(owner, docId).click()
+      const ownerPane = pane(owner, docId)
+      await expect(docEditor(owner, docId)).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+      const archived = owner.waitForResponse((response) =>
+        new URL(response.url()).pathname.endsWith(`/${docId}/archive`)
+      )
+      await ownerPane.getByRole("button", { name: "Stream actions" }).first().click()
+      await owner.getByRole("menuitem", { name: "Archive" }).click()
+      await expectApiOk(await archived, "Channel creator archives the member's doc")
+      await expect(ownerPane.getByText("Archived", { exact: true })).toBeVisible()
+      await expectApiOk(
+        await owner.request.post(`/api/workspaces/${workspaceId}/streams/${docId}/unarchive`),
+        "Unarchive doc"
+      )
+      await expectApiOk(
+        await owner.request.post(`/api/workspaces/${workspaceId}/streams/${channelId}/archive`),
+        "Archive channel"
+      )
+
+      await openChannel(member.page, workspaceId, channelId)
+      await anchorRow(member.page, docId).click()
+      const memberPane = pane(member.page, docId)
+      await expect(docEditor(member.page, docId)).toHaveAttribute("contenteditable", "false", { timeout: 15000 })
+      await memberPane.getByRole("button", { name: "Stream actions" }).first().click()
+      await expect(member.page.getByRole("menuitem", { name: "Copy link" })).toBeVisible()
+      await expect(member.page.getByRole("menuitem", { name: "Archive" })).toHaveCount(0)
+    } finally {
+      await ownerContext.close()
+      await member.context.close()
+    }
+  })
+
   test("should merge edits made offline when the member reconnects, and ship edits from a pane closed offline", async ({
     browser,
   }) => {

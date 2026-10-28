@@ -39,7 +39,7 @@ import { cn } from "@/lib/utils"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { foldHeaderControls } from "@/lib/pane-header-fold"
 import { tabRowReserve } from "@/lib/panel-tab-fit"
-import { useStreamOrDraft, isDmDraftId, useActiveBotPresence } from "@/hooks"
+import { useStreamOrDraft, isDmDraftId, useActiveBotPresence, useEffectiveArchived } from "@/hooks"
 import {
   useWorkspaceDmPeers,
   useWorkspaceMetadata,
@@ -84,7 +84,7 @@ import {
   StreamTypes,
   streamTypeCapabilities,
 } from "@threahq/types"
-import { getStreamTypeLabel, streamFallbackLabel, streamLabel } from "@/lib/streams"
+import { canChangeArchiveState, getStreamTypeLabel, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamSheet } from "@/components/stream-sheet"
 import { PaneHeader } from "./pane-header"
 import { PaneLanded } from "./pane-host"
@@ -199,16 +199,21 @@ export function StreamPane({
   )
   const createDoc = useCreateDoc(workspaceId, isDraft ? undefined : stream)
   const currentUserId = useCurrentWorkspaceUserId(workspaceId)
-  const docRootCreatedBy = useWorkspaceStream(
+  const docRoot = useWorkspaceStream(
     workspaceId,
     isDoc ? (stream?.rootStreamId ?? undefined) : undefined,
     pickCreatedBy
-  )?.createdBy
-  // The backend lets a stream's creator or its root's creator archive it.
+  )
+  const { ancestorArchived } = useEffectiveArchived({
+    workspaceId,
+    stream: isDoc ? stream : undefined,
+    fallbackArchived: null,
+  })
+  // Under an archived host the doc is already read-only, so archiving it would change nothing visible.
   const canArchiveDoc =
     isDoc &&
-    !!currentUserId &&
-    ((stream && "createdBy" in stream && stream.createdBy === currentUserId) || docRootCreatedBy === currentUserId)
+    canChangeArchiveState(currentUserId, stream && "createdBy" in stream ? stream : null, docRoot) &&
+    (!ancestorArchived || stream?.archivedAt != null)
   // Only the stream page sets a list beside its stream; under an aside it would land out of sight.
   const offersList = (isChannel || isDm) && hasTabs && offersContext
   const dmPeerUserId = isDm ? dmPeers.find((p) => p.streamId === streamId)?.userId : null

@@ -26,6 +26,15 @@ export const STREAM_ICONS: Record<StreamType, ComponentType<{ className?: string
  * read time with this predicate rather than every writer guarding — and name
  * resolution (`useStreamName`) stays unfiltered so labels still resolve.
  */
+/** Mirrors the backend's `assertCanArchive`: a stream's creator or its root's creator may archive or unarchive it. */
+export function canChangeArchiveState(
+  userId: string | null | undefined,
+  stream: { createdBy?: unknown } | null | undefined,
+  root: { createdBy?: unknown } | null | undefined
+): boolean {
+  return !!userId && (stream?.createdBy === userId || root?.createdBy === userId)
+}
+
 export function isUtilityStream(stream: { purpose?: string | null }): boolean {
   return stream.purpose != null
 }
