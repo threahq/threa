@@ -1953,24 +1953,38 @@ export function registerWorkspaceSocketHandlers(
 
     const removedStream = old.streams?.find((s) => s.id === payload.streamId)
     const shouldRemoveFromSidebar = removedStream?.visibility === "private"
-    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), {
-      ...old,
-      streamMemberships: old.streamMemberships.filter((m: StreamMember) => m.streamId !== payload.streamId),
-      streams: shouldRemoveFromSidebar ? old.streams?.filter((s) => s.id !== payload.streamId) : old.streams,
+    // Threads carry no access of their own (INV-62): a private root's revocation takes them along.
+    // Archived threads live only in IndexedDB and `archivedStreams`, so the active cache alone would miss them.
+    const candidates = shouldRemoveFromSidebar
+      ? [
+          ...(old.streams ?? []),
+          ...(old.archivedStreams ?? []),
+          ...(await db.streams.where("workspaceId").equals(workspaceId).toArray()),
+        ]
+      : []
+    const unreadableIds = new Set(
+      candidates.filter((s) => s.id === payload.streamId || s.rootStreamId === payload.streamId).map((s) => s.id)
+    )
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (current) => {
+      if (!current) return current
+      return {
+        ...current,
+        streamMemberships: current.streamMemberships.filter((m: StreamMember) => m.streamId !== payload.streamId),
+        streams: current.streams?.filter((s) => !unreadableIds.has(s.id)),
+        archivedStreams: current.archivedStreams?.filter((s) => !unreadableIds.has(s.id)),
+      }
     })
 
     await Promise.all([
       db.streamMemberships.delete(`${workspaceId}:${payload.streamId}`),
       db.streamReadState.delete(`${workspaceId}:${payload.streamId}`),
-      ...(shouldRemoveFromSidebar
-        ? [
-            db.streams.delete([workspaceId, payload.streamId]),
-            deleteStreamSlots(db, workspaceId, payload.streamId),
-            // The cards this stream contributed are unreadable now — drop them
-            // rather than leave them rendering off the cache.
-            removeBoardConversationsForStream(workspaceId, payload.streamId),
-          ]
-        : []),
+      ...[...unreadableIds].flatMap((streamId) => [
+        db.streams.delete([workspaceId, streamId]),
+        deleteStreamSlots(db, workspaceId, streamId),
+      ]),
+      // The cards this stream contributed are unreadable now — drop them
+      // rather than leave them rendering off the cache.
+      ...(shouldRemoveFromSidebar ? [removeBoardConversationsForStream(workspaceId, payload.streamId)] : []),
     ])
   }
 
