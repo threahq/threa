@@ -47,6 +47,7 @@ export class DocSync {
   private readonly api: DocsApi
   private readonly onRejected?: (refusal: ApiError) => void
   private readonly onLost?: (error: unknown) => void
+  private readonly onSaved?: () => void
   private readonly kickOperationQueue: () => void
   private readonly listeners = new Set<() => void>()
   private status: DocSyncStatus = { phase: "loading" }
@@ -72,6 +73,8 @@ export class DocSync {
     onRejected?: (refusal: ApiError) => void
     /** Called when unsent edits could not be handed to the operation queue either; they are gone. */
     onLost?: (error: unknown) => void
+    /** Called each time the server applies a flush of local edits. */
+    onSaved?: () => void
     kickOperationQueue: () => void
   }) {
     this.workspaceId = params.workspaceId
@@ -80,6 +83,7 @@ export class DocSync {
     this.api = params.api ?? docsApi
     this.onRejected = params.onRejected
     this.onLost = params.onLost
+    this.onSaved = params.onSaved
     this.kickOperationQueue = params.kickOperationQueue
   }
 
@@ -289,6 +293,7 @@ export class DocSync {
     // that may be a peer's row, a server stamp adds a row after ours, and any head that moved meanwhile belongs to
     // the broadcasts, which apply each row in order.
     if (result.applied && before !== null && this.seq === before && result.seq === before + 1) this.seq = result.seq
+    if (result.applied) this.onSaved?.()
   }
 
   private async discardRefusedEdits(error: ApiError): Promise<void> {

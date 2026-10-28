@@ -114,6 +114,10 @@ function previewNode(node: JSONContent): string {
     const title = stringAttr(node, "title")
     return title ? `Memo: ${title}` : "Memo"
   }
+  if (node.type === "docEmbed") {
+    const title = stringAttr(node, "title")
+    return title ? `Doc: ${title}` : "Doc"
+  }
   if (node.type === "giphyEmbed") {
     const title = stringAttr(node, "title")
     return title ? `GIF: ${title}` : "GIF"

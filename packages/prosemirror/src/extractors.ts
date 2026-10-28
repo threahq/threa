@@ -429,3 +429,27 @@ function unresolvedTriggerSigil(node: JSONContent): "@" | "#" | null {
   if (node.type === "channelLink" && !isResolvedChannelLinkId(id)) return "#"
   return null
 }
+
+/** Doc ids from inline `docEmbed` nodes, de-duplicated in first-seen order. */
+export function collectDocEmbedIds(content: JSONContent): string[] {
+  const ids: string[] = []
+  const seen = new Set<string>()
+
+  const walk = (node: JSONContent): void => {
+    if (node.type === "docEmbed") {
+      const docId = node.attrs?.docId
+      if (typeof docId === "string" && docId.length > 0 && !seen.has(docId)) {
+        seen.add(docId)
+        ids.push(docId)
+      }
+    }
+    if (node.content) {
+      for (const child of node.content) {
+        walk(child)
+      }
+    }
+  }
+
+  walk(content)
+  return ids
+}

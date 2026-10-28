@@ -9,6 +9,7 @@ export const DISPLAY_STAMP_ATTRS = {
   sharedMessage: ["authorName", "authorId", "actorType"],
   inAppLink: ["name"],
   memoEmbed: ["title"],
+  docEmbed: ["title"],
 } as const
 
 export type DisplayStampedNode = keyof typeof DISPLAY_STAMP_ATTRS

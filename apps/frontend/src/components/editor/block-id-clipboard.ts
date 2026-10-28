@@ -13,8 +13,12 @@ interface SliceJSON {
   [key: string]: unknown
 }
 
+// A doc chip's `blockId` points into another doc; it is not an id this doc holds.
+const POINTER_NODE_TYPES = new Set(["docEmbed"])
+
 function mapNodes(nodes: NodeJSON[] | undefined, map: (attrs: Record<string, unknown>) => Record<string, unknown>) {
   return nodes?.map((node): NodeJSON => {
+    if (typeof node.type === "string" && POINTER_NODE_TYPES.has(node.type)) return node
     const next: NodeJSON = { ...node }
     if (node.attrs && "blockId" in node.attrs) next.attrs = map(node.attrs)
     if (node.content) next.content = mapNodes(node.content, map)
@@ -29,7 +33,7 @@ function withoutBlockIds(slice: SliceJSON): string {
 function blockIdsIn(doc: ProseMirrorNode): Set<string> {
   const ids = new Set<string>()
   doc.descendants((node) => {
-    if (typeof node.attrs.blockId === "string") ids.add(node.attrs.blockId)
+    if (!POINTER_NODE_TYPES.has(node.type.name) && typeof node.attrs.blockId === "string") ids.add(node.attrs.blockId)
   })
   return ids
 }

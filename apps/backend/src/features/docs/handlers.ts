@@ -1,6 +1,6 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import type { DocSectionResponse, DocThreadsResponse, DocUpdatesResponse } from "@threahq/types"
+import type { DocBacklinksResponse, DocSectionResponse, DocThreadsResponse, DocUpdatesResponse } from "@threahq/types"
 import { validateRequest } from "../../lib/validation"
 import type { DocService } from "./service"
 
@@ -57,6 +57,12 @@ export function createDocHandlers({ docService }: Dependencies) {
       const { docId } = validateRequest(paramsSchema, req.params)
       const threads = await docService.listThreads({ workspaceId: req.workspaceId!, userId: req.user!.id, docId })
       res.json({ threads } satisfies DocThreadsResponse)
+    },
+
+    async listBacklinks(req: Request, res: Response) {
+      const { docId } = validateRequest(paramsSchema, req.params)
+      const backlinks = await docService.listBacklinks({ workspaceId: req.workspaceId!, userId: req.user!.id, docId })
+      res.json({ backlinks } satisfies DocBacklinksResponse)
     },
 
     async getSection(req: Request, res: Response) {

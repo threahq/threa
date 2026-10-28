@@ -28,6 +28,12 @@ const task = (checked: boolean, value: string, n: number): JSONContent => ({
   content: [paragraph(value, n)],
 })
 
+const DOC_ID = "stream_self"
+const docEmbed = (docId: string, embedBlockId: string | null = null): JSONContent => ({
+  type: "docEmbed",
+  attrs: { docId, blockId: embedBlockId, title: "Linked" },
+})
+
 const stampedDoc: JSONContent = {
   type: "doc",
   content: [
@@ -45,7 +51,7 @@ function editText(json: JSONContent, index: number, value: string): JSONContent 
 
 describe("doc projection", () => {
   test("projects a Y.Doc's top-level blocks into sections and the whole body into markdown", () => {
-    const projection = projectDoc(ydocToContentJson(contentJsonToYDoc(stampedDoc)))
+    const projection = projectDoc(ydocToContentJson(contentJsonToYDoc(stampedDoc)), DOC_ID)
     expect({
       bodyMarkdown: projection.bodyMarkdown,
       sections: projection.sections.map(({ contentJson: _contentJson, ...section }) => section),
@@ -60,15 +66,35 @@ describe("doc projection", () => {
   })
 
   test("projects an emptied doc to no sections", () => {
-    expect(projectDoc(ydocToContentJson(new Y.Doc()))).toEqual({
+    expect(projectDoc(ydocToContentJson(new Y.Doc()), DOC_ID)).toEqual({
       bodyMarkdown: "",
       bodyJson: { type: "doc", content: [] },
       sections: [],
+      references: [],
     })
   })
 
+  test("should emit one reference per block and target when blocks embed other docs and itself", () => {
+    const json: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", attrs: { blockId: id(1) }, content: [docEmbed("stream_b"), docEmbed("stream_b")] },
+        {
+          type: "paragraph",
+          attrs: { blockId: id(2) },
+          content: [docEmbed("stream_b", id(9)), docEmbed("stream_b"), docEmbed(DOC_ID), docEmbed("stream_c")],
+        },
+      ],
+    }
+    expect(projectDoc(json, DOC_ID).references).toEqual([
+      { blockId: id(1), refType: "doc", refId: "stream_b" },
+      { blockId: id(2), refType: "doc", refId: "stream_b" },
+      { blockId: id(2), refType: "doc", refId: "stream_c" },
+    ])
+  })
+
   test("refuses a top-level block without a block id", () => {
-    expect(() => projectDoc({ type: "doc", content: [paragraph("No id")] })).toThrow("has no blockId")
+    expect(() => projectDoc({ type: "doc", content: [paragraph("No id")] }, DOC_ID)).toThrow("has no blockId")
   })
 
   test("reports exactly the added, changed and removed block ids", () => {

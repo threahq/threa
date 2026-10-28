@@ -12,12 +12,14 @@ const SECOND_ID = `blk_${"0".repeat(25)}2`
 
 const editors: Editor[] = []
 
-function createEditor(): Editor {
+const TARGET_BLOCK_ID = `blk_${"0".repeat(25)}9`
+
+function createEditor(secondContent: JSONContent[] = [{ type: "text", text: "Second block" }]): Editor {
   const content: JSONContent = {
     type: "doc",
     content: [
       { type: "paragraph", attrs: { blockId: FIRST_ID }, content: [{ type: "text", text: "First block" }] },
-      { type: "paragraph", attrs: { blockId: SECOND_ID }, content: [{ type: "text", text: "Second block" }] },
+      { type: "paragraph", attrs: { blockId: SECOND_ID }, content: secondContent },
     ],
   }
   const ydoc: Y.Doc = prosemirrorJSONToYDoc(getThreaSchema(), content, DOC_FRAGMENT)
@@ -118,5 +120,26 @@ describe("BlockIdClipboard", () => {
     paste(editor, "<p></p><p>Something else</p>")
 
     expect(blocks(editor).map((block) => block.blockId)).not.toContain(SECOND_ID)
+  })
+
+  it("should keep a doc chip's target block when a block holding it is copied and pasted", () => {
+    const editor = createEditor([
+      { type: "text", text: "See " },
+      { type: "docEmbed", attrs: { docId: "stream_plan", blockId: TARGET_BLOCK_ID, title: "Plan" } },
+    ])
+    selectSecondBlock(editor)
+    const html = copySelection(editor)
+    newBlockAtEnd(editor)
+
+    paste(editor, html)
+
+    const chips: unknown[] = []
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === "docEmbed") chips.push(node.attrs)
+    })
+    expect(chips).toEqual([
+      { docId: "stream_plan", blockId: TARGET_BLOCK_ID, title: "Plan" },
+      { docId: "stream_plan", blockId: TARGET_BLOCK_ID, title: "Plan" },
+    ])
   })
 })

@@ -934,6 +934,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     docs.listThreads
   )
   app.get(
+    "/api/workspaces/:workspaceId/docs/:docId/backlinks",
+    ...authed,
+    audit("docs.list_backlinks", "read"),
+    docs.listBacklinks
+  )
+  app.get(
     "/api/workspaces/:workspaceId/docs/:docId/sections/:blockId",
     ...authed,
     audit("docs.get_section", "read"),

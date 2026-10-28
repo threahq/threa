@@ -28,7 +28,7 @@ const body: JSONContent = {
     paragraph("GCP key is live", 3),
   ],
 }
-const sections = projectDoc(body).sections
+const sections = projectDoc(body, "stream_agent_markdown_test").sections
 
 function minter() {
   let n = 100

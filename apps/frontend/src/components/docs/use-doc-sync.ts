@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react"
 import { toast } from "sonner"
+import { useQueryClient } from "@tanstack/react-query"
 import * as Y from "yjs"
 import { StreamErrorCodes } from "@threahq/types"
 import { useSocket, useSocketReconnectCount } from "@/contexts"
+import { docKeys } from "@/api/docs"
 import { useCurrentWorkspaceUser } from "@/hooks"
 import { useLatest } from "@/hooks/use-latest"
 import { DocPresence } from "@/lib/docs/doc-presence"
@@ -51,6 +53,7 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
   const latestSocket = useLatest(socket)
   const syncEngine = useOptionalSyncEngine()
   const latestSyncEngine = useLatest(syncEngine)
+  const queryClient = useQueryClient()
 
   // Keyed on the doc alone: a rejected edit's new generation is the same open doc.
   useEffect(() => (docId ? registerOpenDoc(docId) : undefined), [docId])
@@ -63,6 +66,8 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
       docId,
       ydoc,
       kickOperationQueue: () => latestSyncEngine()?.kickOperationQueue(),
+      // A saved edit may add or drop a link to another doc, whose "Linked from" may be open beside this one.
+      onSaved: () => void queryClient.invalidateQueries({ queryKey: docKeys.allBacklinks(workspaceId) }),
       onLost: () => {
         toast.error("Your last edits couldn't be kept", {
           description: "This browser could not store them to send later.",
@@ -102,7 +107,7 @@ export function useDocSync(workspaceId: string, docId: string | null): DocSyncVi
       sync.stop()
       ydoc.destroy()
     }
-  }, [workspaceId, docId, key, latestSocket, latestSyncEngine])
+  }, [workspaceId, docId, key, latestSocket, latestSyncEngine, queryClient])
 
   const viewer = useCurrentWorkspaceUser(workspaceId)
   const viewerId = viewer?.id

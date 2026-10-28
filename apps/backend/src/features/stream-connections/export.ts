@@ -97,6 +97,7 @@ type NodeRule =
   | "inAppLink"
   | "attachmentReference"
   | "memoEmbed"
+  | "docEmbed"
 
 /**
  * How each node leaves the host. A pointer survives only when it resolves
@@ -133,6 +134,7 @@ export const BRIDGE_NODE_RULES: ReadonlyMap<string, NodeRule> = new Map<string, 
   ["inAppLink", "inAppLink"],
   ["attachmentReference", "attachmentReference"],
   ["memoEmbed", "memoEmbed"],
+  ["docEmbed", "docEmbed"],
 ])
 
 // Keyed by every mark type, so a new mark fails the typecheck until it is given a rule here.
@@ -792,6 +794,7 @@ function exportNode(node: JSONContent, scope: ContentScope): JSONContent | null 
       if (!scope.attachmentIds.has(attr(node, "id") ?? "")) return null
       break
     case "memoEmbed":
+    case "docEmbed":
       return asText(node, attr(node, "title"))
   }
 

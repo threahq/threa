@@ -110,6 +110,7 @@ describe("composer pill moves", () => {
       "slashCommand",
       "attachmentReference",
       "memoEmbed",
+      "docEmbed",
       "inAppLink",
       "giphyEmbed",
     ])

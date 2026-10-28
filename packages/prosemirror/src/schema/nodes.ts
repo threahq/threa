@@ -189,6 +189,35 @@ export const MemoEmbedNode = Node.create({
   },
 })
 
+export const DocEmbedNode = Node.create({
+  name: "docEmbed",
+  group: "inline",
+  inline: true,
+  selectable: true,
+  atom: true,
+  marks: "_",
+
+  addAttributes() {
+    return {
+      docId: dataAttr("docId", "data-doc-id", null),
+      blockId: optionalDataAttr("blockId", "data-block-id"),
+      title: dataAttr("title", "data-title", ""),
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'span[data-type="doc-embed"]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ["span", mergeAttributes(HTMLAttributes, { "data-type": "doc-embed" })]
+  },
+
+  renderText({ node }) {
+    return node.attrs.title || "Doc"
+  },
+})
+
 export const InAppLinkNode = Node.create({
   name: "inAppLink",
   group: "inline",

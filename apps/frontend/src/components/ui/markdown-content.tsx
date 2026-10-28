@@ -5,7 +5,7 @@ import rehypeKatex from "rehype-katex"
 import rehypeRaw from "rehype-raw"
 import rehypeSanitize, { defaultSchema, type Options as SanitizeSchema } from "rehype-sanitize"
 import "katex/dist/katex.min.css"
-import { extractMath, normalizeMarkdownTables, parseMentionPointerHref } from "@threahq/prosemirror"
+import { extractMath, normalizeMarkdownTables, parseDocHref, parseMentionPointerHref } from "@threahq/prosemirror"
 import { APP_LINK_SCHEME } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { markdownComponents } from "@/lib/markdown/components"
@@ -98,6 +98,10 @@ function urlTransform(url: string): string {
   // Allow giphy: protocol so the link renderer can swap the anchor for the
   // inline GIF embed. Same reasoning as the pointer protocols above.
   if (url.startsWith("giphy:")) {
+    return url
+  }
+  // Allow well-formed doc: pointers so MarkdownLink can render the doc chip.
+  if (parseDocHref(url)) {
     return url
   }
   // Allow the mention/channel pointer schemes (user:/persona:/bot:/broadcast:/

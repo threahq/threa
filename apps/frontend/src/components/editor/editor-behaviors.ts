@@ -79,7 +79,8 @@ export function isSuggestionActive(editor: Editor): boolean {
     s.channelLink?.popupVisible ||
     s.slashCommand?.popupVisible ||
     s.emoji?.popupVisible ||
-    s.memoSearch?.popupVisible
+    s.memoSearch?.popupVisible ||
+    s.docSearch?.popupVisible
   )
 }
 

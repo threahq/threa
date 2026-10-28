@@ -17,6 +17,7 @@ import {
 import { extractMath, splitMathTokens, unescapeTableCellTex } from "./math"
 import {
   buildAgentBlockHref,
+  buildDocHref,
   buildGiphyHref,
   buildMemoHref,
   buildQuoteHref,
@@ -30,33 +31,40 @@ import {
   type ReferencePin,
 } from "./pointer-urls"
 
+/** A memo/doc pointer's link text: its cached title (or the fallback) with only `\\` and `]` escaped. */
+function pointerLinkLabel(title: unknown, fallback: string): string {
+  const label = typeof title === "string" && title.length > 0 ? title : fallback
+  return label.replace(/\\/g, "\\\\").replace(/\]/g, "\\]")
+}
+
 /**
  * Inline markdown pattern - captures each format type in separate groups.
  * Group layout (order matters for matching priority):
  *   1-4:   Attachment  [text](attachment:id "meta") → groups: full, text, id, optional title
  *   5-7:   Memo        [title](memo:id)             → groups: full, title, memoId (before Link)
- *   8-10:  Link        [text](url)     → groups: full, text, url
- *   11-12: BoldItalic  ***text***      → groups: full, text (must come before ** and *)
- *   13-14: Bold        **text**        → groups: full, text
- *   15-16: Italic      *text*          → groups: full, text (with negative lookahead/behind for **)
- *   17-18: Strike      ~~text~~        → groups: full, text
- *   19-20: Code        `text`          → groups: full, text
- *   21-22: Mention     @slug           → groups: full, slug (a whole token, `MENTION_PATTERN`)
- *   23-24: Channel     #slug           → groups: full, slug (a whole token, `CHANNEL_PATTERN`)
- *   25-26: Emoji       :shortcode:     → groups: full, shortcode
+ *   8-11:  Doc         [title](doc:id#blk)          → groups: full, title, docId, optional blockId (before Link)
+ *   12-14: Link        [text](url)     → groups: full, text, url
+ *   15-16: BoldItalic  ***text***      → groups: full, text (must come before ** and *)
+ *   17-18: Bold        **text**        → groups: full, text
+ *   19-20: Italic      *text*          → groups: full, text (with negative lookahead/behind for **)
+ *   21-22: Strike      ~~text~~        → groups: full, text
+ *   23-24: Code        `text`          → groups: full, text
+ *   25-26: Mention     @slug           → groups: full, slug (a whole token, `MENTION_PATTERN`)
+ *   27-28: Channel     #slug           → groups: full, slug (a whole token, `CHANNEL_PATTERN`)
+ *   29-30: Emoji       :shortcode:     → groups: full, shortcode
  *
  * Resolved mentions/channels also serialize to the pointer form
  * `[@slug](user:usr_x)` / `[#slug](channel:stream_x)` / `[@here](broadcast:here)`
- * (INV-64); those match the generic Link group (8-10) and are routed by scheme in
+ * (INV-64); those match the generic Link group (12-14) and are routed by scheme in
  * `parseInlineMarkdown` like `giphy:`/`attachment:`, so no dedicated group is
- * needed. The bare `@slug`/`#slug` groups (21-24) remain as lenient input for
+ * needed. The bare `@slug`/`#slug` groups (25-28) remain as lenient input for
  * unresolved or markdown-authored mentions.
  *
  * Exported so both the shared package and the frontend editor can use the same
  * source of truth (use `new RegExp(INLINE_MARKDOWN_PATTERN, "g")`).
  */
 export const INLINE_MARKDOWN_PATTERN = [
-  /(\[((?:\\.|[^\\\]])+)\]\(attachment:([^)\s"]+)(?:\s+"((?:\\"|\\\\|[^"])*)")?\))|(\[((?:\\.|[^\\\]])+)\]\(memo:([\w-]+)\))|(\[([^\]]+)\]\(([^)]+)\))|(\*\*\*(.+?)\*\*\*)|(\*\*(.+?)\*\*)|(?<!\*)(\*([^*]+?)\*)(?!\*)|(\~\~(.+?)\~\~)|(`([^`]+)`)/
+  /(\[((?:\\.|[^\\\]])+)\]\(attachment:([^)\s"]+)(?:\s+"((?:\\"|\\\\|[^"])*)")?\))|(\[((?:\\.|[^\\\]])+)\]\(memo:([\w-]+)\))|(\[((?:\\.|[^\\\]])+)\]\(doc:([\w-]+)(?:#([\w-]+))?\))|(\[([^\]]+)\]\(([^)]+)\))|(\*\*\*(.+?)\*\*\*)|(\*\*(.+?)\*\*)|(?<!\*)(\*([^*]+?)\*)(?!\*)|(\~\~(.+?)\~\~)|(`([^`]+)`)/
     .source,
   `(${MENTION_PATTERN.source})`,
   `(${CHANNEL_PATTERN.source})`,
@@ -351,10 +359,13 @@ function getNodeText(node: JSONContent): string {
     // Wire-format only — the frontend hydrates the live memo card on render.
     // Markdown link syntax keeps INV-60 strip helpers reducing it to a clean
     // title; the cached title is the fallback external consumers see.
-    const title = node.attrs?.title as string | undefined
-    const rawTitle = title && title.length > 0 ? title : "Memo"
-    const escapedTitle = rawTitle.replace(/\\/g, "\\\\").replace(/\]/g, "\\]")
-    return `[${escapedTitle}](${buildMemoHref({ memoId })})`
+    return `[${pointerLinkLabel(node.attrs?.title, "Memo")}](${buildMemoHref({ memoId })})`
+  }
+  if (node.type === "docEmbed") {
+    const docId = node.attrs?.docId as string
+    if (!docId) return ""
+    const href = buildDocHref({ docId, blockId: node.attrs?.blockId as string | null | undefined })
+    return `[${pointerLinkLabel(node.attrs?.title, "Doc")}](${href})`
   }
   if (node.type === "inAppLink") {
     const url = node.attrs?.url as string
@@ -391,6 +402,7 @@ function isAtomNode(node: JSONContent): boolean {
     node.type === "attachmentReference" ||
     node.type === "emoji" ||
     node.type === "memoEmbed" ||
+    node.type === "docEmbed" ||
     node.type === "inAppLink" ||
     node.type === "giphyEmbed" ||
     node.type === "math"
@@ -1200,7 +1212,12 @@ function tokenizeBalancedLinkDestinations(
 
     if (hrefEnd === -1) break
     const href = text.slice(hrefStart, hrefEnd)
-    if (href.startsWith("attachment:") || href.startsWith("memo:") || hrefByToken.has(href)) {
+    if (
+      href.startsWith("attachment:") ||
+      href.startsWith("memo:") ||
+      href.startsWith("doc:") ||
+      hrefByToken.has(href)
+    ) {
       linkStart.lastIndex = hrefEnd + 1
       continue
     }
@@ -1331,13 +1348,17 @@ function parseInlineTokens(text: string, options: ParseOptions = {}): JSONConten
     } else if (match[5]) {
       // Memo embed: [title](memo:memoId) — inline chip (matched before Link
       // so a memo link isn't swallowed by the generic link branch).
-      const title = match[6].replace(/\\([\]\\])/g, "$1")
+      const title = unescapeMarkdownLinkText(match[6])
       const memoId = match[7]
       result.push({ type: "memoEmbed", attrs: { memoId, title } })
     } else if (match[8]) {
+      // Doc embed: [title](doc:stream_x) or [title](doc:stream_x#blk_y), matched before Link like memo.
+      const title = unescapeMarkdownLinkText(match[9])
+      result.push({ type: "docEmbed", attrs: { docId: match[10], blockId: match[11] ?? null, title } })
+    } else if (match[12]) {
       // Link: [text](url)
-      const linkText = match[9]
-      const linkUrl = tokenizedLinks.hrefByToken.get(match[10]) ?? match[10]
+      const linkText = match[13]
+      const linkUrl = tokenizedLinks.hrefByToken.get(match[14]) ?? match[14]
       // `giphy:` pointer links round-trip back to an inline GIF embed rather
       // than a plain link. Detected here (inside the generic link branch) so no
       // dedicated regex group is needed; the encoded URL never contains a `)`.
@@ -1380,9 +1401,9 @@ function parseInlineTokens(text: string, options: ParseOptions = {}): JSONConten
           marks: [...(node.marks || []), { type: "link", attrs: { href: linkUrl } }],
         })
       }
-    } else if (match[11]) {
+    } else if (match[15]) {
       // BoldItalic: ***text***
-      const boldItalicText = match[12]
+      const boldItalicText = match[16]
       const innerContent = parseInlineTokens(boldItalicText, options)
       for (const node of innerContent) {
         result.push({
@@ -1390,9 +1411,9 @@ function parseInlineTokens(text: string, options: ParseOptions = {}): JSONConten
           marks: [...(node.marks || []), { type: "bold" }, { type: "italic" }],
         })
       }
-    } else if (match[13]) {
+    } else if (match[17]) {
       // Bold: **text**
-      const boldText = match[14]
+      const boldText = match[18]
       const innerContent = parseInlineTokens(boldText, options)
       for (const node of innerContent) {
         result.push({
@@ -1400,9 +1421,9 @@ function parseInlineTokens(text: string, options: ParseOptions = {}): JSONConten
           marks: [...(node.marks || []), { type: "bold" }],
         })
       }
-    } else if (match[15]) {
+    } else if (match[19]) {
       // Italic: *text*
-      const italicText = match[16]
+      const italicText = match[20]
       const innerContent = parseInlineTokens(italicText, options)
       for (const node of innerContent) {
         result.push({
@@ -1410,9 +1431,9 @@ function parseInlineTokens(text: string, options: ParseOptions = {}): JSONConten
           marks: [...(node.marks || []), { type: "italic" }],
         })
       }
-    } else if (match[17]) {
+    } else if (match[21]) {
       // Strike: ~~text~~
-      const strikeText = match[18]
+      const strikeText = match[22]
       const innerContent = parseInlineTokens(strikeText, options)
       for (const node of innerContent) {
         result.push({
@@ -1420,16 +1441,16 @@ function parseInlineTokens(text: string, options: ParseOptions = {}): JSONConten
           marks: [...(node.marks || []), { type: "strike" }],
         })
       }
-    } else if (match[19]) {
+    } else if (match[23]) {
       // Code: `text` (no nesting for code)
       result.push({
         type: "text",
-        text: match[20],
+        text: match[24],
         marks: [{ type: "code" }],
       })
-    } else if (match[21]) {
+    } else if (match[25]) {
       // Mention: @slug
-      const slug = match[22]
+      const slug = match[26]
       const mentionType = allowMentions ? lookupMentionType(slug) : null
       if (mentionType) {
         result.push({
@@ -1439,9 +1460,9 @@ function parseInlineTokens(text: string, options: ParseOptions = {}): JSONConten
       } else {
         result.push({ type: "text", text: match[0] })
       }
-    } else if (match[23]) {
+    } else if (match[27]) {
       // Channel: #slug
-      const slug = match[24]
+      const slug = match[28]
       if (allowChannels && (options.isKnownChannel?.(slug) ?? true)) {
         result.push({
           type: "channelLink",
@@ -1450,9 +1471,9 @@ function parseInlineTokens(text: string, options: ParseOptions = {}): JSONConten
       } else {
         result.push({ type: "text", text: match[0] })
       }
-    } else if (match[25]) {
+    } else if (match[29]) {
       // Emoji: :shortcode:
-      const shortcode = match[26]
+      const shortcode = match[30]
       const emoji = allowEmoji ? getEmoji?.(shortcode) : null
       if (allowEmoji && emoji) {
         if (emojiAsText) {

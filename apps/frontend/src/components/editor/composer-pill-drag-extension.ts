@@ -19,6 +19,7 @@ export const COMPOSER_PILL_NODE_NAMES = [
   "slashCommand",
   "attachmentReference",
   "memoEmbed",
+  "docEmbed",
   "inAppLink",
   "giphyEmbed",
 ] as const

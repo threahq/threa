@@ -6,6 +6,7 @@ import {
   parseAttachmentMetadata,
   parseGiphyHref,
   parseMemoHref,
+  parseDocHref,
   parseMentionPointerHref,
   parseQuoteHref,
   parseSharedMessageHref,
@@ -23,6 +24,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { MemoChip } from "@/components/memo-embed/memo-chip"
+import { DocChipLink } from "@/components/docs/doc-chip-link"
 import { GifChip } from "@/components/giphy/gif-chip"
 import { AppLink, appLinkDestinationLabel, appLinkHrefFromGoPath } from "@/components/in-app-link/app-link"
 import { AttachmentChip } from "@/components/timeline/attachment-chip"
@@ -232,6 +234,13 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
 
   if (href?.startsWith(APP_LINK_SCHEME)) {
     return <AppLink href={href} label={<ProcessedChildren>{children}</ProcessedChildren>} />
+  }
+
+  const docHref = href ? parseDocHref(href) : null
+  if (docHref) {
+    return (
+      <DocChipLink docId={docHref.docId} blockId={docHref.blockId} fallbackTitle={extractTextFromChildren(children)} />
+    )
   }
 
   const memoHref = href ? parseMemoHref(href) : null

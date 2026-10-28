@@ -23,6 +23,7 @@ export const everyNodeDoc = doc(
       attrs: { id: "attach_2", filename: "b.png", status: "uploaded", display: "inline" },
     },
     { type: "memoEmbed", attrs: { memoId: "memo_1", title: "Memo" } },
+    { type: "docEmbed", attrs: { docId: "stream_2", blockId: "blk_1", title: "Doc" } },
     { type: "inAppLink", attrs: { url: "/w/x", streamId: "stream_1", name: "x" } },
     { type: "giphyEmbed", attrs: { giphyUrl: "https://giphy.com/x", width: 10, height: 10 } },
     { type: "math", attrs: { tex: "x", display: false } }

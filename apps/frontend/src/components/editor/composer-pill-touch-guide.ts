@@ -54,6 +54,9 @@ function guideLabelForNode(node: ProseMirrorNode | null, fromEnd: boolean): stri
     case "memoEmbed":
       label = typeof node.attrs.title === "string" && node.attrs.title ? node.attrs.title : "Memory"
       break
+    case "docEmbed":
+      label = typeof node.attrs.title === "string" && node.attrs.title ? node.attrs.title : "Doc"
+      break
     case "inAppLink":
       label = typeof node.attrs.name === "string" && node.attrs.name ? node.attrs.name : "Link"
       break

@@ -29,6 +29,7 @@ import { TableHeader } from "@tiptap/extension-table/header"
 import { TableCell } from "@tiptap/extension-table/cell"
 import { MarkdownTableInputRule } from "./markdown-table-input-rule"
 import { BlockIdClipboard } from "./block-id-clipboard"
+import { DocBlockLanding } from "./doc-block-landing-extension"
 
 import { MentionExtension, type MentionOptions } from "./triggers/mention-extension"
 import { ChannelExtension, type ChannelOptions } from "./triggers/channel-extension"
@@ -41,9 +42,11 @@ import { QuoteReplyExtension } from "./quote-reply-extension"
 import { AgentBlockExtension } from "./agent-block-extension"
 import { SharedMessageExtension } from "./shared-message-extension"
 import { MemoEmbedExtension } from "./memo-embed-extension"
+import { DocEmbedExtension } from "./doc-embed-extension"
 import { InAppLinkExtension } from "./in-app-link-extension"
 import { GiphyEmbedExtension } from "./giphy-embed-extension"
 import { MemoSearchExtension, type MemoSearchOptions } from "./triggers/memo-search-extension"
+import { DocSearchExtension, type DocSearchOptions } from "./triggers/doc-search-extension"
 import { DictationPreview } from "./dictation-preview-extension"
 import { MathExtension } from "./math-extension"
 import { DictationChunkExtension } from "./dictation-chunk-extension"
@@ -59,6 +62,7 @@ interface ContentExtensionsOptions {
   mentionSuggestion?: MentionOptions["suggestion"]
   channelSuggestion?: ChannelOptions["suggestion"]
   emojiSuggestion?: EmojiExtensionOptions["suggestion"]
+  docSearchSuggestion?: DocSearchOptions["suggestion"]
   /** Look up emoji by shortcode - used for input rule auto-convert */
   toEmoji?: (shortcode: string) => string | null
 }
@@ -164,6 +168,7 @@ function buildExtensions(config: Partial<CreateEditorExtensionsOptions>, surface
     SharedMessageExtension,
 
     MemoEmbedExtension,
+    DocEmbedExtension,
 
     InAppLinkExtension,
 
@@ -202,9 +207,12 @@ function buildExtensions(config: Partial<CreateEditorExtensionsOptions>, surface
         ? MemoSearchExtension.configure({ suggestion: config.memoSearchSuggestion })
         : MemoSearchExtension
     ),
+    config.docSearchSuggestion
+      ? DocSearchExtension.configure({ suggestion: config.docSearchSuggestion })
+      : DocSearchExtension,
 
     BlockIdAttribute,
-    ...documentOnly(BlockIdClipboard),
+    ...documentOnly(BlockIdClipboard, DocBlockLanding),
   ]
 
   return extensions

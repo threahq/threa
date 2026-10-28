@@ -1312,6 +1312,11 @@ export function usePanel(): PanelContextValue {
   return context
 }
 
+/** {@link usePanel} for a surface that also renders outside any PanelProvider. */
+export function useOptionalPanel(): PanelContextValue | null {
+  return useContext(PanelContext)
+}
+
 /** `usePanel().panelId` alone: re-renders only when the pane worked in changes, not on every layout change. */
 export function usePanelId(): string | null {
   const panelId = useContext(PanelIdContext)
