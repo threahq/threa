@@ -66,11 +66,11 @@ describe("code block language chip", () => {
     await user.type(screen.getByPlaceholderText("Search languages"), "yml")
     await user.click(screen.getByRole("option", { name: "YAML" }))
 
+    await waitFor(() => expect(editor.view.hasFocus()).toBe(true))
     expect({
       markdown: getMarkdown(),
       chip: screen.getByRole("button", { name: "Code language: YAML" }).textContent,
-      focused: editor.view.hasFocus(),
-    }).toEqual({ markdown: "```yaml\nname: threa\n```", chip: "YAML", focused: true })
+    }).toEqual({ markdown: "```yaml\nname: threa\n```", chip: "YAML" })
   })
 
   it("closes on Escape without changing the language", async () => {
