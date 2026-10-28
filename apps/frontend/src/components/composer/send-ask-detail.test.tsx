@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
 import * as workspaceStoreModule from "@/stores/workspace-store"
@@ -90,5 +90,7 @@ describe("SendAskDetail", () => {
     )
 
     expect(document.body.style.position).toBe("fixed")
+    // vaul re-measures 300ms after pinning the body; let that timer fire before jsdom is torn down.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 350)))
   })
 })
