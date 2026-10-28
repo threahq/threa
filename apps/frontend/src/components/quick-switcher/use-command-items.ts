@@ -1,5 +1,5 @@
 import { useMemo } from "react"
-import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
+import { StreamTypes, WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import { isDraftId, useFeatureFlag } from "@/hooks"
 import { useViewerPermissions } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"
@@ -8,6 +8,14 @@ import { isToleranceMatch, rankMatchesScored } from "@/lib/match-score"
 import { commands, paneCommands, type Command, type CommandContext } from "./commands"
 import { draftStreamCommands, streamCommands } from "./stream-commands"
 import type { ModeResult, QuickSwitcherItem } from "./types"
+
+/** A doc's body is its editor: no composer for a snippet, no settings, files or agent agenda of its own. */
+const TIMELINE_STREAM_COMMAND_IDS = new Set([
+  "stream-create-snippet",
+  "stream-settings",
+  "stream-files",
+  "stream-agenda",
+])
 
 interface UseCommandItemsParams {
   query: string
@@ -72,9 +80,11 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
     // settings/files/labels, so they only get a delete command.
     let contextualCommands: Command[] = []
     if (currentStreamId) {
+      const isDoc = commandContext.currentStreamType === StreamTypes.DOC
       contextualCommands = isDraftId(currentStreamId) ? draftStreamCommands : streamCommands
       contextualCommands = contextualCommands.filter(
         (c) =>
+          (!isDoc || !TIMELINE_STREAM_COMMAND_IDS.has(c.id)) &&
           (c.id !== "stream-archive" || commandContext.currentStreamArchived === false) &&
           (c.id !== "stream-unarchive" || commandContext.currentStreamArchived === true) &&
           (c.id !== "stream-open-aside" || !!commandContext.openAside) &&

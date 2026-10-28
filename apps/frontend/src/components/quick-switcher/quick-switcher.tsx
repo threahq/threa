@@ -591,6 +591,7 @@ function QuickSwitcherBody({
       openOutcomes,
       currentStreamId,
       currentStreamName,
+      currentStreamType: currentStream?.type,
       currentStreamArchived:
         currentStream && canChangeCurrentStreamArchive ? currentStream.archivedAt != null : undefined,
       openStreamSettings: handleOpenStreamSettings,
@@ -631,6 +632,7 @@ function QuickSwitcherBody({
       openOutcomes,
       currentStreamId,
       currentStreamName,
+      currentStream?.type,
       currentStream?.archivedAt,
       canChangeCurrentStreamArchive,
       handleOpenStreamSettings,

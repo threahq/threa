@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react"
 import { toast } from "sonner"
 import { useParams, useSearchParams } from "react-router-dom"
 import {
+  AppWindow,
   ListChecks,
   MoreHorizontal,
   Pencil,
@@ -56,8 +57,10 @@ import { useOutcomesUrlState } from "@/components/agent-outcomes"
 import { StreamContent, TimelineSkeleton, AgentActivityHeaderChip } from "@/components/timeline"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { DocPaneBody } from "@/components/docs/doc-pane-body"
+import { docExportActions } from "@/components/docs/doc-export-actions"
 import { useDocCanWrite } from "@/components/docs/use-doc-can-write"
 import { useDocSync } from "@/components/docs/use-doc-sync"
+import { useLiveDocTitle } from "@/components/docs/use-live-doc-title"
 import { DocPresenceAvatars } from "@/components/docs/doc-presence-avatars"
 import { DocsHeaderChip, useHostedDocs } from "@/components/docs/docs-header-chip"
 import { LabelPicker } from "@/components/labels/label-picker"
@@ -75,7 +78,7 @@ import { useInputMode } from "@/hooks/use-input-mode"
 import { useCreateDoc } from "@/hooks/use-create-doc"
 import { useCoverClose } from "@/hooks/use-cover-close"
 import { CONVERSATION_OVERLAY_COVER } from "@/lib/covers"
-import { panelIdsOf, primaryPanelOf } from "@/lib/panel-tabs"
+import { PANEL_PARAM, panelIdsOf, primaryPanelOf, soleFirstPanelOf } from "@/lib/panel-tabs"
 import { InviteActorButton, InviteBotButton } from "@/components/encryption"
 import {
   BotRuntimeStatuses,
@@ -196,6 +199,7 @@ export function StreamPane({
   const isDoc = stream?.type === StreamTypes.DOC
   // A doc's body is its editor: no timeline to search, move, browse or summarize, and no settings of its own.
   const hasTimeline = !isDoc
+  const docTitle = useLiveDocTitle(workspaceId, isDoc ? streamId : undefined, "").title
   const canWriteDoc = useDocCanWrite(workspaceId, stream)
   const docSync = useDocSync(workspaceId, isDoc ? streamId : null)
   const hostedDocs = useHostedDocs(
@@ -308,27 +312,43 @@ export function StreamPane({
   // feeds) — surfacing "Move messages…" there would be a guaranteed dead
   // end since the move endpoints reject the source stream.
   const isSystem = stream?.type === StreamTypes.SYSTEM
-  const streamMenuActions: SidebarActionItem[] = []
-  if (hasTimeline) {
-    streamMenuActions.push({
-      id: "stream-settings",
-      label: "Settings",
-      icon: Settings,
-      onSelect: () => openStreamSettings(streamId),
-    })
-  }
-  streamMenuActions.push({
+  const labelsAction: SidebarActionItem = {
     id: "labels",
     label: "Labels…",
     icon: Tag,
     onSelect: () => setLabelPickerOpen(true),
-  })
-  streamMenuActions.push({
+  }
+  const copyLinkAction: SidebarActionItem = {
     id: "copy-link",
     label: "Copy link",
     icon: Link2,
     onSelect: () => void copyStreamLink(workspaceId, streamId),
-  })
+  }
+  const streamMenuActions: SidebarActionItem[] = []
+  if (isDoc) {
+    streamMenuActions.push(copyLinkAction)
+    if (docSync.phase === "ready") {
+      streamMenuActions.push(...docExportActions(docSync.ydoc, docTitle))
+    }
+    // On a phone every pane already fills the screen.
+    const isWholePage = layout.columns.length === 1 && soleFirstPanelOf(layout) === streamId
+    if (!isWholePage && !isMobile) {
+      streamMenuActions.push({
+        id: "open-full-page",
+        label: "Open full page",
+        icon: AppWindow,
+        // A link naming the panes goes to the router; a bare link to this doc from inside its pane only flashes it.
+        href: `/w/${workspaceId}/s/${streamId}?${PANEL_PARAM}=${streamId}`,
+      })
+    }
+    streamMenuActions.push(labelsAction)
+  } else {
+    streamMenuActions.push(
+      { id: "stream-settings", label: "Settings", icon: Settings, onSelect: () => openStreamSettings(streamId) },
+      labelsAction,
+      copyLinkAction
+    )
+  }
   if (createDoc.enabled) {
     streamMenuActions.push({
       id: "new-doc",
@@ -894,6 +914,7 @@ export function StreamPane({
               <SidebarActionMenu
                 actions={desktopMenuActions}
                 ariaLabel="Stream actions"
+                contentClassName="w-auto min-w-40 max-w-64"
                 trigger={
                   <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Stream actions">
                     <MoreHorizontal className="h-4 w-4" />

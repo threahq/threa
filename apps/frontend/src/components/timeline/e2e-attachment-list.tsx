@@ -5,7 +5,7 @@ import type { AttachmentSummary } from "@threahq/types"
 import { type AttachmentRef } from "@/lib/crypto/attachment-crypto"
 import { requestAttachmentBytes } from "@/lib/crypto/attachment-cache"
 import { fetchAndDecryptAttachment, useDecryptedAttachment } from "@/hooks/use-decrypted-attachment"
-import { triggerDownload } from "@/lib/image-utils"
+import { downloadBlob } from "@/lib/image-utils"
 import { Button } from "@/components/ui/button"
 import { subscribeUploads, getUploadsVersion } from "@/lib/uploads/upload-manager"
 import { resolveUploadChip, PendingAttachmentChip } from "./attachment-list"
@@ -86,10 +86,7 @@ function E2eFileAttachment({ workspaceId, attachmentRef }: { workspaceId: string
         fetchAndDecryptAttachment(workspaceId, attachmentRef)
       )
       if (!entry.value) throw new Error("decrypt failed")
-      const objectUrl = URL.createObjectURL(entry.value)
-      triggerDownload(objectUrl, attachmentRef.filename)
-      // Give the browser a beat to start the download before reclaiming the URL.
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
+      downloadBlob(entry.value, attachmentRef.filename)
     } catch {
       toast.error("Couldn't decrypt this attachment")
     } finally {

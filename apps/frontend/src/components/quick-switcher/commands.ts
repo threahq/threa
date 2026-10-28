@@ -25,7 +25,13 @@ import {
   X,
 } from "lucide-react"
 import { toast } from "sonner"
-import { SETTINGS_TABS, StreamTypes, type SettingsTab, type WorkspaceSettingsTab } from "@threahq/types"
+import {
+  SETTINGS_TABS,
+  StreamTypes,
+  type SettingsTab,
+  type StreamType,
+  type WorkspaceSettingsTab,
+} from "@threahq/types"
 import { STREAM_ICONS } from "@/lib/streams"
 import { SETTINGS_TAB_CONFIG } from "@/components/settings/tab-config"
 import type { ExplorerFilters } from "@/components/attachment-explorer"
@@ -77,6 +83,8 @@ export interface CommandContext {
   currentStreamId?: string | null
   /** Resolved display name of `currentStreamId`, for section headers/confirm copy. */
   currentStreamName?: string | null
+  /** Type of the stream in view, when resolved. */
+  currentStreamType?: StreamType
   /** Archive state of the stream in view, when resolved. */
   currentStreamArchived?: boolean
   /** Open the stream settings dialog for a stream. */

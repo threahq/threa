@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import { test, expect, type Page, type Locator } from "@playwright/test"
 import {
   createChannelViaApi,
@@ -257,6 +258,66 @@ test.describe("Doc pane", () => {
     await expect(editor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
   })
 
+  test("should copy, download and open a doc full page from its menu, with no timeline actions", async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"])
+    const { testId } = await loginAndCreateWorkspace(page, "doc-menu")
+    const workspaceId = workspaceIdFromUrl(page)
+    const channelId = await createChannelViaApi(page, workspaceId, `menu-docs-${testId}`, "private")
+    const docId = await createDocViaApi(page, workspaceId, channelId)
+
+    await openChannel(page, workspaceId, channelId)
+    await anchorRow(page, docId).click()
+    const docPane = pane(page, docId)
+    await expect(docEditor(page, docId)).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+    const title = docPane.getByRole("textbox", { name: "Doc title" })
+    await title.fill("Launch: plan/v2")
+    await title.press("Enter")
+    await expect(docPane.locator('header [aria-current="page"]')).toHaveText("Launch: plan/v2", { timeout: 15000 })
+    await page.keyboard.type("Owners and dates")
+    const markdown = "# Launch: plan/v2\n\nOwners and dates"
+
+    const menuItem = (name: string) => page.getByRole("menuitem", { name, exact: true })
+    const openMenu = () => pane(page, docId).getByRole("button", { name: "Stream actions" }).first().click()
+
+    await openMenu()
+    for (const name of ["Copy link", "Copy as Markdown", "Download as Markdown", "Open full page", "Labels…"]) {
+      await expect(menuItem(name)).toBeVisible()
+    }
+    for (const name of ["Settings", "Move messages…", "Browse files…", "Agent agenda…"]) {
+      await expect(menuItem(name)).toHaveCount(0)
+    }
+    await menuItem("Copy as Markdown").click()
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(markdown)
+
+    await openMenu()
+    const download = page.waitForEvent("download")
+    await menuItem("Download as Markdown").click()
+    const file = await download
+    expect({ name: file.suggestedFilename(), text: readFileSync(await file.path(), "utf8") }).toEqual({
+      name: "Launch plan v2.md",
+      text: markdown,
+    })
+
+    await openMenu()
+    await expect(menuItem("Open full page")).toHaveAttribute("href", `/w/${workspaceId}/s/${docId}?panel=${docId}`)
+    await menuItem("Open full page").click()
+    await expect.poll(() => new URL(page.url()).pathname).toBe(`/w/${workspaceId}/s/${docId}`)
+    await expect(pane(page, channelId)).toHaveCount(0)
+    await expect(docEditor(page, docId)).toContainText("Owners and dates", { timeout: 15000 })
+    await openMenu()
+    await expect(menuItem("Copy as Markdown")).toBeVisible()
+    await expect(menuItem("Open full page")).toHaveCount(0)
+
+    await page.keyboard.press("Escape")
+    await page.goto(`/w/${workspaceId}/s/${channelId}?panel=${channelId}--${docId}`)
+    await expect(docEditor(page, docId)).toContainText("Owners and dates", { timeout: 15000 })
+    await openMenu()
+    await expect(menuItem("Open full page")).toBeVisible()
+  })
+
   test("should let a doc's author and the channel's creator archive it, and offer no archive once the channel is archived", async ({
     browser,
   }) => {
@@ -478,6 +539,24 @@ test.describe("Doc pane", () => {
       await expect.poll(() => new URL(page.url()).searchParams.get("panel")).toBeNull()
       const channelBox = (await pane(page, channelId).boundingBox())!
       expect({ x: Math.round(channelBox.x), width: Math.round(channelBox.width) }).toEqual({ x: 0, width: 390 })
+    })
+
+    test("should offer the doc's copy and download in its sheet, and no full page", async ({ page }) => {
+      const { testId } = await loginAndCreateWorkspace(page, "doc-phone-sheet")
+      const workspaceId = workspaceIdFromUrl(page)
+      const channelId = await createChannelViaApi(page, workspaceId, `phone-sheet-${testId}`, "public")
+      const docId = await createDocViaApi(page, workspaceId, channelId)
+      await page.setViewportSize({ width: 390, height: 780 })
+      await openChannel(page, workspaceId, channelId)
+      await anchorRow(page, docId).tap()
+      await expect(docEditor(page, docId)).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+
+      await pane(page, docId).getByRole("button", { name: "Stream actions" }).first().tap()
+      const sheet = page.getByRole("dialog", { name: "Doc details and actions" })
+      for (const name of ["Copy link", "Copy as Markdown", "Download as Markdown", "Labels…"]) {
+        await expect(sheet.getByRole("button", { name, exact: true })).toBeVisible()
+      }
+      await expect(sheet.getByText("Open full page")).toHaveCount(0)
     })
   })
 })
