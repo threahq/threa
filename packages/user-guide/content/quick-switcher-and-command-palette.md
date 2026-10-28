@@ -30,6 +30,7 @@ When a stream is open, a group named after it comes first. It includes, dependin
 
 - **Settle**, when the stream is in your Inbox.
 - **Create snippet**.
+- **New doc**, when the stream can host a doc. It creates an untitled doc in the stream and opens it beside it.
 - **Open an aside here**, when the stream can host one.
 - **Open stream settings**.
 - **Browse files in this stream**.

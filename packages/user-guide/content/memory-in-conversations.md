@@ -1,6 +1,6 @@
 ---
 title: Using memory in chat
-summary: Embed a memo in a message with /memo, and how Ariadne and other agents search, read and save memos.
+summary: Embed a memo in a message with /memos, and how Ariadne and other agents search, read and save memos.
 section: memory
 order: 4
 ---
@@ -9,17 +9,17 @@ order: 4
 
 Memos can be pulled into a conversation in two ways. You can embed one in a message yourself, and agents can search memory, read memos and save new ones while they work for you.
 
-## Embed a memo with /memo
+## Embed a memo with /memos
 
-In the composer, type `/memo` followed by a space and a few words, for example:
+In the composer, type `/memos` followed by a space and a few words, for example:
 
 ```
-/memo auth rewrite
+/memos auth rewrite
 ```
 
-A list of matching memos opens, using the same search as the [Memory](app:memory) page, limited to memos that can be shared into the stream you are writing in. With no words after `/memo `, it lists recent memos. Each entry shows the title, the knowledge type and tags. Pick one and it is inserted as a memo chip, and the typed text is removed. If nothing matches, the list says "No memos found".
+A list of matching memos opens, using the same search as the [Memory](app:memory) page, limited to memos that can be shared into the stream you are writing in. With no words after `/memos `, it lists recent memos. Each entry shows the title, the knowledge type and tags. Pick one and it is inserted as a memo chip, and the typed text is removed. If nothing matches, the list says "No memos found".
 
-You can also type `/` and choose **memo** from the command list, which fills in `/memo ` for you. Unlike most slash commands, it works in the middle of a sentence.
+You can also type `/` and choose **memos** from the command list, which fills in `/memos ` for you. Unlike most slash commands, it works in the middle of a sentence.
 
 After you send the message, a card for each memo appears below it, showing the knowledge type, up to two tags, the title and the date. Select the card to preview the memo in place, with a link through to the Memory page. The embed is not available in a stream's description.
 

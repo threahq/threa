@@ -13,8 +13,8 @@ export interface DocEmbedAttrs {
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     docEmbed: {
-      /** Insert an inline doc chip at the caret, or at `at` with the caret left where it is. */
-      insertDocEmbed: (attrs: { docId: string; blockId?: string | null; title?: string; at?: number }) => ReturnType
+      /** Insert an inline doc chip at the caret. */
+      insertDocEmbed: (attrs: { docId: string; blockId?: string | null; title?: string }) => ReturnType
     }
   }
 }
@@ -27,22 +27,21 @@ export const DocEmbedExtension = DocEmbedNode.extend({
         (attrs) =>
         ({ chain, state }) => {
           // Keep the caret's marks on the chip and its trailing space, which also ends any open suggestion match.
-          const sourceMarks =
-            attrs.at === undefined
-              ? (state.storedMarks ?? state.selection.$from.marks())
-              : state.doc.resolve(attrs.at).marks()
-          const marks = sourceMarks.map((mark) => ({ type: mark.type.name, attrs: mark.attrs }))
-          const content = [
-            {
-              type: this.name,
-              attrs: { docId: attrs.docId, blockId: attrs.blockId ?? null, title: attrs.title ?? "" },
-              marks,
-            },
-            { type: "text", text: " ", marks },
-          ]
-          return attrs.at === undefined
-            ? chain().insertContent(content).run()
-            : chain().insertContentAt(attrs.at, content).run()
+          const { $from } = state.selection
+          const marks = (state.storedMarks ?? $from.marks()).map((mark) => ({
+            type: mark.type.name,
+            attrs: mark.attrs,
+          }))
+          return chain()
+            .insertContent([
+              {
+                type: this.name,
+                attrs: { docId: attrs.docId, blockId: attrs.blockId ?? null, title: attrs.title ?? "" },
+                marks,
+              },
+              { type: "text", text: " ", marks },
+            ])
+            .run()
         },
     }
   },

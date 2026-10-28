@@ -11,6 +11,7 @@ import * as mentionablesModule from "@/hooks/use-mentionables"
 import * as emojiModule from "@/hooks/use-workspace-emoji"
 import * as giphyModule from "@/hooks/use-giphy-enabled"
 import * as streamCommandsModule from "@/hooks/use-stream-commands"
+import * as createDocModule from "@/hooks/use-create-doc"
 import * as contextsModule from "@/contexts"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import * as uploadManagerModule from "@/lib/uploads/upload-manager"
@@ -35,6 +36,10 @@ beforeEach(() => {
   spyOnExport(emojiModule, "useWorkspaceEmoji").mockReturnValue((() => NO_EMOJI) as never)
   spyOnExport(giphyModule, "useGiphyEnabled").mockReturnValue((() => false) as never)
   spyOnExport(streamCommandsModule, "useStreamCommands").mockReturnValue((() => []) as never)
+  spyOnExport(createDocModule, "useCreateDoc").mockReturnValue((() => ({
+    enabled: false,
+    run: async () => null,
+  })) as never)
   spyOnExport(contextsModule, "usePreferences").mockReturnValue((() => NO_PREFERENCES) as never)
 })
 

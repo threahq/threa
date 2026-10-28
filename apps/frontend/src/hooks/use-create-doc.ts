@@ -39,7 +39,10 @@ export function useCreateDoc(workspaceId: string, host: DocHost | undefined) {
   const run = useCallback(
     async (title?: string) => {
       if (!hostId || isPending) return null
-      const displayName = title?.trim().slice(0, DOC_TITLE_MAX_LENGTH)
+      const displayName = title
+        ?.trim()
+        .slice(0, DOC_TITLE_MAX_LENGTH)
+        .replace(/[\uD800-\uDBFF]$/, "")
       let doc
       try {
         doc = await createStream({

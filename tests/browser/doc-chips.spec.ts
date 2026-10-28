@@ -76,17 +76,17 @@ test.describe("Doc chips", () => {
         response.request().method() === "POST" &&
         new URL(response.url()).pathname === `/api/workspaces/${workspaceId}/streams`
     )
-    await page
-      .getByRole("listbox", { name: "Doc suggestions" })
-      .getByRole("option")
-      .filter({ hasText: "New doc" })
-      .click()
+    await expect(
+      page.getByRole("listbox", { name: "Doc suggestions" }).getByRole("option").filter({ hasText: "New doc" })
+    ).toBeVisible()
+    await page.keyboard.press("Enter")
     const response = await created
     await expectApiOk(response, "Create doc")
     const { stream } = (await response.json()) as { stream: { id: string; type: string; displayName: string } }
 
     expect({ type: stream.type, displayName: stream.displayName }).toEqual({ type: "doc", displayName: title })
     await expect(docChip(composer)).toContainText(title)
+    await expect(composer).not.toContainText("/doc")
     await expect(pane(page, stream.id)).toBeVisible({ timeout: 15000 })
     await expect(pane(page, channelId)).toBeVisible()
   })

@@ -27,8 +27,8 @@ export interface InlineSearchOptions<T> {
       onKeyDown: (props: SuggestionKeyDownProps) => boolean
     }
   }
-  /** Runs after a pick is inserted; `at` is where the typed trigger started. */
-  onPick?: (pick: { editor: Editor; item: T; at: number }) => void
+  /** Handles a pick itself and returns true, leaving the typed trigger in place; otherwise the default insert runs. */
+  takeOver?: (pick: { editor: Editor; item: T }) => boolean
 }
 
 interface InlineSearchConfig<T> {
@@ -81,7 +81,7 @@ export function createInlineSearchExtension<T>({ name, trigger, pluginKey, inser
     },
 
     addProseMirrorPlugins() {
-      const { onPick } = this.options
+      const { takeOver } = this.options
       return [
         Suggestion<T>({
           editor: this.editor,
@@ -103,10 +103,10 @@ export function createInlineSearchExtension<T>({ name, trigger, pluginKey, inser
           },
           ...this.options.suggestion,
           command: ({ editor, range, props }) => {
+            if (takeOver?.({ editor, item: props as T })) return
             // Removing the typed trigger clears the suggestion match, so the plugin
             // fires `onExit` and the popup closes instead of lingering.
             insert(editor.chain().focus().deleteRange(range), props as T).run()
-            onPick?.({ editor, item: props as T, at: range.from })
           },
         }),
       ]

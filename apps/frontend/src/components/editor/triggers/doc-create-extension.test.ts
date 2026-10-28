@@ -1,10 +1,9 @@
 import { afterEach, describe, it, expect } from "vitest"
 import { Editor } from "@tiptap/core"
 import { createEditorExtensions } from "../editor-extensions"
-import { DocCreatePluginKey } from "./doc-create-extension"
+import { DocCreatePluginKey, linkNewDoc } from "./doc-create-extension"
 import { DocSearchPluginKey } from "./doc-search-extension"
 import { isNewDoc, type DocSuggestionItem, type NewDocItem } from "./use-doc-suggestion"
-import { linkCreatedDoc } from "./use-doc-create-suggestion"
 
 type Item = DocSuggestionItem | NewDocItem
 
@@ -40,8 +39,10 @@ function makeEditor(create: (title: string) => Promise<{ id: string; displayName
         items: () => [],
         render: () => ({ onStart: capture, onUpdate: capture, onExit() {}, onKeyDown: () => false }),
       },
-      onPick: ({ editor, item, at }) => {
-        if (isNewDoc(item)) links.push(linkCreatedDoc(editor, at, () => create(item.title), `/doc ${item.title}`))
+      takeOver: ({ editor, item }) => {
+        if (!isNewDoc(item)) return false
+        links.push(linkNewDoc(editor, () => create(item.title)))
+        return true
       },
     },
   })
@@ -104,7 +105,7 @@ describe("DocCreateExtension", () => {
     ])
   })
 
-  it("should put the new doc's chip where /doc was typed when text is typed while it is created", async () => {
+  it("should keep the typed /doc while the doc is created, then put its chip in place of it", async () => {
     const creation = deferred<{ id: string; displayName: string | null }>()
     const titles: string[] = []
     const { editor, pick, settled } = makeEditor((title) => {
@@ -116,17 +117,55 @@ describe("DocCreateExtension", () => {
     await new Promise((r) => setTimeout(r, 0))
 
     pick({ kind: "new-doc", title: "Q4 findings" })
-    typeText(editor, "now")
+    const whileCreating = editor.getText()
     creation.resolve({ id: "stream_new", displayName: "Q4 findings" })
     await settled()
 
-    expect({ titles, content: editor.getJSON().content?.[0]?.content }).toEqual({
+    expect({ titles, whileCreating, content: editor.getJSON().content?.[0]?.content }).toEqual({
       titles: ["Q4 findings"],
-      content: [{ type: "text", text: "see " }, chip("stream_new", "Q4 findings"), { type: "text", text: " now" }],
+      whileCreating: "see /doc Q4 findings",
+      content: [{ type: "text", text: "see " }, chip("stream_new", "Q4 findings"), { type: "text", text: " " }],
     })
   })
 
-  it("should give the typed /doc back when the doc could not be created", async () => {
+  it("should place the chip on the trigger when another tab rewrites the whole document while the doc is created", async () => {
+    const creation = deferred<{ id: string; displayName: string | null }>()
+    const { editor, pick, settled } = makeEditor(() => creation.promise)
+    editor.commands.focus()
+    typeText(editor, "see /doc Q4 findings")
+    await new Promise((r) => setTimeout(r, 0))
+
+    pick({ kind: "new-doc", title: "Q4 findings" })
+    const { doc, schema } = editor.state
+    const remote = schema.nodes.paragraph.create(null, schema.text("intro"))
+    const tr = editor.state.tr.replaceWith(0, doc.content.size, [remote, ...doc.content.content])
+    editor.view.dispatch(tr)
+    creation.resolve({ id: "stream_new", displayName: "Q4 findings" })
+    await settled()
+
+    expect(editor.getJSON().content?.map((block) => block.content)).toEqual([
+      [{ type: "text", text: "intro" }],
+      [{ type: "text", text: "see " }, chip("stream_new", "Q4 findings"), { type: "text", text: " " }],
+    ])
+  })
+
+  it("should link nothing when the typed /doc was cleared while the doc was created", async () => {
+    const creation = deferred<{ id: string; displayName: string | null }>()
+    const { editor, pick, settled } = makeEditor(() => creation.promise)
+    editor.commands.focus()
+    typeText(editor, "see /doc Q4 findings")
+    await new Promise((r) => setTimeout(r, 0))
+
+    pick({ kind: "new-doc", title: "Q4 findings" })
+    editor.commands.clearContent()
+    typeText(editor, "sent")
+    creation.resolve({ id: "stream_new", displayName: "Q4 findings" })
+    await settled()
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([{ type: "text", text: "sent" }])
+  })
+
+  it("should leave the typed /doc untouched when the doc could not be created", async () => {
     const { editor, pick, settled } = makeEditor(async () => null)
     editor.commands.focus()
     typeText(editor, "see /doc Q4 findings")
