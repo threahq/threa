@@ -339,19 +339,41 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # The production build, not the E2E one. `build:e2e` sets the PWA plugin's
-      # globPatterns to [], so it never builds a precache manifest and never
-      # checks any asset against the per-file precache limit — a chunk that grows
-      # past it fails only in deploy-cloudflare.yml, after merge, with the
-      # frontend left on the previous release.
       - name: Build frontend
+        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
         run: bun run --cwd apps/frontend build
+
+      - name: Build deployable frontend
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          POSTHOG_CLI_TOKEN: ${{ secrets.POSTHOG_CLI_TOKEN }}
+          POSTHOG_ENV_ID_EU: ${{ secrets.POSTHOG_ENV_ID_EU }}
+          POSTHOG_ENV_ID_US: ${{ secrets.POSTHOG_ENV_ID_US }}
+        run: bun run --cwd apps/frontend build
+
+      - name: Strip source maps
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: find apps/frontend/dist -name '*.map' -type f -delete
+
+      - name: Upload deployable frontend
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-production
+          path: apps/frontend/dist
+          if-no-files-found: error
+          overwrite: true
 
   app-update-browser:
     name: App Update Browser Proof (${{ matrix.browser }})
