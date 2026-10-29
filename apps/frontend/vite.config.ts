@@ -274,9 +274,6 @@ export default defineConfig({
   },
   test: {
     maxWorkers: process.env.CI ? undefined : 2,
-    // Two projects so the Node build-script tests under scripts/ don't drag in
-    // the jsdom UI bootstrap (./src/test/setup.ts → @/db, localStorage, DOM
-    // polyfills) that has nothing to do with a filesystem script.
     projects: [
       {
         extends: true,
@@ -286,6 +283,16 @@ export default defineConfig({
           environment: "jsdom",
           setupFiles: ["./src/test/setup.ts"],
           include: ["src/**/*.test.{ts,tsx}"],
+          exclude: ["src/**/*.node.test.ts"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "frontend-node",
+          globals: true,
+          environment: "node",
+          include: ["src/**/*.node.test.ts"],
         },
       },
       {
