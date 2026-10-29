@@ -2793,6 +2793,7 @@ export class RemoteSession {
     for (let start = 0; start < frames.length; start += MAX_STEP_FRAMES_PER_CALL) {
       const chunk = frames.slice(start, start + MAX_STEP_FRAMES_PER_CALL)
       const sourceRevision = entry.invocation.sourceRevision
+      let accepted = false
       if (entry.invocation.sealing) {
         // Sealed turn: seal each frame under the stream key and ship on the
         // sealed wire. No statusText — the sealed wire deliberately carries
@@ -2812,20 +2813,28 @@ export class RemoteSession {
             )
           )
           if (!this.isOutputCurrent(entry.invocation, sourceRevision)) return this.inflight.has(invocationId)
-          await this.transport.recordSealedSteps(invocationId, sealing.callbackToken, sealedFrames)
+          accepted = await this.transport.recordSealedSteps(invocationId, sealing.callbackToken, sealedFrames)
         } catch (error) {
           this.log(`recordSteps (sealed) failed: ${this.summarize(error)}`)
         }
       } else {
         if (!this.isOutputCurrent(entry.invocation, sourceRevision)) return this.inflight.has(invocationId)
-        await this.transport
-          .recordSteps(invocationId, entry.invocation.claimToken, chunk, statusText ?? this.runtime.busyStatusText)
-          .catch((error) => this.log(`recordSteps failed: ${this.summarize(error)}`))
+        try {
+          accepted = await this.transport.recordSteps(
+            invocationId,
+            entry.invocation.claimToken,
+            chunk,
+            statusText ?? this.runtime.busyStatusText
+          )
+        } catch (error) {
+          this.log(`recordSteps failed: ${this.summarize(error)}`)
+        }
       }
       // The turn can close during an awaited send (reply, /stop, idle timeout)
       // — exactly the long multi-chunk replays this loop exists for. Recheck so
       // the returned boolean stays an honest stop signal for the tailer.
       if (!this.openRoute(invocationId)) return false
+      if (accepted && this.isOutputCurrent(entry.invocation, sourceRevision)) entry.touchIdleTimeout()
     }
     return true
   }

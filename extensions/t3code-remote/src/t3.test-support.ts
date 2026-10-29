@@ -21,6 +21,7 @@ interface ScriptStep {
   status: string
   /** Items as of this poll; each replaces the thread's item at its position. */
   items?: ThreadItem[]
+  replaceItems?: boolean
   /** The run the wait answers for, when T3 continued the waited one as a new run. */
   runId?: string
   /** The thread's model as of this poll, as when the user switches it in T3. */
@@ -121,7 +122,7 @@ export function fakeT3() {
 
   function apply(threadId: string, step: ScriptStep): void {
     if (step.model) models.set(threadId, step.model)
-    const current = items.get(threadId) ?? []
+    const current = step.replaceItems ? [] : (items.get(threadId) ?? [])
     for (const next of step.items ?? []) {
       const index = current.findIndex((existing) => existing.position === next.position)
       if (index === -1) current.push(next)
@@ -193,8 +194,15 @@ export function fakeT3() {
         const found = (items.get(args.threadId) ?? []).find((candidate) => candidate.itemId === args.itemId)!
         return {
           thread,
-          items: [{ ...found, text: text.slice(args.textOffset ?? 0), nextTextOffset: null }],
-          nextPosition: found.position,
+          items: found
+            ? [
+                {
+                  ...found,
+                  ...(args.textOffset === undefined ? {} : { text: text.slice(args.textOffset), nextTextOffset: null }),
+                },
+              ]
+            : [],
+          nextPosition: found?.position ?? null,
           hasMore: false,
         }
       }
@@ -307,6 +315,7 @@ export function fakeT3() {
     client,
     calls,
     uploads,
+    replaceActivity: (threadId: string, activity: ThreadItem[]) => items.set(threadId, activity),
     callsOf: (name: T3ToolName) => calls.filter((call) => call.name === name).map((call) => call.args),
     script: (runId: string, steps: ScriptStep[]) => {
       scripts.set(runId, [...(scripts.get(runId) ?? []), ...steps])
@@ -356,6 +365,7 @@ export function fakeSession(rootStreamId = "stream_root") {
   const replies: Array<{ invocationId: string; text: string }> = []
   const posts: Array<{ streamId: string; text: string; clientMessageId: string }> = []
   const interims: Array<{ invocationId: string; text: string }> = []
+  const replyResults: Array<Awaited<ReturnType<BridgeSession["reply"]>>> = []
   const interimResults: Array<Awaited<ReturnType<BridgeSession["sendInterim"]>>> = []
   const postFailures: Error[] = []
   const encrypted = new Set<string>()
@@ -372,9 +382,12 @@ export function fakeSession(rootStreamId = "stream_root") {
       return true
     },
     reply: async (invocationId, text) => {
-      replies.push({ invocationId, text })
-      settle()
-      return { ok: true, message: "" }
+      const result = replyResults.shift() ?? { ok: true, message: "" }
+      if (result.ok) {
+        replies.push({ invocationId, text })
+        settle()
+      }
+      return result
     },
     sendInterim: async (invocationId, text) => {
       const result = interimResults.shift() ?? { ok: true, message: "" }
@@ -416,6 +429,7 @@ export function fakeSession(rootStreamId = "stream_root") {
     interims,
     /** How the next interim posts answer; unset, they post. */
     interimResults,
+    replyResults,
     /** What the next posts to a stream throw; unset, they post. */
     postFailures,
     /** Streams Threa reports as end-to-end encrypted. */

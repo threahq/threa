@@ -1,5 +1,11 @@
 import { describe, expect, jest, spyOn, test } from "bun:test"
-import { base64ToBytes, bytesToBase64, openMessageAsString, sealMessage } from "@threahq/bot-runtime-client"
+import {
+  BotRuntimeTransport as RuntimeTransport,
+  base64ToBytes,
+  bytesToBase64,
+  openMessageAsString,
+  sealMessage,
+} from "@threahq/bot-runtime-client"
 import type {
   BotRuntimeHello,
   CreateDecisionRequestBody,
@@ -115,6 +121,7 @@ function makeFakeTransport(onSync?: (params: ObserveClaimParams) => void | Promi
       frames: Array<{ stepType: string; content: string }>
     ) => {
       steps.push({ invocationId, frames })
+      return true
     },
     observeClaim: (params: ObserveClaimParams) => {
       const record = {
@@ -199,6 +206,87 @@ function makeInvocation(partial: Partial<ClaimedInvocation>): ClaimedInvocation 
     ...partial,
   }
 }
+
+describe("trace activity idle deadline", () => {
+  for (const status of [200, 500]) {
+    test(`should renew idle only for accepted activity through the HTTP transport (${status})`, async () => {
+      jest.useFakeTimers()
+      const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status }))
+      const { client, calls } = makeFakeClient()
+      const transport = new RuntimeTransport({
+        baseUrl: "https://app.example.test",
+        workspaceId: "ws_1",
+        apiKey: "test_key",
+        hello: { instanceId: "rt-test", runtimeKind: "test-runtime", supportedCapabilities: [] },
+      })
+      const session = makeSession(client, transport)
+      try {
+        seedInflight(session, makeInvocation({ id: "binv_trace_http" }))
+        jest.advanceTimersByTime(3_599_000)
+        await session.recordSteps("binv_trace_http", [{ stepType: "thinking", content: "Working" }])
+        jest.advanceTimersByTime(1001)
+        await flush()
+        expect({
+          inflight: session.isInflight("binv_trace_http"),
+          completed: calls.complete.map(({ id }) => id),
+        }).toEqual({
+          inflight: status === 200,
+          completed: status === 200 ? [] : ["binv_trace_http"],
+        })
+      } finally {
+        await session.shutdown()
+        fetchSpy.mockRestore()
+        jest.useRealTimers()
+      }
+    })
+  }
+  for (const activity of ["accepted", "failed", "empty", "stale"] as const) {
+    test(`should ${activity === "accepted" ? "renew" : "preserve"} the idle deadline for ${activity} trace activity`, async () => {
+      jest.useFakeTimers()
+      const { client, calls } = makeFakeClient()
+      const { transport } = makeFakeTransport()
+      const invocation = makeInvocation({ id: "binv_trace" })
+      if (activity === "failed") {
+        transport.recordSteps = async () => {
+          throw new Error("offline")
+        }
+      } else if (activity === "stale") {
+        transport.recordSteps = async () => {
+          invocation.sourceRevision += 1
+          return true
+        }
+      }
+      const session = makeSession(client, transport)
+      try {
+        seedInflight(session, invocation)
+        jest.advanceTimersByTime(3_599_000)
+        await session.recordSteps(
+          "binv_trace",
+          activity === "empty" ? [] : [{ stepType: "thinking", content: "Working" }]
+        )
+        jest.advanceTimersByTime(1001)
+        await flush()
+        expect({ inflight: session.isInflight("binv_trace"), completed: calls.complete.map(({ id }) => id) }).toEqual({
+          inflight: activity === "accepted",
+          completed: activity === "accepted" ? [] : ["binv_trace"],
+        })
+        if (activity === "accepted") {
+          jest.advanceTimersByTime(3_599_000)
+          await flush()
+          expect({ inflight: session.isInflight("binv_trace"), completed: calls.complete.map(({ id }) => id) }).toEqual(
+            {
+              inflight: false,
+              completed: ["binv_trace"],
+            }
+          )
+        }
+      } finally {
+        await session.shutdown()
+        jest.useRealTimers()
+      }
+    })
+  }
+})
 
 describe("effectiveRuntimeManifest", () => {
   const actuator = (steer?: SessionControlActuator["steer"]): SessionControlActuator => ({

@@ -306,7 +306,7 @@ export class BotRuntimeTransport {
   /**
    * Record one or more trace steps. Best-effort: a turn's narration is nice to
    * have, not load-bearing, so a failure is logged and dropped rather than
-   * surfaced. This is the high-volume op the whole exercise targets.
+   * surfaced. Returns true when at least one frame was confirmed accepted.
    */
   async recordSteps(
     invocationId: string,
@@ -317,8 +317,8 @@ export class BotRuntimeTransport {
     // override exists for runtimes (pi-remote) whose claim instance can differ
     // from the session instance the transport registered with.
     instanceId: string = this.hello.instanceId
-  ): Promise<void> {
-    if (steps.length === 0) return
+  ): Promise<boolean> {
+    if (steps.length === 0) return false
     // Stamp each frame with an idempotency key (shared across the WS frame and the
     // HTTP fallback) so the server can never persist the same step twice.
     const keyed = steps.map((step) => ({ ...step, clientStepId: step.clientStepId ?? crypto.randomUUID() }))
@@ -331,18 +331,18 @@ export class BotRuntimeTransport {
     })
     if (ack) {
       if (!ack.ok) this.logFn(`steps rejected (${ack.code ?? "?"}): ${ack.message ?? ""}`)
-      return
+      return ack.ok
     }
     if (sent) {
       // The frame is in flight; the ack just didn't arrive in time. Steps are
       // best-effort, so rather than re-POST (an edge request we're avoiding,
       // dedup'd server-side or not) we drop and trust the in-flight frame.
       this.logFn("steps ack timed out; relying on the in-flight frame (no HTTP retry)")
-      return
+      return false
     }
     // Socket was down — the frame never left, so HTTP is the only path. The
     // idempotency key still guards against a late WS delivery racing this POST.
-    await this.httpRecordStepsFallback(invocationId, claimToken, keyed, statusText, instanceId)
+    return this.httpRecordStepsFallback(invocationId, claimToken, keyed, statusText, instanceId)
   }
 
   /**
@@ -353,8 +353,8 @@ export class BotRuntimeTransport {
    * `instanceId`/`claimToken`. `stepId` is the idempotency key: the server
    * finalizes/upserts by it, so a duplicate delivery can't double-persist.
    */
-  async recordSealedSteps(invocationId: string, callbackToken: string, steps: SealedStepFrame[]): Promise<void> {
-    if (steps.length === 0) return
+  async recordSealedSteps(invocationId: string, callbackToken: string, steps: SealedStepFrame[]): Promise<boolean> {
+    if (steps.length === 0) return false
     const { sent, ack } = await this.emitWrite("bot:invocation:sealed-steps", {
       invocationId,
       callbackToken,
@@ -362,13 +362,13 @@ export class BotRuntimeTransport {
     })
     if (ack) {
       if (!ack.ok) this.logFn(`sealed steps rejected (${ack.code ?? "?"}): ${ack.message ?? ""}`)
-      return
+      return ack.ok
     }
     if (sent) {
       this.logFn("sealed steps ack timed out; relying on the in-flight frame (no HTTP retry)")
-      return
+      return false
     }
-    await this.httpRecordSealedStepsFallback(invocationId, callbackToken, steps)
+    return this.httpRecordSealedStepsFallback(invocationId, callbackToken, steps)
   }
 
   /**
@@ -497,12 +497,13 @@ export class BotRuntimeTransport {
     steps: StepFrame[],
     statusText: string | undefined,
     instanceId: string
-  ): Promise<void> {
+  ): Promise<boolean> {
     // The HTTP /steps endpoint takes one step per request, so a batched WS frame
     // unrolls into N posts here. Best-effort: swallow per-step failures.
+    let accepted = false
     for (const step of steps) {
       try {
-        await this.httpRequest(this.v1Path(`/bot-invocations/${invocationId}/steps`), {
+        const response = await this.httpRequest(this.v1Path(`/bot-invocations/${invocationId}/steps`), {
           method: "POST",
           body: JSON.stringify({
             instanceId,
@@ -515,30 +516,37 @@ export class BotRuntimeTransport {
             ...(statusText ? { statusText } : {}),
           }),
         })
+        if (response.ok) accepted = true
+        else this.logFn(`step HTTP fallback rejected (${response.status})`)
       } catch (error) {
         this.logFn(`step HTTP fallback failed: ${summarize(error)}`)
       }
     }
+    return accepted
   }
 
   private async httpRecordSealedStepsFallback(
     invocationId: string,
     callbackToken: string,
     steps: SealedStepFrame[]
-  ): Promise<void> {
+  ): Promise<boolean> {
     // The HTTP /sealed-steps endpoint takes one step per request, so a batched
     // WS frame unrolls into N posts here. Best-effort: swallow per-step failures.
+    let accepted = false
     for (const step of steps) {
       try {
-        await this.httpRequest(this.v1Path(`/bot-invocations/${invocationId}/sealed-steps`), {
+        const response = await this.httpRequest(this.v1Path(`/bot-invocations/${invocationId}/sealed-steps`), {
           method: "POST",
           headers: { [THREA_CALLBACK_TOKEN_HEADER]: callbackToken },
           body: JSON.stringify(step),
         })
+        if (response.ok) accepted = true
+        else this.logFn(`step HTTP fallback rejected (${response.status})`)
       } catch (error) {
         this.logFn(`sealed step HTTP fallback failed: ${summarize(error)}`)
       }
     }
+    return accepted
   }
 
   private async httpRenewFallback(

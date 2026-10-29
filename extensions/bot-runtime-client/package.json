@@ -1,6 +1,6 @@
 {
   "name": "@threahq/bot-runtime-client",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Protocol client for Threa's bot runtime: the /bot WebSocket transport (presence, claim renewal, trace steps, work nudges) with an HTTP fallback, plus the sealed-turn crypto an end-to-end-encrypted bot needs.",
   "keywords": [
     "threa",

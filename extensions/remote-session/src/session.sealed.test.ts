@@ -28,7 +28,7 @@ import {
 import { RemoteSession, type RemoteSessionDelegate, type RuntimeDescriptor } from "./session"
 import type { RemoteSessionConfig } from "./identity"
 import { ThreaApiError, type ClaimedInvocation, type ThreaClient } from "./client"
-import { fireIdleTimeout, gate } from "./session.test-support"
+import { captureIdleTimeout, fireIdleTimeout, flush, gate } from "./session.test-support"
 
 // End-to-end sealed session behavior with REAL crypto: an "owner" wraps a
 // stream key to the session's BIK and seals a trigger; the session must open
@@ -200,9 +200,11 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
     sendHello: () => {},
     recordSteps: async (id: string) => {
       calls.plainSteps.push({ id })
+      return true
     },
     recordSealedSteps: async (id: string, callbackToken: string, frames: SealedStepFrame[]) => {
       calls.sealedSteps.push({ id, callbackToken, frames })
+      return true
     },
     observeClaim: (params: ObserveClaimParams) => {
       const record = {
@@ -354,6 +356,31 @@ describe("sealed claim hydration + delivery", () => {
     expect([...calls.sendMessage, ...calls.invocationMessages]).toHaveLength(0)
     expect(calls.complete).toHaveLength(0)
   })
+
+  for (const phase of ["started", "finished"] as const) {
+    test(`should ${phase === "started" ? "preserve" : "renew"} the idle deadline for sealed ${phase} trace activity`, async () => {
+      const { session, calls, openSealed } = await startSealedTurn()
+      try {
+        const originalDeadline = captureIdleTimeout(session, "binv_sealed")
+        await session.recordSteps("binv_sealed", [
+          {
+            stepType: "tool_call",
+            content: "Read a.ts",
+            ...(phase === "started" ? { phase: "started" as const } : {}),
+          },
+        ])
+        await originalDeadline()
+        expect(session.isInflight("binv_sealed")).toBe(phase === "finished")
+        if (phase === "finished") await fireIdleTimeout(session, "binv_sealed")
+        expect(session.isInflight("binv_sealed")).toBe(false)
+        expect(await openSealed(calls.completeSealed[0]!.body.reply as SealedReplyBody)).toContain(
+          "without sending a reply"
+        )
+      } finally {
+        await session.shutdown()
+      }
+    })
+  }
 
   test("drops started tool frames and seals the finish with its duration", async () => {
     const { session, calls, openSealed } = await startSealedTurn()
@@ -1053,8 +1080,8 @@ describe("harness-created E2E scratchpad (two-phase create)", () => {
       updatePresence: async (body: Record<string, unknown>) => {
         calls.presence.push(body)
       },
-      recordSteps: async () => {},
-      recordSealedSteps: async () => {},
+      recordSteps: async () => true,
+      recordSealedSteps: async () => true,
     }
     const session = new RemoteSession({
       config: { ...makeConfig(dir), e2e: true, ...(opts.keyScope ? { keyScope: opts.keyScope } : {}) },

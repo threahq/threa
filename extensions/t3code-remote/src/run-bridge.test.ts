@@ -1,9 +1,10 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import { mkdtempSync, truncateSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ThreaApiError, type DownloadedAttachment } from "@threahq/remote-session"
 import { T3AuthError } from "./auth"
+import { createFileThreadStore } from "./connector"
 import { RunTrace, T3TurnRunner, type RunTraceMode, type ThreadState } from "./run-bridge"
 import { T3ToolError, type PendingQuestion } from "./t3-client"
 import { DECISION, fakeSession, fakeT3, item, picked, turn, until } from "./t3.test-support"
@@ -101,7 +102,10 @@ describe("T3TurnRunner", () => {
         modelSelection: MODEL,
       },
     ])
-    expect(saved).toEqual([{ threads: { stream_root: "thread_1" }, model: MODEL }])
+    expect(saved).toEqual([
+      { threads: { stream_root: "thread_1" }, model: MODEL },
+      { threads: { stream_root: "thread_1" }, model: MODEL, owed: { thread_1: ["run_1"] } },
+    ])
     const [started, final] = session.frames()
     const content = { headline: "bun test", sections: [{ label: "Details", body: "bun test", lang: "bash" }] }
     expect({ ...started!, content: traceOf(started!.content) }).toEqual({
@@ -141,7 +145,7 @@ describe("T3TurnRunner", () => {
         projectId: "project_1",
       },
     ])
-    expect(saved.at(-1)).toEqual({ threads: { stream_root: "thread_1" }, model: MODEL })
+    expect(saved.at(-1)).toEqual({ threads: { stream_root: "thread_1" }, model: MODEL, owed: { thread_1: ["run_1"] } })
   })
 
   test.each([
@@ -185,7 +189,7 @@ describe("T3TurnRunner", () => {
 
     expect({ model: runner.model, saved: saved.at(-1) }).toEqual({
       model: MODEL,
-      saved: { threads: { stream_root: "thread_root" }, model: MODEL },
+      saved: { threads: { stream_root: "thread_root" }, model: MODEL, owed: { thread_root: ["run_1"] } },
     })
   })
 
@@ -371,11 +375,21 @@ describe("T3TurnRunner", () => {
     await session.settled()
 
     expect(t3.callsOf("t3_thread_send")).toEqual([
-      { threadId: "thread_1", message: "Now the docs", mode: "queue", clientRequestId: "binv_2" },
+      {
+        threadId: "thread_1",
+        message: expect.stringContaining("\n\nNow the docs"),
+        mode: "queue",
+        clientRequestId: "binv_2",
+      },
     ])
-    expect(t3.callsOf("t3_thread_read").slice(readsBefore)).toEqual([
-      expect.objectContaining({ threadId: "thread_1", afterPosition: 2, maxCharsPerItem: 1 }),
-      expect.objectContaining({ threadId: "thread_1", afterPosition: 2, maxCharsPerItem: 8000 }),
+    expect(
+      t3
+        .callsOf("t3_thread_read")
+        .slice(readsBefore)
+        .filter((args) => args.view === "activity")
+    ).toEqual([
+      expect.objectContaining({ threadId: "thread_1", afterPosition: 1, maxCharsPerItem: 1 }),
+      expect.objectContaining({ threadId: "thread_1", afterPosition: 1, maxCharsPerItem: 8000 }),
     ])
     expect(session.replies.at(-1)).toEqual({ invocationId: "binv_2", text: "Docs updated." })
   })
@@ -393,7 +407,7 @@ describe("T3TurnRunner", () => {
       attachmentSends: [
         {
           threadId: "thread_1",
-          message: "Fix the flaky test",
+          message: expect.stringContaining("\n\nFix the flaky test"),
           attachments: [{ type: "image", id: "t3att_1", name: "cat.png", mimeType: "image/png", sizeBytes: 9 }],
         },
       ],
@@ -412,7 +426,11 @@ describe("T3TurnRunner", () => {
       { threadId: "thread_root", sourcePoint: { type: "latest_stable" }, title: "Branch off here" },
     ])
     expect(t3.callsOf("t3_thread_send")).toEqual([expect.objectContaining({ threadId: "thread_1" })])
-    expect(saved.at(-1)).toEqual({ threads: { stream_root: "thread_root", stream_thread: "thread_1" }, model: MODEL })
+    expect(saved.at(-1)).toEqual({
+      threads: { stream_root: "thread_root", stream_thread: "thread_1" },
+      model: MODEL,
+      owed: { thread_1: ["run_1"] },
+    })
   })
 
   test("a spawned thread launches a fresh T3 thread on the spawn's model instead of forking", async () => {
@@ -443,7 +461,12 @@ describe("T3TurnRunner", () => {
           scratch: true,
         }),
       ],
-      saved: { threads: { stream_root: "thread_root", stream_thread: "thread_1" }, model: MODEL, spawns: {} },
+      saved: {
+        threads: { stream_root: "thread_root", stream_thread: "thread_1" },
+        model: MODEL,
+        spawns: {},
+        owed: { thread_1: ["run_1"] },
+      },
     })
   })
 
@@ -705,6 +728,7 @@ describe("T3TurnRunner", () => {
     ])
     await session.settled()
 
+    await until(() => !runner.busy)
     expect({
       busyWhileAsking,
       busy: runner.busy,
@@ -974,7 +998,7 @@ describe("T3TurnRunner", () => {
       open: session.decisions.map(({ signal }) => signal?.aborted),
       sends: t3.callsOf("t3_thread_send").map(({ message }) => message),
       responds: t3.callsOf("t3_pending_request_respond"),
-    }).toEqual({ open: [false], sends: ["Use Bun"], responds: [] })
+    }).toEqual({ open: [false], sends: [expect.stringContaining("\n\nUse Bun")], responds: [] })
     runner.shutdown()
   })
 
@@ -992,7 +1016,11 @@ describe("T3TurnRunner", () => {
       open: session.decisions.map(({ signal }) => signal?.aborted),
       sends: t3.callsOf("t3_thread_send").map(({ message, mode }) => ({ message, mode })),
       responds: t3.callsOf("t3_pending_request_respond"),
-    }).toEqual({ open: [false], sends: [{ message: "Deploy it, using Bun", mode: "steer" }], responds: [] })
+    }).toEqual({
+      open: [false],
+      sends: [{ message: expect.stringContaining("\n\nDeploy it, using Bun"), mode: "steer" }],
+      responds: [],
+    })
     runner.shutdown()
   })
 
@@ -1015,8 +1043,8 @@ describe("T3TurnRunner", () => {
     }).toEqual({
       open: [false],
       sends: [
-        { message: "Deploy it, using Bun", mode: "steer" },
-        { message: "Deploy it, using Bun", mode: "queue" },
+        { message: expect.stringContaining("\n\nDeploy it, using Bun"), mode: "steer" },
+        { message: expect.stringContaining("\n\nDeploy it, using Bun"), mode: "queue" },
       ],
       responds: [],
       followed: "run_2",
@@ -1125,8 +1153,8 @@ describe("T3TurnRunner", () => {
     t3.failNext("t3_thread_send", t3.notSendable())
     expect(await runner.steer("and the readme", "stream_root", [])).toBe(false)
     expect(t3.callsOf("t3_thread_send")).toEqual([
-      { threadId: "thread_1", message: "also the docs", mode: "steer" },
-      { threadId: "thread_1", message: "and the readme", mode: "steer" },
+      { threadId: "thread_1", message: expect.stringContaining("\n\nalso the docs"), mode: "steer" },
+      { threadId: "thread_1", message: expect.stringContaining("\n\nand the readme"), mode: "steer" },
     ])
     runner.shutdown()
   })
@@ -1142,7 +1170,7 @@ describe("T3TurnRunner", () => {
       attachmentSends: [
         {
           threadId: "thread_1",
-          message: "this one",
+          message: expect.stringContaining("\n\nthis one"),
           attachments: [{ type: "image", id: "t3att_1", name: "cat.png", mimeType: "image/png", sizeBytes: 9 }],
         },
       ],
@@ -1171,7 +1199,7 @@ describe("T3TurnRunner", () => {
         frames: session.frames(),
         replies: session.replies,
       }).toEqual({
-        sends: [{ threadId: "thread_1", message: "also the docs", mode: "steer" }],
+        sends: [{ threadId: "thread_1", message: expect.stringContaining("\n\nalso the docs"), mode: "steer" }],
         frames: [{ stepType: "thinking", content: "Fixed." }],
         replies: [{ invocationId: "binv_1", text: "Docs too." }],
       })
@@ -1934,7 +1962,10 @@ describe("runs T3 starts by itself", () => {
 
     expect({ replies: session.replies, saved }).toEqual({
       replies: [{ invocationId: "binv_2", text: "Docs done." }],
-      saved: [{ ...LINKED, delivered: { thread_1: "run_1" }, posted: { thread_1: ["run_3"] } }],
+      saved: [
+        { ...LINKED, delivered: { thread_1: "run_1" }, owed: { thread_1: ["run_3"] } },
+        { ...LINKED, delivered: { thread_1: "run_1" }, posted: { thread_1: ["run_3"] } },
+      ],
     })
   })
 
@@ -2276,7 +2307,7 @@ describe("runs T3 starts by itself", () => {
     const looks = t3.callsOf("t3_thread_read").filter((args) => args.maxCharsPerItem === 1)
     expect({ posts: session.posts, lastLookFrom: looks.at(-1)?.afterPosition }).toEqual({
       posts: [],
-      lastLookFrom: 4,
+      lastLookFrom: 3,
     })
   })
 
@@ -2456,7 +2487,7 @@ describe("runs T3 starts by itself", () => {
     ])
     const release = t3.holdNext("t3_thread_send")
     const delivering = runner.deliverTurn(turn({ invocationId: "binv_2", content: "Now the docs" }))
-    await until(() => t3.callsOf("t3_thread_send").some((args) => args.message === "Now the docs"))
+    await until(() => t3.callsOf("t3_thread_send").some((args) => String(args.message).endsWith("\n\nNow the docs")))
     runner.shutdown()
     release()
     await delivering
@@ -2483,4 +2514,427 @@ describe("runs T3 starts by itself", () => {
       reply: { invocationId: "binv_2", text: "Looked into it." },
     })
   })
+})
+
+describe("T3 delivery reliability", () => {
+  test.each([true, false])("should trace renumbered activity when the cursor anchor survives: %p", async (survives) => {
+    const { t3, session, runner } = setup()
+    const anchor = item(103, "assistant_message", { itemId: "anchor", text: "First." })
+    t3.script("run_1", [{ status: "running", items: [anchor] }])
+    await runner.deliverTurn(turn())
+    await until(() => t3.callsOf("t3_thread_read").some((args) => args.view === "activity"))
+    await idle()
+    const tools = Array.from({ length: 102 }, (_, index) =>
+      item(index + (survives ? 1 : 0), "command_execution", {
+        itemId: `new-tool-${index}`,
+        text: `$ tool-${index}`,
+      })
+    )
+    t3.script("run_1", [
+      {
+        status: "completed",
+        replaceItems: true,
+        items: [
+          ...(survives ? [{ ...anchor, position: 0 }] : []),
+          ...tools,
+          item(104, "assistant_message", { itemId: "final", text: "Done." }),
+        ],
+      },
+    ])
+    await session.settled()
+    expect({
+      tools: session
+        .frames()
+        .filter((frame) => frame.stepType === "tool_call")
+        .map((frame) => frame.content),
+      reply: session.replies,
+    }).toEqual({
+      tools: tools.map((tool) => expect.stringContaining(tool.text!.slice(2))),
+      reply: [{ invocationId: "binv_1", text: "Done." }],
+    })
+    expect(
+      session
+        .frames()
+        .filter((frame) => frame.stepType === "thinking")
+        .map((frame) => frame.content)
+    ).toEqual(survives ? ["First."] : [])
+    runner.shutdown()
+  })
+
+  test("should retry a completed reply before recording delivery", async () => {
+    const { t3, session, runner, saved } = setup()
+    session.replyResults.push({ ok: false, retryable: true, message: "offline" })
+    t3.script("run_1", [{ status: "completed", items: [item(0, "assistant_message", { text: "Done." })] }])
+    await runner.deliverTurn(turn())
+    await session.settled()
+    await until(() => !runner.busy)
+    expect({
+      replies: session.replies,
+      mark: saved.at(-1)?.delivered,
+      stops: t3.callsOf("t3_thread_interrupt"),
+    }).toEqual({
+      replies: [{ invocationId: "binv_1", text: "Done." }],
+      mark: { thread_1: "run_1" },
+      stops: [],
+    })
+    runner.shutdown()
+  })
+
+  test("should leave an exhausted reply owed for restart without stopping its completed run", async () => {
+    const { t3, session, runner, saved } = setup()
+    session.replyResults.push(
+      ...Array.from({ length: 150 }, () => ({ ok: false as const, retryable: true, message: "offline" }))
+    )
+    t3.script("run_1", [{ status: "completed", items: [item(0, "assistant_message", { text: "Done." })] }])
+    await runner.deliverTurn(turn())
+    await until(() => !runner.busy)
+    expect({
+      replies: session.replies,
+      mark: saved.at(-1)?.delivered,
+      stops: t3.callsOf("t3_thread_interrupt"),
+    }).toEqual({ replies: [], mark: undefined, stops: [] })
+    runner.shutdown()
+    const store = createFileThreadStore(join(mkdtempSync(join(tmpdir(), "t3-owed-")), "threads.json"))
+    store.save(saved.at(-1)!)
+    const restarted = setup({ t3, state: store.load() })
+    await restarted.runner.watch()
+    await until(() => !restarted.runner.busy)
+    expect(restarted.session.posts).toEqual([
+      { streamId: "stream_root", text: "Done.", clientMessageId: "t3run-run_1" },
+    ])
+    restarted.runner.shutdown()
+  })
+
+  test("should show queued state once then running before tool progress", async () => {
+    const { t3, session, runner } = setup()
+    t3.script("run_1", [
+      { status: "queued" },
+      { status: "queued" },
+      { status: "preparing" },
+      { status: "starting" },
+      { status: "running" },
+      {
+        status: "completed",
+        items: [item(0, "command_execution", { text: "$ true" }), item(1, "assistant_message", { text: "Done." })],
+      },
+    ])
+    await runner.deliverTurn(turn())
+    await session.settled()
+    expect(session.frames().map((frame) => (frame.stepType === "thinking" ? frame.content : frame.stepType))).toEqual([
+      "Queued in T3 Code, waiting for an earlier run…",
+      "Preparing in T3 Code…",
+      "Starting in T3 Code…",
+      "Working in T3 Code…",
+      "tool_call",
+    ])
+    runner.shutdown()
+  })
+})
+
+test("should finish an open tool after its timeline positions shrink", async () => {
+  const { t3, session, runner } = setup()
+  t3.script("run_1", [
+    {
+      status: "running",
+      items: [
+        item(102, "system_notice", { itemId: "anchor", text: "Preparing." }),
+        item(103, "command_execution", { itemId: "tool", status: "running", text: "$ true" }),
+      ],
+    },
+  ])
+  await runner.deliverTurn(turn())
+  await until(() => session.frames().some((frame) => frame.phase === "started"))
+  t3.script("run_1", [
+    {
+      status: "completed",
+      replaceItems: true,
+      items: [
+        item(0, "system_notice", { itemId: "anchor", text: "Preparing." }),
+        item(1, "command_execution", { itemId: "tool", text: "$ true" }),
+        item(2, "assistant_message", { itemId: "final", text: "Done." }),
+      ],
+    },
+  ])
+  await session.settled()
+  expect(
+    session
+      .frames()
+      .filter((frame) => frame.stepType === "tool_call")
+      .map(({ phase, clientStepId }) => ({ phase, clientStepId }))
+  ).toEqual([
+    { phase: "started", clientStepId: expect.any(String) },
+    { phase: undefined, clientStepId: session.frames().find((frame) => frame.phase === "started")!.clientStepId },
+  ])
+  expect(session.replies).toEqual([{ invocationId: "binv_1", text: "Done." }])
+  runner.shutdown()
+})
+
+test("should show an earlier pending question without assigning it to the queued turn", async () => {
+  const { t3, session, runner } = setup({ state: { threads: { stream_root: "thread_1" }, model: MODEL } })
+  t3.ask("thread_1", "old_request", [question("old")])
+  t3.script("run_1", [
+    { status: "queued" },
+    { status: "queued" },
+    { status: "completed", items: [item(0, "assistant_message", { text: "Done." })] },
+  ])
+  await runner.deliverTurn(turn())
+  await session.settled()
+  expect({
+    frames: session.frames(),
+    cards: session.decisions,
+    answers: t3.callsOf("t3_pending_request_respond"),
+  }).toEqual({
+    frames: [
+      {
+        stepType: "thinking",
+        content: "Queued in T3 Code. Answer the earlier run's pending question in T3 Code to continue.",
+      },
+    ],
+    cards: [],
+    answers: [],
+  })
+  runner.shutdown()
+})
+
+test("should restore an owed outcome even when a later outcome already advanced the delivered mark", async () => {
+  const { t3, session, runner, saved } = setup({
+    state: {
+      threads: { stream_root: "thread_1" },
+      model: MODEL,
+      delivered: { thread_1: "run_2" },
+      owed: { thread_1: ["run_1"] },
+    },
+  })
+  t3.startInT3("thread_1")
+  t3.endInT3("run_1")
+  t3.startInT3("thread_1")
+  t3.endInT3("run_2")
+  t3.addItems("thread_1", [
+    item(0, "assistant_message", { text: "Owed." }),
+    item(1, "assistant_message", { runId: "run_2", text: "Already posted." }),
+  ])
+  await runner.watch()
+  await until(() => !runner.busy)
+  expect(session.posts).toEqual([{ streamId: "stream_root", text: "Owed.", clientMessageId: "t3run-run_1" }])
+  expect(saved.at(-1)?.delivered).toEqual({ thread_1: "run_2" })
+  runner.shutdown()
+  const restarted = setup({ t3, state: saved.at(-1)! })
+  await restarted.runner.watch()
+  await until(() => !restarted.runner.busy)
+  expect(restarted.session.posts).toEqual([])
+  restarted.runner.shutdown()
+})
+
+test("should refresh attachment instructions on launches, followups, steers, and image sends", async () => {
+  const { t3, session, runner } = setup()
+  t3.script("run_1", [{ status: "completed", items: [item(0, "assistant_message", { text: "Done." })] }])
+  await runner.deliverTurn(turn())
+  await session.settled()
+  t3.script("run_2", [{ status: "running" }])
+  await runner.deliverTurn(turn({ invocationId: "binv_2" }))
+  await runner.steer("More work", "stream_root", [])
+  await runner.steer("See image", "stream_root", [downloaded("image.png", "image/png", "image")])
+  const sent = t3.calls.filter(({ name }) =>
+    ["t3_thread_launch", "t3_thread_send", "t3_thread_send_attachments"].includes(name)
+  )
+  expect(sent.map(({ args }) => args.message)).toEqual(
+    Array.from({ length: 4 }, () =>
+      expect.stringMatching(
+        /THREA_ATTACH: \/absolute\/path\/to\/file.*Local paths and file: links are not downloadable links in Threa/s
+      )
+    )
+  )
+  runner.shutdown()
+})
+
+test.each(["anchor", "tool-98"])("should retry a page when activity shifts after resolving %s", async (shiftAt) => {
+  const { t3, session, runner } = setup()
+  const anchor = item(100, "system_notice", { itemId: "anchor", text: "Preparing." })
+  t3.script("run_1", [{ status: "running", items: [anchor] }])
+  await runner.deliverTurn(turn())
+  await until(() => session.frames().some((frame) => frame.content === "Preparing."))
+  const call = t3.client.call.bind(t3.client)
+  const tools = Array.from({ length: 102 }, (_, index) =>
+    item(101 + index, "command_execution", { itemId: `tool-${index}`, text: `$ important-${index}` })
+  )
+  const final = item(203, "assistant_message", { itemId: "final", text: "Done." })
+  let shifted = false
+  const read = spyOn(t3.client, "call").mockImplementation(async (name, args) => {
+    const result = await call(name, args)
+    if (name === "t3_thread_read" && "itemId" in args && args.itemId === shiftAt && !shifted) {
+      shifted = true
+      t3.replaceActivity("thread_1", [
+        { ...anchor, position: 0 },
+        ...tools.map((tool) => ({ ...tool, position: tool.position - 100 })),
+        { ...final, position: 103 },
+      ])
+    }
+    return result
+  })
+  try {
+    t3.script("run_1", [{ status: "completed", items: [...tools, final] }])
+    await session.settled()
+    expect({
+      tools: session.frames().filter((frame) => frame.stepType === "tool_call"),
+      replies: session.replies,
+    }).toEqual({
+      tools: tools.map((tool) => expect.objectContaining({ content: expect.stringContaining(tool.text!.slice(2)) })),
+      replies: [{ invocationId: "binv_1", text: "Done." }],
+    })
+  } finally {
+    read.mockRestore()
+    runner.shutdown()
+  }
+})
+
+test.each([false, true])(
+  "should keep held assistant text in the activity snapshot when positions shift: %p",
+  async (update) => {
+    const { t3, session, runner } = setup()
+    const held = item(update ? 0 : 101, "assistant_message", {
+      itemId: "held",
+      text: update ? "THREA_UPDATE: First update." : "Final answer.",
+    })
+    const tool = item(100, "command_execution", { itemId: "tool", text: "$ true", status: "running" })
+    t3.script("run_1", [{ status: "running", items: update ? [held] : [tool, held] }])
+    await runner.deliverTurn(turn())
+    await until(() => t3.callsOf("t3_thread_wait").length >= 2)
+    const call = t3.client.call.bind(t3.client)
+    let shifted = false
+    const read = spyOn(t3.client, "call").mockImplementation(async (name, args) => {
+      const result = await call(name, args)
+      if (name === "t3_thread_read" && "view" in args && args.view === "activity" && !shifted) {
+        shifted = true
+        t3.replaceActivity(
+          "thread_1",
+          update
+            ? [{ ...held, position: 100 }, item(101, "assistant_message", { itemId: "final", text: "Done." })]
+            : [
+                { ...tool, position: 0, status: "completed" },
+                { ...held, position: 1 },
+              ]
+        )
+      }
+      return result
+    })
+    try {
+      t3.script("run_1", [
+        {
+          status: "completed",
+          items: update
+            ? [item(1, "assistant_message", { itemId: "final", text: "Done." })]
+            : [{ ...tool, status: "completed" }, held],
+        },
+      ])
+      await session.settled()
+      expect({ interims: session.interims, replies: session.replies }).toEqual({
+        interims: update ? [{ invocationId: "binv_1", text: "First update." }] : [],
+        replies: [{ invocationId: "binv_1", text: update ? "Done." : "Final answer." }],
+      })
+    } finally {
+      read.mockRestore()
+      runner.shutdown()
+    }
+  }
+)
+
+test("should preserve a held update before an unrelated cursor item", async () => {
+  const { t3, session, runner } = setup()
+  t3.script("run_1", [
+    {
+      status: "running",
+      items: [
+        item(0, "assistant_message", { itemId: "held", text: "THREA_UPDATE: First update." }),
+        item(1, "user_message", { itemId: "external", runId: null, text: "More context." }),
+      ],
+    },
+  ])
+  await runner.deliverTurn(turn())
+  await until(() => t3.callsOf("t3_thread_wait").length >= 2)
+  t3.script("run_1", [
+    { status: "completed", items: [item(2, "assistant_message", { itemId: "final", text: "Done." })] },
+  ])
+  await session.settled()
+  expect({ interims: session.interims, replies: session.replies }).toEqual({
+    interims: [{ invocationId: "binv_1", text: "First update." }],
+    replies: [{ invocationId: "binv_1", text: "Done." }],
+  })
+  runner.shutdown()
+})
+
+test.each([1, 150])("should preserve a capped final through %s continuation read failures", async (failures) => {
+  const { t3, session, runner, saved } = setup()
+  const call = t3.client.call.bind(t3.client)
+  let remaining = failures
+  const read = spyOn(t3.client, "call").mockImplementation(async (name, args) => {
+    if (name === "t3_thread_read" && "textOffset" in args && remaining-- > 0)
+      throw new Error("Temporary continuation outage")
+    return call(name, args)
+  })
+  t3.continueText("final", "First part. Done.")
+  t3.script("run_1", [
+    {
+      status: "completed",
+      items: [item(0, "assistant_message", { itemId: "final", text: "First part.", nextTextOffset: 11 })],
+    },
+  ])
+  try {
+    await runner.deliverTurn(turn())
+    await until(() => !runner.busy)
+    await runner.watch()
+    expect({ replies: session.replies, owed: saved.at(-1)?.owed, stops: t3.callsOf("t3_thread_interrupt") }).toEqual({
+      replies: failures === 1 ? [{ invocationId: "binv_1", text: "First part. Done." }] : [],
+      owed: failures === 1 ? undefined : { thread_1: ["run_1"] },
+      stops: [],
+    })
+    if (failures === 150) {
+      runner.shutdown()
+      const restarted = setup({ t3, state: saved.at(-1)! })
+      await restarted.runner.watch()
+      await until(() => !restarted.runner.busy)
+      expect(restarted.session.posts).toEqual([
+        { streamId: "stream_root", text: "First part. Done.", clientMessageId: "t3run-run_1" },
+      ])
+      restarted.runner.shutdown()
+    }
+  } finally {
+    read.mockRestore()
+    runner.shutdown()
+  }
+})
+
+test("should reuse resolved final text after a thrown send failure", async () => {
+  const { t3, session, runner } = setup()
+  const reply = session.session.reply.bind(session.session)
+  let failed = false
+  const send = spyOn(session.session, "reply").mockImplementation(async (invocationId, text) => {
+    if (!failed) {
+      failed = true
+      throw new Error("Temporary send outage")
+    }
+    return reply(invocationId, text)
+  })
+  t3.continueText("final", "First part. Done.")
+  t3.script("run_1", [
+    {
+      status: "completed",
+      items: [item(0, "assistant_message", { itemId: "final", text: "First part.", nextTextOffset: 11 })],
+    },
+  ])
+  try {
+    await runner.deliverTurn(turn())
+    await session.settled()
+    expect({
+      replies: session.replies,
+      reads: t3.callsOf("t3_thread_read").filter((args) => args.textOffset !== undefined),
+      stops: t3.callsOf("t3_thread_interrupt"),
+    }).toEqual({
+      replies: [{ invocationId: "binv_1", text: "First part. Done." }],
+      reads: [{ threadId: "thread_1", itemId: "final", textOffset: 11, maxCharsPerItem: 8000 }],
+      stops: [],
+    })
+  } finally {
+    send.mockRestore()
+    runner.shutdown()
+  }
 })
