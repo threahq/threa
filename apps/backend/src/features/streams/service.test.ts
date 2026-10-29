@@ -272,7 +272,7 @@ describe("StreamService.joinPublicChannel", () => {
 
     expect(error).toBeInstanceOf(HttpError)
     expect((error as HttpError).status).toBe(403)
-    expect((error as HttpError).message).toBe("Can only join public channels")
+    expect((error as HttpError).message).toBe("Can only join public channels and docs")
   })
 
   test("should throw 403 when channel is private", async () => {

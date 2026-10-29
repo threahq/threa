@@ -177,7 +177,7 @@ export const STREAM_TYPE_CAPABILITIES = {
     threadAnchorPrefixes: DOC_THREAD_ANCHOR_PREFIXES,
     hostsAsides: false,
     hostsDocs: false,
-    root: null,
+    root: { listed: false, sidebarSection: null, ownMembers: true, addMembers: true },
     nested: { listed: false, sidebarSection: null, ownMembers: false, addMembers: false },
   },
 } as const satisfies Record<StreamType, StreamTypeCapabilities>
@@ -211,6 +211,11 @@ export function streamCapabilities(stream: { type: string; parentStreamId: strin
   return { ...type, ...placement! }
 }
 
+/** A doc with no host: its own root, with its own members and visibility, like a channel. */
+export function isTopLevelDoc(stream: { type: string; parentStreamId: string | null }): boolean {
+  return stream.type === StreamTypes.DOC && stream.parentStreamId === null
+}
+
 export function isAsideHostType(type: string): boolean {
   return streamTypeCapabilities(type).hostsAsides
 }
@@ -235,6 +240,8 @@ export const DocErrorCodes = {
   CREATE_INCOMPLETE: "DOC_CREATE_INCOMPLETE",
   MOVE_FORBIDDEN: "DOC_MOVE_FORBIDDEN",
   MOVED_CONCURRENTLY: "DOC_MOVED_CONCURRENTLY",
+  TOP_LEVEL_REQUIRES_USER: "DOC_TOP_LEVEL_REQUIRES_USER",
+  VISIBILITY_INHERITED: "DOC_VISIBILITY_INHERITED",
 } as const
 
 // A stream's system purpose, when it exists to power a feature rather than to be

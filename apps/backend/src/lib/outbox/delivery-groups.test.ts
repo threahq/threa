@@ -105,6 +105,26 @@ describe("resolveDeliveryGroups — docs", () => {
     expect(groups).toEqual([streamGroup("stream_host")])
   })
 
+  for (const visibility of VISIBILITIES) {
+    it(`should route a created top-level ${visibility} doc like a channel`, () => {
+      const groups = resolveDeliveryGroups(
+        event("stream:created", {
+          workspaceId: "ws_1",
+          streamId: "stream_doc",
+          stream: {
+            id: "stream_doc",
+            type: StreamTypes.DOC,
+            parentAnchorId: null,
+            parentStreamId: null,
+            visibility,
+            createdBy: "usr_creator",
+          },
+        })
+      )
+      expect(groups).toEqual([...OPEN_AUDIENCE[visibility], userGroup("usr_creator")])
+    })
+  }
+
   it("routes the host's doc:created row to the host and a doc update to the doc", () => {
     expect({
       created: resolveDeliveryGroups(
@@ -126,7 +146,21 @@ describe("resolveDeliveryGroups — docs", () => {
           workspaceId: "ws_1",
           streamId: "stream_old_host",
           event: {},
-          doc: { id: "stream_doc", type: StreamTypes.DOC },
+          doc: { id: "stream_doc", type: StreamTypes.DOC, parentStreamId: "stream_new_host" },
+          movedStreamIds: ["stream_doc"],
+        })
+      )
+    ).toEqual([streamGroup("stream_old_host"), streamGroup("stream_doc"), docReadersGroup("stream_doc")])
+  })
+
+  it("should keep a doc lifted to the top level to its old host, the doc and its readers", () => {
+    expect(
+      resolveDeliveryGroups(
+        event("stream:doc_moved", {
+          workspaceId: "ws_1",
+          streamId: "stream_old_host",
+          event: {},
+          doc: { id: "stream_doc", type: StreamTypes.DOC, parentStreamId: null, visibility: Visibilities.PUBLIC },
           movedStreamIds: ["stream_doc"],
         })
       )

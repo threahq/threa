@@ -221,6 +221,24 @@ describe("stream context doc rows", () => {
     })
   })
 
+  test("should refuse a top-level doc's index to a reader who holds only its grant", async () => {
+    const doc = await streamService.createDoc({
+      workspaceId: wsId,
+      principal: { kind: "user", userId: owner },
+      displayName: "Top-level plan",
+    })
+    const open = await createChannel("public")
+    await post(open.id, body(chip(doc.id)), { confirmedPrivacyWarning: true })
+
+    expect({
+      member: (await list(owner, doc.id)).items,
+      grantOnly: await list(outsider, doc.id).then(
+        () => null,
+        (error: { status?: number }) => error.status
+      ),
+    }).toEqual({ member: [], grantOnly: 404 })
+  })
+
   test("should list a chip in a thread to a channel member who never joined the thread (INV-62)", async () => {
     const channel = await createChannel("private", [peer])
     const doc = await createDoc(channel.id, "Thread plan")
