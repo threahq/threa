@@ -41,6 +41,16 @@ function stringEntries(value: unknown): Record<string, string> {
   )
 }
 
+function stringLists(value: unknown): Record<string, string[]> {
+  return Object.fromEntries(
+    Object.entries((value ?? {}) as Record<string, unknown>).flatMap(([key, entry]) => {
+      if (!Array.isArray(entry)) return []
+      const runs = [...new Set(entry.filter((run): run is string => typeof run === "string" && run.length > 0))]
+      return runs.length ? [[key, runs]] : []
+    })
+  )
+}
+
 /** Stream → thread links, the `/model` default, pending spawns and each thread's last delivered run, swapped in whole so a crash cannot truncate it. */
 export function createFileThreadStore(path: string): ThreadStore {
   return {
@@ -48,6 +58,8 @@ export function createFileThreadStore(path: string): ThreadStore {
       const parsed = readJsonFile(path) ?? {}
       const threads = stringEntries(parsed.threads)
       const delivered = stringEntries(parsed.delivered)
+      const posted = stringLists(parsed.posted)
+      const owed = stringLists(parsed.owed)
       const spawns = Object.fromEntries(
         Object.entries((parsed.spawns ?? {}) as Record<string, unknown>).flatMap(([key, value]) => {
           const spawn = pendingSpawnOf(value)
@@ -60,6 +72,8 @@ export function createFileThreadStore(path: string): ThreadStore {
         ...(model ? { model } : {}),
         ...(Object.keys(spawns).length > 0 ? { spawns } : {}),
         ...(Object.keys(delivered).length > 0 ? { delivered } : {}),
+        ...(Object.keys(posted).length > 0 ? { posted } : {}),
+        ...(Object.keys(owed).length > 0 ? { owed } : {}),
       }
     },
     save: (state) => writeFileAtomic(path, `${JSON.stringify(state, null, 2)}\n`),

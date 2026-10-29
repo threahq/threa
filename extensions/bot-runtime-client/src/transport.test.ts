@@ -528,9 +528,9 @@ describe("the routed writes never reject (best-effort contract)", () => {
     })
     const transport = makeTransport() // not connected → HTTP fallback path
 
-    await expect(
-      transport.recordSteps("binv_1", "tok_1", [{ stepType: "thinking", content: "a" }])
-    ).resolves.toBeUndefined()
+    await expect(transport.recordSteps("binv_1", "tok_1", [{ stepType: "thinking", content: "a" }])).resolves.toBe(
+      false
+    )
     await expect(transport.renewClaim("binv_1", "tok_1", 120)).resolves.toEqual({ notFound: false, renewed: false })
     await expect(
       transport.updatePresence({
@@ -574,4 +574,70 @@ describe("WS steps", () => {
     ])
     transport.disconnect()
   })
+})
+
+describe("trace activity acceptance", () => {
+  for (const sealed of [false, true]) {
+    const frames = [
+      {
+        stepId: "step_1",
+        stepType: "thinking",
+        ciphertext: "AA==",
+        envelope: { v: 2, keyGeneration: 1, iv: "AA==", aad: "AA==" },
+      },
+    ]
+    const record = (transport: BotRuntimeTransport, empty = false) =>
+      sealed
+        ? transport.recordSealedSteps("binv_1", "tok_1", empty ? [] : frames)
+        : transport.recordSteps("binv_1", "tok_1", empty ? [] : [{ stepType: "thinking", content: "a" }])
+    for (const outcome of ["accepted", "rejected", "timeout", "missing"] as const) {
+      it(`should report ${outcome} ${sealed ? "sealed" : "plain"} WS trace activity accurately`, async () => {
+        const calls = stubFetch(() => new Response(null, { status: 200 }))
+        const transport = makeTransport()
+        attachReadySocket(
+          transport,
+          fakeSocket((_event, _payload, callback) => {
+            callback(
+              outcome === "timeout" ? new Error("timeout") : null,
+              outcome === "missing" ? undefined : { ok: outcome === "accepted" }
+            )
+          })
+        )
+        expect(await record(transport)).toBe(outcome === "accepted")
+        expect(calls).toEqual([])
+        transport.disconnect()
+      })
+    }
+    it(`should confirm partial ${sealed ? "sealed" : "plain"} HTTP trace acceptance`, async () => {
+      let request = 0
+      const calls = stubFetch(() => new Response(null, { status: ++request === 1 ? 200 : 500 }))
+      const transport = makeTransport()
+      const accepted = sealed
+        ? await transport.recordSealedSteps("binv_1", "tok_1", [...frames, { ...frames[0]!, stepId: "step_2" }])
+        : await transport.recordSteps("binv_1", "tok_1", [
+            { stepType: "thinking", content: "a" },
+            { stepType: "thinking", content: "b" },
+          ])
+      expect({ accepted, paths: calls.map(({ url }) => new URL(url).pathname) }).toEqual({
+        accepted: true,
+        paths: Array(2).fill(`/api/v1/workspaces/ws_1/bot-invocations/binv_1/${sealed ? "sealed-steps" : "steps"}`),
+      })
+    })
+    for (const status of [200, 403, 500]) {
+      it(`should confirm ${sealed ? "sealed" : "plain"} HTTP trace activity only on success (${status})`, async () => {
+        stubFetch(() => new Response(null, { status }))
+        expect(await record(makeTransport())).toBe(status === 200)
+      })
+    }
+    it(`should reject empty and failed ${sealed ? "sealed" : "plain"} trace activity without throwing`, async () => {
+      stubFetch(() => {
+        throw new Error("offline")
+      })
+      const transport = makeTransport()
+      expect({ empty: await record(transport, true), failed: await record(transport) }).toEqual({
+        empty: false,
+        failed: false,
+      })
+    })
+  }
 })
