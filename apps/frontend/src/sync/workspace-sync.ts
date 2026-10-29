@@ -1914,6 +1914,9 @@ export function registerWorkspaceSocketHandlers(
     )
     // The server hides an unreadable stream's rows from the feed and the badge counts.
     commitCounter((state) => [...unreadableIds].reduce(dropActivitiesForStream, state))
+    queryClient.setQueriesData<Activity[]>({ queryKey: activityKeys.list(workspaceId) }, (old) =>
+      old?.filter((a) => !a.streamId || !unreadableIds.has(a.streamId))
+    )
     invalidateActivityFeed(true)
     await Promise.all(
       [...unreadableIds].flatMap((streamId) => [

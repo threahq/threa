@@ -5797,6 +5797,11 @@ describe("stream:member_removed board cleanup", () => {
       mentionCounts: { chan_x: 1, thread_t: 1, chan_y: 1 },
       unreadActivityCount: 3,
     }))
+    const reminder: Activity = { ...held("act_reminder", "chan_x"), activityType: "saved_reminder", streamId: null }
+    queryClient.setQueryData(
+      activityKeys.listFiltered("ws_1", { unreadOnly: false, mineOnly: false, othersOnly: false }),
+      [held("act_root", "chan_x"), held("act_thread", "thread_t"), held("act_other", "chan_y"), reminder]
+    )
     const { socket, emit } = createTestSocket()
     const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
 
@@ -5806,16 +5811,21 @@ describe("stream:member_removed board cleanup", () => {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: activityKeys.list("ws_1") })
     })
     const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))!
+    const feed = queryClient.getQueryData<Activity[]>(
+      activityKeys.listFiltered("ws_1", { unreadOnly: false, mineOnly: false, othersOnly: false })
+    )
     expect({
       held: bootstrap.unreadActivities?.map((a) => a.id),
       activityCounts: bootstrap.activityCounts,
       mentionCounts: bootstrap.mentionCounts,
       unreadActivityCount: bootstrap.unreadActivityCount,
+      feed: feed?.map((a) => a.id),
     }).toEqual({
       held: ["act_other"],
       activityCounts: { chan_y: 1 },
       mentionCounts: { chan_y: 1 },
       unreadActivityCount: 1,
+      feed: ["act_other", "act_reminder"],
     })
     cleanup()
   })

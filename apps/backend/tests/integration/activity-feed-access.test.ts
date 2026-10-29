@@ -140,6 +140,57 @@ describe("activity feed access", () => {
     expect(await view(ws, reader, room.id)).toEqual(shown(room.id, [first, second]))
   })
 
+  test("should keep a still-readable channel's rows and streamless rows while a removed channel's are hidden", async () => {
+    const { ws, owner, reader } = await workspaceWithUsers()
+    const gone = await channel(ws, owner, Visibilities.PRIVATE)
+    const kept = await channel(ws, owner, Visibilities.PRIVATE)
+    await StreamMemberRepository.insertMany(pool, ws, gone.id, [owner, reader])
+    await StreamMemberRepository.insertMany(pool, ws, kept.id, [owner, reader])
+    const goneRow = await mention(ws, reader, gone.id, owner)
+    const keptRow = await mention(ws, reader, kept.id, owner)
+    const reminder = await ActivityRepository.insert(pool, {
+      workspaceId: ws,
+      userId: reader,
+      activityType: ActivityTypes.SAVED_REMINDER,
+      streamId: null,
+      messageId: null,
+      actorId: reader,
+      actorType: AuthorTypes.USER,
+    })
+
+    await StreamMemberRepository.delete(pool, ws, gone.id, reader)
+    const readable = async () => {
+      const [feed, grouped] = await Promise.all([
+        activityService.listFeed(reader, ws),
+        activityService.getUnreadCounts(reader, ws),
+      ])
+      return {
+        feed: feed.map((a) => a.id),
+        total: grouped.total,
+        totalByStream: Object.fromEntries(grouped.totalByStream),
+      }
+    }
+    expect(await readable()).toEqual({
+      feed: [reminder!.id, keptRow],
+      total: 2,
+      // Streamless rows group under a null stream id, as before this filter.
+      totalByStream: { [kept.id]: 1, null: 1 },
+    })
+
+    await activityService.markAllAsRead(reader, ws)
+    await StreamMemberRepository.insertMany(pool, ws, gone.id, [reader])
+    const [feed, unread, grouped] = await Promise.all([
+      activityService.listFeed(reader, ws),
+      activityService.listFeed(reader, ws, { unreadOnly: true }),
+      activityService.getUnreadCounts(reader, ws),
+    ])
+    expect({ feed: feed.map((a) => a.id), unread: unread.map((a) => a.id), total: grouped.total }).toEqual({
+      feed: [reminder!.id, keptRow, goneRow],
+      unread: [goneRow],
+      total: 1,
+    })
+  })
+
   test("should decide push-payload counts per user, not per stream", async () => {
     const { ws, owner, reader } = await workspaceWithUsers()
     const room = await channel(ws, owner, Visibilities.PRIVATE)
