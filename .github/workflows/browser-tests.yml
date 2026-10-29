@@ -13,6 +13,7 @@ on:
       - "tests/browser/**"
       - "playwright.config.ts"
       - "scripts/test-silent.ts"
+      - "scripts/browser-ci.ts"
       - "package.json"
       - "bun.lock"
       - ".github/workflows/browser-tests.yml"
@@ -35,6 +36,33 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Restore browser timing history
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/browser-ci/timings.json
+          key: browser-timings-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: browser-timings-v1-
+
+      - name: Plan balanced browser shards
+        run: |
+          mkdir -p browser-shard-lists
+          bunx playwright test --list --reporter=json > browser-inventory.json
+          args=(--inventory browser-inventory.json --shards "$TOTAL_SHARDS" --output-dir browser-shard-lists --summary browser-shard-plan.md)
+          if [[ -f .cache/browser-ci/timings.json ]]; then
+            args+=(--history .cache/browser-ci/timings.json)
+          else
+            echo "No browser timing history restored; using count-based weights."
+          fi
+          bun scripts/browser-ci.ts plan "${args[@]}"
+          cat browser-shard-plan.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload browser shard lists
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-shard-lists
+          path: browser-shard-lists/
+          retention-days: 7
 
       - name: Build frontend once
         run: bun run --cwd apps/frontend build:e2e
@@ -139,6 +167,7 @@ jobs:
           #!/usr/bin/env bash
           exec docker run --rm --init --ipc=host --network host \\
             --user "\$(id -u):\$(id -g)" -e HOME=/tmp \\
+            -e PLAYWRIGHT_JSON_OUTPUT_FILE \\
             -e CI -e PLAYWRIGHT_TEST_DB_NAME -e PLAYWRIGHT_FRONTEND_PREBUILT \\
             -e PATH=/opt/bun:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \\
             -v "$bun_bin:/opt/bun/bun:ro" -v "$bun_bin:/opt/bun/bunx:ro" \\
@@ -181,15 +210,22 @@ jobs:
           name: browser-test-frontend
           path: apps/frontend/dist/
 
+      - name: Download browser shard lists
+        uses: actions/download-artifact@v4
+        with:
+          name: browser-shard-lists
+          path: browser-shard-lists/
+
       - name: Run browser tests
         id: initial-run
         continue-on-error: true
         run: |
-          "$RUNNER_TEMP/in-playwright" bun run test:browser -- --reporter=line,blob --shard=${{ matrix.shard_index }}/${{ env.TOTAL_SHARDS }}
+          "$RUNNER_TEMP/in-playwright" bun run test:browser -- --reporter=line,blob,json --test-list=browser-shard-lists/shard-${{ matrix.shard_index }}.txt
         env:
           CI: true
           PLAYWRIGHT_TEST_DB_NAME: ${{ env.PLAYWRIGHT_TEST_DB_NAME }}
           PLAYWRIGHT_FRONTEND_PREBUILT: "true"
+          PLAYWRIGHT_JSON_OUTPUT_FILE: initial-report.json
 
       - name: Archive initial blob report before retry
         if: steps.initial-run.outcome == 'failure'
@@ -208,7 +244,7 @@ jobs:
             retry_target=(--last-failed)
           else
             echo "::warning::No failed-test IDs found — retrying the shard after the infrastructure failure"
-            retry_target=(--shard=${{ matrix.shard_index }}/${{ env.TOTAL_SHARDS }})
+            retry_target=(--test-list=browser-shard-lists/shard-${{ matrix.shard_index }}.txt)
           fi
           "$RUNNER_TEMP/in-playwright" bun run test:browser -- --reporter=line,blob "${retry_target[@]}" --retries=0
         env:
@@ -226,7 +262,15 @@ jobs:
           else
             result="failed"
           fi
+          if [[ -f initial-report.json ]]; then
+            if ! bun scripts/browser-ci.ts report --report initial-report.json --shard "${{ matrix.shard_index }}" --output first-attempt-summary.md; then
+              echo "⛔ First-attempt reliability unavailable: Playwright JSON report is incomplete or malformed." >> first-attempt-summary.md
+            fi
+          else
+            echo "⛔ First-attempt reliability unavailable: Playwright JSON report is missing." > first-attempt-summary.md
+          fi
           echo "$result" > shard-result.txt
+          cat first-attempt-summary.md >> "$GITHUB_STEP_SUMMARY"
           echo "Shard ${{ matrix.shard_index }} result: $result"
 
       - name: Upload initial blob report (when retry ran)
@@ -252,7 +296,11 @@ jobs:
         if: always()
         with:
           name: shard-result-${{ matrix.shard_index }}-attempt-${{ github.run_attempt }}
-          path: shard-result.txt
+          path: |
+            shard-result.txt
+            initial-report.json
+            first-attempt-summary.md
+          if-no-files-found: error
           retention-days: 7
 
   evaluate-results:
@@ -365,3 +413,30 @@ jobs:
           name: playwright-report-merged
           path: playwright-report/
           retention-days: 30
+
+  save-browser-timings:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    needs: [browser-tests, evaluate-results]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.evaluate-results.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Download initial reports
+        uses: actions/download-artifact@v4
+        with:
+          path: shard-results
+          pattern: shard-result-*-attempt-${{ github.run_attempt }}
+
+      - name: Build browser timing history
+        run: |
+          mkdir -p .cache/browser-ci
+          bun scripts/browser-ci.ts merge-timings --reports-dir shard-results --shards "$TOTAL_SHARDS" --output .cache/browser-ci/timings.json
+
+      - name: Save browser timing history
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/browser-ci/timings.json
+          key: browser-timings-v1-${{ github.run_id }}-${{ github.run_attempt }}
