@@ -3,7 +3,7 @@ import { useActors } from "@/hooks"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { STREAM_ICONS, streamFallbackLabel } from "@/lib/streams"
 import { formatRelativeTime } from "@/lib/dates"
-import { DocEventRow } from "./doc-event-row"
+import { DocEventRow, useDocRowReadable } from "./doc-event-row"
 
 const DocGlyph = STREAM_ICONS[StreamTypes.DOC]
 
@@ -22,6 +22,7 @@ export function DocMovedEvent({ event, workspaceId, streamId }: DocMovedEventPro
   const { getActorName } = useActors(workspaceId)
   const docName = useStreamName(workspaceId, docId)
   const otherHost = useStreamName(workspaceId, otherHostId) ?? "another stream"
+  const readable = useDocRowReadable(workspaceId, streamId, docName)
   if (!docId) return null
 
   const actorName = getActorName(event.actorId, event.actorType)
@@ -49,7 +50,7 @@ export function DocMovedEvent({ event, workspaceId, streamId }: DocMovedEventPro
   )
 
   return (
-    <DocEventRow docId={docId} readable={docName !== null}>
+    <DocEventRow docId={docId} readable={readable}>
       {content}
     </DocEventRow>
   )
