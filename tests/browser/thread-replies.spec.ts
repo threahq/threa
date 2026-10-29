@@ -1,12 +1,19 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
 import {
   clickReplyInThread,
-  createChannel,
+  createChannelViaApi,
   expectPaneFlash,
-  loginAndCreateWorkspace,
+  loginAndCreateWorkspaceViaApi,
   sendPanelReply,
   waitForRealThreadPanel,
 } from "./helpers"
+
+async function createThreadChannel(page: Page, workspaceId: string, channelName: string): Promise<void> {
+  const channelId = await createChannelViaApi(page, workspaceId, channelName, "public")
+  await page.goto(`/w/${workspaceId}/s/${channelId}`)
+  await expect(page.getByRole("heading", { name: `#${channelName}`, level: 1 })).toBeVisible({ timeout: 5000 })
+  await expect(page.getByRole("link", { name: `#${channelName}` })).toBeVisible({ timeout: 5000 })
+}
 
 /** A thread's channel crumb names the channel already on show beside it: that pane flashes, and the thread stays.
  *  Returns the channel's pane, whose timeline holds the parent (the thread's pane shows it too). */
@@ -32,16 +39,18 @@ test.describe("Thread Replies", () => {
   test.setTimeout(90000)
 
   let testId: string
+  let workspaceId: string
 
   test.beforeEach(async ({ page }) => {
-    const result = await loginAndCreateWorkspace(page, "thread-test")
+    const result = await loginAndCreateWorkspaceViaApi(page, "thread-test")
     testId = result.testId
+    workspaceId = result.workspaceId
   })
 
   test("should send a reply in a thread", async ({ page }) => {
     // Create a channel
     const channelName = `thread-reply-${testId}`
-    await createChannel(page, channelName)
+    await createThreadChannel(page, workspaceId, channelName)
 
     // Send a parent message in the channel
     const editor = page.locator("[contenteditable='true']")
@@ -77,7 +86,7 @@ test.describe("Thread Replies", () => {
   test("should show reply count in main stream after sending thread reply", async ({ page }) => {
     // Create a channel
     const channelName = `reply-count-${testId}`
-    await createChannel(page, channelName)
+    await createThreadChannel(page, workspaceId, channelName)
 
     // Send a parent message
     const editor = page.locator("[contenteditable='true']")
@@ -114,7 +123,7 @@ test.describe("Thread Replies", () => {
 
   test("keeps reminder controls above a thread preview", async ({ page }) => {
     const channelName = `thread-reminder-${testId}`
-    await createChannel(page, channelName)
+    await createThreadChannel(page, workspaceId, channelName)
     const channel = page.locator(`[data-panel-tab="${page.url().match(/\/s\/([^/?]+)/)![1]}"]`)
 
     const editor = page.locator("[contenteditable='true']")
@@ -152,7 +161,7 @@ test.describe("Thread Replies", () => {
   test("should send multiple replies in a thread", async ({ page }) => {
     // Create a channel
     const channelName = `multi-reply-${testId}`
-    await createChannel(page, channelName)
+    await createThreadChannel(page, workspaceId, channelName)
 
     // Send a parent message
     const editor = page.locator("[contenteditable='true']")
@@ -200,7 +209,7 @@ test.describe("Thread Replies", () => {
   test("should reopen existing thread and send additional reply", async ({ page }) => {
     // Create a channel
     const channelName = `reopen-thread-${testId}`
-    await createChannel(page, channelName)
+    await createThreadChannel(page, workspaceId, channelName)
 
     // Send a parent message
     const editor = page.locator("[contenteditable='true']")
