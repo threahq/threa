@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { Link } from "react-router-dom"
 import {
   AgentReconsiderationDecisions,
@@ -46,6 +47,8 @@ import { RedirectSessionButton, StopSessionButton } from "./session-action-butto
 
 interface TraceStepProps {
   step: AgentSessionStep
+  collapsible?: boolean
+  highlighted?: boolean
   workspaceId: string
   streamId: string
   /**
@@ -71,6 +74,8 @@ interface TraceStepProps {
 
 export function TraceStep({
   step,
+  collapsible = false,
+  highlighted = false,
   workspaceId,
   streamId,
   userId,
@@ -78,6 +83,8 @@ export function TraceStep({
   onStopSession,
   onRedirectSession,
 }: TraceStepProps) {
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const open = !collapsible || highlighted || detailsOpen
   const config = STEP_DISPLAY_CONFIG[step.stepType]
   const Icon = config.icon
 
@@ -135,24 +142,27 @@ export function TraceStep({
   return (
     // The left gutter is always present and transparent until the step has
     // effects, so colouring it when a write lands costs no layout (INV-21).
-    <div
-      className="px-6 py-5 border-b border-border border-l-[3px]"
-      style={{
-        background: `hsl(${config.hue} ${config.saturation}% ${config.lightness}% / 0.03)`,
-        borderLeftColor: hasEffects ? hueColor : "transparent",
-      }}
-    >
-      <StepHeader
-        config={headerConfig}
-        Icon={Icon}
-        startedAt={step.startedAt}
-        duration={duration}
-        rightSlot={rightSlot}
-        verification={step.verification}
-        hasEffects={hasEffects}
-      />
+    <Collapsible open={open} onOpenChange={setDetailsOpen} asChild>
+      <div
+        className="px-6 py-5 border-b border-border border-l-[3px]"
+        style={{
+          background: `hsl(${config.hue} ${config.saturation}% ${config.lightness}% / 0.03)`,
+          borderLeftColor: hasEffects ? hueColor : "transparent",
+        }}
+      >
+        <StepHeader
+          config={headerConfig}
+          Icon={Icon}
+          startedAt={step.startedAt}
+          duration={duration}
+          rightSlot={rightSlot}
+          verification={step.verification}
+          hasEffects={hasEffects}
+          collapsible={collapsible}
+        />
 
-      {/*
+        <CollapsibleContent>
+          {/*
         Render the body when there's content OR when the step is in-progress (so
         live substeps can render even before the first persisted substep lands).
         For sealed steps that can't be shown yet (locked / decrypting / failed),
@@ -160,25 +170,27 @@ export function TraceStep({
         content lets the workspace_search case fall through to the "substeps
         only" branch via liveSubsteps.
       */}
-      {decrypted.status === "locked" || decrypted.status === "pending" || decrypted.status === "failed" ? (
-        <StepDecryptNotice status={decrypted.status} />
-      ) : (
-        (effectiveContent || isInProgress) && (
-          <StepContent
-            stepType={step.stepType}
-            content={effectiveContent ?? ""}
-            messageLink={messageLink}
-            workspaceId={workspaceId}
-            liveSubsteps={liveSubsteps}
-            isInProgress={isInProgress}
-          />
-        )
-      )}
+          {decrypted.status === "locked" || decrypted.status === "pending" || decrypted.status === "failed" ? (
+            <StepDecryptNotice status={decrypted.status} />
+          ) : (
+            (effectiveContent || isInProgress) && (
+              <StepContent
+                stepType={step.stepType}
+                content={effectiveContent ?? ""}
+                messageLink={messageLink}
+                workspaceId={workspaceId}
+                liveSubsteps={liveSubsteps}
+                isInProgress={isInProgress}
+              />
+            )
+          )}
 
-      {hasEffects && <StepEffectList effects={effects} workspaceId={workspaceId} />}
+          {hasEffects && <StepEffectList effects={effects} workspaceId={workspaceId} />}
 
-      {hasSources && <SourceList sources={effectiveSources!} config={config} workspaceId={workspaceId} />}
-    </div>
+          {hasSources && <SourceList sources={effectiveSources!} config={config} workspaceId={workspaceId} />}
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
   )
 }
 
@@ -285,9 +297,34 @@ interface StepHeaderProps {
   verification?: AgentSessionStep["verification"]
   /** Whether this step wrote durable state — drives the WROTE badge. */
   hasEffects?: boolean
+  collapsible?: boolean
 }
 
-function StepHeader({ config, Icon, startedAt, duration, rightSlot, verification, hasEffects }: StepHeaderProps) {
+function StepHeader({
+  config,
+  Icon,
+  startedAt,
+  duration,
+  rightSlot,
+  verification,
+  hasEffects,
+  collapsible,
+}: StepHeaderProps) {
+  const label = (
+    <span
+      className="px-2.5 py-1 rounded-md text-[11px] font-semibold uppercase tracking-wide inline-flex items-center gap-1.5"
+      style={{
+        background: `hsl(${config.hue} ${config.saturation}% ${config.lightness}% / 0.15)`,
+        color: `hsl(${config.hue} ${config.saturation}% ${config.lightness}%)`,
+      }}
+    >
+      <Icon className="w-3.5 h-3.5" />
+      {config.label}
+      {collapsible && (
+        <ChevronRight className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-90" aria-hidden />
+      )}
+    </span>
+  )
   return (
     // Wraps because this row can now carry three groups at once — the step-type
     // chip, the verification badge, and the in-flight controls — and its scroll
@@ -296,16 +333,11 @@ function StepHeader({ config, Icon, startedAt, duration, rightSlot, verification
     // Stop / Redirect buttons during a guarded call: the one moment a user most
     // wants to interrupt. Wrapping drops the right group to its own line instead.
     <div className="flex flex-wrap items-center gap-2.5 mb-3">
-      <div
-        className="px-2.5 py-1 rounded-md text-[11px] font-semibold uppercase tracking-wide inline-flex items-center gap-1.5"
-        style={{
-          background: `hsl(${config.hue} ${config.saturation}% ${config.lightness}% / 0.15)`,
-          color: `hsl(${config.hue} ${config.saturation}% ${config.lightness}%)`,
-        }}
-      >
-        <Icon className="w-3.5 h-3.5" />
-        {config.label}
-      </div>
+      {collapsible ? (
+        <CollapsibleTrigger className="group flex min-h-11 items-center">{label}</CollapsibleTrigger>
+      ) : (
+        label
+      )}
       {verification && <VerificationBadge verification={verification} />}
       {hasEffects && <WroteBadge />}
       <div className="flex items-center gap-2 ml-auto text-[11px] text-muted-foreground">

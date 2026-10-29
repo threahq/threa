@@ -90,8 +90,8 @@ export function TraceStepList({
     return <div className="p-6 text-center text-muted-foreground">No steps recorded yet.</div>
   }
 
-  const renderStep = (step: AgentSessionStep) => {
-    const isHighlighted = step.messageId === highlightMessageId
+  const renderStep = (step: AgentSessionStep, collapsible = false) => {
+    const isHighlighted = highlightMessageId !== null && step.messageId === highlightMessageId
     const isInProgress = !step.completedAt
     const liveSubsteps = isInProgress ? streamingSubsteps?.[step.stepType] : undefined
     return (
@@ -102,6 +102,8 @@ export function TraceStepList({
       >
         <TraceStep
           step={step}
+          collapsible={collapsible}
+          highlighted={isHighlighted}
           workspaceId={workspaceId}
           streamId={streamId}
           userId={userId}
@@ -116,7 +118,7 @@ export function TraceStepList({
   return (
     <div>
       {displayItems.map((item) => {
-        if (item.kind === "step") return renderStep(item.step)
+        if (item.kind === "step") return renderStep(item.step, item.step.stepType !== "thinking")
         return (
           <BotWorkingSection
             key={item.id}
@@ -148,16 +150,14 @@ function BotWorkingSection({
 }) {
   const isMobile = useIsMobile()
   const errorCount = tools.filter((step) => step.stepType === "tool_error").length
-  const containsHighlight = tools.some((step) => step.messageId === highlightedMessageId)
-  const [detailsOpen, setDetailsOpen] = useState(errorCount > 0)
+  const containsHighlight =
+    highlightedMessageId !== null && tools.some((step) => step.messageId === highlightedMessageId)
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const open = containsHighlight || detailsOpen
   const lastTool = tools.at(-1)!
   const running = active || (sessionRunning && tools.some((step) => !step.completedAt))
   const preview = running ? toolPreview(resolveStepContent(lastTool)) : null
 
-  useEffect(() => {
-    if (errorCount > 0) setDetailsOpen(true)
-  }, [errorCount])
   // A tool call is two steps on the wire (the use and its result), so the count
   // and the chips are derived from paired calls, never from step rows.
   const calls = useMemo(() => deriveToolCalls(tools), [tools])
@@ -234,7 +234,7 @@ function BotWorkingSection({
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="border-t bg-background/60" style={{ borderColor: workHue(0.18) }}>
-            {tools.map(renderStep)}
+            {tools.map((step) => renderStep(step))}
           </div>
         </CollapsibleContent>
       </Collapsible>

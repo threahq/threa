@@ -106,6 +106,51 @@ describe("TraceStepList", () => {
     expect(screen.queryByText(/0 errors/)).not.toBeInTheDocument()
   })
 
+  it.each([false, true])("should keep tools collapsed with null message IDs when running is %s", async (running) => {
+    const user = userEvent.setup()
+    const step: AgentSessionStep = JSON.parse(JSON.stringify({ ...createStep(), messageId: null }))
+    renderList([thinking("think_1", 0, "Visible thinking prose"), step], running)
+
+    const trigger = screen.getByRole("button", { name: /working/i })
+    expect(screen.getByText("Visible thinking prose")).toBeInTheDocument()
+    expect(trigger).toHaveAttribute("aria-expanded", "false")
+    expect(screen.queryByText("Tool Call")).not.toBeInTheDocument()
+
+    await user.click(trigger)
+    expect(screen.getByText("Tool Call")).toBeInTheDocument()
+
+    await user.click(trigger)
+    expect(trigger).toHaveAttribute("aria-expanded", "false")
+    expect(screen.queryByText("Tool Call")).not.toBeInTheDocument()
+  })
+
+  it("should show only thinking content until another step is opened with the keyboard", async () => {
+    const user = userEvent.setup()
+    renderList([
+      thinking("think_1", 1, "Visible reasoning"),
+      createStep({ id: "reply_1", stepNumber: 2, stepType: "message_sent", content: "Response prose" }),
+    ])
+
+    expect(screen.getByText("Visible reasoning")).toBeInTheDocument()
+    expect(screen.queryByText("Response prose")).not.toBeInTheDocument()
+    const trigger = screen.getByRole("button", { name: "Response" })
+    trigger.focus()
+    await user.keyboard("{Enter}")
+    expect(screen.getByText("Response prose")).toBeInTheDocument()
+    await user.keyboard(" ")
+    expect(screen.queryByText("Response prose")).not.toBeInTheDocument()
+  })
+
+  it("should reveal a collapsed response when it becomes the highlighted message", () => {
+    const steps = [createStep({ stepType: "message_sent", content: "Linked response", messageId: "msg_reply" })]
+    const view = renderList(steps)
+    expect(screen.queryByText("Linked response")).not.toBeInTheDocument()
+
+    view.rerender(listElement(steps, false, "msg_reply"))
+    expect(screen.getByText("Linked response")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Response" })).toHaveAttribute("aria-expanded", "true")
+  })
+
   it("previews the latest tool in the active phase and summarises settled phases as chips", () => {
     renderList(
       [
@@ -197,7 +242,7 @@ describe("TraceStepList", () => {
     expect(screen.queryByText("first output line")).not.toBeInTheDocument()
   })
 
-  it("opens an existing phase when a live tool error arrives", () => {
+  it("should keep an existing phase collapsed when a live tool error arrives", () => {
     const initial = [thinking("think_1", 1, "Plan"), createStep({ id: "tool_1", stepNumber: 2 })]
     const view = renderList(initial, true)
 
@@ -222,7 +267,8 @@ describe("TraceStepList", () => {
       )
     )
 
-    expect(screen.getAllByText("live boom")).toHaveLength(2)
+    expect(screen.getByRole("button", { name: /working/i })).toHaveAttribute("aria-expanded", "false")
+    expect(screen.getByText("1 error")).toBeInTheDocument()
   })
 
   it("opens full details when an existing grouped tool step becomes highlighted", () => {
@@ -237,7 +283,7 @@ describe("TraceStepList", () => {
     expect(screen.getByText("Run bash")).toBeInTheDocument()
   })
 
-  it("shows error counts, opens error groups, and preserves full tool detail", async () => {
+  it("should keep errors collapsed until the user opens their tool group", async () => {
     const user = userEvent.setup()
     renderList([
       thinking("think_1", 1, "Plan"),
@@ -255,6 +301,9 @@ describe("TraceStepList", () => {
     ])
 
     expect(screen.getByText(/1 error/)).toBeInTheDocument()
+    expect(screen.queryByText("boom stack")).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: /working/i }))
     expect(screen.getByText("boom stack")).toBeInTheDocument()
 
     await user.click(screen.getByRole("button", { name: /working/i }))
@@ -382,15 +431,21 @@ describe("TraceStepList", () => {
     expect(screen.getByText("Running shell command")).toBeInTheDocument()
   })
 
-  it("leaves non-bot tool steps as regular trace rows", () => {
+  it("should reveal ordinary tool details only when expanded", async () => {
+    const user = userEvent.setup()
     renderList([
       createStep({
         content: JSON.stringify({ tool: "workspace_search", args: { query: "pricing", format: PI_TOOL_TRACE_FORMAT } }),
       }),
     ])
 
-    expect(screen.queryByText("Full tool details")).not.toBeInTheDocument()
+    const trigger = screen.getByRole("button", { name: "Tool Call" })
+    expect(trigger).toHaveAttribute("aria-expanded", "false")
+    expect(screen.queryByText("workspace_search")).not.toBeInTheDocument()
+    await user.click(trigger)
     expect(screen.getByText("workspace_search")).toBeInTheDocument()
+    await user.click(trigger)
+    expect(screen.queryByText("workspace_search")).not.toBeInTheDocument()
   })
   it("spins the Working header while a lifecycle row is still running, then shows the summed duration", () => {
     const done = [
@@ -437,7 +492,7 @@ describe("TraceStepList", () => {
     expect(screen.getByText("2 tool calls")).toBeInTheDocument()
   })
 
-  it("shows a tool_error lifecycle row and opens its group", () => {
+  it("should show the error count without opening a failed lifecycle group", () => {
     renderList([
       lifecycleStep("tool_1", 1, "read_file: a.ts"),
       lifecycleStep("tool_2", 2, "terminal: false", { stepType: "tool_error" }),
@@ -445,7 +500,7 @@ describe("TraceStepList", () => {
 
     expect(screen.getByText("2 tool calls")).toBeInTheDocument()
     expect(screen.getByText("1 error")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: /working/i })).toHaveAttribute("aria-expanded", "true")
+    expect(screen.getByRole("button", { name: /working/i })).toHaveAttribute("aria-expanded", "false")
   })
 
   it("counts each lifecycle row as its own call and dedupes repeats into one chip", () => {
