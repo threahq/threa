@@ -260,7 +260,7 @@ export default defineConfig({
       ...(isE2ETest
         ? {
             input: {
-              app: path.resolve(__dirname, "index.html"),
+              index: path.resolve(__dirname, "index.html"),
               composer: path.resolve(__dirname, "browser-fixtures/composer.html"),
             },
           }
