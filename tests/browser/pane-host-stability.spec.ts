@@ -1,5 +1,11 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk, getPanelEditor, panesSettled } from "./helpers"
+import {
+  loginAndCreateWorkspaceViaApi,
+  createChannelViaApi,
+  expectApiOk,
+  getPanelEditor,
+  panesSettled,
+} from "./helpers"
 
 /**
  * The stream page lays its timeline and thread panel out as flat panes of one
@@ -20,11 +26,8 @@ async function post(page: Page, workspaceId: string, streamId: string, content: 
 const scroller = (page: Page, streamId: string) => page.locator(`[data-stream-scroller="${streamId}"]`)
 
 async function seedStreamWithThread(page: Page) {
-  await loginAndCreateWorkspace(page, "pane-host")
-  await createChannel(page, `panes-${Date.now().toString(36)}`)
-  const url = page.url()
-  const workspaceId = url.match(/\/w\/([^/]+)/)![1]
-  const streamId = url.match(/\/s\/([^/?]+)/)![1]
+  const { workspaceId } = await loginAndCreateWorkspaceViaApi(page, "pane-host")
+  const streamId = await createChannelViaApi(page, workspaceId, `panes-${Date.now().toString(36)}`, "public")
   const ids: string[] = []
   for (let i = 0; i < 40; i++) {
     ids.push(
@@ -39,7 +42,7 @@ async function seedStreamWithThread(page: Page) {
   await expectApiOk(response, "create thread")
   const threadId = ((await response.json()) as { stream: { id: string } }).stream.id
   await post(page, workspaceId, threadId, "a reply in the thread")
-  await page.reload()
+  await page.goto(`/w/${workspaceId}/s/${streamId}`)
   // A cold load of a 40-message stream can take a while on a busy runner.
   await expect(scroller(page, streamId)).toBeVisible({ timeout: 30_000 })
   // The cold-load settle pins the timeline to its tail every frame behind this mask; a scroll or click before it

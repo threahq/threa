@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk, panesSettled } from "./helpers"
+import { loginAndCreateWorkspaceViaApi, createChannelViaApi, expectApiOk, panesSettled } from "./helpers"
 
 /**
  * "In this stream" is a pane of its own (`context:<streamId>[:<filter>]`)
@@ -26,19 +26,15 @@ async function createThread(page: Page, workspaceId: string, streamId: string, a
 }
 
 async function seedChannelWithThread(page: Page, prefix: string, filler = 0) {
-  await loginAndCreateWorkspace(page, prefix)
-  await createChannel(page, `${prefix}-${Date.now().toString(36)}`)
-  const url = page.url()
-  const workspaceId = url.match(/\/w\/([^/]+)/)?.[1]
-  const streamId = url.match(/\/s\/([^/?]+)/)?.[1]
-  expect(workspaceId && streamId, `ids in URL: ${url}`).toBeTruthy()
-  const anchorId = await postMessage(page, workspaceId!, streamId!, "channel link https://example.com/alpha")
+  const { workspaceId } = await loginAndCreateWorkspaceViaApi(page, prefix)
+  const streamId = await createChannelViaApi(page, workspaceId, `${prefix}-${Date.now().toString(36)}`, "public")
+  const anchorId = await postMessage(page, workspaceId, streamId, "channel link https://example.com/alpha")
   for (let i = 0; i < filler; i++) {
-    await postMessage(page, workspaceId!, streamId!, `filler ${String(i).padStart(2, "0")} keeps the link off screen`)
+    await postMessage(page, workspaceId, streamId, `filler ${String(i).padStart(2, "0")} keeps the link off screen`)
   }
-  const threadId = await createThread(page, workspaceId!, streamId!, anchorId)
-  await postMessage(page, workspaceId!, threadId, "thread link https://example.org/beta")
-  return { workspaceId: workspaceId!, streamId: streamId!, threadId, anchorId }
+  const threadId = await createThread(page, workspaceId, streamId, anchorId)
+  await postMessage(page, workspaceId, threadId, "thread link https://example.org/beta")
+  return { workspaceId, streamId, threadId, anchorId }
 }
 
 const overview = (page: Page) => page.getByRole("region", { name: "In this stream" })
