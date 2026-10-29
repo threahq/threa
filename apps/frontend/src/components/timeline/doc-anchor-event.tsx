@@ -3,7 +3,7 @@ import { useActors } from "@/hooks"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { STREAM_ICONS } from "@/lib/streams"
 import { formatRelativeTime } from "@/lib/dates"
-import { DocEventRow } from "./doc-event-row"
+import { DocEventRow, useDocRowReadable } from "./doc-event-row"
 
 const DocGlyph = STREAM_ICONS[StreamTypes.DOC]
 
@@ -17,13 +17,14 @@ export function DocAnchorEvent({ event, workspaceId }: DocAnchorEventProps) {
   const docId = (event.payload as DocCreatedEventPayload | undefined)?.docId ?? ""
   const { getActorName } = useActors(workspaceId)
   const title = useStreamName(workspaceId, docId)
+  const readable = useDocRowReadable(workspaceId, event.streamId, title)
   if (!docId) return null
 
   const actorName = getActorName(event.actorId, event.actorType)
   const age = formatRelativeTime(new Date(event.createdAt), new Date(), undefined, { terse: true })
 
   return (
-    <DocEventRow docId={docId} readable={title !== null}>
+    <DocEventRow docId={docId} readable={readable}>
       <DocGlyph className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70 group-hover:text-primary" aria-hidden />
       <span className="shrink-0">
         <span className="font-medium text-foreground">{actorName}</span> created a doc

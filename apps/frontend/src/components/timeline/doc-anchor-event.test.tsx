@@ -70,6 +70,21 @@ describe("DocAnchorEvent", () => {
     })
   })
 
+  it("links an uncached doc under an archived host, whose docs the bootstrap never lists", () => {
+    cacheStreams([])
+    const host = createMockStream({
+      id: "stream_host",
+      type: StreamTypes.CHANNEL,
+      archivedAt: "2026-10-29T06:00:00.000Z",
+    })
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreamsSelect").mockImplementation((_ws, select) =>
+      select([host] as never)
+    )
+    renderRow()
+
+    expect(screen.getByRole("link").getAttribute("href")).toBe("/w/ws_1/s/stream_doc_1?panel=stream_host-stream_doc_1")
+  })
+
   it("shows the doc's cached name", () => {
     cacheStreams([createMockStream({ id: DOC, type: StreamTypes.DOC, displayName: "Rotation tracker" })])
     renderRow()
