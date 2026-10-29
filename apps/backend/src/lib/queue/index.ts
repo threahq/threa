@@ -54,6 +54,8 @@ export {
   type StreamConnectionProfilesJobData,
   DocActivityRollupJobSchema,
   type DocActivityRollupJobData,
+  DocMentionSettleJobSchema,
+  type DocMentionSettleJobData,
 } from "./job-queue"
 export { ScheduleManager, type ScheduleManagerConfig } from "./schedule-manager"
 export { CleanupWorker, type CleanupWorkerConfig } from "./cleanup-worker"

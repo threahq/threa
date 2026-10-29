@@ -306,6 +306,8 @@ export const StreamEventRepository = {
       beforeSequence?: bigint
       limit?: number
       viewerId?: string
+      /** Only this actor's events. */
+      actorId?: string
     }
   ): Promise<StreamEvent[]> {
     const limit = filters?.limit ?? EVENTS_DEFAULT_LIMIT
@@ -336,6 +338,12 @@ export const StreamEventRepository = {
     if (types && types.length > 0) {
       conditions.push(`event_type = ANY($${paramIndex})`)
       params.push(types)
+      paramIndex++
+    }
+
+    if (filters?.actorId) {
+      conditions.push(`actor_id = $${paramIndex}`)
+      params.push(filters.actorId)
       paramIndex++
     }
 

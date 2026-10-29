@@ -24,6 +24,7 @@ export {
   findReadersWithoutAccess,
   isRoomShared,
   listAccessibleStreamIds,
+  listUsersWithStreamAccess,
   listRoomReadableStreamIds,
   resolveEffectiveAccessStream,
   roomReadableWithoutMembershipSql,

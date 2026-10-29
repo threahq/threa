@@ -12,6 +12,7 @@ import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type Process
 import type { OutboxHandler } from "../../lib/outbox"
 import type { ActivityService } from "./service"
 import { ActivityRepository, type Activity } from "./repository"
+import { insertActivityCreatedEvents } from "./publish"
 import { withTransaction } from "../../db"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { truncateCodePoints } from "../../lib/truncate"
@@ -355,38 +356,7 @@ export class ActivityFeedHandler implements OutboxHandler {
         const publishable = group.filter((a) => a.isSelf || stillUnread.has(a.id))
         if (publishable.length === 0) continue
 
-        // Stream-less rows (standalone saved-item reminders) have no
-        // per-stream unread counts; their lookup below misses and falls back
-        // to zeros, which is correct — there's no stream badge to update.
-        const counts = await ActivityRepository.countUnreadForPairs(
-          client,
-          workspaceId,
-          publishable.flatMap((a) => (a.streamId ? [{ userId: a.userId, streamId: a.streamId }] : []))
-        )
-
-        for (const activity of publishable) {
-          const pairCounts = counts.get(`${activity.userId}:${activity.streamId}`)
-          await OutboxRepository.insert(client, "activity:created", {
-            workspaceId: activity.workspaceId,
-            targetUserId: activity.userId,
-            counts: {
-              mentionCount: pairCounts?.mentionCount ?? 0,
-              activityCount: pairCounts?.totalCount ?? 0,
-            },
-            activity: {
-              id: activity.id,
-              activityType: activity.activityType,
-              streamId: activity.streamId,
-              messageId: activity.messageId,
-              actorId: activity.actorId,
-              actorType: activity.actorType,
-              context: activity.context,
-              createdAt: activity.createdAt.toISOString(),
-              isSelf: activity.isSelf,
-              emoji: activity.emoji,
-            },
-          })
-        }
+        await insertActivityCreatedEvents(client, workspaceId, publishable)
       }
     })
   }

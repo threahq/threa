@@ -16,6 +16,7 @@ import { collectMentionActorRefs } from "@threahq/prosemirror"
 import { BotRepository } from "../public-api"
 import { MessageRepository } from "../messaging"
 import { E2eStreamsRepository } from "../e2e-streams"
+import { DocRepository } from "../docs"
 import {
   NotificationLevels,
   StreamTypes,
@@ -26,6 +27,7 @@ import {
   getAvatarUrl,
   getBotAvatarUrl,
   getPersonaAvatarUrl,
+  markdownLines,
   type JSONContent,
 } from "@threahq/types"
 import { withClient, withTransaction } from "../../db"
@@ -48,6 +50,7 @@ const PUSHABLE_ACTIVITY_TYPES: ReadonlySet<string> = new Set([
   ActivityTypes.MESSAGE,
   ActivityTypes.REACTION,
   ActivityTypes.MISSED_CALL,
+  ActivityTypes.DOC_MENTION,
 ])
 
 /** Message-anchored types whose content and unread state come from the message. */
@@ -746,6 +749,13 @@ export class ActivityService {
 
         encrypted = e2eRooted || message.ciphertext !== null || message.e2eVersion !== null
         contentMarkdown = encrypted ? null : message.contentMarkdown
+      }
+
+      // A doc mention's `messageId` is the block that holds the mention.
+      if (stream && activity.messageId && activity.activityType === ActivityTypes.DOC_MENTION) {
+        const section = await DocRepository.findSection(client, workspaceId, stream.id, activity.messageId)
+        if (!section) return invalid("gone")
+        contentMarkdown = markdownLines(section.markdown)[0] ?? null
       }
 
       const author = await this.resolveAuthor(client, workspaceId, activity.actorId, activity.actorType)

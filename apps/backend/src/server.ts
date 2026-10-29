@@ -99,9 +99,12 @@ import {
 import {
   DocActivityOutboxHandler,
   DocActivityService,
+  DocMentionOutboxHandler,
+  DocMentionService,
   DocAgentService,
   DocService,
   createDocActivityWorker,
+  createDocMentionWorker,
 } from "./features/docs"
 import {
   AttachmentService,
@@ -1448,6 +1451,12 @@ export async function startServer(): Promise<ServerInstance> {
     { tier: QueueTiers.LIGHT, fairness: QueueFairness.NONE }
   )
 
+  jobQueue.registerHandler(
+    JobQueues.DOC_MENTION_SETTLE,
+    createDocMentionWorker(new DocMentionService({ pool, jobQueue })),
+    { tier: QueueTiers.LIGHT, fairness: QueueFairness.NONE }
+  )
+
   const embeddingWorker = createEmbeddingWorker({ pool, embeddingService })
   jobQueue.registerHandler(JobQueues.EMBEDDING_GENERATE, embeddingWorker, {
     tier: QueueTiers.LIGHT,
@@ -1838,6 +1847,7 @@ export async function startServer(): Promise<ServerInstance> {
   const contextBagPrecomputeHandler = new ContextBagPrecomputeHandler(pool, jobQueue)
   const dynamicNamingHandler = new DynamicNamingOutboxHandler(pool, dynamicNamingScheduler, dynamicNamingService)
   const docActivityHandler = new DocActivityOutboxHandler(pool, jobQueue)
+  const docMentionHandler = new DocMentionOutboxHandler(pool, jobQueue)
   const emojiUsageHandler = new EmojiUsageHandler(pool)
   const analyticsOutboxHandler = config.posthog ? new AnalyticsOutboxHandler(pool, analyticsReporter) : null
   const embeddingHandler = new EmbeddingHandler(pool, jobQueue)
@@ -1879,6 +1889,7 @@ export async function startServer(): Promise<ServerInstance> {
     contextBagPrecomputeHandler,
     dynamicNamingHandler,
     docActivityHandler,
+    docMentionHandler,
     emojiUsageHandler,
     embeddingHandler,
     boundaryExtractionHandler,

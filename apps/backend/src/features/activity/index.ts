@@ -7,3 +7,4 @@ export type { ActivityPushResolution, ActivityPushInvalidReason } from "./servic
 export { createActivityHandlers } from "./handlers"
 
 export { ActivityFeedHandler } from "./outbox-handler"
+export { insertActivityCreatedEvents } from "./publish"

@@ -31,6 +31,7 @@ import { PushReceiptRepository, PUSH_RECEIPT_SCOPES, type LivePushReceipt } from
 import {
   PrefNotificationLevels,
   ActivityTypes,
+  isMentionActivityType,
   StreamTypes,
   PRESENCE_INTERACTION_WINDOW_MS,
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
@@ -1082,13 +1083,14 @@ export class PushService {
       // generic message-grouping path has no missed_call copy, so it would title
       // the banner "New message". The kind + mode route it to the dedicated branch.
       const isMissedCall = source.activityType === ActivityTypes.MISSED_CALL
-      const isMention = source.activityType === ActivityTypes.MENTION
+      const isMention = isMentionActivityType(source.activityType)
       return {
         valid: true,
         activity: { activityType: source.activityType, streamId: source.streamId },
         receipt: source.encrypted || source.e2eRooted ? null : { streamId: source.streamId },
         withWorkosUserId: true,
-        withButtons: true,
+        // The buttons act on a message; a doc mention points at a block.
+        withButtons: source.activityType !== ActivityTypes.DOC_MENTION,
         // Topic keyed by stream + notification group: mentions display under their
         // own tag in the SW, so they collapse separately from plain messages.
         topic: source.streamId ? streamPushTopic(workspaceId, source.streamId, isMention ? "m" : "") : undefined,
@@ -1212,7 +1214,7 @@ export class PushService {
     /** Null only for stream-less saved_reminder rows, which never reach the DM/scratchpad check below. */
     streamId: string | null
   ): Promise<boolean> {
-    if (activityType === ActivityTypes.MENTION) {
+    if (isMentionActivityType(activityType)) {
       return true
     }
 

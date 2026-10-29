@@ -60,6 +60,7 @@ import { DocPaneBody } from "@/components/docs/doc-pane-body"
 import { docExportActions } from "@/components/docs/doc-export-actions"
 import { useDocCanWrite } from "@/components/docs/use-doc-can-write"
 import { useDocSync } from "@/components/docs/use-doc-sync"
+import { useDocDeepLinkLanding } from "@/components/docs/use-doc-deep-link-landing"
 import { useLiveDocTitle } from "@/components/docs/use-live-doc-title"
 import { DocPresenceAvatars } from "@/components/docs/doc-presence-avatars"
 import { DocsHeaderChip, useHostedDocs } from "@/components/docs/docs-header-chip"
@@ -202,6 +203,7 @@ export function StreamPane({
   const docTitle = useLiveDocTitle(workspaceId, isDoc ? streamId : undefined, "").title
   const canWriteDoc = useDocCanWrite(workspaceId, stream)
   const docSync = useDocSync(workspaceId, isDoc ? streamId : null)
+  useDocDeepLinkLanding(isDoc ? streamId : null, highlightMessageId)
   const hostedDocs = useHostedDocs(
     workspaceId,
     stream && !isDraft && streamTypeCapabilities(stream.type).hostsDocs ? stream.id : null
