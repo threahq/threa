@@ -1,7 +1,9 @@
+import type { QueryConfig } from "pg"
 import type { Querier } from "../../db"
-import { sql } from "../../db"
+import { sql, composeSql } from "../../db"
 import { activityId } from "../../lib/id"
 import { effectivelyArchivedSql } from "../../lib/sql-filters"
+import { listAccessibleStreamIds, streamAccessPredicateSql } from "../streams"
 import { ActivityTypes, MENTION_ACTIVITY_TYPES } from "@threahq/types"
 
 interface ActivityRow {
@@ -125,6 +127,15 @@ const STREAM_NOT_SEALED = sql.raw(`(user_activity.stream_id IS NULL OR NOT EXIST
     AND s.workspace_id = user_activity.workspace_id
     AND ${effectivelyArchivedSql("s")}
 ))`)
+
+/**
+ * Rows on a stream the reader can no longer read (removed from its private root, a doc's share
+ * revoked) leave the feed and the counts, and come back with access: losing access writes nothing
+ * to `user_activity`. Rows with no stream pass.
+ */
+function streamReadableSql(workspaceId: string, userId: string): QueryConfig {
+  return composeSql`(user_activity.stream_id IS NULL OR ${streamAccessPredicateSql(workspaceId, userId, "user_activity.stream_id")})`
+}
 
 /**
  * Pick the ON CONFLICT target for the given activity type. Reactions dedup by
@@ -253,15 +264,16 @@ export const ActivityRepository = {
     const mineOnly = opts?.mineOnly ?? false
     const othersOnly = opts?.othersOnly ?? false
 
-    const result = await db.query<ActivityRow>(sql`
-      SELECT ${sql.raw(USER_ACTIVITY_COLUMNS)}
+    const result = await db.query<ActivityRow>(composeSql`
+      SELECT ${sql`${sql.raw(USER_ACTIVITY_COLUMNS)}`}
       FROM user_activity
       WHERE user_id = ${userId}
         AND workspace_id = ${workspaceId}
         AND (${!unreadOnly} OR read_at IS NULL)
         AND (${!mineOnly} OR is_self = TRUE)
         AND (${!othersOnly} OR is_self = FALSE)
-        AND ${STREAM_NOT_SEALED}
+        AND ${sql`${STREAM_NOT_SEALED}`}
+        AND ${streamReadableSql(workspaceId, userId)}
         AND (${!hasCursor} OR created_at < (
           SELECT created_at FROM user_activity
           WHERE id = ${cursor} AND user_id = ${userId} AND workspace_id = ${workspaceId}
@@ -273,8 +285,8 @@ export const ActivityRepository = {
   },
 
   /**
-   * Single-scan aggregation: per-stream mention counts, per-stream total counts,
-   * and workspace-wide total — all from one GROUP BY with FILTER.
+   * Per-stream mention counts, per-stream total counts, and workspace-wide total
+   * — one GROUP BY with FILTER, limited to streams the reader can still read.
    *
    * Self rows are excluded because they're inserted already read; this keeps
    * the filter explicit and defensive against any future change to that invariant.
@@ -297,10 +309,18 @@ export const ActivityRepository = {
         AND ${STREAM_NOT_SEALED}
       GROUP BY stream_id
     `)
+    // Access is checked in a second query over just the streams holding unread rows: folded into
+    // the count, the predicate inflates the plan enough to trip JIT compilation at a few thousand rows.
+    const readable = await listAccessibleStreamIds(
+      db,
+      workspaceId,
+      userId,
+      result.rows.flatMap((row) => (row.stream_id ? [row.stream_id] : []))
+    )
     const mentionsByStream = new Map<string, number>()
     const totalByStream = new Map<string, number>()
     let total = 0
-    for (const row of result.rows) {
+    for (const row of result.rows.filter((r) => r.stream_id === null || readable.has(r.stream_id))) {
       const mentions = Number(row.mention_count)
       const count = Number(row.total_count)
       if (mentions > 0) mentionsByStream.set(row.stream_id, mentions)
@@ -325,22 +345,31 @@ export const ActivityRepository = {
     const userIds = pairs.map((p) => p.userId)
     const streamIds = pairs.map((p) => p.streamId)
     const result = await db.query<{ user_id: string; stream_id: string; mention_count: string; total_count: string }>(
-      sql`
+      composeSql`
+      -- MATERIALIZED decides access once per pair; inlined, it reruns for every activity row joined.
+      WITH p AS MATERIALIZED (
+        SELECT
+          pair.user_id,
+          pair.stream_id,
+          ${streamAccessPredicateSql(workspaceId, sql`pair.user_id`, "pair.stream_id")} AS readable
+        FROM (
+          SELECT DISTINCT user_id, stream_id
+          FROM unnest(${userIds}::text[], ${streamIds}::text[]) AS pair(user_id, stream_id)
+        ) pair
+      )
       SELECT
         p.user_id,
         p.stream_id,
         COUNT(ua.id) FILTER (WHERE ua.activity_type = ANY(${MENTION_TYPES}::text[]))::text AS mention_count,
         COUNT(ua.id)::text AS total_count
-      FROM (
-        SELECT DISTINCT user_id, stream_id
-        FROM unnest(${userIds}::text[], ${streamIds}::text[]) AS pair(user_id, stream_id)
-      ) p
+      FROM p
       LEFT JOIN user_activity ua
         ON ua.user_id = p.user_id
         AND ua.stream_id = p.stream_id
         AND ua.workspace_id = ${workspaceId}
         AND ua.read_at IS NULL
         AND ua.is_self = FALSE
+        AND p.readable
       GROUP BY p.user_id, p.stream_id
     `
     )
@@ -361,7 +390,7 @@ export const ActivityRepository = {
     workspaceId: string,
     streamId: string
   ): Promise<{ mentionCount: number; totalCount: number }> {
-    const result = await db.query<{ mention_count: string; total_count: string }>(sql`
+    const result = await db.query<{ mention_count: string; total_count: string }>(composeSql`
       SELECT
         COUNT(*) FILTER (WHERE activity_type = ANY(${MENTION_TYPES}::text[]))::text AS mention_count,
         COUNT(*)::text AS total_count
@@ -371,6 +400,7 @@ export const ActivityRepository = {
         AND stream_id = ${streamId}
         AND read_at IS NULL
         AND is_self = FALSE
+        AND ${streamReadableSql(workspaceId, userId)}
     `)
 
     const row = result.rows[0]
@@ -480,12 +510,13 @@ export const ActivityRepository = {
   },
 
   async markAllAsRead(db: Querier, workspaceId: string, userId: string): Promise<ClearedActivity[]> {
-    const result = await db.query<ClearedActivityRow>(sql`
+    const result = await db.query<ClearedActivityRow>(composeSql`
       UPDATE user_activity
       SET read_at = NOW()
       WHERE workspace_id = ${workspaceId}
         AND user_id = ${userId}
         AND read_at IS NULL
+        AND ${streamReadableSql(workspaceId, userId)}
       RETURNING id AS activity_id, stream_id
     `)
     return result.rows.map((row) => ({ activityId: row.activity_id, streamId: row.stream_id }))

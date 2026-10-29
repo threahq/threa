@@ -2961,10 +2961,11 @@ describe("registerWorkspaceSocketHandlers", () => {
       workspaceId: "ws_1",
       conversation: { id: "conv_1", lastActivityAt: "2026-06-22T12:00:00.000Z" },
     })
-    await new Promise((resolve) => setTimeout(resolve, 0))
 
-    const row = await db.conversations.get(["ws_1", "conv_1"])
-    expect(row?._lastActivityMs).toBe(Date.parse("2026-06-22T12:00:00.000Z"))
+    await vi.waitFor(async () => {
+      const row = await db.conversations.get(["ws_1", "conv_1"])
+      expect(row?._lastActivityMs).toBe(Date.parse("2026-06-22T12:00:00.000Z"))
+    })
     // A cached card merges in place — no refetch of the board head.
     expect(invalidate).not.toHaveBeenCalledWith(
       expect.objectContaining({ queryKey: [...conversationKeys.all, "workspaceList", "ws_1"] })
@@ -3750,7 +3751,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     ["refetches", "a private channel the viewer could not see", "private", true],
     ["keeps", "a channel already in the cache", "public", false],
   ])(
-    "%s the bootstrap, which lists a host's docs, when the viewer is added to %s",
+    "%s the bootstrap and activity feed, which list a host's docs and hidden activity, when the viewer is added to %s",
     async (_verb, _host, visibility, invalidated) => {
       const queryClient = new QueryClient()
       const cached = visibility === "public"
@@ -3762,6 +3763,7 @@ describe("registerWorkspaceSocketHandlers", () => {
           streams: cached ? [{ ...host, lastMessagePreview: null }] : [],
         })
       )
+      queryClient.setQueryData(activityKeys.list("ws_1"), [])
       const { socket, emit } = createTestSocket()
       const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
         getCurrentStreamId: () => undefined,
@@ -3772,7 +3774,10 @@ describe("registerWorkspaceSocketHandlers", () => {
       emit("stream:member_added", { workspaceId: "ws_1", streamId: host.id, memberId: "member_1", stream: host })
       await Promise.resolve()
 
-      expect(queryClient.getQueryState(workspaceKeys.bootstrap("ws_1"))?.isInvalidated).toBe(invalidated)
+      expect({
+        bootstrap: queryClient.getQueryState(workspaceKeys.bootstrap("ws_1"))?.isInvalidated,
+        feed: queryClient.getQueryState(activityKeys.list("ws_1"))?.isInvalidated,
+      }).toEqual({ bootstrap: invalidated, feed: invalidated })
       cleanup()
     }
   )
@@ -5757,6 +5762,72 @@ describe("stream:member_removed board cleanup", () => {
       archived: bootstrap.archivedStreams,
       stored: (await db.streams.where("workspaceId").equals("ws_1").toArray()).map((s) => s.id),
     }).toEqual({ cached: ["thread_other"], archived: [], stored: ["thread_other"] })
+    cleanup()
+  })
+
+  it("drops the held activity and badges of a private root and its threads the viewer was removed from", async () => {
+    const held = (id: string, streamId: string): Activity => ({
+      id,
+      workspaceId: "ws_1",
+      userId: "member_1",
+      activityType: "mention",
+      streamId,
+      messageId: `msg_${id}`,
+      actorId: "member_2",
+      actorType: "user",
+      context: {},
+      readAt: null,
+      createdAt: new Date().toISOString(),
+      isSelf: false,
+      emoji: null,
+    })
+    const queryClient = seededClient("private")
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"), (old) => ({
+      ...old!,
+      streams: [
+        ...old!.streams,
+        {
+          ...makeStream("thread_t", { type: "thread", parentStreamId: "chan_x", rootStreamId: "chan_x" }),
+          lastMessagePreview: null,
+        },
+        { ...makeStream("chan_y"), lastMessagePreview: null },
+      ],
+      unreadActivities: [held("act_root", "chan_x"), held("act_thread", "thread_t"), held("act_other", "chan_y")],
+      activityCounts: { chan_x: 1, thread_t: 1, chan_y: 1 },
+      mentionCounts: { chan_x: 1, thread_t: 1, chan_y: 1 },
+      unreadActivityCount: 3,
+    }))
+    const reminder: Activity = { ...held("act_reminder", "chan_x"), activityType: "saved_reminder", streamId: null }
+    queryClient.setQueryData(
+      activityKeys.listFiltered("ws_1", { unreadOnly: false, mineOnly: false, othersOnly: false }),
+      [held("act_root", "chan_x"), held("act_thread", "thread_t"), held("act_other", "chan_y"), reminder]
+    )
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    emit("stream:member_removed", { workspaceId: "ws_1", streamId: "chan_x", memberId: "member_1" })
+
+    await vi.waitFor(() => {
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: activityKeys.list("ws_1") })
+    })
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))!
+    const feed = queryClient.getQueryData<Activity[]>(
+      activityKeys.listFiltered("ws_1", { unreadOnly: false, mineOnly: false, othersOnly: false })
+    )
+    expect({
+      held: bootstrap.unreadActivities?.map((a) => a.id),
+      activityCounts: bootstrap.activityCounts,
+      mentionCounts: bootstrap.mentionCounts,
+      unreadActivityCount: bootstrap.unreadActivityCount,
+      feed: feed?.map((a) => a.id),
+    }).toEqual({
+      held: ["act_other"],
+      activityCounts: { chan_y: 1 },
+      mentionCounts: { chan_y: 1 },
+      unreadActivityCount: 1,
+      feed: ["act_other", "act_reminder"],
+    })
     cleanup()
   })
 
