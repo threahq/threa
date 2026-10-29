@@ -23,10 +23,25 @@ jobs:
       selected: ${{ steps.select.outputs.selected }}
     steps:
       - uses: actions/checkout@v4
+        if: github.event_name == 'push'
+        with:
+          fetch-depth: 0
+      - name: Require the complete push range
+        if: github.event_name == 'push'
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          [[ "$BEFORE" =~ ^[0-9a-f]{40}$ && "$BEFORE" != 0000000000000000000000000000000000000000 ]]
+          [[ "$AFTER" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "$BEFORE^{commit}"
+          git cat-file -e "$AFTER^{commit}"
       - id: paths
-        if: github.event_name == 'pull_request'
+        if: github.event_name != 'workflow_dispatch'
         uses: dorny/paths-filter@v3
         with:
+          base: ${{ github.event_name == 'push' && github.event.before || '' }}
+          ref: ${{ github.event_name == 'push' && github.sha || '' }}
           filters: |
             common:
               - '.bun-version'
@@ -38,7 +53,8 @@ jobs:
               - 'packages/*/package.json'
               - '.github/actions/**'
               - '.github/workflows/production-images.yml'
-              - 'scripts/smoke-production-image.ts'
+              - 'scripts/production-image-smoke.compose.yml'
+              - 'scripts/smoke-production-image.sh'
             backend:
               - 'Dockerfile.backend'
               - 'apps/backend/**'
@@ -76,7 +92,16 @@ jobs:
           DB_READ_PROXY: ${{ steps.paths.outputs.db-read-proxy }}
           ENCLAVE: ${{ steps.paths.outputs.enclave }}
         run: |
-          if [[ "$EVENT_NAME" != pull_request || "$COMMON" == true ]]; then
+          if [[ "$EVENT_NAME" != workflow_dispatch ]]; then
+            for changed in "$COMMON" "$BACKEND" "$CONTROL_PLANE" "$DB_READ_PROXY" "$ENCLAVE"; do
+              if [[ "$changed" != true && "$changed" != false ]]; then
+                echo "Image selection returned an invalid result: $changed" >&2
+                exit 1
+              fi
+            done
+          fi
+
+          if [[ "$EVENT_NAME" == workflow_dispatch || "$COMMON" == true ]]; then
             services='["backend","control-plane","db-read-proxy","enclave"]'
           else
             services=$(jq -cn \
@@ -120,9 +145,8 @@ jobs:
           push: false
           cache-from: type=gha,scope=production-${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=production-${{ matrix.service }}
-      - uses: ./.github/actions/setup-bun
       - name: Smoke unchanged image command
-        run: bun scripts/smoke-production-image.ts '${{ matrix.service }}' 'threa-production-smoke:${{ matrix.service }}'
+        run: exec scripts/smoke-production-image.sh '${{ matrix.service }}' 'threa-production-smoke:${{ matrix.service }}'
 
   aggregate:
     name: Production Images
