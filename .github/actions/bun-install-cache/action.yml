@@ -15,7 +15,7 @@ runs:
     - uses: actions/cache@v4
       with:
         path: ~/.bun/install/cache
-        key: bun-install-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/bun.lock') }}
+        key: bun-install-${{ runner.os }}-${{ github.job }}-${{ hashFiles('bun.lock', 'extensions/*/bun.lock') }}
         restore-keys: |
           bun-install-${{ runner.os }}-${{ github.job }}-
           ${{ inputs.share-across-jobs == 'true' && format('bun-install-{0}-', runner.os) || '' }}

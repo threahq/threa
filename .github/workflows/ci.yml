@@ -90,7 +90,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [remaining, backend-integration]
+        partition: [backend, backend-integration, packages]
 
     services:
       postgres:
@@ -123,7 +123,7 @@ jobs:
           bun install --frozen-lockfile --cwd extensions/bot-runtime-client
 
       - name: Run scripts tests
-        if: matrix.partition == 'remaining'
+        if: matrix.partition == 'packages'
         run: bun run test:scripts
 
       - name: Create test databases
@@ -148,7 +148,7 @@ jobs:
           done
 
       - name: Run backend tests
-        if: matrix.partition == 'remaining'
+        if: matrix.partition == 'backend'
         run: bun run test
         env:
           TEST_DATABASE_URL: postgresql://threa:threa@localhost:5454/threa_test
@@ -168,25 +168,25 @@ jobs:
           S3_SECRET_ACCESS_KEY: minioadmin
 
       - name: Run control-plane tests
-        if: matrix.partition == 'remaining'
+        if: matrix.partition == 'packages'
         run: bun run --cwd apps/control-plane test
         env:
           TEST_DATABASE_URL: postgresql://threa:threa@localhost:5454/threa_control_plane_test
 
       - name: Run workspace-router tests
-        if: matrix.partition == 'remaining'
+        if: matrix.partition == 'packages'
         run: bun run --cwd apps/workspace-router test
 
       - name: Run enclave tests
-        if: matrix.partition == 'remaining'
+        if: matrix.partition == 'packages'
         run: bun run --cwd apps/enclave test
 
       - name: Run cli tests
-        if: matrix.partition == 'remaining'
+        if: matrix.partition == 'packages'
         run: bun run --cwd packages/cli test
 
       - name: Run shared package tests
-        if: matrix.partition == 'remaining'
+        if: matrix.partition == 'packages'
         run: |
           bun run --cwd packages/types test
           bun run --cwd packages/backend-common test
@@ -202,7 +202,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard_index: [1, 2, 3, 4]
+        shard_index: [1, 2, 3, 4, 5, 6]
 
     steps:
       - name: Checkout
