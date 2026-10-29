@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { useState } from "react"
+import { render, screen, waitFor, act } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createMemoryRouter, RouterProvider } from "react-router-dom"
 import { MediaGalleryProvider } from "@/contexts"
@@ -68,6 +69,48 @@ function stripTransform(): string {
 }
 
 describe("MediaGallery mobile strip positioning across reopen", () => {
+  it("should keep the selected image and strip aligned when an earlier slide is removed", async () => {
+    const user = userEvent.setup()
+    function EditableAttachments() {
+      const [attachments, setAttachments] = useState([
+        img("img_1", "photo1.png"),
+        img("img_2", "photo2.png"),
+        img("img_3", "photo3.png"),
+      ])
+      return (
+        <>
+          <button onClick={() => setAttachments((items) => items.slice(1))}>Remove first image</button>
+          <AttachmentList attachments={attachments} workspaceId="ws_1" />
+        </>
+      )
+    }
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/s",
+          element: (
+            <MediaGalleryProvider>
+              <EditableAttachments />
+            </MediaGalleryProvider>
+          ),
+        },
+      ],
+      { initialEntries: ["/s"] }
+    )
+    render(<RouterProvider router={router} />)
+
+    await user.click(await screen.findByRole("button", { name: /photo2\.png/i }))
+    await waitFor(() => expect(stripTransform()).toBe(`translateX(${-WIDTH}px)`))
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Remove first image", hidden: true }).click()
+    })
+
+    expect(await screen.findByText("1 / 2")).toBeInTheDocument()
+    expect(stripTransform()).toBe("translateX(0px)")
+    expect(router.state.location.search).toBe("?media=img_2")
+  })
+
   it("positions the strip on the clicked image on first open", async () => {
     const user = userEvent.setup()
     renderGallery()

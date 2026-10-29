@@ -1,3 +1,4 @@
+import { useMediaGallery } from "@/contexts"
 import { useState, useCallback, useEffect, useMemo, type ReactNode } from "react"
 import {
   ExternalLink,
@@ -24,7 +25,11 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { cn } from "@/lib/utils"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
-import { linkPreviewGalleryId } from "@/components/gallery/link-preview-gallery-id"
+import {
+  linkPreviewGalleryId,
+  linkPreviewImageItem,
+  linkPreviewDomain as getDomain,
+} from "@/components/gallery/link-preview-gallery-id"
 import { isVideoPreview, videoPlaybackSrc } from "@/components/gallery/video-embed"
 import { LinkPreviewBody } from "./link-preview-body"
 import { useReportPreviewVisible } from "@/hooks/use-report-preview-visible"
@@ -95,14 +100,6 @@ function ContentTypeIcon({ contentType }: { contentType: string }) {
       return <VideoIcon className="h-4 w-4 text-rose-500 shrink-0" />
     default:
       return <ExternalLink className="h-4 w-4 text-muted-foreground shrink-0" />
-  }
-}
-
-function getDomain(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "")
-  } catch {
-    return url
   }
 }
 
@@ -203,7 +200,7 @@ export function LinkPreviewCard({
           onToggleCollapse={handleToggleCollapse}
           onDismiss={onDismiss ? handleDismiss : undefined}
         />
-        <ImagePreviewContent preview={preview} workspaceId={workspaceId} />
+        <ImagePreviewContent preview={preview} messageId={messageId ?? ""} />
       </div>
     )
   }
@@ -339,13 +336,12 @@ const HERO_MIN_HEIGHT = 200
  * image rides the gallery via a `link-preview:` sentinel id, so its bytes never
  * touch the attachment API (download/copy are gated off there).
  */
-function ImagePreviewContent({ preview, workspaceId }: { preview: LinkPreviewSummary; workspaceId?: string }) {
+function ImagePreviewContent({ preview, messageId }: { preview: LinkPreviewSummary; messageId: string }) {
   const [imageError, setImageError] = useState(false)
-  const [galleryOpen, setGalleryOpen] = useState(false)
+  const { openMedia } = useMediaGallery()
   const [fit, setFit] = useState<"cover" | "contain">("cover")
 
   const src = preview.imageUrl ?? preview.url
-  const filename = preview.title ?? getDomain(preview.url)
 
   // A link preview is PATCHed in place as its metadata resolves (a real
   // `imageUrl` can replace the raw url on the same mounted card), so a stale
@@ -356,53 +352,37 @@ function ImagePreviewContent({ preview, workspaceId }: { preview: LinkPreviewSum
     setFit("cover")
   }, [src])
 
-  const galleryItems = useMemo<GalleryItem[]>(
-    () => [{ type: "image", url: src, thumbnailUrl: src, filename, attachmentId: linkPreviewGalleryId(src) }],
-    [src, filename]
-  )
-
   return (
-    <>
-      <button
-        type="button"
-        onClick={() => setGalleryOpen(true)}
-        className="relative block w-full cursor-zoom-in overflow-hidden"
-        aria-label={`Open image preview${preview.title ? `: ${preview.title}` : ""}`}
-      >
-        <AccentGlow />
-        {!imageError ? (
-          <div className="relative flex h-48 w-full items-center justify-center overflow-hidden bg-muted/30">
-            <img
-              src={src}
-              alt={preview.title ?? "Image preview"}
-              loading="lazy"
-              onLoad={(e) => {
-                const img = e.currentTarget
-                if (img.naturalWidth < HERO_MIN_WIDTH || img.naturalHeight < HERO_MIN_HEIGHT) setFit("contain")
-              }}
-              onError={() => setImageError(true)}
-              className={cn(
-                "transition-transform duration-200 group-hover/preview:scale-[1.02]",
-                fit === "cover" ? "h-full w-full object-cover" : "max-h-full max-w-full object-contain"
-              )}
-            />
-          </div>
-        ) : (
-          <div className="flex h-48 w-full items-center justify-center bg-muted/30 text-muted-foreground">
-            <ImageIcon className="h-8 w-8" />
-          </div>
-        )}
-      </button>
-      {galleryOpen && (
-        <MediaGallery
-          isOpen={galleryOpen}
-          onClose={() => setGalleryOpen(false)}
-          items={galleryItems}
-          initialIndex={0}
-          workspaceId={workspaceId ?? ""}
-        />
+    <button
+      type="button"
+      onClick={() => openMedia(linkPreviewImageItem(messageId, preview).attachmentId)}
+      className="relative block w-full cursor-zoom-in overflow-hidden"
+      aria-label={`Open image preview${preview.title ? `: ${preview.title}` : ""}`}
+    >
+      <AccentGlow />
+      {!imageError ? (
+        <div className="relative flex h-48 w-full items-center justify-center overflow-hidden bg-muted/30">
+          <img
+            src={src}
+            alt={preview.title ?? "Image preview"}
+            loading="lazy"
+            onLoad={(e) => {
+              const img = e.currentTarget
+              if (img.naturalWidth < HERO_MIN_WIDTH || img.naturalHeight < HERO_MIN_HEIGHT) setFit("contain")
+            }}
+            onError={() => setImageError(true)}
+            className={cn(
+              "transition-transform duration-200 group-hover/preview:scale-[1.02]",
+              fit === "cover" ? "h-full w-full object-cover" : "max-h-full max-w-full object-contain"
+            )}
+          />
+        </div>
+      ) : (
+        <div className="flex h-48 w-full items-center justify-center bg-muted/30 text-muted-foreground">
+          <ImageIcon className="h-8 w-8" />
+        </div>
       )}
-    </>
+    </button>
   )
 }
 

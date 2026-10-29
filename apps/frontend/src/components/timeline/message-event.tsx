@@ -295,11 +295,13 @@ const MessageLinkPreviews = memo(function MessageLinkPreviews({
   workspaceId,
   previews,
   hydrateFromApi,
+  renderBeforePreviews,
 }: {
   messageId: string
   workspaceId: string
   previews?: LinkPreviewSummary[]
   hydrateFromApi?: boolean
+  renderBeforePreviews?: React.ComponentProps<typeof LinkPreviewList>["renderBeforePreviews"]
 }) {
   const linkPreviewContext = useLinkPreviewContext()
   return (
@@ -309,6 +311,7 @@ const MessageLinkPreviews = memo(function MessageLinkPreviews({
       previews={previews}
       hoveredUrl={linkPreviewContext?.hoveredLinkUrl}
       hydrateFromApi={hydrateFromApi}
+      renderBeforePreviews={renderBeforePreviews}
     />
   )
 })
@@ -623,32 +626,36 @@ function MessageLayout({
             onHeight={runFold.onHeight}
             trailing={
               <>
-                {attachmentRefs && attachmentRefs.length > 0 ? (
-                  // E2E attachments: the server rows are opaque placeholders (no
-                  // thumbnails/metadata), so render from the decrypted refs — fetch the
-                  // ciphertext and decrypt on view — instead of the normal list.
-                  <E2eAttachmentList
-                    workspaceId={workspaceId}
-                    refs={attachmentRefs}
-                    attachments={payload.attachments}
-                  />
-                ) : (
-                  payload.attachments &&
-                  payload.attachments.length > 0 && (
-                    <AttachmentList
-                      attachments={payload.attachments}
-                      workspaceId={workspaceId}
-                      deferHydration={deferSecondaryHydration}
-                    />
-                  )
-                )}
-                {sources && sources.length > 0 && <MessageSourceList sources={sources} />}
-                {isFirstMessage && <MessageContextBadge workspaceId={workspaceId} streamId={streamId} />}
                 <MessageLinkPreviews
                   messageId={payload.messageId}
                   workspaceId={workspaceId}
                   previews={payload.linkPreviews}
                   hydrateFromApi={!deferSecondaryHydration}
+                  renderBeforePreviews={(imageItems) => (
+                    <>
+                      {attachmentRefs && attachmentRefs.length > 0 ? (
+                        // E2E attachments: the server rows are opaque placeholders (no
+                        // thumbnails/metadata), so render from the decrypted refs — fetch the
+                        // ciphertext and decrypt on view — instead of the normal list.
+                        <E2eAttachmentList
+                          workspaceId={workspaceId}
+                          refs={attachmentRefs}
+                          attachments={payload.attachments}
+                        />
+                      ) : (
+                        ((payload.attachments?.length ?? 0) > 0 || imageItems.length > 0) && (
+                          <AttachmentList
+                            attachments={payload.attachments ?? NO_ATTACHMENTS}
+                            workspaceId={workspaceId}
+                            additionalGalleryItems={imageItems}
+                            deferHydration={deferSecondaryHydration}
+                          />
+                        )
+                      )}
+                      {sources && sources.length > 0 && <MessageSourceList sources={sources} />}
+                      {isFirstMessage && <MessageContextBadge workspaceId={workspaceId} streamId={streamId} />}
+                    </>
+                  )}
                 />
                 <MemoPreviewList contentMarkdown={payload.contentMarkdown} memoEmbeds={payload.memoEmbeds} />
                 <GiphyPreviewList contentMarkdown={payload.contentMarkdown} />

@@ -668,15 +668,21 @@ export function MessageItem({
         defaultCollapsed={messageCollapse.enabled}
         trailing={
           <>
-            {attachments.length > 0 && <AttachmentList attachments={attachments} workspaceId={workspaceId} />}
-            {linkPreviews.length > 0 && (
-              <LinkPreviewList
-                messageId={message.id}
-                workspaceId={workspaceId}
-                previews={linkPreviews}
-                hydrateFromApi={false}
-              />
-            )}
+            <LinkPreviewList
+              messageId={message.id}
+              workspaceId={workspaceId}
+              previews={linkPreviews}
+              hydrateFromApi={false}
+              renderBeforePreviews={(imageItems) =>
+                (attachments.length > 0 || imageItems.length > 0) && (
+                  <AttachmentList
+                    attachments={attachments}
+                    workspaceId={workspaceId}
+                    additionalGalleryItems={imageItems}
+                  />
+                )
+              }
+            />
             {/* Giphy embeds are parsed from the markdown; memo cards take their
                 content from the message the same way the timeline does. */}
             <MemoPreviewList contentMarkdown={message.contentMarkdown} memoEmbeds={message.memoEmbeds} />

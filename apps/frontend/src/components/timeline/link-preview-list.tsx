@@ -1,3 +1,5 @@
+import type { GalleryItem } from "@/components/image-gallery"
+import { linkPreviewImageItem } from "@/components/gallery/link-preview-gallery-id"
 import { Component, useState, useCallback, useEffect, useMemo, type ReactNode } from "react"
 import { ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -27,6 +29,7 @@ function isAppLinkChipUrl(url: string): boolean {
 const MAX_OPEN_CARDS = 3
 
 interface LinkPreviewListProps {
+  renderBeforePreviews?: (items: GalleryItem[]) => ReactNode
   messageId: string
   workspaceId: string
   /** Previews provided from stream event payload (real-time) */
@@ -61,6 +64,7 @@ export function LinkPreviewList({
   hoveredUrl,
   className,
   hydrateFromApi = true,
+  renderBeforePreviews,
 }: LinkPreviewListProps) {
   const [previews, setPreviews] = useState<LinkPreviewSummary[]>(initialPreviews ?? [])
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set())
@@ -113,7 +117,13 @@ export function LinkPreviewList({
     [previews, dismissedIds]
   )
 
-  if (visiblePreviews.length === 0) return null
+  const imageItems = useMemo(
+    () =>
+      visiblePreviews
+        .filter((preview) => preview.contentType === "image")
+        .map((preview) => linkPreviewImageItem(messageId, preview)),
+    [messageId, visiblePreviews]
+  )
 
   // In-app previews have no chip form, so past the cap they hide behind "Show more"
   // while web previews fold to chips, which share lines and never count.
@@ -131,51 +141,58 @@ export function LinkPreviewList({
   const hiddenCount = visiblePreviews.length - displayedPreviews.length
 
   return (
-    <div className={cn("flex flex-wrap items-start gap-2 mt-2", className)}>
-      {displayedPreviews.map(({ preview, defaultOpen }) => {
-        // In-app links (message / stream / memo / conversation) use a specialized card with
-        // permission-checked resolve instead of a network-fetched web card.
-        if (isInAppLinkContentType(preview.contentType)) {
-          return (
-            <PreviewRenderBoundary key={preview.id}>
-              <div className="basis-full min-w-0">
-                <InAppLinkPreviewCard
+    <>
+      {renderBeforePreviews?.(imageItems)}
+      {visiblePreviews.length > 0 && (
+        <div className={cn("flex flex-wrap items-start gap-2 mt-2", className)}>
+          {displayedPreviews.map(({ preview, defaultOpen }) => {
+            // In-app links (message / stream / memo / conversation) use a specialized card with
+            // permission-checked resolve instead of a network-fetched web card.
+            if (isInAppLinkContentType(preview.contentType)) {
+              return (
+                <PreviewRenderBoundary key={preview.id}>
+                  <div className="basis-full min-w-0">
+                    <InAppLinkPreviewCard
+                      preview={preview}
+                      workspaceId={workspaceId}
+                      onDismiss={handleDismiss}
+                      hydrate={hydrateFromApi}
+                    />
+                  </div>
+                </PreviewRenderBoundary>
+              )
+            }
+
+            return (
+              <PreviewRenderBoundary key={preview.id}>
+                <WebPreviewItem
                   preview={preview}
+                  messageId={messageId}
                   workspaceId={workspaceId}
+                  isHighlighted={
+                    hoveredUrl ? normalizeForCompare(preview.url) === normalizeForCompare(hoveredUrl) : false
+                  }
+                  defaultOpen={defaultOpen}
                   onDismiss={handleDismiss}
-                  hydrate={hydrateFromApi}
                 />
-              </div>
-            </PreviewRenderBoundary>
-          )
-        }
+              </PreviewRenderBoundary>
+            )
+          })}
 
-        return (
-          <PreviewRenderBoundary key={preview.id}>
-            <WebPreviewItem
-              preview={preview}
-              messageId={messageId}
-              workspaceId={workspaceId}
-              isHighlighted={hoveredUrl ? normalizeForCompare(preview.url) === normalizeForCompare(hoveredUrl) : false}
-              defaultOpen={defaultOpen}
-              onDismiss={handleDismiss}
-            />
-          </PreviewRenderBoundary>
-        )
-      })}
-
-      {hiddenCount > 0 && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="basis-full justify-start h-7 text-xs text-muted-foreground"
-          onClick={() => setIsExpanded(true)}
-        >
-          <ChevronDown className="h-3 w-3 mr-1" />
-          Show {hiddenCount} more preview{hiddenCount > 1 ? "s" : ""}
-        </Button>
+          {hiddenCount > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="basis-full justify-start h-7 text-xs text-muted-foreground"
+              onClick={() => setIsExpanded(true)}
+            >
+              <ChevronDown className="h-3 w-3 mr-1" />
+              Show {hiddenCount} more preview{hiddenCount > 1 ? "s" : ""}
+            </Button>
+          )}
+        </div>
       )}
-    </div>
+    </>
   )
 }
 

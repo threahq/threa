@@ -29,6 +29,7 @@ import {
 
 interface AttachmentListProps {
   attachments: AttachmentSummary[]
+  additionalGalleryItems?: GalleryItem[]
   workspaceId: string
   className?: string
   /** Defer image URL hydration until coordinated reveal completes */
@@ -436,14 +437,23 @@ export function isGalleryPreviewableAttachment(a: AttachmentSummary): boolean {
   return isMarkdownAttachment(a) || isHtmlAttachment(a) || isPdfAttachment(a) || isTextPreviewableAttachment(a)
 }
 
-export function AttachmentList({ attachments, workspaceId, className, deferHydration = false }: AttachmentListProps) {
+export function AttachmentList({
+  attachments,
+  workspaceId,
+  className,
+  deferHydration = false,
+  additionalGalleryItems = [],
+}: AttachmentListProps) {
   const attachmentContext = useAttachmentContext()
   const inlineImages = attachmentContext?.inlineImages
   const hoveredAttachmentId = attachmentContext?.hoveredAttachmentId ?? null
   const { mediaAttachmentId, openMedia, closeMedia } = useMediaGallery()
 
-  // Only claim ownership when the URL param references one of our attachments
-  const attachmentIds = useMemo(() => new Set((attachments ?? []).map((a) => a.id)), [attachments])
+  const attachmentIds = useMemo(
+    () =>
+      new Set([...(attachments ?? []).map((a) => a.id), ...additionalGalleryItems.map((item) => item.attachmentId)]),
+    [attachments, additionalGalleryItems]
+  )
   const selectedAttachmentId = mediaAttachmentId && attachmentIds.has(mediaAttachmentId) ? mediaAttachmentId : null
 
   useSyncExternalStore(subscribeUploads, getUploadsVersion, getUploadsVersion)
@@ -606,7 +616,15 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
       attachmentId: a.id,
     }))
 
-    return [...imageItems, ...videoItems, ...markdownItems, ...htmlItems, ...pdfItems, ...textItems]
+    return [
+      ...imageItems,
+      ...videoItems,
+      ...markdownItems,
+      ...htmlItems,
+      ...pdfItems,
+      ...textItems,
+      ...additionalGalleryItems,
+    ]
   }, [
     workspaceId,
     imageAttachments,
@@ -616,6 +634,7 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
     pdfAttachments,
     textAttachments,
     galleryUrls,
+    additionalGalleryItems,
   ])
 
   // Track selected item by ID — derived index stays correct even as galleryItems grows
@@ -644,13 +663,13 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
     [openMedia]
   )
 
-  if (!attachments || attachments.length === 0) {
+  if ((attachments?.length ?? 0) === 0 && additionalGalleryItems.length === 0) {
     return null
   }
 
   const allFileAttachments = [...fileAttachments, ...failedVideoAttachments]
   const hiddenInlineCount = imageAttachments.length - visibleImages.length
-  const hasVisibleStrip = attachments.length > hiddenInlineCount
+  const hasVisibleStrip = (attachments?.length ?? 0) > hiddenInlineCount
 
   return (
     <>

@@ -502,18 +502,31 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
 
   // Re-anchor currentIndex when the items array shifts underneath it.
   const viewedIdRef = useRef<string | null>(null)
-  viewedIdRef.current = items[currentIndex]?.attachmentId ?? null
-  useEffect(() => {
+  const viewedIndexRef = useRef(initialIndex)
+  useLayoutEffect(() => {
     if (justOpened.current) {
       justOpened.current = false
+      viewedIdRef.current = items[initialIndex]?.attachmentId ?? null
+      viewedIndexRef.current = initialIndex
       return
     }
-    if (!isOpen || !viewedIdRef.current) return
-    setCurrentIndex((prev) => {
-      const corrected = items.findIndex((i) => i.attachmentId === viewedIdRef.current)
-      return corrected !== -1 && corrected !== prev ? corrected : prev
-    })
-  }, [items, isOpen])
+    if (!isOpen) return
+    const viewedId = viewedIdRef.current
+    if (currentIndex === viewedIndexRef.current && viewedId) {
+      const corrected = items.findIndex((i) => i.attachmentId === viewedId)
+      if (corrected !== -1 && corrected !== currentIndex) {
+        viewedIndexRef.current = corrected
+        if (touchCapable && stripRef.current && containerWidth > 0) {
+          stripRef.current.style.transition = "none"
+          stripRef.current.style.transform = `translateX(${-corrected * containerWidth}px)`
+        }
+        setCurrentIndex(corrected)
+        return
+      }
+    }
+    viewedIdRef.current = items[currentIndex]?.attachmentId ?? null
+    viewedIndexRef.current = currentIndex
+  }, [items, isOpen, currentIndex, initialIndex, touchCapable, containerWidth])
 
   // Scroll active thumbnail into view when index changes
   useEffect(() => {

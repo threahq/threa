@@ -1,8 +1,13 @@
+import { MediaGalleryProvider, useMediaGallery } from "@/contexts"
 import { describe, expect, it, vi } from "vitest"
 import { render, screen, fireEvent, within } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { LinkPreviewCard } from "./link-preview-card"
 import type { LinkPreviewSummary } from "@threahq/types"
+
+function SelectedMedia() {
+  return <output data-testid="selected-media">{useMediaGallery().mediaAttachmentId}</output>
+}
 
 function makeGitHubPreview(overrides: Partial<LinkPreviewSummary> = {}): LinkPreviewSummary {
   return {
@@ -451,7 +456,13 @@ describe("LinkPreviewCard", () => {
       previewData: null,
     })
 
-    render(<LinkPreviewCard preview={preview} onToggleCollapse={() => {}} />)
+    render(
+      <MemoryRouter>
+        <MediaGalleryProvider>
+          <LinkPreviewCard preview={preview} onToggleCollapse={() => {}} />
+        </MediaGalleryProvider>
+      </MemoryRouter>
+    )
 
     expect(screen.getByText("Example")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: /Collapse preview/i })).toBeInTheDocument()
@@ -523,7 +534,7 @@ describe("LinkPreviewCard", () => {
     expect(screen.getAllByTitle("Never Gonna Give You Up")).toHaveLength(1)
   })
 
-  it("opens the media gallery when an image preview is clicked", () => {
+  it("should dispatch the clicked image to the media URL owner", () => {
     const preview = makeGitHubPreview({
       url: "https://example.com/photo.png",
       contentType: "image",
@@ -534,11 +545,18 @@ describe("LinkPreviewCard", () => {
       previewData: null,
     })
 
-    render(<LinkPreviewCard preview={preview} workspaceId="ws_1" onToggleCollapse={() => {}} />)
+    render(
+      <MemoryRouter>
+        <MediaGalleryProvider>
+          <LinkPreviewCard preview={preview} messageId="msg_1" workspaceId="ws_1" onToggleCollapse={() => {}} />
+          <SelectedMedia />
+        </MediaGalleryProvider>
+      </MemoryRouter>
+    )
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: /Open image preview/i }))
-    const dialog = screen.getByRole("dialog")
-    expect(within(dialog).getAllByText("A nice photo").length).toBeGreaterThan(0)
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    expect(screen.getByTestId("selected-media")).toHaveTextContent("link-preview:msg_1:preview_1")
   })
 })
