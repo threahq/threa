@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test"
+import type { Browser, Page } from "@playwright/test"
 import {
   anchorRow,
   createChannelViaApi,
@@ -19,6 +20,77 @@ import {
  */
 
 test.describe.configure({ timeout: 150_000 })
+
+async function liftJourney(page: Page, browser: Browser, tap = false) {
+  const activate = async (locator: import("@playwright/test").Locator) => (tap ? locator.tap() : locator.click())
+  const { testId } = await loginAndCreateWorkspace(page, "doc-move-lift")
+  const workspaceId = workspaceIdFromUrl(page)
+  const hostSlug = `host-${testId}`
+  const hostId = await createChannelViaApi(page, workspaceId, hostSlug, "public")
+  const docId = await createDocViaApi(page, workspaceId, hostId)
+  const title = `Lifted ${testId}`
+  await renameDoc(page, workspaceId, docId, title)
+  const member = await joinWorkspace(browser, workspaceId, "doc-lift-reader", testId)
+
+  try {
+    await page.goto(`/w/${workspaceId}/s/${docId}`)
+    await activate(pane(page, docId).getByRole("button", { name: "Stream actions" }).first())
+    await activate(page.getByRole(tap ? "button" : "menuitem", { name: "Move to…" }))
+    const picker = page.getByRole("dialog", { name: `Move ${title} to…` })
+    await activate(picker.getByRole("button", { name: "Top level" }))
+    await activate(picker.getByRole("button", { name: /^Private/ }))
+    const previewed = page.waitForResponse(
+      (response) => response.request().method() === "GET" && new URL(response.url()).pathname.endsWith("/move-preview")
+    )
+    await activate(picker.getByRole("button", { name: "Move", exact: true }))
+    const preview = await previewed
+    expect(new URL(preview.url()).searchParams.has("toStreamId")).toBe(false)
+    expect(new URL(preview.url()).searchParams.get("visibility")).toBe("private")
+    await expectApiOk(preview, "Preview lift doc")
+
+    const confirmLift = page.getByRole(tap ? "dialog" : "alertdialog", { name: "Change who can read this doc?" })
+    await expect(confirmLift).toBeVisible()
+    const moved = page.waitForResponse(
+      (response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/move")
+    )
+    await activate(confirmLift.getByRole("button", { name: "Move" }))
+    const moveResponse = await moved
+    await expectApiOk(moveResponse, "Lift doc")
+    expect(moveResponse.request().postDataJSON()).toMatchObject({
+      fromStreamId: hostId,
+      toStreamId: null,
+      visibility: "private",
+    })
+    await expect(pane(page, docId)).not.toContainText(hostSlug)
+
+    const docListResponse = await page.request.get(`/api/workspaces/${workspaceId}/docs`)
+    const listed = await docListResponse.json()
+    expect(listed.docs.find((doc: { id: string }) => doc.id === docId)?.isTopLevel).toBe(true)
+
+    const stateResponse = await page.request.get(`/api/workspaces/${workspaceId}/docs/${docId}`)
+    expect(await stateResponse.json()).toMatchObject({ stream: { parentStreamId: null, visibility: "private" } })
+
+    await page.goto(`/w/${workspaceId}/docs?host=top-level`)
+    await expect(page.getByRole("listitem").getByRole("link", { name: new RegExp(title) })).toBeVisible()
+
+    await page.goto(`/w/${workspaceId}/s/${docId}`)
+    await activate(pane(page, docId).getByRole("button", { name: "Stream actions" }).first())
+    await activate(page.getByRole(tap ? "button" : "menuitem", { name: "Move to…" }))
+    const secondPicker = page.getByRole("dialog", { name: `Move ${title} to…` })
+    await secondPicker.getByPlaceholder("Search streams…").fill(hostSlug)
+    const nested = page.waitForResponse(
+      (response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/move")
+    )
+    await activate(secondPicker.getByRole("option", { name: `#${hostSlug}` }))
+    const nestedConfirm = page.getByRole(tap ? "dialog" : "alertdialog", { name: "Change who can read this doc?" })
+    await expect(nestedConfirm).toBeVisible()
+    await activate(nestedConfirm.getByRole("button", { name: "Move" }))
+    await expectApiOk(await nested, "Nest doc")
+    await expect(pane(page, docId)).toContainText(hostSlug, { timeout: 15000 })
+  } finally {
+    await member.context.close()
+  }
+}
 
 test.describe("Doc move", () => {
   test("should re-host the doc and drop it for readers who lose access when moving it to a private channel", async ({
@@ -140,5 +212,23 @@ test.describe("Doc move", () => {
       await member.context.close()
       await ownerContext.close()
     }
+  })
+
+  test("should lift a doc with selected visibility and move it into a channel", async ({ browser }) => {
+    const context = await browser.newContext()
+    const page = await context.newPage()
+    try {
+      await liftJourney(page, browser)
+    } finally {
+      await context.close()
+    }
+  })
+})
+
+test.describe("Doc move on touch", () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+
+  test("should lift with visibility and move back into a channel", async ({ page, browser }) => {
+    await liftJourney(page, browser, true)
   })
 })

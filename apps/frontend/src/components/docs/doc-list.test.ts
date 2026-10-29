@@ -24,11 +24,15 @@ function doc(id: string, overrides: Partial<DocListStream> = {}): DocListStream 
 function item(
   id: string,
   editors: [actorId: string, lastEditedAt: string][],
-  listed: Pick<DocListItem, "displayName" | "createdAt"> = { displayName: null, createdAt: "2026-10-01T00:00:00.000Z" }
+  listed: Pick<DocListItem, "displayName" | "createdAt"> & Partial<Pick<DocListItem, "isTopLevel">> = {
+    displayName: null,
+    createdAt: "2026-10-01T00:00:00.000Z",
+  }
 ): DocListItem {
   return {
     id,
     ...listed,
+    isTopLevel: listed.isTopLevel ?? false,
     lastEditedAt: editors[0]?.[1] ?? null,
     editors: editors.map(([actorId, lastEditedAt]) => ({
       actorId,
@@ -58,7 +62,7 @@ const items = [
   ]),
   item("doc_notes", [["usr_ben", "2026-10-15T00:00:00.000Z"]]),
   item("doc_shared", [["usr_ana", "2026-10-05T00:00:00.000Z"]]),
-  item("doc_granted", [], { displayName: "Granted brief", createdAt: "2026-10-04T00:00:00.000Z" }),
+  item("doc_granted", [], { displayName: "Granted brief", createdAt: "2026-10-04T00:00:00.000Z", isTopLevel: true }),
   item("doc_archived", []),
   item("doc_sealed", []),
 ]
@@ -103,6 +107,16 @@ describe("buildDocRows", () => {
     ])
   })
 
+  it("should use listed placement when the doc is absent from cache and retain hosted placement without its host", () => {
+    expect(rows.map((row) => [row.doc.id, row.isTopLevel])).toEqual([
+      ["doc_plan", false],
+      ["doc_fresh", false],
+      ["doc_notes", false],
+      ["doc_shared", false],
+      ["doc_granted", true],
+    ])
+  })
+
   it("should carry only stream label assignments when a label row targets another resource type", () => {
     expect(Object.fromEntries(rows.map((row) => [row.doc.id, row.labelIds]))).toEqual({
       doc_plan: [],
@@ -124,6 +138,18 @@ describe("filterDocRows", () => {
 
   it("should keep only the host's docs when filtering by host", () => {
     expect(ids({ host: "general" })).toEqual(["doc_plan", "doc_fresh"])
+  })
+
+  it("should filter top-level docs when their host is not in cache", () => {
+    expect(ids({ host: "top-level" })).toEqual(["doc_granted"])
+  })
+
+  it("should prefer the cached placement after a move while the list response is stale", () => {
+    const staleItems = items.map((listed) => (listed.id === "doc_plan" ? { ...listed, isTopLevel: true } : listed))
+    const currentRows = buildDocRows({ streams, items: staleItems, assignments, listedAt })
+    expect(filterDocRows(currentRows, { ...NO_FILTERS, host: "top-level" }).map(({ doc }) => doc.id)).toEqual([
+      "doc_granted",
+    ])
   })
 
   it("should keep only labeled docs when filtering by label", () => {
@@ -178,8 +204,8 @@ describe("doc list search params", () => {
     const params = new URLSearchParams("panel=doc_plan&q=plan&host=general")
     expect([
       docListHref("ws_1", new URLSearchParams()),
-      docListHref("ws_1", new URLSearchParams(), { host: "general" }),
+      docListHref("ws_1", new URLSearchParams(), { host: "top-level" }),
       docListHref("ws_1", params, { query: "", host: null, label: null, editor: null }),
-    ]).toEqual(["/w/ws_1/docs", "/w/ws_1/docs?host=general", "/w/ws_1/docs?panel=doc_plan"])
+    ]).toEqual(["/w/ws_1/docs", "/w/ws_1/docs?host=top-level", "/w/ws_1/docs?panel=doc_plan"])
   })
 })

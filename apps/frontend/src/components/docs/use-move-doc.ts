@@ -6,6 +6,8 @@ import {
   StreamErrorCodes,
   WORKSPACE_PERMISSION_SCOPES,
   streamTypeCapabilities,
+  type MoveDocInput,
+  type Visibility,
   type DocMovePreviewResponse,
 } from "@threahq/types"
 import { ApiError } from "@/api/client"
@@ -13,6 +15,7 @@ import { docsApi } from "@/api/docs"
 import { useViewerPermissions } from "@/hooks/use-workspaces"
 import { useCurrentWorkspaceUserId } from "@/hooks/use-current-workspace-user-id"
 import { hasPermission } from "@/lib/permissions"
+import { useCanManageChannels } from "@/lib/use-can-manage-channels"
 import type { CachedStream } from "@/stores/workspace-store"
 import { applyDocMove } from "@/sync/workspace-sync"
 
@@ -24,9 +27,11 @@ interface MovableDoc {
 }
 
 export interface PendingDocMove {
-  toStreamId: string
+  input: MoveDocInput
   preview: DocMovePreviewResponse
 }
+
+export type DocMoveDestination = { toStreamId: string } | { toStreamId: null; visibility: Visibility }
 
 const MOVE_ERROR_BY_CODE: Record<string, string> = {
   [DocErrorCodes.MOVED_CONCURRENTLY]: "Someone else moved this doc first.",
@@ -51,18 +56,15 @@ export function useMoveDoc(workspaceId: string, doc: MovableDoc | undefined, can
   const queryClient = useQueryClient()
   const currentUserId = useCurrentWorkspaceUserId(workspaceId)
   const isAdmin = hasPermission(useViewerPermissions(workspaceId), WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
+  const fromStreamId = doc?.parentStreamId ?? null
+  const canLift = useCanManageChannels(workspaceId) && fromStreamId !== null
   const [pending, setPending] = useState<PendingDocMove | null>(null)
   const [busy, setBusy] = useState(false)
   const attemptRef = useRef(0)
 
   const docId = doc?.id
-  const fromStreamId = doc?.parentStreamId ?? null
   const enabled = Boolean(
-    canMove &&
-    doc &&
-    fromStreamId &&
-    !doc.archivedAt &&
-    ((currentUserId !== null && doc.createdBy === currentUserId) || isAdmin)
+    canMove && doc && !doc.archivedAt && ((currentUserId !== null && doc.createdBy === currentUserId) || isAdmin)
   )
 
   const isTarget = useCallback(
@@ -76,10 +78,10 @@ export function useMoveDoc(workspaceId: string, doc: MovableDoc | undefined, can
   )
 
   const move = useCallback(
-    async (toStreamId: string): Promise<boolean> => {
-      if (!docId || !fromStreamId) return false
+    async (input: MoveDocInput): Promise<boolean> => {
+      if (!docId) return false
       try {
-        const { stream } = await docsApi.move(workspaceId, docId, { fromStreamId, toStreamId })
+        const { stream } = await docsApi.move(workspaceId, docId, input)
         await applyDocMove(queryClient, workspaceId, { doc: stream, movedStreamIds: [stream.id] })
         return true
       } catch (err) {
@@ -87,24 +89,26 @@ export function useMoveDoc(workspaceId: string, doc: MovableDoc | undefined, can
         return false
       }
     },
-    [queryClient, workspaceId, docId, fromStreamId]
+    [queryClient, workspaceId, docId]
   )
 
   /** Resolves true once the doc moved, false when it waits on `confirm`, failed, or was reset meanwhile. */
   const pick = useCallback(
-    async (toStreamId: string): Promise<boolean> => {
+    async (destination: DocMoveDestination): Promise<boolean> => {
       if (!docId) return false
+      if (destination.toStreamId === null && !canLift) return false
+      const input: MoveDocInput = { fromStreamId, ...destination }
       const attempt = ++attemptRef.current
       const isCurrent = () => attemptRef.current === attempt
       setBusy(true)
       try {
-        const preview = await docsApi.previewMove(workspaceId, docId, toStreamId)
+        const preview = await docsApi.previewMove(workspaceId, docId, destination)
         if (!isCurrent()) return false
         if (preview.losing > 0 || preview.gaining > 0) {
-          setPending({ toStreamId, preview })
+          setPending({ input, preview })
           return false
         }
-        return await move(toStreamId)
+        return await move(input)
       } catch (err) {
         if (isCurrent()) toastMoveError(err)
         return false
@@ -112,14 +116,14 @@ export function useMoveDoc(workspaceId: string, doc: MovableDoc | undefined, can
         if (isCurrent()) setBusy(false)
       }
     },
-    [workspaceId, docId, move]
+    [workspaceId, docId, fromStreamId, canLift, move]
   )
 
   const confirm = useCallback(async (): Promise<boolean> => {
     if (!pending) return false
     setBusy(true)
     try {
-      return await move(pending.toStreamId)
+      return await move(pending.input)
     } finally {
       setBusy(false)
       setPending(null)
@@ -134,7 +138,7 @@ export function useMoveDoc(workspaceId: string, doc: MovableDoc | undefined, can
     setBusy(false)
   }, [])
 
-  return { enabled, isTarget, pick, pending, confirm, cancel, reset, busy }
+  return { enabled, canLift, isTarget, pick, pending, confirm, cancel, reset, busy }
 }
 
 export type DocMove = ReturnType<typeof useMoveDoc>
