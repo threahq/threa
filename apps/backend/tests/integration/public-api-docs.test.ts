@@ -266,6 +266,43 @@ describe("public API docs", () => {
     })
   })
 
+  test("should create, read, edit and refuse a cycle for a child doc", async () => {
+    const parent = await createDoc(userReq(owner, { body: { title: "Parent" } }))
+    const child = await createDoc(
+      userReq(owner, {
+        body: { streamId: parent.data.id, title: "Child", markdown: "Child text", reason: "Create child" },
+      })
+    )
+    const read = await readDoc(userReq(owner, { params: { docId: child.data.id } }))
+    const edited = await editDoc(
+      userReq(owner, {
+        params: { docId: child.data.id },
+        body: { reason: "Update child", edits: [{ old: "Child text", new: "Updated child" }] },
+      })
+    )
+    const cycle = refusal(
+      moveDoc(
+        userReq(owner, {
+          user: { id: owner, role: "member" },
+          params: { docId: parent.data.id },
+          body: { toStreamId: child.data.id },
+        })
+      )
+    )
+
+    expect({
+      placement: (await StreamRepository.findById(pool, ws, child.data.id))?.parentStreamId,
+      read: unmarked(read.data.markdown),
+      edited: unmarked(edited.data.markdown),
+      cycle: await cycle,
+    }).toEqual({
+      placement: parent.data.id,
+      read: "Child text",
+      edited: "Updated child",
+      cycle: { status: 400, code: DocErrorCodes.MOVE_CYCLE },
+    })
+  })
+
   test("should apply an edit whose old carries the trailing newline a copy from the read output picks up", async () => {
     const created = await createDoc(
       userReq(owner, {

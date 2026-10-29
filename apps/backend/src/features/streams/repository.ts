@@ -659,6 +659,26 @@ export const StreamRepository = {
     return result.rows.map((row) => row.id)
   },
 
+  /** The nearest DOC on a stream's parent chain, including the stream itself, before its effective root. */
+  async findNearestDocAncestor(db: Querier, workspaceId: string, streamId: string): Promise<string | null> {
+    const result = await db.query<{ id: string }>(sql`
+      WITH RECURSIVE chain AS (
+        SELECT id, type, parent_stream_id, root_stream_id, 0 AS depth
+        FROM streams
+        WHERE workspace_id = ${workspaceId} AND id = ${streamId}
+        UNION ALL
+        SELECT p.id, p.type, p.parent_stream_id, p.root_stream_id, c.depth + 1
+        FROM chain c
+        JOIN streams p ON p.id = c.parent_stream_id AND p.workspace_id = ${workspaceId}
+        WHERE c.depth < ${MAX_STREAM_CHAIN_DEPTH}
+          AND c.id <> COALESCE(c.root_stream_id, c.id)
+      )
+      SELECT id FROM chain WHERE type = ${StreamTypes.DOC}
+      ORDER BY depth LIMIT 1
+    `)
+    return result.rows[0]?.id ?? null
+  },
+
   /**
    * `streamId` plus every stream nested beneath it (any depth), walking down
    * `parent_stream_id` in one recursive CTE. Used by the thread-split flow to

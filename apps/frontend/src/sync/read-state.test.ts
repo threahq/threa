@@ -744,6 +744,7 @@ describe("replayed message:created entries and the preview write", () => {
       getCurrentStreamId: () => undefined,
       getCurrentUser: () => ({ id: "workos_1" }),
       subscribeStream: vi.fn(),
+      refreshWorkspace: vi.fn(),
       getCatchUpBatch: () => batch,
     })
 

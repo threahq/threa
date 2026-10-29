@@ -849,7 +849,6 @@ function paginated(itemSchema: z.ZodType) {
   })
 }
 
-// A doc is a stream of type "doc", hosted by a channel, scratchpad or DM, or top-level with no host; `seq` counts its writes.
 const docSchema = z.object({
   id: z.string(),
   hostStreamId: z.string().nullable(),
@@ -1960,7 +1959,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "createDoc",
     summary: "Create a doc",
     description:
-      "Create a doc under `streamId` as the key's actor (user keys as the owner, workspace keys as the bot). " +
+      "Create a doc under `streamId`, including another doc, as the key's actor (user keys as the owner, workspace keys as the bot). " +
       "Without `streamId` the doc is top-level: private unless `visibility` says otherwise, with the key's user" +
       " as its only member. Only a user key that may manage channels creates one (403 " +
       "DOC_TOP_LEVEL_REQUIRES_USER for a workspace key, CHANNEL_MANAGEMENT_FORBIDDEN for a guest). A hosted doc" +
@@ -2021,7 +2020,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "moveDoc",
     summary: "Move a doc to another stream",
     description:
-      "Re-host the doc and its block comment threads under `toStreamId`; they take that stream's access, and " +
+      "Re-host the doc, its child docs and block comment threads under `toStreamId`; they take that stream's access, and " +
       "share grants carried by messages stay. A null `toStreamId` lifts the doc to the top level with " +
       "`visibility` (private by default) and the key's user as its only member; nesting a top-level doc drops " +
       "its members. Only a user key lifts a doc (403 DOC_TOP_LEVEL_REQUIRES_USER). Only the doc's creator or a " +
@@ -2030,7 +2029,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
       "target (403 STREAM_READ_ONLY). 404 NOT_FOUND when the key cannot read the doc or the target. " +
       "`fromStreamId` is the host the caller saw (null for the top level); 409 DOC_MOVED_CONCURRENTLY when the " +
       "doc has moved since. 400 DOC_HOST_TYPE_INVALID or DOC_E2E_HOST_NOT_ALLOWED for a target that cannot host" +
-      " docs. Moving to the current host changes nothing.",
+      " docs. 400 DOC_MOVE_CYCLE when the target is the doc itself or a descendant. Moving to the current host changes nothing.",
     tags: ["Docs"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.DOCS_WRITE],
     parameters: [workspaceIdParam, docIdParam],

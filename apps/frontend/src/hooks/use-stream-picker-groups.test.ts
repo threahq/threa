@@ -93,4 +93,52 @@ describe("useStreamPickerGroups", () => {
     const { result } = renderHook(() => useStreamPickerGroups("workspace_1", { search: "", sortMode: "alphabetical" }))
     expect(groupIds(result.current, StreamTypes.CHANNEL)).toEqual(["stream_pub", "stream_guest"])
   })
+
+  it("includes only docs reachable through their accessible, unsealed root when opted in", () => {
+    const root = createMockStream({ id: "stream_root", type: StreamTypes.CHANNEL, visibility: Visibilities.PRIVATE })
+    const nested = createMockStream({
+      id: "stream_nested_doc",
+      type: StreamTypes.DOC,
+      parentStreamId: root.id,
+      rootStreamId: root.id,
+      visibility: Visibilities.PRIVATE,
+    })
+    const nestedChild = createMockStream({
+      id: "stream_child_doc",
+      type: StreamTypes.DOC,
+      parentStreamId: nested.id,
+      rootStreamId: root.id,
+      visibility: Visibilities.PRIVATE,
+    })
+    const missingRoot = createMockStream({
+      id: "stream_missing_root_doc",
+      type: StreamTypes.DOC,
+      parentStreamId: "stream_missing_root",
+      rootStreamId: null,
+      visibility: Visibilities.PUBLIC,
+    })
+    const archivedRoot = createMockStream({
+      id: "stream_archived_root",
+      type: StreamTypes.CHANNEL,
+      visibility: Visibilities.PRIVATE,
+      archivedAt: "2026-10-01T00:00:00Z",
+    })
+    const archivedDoc = createMockStream({
+      id: "stream_archived_doc",
+      type: StreamTypes.DOC,
+      parentStreamId: archivedRoot.id,
+      rootStreamId: archivedRoot.id,
+    })
+    const rows = [root, nested, nestedChild, missingRoot, archivedRoot, archivedDoc]
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue(rows as never)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreamMemberships").mockReturnValue([{ streamId: root.id }] as never)
+
+    const ordinary = renderHook(() => useStreamPickerGroups("workspace_1", { search: "", sortMode: "alphabetical" }))
+    const optedIn = renderHook(() =>
+      useStreamPickerGroups("workspace_1", { search: "", sortMode: "alphabetical", includeDocHosts: true })
+    )
+
+    expect(groupIds(ordinary.result.current, StreamTypes.DOC)).toEqual([])
+    expect(groupIds(optedIn.result.current, StreamTypes.DOC)).toEqual([nested.id, nestedChild.id])
+  })
 })

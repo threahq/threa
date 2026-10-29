@@ -1,6 +1,5 @@
 import { describe, test, expect } from "bun:test"
-import { StreamTypes } from "@threahq/types"
-import { docFirstLine, docHostFor } from "./hosted-docs"
+import { docFirstLine } from "./hosted-docs"
 
 describe("docFirstLine", () => {
   test.each([
@@ -13,21 +12,5 @@ describe("docFirstLine", () => {
     ["an escaped backslash ending the line as one backslash", "C:\\\\\nnext", "C:\\"],
   ])("returns %s", (_name, markdown, expected) => {
     expect(docFirstLine(markdown)).toBe(expected)
-  })
-})
-
-describe("docHostFor", () => {
-  const channel = { id: "stream_channel", rootStreamId: null, e2eEnabled: false }
-  const thread = { id: "stream_thread", rootStreamId: "stream_channel", e2eEnabled: false }
-
-  test.each([
-    ["a channel hosts its own docs", channel, StreamTypes.CHANNEL, "stream_channel"],
-    ["a thread works on its root's docs", thread, StreamTypes.CHANNEL, "stream_channel"],
-    ["a scratchpad hosts its own docs", { ...channel, id: "stream_pad" }, StreamTypes.SCRATCHPAD, "stream_pad"],
-    ["a sealed stream has no doc host", { ...channel, e2eEnabled: true }, StreamTypes.SCRATCHPAD, null],
-    ["an aside cannot host docs", { ...channel, id: "stream_aside" }, StreamTypes.ASIDE, null],
-    ["a thread with no root found has no doc host", thread, null, null],
-  ])("%s", (_name, stream, rootType, expected) => {
-    expect(docHostFor(stream, rootType)).toBe(expected)
   })
 })

@@ -8,6 +8,7 @@ import {
   DocService,
   decodeUpdateBase64,
   encodeUpdateBase64,
+  listHostedDocs,
   writeContentJson,
   ydocToContentJson,
   type DocAgentContext,
@@ -15,8 +16,10 @@ import {
 } from "../../src/features/docs"
 import { BotChannelService } from "../../src/features/api-keys"
 import { StreamEventRepository, StreamRepository, StreamService } from "../../src/features/streams"
+import { BotChannelAccessRepository } from "../../src/features/api-keys"
+import { EventService } from "../../src/features/messaging"
 import { UserRepository, WorkspaceRepository } from "../../src/features/workspaces"
-import { blockId, personaId, userId, workspaceId } from "../../src/lib/id"
+import { blockId, botChannelAccessId, botId, personaId, userId, workspaceId } from "../../src/lib/id"
 import { addTestMember, setupIsolatedTestDatabase, withTransaction } from "./setup"
 
 let pool: Pool
@@ -271,6 +274,108 @@ describe("doc agent service", () => {
       otherHostWrite: { status: "not_found" },
       listed: { status: "not_found" },
     })
+  })
+
+  test("should respect share-only and root access when listing a doc and its children", async () => {
+    const host = await streamService.createChannel({
+      workspaceId: wsId,
+      slug: `shared-doc-host-${++slugCounter}`,
+      visibility: "private",
+      createdBy: owner,
+    })
+    const parent = await streamService.createDoc({
+      workspaceId: wsId,
+      parentStreamId: host.id,
+      principal: { kind: "user", userId: owner },
+      displayName: "Shared parent",
+    })
+    const child = await streamService.createDoc({
+      workspaceId: wsId,
+      parentStreamId: parent.id,
+      principal: { kind: "user", userId: owner },
+      displayName: "Private child title",
+    })
+    await postClient(child.id, await draftClientUpdate(child.id, () => [paragraph("Private child body")]))
+    const shareStream = await streamService.createChannel({
+      workspaceId: wsId,
+      slug: `share-carrier-${++slugCounter}`,
+      visibility: "public",
+      createdBy: owner,
+    })
+    const eventService = new EventService(pool)
+    const shareMessage = await eventService.createMessage({
+      workspaceId: wsId,
+      streamId: shareStream.id,
+      authorId: owner,
+      authorType: "user",
+      contentJson: {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "docEmbed", attrs: { docId: parent.id } }] }],
+      },
+      contentMarkdown: "shared parent",
+      confirmedPrivacyWarning: true,
+    })
+    const bot = botId()
+    await pool.query(`INSERT INTO bots (id, workspace_id, api_key_id, name) VALUES ($1, $2, $3, 'Doc agent bot')`, [
+      bot,
+      wsId,
+      `key_${bot}`,
+    ])
+    await BotChannelAccessRepository.grantAccess(pool, {
+      id: botChannelAccessId(),
+      workspaceId: wsId,
+      botId: bot,
+      streamId: host.id,
+      grantedBy: owner,
+    })
+    const userCtx: HostedDocAgentContext = {
+      workspaceId: wsId,
+      hostStreamId: parent.id,
+      principal: { kind: "user", userId: owner },
+      actor: { actorId: persona, actorType: AuthorTypes.PERSONA },
+    }
+    const selfRead = await agent.readDoc(userCtx, { docId: parent.id })
+    const childRead = await agent.readDoc(userCtx, { docId: child.id })
+    const childTitle = await agent.setTitle(userCtx, { docId: child.id, title: "Nested child" })
+    const userListed = await agent.listDocs({ ...userCtx, principal: { kind: "user", userId: outsider } })
+    const botListed = await agent.listDocs({ ...userCtx, principal: { kind: "bot", botId: bot } })
+
+    const parentGrant = await agent.readDoc(
+      { ...userCtx, principal: { kind: "user", userId: outsider } },
+      { docId: parent.id }
+    )
+    const shareExists = await pool.query(
+      "SELECT 1 FROM shared_docs WHERE workspace_id = $1 AND share_message_id = $2 AND doc_id = $3",
+      [wsId, shareMessage.id, parent.id]
+    )
+    expect({
+      shareExists: shareExists.rowCount,
+      userDocs: userListed.status === "ok" ? userListed.docs.map(({ docId, title }) => ({ docId, title })) : [],
+      promptDocs: await listHostedDocs(pool, wsId, parent.id, outsider),
+      botDocs: botListed.status === "ok" ? botListed.docs.map(({ docId, title }) => ({ docId, title })) : [],
+      parentGrant: parentGrant.status,
+      self: { status: selfRead.status, title: selfRead.status === "ok" ? selfRead.title : null },
+      child: {
+        status: childRead.status,
+        title: childRead.status === "ok" ? childRead.title : null,
+        containsBody: childRead.status === "ok" && childRead.markdown.includes("Private child body"),
+      },
+      childTitle: { status: childTitle.status, title: childTitle.status === "applied" ? childTitle.title : null },
+    }).toEqual({
+      shareExists: 1,
+      userDocs: [{ docId: parent.id, title: "Shared parent" }],
+      promptDocs: [{ docId: parent.id, title: "Shared parent", firstLine: null, open: false }],
+      botDocs: [
+        { docId: parent.id, title: "Shared parent" },
+        { docId: child.id, title: "Nested child" },
+      ],
+      parentGrant: "ok",
+      self: { status: "ok", title: "Shared parent" },
+      child: { status: "ok", title: "Private child title", containsBody: true },
+      childTitle: { status: "applied", title: "Nested child" },
+    })
+    expect(JSON.stringify(userListed)).not.toContain("Private child")
+    expect(JSON.stringify(userListed)).not.toContain("Private child body")
   })
 
   test("should attribute the write to the persona and carry the reason on doc:edited", async () => {

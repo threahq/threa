@@ -14,7 +14,7 @@ import { addTestMember, withTestTransaction } from "./setup"
 import { WorkspaceRepository, UserRepository } from "../../src/features/workspaces"
 import { StreamRepository, StreamMemberRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
-import { DocRepository } from "../../src/features/docs"
+import { DocRepository, docHostFor } from "../../src/features/docs"
 import { buildStreamContext } from "../../src/features/agents"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { userId, workspaceId, streamId, messageId } from "../../src/lib/id"
@@ -698,6 +698,7 @@ describe("Context Builder", () => {
         }
         const tracker = await insertDoc(3, "Tracker")
         const untitled = await insertDoc(2)
+        await DocRepository.replaceSections(client, wsId, tracker.id, [section("b0", 0, "Tracker body")])
         const archived = await insertDoc(1, "Old plan")
         await StreamRepository.update(client, wsId, archived.id, { archivedAt: new Date() })
         await DocRepository.replaceSections(client, wsId, tracker.id, [
@@ -710,11 +711,18 @@ describe("Context Builder", () => {
 
         const trackerDoc = { docId: tracker.id, title: "Tracker", firstLine: "- [ ] Revoke the old AWS access key" }
         const untitledDoc = { docId: untitled.id, title: null, firstLine: null }
-        const options = { docHostId: channel.id, openDocIds: [tracker.id, "stream_not_hosted_here"] }
+        const options = {
+          docScope: { hostStreamId: channel.id, userId: ownerUserId },
+          openDocIds: [tracker.id, "stream_not_hosted_here"],
+        }
 
         expect({
           trackerOpen: (await buildStreamContext(client, channel, options)).docs,
-          nothingOpen: (await buildStreamContext(client, channel, { docHostId: channel.id })).docs,
+          nothingOpen: (
+            await buildStreamContext(client, channel, {
+              docScope: { hostStreamId: channel.id, userId: ownerUserId },
+            })
+          ).docs,
           noHost: (await buildStreamContext(client, channel)).docs,
         }).toEqual({
           trackerOpen: [
@@ -726,6 +734,146 @@ describe("Context Builder", () => {
             { ...trackerDoc, open: false },
           ],
           noHost: undefined,
+        })
+      })
+    })
+
+    test("should expose a nested doc to its own host and accessible children only", async () => {
+      await withTestTransaction(pool, async (client) => {
+        const memberKey = userId()
+        const wsId = workspaceId()
+        await WorkspaceRepository.insert(client, {
+          id: wsId,
+          name: "Nested Docs Context Workspace",
+          slug: `nested-docs-ctx-${wsId}`,
+          createdBy: memberKey,
+        })
+        const viewer = (await addTestMember(client, wsId, memberKey)).id
+        const outsiderKey = userId()
+        const outsider = (await addTestMember(client, wsId, outsiderKey)).id
+        const channel = await StreamRepository.insert(client, {
+          id: streamId(),
+          workspaceId: wsId,
+          type: StreamTypes.CHANNEL,
+          displayName: "Root",
+          slug: `nested-docs-root-${wsId}`,
+          visibility: Visibilities.PRIVATE,
+          createdBy: viewer,
+        })
+        await StreamMemberRepository.insert(client, wsId, channel.id, viewer)
+        const parent = await StreamRepository.insert(client, {
+          id: streamId(),
+          workspaceId: wsId,
+          type: StreamTypes.DOC,
+          displayName: "Parent",
+          parentStreamId: channel.id,
+          rootStreamId: channel.id,
+          visibility: Visibilities.PUBLIC,
+          createdBy: viewer,
+        })
+        const child = await StreamRepository.insert(client, {
+          id: streamId(),
+          workspaceId: wsId,
+          type: StreamTypes.DOC,
+          displayName: "Private child",
+          parentStreamId: parent.id,
+          rootStreamId: channel.id,
+          visibility: Visibilities.PRIVATE,
+          createdBy: viewer,
+        })
+        await DocRepository.replaceSections(client, wsId, parent.id, [section("p0", 0, "Parent first line")])
+        await DocRepository.replaceSections(client, wsId, child.id, [section("c0", 0, "Secret child first line")])
+        const sectionThread = await StreamRepository.insert(client, {
+          id: streamId(),
+          workspaceId: wsId,
+          type: StreamTypes.THREAD,
+          displayName: "Section",
+          parentStreamId: child.id,
+          rootStreamId: channel.id,
+          visibility: Visibilities.PRIVATE,
+          createdBy: viewer,
+        })
+        const deeperThread = await StreamRepository.insert(client, {
+          id: streamId(),
+          workspaceId: wsId,
+          type: StreamTypes.THREAD,
+          displayName: "Nested section",
+          parentStreamId: sectionThread.id,
+          rootStreamId: channel.id,
+          visibility: Visibilities.PRIVATE,
+          createdBy: viewer,
+        })
+        const ordinaryThread = await StreamRepository.insert(client, {
+          id: streamId(),
+          workspaceId: wsId,
+          type: StreamTypes.THREAD,
+          displayName: "Channel thread",
+          parentStreamId: channel.id,
+          rootStreamId: channel.id,
+          visibility: Visibilities.PRIVATE,
+          createdBy: viewer,
+        })
+        const asideId = streamId()
+        const aside = await StreamRepository.insert(client, {
+          id: asideId,
+          workspaceId: wsId,
+          type: StreamTypes.ASIDE,
+          displayName: "Aside",
+          parentStreamId: sectionThread.id,
+          rootStreamId: asideId,
+          visibility: Visibilities.PRIVATE,
+          createdBy: viewer,
+        })
+
+        expect({
+          owner: (await buildStreamContext(client, parent, { docScope: { hostStreamId: parent.id, userId: viewer } }))
+            .docs,
+          outsider: (
+            await buildStreamContext(client, parent, { docScope: { hostStreamId: parent.id, userId: outsider } })
+          ).docs,
+        }).toEqual({
+          owner: [
+            { docId: parent.id, title: "Parent", firstLine: "Parent first line", open: false },
+            { docId: child.id, title: "Private child", firstLine: "Secret child first line", open: false },
+          ],
+          outsider: [],
+        })
+        expect({
+          sectionThread: await docHostFor(client, wsId, sectionThread, StreamTypes.CHANNEL),
+          deeperThread: await docHostFor(client, wsId, deeperThread, StreamTypes.CHANNEL),
+          ordinaryThread: await docHostFor(client, wsId, ordinaryThread, StreamTypes.CHANNEL),
+          aside: await docHostFor(client, wsId, aside, StreamTypes.ASIDE),
+          docSelf: await docHostFor(client, wsId, parent, StreamTypes.CHANNEL),
+        }).toEqual({
+          sectionThread: child.id,
+          deeperThread: child.id,
+          ordinaryThread: channel.id,
+          aside: null,
+          docSelf: parent.id,
+        })
+
+        const openedChildren = []
+        for (let index = 0; index < 20; index += 1) {
+          openedChildren.push(
+            await StreamRepository.insert(client, {
+              id: streamId(),
+              workspaceId: wsId,
+              type: StreamTypes.DOC,
+              displayName: `Open ${index}`,
+              parentStreamId: parent.id,
+              rootStreamId: channel.id,
+              visibility: Visibilities.PRIVATE,
+              createdBy: viewer,
+            })
+          )
+        }
+        const capped = await buildStreamContext(client, parent, {
+          docScope: { hostStreamId: parent.id, userId: viewer },
+          openDocIds: openedChildren.map((doc) => doc.id),
+        })
+        expect({ count: capped.docs?.length, first: capped.docs?.[0]?.docId }).toEqual({
+          count: 20,
+          first: parent.id,
         })
       })
     })

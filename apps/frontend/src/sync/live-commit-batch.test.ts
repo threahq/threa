@@ -213,6 +213,7 @@ async function register(queryClient: QueryClient, coalesced: boolean): Promise<H
     getCurrentStreamId: () => undefined,
     getCurrentUser: () => ({ id: "workos_1" }),
     subscribeStream: vi.fn(),
+    refreshWorkspace: vi.fn(),
     getCatchUpBatch: () => catchUpBatch,
     getLiveCommitBatch: () => (coalesced ? liveBatch : null),
   })

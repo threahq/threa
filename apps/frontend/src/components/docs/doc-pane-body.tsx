@@ -145,7 +145,7 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
   const { suggestionConfig: emojiConfig, renderEmojiGrid } = useEmojiSuggestion({ emojis, emojiWeights })
   const docHost = useWorkspaceStream(workspaceId, docId, pickDocHost)?.parentStreamId ?? undefined
   const { suggestionConfig: docConfig, renderDocList } = useDocSuggestion(docHost, docId)
-  const { docCreateOptions, renderDocCreateList } = useDocCreateSuggestion(docHost, docId)
+  const { docCreateOptions, renderDocCreateList } = useDocCreateSuggestion(docId, docId)
   const { uploadFile, imageCount } = useAttachments(workspaceId, { e2eEnabled: false })
 
   const markdownParseOptions = useMemo(() => ({ emojiAsText: true, isKnownChannel }), [isKnownChannel])

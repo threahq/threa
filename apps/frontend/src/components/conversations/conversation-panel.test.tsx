@@ -2048,6 +2048,7 @@ describe("ConversationPanel settle echo on a by-id fetched post", () => {
       getCurrentStreamId: () => undefined,
       getCurrentUser: () => ({ id: "usr_me" }),
       subscribeStream: vi.fn(),
+      refreshWorkspace: vi.fn(),
     })
     await act(async () => {
       emit("conversation:updated", {

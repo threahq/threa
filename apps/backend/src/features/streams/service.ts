@@ -427,6 +427,13 @@ function docVisibilityInheritedError(): HttpError {
   })
 }
 
+function docMoveCycleError(): HttpError {
+  return new HttpError("A doc cannot be moved under itself or one of its descendants", {
+    status: 400,
+    code: DocErrorCodes.MOVE_CYCLE,
+  })
+}
+
 async function lockLifecycleStreams(
   client: Querier,
   workspaceId: string,
@@ -1100,6 +1107,7 @@ export class StreamService {
         workspaceId: params.workspaceId,
         streamIds: [parentStreamId],
         principal,
+        typeReadOnly: "none",
       })
       if (!authority) throw new StreamNotFoundError()
       const { target: host, root, state } = authority
@@ -1248,10 +1256,13 @@ export class StreamService {
       // A thread committed under the doc after the unlocked read: lock it now, after the ordered set. A
       // cycle that opens is a deadlock, which withTransaction retries.
       const seenIds = new Set(seenSubtreeIds)
-      const lateIds = (await StreamRepository.listDocSubtreeIds(client, workspaceId, docId, oldRootId)).filter(
-        (id) => !seenIds.has(id)
-      )
+      const refreshedSubtreeIds = await StreamRepository.listDocSubtreeIds(client, workspaceId, docId, oldRootId)
+      const lateIds = refreshedSubtreeIds.filter((id) => !seenIds.has(id))
       await StreamRepository.findByIdsForUpdateBlocking(client, workspaceId, lateIds)
+
+      if (toStreamId !== null && refreshedSubtreeIds.includes(toStreamId)) {
+        throw docMoveCycleError()
+      }
 
       const threadCompanion = threadCompanionFrom(root)
       const movedStreamIds = await StreamRepository.moveDocSubtree(client, {
@@ -1356,6 +1367,17 @@ export class StreamService {
     if (doc.parentStreamId === toStreamId) {
       if (params.visibility === undefined) return { losing: 0, gaining: 0 }
       throw docAlreadyTopLevelError()
+    }
+    if (toStreamId !== null) {
+      const subtreeIds = await StreamRepository.listDocSubtreeIds(
+        this.pool,
+        workspaceId,
+        docId,
+        doc.rootStreamId ?? doc.id
+      )
+      if (subtreeIds.includes(toStreamId)) {
+        throw docMoveCycleError()
+      }
     }
     const destination = lifting
       ? { visibility: params.visibility ?? TOP_LEVEL_DOC_DEFAULT_VISIBILITY, moverId: userId }

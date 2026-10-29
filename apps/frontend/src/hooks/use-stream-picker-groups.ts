@@ -7,7 +7,7 @@ import {
   type CachedStream,
 } from "@/stores/workspace-store"
 import { calculateUrgency } from "@/components/layout/sidebar/utils"
-import { isHiddenStreamType } from "@/lib/streams"
+import { collectSealedStreamIds, isHiddenStreamType } from "@/lib/streams"
 import { scoreStreamMatch, compareStreamEntries, type SortableEntry, type StreamSortMode } from "@/lib/stream-sort"
 
 /** Stable identity for the no-unread-state case so the memo doesn't re-sort every render. */
@@ -23,6 +23,8 @@ export interface StreamPickerGroupsOptions {
    * narrow to postable channels+DMs while another caller keeps scratchpads.
    */
   filter?: (stream: CachedStream) => boolean
+  /** Include doc hosts for flows that move docs; ordinary message/share pickers keep excluding them. */
+  includeDocHosts?: boolean
 }
 
 /**
@@ -37,7 +39,7 @@ export interface StreamPickerGroupsOptions {
  */
 export function useStreamPickerGroups(
   workspaceId: string,
-  { search, sortMode, filter }: StreamPickerGroupsOptions
+  { search, sortMode, filter, includeDocHosts = false }: StreamPickerGroupsOptions
 ): Map<StreamType, SortableEntry<CachedStream>[]> {
   const streams = useWorkspaceStreams(workspaceId)
   const memberships = useWorkspaceStreamMemberships(workspaceId)
@@ -46,6 +48,7 @@ export function useStreamPickerGroups(
   const mentionCounts = unreadState?.mentionCounts ?? EMPTY_COUNTS
   const activityCounts = unreadState?.activityCounts ?? EMPTY_COUNTS
   const mutedStreamIds = useMemo(() => new Set(unreadState?.mutedStreamIds ?? []), [unreadState?.mutedStreamIds])
+  const sealedStreamIds = useMemo(() => collectSealedStreamIds(streams), [streams])
 
   const memberStreamIds = useMemo(() => {
     const ids = new Set<string>()
@@ -56,13 +59,23 @@ export function useStreamPickerGroups(
   return useMemo(() => {
     const lower = search.toLowerCase()
     const isSearching = lower.length > 0
+    const streamsById = new Map(streams.map((stream) => [stream.id, stream]))
 
     const matchable = streams.filter((s) => {
-      if (s.archivedAt) return false
-      if (s.rootStreamId) return false
-      if (s.type === StreamTypes.THREAD || isHiddenStreamType(s)) return false
-      if (streamTypeCapabilities(s.type).messagesReadOnly) return false
-      const accessible = isOpenVisibility(s.visibility) || memberStreamIds.has(s.id)
+      if (sealedStreamIds.has(s.id)) return false
+      let accessStream = s
+      if (s.type === StreamTypes.DOC) {
+        if (!includeDocHosts) return false
+        if (s.parentStreamId) {
+          const root = s.rootStreamId ? streamsById.get(s.rootStreamId) : undefined
+          if (!root) return false
+          accessStream = root
+        }
+      } else {
+        if (s.rootStreamId || s.type === StreamTypes.THREAD || isHiddenStreamType(s)) return false
+        if (streamTypeCapabilities(s.type).messagesReadOnly) return false
+      }
+      const accessible = isOpenVisibility(accessStream.visibility) || memberStreamIds.has(accessStream.id)
       if (!accessible) return false
       return filter ? filter(s) : true
     })
@@ -88,5 +101,17 @@ export function useStreamPickerGroups(
       list.sort((a, b) => compareStreamEntries(a, b, { isSearching, mode: sortMode }))
     }
     return byType
-  }, [streams, memberStreamIds, search, sortMode, filter, unreadCounts, mentionCounts, activityCounts, mutedStreamIds])
+  }, [
+    streams,
+    sealedStreamIds,
+    memberStreamIds,
+    search,
+    sortMode,
+    filter,
+    includeDocHosts,
+    unreadCounts,
+    mentionCounts,
+    activityCounts,
+    mutedStreamIds,
+  ])
 }
