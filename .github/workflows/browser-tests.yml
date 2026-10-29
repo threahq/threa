@@ -248,11 +248,13 @@ jobs:
         run: |
           list="browser-shard-lists/shard-${{ matrix.shard_index }}.txt"
           test -s "$list"
-          if rg -Fxq '[chromium] > stream-connections.spec.ts' "$list"; then
-            single_region=0
-          else
-            single_region=1
-          fi
+          single_region=1
+          while IFS= read -r group || [[ -n "$group" ]]; do
+            if [[ "$group" == '[chromium] > stream-connections.spec.ts' ]]; then
+              single_region=0
+              break
+            fi
+          done < "$list"
           echo "PLAYWRIGHT_SINGLE_REGION=$single_region" >> "$GITHUB_ENV"
           echo "Shard ${{ matrix.shard_index }}: PLAYWRIGHT_SINGLE_REGION=$single_region"
 
