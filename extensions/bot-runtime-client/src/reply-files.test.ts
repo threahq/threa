@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { decryptAttachmentBytes } from "./crypto"
 import {
   extractAttachmentDirectives,
+  hasReplyAttachments,
   redactAttachDirectives,
   uploadReplyAttachments,
   uploadSealedReplyAttachments,
@@ -267,4 +268,130 @@ describe("uploadSealedReplyAttachments", () => {
       markdown: `Done\n\nAttachment upload failed:\n- ${paths[16]}: over the 16-attachment limit for one message`,
     })
   })
+})
+
+test("should upload explicit report and video links with their actual bytes", async () => {
+  const dir = tempDir()
+  const uploads: { name: string; type: string; bytes: string }[] = []
+  for (const name of ["report.md", "walkthrough.webm"]) writeFileSync(join(dir, name), `synthetic ${name}`)
+  const result = await uploadReplyAttachments(
+    {
+      async uploadAttachment(form) {
+        const file = form.get("file") as File
+        uploads.push({ name: file.name, type: file.type, bytes: await file.text() })
+        return { id: `att_${uploads.length}`, filename: file.name, mimeType: file.type, sizeBytes: file.size }
+      },
+    },
+    `[Report](${dir}/report.md) [Video](file://${dir}/walkthrough.webm)`,
+    dir
+  )
+  expect({ uploads, markdown: result.markdown, failed: result.failed }).toEqual({
+    uploads: [
+      { name: "report.md", type: "text/markdown", bytes: "synthetic report.md" },
+      { name: "walkthrough.webm", type: "video/webm", bytes: "synthetic walkthrough.webm" },
+    ],
+    markdown:
+      '[Report](attachment:att_1 "threa-attachment:filename=report.md&mimeType=text%2Fmarkdown&sizeBytes=19") [Video](attachment:att_2 "threa-attachment:filename=walkthrough.webm&mimeType=video%2Fwebm&sizeBytes=26")',
+    failed: [],
+  })
+})
+
+test("should encrypt explicit video links into decryptable sealed refs", async () => {
+  const dir = tempDir()
+  writeFileSync(join(dir, "video.webm"), "synthetic video")
+  let ciphertext = new Uint8Array()
+  const result = await uploadSealedReplyAttachments(
+    {
+      async uploadAttachment(form) {
+        ciphertext = new Uint8Array(await (form.get("file") as Blob).arrayBuffer())
+        return summary({ id: "att_video" })
+      },
+    },
+    `[Video](${dir}/video.webm)`,
+    dir
+  )
+  expect(result.refs[0]).toBeDefined()
+  const ref = result.refs[0]!
+  const decrypted = await decryptAttachmentBytes({ ciphertext, key: ref.key, iv: ref.iv })
+  expect({
+    markdown: result.markdown,
+    ids: result.attachmentIds,
+    mime: ref.mimeType,
+    bytes: new TextDecoder().decode(decrypted),
+  }).toEqual({
+    markdown: "",
+    ids: ["att_video"],
+    mime: "video/webm",
+    bytes: "synthetic video",
+  })
+})
+
+test("should leave relative references, source links, URLs, and code samples alone", async () => {
+  const markdown =
+    "[doc](docs/report.md) [code](/tmp/source.ts:12) [section](/tmp/report.md#L12) [file-section](file:///tmp/report.md#L12) [encoded-section](/tmp/report.md%23L12) [encoded-source](/tmp/source.ts%3A12) [web](https://example.com/report.pdf) `[example](/tmp/report.md)`\n\n```md\n[file](/tmp/video.webm)\n```"
+  expect({
+    result: await uploadReplyAttachments(noUploads, markdown, "/tmp"),
+    has: hasReplyAttachments(markdown),
+  }).toEqual({
+    result: { markdown, uploaded: [], failed: [] },
+    has: false,
+  })
+  expect(hasReplyAttachments("[report](/tmp/report.md)")).toBe(true)
+  expect(redactAttachDirectives("[report](/tmp/report.md)")).toBe("[file: local path omitted]")
+})
+
+test("should upload escaped and encoded deliverable paths with decoded labels", async () => {
+  const dir = tempDir()
+  writeFileSync(join(dir, "a(1).md"), "parentheses")
+  writeFileSync(join(dir, "my report.md"), "spaces")
+  const uploads: { name: string; bytes: string }[] = []
+  const markdown = `[Report \\[one\\]](${dir}/a\\(1\\).md) [Report two](${dir}/my%20report.md)`
+  const result = await uploadReplyAttachments(
+    {
+      async uploadAttachment(form) {
+        const file = form.get("file") as File
+        uploads.push({ name: file.name, bytes: await file.text() })
+        return { id: `att_${uploads.length}`, filename: file.name, mimeType: file.type, sizeBytes: file.size }
+      },
+    },
+    markdown,
+    dir
+  )
+  expect({ uploads, markdown: result.markdown, failed: result.failed, has: hasReplyAttachments(markdown) }).toEqual({
+    uploads: [
+      { name: "a(1).md", bytes: "parentheses" },
+      { name: "my report.md", bytes: "spaces" },
+    ],
+    markdown:
+      '[Report \\[one\\]](attachment:att_1 "threa-attachment:filename=a%281%29.md&mimeType=text%2Fmarkdown&sizeBytes=11") [Report two](attachment:att_2 "threa-attachment:filename=my+report.md&mimeType=text%2Fmarkdown&sizeBytes=6")',
+    failed: [],
+    has: true,
+  })
+  expect(redactAttachDirectives(markdown)).toBe("[file: local path omitted] [file: local path omitted]")
+})
+
+test("should upload and redact a deliverable with a multiline label without another attachment", async () => {
+  const dir = tempDir()
+  writeFileSync(join(dir, "report.pdf"), "synthetic report")
+  const markdown = `[Download\nreport](${dir}/report.pdf)`
+  let bytes = ""
+  const result = await uploadReplyAttachments(
+    {
+      async uploadAttachment(form) {
+        const file = form.get("file") as File
+        bytes = await file.text()
+        return { id: "att_report", filename: file.name, mimeType: file.type, sizeBytes: file.size }
+      },
+    },
+    markdown,
+    dir
+  )
+  expect({ bytes, markdown: result.markdown, failed: result.failed, has: hasReplyAttachments(markdown) }).toEqual({
+    bytes: "synthetic report",
+    markdown:
+      '[Download report](attachment:att_report "threa-attachment:filename=report.pdf&mimeType=application%2Fpdf&sizeBytes=16")',
+    failed: [],
+    has: true,
+  })
+  expect(redactAttachDirectives(markdown)).toBe("[file: local path omitted]")
 })
