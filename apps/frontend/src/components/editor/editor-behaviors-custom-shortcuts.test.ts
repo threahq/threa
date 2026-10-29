@@ -49,6 +49,31 @@ function pressKey(editor: Editor, key: string, options: Partial<KeyboardEventIni
 }
 
 describe("editor custom formatting shortcuts", () => {
+  it.each([
+    { action: "formatItalic", binding: "mod+i", key: "i", mark: "italic", selector: "em", event: { metaKey: true } },
+    {
+      action: "formatStrike",
+      binding: "mod+shift+s",
+      key: "s",
+      mark: "strike",
+      selector: "s",
+      event: { metaKey: true, shiftKey: true },
+    },
+  ])("triggers $mark through the default $action binding", ({ action, binding, key, mark, selector, event }) => {
+    const bindings = getEffectiveEditorBindings({})
+    expect(bindings[action]).toBe(binding)
+
+    const { editor } = createEditorWithBindings(bindings)
+    editor.commands.setTextSelection({ from: 1, to: editor.state.doc.content.size })
+
+    const handled = pressKey(editor, key, event)
+
+    expect(handled).toBe(true)
+    expect(editor.getJSON().content?.[0]?.content?.[0]).toMatchObject({ text: "hello", marks: [{ type: mark }] })
+    expect(editor.view.dom.querySelector(selector)?.textContent).toBe("hello")
+    editor.destroy()
+  })
+
   it("triggers bold when pressing the custom binding mod+f", () => {
     const { editor } = createEditorWithBindings({ formatBold: "mod+f" })
 

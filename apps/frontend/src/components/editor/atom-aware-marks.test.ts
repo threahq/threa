@@ -56,3 +56,53 @@ describe("AtomAwareCode", () => {
     expect(serializeToMarkdown(editor.getJSON())).toBe("see [`site`](https://x.io) now")
   })
 })
+
+describe("editor formatting input rules", () => {
+  it.each([
+    { input: "*italic text*", selector: "em", mark: "italic", text: "italic text", delimiter: "*italic" },
+    { input: "~~struck text~~", selector: "s", mark: "strike", text: "struck text", delimiter: "~~" },
+    { input: "`inline code`", selector: "code", mark: "code", text: "inline code", delimiter: "`inline" },
+  ])("should convert $input through the installed mark input rule", ({ input, selector, mark, text, delimiter }) => {
+    const editor = createTestEditor()
+
+    typeText(editor, input)
+
+    expect(editor.getJSON().content?.[0]?.content?.[0]).toMatchObject({
+      type: "text",
+      text,
+      marks: [{ type: mark }],
+    })
+    expect(editor.view.dom.querySelector(selector)?.textContent).toBe(text)
+    expect(editor.view.dom.textContent).not.toContain(delimiter)
+    expect(serializeToMarkdown(editor.getJSON())).toBe(input)
+  })
+
+  it.each([
+    { input: "## Heading Two", selector: "h2", level: 2, text: "Heading Two" },
+    { input: "### Heading Three", selector: "h3", level: 3, text: "Heading Three" },
+  ])(
+    "should convert the level-$level prefix through the installed heading input rule",
+    ({ input, selector, level, text }) => {
+      const editor = createTestEditor()
+
+      typeText(editor, input)
+
+      expect(editor.getJSON().content?.[0]).toMatchObject({ type: "heading", attrs: { level }, content: [{ text }] })
+      expect(editor.view.dom.querySelector(selector)?.textContent).toBe(text)
+      expect(editor.view.dom.textContent).not.toContain("#")
+    }
+  )
+
+  it("should convert the numbered-list prefix through the installed list input rule", () => {
+    const editor = createTestEditor()
+
+    typeText(editor, "1. first item")
+
+    expect(editor.getJSON().content?.[0]).toMatchObject({
+      type: "orderedList",
+      content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ text: "first item" }] }] }],
+    })
+    expect(editor.view.dom.querySelector("ol li")?.textContent).toBe("first item")
+    expect(editor.view.dom.textContent).not.toContain("1. ")
+  })
+})

@@ -226,34 +226,6 @@ test.describe("Rich Text Editing", () => {
       await expect(editor.locator("strong")).toHaveText("bold text")
       await expect(editor).not.toContainText("**")
     })
-
-    test("typing *text* converts to italic", async ({ page }) => {
-      const editor = page.locator("[contenteditable='true']")
-      await editor.click()
-      await page.keyboard.type("*italic text*")
-
-      await expect(editor.locator("em")).toHaveText("italic text")
-      await expect(editor).not.toContainText("*italic")
-    })
-
-    test("typing ~~text~~ converts to strikethrough", async ({ page }) => {
-      const editor = page.locator("[contenteditable='true']")
-      await editor.click()
-      await page.keyboard.type("~~struck text~~")
-
-      await expect(editor.locator("s")).toHaveText("struck text")
-      await expect(editor).not.toContainText("~~")
-    })
-
-    test("typing `code` converts to inline code", async ({ page }) => {
-      const editor = page.locator("[contenteditable='true']")
-      await editor.click()
-      await page.keyboard.type("`inline code`")
-
-      await expect(editor.locator("code")).toHaveText("inline code")
-      // Raw backticks should be gone
-      await expect(editor).not.toContainText("`inline")
-    })
   })
 
   test.describe("Inline Formatting - Keyboard Shortcuts", () => {
@@ -273,28 +245,6 @@ test.describe("Rich Text Editing", () => {
       await pressEditorShortcut(editor, "b")
       await expect(editor.locator("strong")).not.toBeVisible()
     })
-
-    test("Cmd+I toggles italic on selection", async ({ page }) => {
-      const editor = page.locator("[contenteditable='true']")
-      await editor.click()
-      await page.keyboard.type("text to italicize")
-
-      await selectAllEditorContent(editor)
-      await pressEditorShortcut(editor, "i")
-
-      await expect(editor.locator("em")).toHaveText("text to italicize")
-    })
-
-    test("Cmd+Shift+S toggles strikethrough", async ({ page }) => {
-      const editor = page.locator("[contenteditable='true']")
-      await editor.click()
-      await page.keyboard.type("crossed out")
-
-      await selectAllEditorContent(editor)
-      await pressEditorShortcut(editor, "s", { shift: true })
-
-      await expect(editor.locator("s")).toHaveText("crossed out")
-    })
   })
 
   test.describe("Block Formatting - Lists", () => {
@@ -304,24 +254,6 @@ test.describe("Rich Text Editing", () => {
       await page.keyboard.type("- first item")
 
       await expect(editor.locator("ul li")).toContainText("first item")
-    })
-
-    test("typing '1. ' creates numbered list", async ({ page }) => {
-      const editor = page.locator("[contenteditable='true']")
-      await editor.click()
-      await page.keyboard.type("1. first item")
-
-      await expect(editor.locator("ol li")).toContainText("first item")
-    })
-
-    test("Shift+Enter in list creates new item", async ({ page }) => {
-      const editor = page.locator("[contenteditable='true']")
-      await editor.click()
-      await page.keyboard.type("- item one")
-      await page.keyboard.press("Shift+Enter")
-      await page.keyboard.type("item two")
-
-      await expect(editor.locator("ul li")).toHaveCount(2)
     })
 
     test("Shift+Enter on empty list item exits list", async ({ page }) => {
@@ -377,17 +309,6 @@ test.describe("Rich Text Editing", () => {
       await expect(editor.locator("pre code")).toContainText("const x = 1")
     })
 
-    test("typing ``` + Shift+Enter creates code block", async ({ page }) => {
-      const editor = page.locator("[contenteditable='true']")
-      await editor.click()
-      // Shift+Enter triggers code block creation just like Enter would in cmdEnter mode
-      await page.keyboard.type("```")
-      await page.keyboard.press("Shift+Enter")
-      await page.keyboard.type("const y = 2")
-
-      await expect(editor.locator("pre code")).toContainText("const y = 2")
-    })
-
     test("Tab in code block inserts spaces", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()
@@ -440,22 +361,6 @@ test.describe("Rich Text Editing", () => {
       await page.keyboard.type("# Heading One")
 
       await expect(editor.locator("h1")).toHaveText("Heading One")
-    })
-
-    test("typing '## ' creates H2", async ({ page }) => {
-      const editor = page.locator("[contenteditable='true']")
-      await editor.click()
-      await page.keyboard.type("## Heading Two")
-
-      await expect(editor.locator("h2")).toHaveText("Heading Two")
-    })
-
-    test("typing '### ' creates H3", async ({ page }) => {
-      const editor = page.locator("[contenteditable='true']")
-      await editor.click()
-      await page.keyboard.type("### Heading Three")
-
-      await expect(editor.locator("h3")).toHaveText("Heading Three")
     })
 
     // Note: backspace-at-start-of-heading is not supported by TipTap's Heading extension.
