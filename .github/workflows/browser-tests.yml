@@ -19,7 +19,7 @@ on:
       - ".github/workflows/browser-tests.yml"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -31,6 +31,19 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check main tip
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: tip
+        uses: ./.github/actions/check-main-tip
+        with:
+          expected-sha: ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Reject obsolete main revision
+        if: steps.tip.outputs.is-tip == 'false'
+        run: exit 1
 
       - uses: ./.github/actions/setup-bun
 
