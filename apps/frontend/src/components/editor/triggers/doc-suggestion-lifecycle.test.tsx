@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "vitest"
-import { act, cleanup, render, screen, within } from "@testing-library/react"
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react"
 import { EditorContent, useEditor } from "@tiptap/react"
 import type { Editor } from "@tiptap/core"
 import Document from "@tiptap/extension-document"
@@ -7,6 +7,8 @@ import Paragraph from "@tiptap/extension-paragraph"
 import Text from "@tiptap/extension-text"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { seedWorkspaceCache, type CachedStream } from "@/stores/workspace-store"
+import { getWorkspaceTableSnapshot } from "@/stores/workspace-table-registry"
+import { streamsTable } from "@/test/workspace-rows"
 import { DocEmbedExtension } from "../doc-embed-extension"
 import { DocSearchExtension } from "./doc-search-extension"
 import { useDocSuggestion } from "./use-doc-suggestion"
@@ -50,7 +52,12 @@ function RoutedHarness() {
   )
 }
 
-function publishDocs(streams: CachedStream[]) {
+async function publishDocs(streams: CachedStream[]) {
+  const table = streamsTable()
+  await table.db.transaction("rw", table, async () => {
+    await table.where("workspaceId").equals(workspaceId).delete()
+    await table.bulkPut(streams)
+  })
   seedWorkspaceCache(workspaceId, {
     workspace: { id: workspaceId } as Parameters<typeof seedWorkspaceCache>[1]["workspace"],
     users: [],
@@ -62,15 +69,15 @@ function publishDocs(streams: CachedStream[]) {
   })
 }
 
-afterEach(() => {
+afterEach(async () => {
   cleanup()
   editor = null
   suggestionConfig = null
-  publishDocs([])
+  await publishDocs([])
 })
 
 it("should show a matching doc arriving while its suggestion query remains unchanged", async () => {
-  publishDocs([])
+  await publishDocs([])
   render(<RoutedHarness />)
   await act(async () => {
     editor!.commands.focus()
@@ -81,7 +88,7 @@ it("should show a matching doc arriving while its suggestion query remains uncha
   const stateBeforePublication = editor!.state
 
   await act(async () => {
-    publishDocs([
+    await publishDocs([
       {
         id: "stream_runbook",
         workspaceId,
@@ -94,9 +101,11 @@ it("should show a matching doc arriving while its suggestion query remains uncha
     ])
   })
 
-  expect(suggestionConfig!.items({ query: "Runbook" })).toEqual([
-    expect.objectContaining({ id: "stream_runbook", displayName: "Runbook launch" }),
-  ])
+  await waitFor(() =>
+    expect(suggestionConfig!.items({ query: "Runbook" })).toEqual([
+      expect.objectContaining({ id: "stream_runbook", displayName: "Runbook launch" }),
+    ])
+  )
   expect(editor!.state).toBe(stateBeforePublication)
   expect(await within(picker).findByRole("option", { name: /Runbook launch/ })).toBeVisible()
 
@@ -120,7 +129,7 @@ it("should show a matching doc arriving while its suggestion query remains uncha
 })
 
 it("should keep the selected doc when an unrelated parent render leaves its query unchanged", async () => {
-  publishDocs([
+  await publishDocs([
     {
       id: "stream_first",
       workspaceId,
@@ -146,6 +155,12 @@ it("should keep the selected doc when an unrelated parent render leaves its quer
     editor!.commands.insertContent("/docs Runbook")
   })
   const picker = await screen.findByRole("listbox", { name: "Doc suggestions" })
+  await waitFor(() =>
+    expect(getWorkspaceTableSnapshot(workspaceId, "streams")?.map((row) => row.id)).toEqual([
+      "stream_first",
+      "stream_second",
+    ])
+  )
   await act(async () => {
     editor!.view.dom.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }))
   })
