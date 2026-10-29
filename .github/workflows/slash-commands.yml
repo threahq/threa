@@ -101,8 +101,6 @@ jobs:
           ref: ${{ steps.pr.outputs.sha }}
 
       - uses: ./.github/actions/setup-bun
-        with:
-          bun-version: latest
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
