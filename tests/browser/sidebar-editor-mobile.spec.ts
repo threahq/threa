@@ -400,6 +400,43 @@ test("should preserve section and nested keyboard reordering on desktop", async 
   }
 })
 
+for (const { count, key } of [
+  { count: 3, key: "Space" },
+  { count: 0, key: "Enter" },
+]) {
+  test(`should show the saved keyboard tray position with ${count} sections using ${key}`, async ({
+    page: setupPage,
+    browser,
+  }) => {
+    const { context, page, dialog, workspaceId } = await openEditor(setupPage, browser, count, false)
+    try {
+      const chip = dialog.getByRole("button", { name: "Add Everything Else", exact: true })
+      await chip.focus()
+      await page.keyboard.press(key)
+      const marker = dialog.getByTestId("sidebar-insertion-marker")
+      const index = Math.max(0, count - 1)
+      await expect(marker).toHaveAttribute("data-index", String(index))
+      await expect(marker).toHaveAttribute("data-edge", "before")
+      const targetElement =
+        count === 0
+          ? dialog.getByText("Empty sidebar.", { exact: false })
+          : dialog.getByRole("button", { name: `Reorder Touch section ${index}`, exact: true }).locator("../..")
+      const target = (await targetElement.boundingBox())!
+      const borderTop = await targetElement.evaluate((element) => element.clientTop)
+      expect((await marker.boundingBox())!.y).toBeCloseTo(target.y + borderTop - 3, 0)
+      await page.keyboard.press(key)
+      await expect(marker).toHaveCount(0)
+      const expected = Array.from({ length: count }, (_, i) => `custom:touch-${i}`)
+      expected.splice(index, 0, "other")
+      await expect
+        .poll(async () => (await readSidebarConfig(page, workspaceId)).sidebarConfig.sections.map((row) => row.id))
+        .toEqual(expected)
+    } finally {
+      await context.close()
+    }
+  })
+}
+
 test("should target the full Quick Links section when adding from the tray", async ({ page: setupPage, browser }) => {
   const { context, page, dialog, cdp, workspaceId } = await openEditor(setupPage, browser, 0, true, 1100)
   try {

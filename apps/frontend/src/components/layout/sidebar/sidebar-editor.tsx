@@ -103,6 +103,8 @@ function insertionCollision(ids: string[], listId: string): CollisionDetection {
         rowId: ids[gap] ?? ids.at(-1) ?? listId,
         edge: gap < ids.length || ids.length === 0 ? "before" : "after",
       }
+    } else if (ids.length === 0) {
+      target = { index: 0, rowId: listId, edge: "before" }
     } else {
       const collision = closestCenter({
         ...args,
@@ -110,7 +112,11 @@ function insertionCollision(ids: string[], listId: string): CollisionDetection {
       })[0]
       if (!collision) return []
       const index = ids.indexOf(String(collision.id))
-      target = { index, rowId: String(collision.id), edge: index > activeIndex ? "after" : "before" }
+      target = {
+        index,
+        rowId: String(collision.id),
+        edge: activeIndex >= 0 && index > activeIndex ? "after" : "before",
+      }
     }
     const id = target.rowId
     const droppableContainer = droppableContainers.find((container) => container.id === id)
