@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, jest, spyOn, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -28,7 +28,7 @@ import {
 import { RemoteSession, type RemoteSessionDelegate, type RuntimeDescriptor } from "./session"
 import type { RemoteSessionConfig } from "./identity"
 import { ThreaApiError, type ClaimedInvocation, type ThreaClient } from "./client"
-import { fireIdleTimeout, flush, gate } from "./session.test-support"
+import { captureIdleTimeout, fireIdleTimeout, flush, gate } from "./session.test-support"
 
 // End-to-end sealed session behavior with REAL crypto: an "owner" wraps a
 // stream key to the session's BIK and seals a trigger; the session must open
@@ -359,12 +359,9 @@ describe("sealed claim hydration + delivery", () => {
 
   for (const phase of ["started", "finished"] as const) {
     test(`should ${phase === "started" ? "preserve" : "renew"} the idle deadline for sealed ${phase} trace activity`, async () => {
-      jest.useFakeTimers()
-      let session: RemoteSession | undefined
+      const { session, calls, openSealed } = await startSealedTurn()
       try {
-        const made = await startSealedTurn()
-        session = made.session
-        jest.advanceTimersByTime(3_599_000)
+        const originalDeadline = captureIdleTimeout(session, "binv_sealed")
         await session.recordSteps("binv_sealed", [
           {
             stepType: "tool_call",
@@ -372,12 +369,15 @@ describe("sealed claim hydration + delivery", () => {
             ...(phase === "started" ? { phase: "started" as const } : {}),
           },
         ])
-        jest.advanceTimersByTime(1001)
-        await flush()
+        await originalDeadline()
         expect(session.isInflight("binv_sealed")).toBe(phase === "finished")
+        if (phase === "finished") await fireIdleTimeout(session, "binv_sealed")
+        expect(session.isInflight("binv_sealed")).toBe(false)
+        expect(await openSealed(calls.completeSealed[0]!.body.reply as SealedReplyBody)).toContain(
+          "without sending a reply"
+        )
       } finally {
-        await session?.shutdown()
-        jest.useRealTimers()
+        await session.shutdown()
       }
     })
   }
