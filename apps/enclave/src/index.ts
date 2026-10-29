@@ -27,8 +27,16 @@ async function main() {
   app.disable("x-powered-by")
   app.use(accessLog)
 
+  let registered = false
+  let intakeStarted = false
+
   app.get("/healthz", (_req, res) => {
     res.json({ status: "ok" })
+  })
+
+  app.get("/readyz", (_req, res) => {
+    const ready = registered && intakeStarted
+    res.status(ready ? 200 : 503).json({ status: ready ? "ok" : "starting" })
   })
 
   app.get("/pubkey", (_req, res) => {
@@ -63,6 +71,7 @@ async function main() {
   for (let attempt = 1; attempt <= 10; attempt++) {
     try {
       await registerWithBackend(config, keyPair)
+      registered = true
       break
     } catch (err) {
       if (attempt === 10) {
@@ -75,6 +84,7 @@ async function main() {
 
   const heartbeat = startHeartbeat(config, keyPair, async () => {
     await registerWithBackend(config, keyPair)
+    registered = true
   })
 
   // Work intake: poll the backend and claim turns this EIK can serve.
@@ -99,6 +109,7 @@ async function main() {
         assignment
       ),
   })
+  intakeStarted = true
 
   // On a graceful signal, how long to let in-flight sessions finish before exit.
   const SHUTDOWN_DRAIN_MS = 10_000
@@ -107,6 +118,7 @@ async function main() {
   const shutdown = async (code: number) => {
     if (shuttingDown) return
     shuttingDown = true
+    intakeStarted = false
     logger.info("Enclave shutting down")
     claimLoop.stop() // stop taking new turns; in-flight sessions run detached
     heartbeat.stop()
