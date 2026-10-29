@@ -236,10 +236,21 @@ for (const { destination, count, rowNumber, index, edge } of insertionCases) {
       await expect(marker).toBeVisible()
       await expect(marker).toHaveAttribute("data-index", String(index))
       const bounds = (await marker.boundingBox())!
-      expect(bounds.y).toBeCloseTo(edge === "after" ? target.y + target.height : target.y + borderTop - 2, 0)
+      expect(bounds.y + bounds.height / 2).toBeCloseTo(
+        edge === "after" ? target.y + target.height + 2 : target.y + borderTop - 2,
+        0
+      )
       if (destination === "middle") {
+        const previous = (await dialog
+          .getByRole("button", { name: "Reorder Touch section 0", exact: true })
+          .locator("../..")
+          .boundingBox())!
+        expect(bounds.y + bounds.height / 2).toBeCloseTo((previous.y + previous.height + target.y) / 2, 0)
+        const trayLabel = dialog.getByText("Available to add:", { exact: true })
+        await expect(marker).toHaveCSS("background-color", await trayLabel.evaluate((el) => getComputedStyle(el).color))
         await page.screenshot({ path: test.info().outputPath("everything-else-insertion-light.png") })
         await page.evaluate(() => document.documentElement.classList.add("dark"))
+        await expect(marker).toHaveCSS("background-color", await trayLabel.evaluate((el) => getComputedStyle(el).color))
         await page.screenshot({ path: test.info().outputPath("everything-else-insertion-dark.png") })
       }
       await touch(cdp, "touchEnd")
@@ -337,11 +348,11 @@ test("should update the insertion gap when crossing the same final row midpoint"
     const marker = dialog.getByTestId("sidebar-insertion-marker")
     await expect(marker).toHaveAttribute("data-index", "2")
     await expect(marker).toHaveAttribute("data-edge", "before")
-    expect((await marker.boundingBox())!.y).toBeCloseTo(row.y - 2, 0)
+    expect((await marker.boundingBox())!.y).toBeCloseTo(row.y - 3, 0)
     await touch(cdp, "touchMove", row.x + 20, row.y + row.height - 3)
     await expect(marker).toHaveAttribute("data-index", "3")
     await expect(marker).toHaveAttribute("data-edge", "after")
-    expect((await marker.boundingBox())!.y).toBeCloseTo(row.y + row.height, 0)
+    expect((await marker.boundingBox())!.y).toBeCloseTo(row.y + row.height + 1, 0)
     await cdp.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] })
   } finally {
     await context.close()
@@ -411,7 +422,7 @@ test("should target the full Quick Links section when adding from the tray", asy
     await touch(cdp, "touchMove", lastPoint.x, lastPoint.y)
     await expect(marker).toHaveAttribute("data-index", "1")
     const landedSection = (await sectionElement.boundingBox())!
-    expect((await marker.boundingBox())!.y).toBeCloseTo(landedSection.y + landedSection.height, 0)
+    expect((await marker.boundingBox())!.y).toBeCloseTo(landedSection.y + landedSection.height + 1, 0)
     await touch(cdp, "touchEnd")
     await expect
       .poll(async () =>

@@ -130,8 +130,8 @@ function InsertionMarker({ rowId }: { rowId: string }) {
       data-edge={target.edge}
       data-index={target.index}
       className={cn(
-        "pointer-events-none absolute inset-x-0 z-10 h-0.5 rounded-full bg-primary",
-        target.edge === "before" ? "-top-0.5" : "-bottom-0.5"
+        "pointer-events-none absolute inset-x-0 z-10 h-0.5 rounded-full bg-muted-foreground",
+        target.edge === "before" ? "-top-0.5 -translate-y-1/2" : "-bottom-0.5 translate-y-1/2"
       )}
     />
   )
@@ -346,7 +346,7 @@ function SectionsList({
         ref={setNodeRef}
         className={cn(
           "relative rounded-lg border border-dashed py-6 text-center text-sm text-muted-foreground",
-          isOver && "border-primary/60 bg-primary/5"
+          isOver && "border-muted-foreground/60 bg-muted-foreground/5"
         )}
       >
         <InsertionMarker rowId={SECTIONS_DROPPABLE_ID} />
@@ -356,7 +356,7 @@ function SectionsList({
   }
 
   return (
-    <div ref={setNodeRef} className={cn("rounded-lg", isOver && "ring-2 ring-primary/40")}>
+    <div ref={setNodeRef} className={cn("rounded-lg", isOver && "ring-2 ring-muted-foreground/40")}>
       <SortableContext items={sectionIds} strategy={verticalListSortingStrategy}>
         <ul className="space-y-1">
           {sections.map((section) => (
