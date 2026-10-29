@@ -25,6 +25,7 @@ concurrency:
 jobs:
   check-main-tip:
     name: Check main tip
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -46,6 +47,11 @@ jobs:
   lint:
     name: Lint
     needs: check-main-tip
+    if: >-
+      ${{ !cancelled() &&
+          (needs.check-main-tip.result == 'success' ||
+           (needs.check-main-tip.result == 'skipped' &&
+            (github.event_name != 'push' || github.ref != 'refs/heads/main'))) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -66,6 +72,11 @@ jobs:
   typecheck:
     name: Typecheck
     needs: check-main-tip
+    if: >-
+      ${{ !cancelled() &&
+          (needs.check-main-tip.result == 'success' ||
+           (needs.check-main-tip.result == 'skipped' &&
+            (github.event_name != 'push' || github.ref != 'refs/heads/main'))) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -86,6 +97,11 @@ jobs:
   test:
     name: Tests (${{ matrix.partition }})
     needs: check-main-tip
+    if: >-
+      ${{ !cancelled() &&
+          (needs.check-main-tip.result == 'success' ||
+           (needs.check-main-tip.result == 'skipped' &&
+            (github.event_name != 'push' || github.ref != 'refs/heads/main'))) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -197,6 +213,11 @@ jobs:
   frontend-tests:
     name: Frontend Tests (${{ matrix.shard_index }}/${{ strategy.job-total }})
     needs: check-main-tip
+    if: >-
+      ${{ !cancelled() &&
+          (needs.check-main-tip.result == 'success' ||
+           (needs.check-main-tip.result == 'skipped' &&
+            (github.event_name != 'push' || github.ref != 'refs/heads/main'))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -220,6 +241,11 @@ jobs:
   extension-tests:
     name: Extension Tests
     needs: check-main-tip
+    if: >-
+      ${{ !cancelled() &&
+          (needs.check-main-tip.result == 'success' ||
+           (needs.check-main-tip.result == 'skipped' &&
+            (github.event_name != 'push' || github.ref != 'refs/heads/main'))) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -291,6 +317,11 @@ jobs:
   public-site-build:
     name: Public Site Build
     needs: check-main-tip
+    if: >-
+      ${{ !cancelled() &&
+          (needs.check-main-tip.result == 'success' ||
+           (needs.check-main-tip.result == 'skipped' &&
+            (github.event_name != 'push' || github.ref != 'refs/heads/main'))) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -334,6 +365,11 @@ jobs:
   frontend-prod-build:
     name: Frontend Production Build
     needs: check-main-tip
+    if: >-
+      ${{ !cancelled() &&
+          (needs.check-main-tip.result == 'success' ||
+           (needs.check-main-tip.result == 'skipped' &&
+            (github.event_name != 'push' || github.ref != 'refs/heads/main'))) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -378,6 +414,11 @@ jobs:
   app-update-browser:
     name: App Update Browser Proof (${{ matrix.browser }})
     needs: check-main-tip
+    if: >-
+      ${{ !cancelled() &&
+          (needs.check-main-tip.result == 'success' ||
+           (needs.check-main-tip.result == 'skipped' &&
+            (github.event_name != 'push' || github.ref != 'refs/heads/main'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
@@ -420,6 +461,11 @@ jobs:
   workos-permissions:
     name: WorkOS Permissions
     needs: check-main-tip
+    if: >-
+      ${{ !cancelled() &&
+          (needs.check-main-tip.result == 'success' ||
+           (needs.check-main-tip.result == 'skipped' &&
+            (github.event_name != 'push' || github.ref != 'refs/heads/main'))) }}
     runs-on: ubuntu-latest
     concurrency:
       group: workos-permissions-${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'production' || github.run_id }}
