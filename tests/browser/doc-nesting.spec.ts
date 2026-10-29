@@ -143,6 +143,7 @@ async function nestedDocJourney(page: Page, touch: boolean) {
   await expect(childEditor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
   await expect(pane(page, child.id).getByRole("button", { name: "1 doc" })).toBeVisible({ timeout: 15000 })
   await openHostedDoc(page, child.id, grandchildTitle, touch)
+  await expect(grandchildEditor).toBeVisible({ timeout: 15000 })
   await expect(grandchildEditor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
   await navigateToAncestor(page, grandchild.id, child.id, childTitle, touch)
 
@@ -190,6 +191,7 @@ async function nestedDocJourney(page: Page, touch: boolean) {
   await expect(pane(page, child.id).getByRole("button", { name: "1 doc" })).toBeVisible({ timeout: 15000 })
   const documentTimeOrigin = await page.evaluate(() => performance.timeOrigin)
   await openHostedDoc(page, child.id, grandchildTitle, touch)
+  await expect(grandchildEditor).toBeVisible({ timeout: 15000 })
   await expect(grandchildEditor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
   expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentTimeOrigin)
   await grandchildEditor.click()

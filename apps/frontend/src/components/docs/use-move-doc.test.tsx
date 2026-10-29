@@ -122,7 +122,9 @@ describe("useMoveDoc", () => {
       parentStreamId: child.id,
       rootStreamId: root.id,
     })
-    vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([root, child, grandchild] as never)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreamsSelect").mockImplementation((_workspaceId, select) =>
+      select([root, child, grandchild] as never)
+    )
     const { result } = renderMoveDoc({ userId: "usr_creator", admin: false })
 
     expect({
