@@ -1,124 +1,30 @@
-name: Browser E2E Tests
+name: Browser worker paired experiment
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-  pull_request:
-    paths:
-      - ".bun-version"
-      - ".github/actions/**"
-      - "apps/**"
-      - "packages/**"
-      - "tests/browser/**"
-      - "playwright.config.ts"
-      - "scripts/test-silent.ts"
-      - "scripts/browser-ci.ts"
-      - "package.json"
-      - "bun.lock"
-      - ".github/workflows/browser-tests.yml"
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
-env:
-  TOTAL_SHARDS: 8
+permissions:
+  contents: read
 
 jobs:
-  build-frontend:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Check main tip
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: tip
-        uses: ./.github/actions/check-main-tip
-        with:
-          expected-sha: ${{ github.sha }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Reject obsolete main revision
-        if: steps.tip.outputs.is-tip == 'false'
-        run: exit 1
-
-      - uses: ./.github/actions/setup-bun
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Restore browser timing history
-        uses: actions/cache/restore@v4
-        with:
-          path: .cache/browser-ci/timings.json
-          key: browser-timings-v1-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: browser-timings-v1-
-
-      - name: Plan balanced browser shards
-        run: |
-          mkdir -p browser-shard-lists
-          bunx playwright test --list --reporter=json > browser-inventory.json
-          args=(--inventory browser-inventory.json --shards "$TOTAL_SHARDS" --output-dir browser-shard-lists --summary browser-shard-plan.md)
-          if [[ -f .cache/browser-ci/timings.json ]]; then
-            args+=(--history .cache/browser-ci/timings.json)
-          else
-            echo "No browser timing history restored; using count-based weights."
-          fi
-          bun scripts/browser-ci.ts plan "${args[@]}"
-          cat browser-shard-plan.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload browser shard lists
-        uses: actions/upload-artifact@v4
-        with:
-          name: browser-shard-lists
-          path: browser-shard-lists/
-          retention-days: 7
-
-      - name: Build frontend once
-        run: bun run --cwd apps/frontend build:e2e
-        env:
-          VITE_BACKEND_PORT: "1"
-          VITE_DRAFT_DEBOUNCE_MS: "5"
-
-      - name: Upload frontend build
-        uses: actions/upload-artifact@v4
-        with:
-          name: browser-test-frontend
-          path: apps/frontend/dist/
-          retention-days: 1
-
-  browser-tests:
-    env:
-      BROWSER_WORKERS: 3
-    permissions:
-      contents: read
-      actions: read
+  worker-pairs:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        shard_index: [1, 2, 3, 4, 5, 6, 7, 8]
-
+    timeout-minutes: 45
+    env:
+      CI: true
+      PLAYWRIGHT_SINGLE_REGION: "1"
+      PLAYWRIGHT_FRONTEND_PREBUILT: "true"
     steps:
       - uses: actions/checkout@v4
-
-      - name: Check main tip
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: tip
-        uses: ./.github/actions/check-main-tip
-        with:
-          expected-sha: ${{ github.sha }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Reject obsolete main revision
-        if: steps.tip.outputs.is-tip == 'false'
-        run: exit 1
+      - name: Record experiment environment
+        run: |
+          mkdir -p worker-pairs
+          date +%s.%N > worker-pairs/job-start.txt
+          git rev-parse HEAD > worker-pairs/sha.txt
+          uname -a > worker-pairs/runner.txt
+          lscpu >> worker-pairs/runner.txt
+          free -b >> worker-pairs/runner.txt
+          getconf CLK_TCK >> worker-pairs/runner.txt
 
       - name: Start PostgreSQL
         run: |
@@ -172,313 +78,77 @@ jobs:
           done
 
       - uses: ./.github/actions/setup-bun
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install chromium
+      - name: Build frontend once
+        run: bun run --cwd apps/frontend build:e2e
+        env:
+          VITE_BACKEND_PORT: "1"
+          VITE_DRAFT_DEBOUNCE_MS: "5"
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Install Chromium
-        run: bunx playwright install chromium
-
-      - name: Derive browser test database name
+      - name: Freeze cohort inventory
         run: |
-          repo_name="$(basename "$GITHUB_WORKSPACE")"
-          sanitized_repo_name="$(
-            echo "$repo_name" \
-              | tr '[:upper:]' '[:lower:]' \
-              | sed -E 's/[^a-z0-9]/_/g; s/_+/_/g; s/^_+//; s/_+$//'
-          )"
-          db_name="${sanitized_repo_name:-threa}_browser_test_shard_${{ matrix.shard_index }}"
-          echo "PLAYWRIGHT_TEST_DB_NAME=$db_name" >> "$GITHUB_ENV"
-          echo "Using browser test database: $db_name"
+          cat > worker-pairs/cohort.txt <<'EOF'
+          [chromium] > panel-tabs.spec.ts
+          [chromium] > panel-header.spec.ts
+          [chromium] > message-send-mode.spec.ts > Message Send Mode > default enter mode
+          [chromium] > infinite-scroll.spec.ts
+          [chromium] > pane-host-stability.spec.ts
+          [chromium] > pane-one-chrome.spec.ts
+          EOF
+          PLAYWRIGHT_JSON_OUTPUT_FILE=worker-pairs/inventory.json bunx playwright test --test-list=worker-pairs/cohort.txt --list --reporter=json
+          bun -e 'const r = await Bun.file("worker-pairs/inventory.json").json(); const count = s => (s.specs ?? []).reduce((n, x) => n + x.tests.length, 0) + (s.suites ?? []).reduce((n, x) => n + count(x), 0); if (count(r) !== 36) throw new Error("Expected exactly 36 cases")'
 
-      - name: Create test databases
+      - name: Run paired arms (2, 3, 3, 2 workers)
         run: |
-          # Backend (local region), control-plane and second-region (local-2) databases
-          for db in "${PLAYWRIGHT_TEST_DB_NAME}" "${PLAYWRIGHT_TEST_DB_NAME}_cp" "${PLAYWRIGHT_TEST_DB_NAME}_r2"; do
-            exists="$(
-              PGPASSWORD=threa psql -h localhost -p 5454 -U threa -d postgres -tAc \
-                "SELECT 1 FROM pg_database WHERE datname='${db}'"
-            )"
-            if [ "$exists" != "1" ]; then
-              PGPASSWORD=threa psql -h localhost -p 5454 -U threa -d postgres -c \
-                "CREATE DATABASE ${db}"
-            else
-              echo "Database already exists: ${db}"
-            fi
+          snapshot() {
+            date +%s.%N
+            cat /proc/stat /proc/meminfo /proc/pressure/cpu /proc/pressure/memory
+            awk '/^(pswpin|pswpout|pgmajfault) /' /proc/vmstat
+          }
+          sample() { while true; do snapshot; sleep 2; done; }
+          failed=0
+          arm=0
+          for workers in 2 3 3 2; do
+            arm=$((arm + 1))
+            dir="$GITHUB_WORKSPACE/worker-pairs/arm-$arm-w$workers"
+            mkdir -p "$dir"
+            export PLAYWRIGHT_TEST_DB_NAME="paired_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}_${arm}"
+            export PLAYWRIGHT_JSON_OUTPUT_FILE="$dir/report.json"
+            export PAIRED_STEPS_FILE="$dir/steps.jsonl"
+            export THREA_TEST_LOG_FILE="$dir/backend.ndjson"
+            printf '%s\n' "$PLAYWRIGHT_TEST_DB_NAME" > "$dir/database.txt"
+            date +%s.%N > "$dir/setup-start.txt"
+            for db in "$PLAYWRIGHT_TEST_DB_NAME" "${PLAYWRIGHT_TEST_DB_NAME}_cp"; do
+              docker exec postgres psql -U threa -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $db"
+            done
+            sample > "$dir/runner-samples.txt" &
+            sampler=$!
+            trap 'kill "$sampler" 2>/dev/null || true' EXIT
+            date +%s.%N > "$dir/command-start.txt"
+            set +e
+            /usr/bin/time -v -o "$dir/time.txt" \
+              bun run test:browser -- --workers="$workers" --retries=0 \
+              --test-list=worker-pairs/cohort.txt --output="$dir/test-results" \
+              --reporter=line,json,./scripts/browser-worker-paired-reporter.ts > "$dir/command.log" 2>&1
+            status=$?
+            set -e
+            date +%s.%N > "$dir/command-end.txt"
+            kill "$sampler"
+            wait "$sampler" || true
+            trap - EXIT
+            snapshot >> "$dir/runner-samples.txt"
+            printf '%s\n' "$status" > "$dir/exit-code.txt"
+            if [[ "$status" != 0 ]]; then failed=1; fi
+            cat "$dir/command.log"
           done
+          exit "$failed"
 
-      - name: Wait for this run's frontend artifact
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          deadline=$((SECONDS + 180))
-          while (( SECONDS < deadline )); do
-            jobs=$(timeout 10s gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=all&per_page=100")
-            producer=$(jq -c '[.[].jobs[] | select(.name == "build-frontend")] | max_by(.run_attempt) // empty' <<< "$jobs")
-            if [[ -n "$producer" ]]; then
-              conclusion=$(jq -r '.conclusion // empty' <<< "$producer")
-              if [[ -n "$conclusion" && "$conclusion" != success ]]; then
-                echo "::error::Frontend producer ended with $conclusion"
-                exit 1
-              fi
-              started=$(jq -r '.started_at' <<< "$producer")
-              artifacts=$(timeout 10s gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=browser-test-frontend&per_page=100")
-              if jq -e --arg started "$started" '.artifacts[] | select(.name == "browser-test-frontend" and .expired == false and .created_at >= $started)' <<< "$artifacts" > /dev/null; then
-                exit 0
-              fi
-            fi
-            sleep 3
-          done
-          echo "::error::Timed out waiting for this run's frontend artifact"
-          exit 1
-
-      - name: Download frontend build
-        uses: actions/download-artifact@v4
-        with:
-          name: browser-test-frontend
-          path: apps/frontend/dist/
-
-      - name: Download browser shard lists
-        uses: actions/download-artifact@v4
-        with:
-          name: browser-shard-lists
-          path: browser-shard-lists/
-
-      - name: Select browser shard topology
-        run: |
-          list="browser-shard-lists/shard-${{ matrix.shard_index }}.txt"
-          test -s "$list"
-          single_region=1
-          while IFS= read -r group || [[ -n "$group" ]]; do
-            if [[ "$group" == '[chromium] > stream-connections.spec.ts' ]]; then
-              single_region=0
-              break
-            fi
-          done < "$list"
-          echo "PLAYWRIGHT_SINGLE_REGION=$single_region" >> "$GITHUB_ENV"
-          echo "Shard ${{ matrix.shard_index }}: PLAYWRIGHT_SINGLE_REGION=$single_region"
-
-      - name: Run browser tests
-        id: initial-run
-        continue-on-error: true
-        run: |
-          bun run test:browser -- --workers="$BROWSER_WORKERS" --reporter=line,blob,json --test-list=browser-shard-lists/shard-${{ matrix.shard_index }}.txt
-        env:
-          CI: true
-          PLAYWRIGHT_TEST_DB_NAME: ${{ env.PLAYWRIGHT_TEST_DB_NAME }}
-          PLAYWRIGHT_FRONTEND_PREBUILT: "true"
-          PLAYWRIGHT_JSON_OUTPUT_FILE: initial-report.json
-
-      - name: Archive initial blob report before retry
-        if: steps.initial-run.outcome == 'failure'
-        run: |
-          if [ -d blob-report ]; then
-            mv blob-report blob-report-initial
-          fi
-
-      - name: Retry failed tests in isolation
-        id: retry-run
-        if: steps.initial-run.outcome == 'failure'
-        continue-on-error: true
-        run: |
-          if [ -f test-results/.last-run.json ] && \
-            bun -e 'const r = await Bun.file("test-results/.last-run.json").json(); process.exit(r.failedTests?.length ? 0 : 1)'; then
-            retry_target=(--last-failed)
-          else
-            echo "::warning::No failed-test IDs found — retrying the shard after the infrastructure failure"
-            retry_target=(--test-list=browser-shard-lists/shard-${{ matrix.shard_index }}.txt)
-          fi
-          bun run test:browser -- --workers="$BROWSER_WORKERS" --reporter=line,blob "${retry_target[@]}" --retries=0
-        env:
-          CI: true
-          PLAYWRIGHT_TEST_DB_NAME: ${{ env.PLAYWRIGHT_TEST_DB_NAME }}
-          PLAYWRIGHT_FRONTEND_PREBUILT: "true"
-
-      - name: Write shard result marker
+      - name: Upload paired evidence
         if: always()
-        run: |
-          if [[ "${{ steps.initial-run.outcome }}" == "success" ]]; then
-            result="passed"
-          elif [[ "${{ steps.retry-run.outcome }}" == "success" ]]; then
-            result="flaky"
-          else
-            result="failed"
-          fi
-          if [[ -f initial-report.json ]]; then
-            if ! bun scripts/browser-ci.ts report --report initial-report.json --shard "${{ matrix.shard_index }}" --output first-attempt-summary.md; then
-              echo "⛔ First-attempt reliability unavailable: Playwright JSON report is incomplete or malformed." >> first-attempt-summary.md
-            fi
-          else
-            echo "⛔ First-attempt reliability unavailable: Playwright JSON report is missing." > first-attempt-summary.md
-          fi
-          echo "$result" > shard-result.txt
-          cat first-attempt-summary.md >> "$GITHUB_STEP_SUMMARY"
-          echo "Shard ${{ matrix.shard_index }} result: $result"
-
-      - name: Upload initial blob report (when retry ran)
         uses: actions/upload-artifact@v4
-        if: steps.initial-run.outcome == 'failure' && !cancelled()
         with:
-          name: playwright-blob-report-shard-${{ matrix.shard_index }}-initial
-          path: blob-report-initial/
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Upload Playwright blob report
-        uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() }}
-        with:
-          name: playwright-blob-report-shard-${{ matrix.shard_index }}
-          path: blob-report/
-          if-no-files-found: ignore
-          retention-days: 30
-
-      - name: Upload shard result marker
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: shard-result-${{ matrix.shard_index }}-attempt-${{ github.run_attempt }}
-          path: |
-            shard-result.txt
-            initial-report.json
-            first-attempt-summary.md
+          name: browser-worker-pairs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: worker-pairs/
           if-no-files-found: error
           retention-days: 7
-
-  evaluate-results:
-    runs-on: ubuntu-latest
-    needs: browser-tests
-    if: always()
-    steps:
-      - name: Download shard result markers
-        uses: actions/download-artifact@v4
-        with:
-          path: shard-results
-          pattern: shard-result-*
-
-      - name: Summarize results
-        env:
-          SHARD_JOBS_RESULT: ${{ needs.browser-tests.result }}
-        run: |
-          echo "## Browser Test Results" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Shard | Result |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|-------|--------|" >> "$GITHUB_STEP_SUMMARY"
-
-          passed_count=0
-          flaky_count=0
-          failed_count=0
-          missing_count=0
-
-          for shard_num in $(seq 1 "$TOTAL_SHARDS"); do
-            # A rerun keeps the earlier attempt's marker, so only the newest attempt counts.
-            result_file=$(ls shard-results/shard-result-"$shard_num"-attempt-*/shard-result.txt 2>/dev/null | sort -V | tail -n 1 || true)
-            if [[ -n "$result_file" ]]; then
-              result=$(cat "$result_file")
-            else
-              result="missing"
-            fi
-
-            case "$result" in
-              passed)  icon="✅"; passed_count=$((passed_count + 1)) ;;
-              flaky)   icon="🌀"; flaky_count=$((flaky_count + 1)) ;;
-              missing) icon="⛔"; missing_count=$((missing_count + 1)) ;;
-              *)       icon="❌"; failed_count=$((failed_count + 1)) ;;
-            esac
-
-            echo "| $shard_num | $icon $result |" >> "$GITHUB_STEP_SUMMARY"
-          done
-
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-
-          # A shard whose job died before uploading its marker (runner shutdown,
-          # timeout, cancel) ran an unknown share of its tests, so it can't pass.
-          if [[ $missing_count -gt 0 ]]; then
-            echo "⛔ $missing_count of $TOTAL_SHARDS shards reported no result — their jobs did not run to completion." >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-
-          # Shard jobs succeed even on test failures, so anything else means a
-          # shard died this attempt and its marker may be an earlier attempt's.
-          if [[ "$SHARD_JOBS_RESULT" != "success" ]]; then
-            echo "⛔ A shard job ended $SHARD_JOBS_RESULT — it did not run to completion." >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-
-          if [[ $passed_count -eq 0 && $flaky_count -eq 0 && $failed_count -gt 0 ]]; then
-            echo "⛔ All shards failed — likely an infra issue, not test failures." >> "$GITHUB_STEP_SUMMARY"
-          elif [[ $failed_count -gt 0 && $flaky_count -gt 0 ]]; then
-            echo "⚠️ Some confirmed failures. Some tests are flaky (passed on retry)." >> "$GITHUB_STEP_SUMMARY"
-          elif [[ $failed_count -gt 0 ]]; then
-            echo "⚠️ Some tests have confirmed failures (failed in isolation). Check the merged Playwright report." >> "$GITHUB_STEP_SUMMARY"
-          elif [[ $flaky_count -gt 0 ]]; then
-            echo "🌀 All failures were flaky — tests passed when retried in isolation." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "✅ All shards passed." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          # Confirmed failures (including the all-shards infra case) turn the
-          # check red. Flaky-only runs stay green — that is the point of the
-          # retry-in-isolation step.
-          if [[ $failed_count -gt 0 ]]; then
-            exit 1
-          fi
-
-  merge-playwright-reports:
-    runs-on: ubuntu-latest
-    needs: browser-tests
-    if: always()
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: ./.github/actions/setup-bun
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Download blob reports from all shards
-        uses: actions/download-artifact@v4
-        with:
-          path: downloaded-blob-reports
-          pattern: playwright-blob-report-*
-
-      - name: Merge Playwright blob reports
-        run: |
-          mkdir -p all-blob-reports
-          find downloaded-blob-reports -type f -name "*.zip" -exec cp {} all-blob-reports/ \;
-          bunx playwright merge-reports --reporter html all-blob-reports
-
-      - name: Upload merged Playwright report
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report-merged
-          path: playwright-report/
-          retention-days: 30
-
-  save-browser-timings:
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    needs: [browser-tests, evaluate-results]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.evaluate-results.result == 'success'
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: ./.github/actions/setup-bun
-
-      - name: Download initial reports
-        uses: actions/download-artifact@v4
-        with:
-          path: shard-results
-          pattern: shard-result-*-attempt-${{ github.run_attempt }}
-
-      - name: Build browser timing history
-        run: |
-          mkdir -p .cache/browser-ci
-          bun scripts/browser-ci.ts merge-timings --reports-dir shard-results --shards "$TOTAL_SHARDS" --output .cache/browser-ci/timings.json
-
-      - name: Save browser timing history
-        uses: actions/cache/save@v4
-        with:
-          path: .cache/browser-ci/timings.json
-          key: browser-timings-v1-${{ github.run_id }}-${{ github.run_attempt }}
