@@ -311,4 +311,27 @@ describe("doc activity roll-up", () => {
       rows: await hostActivity(doc.parentStreamId),
     }).toEqual({ result: { status: "skipped" }, folded: await lastEditSequence(doc.id), rows: [] })
   })
+
+  test("should advance a top-level doc's cursor without a row or event anywhere", async () => {
+    const doc = await streamService.create({ workspaceId: wsId, type: "doc", createdBy: owner })
+    await flush(doc.id, [paragraph("Standalone plan")])
+    const { service } = buildService()
+
+    const result = await service.rollUp({ workspaceId: wsId, docId: doc.id })
+    const rows = await pool.query(
+      "SELECT stream_id FROM stream_events WHERE workspace_id = $1 AND event_type = 'doc:activity' AND payload->>'docId' = $2",
+      [wsId, doc.id]
+    )
+    const outbox = await pool.query(
+      "SELECT id FROM outbox WHERE event_type = 'stream:doc_activity' AND payload->'event'->'payload'->>'docId' = $1",
+      [doc.id]
+    )
+
+    expect({ result, folded: await foldedSequence(doc.id), rows: rows.rows, outbox: outbox.rows }).toEqual({
+      result: { status: "skipped" },
+      folded: await lastEditSequence(doc.id),
+      rows: [],
+      outbox: [],
+    })
+  })
 })

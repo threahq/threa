@@ -25,7 +25,7 @@ import {
 } from "../../src/features/streams"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { blockId, botId, userId, workspaceId } from "../../src/lib/id"
-import { addTestMember, setupIsolatedTestDatabase, withTransaction } from "./setup"
+import { addTestMember, refusal, setupIsolatedTestDatabase, withTransaction } from "./setup"
 
 let pool: Pool
 let cleanup: () => Promise<void>
@@ -133,16 +133,6 @@ async function eventsOf(streamId: string, types: string[]) {
 
 async function movedRows(hostId: string) {
   return (await eventsOf(hostId, ["doc:moved"])).map((event) => event.payload)
-}
-
-async function refusal(promise: Promise<unknown>) {
-  try {
-    await promise
-  } catch (error) {
-    const { status, code } = error as { status?: number; code?: string }
-    return { status, code }
-  }
-  return null
 }
 
 describe("top-level docs", () => {

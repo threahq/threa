@@ -63,6 +63,11 @@ function accessError(refusal: DocAgentAccessRefusal): HttpError {
       })
     case "title_empty":
       return new HttpError("Title must not be blank", { status: 400, code: "VALIDATION_ERROR" })
+    case "visibility_inherited":
+      return new HttpError("A doc under another stream takes that stream's visibility", {
+        status: 400,
+        code: DocErrorCodes.VISIBILITY_INHERITED,
+      })
     case "forbidden":
       return new HttpError("Forbidden", { status: 403, code: refusal.detail ?? "FORBIDDEN" })
   }
@@ -103,7 +108,6 @@ function serializeDoc(doc: DocAgentDocSummary) {
 }
 
 function serializeDocStream(doc: Stream, seq: number) {
-  if (!doc.parentStreamId) throw new Error(`Doc ${doc.id} has no host stream`)
   return serializeDoc({
     docId: doc.id,
     hostStreamId: doc.parentStreamId,
@@ -182,8 +186,9 @@ export function createDocPublicApiHandlers({
 
     async createDoc(req: Request, res: Response) {
       const body = validateRequest(createDocSchema, req.body)
-      const created = await docAgentService.createDoc(keyContext(req, body.streamId), {
+      const created = await docAgentService.createDoc(keyContext(req, body.streamId ?? null), {
         title: body.title,
+        visibility: body.visibility,
         markdown: body.markdown,
         reason: body.reason ?? "",
       })
@@ -228,7 +233,7 @@ export function createDocPublicApiHandlers({
 
     async moveDoc(req: Request, res: Response) {
       const { docId } = validateRequest(docIdParamSchema, req.params)
-      const { fromStreamId, toStreamId } = validateRequest(moveDocSchema, req.body)
+      const { fromStreamId, toStreamId, visibility } = validateRequest(moveDocSchema, req.body)
       const workspaceId = req.workspaceId!
       const doc = await streamService
         .moveDoc({
@@ -236,6 +241,7 @@ export function createDocPublicApiHandlers({
           docId,
           fromStreamId,
           toStreamId,
+          visibility,
           principal: apiKeyPrincipal(req),
           isWorkspaceAdmin: sessionHasPermission(req, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
         })

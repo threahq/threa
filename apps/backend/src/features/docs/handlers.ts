@@ -9,6 +9,7 @@ import {
   type DocThreadsResponse,
   type DocUpdatesResponse,
 } from "@threahq/types"
+import { visibilitySchema } from "../../lib/schemas"
 import { validateRequest } from "../../lib/validation"
 import { sessionHasPermission } from "../../middleware/workspace-permission"
 import type { StreamService } from "../streams"
@@ -40,9 +41,18 @@ const postUpdateSchema = z.object({
   update: z.base64().min(1).max(MAX_UPDATE_BASE64_LENGTH),
 })
 
-const movePreviewQuerySchema = z.object({ toStreamId: z.string().min(1) })
+// No `toStreamId` previews a lift to the top level.
+const movePreviewQuerySchema = z.object({
+  toStreamId: z.string().min(1).optional(),
+  visibility: visibilitySchema.optional(),
+})
 
-const moveSchema = z.object({ fromStreamId: z.string().min(1), toStreamId: z.string().min(1) })
+// A null stream is the top level.
+const moveSchema = z.object({
+  fromStreamId: z.string().min(1).nullable(),
+  toStreamId: z.string().min(1).nullable(),
+  visibility: visibilitySchema.optional(),
+})
 
 export function createDocHandlers({ docService, streamService }: Dependencies) {
   return {
@@ -96,24 +106,26 @@ export function createDocHandlers({ docService, streamService }: Dependencies) {
 
     async previewMove(req: Request, res: Response) {
       const { docId } = validateRequest(paramsSchema, req.params)
-      const { toStreamId } = validateRequest(movePreviewQuerySchema, req.query)
+      const { toStreamId, visibility } = validateRequest(movePreviewQuerySchema, req.query)
       const preview = await streamService.previewDocMove({
         workspaceId: req.workspaceId!,
         userId: req.user!.id,
         docId,
-        toStreamId,
+        toStreamId: toStreamId ?? null,
+        visibility,
       })
       res.json(preview satisfies DocMovePreviewResponse)
     },
 
     async move(req: Request, res: Response) {
       const { docId } = validateRequest(paramsSchema, req.params)
-      const { fromStreamId, toStreamId } = validateRequest(moveSchema, req.body)
+      const { fromStreamId, toStreamId, visibility } = validateRequest(moveSchema, req.body)
       const stream = await streamService.moveDoc({
         workspaceId: req.workspaceId!,
         docId,
         fromStreamId,
         toStreamId,
+        visibility,
         principal: { kind: "user", userId: req.user!.id },
         isWorkspaceAdmin: sessionHasPermission(req, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
       })

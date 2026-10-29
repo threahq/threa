@@ -2416,9 +2416,11 @@ export interface DocMovePreviewResponse {
   gaining: number
 }
 
+/** A null stream is the top level; `visibility` applies only when lifting a doc there. */
 export interface MoveDocInput {
-  fromStreamId: string
-  toStreamId: string
+  fromStreamId: string | null
+  toStreamId: string | null
+  visibility?: Visibility
 }
 
 /** Payload for `doc:edited` in the doc stream: one applied Yjs update; the event row carries the actor. */
@@ -2505,7 +2507,8 @@ export interface DocThreadsResponse {
 export interface DocBacklink {
   docId: string
   title: string | null
-  hostStreamId: string
+  /** Null for a top-level doc. */
+  hostStreamId: string | null
   blockIds: string[]
 }
 

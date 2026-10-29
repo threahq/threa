@@ -11,6 +11,7 @@ import {
   MEMO_SCOPES,
   MEMO_TYPES,
   STREAM_TYPES,
+  type Visibility,
 } from "./tools/constants"
 import { buildQuery, ToolInputError, type Envelope, type PagedEnvelope } from "./tools/result"
 
@@ -646,8 +647,10 @@ export async function commentOnDoc(
   return { ...response, clientMessageId }
 }
 
+/** Without `streamRef` the doc is top-level, and takes `visibility`. */
 export interface CreateDocParams {
-  streamRef: string
+  streamRef?: string
+  visibility?: Visibility
   title?: string
   markdown?: string
   reason?: string
@@ -655,7 +658,8 @@ export interface CreateDocParams {
 
 export async function createDoc(client: ThreaApiClient, resolver: RefResolver, p: CreateDocParams): Promise<unknown> {
   return client.post("/docs", {
-    streamId: await resolver.resolveStream(p.streamRef),
+    streamId: p.streamRef === undefined ? undefined : await resolver.resolveStream(p.streamRef),
+    visibility: p.visibility,
     title: p.title,
     markdown: p.markdown,
     reason: p.reason,
@@ -665,10 +669,11 @@ export async function createDoc(client: ThreaApiClient, resolver: RefResolver, p
 export async function moveDoc(
   client: ThreaApiClient,
   resolver: RefResolver,
-  p: { docId: string; toStreamRef: string }
+  p: { docId: string; toStreamRef: string | null; visibility?: Visibility }
 ): Promise<unknown> {
   return client.post(`/docs/${encodeURIComponent(p.docId)}/move`, {
-    toStreamId: await resolver.resolveStream(p.toStreamRef),
+    toStreamId: p.toStreamRef === null ? null : await resolver.resolveStream(p.toStreamRef),
+    visibility: p.visibility,
   })
 }
 

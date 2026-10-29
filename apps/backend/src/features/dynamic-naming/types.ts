@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg"
 import type { TitleSource } from "@threahq/types"
 import { z } from "zod"
+import type { TypeReadOnlyRule } from "../streams"
 import { DYNAMIC_NAMING_CHECKPOINTS } from "./config"
 export {
   DynamicNamingEvaluateJobSchema,
@@ -71,6 +72,8 @@ export interface DynamicNamingTargetLockParams {
 
 export interface DynamicNamingTargetAdapter {
   resolveAuthorityStreamId(client: PoolClient, params: DynamicNamingTargetLockParams): Promise<string | null>
+  /** Which of the authority stream's type read-only reasons naming answers to; defaults to message writes. */
+  readonly authorityTypeReadOnly?: TypeReadOnlyRule
   lockAndValidate(
     client: PoolClient,
     params: DynamicNamingTargetLockParams

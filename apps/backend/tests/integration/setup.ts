@@ -286,6 +286,17 @@ export function testMessageContent(content: string) {
  * Adds a workspace user with auto-generated id/slug for test convenience.
  * Wraps UserRepository.insert with sensible defaults.
  */
+/** The status and code a rejected call failed with, or null when it succeeded. */
+export async function refusal(pending: Promise<unknown>): Promise<{ status?: number; code?: string } | null> {
+  try {
+    await pending
+  } catch (error) {
+    const { status, code } = error as { status?: number; code?: string }
+    return { status, code }
+  }
+  return null
+}
+
 export async function addTestMember(
   db: Querier,
   workspaceId: string,

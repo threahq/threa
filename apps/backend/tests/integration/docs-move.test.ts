@@ -35,7 +35,7 @@ import { BotRuntimeSessionLinkRepository } from "../../src/features/bot-runtimes
 import { EventService } from "../../src/features/messaging/event-service"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { blockId, botRuntimeSessionLinkId, userId, workspaceId } from "../../src/lib/id"
-import { addTestMember, setupIsolatedTestDatabase, testMessageContent, withTransaction } from "./setup"
+import { addTestMember, refusal, setupIsolatedTestDatabase, testMessageContent, withTransaction } from "./setup"
 
 let pool: Pool
 let cleanup: () => Promise<void>
@@ -147,16 +147,6 @@ async function outbox(eventType: string, docId: string) {
     [eventType, docId]
   )
   return result.rows.map((row) => row.payload)
-}
-
-async function refusal(promise: Promise<unknown>) {
-  try {
-    await promise
-  } catch (error) {
-    const { status, code } = error as { status?: number; code?: string }
-    return { status, code }
-  }
-  return null
 }
 
 describe("moving a doc", () => {
@@ -407,6 +397,47 @@ describe("moving a doc", () => {
     expect(
       await streamService.previewDocMove({ workspaceId: wsId, docId: doc.id, toStreamId: b.id, userId: owner })
     ).toEqual({ losing: 0, gaining: 0 })
+  })
+
+  test("should count a lift's private loss and public gain, never counting the mover as losing", async () => {
+    const host = await createChannel([alice])
+    const doc = await streamService.create({
+      workspaceId: wsId,
+      type: "doc",
+      parentStreamId: host.id,
+      createdBy: owner,
+    })
+    const preview = (visibility?: "public" | "private") =>
+      streamService.previewDocMove({ workspaceId: wsId, docId: doc.id, toStreamId: null, visibility, userId: owner })
+
+    // Host readers: owner (the mover) and alice. Everyone else in the workspace browses: bob, carol, admin.
+    expect({ private: await preview(), public: await preview("public") }).toEqual({
+      private: { losing: 1, gaining: 0 },
+      public: { losing: 0, gaining: 3 },
+    })
+  })
+
+  test("should preview staying top-level as no change, and refuse a visibility that the move would refuse", async () => {
+    const host = await createChannel([alice])
+    const hosted = await streamService.create({
+      workspaceId: wsId,
+      type: "doc",
+      parentStreamId: host.id,
+      createdBy: owner,
+    })
+    const topLevel = await streamService.create({ workspaceId: wsId, type: "doc", createdBy: owner })
+    const preview = (docId: string, toStreamId: string | null, visibility?: "public") =>
+      streamService.previewDocMove({ workspaceId: wsId, docId, toStreamId, visibility, userId: owner })
+
+    expect({
+      stay: await preview(topLevel.id, null),
+      stayWithVisibility: await refusal(preview(topLevel.id, null, "public")),
+      hostedWithVisibility: await refusal(preview(hosted.id, host.id, "public")),
+    }).toEqual({
+      stay: { losing: 0, gaining: 0 },
+      stayWithVisibility: { status: 400, code: "VALIDATION_ERROR" },
+      hostedWithVisibility: { status: 400, code: DocErrorCodes.VISIBILITY_INHERITED },
+    })
   })
 
   test("should let a workspace admin who did not create the doc move it", async () => {

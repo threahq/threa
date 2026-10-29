@@ -55,7 +55,7 @@ export {
   projectStreamForBot,
   projectStreamsForBot,
 } from "./write-authority"
-export type { StreamWritePrincipal, LockedStreamAuthority } from "./write-authority"
+export type { StreamWritePrincipal, LockedStreamAuthority, TypeReadOnlyRule } from "./write-authority"
 
 export { prependThreadNamingAnchor, renderNamingEventAnchor } from "./naming-context"
 

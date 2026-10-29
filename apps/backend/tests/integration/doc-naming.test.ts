@@ -53,14 +53,21 @@ afterAll(async () => {
 })
 
 let slugCounter = 0
-async function createDocWithBody(paragraphs: string[]): Promise<Stream> {
-  const host = await streamService.createChannel({
+async function createDocWithBody(paragraphs: string[], { topLevel = false } = {}): Promise<Stream> {
+  const host = topLevel
+    ? null
+    : await streamService.createChannel({
+        workspaceId: wsId,
+        slug: `doc-naming-${++slugCounter}`,
+        visibility: "public",
+        createdBy: owner,
+      })
+  const doc = await streamService.create({
     workspaceId: wsId,
-    slug: `doc-naming-${++slugCounter}`,
-    visibility: "public",
+    type: "doc",
+    parentStreamId: host?.id,
     createdBy: owner,
   })
-  const doc = await streamService.create({ workspaceId: wsId, type: "doc", parentStreamId: host.id, createdBy: owner })
   const { state } = await docService.get({ workspaceId: wsId, userId: owner, docId: doc.id })
   const ydoc = new Y.Doc()
   Y.applyUpdate(ydoc, decodeUpdateBase64(state))
@@ -206,6 +213,30 @@ describe("doc dynamic naming", () => {
       result: { deferred: false, stream: { displayName: "Launch plan", displayNameSource: "generated" } },
       state: { targetKind: "doc", targetId: doc.id, regenerationPending: true },
       requested: [{ workspaceId: wsId, targetKind: "doc", targetId: doc.id, deferred: false, initiatingUserId: owner }],
+    })
+  })
+
+  test("should title a top-level doc on its own authority, refusing a user who cannot write it", async () => {
+    const doc = await createDocWithBody(body, { topLevel: true })
+    const service = buildService(async () => ({ action: "rename", title: "Lunar garden launch" }))
+
+    const outsiderResult = await service.evaluate(
+      { workspaceId: wsId, targetKind: "doc", targetId: doc.id, initiatingUserId: outsider },
+      "job_doc_top_level_outsider"
+    )
+    const ownerResult = await service.evaluate(
+      { workspaceId: wsId, targetKind: "doc", targetId: doc.id, initiatingUserId: owner },
+      "job_doc_top_level"
+    )
+
+    expect({
+      outsiderResult,
+      ownerResult,
+      stream: await StreamRepository.findById(pool, wsId, doc.id),
+    }).toMatchObject({
+      outsiderResult: { status: "protected" },
+      ownerResult: { status: "evaluated", action: "rename", revision: 1 },
+      stream: { parentStreamId: null, displayName: "Lunar garden launch", displayNameRevision: 1 },
     })
   })
 })

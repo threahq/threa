@@ -567,9 +567,8 @@ describe("VERSION_CHANGES: the 2026-10-01 unclaimed-user change", () => {
 describe("VERSION_CHANGES: the 2026-10-04 guest_public change", () => {
   const guestPublicChange = VERSION_CHANGES.find((c) => c.version === "2026-10-04")!
 
-  test("should be the current version and scope the slot-map and stream operations", () => {
-    expect({ current: CURRENT_API_VERSION, operations: [...guestPublicChange.operations] }).toEqual({
-      current: "2026-10-04",
+  test("should scope the slot-map and stream operations", () => {
+    expect({ operations: [...guestPublicChange.operations] }).toEqual({
       operations: [
         "listMessages",
         "sendMessage",
@@ -657,6 +656,55 @@ describe("VERSION_CHANGES: the 2026-10-04 guest_public change", () => {
         "/messages": { get: { operationId: "listMessages", responses: privateSlotSchema(["public", "private"]) } },
         "/other": { get: { operationId: "other", responses: { type: "string", enum: ["guest_public"] } } },
       },
+    })
+  })
+})
+
+describe("VERSION_CHANGES: the 2026-10-29 top-level doc change", () => {
+  const topLevelDocChange = VERSION_CHANGES.find((c) => c.version === "2026-10-29")!
+  const doc = (id: string, hostStreamId: string | null) => ({ id, hostStreamId, title: null, seq: 0 })
+
+  test("should be the current version and scope the doc operations", () => {
+    expect({ current: CURRENT_API_VERSION, operations: [...topLevelDocChange.operations] }).toEqual({
+      current: "2026-10-29",
+      operations: ["listDocs", "getDoc", "createDoc", "moveDoc"],
+    })
+  })
+
+  test("should drop top-level docs from a listDocs page and keep the page metadata", () => {
+    const page = { data: [doc("stream_hosted", "stream_host"), doc("stream_top", null)], hasMore: true, cursor: "c1" }
+
+    expect(topLevelDocChange.downgradeResponse!(page, { operationId: "listDocs" })).toEqual({
+      data: [doc("stream_hosted", "stream_host")],
+      hasMore: true,
+      cursor: "c1",
+    })
+  })
+
+  test("should leave a single doc alone", () => {
+    const single = { data: doc("stream_top", null) }
+    expect(topLevelDocChange.downgradeResponse!(single, { operationId: "getDoc" })).toBe(single)
+  })
+
+  test("should make hostStreamId a plain string again in the spec", () => {
+    const docItem = (hostStreamId: unknown) => ({
+      type: "object",
+      properties: { id: { type: "string" }, hostStreamId },
+      required: ["id", "hostStreamId"],
+    })
+    const spec = {
+      paths: {
+        "/docs": {
+          get: {
+            operationId: "listDocs",
+            responses: { "200": docItem({ anyOf: [{ type: "string" }, { type: "null" }] }) },
+          },
+        },
+      },
+    }
+
+    expect(topLevelDocChange.downgradeSpec!(spec)).toEqual({
+      paths: { "/docs": { get: { operationId: "listDocs", responses: { "200": docItem({ type: "string" }) } } } },
     })
   })
 })
