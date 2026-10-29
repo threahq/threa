@@ -58,6 +58,8 @@ const mockOpenStreamSettings = vi.fn()
 const mockCreateEncryptedScratchpad = vi.fn(async () => "stream_e2e_test")
 type CreateDoc = ReturnType<typeof createDocModule.useCreateDoc>
 let mockCreateDoc: Omit<CreateDoc, "run"> & { run: Mock<CreateDoc["run"]> }
+type CreateTopLevelDoc = ReturnType<typeof createDocModule.useCreateTopLevelDoc>
+let mockCreateTopLevelDoc: Omit<CreateTopLevelDoc, "run"> & { run: Mock<CreateTopLevelDoc["run"]> }
 
 const mockWorkspaceBootstrap = {
   data: {} as {
@@ -251,6 +253,8 @@ function installSpies() {
     run: vi.fn(async (_title?: string) => null),
   }
   vi.spyOn(createDocModule, "useCreateDoc").mockImplementation(() => mockCreateDoc)
+  mockCreateTopLevelDoc = { enabled: false, pending: false, run: vi.fn(async () => null) }
+  vi.spyOn(createDocModule, "useCreateTopLevelDoc").mockImplementation(() => mockCreateTopLevelDoc)
   vi.spyOn(hooksModule, "useSearch").mockImplementation(
     () =>
       ({
@@ -1515,6 +1519,27 @@ describe("QuickSwitcher Integration Tests", () => {
         runs: mockCreateDoc.run.mock.calls,
         closed: defaultProps.onOpenChange.mock.calls.at(-1),
       }).toEqual({ host: "stream_channel1", runs: [[]], closed: [false] })
+    })
+
+    it("should offer a top-level 'New Doc' only where no stream in view hosts docs", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      mockCreateTopLevelDoc.enabled = true
+      const { unmount } = renderWithProviders(
+        <QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_channel1" />
+      )
+      await waitFor(() => {
+        expect(screen.getByText("Open stream settings")).toBeInTheDocument()
+      })
+      expect(screen.queryByText("New Doc")).toBeNull()
+      unmount()
+
+      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" />)
+      await user.click(await screen.findByText("New Doc"))
+
+      expect({
+        runs: mockCreateTopLevelDoc.run.mock.calls,
+        closed: defaultProps.onOpenChange.mock.calls.at(-1),
+      }).toEqual({ runs: [[]], closed: [false] })
     })
 
     it("should preserve the active stream bootstrap when it is invalidated while the palette is mounted", async () => {

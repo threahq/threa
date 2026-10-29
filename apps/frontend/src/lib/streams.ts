@@ -48,8 +48,9 @@ export function isUtilityStream(stream: { purpose?: string | null }): boolean {
 }
 
 /**
- * A stream type that never lists by itself: an aside is reachable only through
- * its anchor row in the host stream (and the command palette, own asides only).
+ * A stream that never lists by itself: an aside is reachable only through its
+ * anchor row in the host stream (and the command palette, own asides only), and
+ * a hosted doc through its host's docs.
  * The sidebar, the unread badge, the last-location landing and the stream
  * pickers all apply this one predicate instead of each knowing the type — an
  * unhandled aside would otherwise inherit scratchpad listing and light the

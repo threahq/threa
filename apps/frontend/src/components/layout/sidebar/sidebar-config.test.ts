@@ -61,6 +61,7 @@ describe("sectionIdForSpec", () => {
     expect(sectionIdForSpec({ kind: "smart", bucket: "important" })).toBe("important")
     expect(sectionIdForSpec({ kind: "type", streamType: "scratchpad" })).toBe("scratchpads")
     expect(sectionIdForSpec({ kind: "type", streamType: "dm" })).toBe("dms")
+    expect(sectionIdForSpec({ kind: "type", streamType: "doc" })).toBe("docs")
     expect(sectionIdForSpec({ kind: "label", labelId: "lbl_1" })).toBe(labelSectionId("lbl_1"))
     expect(sectionIdForSpec({ kind: "custom", sectionId: "sec_1", name: "Work", streamIds: [] })).toBe(
       customSectionId("sec_1")

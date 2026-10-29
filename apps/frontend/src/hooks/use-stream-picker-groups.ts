@@ -1,5 +1,5 @@
 import { useMemo } from "react"
-import { StreamTypes, type StreamType, isOpenVisibility } from "@threahq/types"
+import { StreamTypes, type StreamType, isOpenVisibility, streamTypeCapabilities } from "@threahq/types"
 import {
   useWorkspaceStreams,
   useWorkspaceStreamMemberships,
@@ -60,7 +60,8 @@ export function useStreamPickerGroups(
     const matchable = streams.filter((s) => {
       if (s.archivedAt) return false
       if (s.rootStreamId) return false
-      if (s.type === StreamTypes.THREAD || s.type === StreamTypes.SYSTEM || isHiddenStreamType(s)) return false
+      if (s.type === StreamTypes.THREAD || isHiddenStreamType(s)) return false
+      if (streamTypeCapabilities(s.type).messagesReadOnly) return false
       const accessible = isOpenVisibility(s.visibility) || memberStreamIds.has(s.id)
       if (!accessible) return false
       return filter ? filter(s) : true

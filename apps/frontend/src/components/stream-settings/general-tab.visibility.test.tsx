@@ -117,3 +117,35 @@ describe("GeneralTab channel settings for a guest", () => {
     })
   })
 })
+
+describe("GeneralTab doc visibility", () => {
+  const doc = (overrides: Partial<Stream> = {}) =>
+    channel({ id: "stream_doc", type: StreamTypes.DOC, slug: null, visibility: Visibilities.PRIVATE, ...overrides })
+
+  it("should make a top-level doc public after confirming, in a doc's words", async () => {
+    const stream = doc()
+    const update = vi.fn().mockResolvedValue({ ...stream, visibility: Visibilities.PUBLIC })
+    renderTab(stream, update)
+
+    await userEvent.click(screen.getByRole("button", { name: /^Public/ }))
+    expect(await screen.findByText(/Making this doc public will make it visible/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }))
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith(WS, stream.id, { visibility: Visibilities.PUBLIC }))
+  })
+
+  it("should lock a top-level doc's visibility for a viewer who can't manage channels", () => {
+    viewerWith([])
+    renderTab(doc(), vi.fn())
+    const locked = screen
+      .getAllByRole("button", { name: /Public|Private|Open to guests/ })
+      .map((option) => (option as HTMLButtonElement).disabled)
+    expect(locked).toEqual([true, true, true])
+  })
+
+  it("should offer no visibility control on a hosted doc", () => {
+    viewerWith([WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE])
+    renderTab(doc({ parentStreamId: "stream_general", rootStreamId: "stream_general" }), vi.fn())
+    expect(screen.queryAllByRole("button", { name: /Public|Private|Open to guests/ })).toEqual([])
+  })
+})

@@ -17,7 +17,7 @@ export const SIDEBAR_SECTION_KEYS = ["important", "recent", "other"] as const
 export type SidebarSectionKey = (typeof SIDEBAR_SECTION_KEYS)[number]
 
 /** Stream types that can back a type-driven section ("All" view). */
-export const SIDEBAR_TYPE_SECTIONS = ["scratchpad", "channel", "dm"] as const
+export const SIDEBAR_TYPE_SECTIONS = ["scratchpad", "channel", "dm", "doc"] as const
 export type SidebarTypeSection = (typeof SIDEBAR_TYPE_SECTIONS)[number]
 
 /** Max length of a user-supplied custom-section name (validated on write, trimmed on render). */
@@ -439,6 +439,7 @@ export const ALL_SIDEBAR_CONFIG: SidebarConfig = {
     { id: QUICK_LINKS_SECTION_ID, spec: { kind: "quicklinks" } },
     { id: "scratchpads", spec: { kind: "type", streamType: "scratchpad" } },
     { id: "channels", spec: { kind: "type", streamType: "channel" } },
+    { id: "docs", spec: { kind: "type", streamType: "doc" } },
     { id: "dms", spec: { kind: "type", streamType: "dm" } },
   ],
   quickLinks: DEFAULT_QUICK_LINKS,

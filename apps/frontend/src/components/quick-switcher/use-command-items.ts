@@ -100,6 +100,7 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
       (c) =>
         (c.id !== "open-ai-agents" || isAdmin) &&
         (c.id !== "new-channel" || canManageChannels) &&
+        (c.id !== "new-doc" || !!commandContext.createTopLevelDoc) &&
         (c.id !== "settings-diagnostics" || perfDiagnostics === "available")
     )
     const [rankedContextual, rankedPanes, rankedGlobal] = rankGroups(query, [

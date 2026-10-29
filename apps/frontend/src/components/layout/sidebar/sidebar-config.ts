@@ -1,4 +1,3 @@
-import type { StreamType } from "@threahq/types"
 import type {
   SidebarConfig,
   SidebarSection,
@@ -65,6 +64,7 @@ const TYPE_SECTION_IDS: Record<SidebarTypeSection, string> = {
   scratchpad: "scratchpads",
   channel: "channels",
   dm: "dms",
+  doc: "docs",
 }
 
 /**
@@ -357,7 +357,7 @@ export interface SectionPresentation {
 }
 
 /** Presentation for the "All" view's stream-type sections. */
-const TYPE_PRESENTATION: Record<Extract<StreamType, "scratchpad" | "channel" | "dm">, SectionPresentation> = {
+const TYPE_PRESENTATION: Record<SidebarTypeSection, SectionPresentation> = {
   scratchpad: {
     label: "Scratchpads",
     tiered: true,
@@ -380,6 +380,14 @@ const TYPE_PRESENTATION: Record<Extract<StreamType, "scratchpad" | "channel" | "
     compact: true,
     showPreviewOnHover: true,
     hideWhenEmpty: true,
+    defaultCollapse: "open",
+  },
+  doc: {
+    label: "Docs",
+    tiered: true,
+    compact: true,
+    showPreviewOnHover: true,
+    hideWhenEmpty: false,
     defaultCollapse: "open",
   },
 }

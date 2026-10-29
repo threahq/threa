@@ -4,8 +4,8 @@ import {
   StreamErrorCodes,
   StreamReadOnlyReasons,
   StreamTypes,
+  isChannelLike,
   isOpenVisibility,
-  isTopLevelDoc,
   type StreamReadOnlyReason,
   type StreamViewerState,
   type StreamType,
@@ -40,11 +40,6 @@ export async function assertUserMayManageChannels(db: Querier, workspaceId: stri
     status: 403,
     code: StreamErrorCodes.CHANNEL_MANAGEMENT_FORBIDDEN,
   })
-}
-
-/** A channel, or a doc at the top level: a shared root people join and that guests cannot manage. */
-export function isChannelLike(stream: Pick<AuthorityStream, "type" | "parentStreamId">): boolean {
-  return stream.type === StreamTypes.CHANNEL || isTopLevelDoc(stream)
 }
 
 /** Bots and API keys pass: channel management is a restriction on user principals only. */

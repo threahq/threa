@@ -122,6 +122,14 @@ describe("useDocCanWrite", () => {
     })
   })
 
+  it("lets a member of a top-level doc write it, not a reader who hasn't joined", () => {
+    const doc = row("stream_doc_top", { type: "doc", slug: null, visibility: "public" })
+    seed([doc], [membership(doc.id)])
+    const member = canWrite(doc)
+    seed([doc], [])
+    expect({ member, reader: canWrite(doc) }).toEqual({ member: true, reader: false })
+  })
+
   it("turns read-only when the doc or anything above it is archived", () => {
     const doc = docUnder(channel)
     seed([{ ...channel, archivedAt: AT }, doc], [membership(channel.id)])

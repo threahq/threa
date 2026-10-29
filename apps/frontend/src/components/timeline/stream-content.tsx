@@ -3144,7 +3144,7 @@ export function StreamContent({
                       <JoinChannelBar
                         workspaceId={workspaceId}
                         streamId={streamId}
-                        channelName={stream?.slug ?? stream?.displayName ?? ""}
+                        streamName={stream?.slug ?? stream?.displayName ?? ""}
                         onJoined={handleJoined}
                         onHeightChange={handleComposerHeightChange}
                       />

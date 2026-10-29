@@ -29,6 +29,7 @@ export {
   useSetNotificationLevel,
   useAddStreamMember,
   useJoinStream,
+  useLandJoinedMembership,
   useRemoveStreamMember,
   streamKeys,
 } from "./use-streams"

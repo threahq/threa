@@ -14,7 +14,7 @@ import type { StreamBootstrap, WorkspaceSettingsTab } from "@threahq/types"
 import { streamKeys } from "@/hooks/use-streams"
 import { useEffectiveArchived } from "@/hooks/use-effective-archived"
 import { isUtilityStream, offersArchiveToggle } from "@/lib/streams"
-import { isAsideHostType } from "@threahq/types"
+import { isAsideHostType, streamTypeCapabilities } from "@threahq/types"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { Terminal, FileText } from "lucide-react"
 import { toast } from "sonner"
@@ -50,7 +50,7 @@ import { useInputMode } from "@/hooks/use-input-mode"
 import { useCurrentPane, usePaneFocusLanding, usePanel, useSettings } from "@/contexts"
 import { useUser } from "@/auth"
 import { useCreateEncryptedScratchpad } from "@/hooks/use-create-encrypted-scratchpad"
-import { useCreateDoc } from "@/hooks/use-create-doc"
+import { useCreateDoc, useCreateTopLevelDoc } from "@/hooks/use-create-doc"
 import { useE2eUnlockOptional } from "@/components/encryption/e2e-unlock-provider"
 import { getE2eSessionState } from "@/stores/e2e-session-store"
 import { useCreateChannel } from "@/components/create-channel"
@@ -351,6 +351,9 @@ function QuickSwitcherBody({
     fallbackArchived: streamBootstrap?.archivedAncestor,
   })
   const { enabled: canCreateDoc, run: runCreateDoc } = useCreateDoc(workspaceId, currentStream)
+  const { enabled: canCreateTopLevelDocEnabled, run: runCreateTopLevelDoc } = useCreateTopLevelDoc(workspaceId)
+  const canCreateTopLevelDoc =
+    canCreateTopLevelDocEnabled && !(currentStream && streamTypeCapabilities(currentStream.type).hostsDocs)
   const canOpenAside =
     !!openAside &&
     isAsideHostType(currentStream?.type ?? "") &&
@@ -601,6 +604,7 @@ function QuickSwitcherBody({
       createSavedTodo,
       openAside: canOpenAside ? openAside : undefined,
       createDoc: canCreateDoc ? runCreateDoc : undefined,
+      createTopLevelDoc: canCreateTopLevelDoc ? runCreateTopLevelDoc : undefined,
       settleStream: canSettle ? settleStream : undefined,
       closePane,
       closeOtherPanes,
@@ -617,6 +621,8 @@ function QuickSwitcherBody({
       openAside,
       canCreateDoc,
       runCreateDoc,
+      canCreateTopLevelDoc,
+      runCreateTopLevelDoc,
       workspaceId,
       navigate,
       handleClose,

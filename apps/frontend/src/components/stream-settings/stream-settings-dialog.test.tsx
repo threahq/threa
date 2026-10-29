@@ -114,6 +114,35 @@ describe("StreamSettingsDialog", () => {
     vi.spyOn(useCurrentWorkspaceUserIdModule, "useCurrentWorkspaceUserId").mockReturnValue("user_1")
   })
 
+  it.each([
+    ["a top-level doc", null, ["General", "Members"]],
+    ["a doc under a host", "stream_host", ["General"]],
+  ])("should give %s its own tabs", async (_label, parentStreamId, tabs) => {
+    const doc = makeStream({ id: "stream_doc", type: StreamTypes.DOC, displayName: "Roadmap", parentStreamId })
+    queryClient.setQueryData(streamKeys.bootstrap("ws_1", doc.id), {
+      ...queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap("ws_1", "stream_dm")),
+      stream: doc,
+    })
+    useStreamSettingsMock.mockReturnValue({
+      isOpen: true,
+      activeTab: "general",
+      streamId: doc.id,
+      closeStreamSettings,
+      setTab,
+    })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <StreamSettingsDialog workspaceId="ws_1" />
+      </QueryClientProvider>
+    )
+
+    await screen.findByText("Roadmap Settings")
+    const shown = ["General", "Companion", "Members", "Connect"].filter(
+      (tab) => screen.queryByRole("button", { name: new RegExp(tab, "i") }) !== null
+    )
+    expect(shown).toEqual(tabs)
+  })
+
   it("shows only the available sidebar items for the resolved stream type", async () => {
     render(
       <QueryClientProvider client={queryClient}>

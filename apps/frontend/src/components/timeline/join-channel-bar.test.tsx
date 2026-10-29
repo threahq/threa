@@ -18,7 +18,7 @@ describe("JoinChannelBar", () => {
   const defaultProps = {
     workspaceId: "ws_1",
     streamId: "stream_1",
-    channelName: "general",
+    streamName: "general",
     onJoined: vi.fn(),
   }
 
@@ -105,5 +105,35 @@ describe("JoinChannelBar", () => {
     } finally {
       HTMLElement.prototype.getBoundingClientRect = original
     }
+  })
+})
+
+describe("JoinChannelBar on a doc", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    mockJoin.mockReset()
+    mockJoin.mockResolvedValue(mockMembership)
+    vi.spyOn(streamsApi, "join").mockImplementation((...args: Parameters<typeof streamsApi.join>) => mockJoin(...args))
+  })
+
+  it("should name the doc and join it", async () => {
+    const onJoined = vi.fn()
+    render(
+      <JoinChannelBar
+        workspaceId="ws_1"
+        streamId="stream_doc"
+        streamName="Roadmap"
+        streamType="doc"
+        onJoined={onJoined}
+      />
+    )
+
+    await userEvent.click(screen.getByRole("button", { name: "Join Doc" }))
+
+    await waitFor(() => expect(onJoined).toHaveBeenCalledWith(mockMembership))
+    expect({ name: screen.getByText("Roadmap").textContent, joined: mockJoin.mock.calls }).toEqual({
+      name: "Roadmap",
+      joined: [["ws_1", "stream_doc"]],
+    })
   })
 })

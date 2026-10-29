@@ -177,7 +177,7 @@ export const STREAM_TYPE_CAPABILITIES = {
     threadAnchorPrefixes: DOC_THREAD_ANCHOR_PREFIXES,
     hostsAsides: false,
     hostsDocs: false,
-    root: { listed: false, sidebarSection: null, ownMembers: true, addMembers: true },
+    root: { listed: true, sidebarSection: "doc", ownMembers: true, addMembers: true },
     nested: { listed: false, sidebarSection: null, ownMembers: false, addMembers: false },
   },
 } as const satisfies Record<StreamType, StreamTypeCapabilities>
@@ -214,6 +214,11 @@ export function streamCapabilities(stream: { type: string; parentStreamId: strin
 /** A doc with no host: its own root, with its own members and visibility, like a channel. */
 export function isTopLevelDoc(stream: { type: string; parentStreamId: string | null }): boolean {
   return stream.type === StreamTypes.DOC && stream.parentStreamId === null
+}
+
+/** A channel or top-level doc: a shared root people join and guests cannot manage. */
+export function isChannelLike(stream: { type: string; parentStreamId: string | null }): boolean {
+  return stream.type === StreamTypes.CHANNEL || isTopLevelDoc(stream)
 }
 
 export function isAsideHostType(type: string): boolean {

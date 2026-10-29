@@ -33,6 +33,7 @@ import {
   type Stream,
   type StreamMember,
   type WorkspaceRoleSlug,
+  isChannelLike,
 } from "@threahq/types"
 import { toast } from "sonner"
 
@@ -66,7 +67,8 @@ export function MembersTab({ workspaceId, streamId, currentUserId }: MembersTabP
     workspaceBootstrap?.viewerPermissions,
     WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE
   )
-  const canAddUserMembers = canManageMembers && streamType === StreamTypes.CHANNEL
+  const channelLike = bootstrap?.stream ? isChannelLike(bootstrap.stream) : false
+  const canAddUserMembers = canManageMembers && channelLike
 
   // Bots can be managed on all stream types that have a members tab.
   // Threads inherit bot access from their root, so the UI is read-only.

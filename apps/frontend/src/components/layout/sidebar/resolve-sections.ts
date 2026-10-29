@@ -4,6 +4,7 @@ import {
   type StreamType,
   StreamTypes,
   type SidebarSectionOrder,
+  type SidebarTypeSection,
   defaultSectionOrder,
   streamCapabilities,
   streamTypeCapabilities,
@@ -11,8 +12,6 @@ import {
 import type { SidebarConfig, SidebarSection } from "./sidebar-config"
 import type { SectionKey, StreamItemData } from "./types"
 import { getActivityTime, getStreamSortName, isUnreadStream, sortStreams, sortStreamsStatic } from "./utils"
-
-type TypeSectionStream = Extract<StreamType, "scratchpad" | "channel" | "dm">
 
 /** Important is capped so a noisy day can't bury the rest of the sidebar. */
 const IMPORTANT_LIMIT = 10
@@ -322,7 +321,7 @@ function resolveSmartBucket(
 
 function resolveTypeSection(
   section: SidebarSection,
-  streamType: TypeSectionStream,
+  streamType: SidebarTypeSection,
   input: ResolveSectionsInput,
   exclude: ReadonlySet<string>
 ): StreamItemData[] {
@@ -349,7 +348,7 @@ function resolveTypeSection(
 function threadHomeType(
   thread: StreamItemData,
   streamTypeById: ReadonlyMap<string, StreamType>
-): TypeSectionStream | null {
+): SidebarTypeSection | null {
   const rootType = thread.rootStreamId ? streamTypeById.get(thread.rootStreamId) : undefined
   const section = rootType ? (streamTypeCapabilities(rootType).root?.sidebarSection ?? null) : null
   return section === "root" ? null : section

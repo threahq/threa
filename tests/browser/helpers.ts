@@ -704,10 +704,10 @@ export async function createChannelViaApi(
   return ((await response.json()) as { stream: { id: string } }).stream.id
 }
 
-/** Hosts a new doc on the given stream through the API and returns the doc's stream id. */
-export async function createDocViaApi(page: Page, workspaceId: string, hostId: string): Promise<string> {
+/** Creates a doc under a host, or standalone, through the API and returns its stream id. */
+export async function createDocViaApi(page: Page, workspaceId: string, hostId?: string): Promise<string> {
   const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
-    data: { type: "doc", parentStreamId: hostId },
+    data: { type: "doc", ...(hostId ? { parentStreamId: hostId } : {}) },
   })
   await expectApiOk(response, "Create doc")
   return ((await response.json()) as { stream: { id: string } }).stream.id
