@@ -5,6 +5,7 @@ import {
   StreamTypes,
   type SidebarSectionOrder,
   defaultSectionOrder,
+  streamCapabilities,
   streamTypeCapabilities,
 } from "@threahq/types"
 import type { SidebarConfig, SidebarSection } from "./sidebar-config"
@@ -332,15 +333,14 @@ function resolveTypeSection(
   // moves it under the root's row wherever that row landed.
   const threads = streams.filter(
     (stream) =>
-      streamTypeCapabilities(stream.type).sidebarSection === "root" &&
-      threadHomeType(stream, streamTypeById) === streamType
+      streamCapabilities(stream).sidebarSection === "root" && threadHomeType(stream, streamTypeById) === streamType
   )
   // Each type homed here, in STREAM_TYPES order (DMs before system streams),
   // then threads; synthetic DM drafts (never messaged) trail, alphabetical
   // from buildVirtualDmDrafts.
-  const roots = STREAM_TYPES.filter((type) => STREAM_TYPE_CAPABILITIES[type].sidebarSection === streamType).flatMap(
-    (type) => order(streams.filter((stream) => stream.type === type))
-  )
+  const roots = STREAM_TYPES.filter(
+    (type) => STREAM_TYPE_CAPABILITIES[type].root?.sidebarSection === streamType
+  ).flatMap((type) => order(streams.filter((stream) => stream.type === type)))
   const drafts = streamType === "dm" ? virtualDmStreams.filter((stream) => !exclude.has(stream.id)) : []
   return [...roots, ...order(threads), ...drafts]
 }
@@ -351,7 +351,7 @@ function threadHomeType(
   streamTypeById: ReadonlyMap<string, StreamType>
 ): TypeSectionStream | null {
   const rootType = thread.rootStreamId ? streamTypeById.get(thread.rootStreamId) : undefined
-  const section = rootType ? streamTypeCapabilities(rootType).sidebarSection : null
+  const section = rootType ? (streamTypeCapabilities(rootType).root?.sidebarSection ?? null) : null
   return section === "root" ? null : section
 }
 

@@ -133,6 +133,7 @@ import {
   WORKSPACE_PERMISSION_SCOPES,
   normalizeSidebarConfig,
   isOpenVisibility,
+  streamCapabilities,
   streamTypeCapabilities,
 } from "@threahq/types"
 import { workspacesApi } from "@/api/workspaces"
@@ -868,7 +869,7 @@ export function registerWorkspaceSocketHandlers(
       shouldAddMembership = Boolean(
         currentUserId &&
         !hasMembership &&
-        streamTypeCapabilities(payload.stream.type).ownMembers &&
+        streamCapabilities(payload.stream).ownMembers &&
         (isCreator || isDmParticipant)
       )
       shouldAddDmPeer = Boolean(

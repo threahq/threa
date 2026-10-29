@@ -1,4 +1,4 @@
-import { SLUG_MAX_LENGTH, StreamTypes, streamTypeCapabilities } from "@threahq/types"
+import { SLUG_MAX_LENGTH, StreamTypes, streamCapabilities } from "@threahq/types"
 import type { StreamType } from "@threahq/types"
 import { Bell, File, FileText, Hash, MessageSquare, MessageSquareDashed, NotebookPen } from "lucide-react"
 import type { ComponentType } from "react"
@@ -55,8 +55,8 @@ export function isUtilityStream(stream: { purpose?: string | null }): boolean {
  * unhandled aside would otherwise inherit scratchpad listing and light the
  * badge on every agent reply, against its decided silent attention.
  */
-export function isHiddenStreamType(stream: { type: string }): boolean {
-  return !streamTypeCapabilities(stream.type).listed
+export function isHiddenStreamType(stream: { type: string; parentStreamId: string | null }): boolean {
+  return !streamCapabilities(stream).listed
 }
 
 /**
@@ -67,7 +67,7 @@ export function isHiddenStreamType(stream: { type: string }): boolean {
  * a row's own type is not enough to tell.
  */
 export function hiddenStreamIds(
-  streams: readonly { id: string; type: string; rootStreamId?: string | null }[]
+  streams: readonly { id: string; type: string; parentStreamId: string | null; rootStreamId?: string | null }[]
 ): Set<string> {
   const hidden = new Set<string>()
   for (const stream of streams) if (isHiddenStreamType(stream)) hidden.add(stream.id)

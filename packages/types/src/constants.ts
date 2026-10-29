@@ -71,6 +71,18 @@ const THREAD_ANCHOR_PREFIXES = ["msg_", "event_"] as const
 const DOC_THREAD_ANCHOR_PREFIXES = ["blk_"] as const
 type ThreadAnchorPrefix = (typeof THREAD_ANCHOR_PREFIXES)[number] | (typeof DOC_THREAD_ANCHOR_PREFIXES)[number]
 
+/** Behavior that follows where a stream sits (top level or under a parent), not what type it is. */
+export interface StreamPlacementCapabilities {
+  /** Rows in the sidebar and unread badges; false = reached only from its host. */
+  listed: boolean
+  /** Sidebar section of the stream; "root" = inherits its root's section. */
+  sidebarSection: SidebarTypeSection | "root" | null
+  /** Has its own `stream_members` rows; false = membership and write access resolve through the root. */
+  ownMembers: boolean
+  /** Members can be added to it directly (channel invites, thread participants). */
+  addMembers: boolean
+}
+
 /** Per-type behavior: adding a stream type means adding a row here, not a branch at every call site. */
 export interface StreamTypeCapabilities {
   /** Message writes are refused with this reason; null = writable. */
@@ -79,15 +91,22 @@ export interface StreamTypeCapabilities {
   threadsReadOnly: StreamReadOnlyReason | null
   /** Settings writes (rename, visibility, memory mode, title regeneration) are refused with this reason; null = writable. */
   settingsReadOnly: StreamReadOnlyReason | null
-  /** Rows in the sidebar and unread badges; false = reached only from its host. */
-  listed: boolean
-  /** Sidebar section of a root stream of this type; "root" = inherits its root's section. */
-  sidebarSection: SidebarTypeSection | "root" | null
   threadAnchorPrefixes: readonly ThreadAnchorPrefix[]
   hostsAsides: boolean
   hostsDocs: boolean
-  /** Has its own `stream_members` rows; false = membership and write access resolve through the root. */
-  ownMembers: boolean
+  /** The type at the top level (no parent); null = it never sits there. */
+  root: StreamPlacementCapabilities | null
+  /** The type under a parent stream; null = it never sits there. */
+  nested: StreamPlacementCapabilities | null
+}
+
+export type StreamCapabilities = Omit<StreamTypeCapabilities, "root" | "nested"> & StreamPlacementCapabilities
+
+const ROOT_STREAM: StreamPlacementCapabilities = {
+  listed: true,
+  sidebarSection: null,
+  ownMembers: true,
+  addMembers: false,
 }
 
 export const STREAM_TYPE_CAPABILITIES = {
@@ -95,98 +114,101 @@ export const STREAM_TYPE_CAPABILITIES = {
     messagesReadOnly: null,
     threadsReadOnly: null,
     settingsReadOnly: null,
-    listed: true,
-    sidebarSection: "scratchpad",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
     hostsAsides: true,
     hostsDocs: true,
-    ownMembers: true,
+    root: { ...ROOT_STREAM, sidebarSection: "scratchpad" },
+    nested: null,
   },
   channel: {
     messagesReadOnly: null,
     threadsReadOnly: null,
     settingsReadOnly: null,
-    listed: true,
-    sidebarSection: "channel",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
     hostsAsides: true,
     hostsDocs: true,
-    ownMembers: true,
+    root: { ...ROOT_STREAM, sidebarSection: "channel", addMembers: true },
+    nested: null,
   },
   dm: {
     messagesReadOnly: null,
     threadsReadOnly: null,
     settingsReadOnly: null,
-    listed: true,
-    sidebarSection: "dm",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
     hostsAsides: true,
     hostsDocs: true,
-    ownMembers: true,
+    root: { ...ROOT_STREAM, sidebarSection: "dm" },
+    nested: null,
   },
   thread: {
     messagesReadOnly: null,
     threadsReadOnly: null,
     settingsReadOnly: null,
-    listed: true,
-    sidebarSection: "root",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
     hostsAsides: true,
     hostsDocs: false,
-    ownMembers: true,
+    root: null,
+    nested: { listed: true, sidebarSection: "root", ownMembers: true, addMembers: true },
   },
   system: {
     messagesReadOnly: StreamReadOnlyReasons.SYSTEM_STREAM,
     threadsReadOnly: StreamReadOnlyReasons.SYSTEM_STREAM,
     settingsReadOnly: StreamReadOnlyReasons.SYSTEM_STREAM,
-    listed: true,
-    sidebarSection: "dm",
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
     hostsAsides: false,
     hostsDocs: false,
-    ownMembers: true,
+    root: { ...ROOT_STREAM, sidebarSection: "dm" },
+    nested: null,
   },
   aside: {
     messagesReadOnly: null,
     threadsReadOnly: null,
     settingsReadOnly: null,
-    listed: false,
-    sidebarSection: null,
     threadAnchorPrefixes: THREAD_ANCHOR_PREFIXES,
     hostsAsides: false,
     hostsDocs: false,
-    ownMembers: true,
+    root: null,
+    nested: { listed: false, sidebarSection: null, ownMembers: true, addMembers: false },
   },
   doc: {
     messagesReadOnly: StreamReadOnlyReasons.DOC_STREAM,
     threadsReadOnly: null,
     settingsReadOnly: null,
-    listed: false,
-    sidebarSection: null,
     threadAnchorPrefixes: DOC_THREAD_ANCHOR_PREFIXES,
     hostsAsides: false,
     hostsDocs: false,
-    ownMembers: false,
+    root: null,
+    nested: { listed: false, sidebarSection: null, ownMembers: false, addMembers: false },
   },
 } as const satisfies Record<StreamType, StreamTypeCapabilities>
 
 /** A newer backend can send a type this build has no row for (deploy skew); the open tab degrades instead of crashing. */
+const UNKNOWN_STREAM_PLACEMENT: StreamPlacementCapabilities = { ...ROOT_STREAM }
 const UNKNOWN_STREAM_TYPE_CAPABILITIES: StreamTypeCapabilities = {
   messagesReadOnly: null,
   threadsReadOnly: null,
   settingsReadOnly: null,
-  listed: true,
-  sidebarSection: null,
   threadAnchorPrefixes: [],
   hostsAsides: false,
   hostsDocs: false,
-  ownMembers: true,
+  root: UNKNOWN_STREAM_PLACEMENT,
+  nested: UNKNOWN_STREAM_PLACEMENT,
 }
 
 export function streamTypeCapabilities(type: string): StreamTypeCapabilities {
   return Object.hasOwn(STREAM_TYPE_CAPABILITIES, type)
     ? STREAM_TYPE_CAPABILITIES[type as StreamType]
     : UNKNOWN_STREAM_TYPE_CAPABILITIES
+}
+
+/**
+ * A stream's type behavior merged with its placement row: a parent selects `nested`, none selects `root`.
+ * A type with a single placement always resolves to it.
+ */
+export function streamCapabilities(stream: { type: string; parentStreamId: string | null }): StreamCapabilities {
+  const { root, nested, ...type } = streamTypeCapabilities(stream.type)
+  const placement = stream.parentStreamId ? (nested ?? root) : (root ?? nested)
+  return { ...type, ...placement! }
 }
 
 export function isAsideHostType(type: string): boolean {
