@@ -1959,7 +1959,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "createDoc",
     summary: "Create a doc",
     description:
-      "Create a doc under `streamId`, including another doc, as the key's actor (user keys as the owner, workspace keys as the bot). " +
+      "Create a doc under the host stream identified by `streamId` (a channel, scratchpad, DM, or another doc), as the key's actor (user keys as the owner, workspace keys as the bot). " +
       "Without `streamId` the doc is top-level: private unless `visibility` says otherwise, with the key's user" +
       " as its only member. Only a user key that may manage channels creates one (403 " +
       "DOC_TOP_LEVEL_REQUIRES_USER for a workspace key, CHANNEL_MANAGEMENT_FORBIDDEN for a guest). A hosted doc" +
