@@ -283,10 +283,17 @@ test.describe("Doc pane", () => {
     const openMenu = () => pane(page, docId).getByRole("button", { name: "Stream actions" }).first().click()
 
     await openMenu()
-    for (const name of ["Copy link", "Copy as Markdown", "Download as Markdown", "Open full page", "Labels…"]) {
+    for (const name of [
+      "Copy link",
+      "Copy as Markdown",
+      "Download as Markdown",
+      "Open full page",
+      "Labels…",
+      "Browse files…",
+    ]) {
       await expect(menuItem(name)).toBeVisible()
     }
-    for (const name of ["Settings", "Move messages…", "Browse files…", "Agent agenda…"]) {
+    for (const name of ["Settings", "Move messages…", "Agent agenda…"]) {
       await expect(menuItem(name)).toHaveCount(0)
     }
     await menuItem("Copy as Markdown").click()

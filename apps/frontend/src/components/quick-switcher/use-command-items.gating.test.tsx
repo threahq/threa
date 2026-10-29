@@ -101,9 +101,9 @@ describe("useCommandItems — doc in view", () => {
   const streamIds = (context: CommandContext) =>
     renderItems(flags, context, "").filter((id) => id.startsWith("stream-") && id !== "stream-labels")
 
-  it("should offer no timeline command for a doc", () => {
+  it("should offer only Browse files of the timeline commands for a doc", () => {
     const inDoc = { workspaceId: "ws_1", currentStreamId: "stream_doc", currentStreamType: "doc" } as CommandContext
-    expect(streamIds(inDoc)).toEqual([])
+    expect(streamIds(inDoc)).toEqual(["stream-files"])
   })
 
   it("should keep the timeline commands for a channel", () => {
