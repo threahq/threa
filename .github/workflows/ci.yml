@@ -4,6 +4,9 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - ".bun-version"
+      - ".github/actions/**"
+      - "Dockerfile*"
       - "apps/**"
       - "packages/**"
       - "extensions/**"
@@ -30,11 +33,9 @@ jobs:
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
-        with:
-          bun-version: latest
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Lint
         run: bun run lint
@@ -51,11 +52,9 @@ jobs:
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
-        with:
-          bun-version: latest
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       # Full monorepo tsc, not just the enclave: catches cross-workspace type
       # drift (e.g. squash-merge collisions) at PR time, before it can reach the
@@ -88,16 +87,14 @@ jobs:
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
-        with:
-          bun-version: latest
 
       # published-sdk-consumer.test.ts packs bot-runtime-client, whose
       # declaration build needs its own deps (mdast) that the root install
       # does not hoist.
       - name: Install dependencies
         run: |
-          bun install
-          bun install --cwd extensions/bot-runtime-client
+          bun install --frozen-lockfile
+          bun install --frozen-lockfile --cwd extensions/bot-runtime-client
 
       - name: Run scripts tests
         run: bun run test:scripts
@@ -178,11 +175,9 @@ jobs:
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
-        with:
-          bun-version: latest
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Run frontend tests
         run: bun run --cwd apps/frontend test -- --shard=${{ matrix.shard_index }}/${{ strategy.job-total }}
@@ -201,19 +196,14 @@ jobs:
         with:
           filters: |
             extensions:
+              - '.bun-version'
+              - '.github/actions/**'
               - 'extensions/**'
               - '.github/workflows/ci.yml'
 
-      # Pinned, not latest: bun 1.4.0 refuses the extensions' transitive
-      # relative file: deps ("unsafe folder path" — claude-code-remote →
-      # remote-session → ../bot-runtime-client), and resolves a file: package's
-      # devDependencies too, so the peer/devDep restructure doesn't work either.
-      # Unpin once the extension packages no longer chain relative file: deps.
       - name: Setup Bun
         if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
         uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.3.14
 
       # Extensions live outside the root Bun workspaces (apps/*, packages/*):
       # each is a standalone package with its own bun.lock, linked by file:
@@ -226,16 +216,16 @@ jobs:
       - name: Install extension dependencies
         if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
         run: |
-          bun install
-          bun install --cwd extensions/bot-runtime-client
-          bun install --cwd extensions/harness-client
-          bun install --cwd extensions/pi-remote
-          bun install --cwd extensions/remote-session
-          bun install --cwd extensions/claude-code-remote
-          bun install --cwd extensions/harness-daemon
-          bun install --cwd extensions/threa-bot
-          bun install --cwd extensions/hermes-remote
-          bun install --cwd extensions/t3code-remote
+          bun install --frozen-lockfile
+          bun install --frozen-lockfile --cwd extensions/bot-runtime-client
+          bun install --frozen-lockfile --cwd extensions/harness-client
+          bun install --frozen-lockfile --cwd extensions/pi-remote
+          bun install --frozen-lockfile --cwd extensions/remote-session
+          bun install --frozen-lockfile --cwd extensions/claude-code-remote
+          bun install --frozen-lockfile --cwd extensions/harness-daemon
+          bun install --frozen-lockfile --cwd extensions/threa-bot
+          bun install --frozen-lockfile --cwd extensions/hermes-remote
+          bun install --frozen-lockfile --cwd extensions/t3code-remote
 
       - name: Typecheck extensions
         if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
@@ -276,6 +266,8 @@ jobs:
         with:
           filters: |
             site:
+              - '.bun-version'
+              - '.github/actions/**'
               - 'apps/public-site/**'
               - 'packages/user-guide/**'
               - 'packages/types/**'
@@ -284,12 +276,10 @@ jobs:
       - name: Setup Bun
         if: github.event_name == 'push' || steps.filter.outputs.site == 'true'
         uses: ./.github/actions/setup-bun
-        with:
-          bun-version: latest
 
       - name: Install dependencies
         if: github.event_name == 'push' || steps.filter.outputs.site == 'true'
-        run: bun install
+        run: bun install --frozen-lockfile
 
       # The full build, not just astro check: build-llms.ts runs post-build and
       # fails on any docs page missing its PAGES entry — a guard that otherwise
@@ -313,11 +303,9 @@ jobs:
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
-        with:
-          bun-version: latest
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       # The production build, not the E2E one. `build:e2e` sets the PWA plugin's
       # globPatterns to [], so it never builds a precache manifest and never
@@ -345,14 +333,14 @@ jobs:
 
       # setup-bun needs `unzip`, which the image lacks.
       - name: Setup Bun
-        run: npm install -g bun
+        run: npm install -g "bun@$(cat .bun-version)"
 
       - uses: ./.github/actions/bun-install-cache
         with:
           share-across-jobs: "false"
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       # A no-op while the lockfile matches the image; after a Playwright bump it
       # fetches the matching browsers from the CDN, no apt involved.
@@ -377,20 +365,21 @@ jobs:
         uses: dorny/paths-filter@v3
         with:
           filters: |
+            toolchain:
+              - '.bun-version'
+              - '.github/actions/**'
             permissions:
               - 'packages/types/src/api-keys.ts'
               - 'packages/types/src/workspace-permissions.ts'
               - 'scripts/sync-workos-permissions.ts'
 
       - name: Setup Bun
-        if: github.event_name == 'push' || steps.filter.outputs.permissions == 'true'
+        if: github.event_name == 'push' || steps.filter.outputs.permissions == 'true' || steps.filter.outputs.toolchain == 'true'
         uses: ./.github/actions/setup-bun
-        with:
-          bun-version: latest
 
       - name: Install dependencies
-        if: github.event_name == 'push' || steps.filter.outputs.permissions == 'true'
-        run: bun install
+        if: github.event_name == 'push' || steps.filter.outputs.permissions == 'true' || steps.filter.outputs.toolchain == 'true'
+        run: bun install --frozen-lockfile
 
       # On PRs: check for drift when permission files change
       - name: Check for permission drift

@@ -55,6 +55,7 @@ function extractCopiedWorkspaces(dockerfileContent: string): Set<string> {
 }
 
 async function main(): Promise<void> {
+  const bunVersion = (await readFile(resolve(REPO_ROOT, ".bun-version"), "utf-8")).trim()
   const allWorkspaces = await findWorkspacePackageJsons()
   if (allWorkspaces.length === 0) {
     console.error("No workspace package.json files found — repo layout changed?")
@@ -70,6 +71,11 @@ async function main(): Promise<void> {
   let failed = false
   for (const dockerfile of dockerfiles) {
     const content = await readFile(resolve(REPO_ROOT, dockerfile), "utf-8")
+    const bunImages = [...content.matchAll(/^FROM\s+oven\/bun:([^@\s]+)(?:@\S+)?/gm)]
+    if (bunImages.length === 0 || bunImages.some((match) => match[1] !== bunVersion)) {
+      failed = true
+      console.error(`❌ ${dockerfile} must use oven/bun:${bunVersion} from .bun-version`)
+    }
     const copied = extractCopiedWorkspaces(content)
     const missing = allWorkspaces.filter((ws) => !copied.has(ws))
     if (missing.length > 0) {
@@ -85,12 +91,6 @@ async function main(): Promise<void> {
   }
 
   if (failed) {
-    console.error(
-      "\nWhen adding a new workspace under apps/ or packages/, add a corresponding COPY line\n" +
-        "to each Dockerfile that runs `bun install --frozen-lockfile`. Bun's frozen lockfile\n" +
-        "fails inside the container if any workspace listed in bun.lock is missing on disk.\n" +
-        "See PR #338 and docs/deployment.md for the historical incident."
-    )
     process.exit(1)
   }
 }
