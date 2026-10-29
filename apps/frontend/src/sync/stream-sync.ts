@@ -274,10 +274,11 @@ async function cleanupStaleOptimisticEvents(
   fetchStartedAt?: number
 ): Promise<void> {
   const db = database
+  // Include legacy temp_ rows without _status; `_`'s successor bounds the whole prefix.
   const tempEvents = await db.events
-    .where("[workspaceId+streamId]")
-    .equals([workspaceId, streamId])
-    .filter((e) => e.id.startsWith("temp_"))
+    .where("[workspaceId+id]")
+    .between([workspaceId, "temp_"], [workspaceId, "temp`"], true, false)
+    .filter((event) => event.streamId === streamId)
     .toArray()
 
   const pendingCommandEventIds = new Set(
@@ -321,11 +322,17 @@ async function pruneBootstrapReplaceWindow(
   const bootstrapWindowCeiling = getBootstrapWindowCeiling(bootstrap.events, bootstrap.latestSequence)
 
   const staleWindowEvents = await db.events
-    .where("[workspaceId+streamId]")
-    .equals([workspaceId, streamId])
+    .where("[workspaceId+streamId+_sequenceNum]")
+    .between(
+      [workspaceId, streamId, sequenceToNum(bootstrapWindowFloor.toString())],
+      [workspaceId, streamId, sequenceToNum(bootstrapWindowCeiling.toString())],
+      true,
+      true
+    )
     .filter((event) => {
       if (bootstrapEventIds.has(event.id)) return false
       if (event._status === "pending" || event._status === "failed") return false
+      // Numeric index bounds can round; keep the deletion window exact.
       const sequence = BigInt(event.sequence)
       return sequence >= bootstrapWindowFloor && sequence <= bootstrapWindowCeiling
     })

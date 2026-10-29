@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest"
 import { QueryClient } from "@tanstack/react-query"
 import type { Socket } from "socket.io-client"
-import { db, type CachedEvent } from "@/db"
+import { db, sequenceToNum, type CachedEvent } from "@/db"
 import {
   applyStreamBootstrap,
   bumpLaterOptimisticAnchors,
@@ -364,6 +364,65 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
 
     expect(await db.events.get(["ws_1", "temp_stale"])).toBeUndefined()
     expect(await db.events.get(["ws_1", "evt_A"])).toBeDefined()
+  })
+
+  it("should remove legacy temporary rows only from the requested workspace and stream", async () => {
+    const streamId = "stream_cleanup"
+    const stale = makeEvent({ id: "temp_stale", streamId, sequence: "10" })
+    const cached = { ...stale, workspaceId: "ws_1", _sequenceNum: 10, _cachedAt: Date.now() }
+    await db.events.bulkPut([
+      cached,
+      { ...cached, workspaceId: "ws_2" },
+      { ...cached, id: "temp_other_stream", streamId: "stream_other" },
+      { ...cached, id: "temp_failed", _status: "failed" },
+      { ...cached, id: "evt_retained" },
+    ])
+
+    const current = makeEvent({ id: "evt_current", streamId, sequence: "100" })
+    await applyStreamBootstrap("ws_1", streamId, makeBootstrap([current], streamId))
+
+    const remaining = (await db.events.toArray()).map((event) => [event.workspaceId, event.streamId, event.id])
+    expect(remaining).toEqual([
+      ["ws_1", streamId, "evt_current"],
+      ["ws_1", streamId, "evt_retained"],
+      ["ws_1", streamId, "temp_failed"],
+      ["ws_1", "stream_other", "temp_other_stream"],
+      ["ws_2", streamId, "temp_stale"],
+    ])
+  })
+
+  it("should prune exact window boundaries when adjacent sequences share numeric index keys", async () => {
+    const streamId = "stream_large_sequence"
+    const base = 2n ** 53n
+    const events = [
+      makeEvent({ id: "evt_before", streamId, sequence: String(base) }),
+      makeEvent({ id: "evt_stale_lower", streamId, sequence: String(base + 1n) }),
+      makeEvent({ id: "evt_stale_inside", streamId, sequence: String(base + 2n) }),
+      makeEvent({ id: "evt_stale_upper", streamId, sequence: String(base + 3n) }),
+      makeEvent({ id: "evt_after", streamId, sequence: String(base + 4n) }),
+      makeEvent({ id: "evt_other_stream", streamId: "stream_other", sequence: String(base + 2n) }),
+    ]
+    await db.events.bulkPut(
+      events.map((event) => ({
+        ...event,
+        workspaceId: "ws_1",
+        _sequenceNum: sequenceToNum(event.sequence),
+        _cachedAt: Date.now(),
+      }))
+    )
+    const lower = makeEvent({ id: "evt_lower", streamId, sequence: String(base + 1n) })
+    const upper = makeEvent({ id: "evt_upper", streamId, sequence: String(base + 3n) })
+    const bootstrap = { ...makeBootstrap([lower, upper], streamId), latestSequence: String(base + 100n) }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap)
+
+    expect((await db.events.toArray()).map((event) => ({ id: event.id, sequence: event.sequence }))).toEqual([
+      { id: "evt_after", sequence: String(base + 4n) },
+      { id: "evt_before", sequence: String(base) },
+      { id: "evt_lower", sequence: String(base + 1n) },
+      { id: "evt_other_stream", sequence: String(base + 2n) },
+      { id: "evt_upper", sequence: String(base + 3n) },
+    ])
   })
 
   it("keeps a sent optimistic row whose send landed after the bootstrap fetch started", async () => {
