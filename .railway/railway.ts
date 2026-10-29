@@ -29,7 +29,7 @@ export default defineRailway(() => {
         "packages/agent-runtime/**",
       ],
     },
-    healthcheck: "/healthz",
+    healthcheck: "/readyz",
     replicas: { "europe-west4-drams3a": 1 },
   })
 
