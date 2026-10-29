@@ -1,3 +1,4 @@
+import { LinkPreviewSettings } from "./link-preview-settings"
 import { useEffect, useState } from "react"
 import { useParams } from "react-router-dom"
 import { Label } from "@/components/ui/label"
@@ -434,6 +435,10 @@ export function AppearanceSettings() {
           ))}
         </RadioGroup>
       </section>
+
+      <Separator />
+
+      <LinkPreviewSettings />
 
       <Separator />
 

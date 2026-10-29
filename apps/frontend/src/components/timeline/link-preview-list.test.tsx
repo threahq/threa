@@ -136,7 +136,7 @@ describe("LinkPreviewList", () => {
     expect(screen.getByRole("button", { name: "Preview title" })).toBeInTheDocument()
   })
 
-  it("keeps an opened chip open across a remount", async () => {
+  it("should preserve a manually opened preview across remount and default changes", async () => {
     const user = userEvent.setup()
     const { unmount } = renderList(many)
 
@@ -145,6 +145,9 @@ describe("LinkPreviewList", () => {
     expect(screen.queryByText("Description 4")).not.toBeInTheDocument()
 
     unmount()
+    vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
+      preferences: { linkPreviewDefault: "collapsed" },
+    } as ReturnType<typeof contextsModule.usePreferences>)
     renderList(many)
 
     expect(screen.getByText("Description 3")).toBeInTheDocument()
@@ -169,7 +172,7 @@ describe("LinkPreviewList", () => {
     await waitFor(() => expect(screen.getByText("This message was deleted")).toBeInTheDocument())
   })
 
-  it("caps in-app cards but not the folded web chips beside them", async () => {
+  it("should cap internal cards independently of open web previews", async () => {
     vi.spyOn(linkPreviewsApi, "resolveInAppLink").mockResolvedValue({
       kind: "message",
       accessTier: "full",
@@ -187,8 +190,8 @@ describe("LinkPreviewList", () => {
     renderList([...cards, ...chips])
 
     await waitFor(() => expect(screen.getAllByText("This message was deleted")).toHaveLength(3))
-    expect(screen.getByRole("button", { name: "Web 0" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Web 1" })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Web 0 Preview description" })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Web 1 Preview description" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Show 1 more preview" })).toBeInTheDocument()
   })
 

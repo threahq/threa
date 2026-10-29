@@ -27,3 +27,13 @@ describe("normalizeBoardMassBadge", () => {
     expect(DEFAULT_USER_PREFERENCES.boardMassBadge).toBe(DEFAULT_BOARD_MASS_BADGE)
   })
 })
+
+describe("link preview defaults", () => {
+  it("should retain the legacy open first three default without type overrides", () => {
+    expect(DEFAULT_USER_PREFERENCES).toMatchObject({
+      linkPreviewDefault: "open",
+      linkPreviewOpenCount: 3,
+      linkPreviewTypeOverrides: {},
+    })
+  })
+})

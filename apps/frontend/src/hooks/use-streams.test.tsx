@@ -83,6 +83,8 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
       sidebarCollapsed: false,
       mobileInlineAttachments: true,
       linkPreviewDefault: "open",
+      linkPreviewOpenCount: 3,
+      linkPreviewTypeOverrides: {},
       labelRemoveOnMove: "ask",
       unreadOpenPosition: "latest",
       inboxClearMode: "interaction",

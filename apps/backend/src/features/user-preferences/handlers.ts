@@ -13,6 +13,7 @@ import {
   MESSAGE_SEND_MODE_OPTIONS,
   COMPOSER_ACTION_SIDE_OPTIONS,
   LINK_PREVIEW_DEFAULT_OPTIONS,
+  LINK_PREVIEW_CATEGORIES,
   LABEL_REMOVE_ON_MOVE_OPTIONS,
   UNREAD_OPEN_POSITION_OPTIONS,
   INBOX_CLEAR_MODE_OPTIONS,
@@ -67,6 +68,13 @@ const updatePreferencesSchema = z.object({
   messageSendMode: z.enum(MESSAGE_SEND_MODE_OPTIONS).optional(),
   mobileInlineAttachments: z.boolean().optional(),
   linkPreviewDefault: z.enum(LINK_PREVIEW_DEFAULT_OPTIONS).optional(),
+  linkPreviewOpenCount: z.union([z.number().int().min(1).max(Number.MAX_SAFE_INTEGER), z.literal("all")]).optional(),
+  linkPreviewTypeOverrides: z
+    .partialRecord(
+      z.enum(LINK_PREVIEW_CATEGORIES),
+      z.union([z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), z.literal("all")])
+    )
+    .optional(),
   labelRemoveOnMove: z.enum(LABEL_REMOVE_ON_MOVE_OPTIONS).optional(),
   unreadOpenPosition: z.enum(UNREAD_OPEN_POSITION_OPTIONS).optional(),
   inboxClearMode: z.enum(INBOX_CLEAR_MODE_OPTIONS).optional(),
