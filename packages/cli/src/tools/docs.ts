@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
-import { commentOnDoc, createDoc, editDoc, listDocs, readDoc } from "../ops"
+import { checkDocTask, commentOnDoc, createDoc, editDoc, listDocs, readDoc } from "../ops"
 import type { RefResolver } from "../resolver"
 import { runTool } from "./result"
 
@@ -114,5 +114,29 @@ export function registerDocTools(server: McpServer, client: ThreaApiClient, reso
       runTool(() =>
         commentOnDoc(client, { docId: doc_id, blockId: block_id, content, clientMessageId: client_message_id })
       )
+  )
+
+  server.registerTool(
+    "check_doc_task",
+    {
+      title: "Tick a doc task item",
+      description:
+        "Tick (or with `checked: false` untick) one `- [ ] text` task item in a doc. `item` is the text after the " +
+        "box, matched exactly (trailing whitespace ignored), nested items included. When several items share the " +
+        "text the call fails with DOC_TASK_AMBIGUOUS listing each as {blockId, nth, line}: retry with `nth` " +
+        "(1-based, document order) or `block_id`. DOC_TASK_NOT_FOUND means no item reads that way. An item already " +
+        "in the wanted state is left alone (`changed: false`). " +
+        REASON,
+      inputSchema: {
+        doc_id: z.string(),
+        item: z.string().min(1),
+        checked: z.boolean().default(true),
+        block_id: z.string().optional(),
+        nth: z.number().int().min(1).optional(),
+        reason: z.string().min(1),
+      },
+    },
+    async ({ doc_id, item, checked, block_id, nth, reason }) =>
+      runTool(() => checkDocTask(client, { docId: doc_id, item, checked, blockId: block_id, nth, reason }))
   )
 }

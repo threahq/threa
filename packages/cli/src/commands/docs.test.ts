@@ -186,3 +186,171 @@ test("docs comment without --block is a usage error before any HTTP", async () =
   expect((JSON.parse(result.stderr) as { code: string }).code).toBe("USAGE")
   expect(fetchSpy).not.toHaveBeenCalled()
 })
+
+interface FakeBlock {
+  id: string
+  markdown: string
+}
+
+function fakeDoc(blocks: FakeBlock[], options: { onEdit?: (attempt: number) => Response | undefined } = {}) {
+  const edits: { blockId: string; old: string; new: string }[] = []
+  let attempt = 0
+  fetchSpy.mockImplementation((async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input)).pathname
+    if (path === `${DOCS}/stream_d1` && (init?.method ?? "GET") === "GET") {
+      const markdown = blocks.map((b) => `<!-- ${b.id} -->\n${b.markdown}`).join("\n\n")
+      return jsonResponse(200, { data: { id: "stream_d1", seq: 1, markdown } })
+    }
+    if (path === `${DOCS}/stream_d1/edits`) {
+      const override = options.onEdit?.(attempt++)
+      if (override) return override
+      const body = JSON.parse(String(init!.body)) as { edits: { blockId: string; old: string; new: string }[] }
+      const [edit] = body.edits
+      edits.push(edit!)
+      const block = blocks.find((b) => b.id === edit!.blockId)!
+      block.markdown = block.markdown.replace(edit!.old, edit!.new)
+      return jsonResponse(200, { data: { id: "stream_d1", seq: 2, touchedBlockIds: [block.id] } })
+    }
+    return jsonResponse(404, { error: "not found" })
+  }) as unknown as typeof fetch)
+  return { blocks, edits }
+}
+
+function check(args: string[]) {
+  return run(["docs", "check", "stream_d1", "--reason", "done", ...args], { config: TEST_CONFIG })
+}
+
+test("docs check ticks the item by rewriting its whole block", async () => {
+  const doc = fakeDoc([{ id: "blk_1", markdown: "- [ ] Write spec\n- [ ] Ship it" }])
+
+  const result = await check(["--item", "Ship it", "-o", "text"])
+
+  expect(result.exitCode).toBe(0)
+  expect({ edits: doc.edits, markdown: doc.blocks[0]!.markdown }).toEqual({
+    edits: [{ blockId: "blk_1", old: "- [ ] Write spec\n- [ ] Ship it", new: "- [ ] Write spec\n- [x] Ship it" }],
+    markdown: "- [ ] Write spec\n- [x] Ship it",
+  })
+  expect(result.stdout).toContain("updated (blk_1): - [x] Ship it")
+})
+
+test("docs check --uncheck clears a ticked item", async () => {
+  const doc = fakeDoc([{ id: "blk_1", markdown: "- [X] Ship it" }])
+
+  const result = await check(["--item", "Ship it", "--uncheck"])
+
+  expect(result.exitCode).toBe(0)
+  expect(doc.blocks[0]!.markdown).toBe("- [ ] Ship it")
+})
+
+test("docs check on an item already in that state writes nothing", async () => {
+  const doc = fakeDoc([{ id: "blk_1", markdown: "- [x] Ship it" }])
+
+  const result = await check(["--item", "Ship it", "--json"])
+
+  expect(result.exitCode).toBe(0)
+  expect(doc.edits).toEqual([])
+  expect(JSON.parse(result.stdout)).toEqual({
+    data: { changed: false, blockId: "blk_1", nth: 1, checked: true, line: "- [x] Ship it" },
+  })
+})
+
+test("docs check with no matching item fails DOC_TASK_NOT_FOUND", async () => {
+  const doc = fakeDoc([{ id: "blk_1", markdown: "- [ ] Ship it" }])
+
+  const result = await check(["--item", "Ship"])
+
+  expect(result.exitCode).toBe(1)
+  expect((JSON.parse(result.stderr) as { code: string }).code).toBe("DOC_TASK_NOT_FOUND")
+  expect(doc.edits).toEqual([])
+})
+
+test("docs check on duplicate items without --nth lists every match", async () => {
+  const doc = fakeDoc([
+    { id: "blk_1", markdown: "- [ ] Review" },
+    { id: "blk_2", markdown: "Phase two\n\n- [ ] Review" },
+  ])
+
+  const result = await check(["--item", "Review"])
+
+  expect(result.exitCode).toBe(1)
+  const error = JSON.parse(result.stderr) as { code: string; details: unknown }
+  expect({ code: error.code, details: error.details }).toEqual({
+    code: "DOC_TASK_AMBIGUOUS",
+    details: {
+      matches: [
+        { blockId: "blk_1", nth: 1, line: "- [ ] Review" },
+        { blockId: "blk_2", nth: 2, line: "- [ ] Review" },
+      ],
+    },
+  })
+  expect(doc.edits).toEqual([])
+})
+
+test("docs check --nth 2 ticks the second duplicate only", async () => {
+  const doc = fakeDoc([{ id: "blk_1", markdown: "- [ ] Review\n- [ ] Merge\n- [ ] Review" }])
+
+  const result = await check(["--item", "Review", "--nth", "2"])
+
+  expect(result.exitCode).toBe(0)
+  expect(doc.blocks[0]!.markdown).toBe("- [ ] Review\n- [ ] Merge\n- [x] Review")
+})
+
+test("docs check matches a nested, indented item", async () => {
+  const doc = fakeDoc([{ id: "blk_1", markdown: "- [ ] Launch\n  - [ ] Tests green\n  - [ ] Docs" }])
+
+  const result = await check(["--item", "Tests green"])
+
+  expect(result.exitCode).toBe(0)
+  expect(doc.blocks[0]!.markdown).toBe("- [ ] Launch\n  - [x] Tests green\n  - [ ] Docs")
+})
+
+test("docs check picks the exact item, not a longer one sharing its prefix", async () => {
+  const doc = fakeDoc([{ id: "blk_1", markdown: "- [ ] foo bar\n- [ ] foo" }])
+
+  const result = await check(["--item", "foo"])
+
+  expect(result.exitCode).toBe(0)
+  expect(doc.blocks[0]!.markdown).toBe("- [ ] foo bar\n- [x] foo")
+})
+
+test("docs check re-reads and retries once when the block moved between read and write", async () => {
+  const blocks = [{ id: "blk_1", markdown: "- [ ] Ship it" }]
+  const doc = fakeDoc(blocks, {
+    onEdit: (attempt) => {
+      if (attempt > 0) return undefined
+      blocks[0]!.markdown = "- [ ] Write spec\n- [ ] Ship it"
+      return jsonResponse(409, { error: "moved", code: "DOC_EDIT_TEXT_NOT_FOUND" })
+    },
+  })
+
+  const result = await check(["--item", "Ship it"])
+
+  expect(result.exitCode).toBe(0)
+  expect({ edits: doc.edits, markdown: blocks[0]!.markdown }).toEqual({
+    edits: [{ blockId: "blk_1", old: "- [ ] Write spec\n- [ ] Ship it", new: "- [ ] Write spec\n- [x] Ship it" }],
+    markdown: "- [ ] Write spec\n- [x] Ship it",
+  })
+})
+
+test("docs check without --reason is a usage error before any HTTP", async () => {
+  const result = await run(["docs", "check", "stream_d1", "--item", "x"], { config: TEST_CONFIG })
+
+  expect(result.exitCode).toBe(2)
+  expect(fetchSpy).not.toHaveBeenCalled()
+})
+
+test("docs check skips a task-shaped line inside a fenced code block", async () => {
+  const doc = fakeDoc([{ id: "blk_1", markdown: "- [ ] Ship it\n  ```md\n  - [ ] Ship it\n  ```" }])
+
+  const result = await check(["--item", "Ship it"])
+
+  expect(result.exitCode).toBe(0)
+  expect(doc.blocks[0]!.markdown).toBe("- [x] Ship it\n  ```md\n  - [ ] Ship it\n  ```")
+})
+
+test("docs check --nth rejects anything but a plain positive integer", async () => {
+  const results = await Promise.all(["0x2", "1e1", "0"].map((nth) => check(["--item", "x", "--nth", nth])))
+
+  expect(results.map((r) => r.exitCode)).toEqual([2, 2, 2])
+  expect(fetchSpy).not.toHaveBeenCalled()
+})

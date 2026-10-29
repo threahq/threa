@@ -1,4 +1,4 @@
-import { commentOnDoc, createDoc, editDoc, listDocs, readDoc } from "../ops"
+import { checkDocTask, commentOnDoc, createDoc, editDoc, listDocs, readDoc } from "../ops"
 import {
   arrayFlag,
   boolFlag,
@@ -209,8 +209,62 @@ const commentVerb: VerbSpec = {
   },
 }
 
+const checkVerb: VerbSpec = {
+  name: "check",
+  summary: "Tick or untick one task-list item in a doc",
+  usage: 'threa docs check <doc-id> --item "text" --reason r [--uncheck] [--block blk_x] [--nth N]',
+  help:
+    'threa docs check <doc-id> --item "text" --reason r [flags]\n\n' +
+    "Tick a `- [ ] text` item (or untick it with --uncheck). --item is the text after the box, matched exactly " +
+    "(trailing whitespace ignored), so `foo` never hits `foo bar`. Nested items match the same way. When several " +
+    "items share the text, DOC_TASK_AMBIGUOUS lists each as {blockId, nth, line}: pick one with --nth or --block. " +
+    "An item already in the wanted state is left alone (changed: false). If the block changes between the read and " +
+    "the write, the command re-reads once and retries.\n\n" +
+    "Flags:\n" +
+    "  --item text    the task's text, exactly as in `threa docs read` (required)\n" +
+    "  --reason r     required; one line shown to people on the stream's timeline\n" +
+    "  --uncheck      clear the box instead of ticking it\n" +
+    "  --block blk_x  only look in this block\n" +
+    "  --nth N        pick the Nth match (1-based, document order) among items with this text\n" +
+    "  --json         force JSON output\n" +
+    "  --help         show this help",
+  options: {
+    item: { type: "string" },
+    reason: { type: "string" },
+    uncheck: { type: "boolean" },
+    block: { type: "string" },
+    nth: { type: "string" },
+  },
+  run: (ctx, positionals, values) => {
+    const docId = positionals[0]
+    if (!docId) throw new UsageError("docs check requires a <doc-id>")
+    const item = stringFlag(values, "item")
+    if (!item) throw new UsageError('docs check requires --item "text" (the task text after the box)')
+    const reason = stringFlag(values, "reason")
+    if (!reason) throw new UsageError("docs check requires --reason (one line shown on the stream's timeline)")
+    const rawNth = stringFlag(values, "nth")
+    if (rawNth !== undefined && !/^[1-9]\d*$/.test(rawNth)) {
+      throw new UsageError("docs check --nth must be a whole number >= 1")
+    }
+    const nth = rawNth === undefined ? undefined : Number(rawNth)
+    return checkDocTask(ctx.client, {
+      docId,
+      item,
+      checked: values.uncheck !== true,
+      reason,
+      blockId: stringFlag(values, "block"),
+      nth,
+    })
+  },
+  render: (payload) => {
+    const d = (payload as { data?: { changed?: boolean; blockId?: string; line?: string } }).data
+    const prefix = d?.changed ? "updated" : "already in that state, no change"
+    return `${prefix} (${d?.blockId ?? "?"}): ${d?.line?.trim() ?? ""}`
+  },
+}
+
 export const docsNoun: NounSpec = {
   name: "docs",
-  summary: "List, read, create, edit, and comment on docs hosted by streams",
-  verbs: [listVerb, readVerb, editVerb, createVerb, commentVerb],
+  summary: "List, read, create, edit, check tasks in, and comment on docs hosted by streams",
+  verbs: [listVerb, readVerb, editVerb, checkVerb, createVerb, commentVerb],
 }

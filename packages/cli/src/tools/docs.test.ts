@@ -143,3 +143,45 @@ test("comment_on_doc posts the content to the block's comments with a generated 
     },
   })
 })
+
+test("check_doc_task ticks the nth duplicate by rewriting its block", async () => {
+  const markdown = "<!-- blk_1 -->\n- [ ] Review\n- [ ] Review"
+  fetchSpy.mockImplementation(
+    fetchByPath((path) =>
+      path === `${DOCS}/stream_d1`
+        ? jsonResponse(200, { data: { id: "stream_d1", markdown } })
+        : jsonResponse(200, { data: { id: "stream_d1", seq: 2, touchedBlockIds: ["blk_1"] } })
+    )
+  )
+  const client = await connectClient()
+
+  const result = (await client.callTool({
+    name: "check_doc_task",
+    arguments: { doc_id: "stream_d1", item: "Review", nth: 2, reason: "reviewed" },
+  })) as CallToolResult
+  expect(result.isError).toBeFalsy()
+
+  const call = lastCall()
+  expect({ method: call.method, path: call.path, body: call.body }).toEqual({
+    method: "POST",
+    path: `${DOCS}/stream_d1/edits`,
+    body: {
+      reason: "reviewed",
+      edits: [{ blockId: "blk_1", old: "- [ ] Review\n- [ ] Review", new: "- [ ] Review\n- [x] Review" }],
+    },
+  })
+})
+
+test("check_doc_task reports duplicates as DOC_TASK_AMBIGUOUS without writing", async () => {
+  fetchSpy.mockResolvedValue(jsonResponse(200, { data: { markdown: "<!-- blk_1 -->\n- [ ] Review\n- [x] Review" } }))
+  const client = await connectClient()
+
+  const result = (await client.callTool({
+    name: "check_doc_task",
+    arguments: { doc_id: "stream_d1", item: "Review", checked: false, reason: "reopen" },
+  })) as CallToolResult
+
+  expect(result.isError).toBe(true)
+  expect((textPayload(result) as { code: string }).code).toBe("DOC_TASK_AMBIGUOUS")
+  expect(fetchSpy.mock.calls.length).toBe(1)
+})
