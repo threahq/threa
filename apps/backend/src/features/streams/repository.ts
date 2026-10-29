@@ -635,9 +635,9 @@ export const StreamRepository = {
    * Every stream on the parent chains of `ids`: the ids themselves, each
    * ancestor up `parent_stream_id`, and each row's `root_stream_id` (INV-62).
    * Unknown ids contribute nothing. Read without locks so the caller can lock
-   * the whole set in one id-ordered statement; `parent_stream_id` and
-   * `root_stream_id` never change after insert, so the set cannot go stale
-   * between this read and that lock.
+   * the whole set in one id-ordered statement. A doc move re-parents and
+   * re-roots rows, so the set can go stale before that lock; a caller that
+   * needs the exact chain rechecks the locked rows (`lockEffectiveStreams`).
    */
   async listAncestorChainIds(db: Querier, workspaceId: string, ids: readonly string[]): Promise<string[]> {
     if (ids.length === 0) return []

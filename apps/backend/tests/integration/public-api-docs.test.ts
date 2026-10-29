@@ -25,7 +25,7 @@ import {
 } from "../../src/features/streams"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { botChannelAccessId, botId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
-import { addTestMember, setupIsolatedTestDatabase, withTransaction } from "./setup"
+import { addTestMember, refusal, setupIsolatedTestDatabase, withTransaction } from "./setup"
 
 let pool: Pool
 let cleanup: () => Promise<void>
@@ -40,7 +40,14 @@ let threadId: string
 let grantedBotId: string
 let strangerBotId: string
 
-type Doc = { id: string; hostStreamId: string; title: string | null; seq: number; createdAt: string; markdown: string }
+type Doc = {
+  id: string
+  hostStreamId: string | null
+  title: string | null
+  seq: number
+  createdAt: string
+  markdown: string
+}
 
 function recorder() {
   const payloads: unknown[] = []
@@ -897,5 +904,53 @@ describe("public API doc moves", () => {
     const moved = await moveDoc(botReq(grantedBotId, { params: { docId: created.data.id }, body: { toStreamId: to } }))
 
     expect({ status: moved.status, hostStreamId: moved.data.hostStreamId }).toEqual({ status: 200, hostStreamId: to })
+  })
+
+  test("should create a top-level doc without a host and refuse a visibility on a hosted one, a guest or a bot owner", async () => {
+    const host = await privateChannel([owner], [grantedBotId])
+    const guest = await withTransaction(pool, async (client) => (await addTestMember(client, ws, userId(), "guest")).id)
+
+    const created = await createDoc(asMember(owner, { body: { title: "Charter", visibility: "public" } }))
+    const read = await readDoc(asMember(outsider, { params: { docId: created.data.id } }))
+
+    expect({
+      created: { status: created.status, hostStreamId: created.data.hostStreamId, title: created.data.title },
+      readByOutsider: { status: read.status, id: read.data.id, hostStreamId: read.data.hostStreamId },
+      visibility: (await StreamRepository.findById(pool, ws, created.data.id))?.visibility,
+      hostedVisibility: await refusal(createDoc(asMember(owner, { body: { streamId: host, visibility: "public" } }))),
+      guest: await refusal(createDoc(asMember(guest, { body: {} }))),
+      bot: await refusal(createDoc(botReq(grantedBotId, { body: {} }))),
+    }).toEqual({
+      created: { status: 201, hostStreamId: null, title: "Charter" },
+      readByOutsider: { status: 200, id: created.data.id, hostStreamId: null },
+      visibility: Visibilities.PUBLIC,
+      hostedVisibility: { status: 400, code: DocErrorCodes.VISIBILITY_INHERITED },
+      guest: { status: 403, code: StreamErrorCodes.CHANNEL_MANAGEMENT_FORBIDDEN },
+      bot: { status: 403, code: DocErrorCodes.TOP_LEVEL_REQUIRES_USER },
+    })
+  })
+
+  test("should lift a doc to the top level and nest it again", async () => {
+    const from = await privateChannel([owner])
+    const to = await privateChannel([owner])
+    const created = await createDoc(asMember(owner, { body: { streamId: from, title: "Runbook" } }))
+    const params = { docId: created.data.id }
+
+    const lifted = await moveDoc(asMember(owner, { params, body: { fromStreamId: from, toStreamId: null } }))
+    const liftedRow = await StreamRepository.findById(pool, ws, created.data.id)
+    const nested = await moveDoc(asMember(owner, { params, body: { fromStreamId: null, toStreamId: to } }))
+
+    expect({
+      lifted,
+      liftedRow: { parentStreamId: liftedRow?.parentStreamId, visibility: liftedRow?.visibility },
+      nested: { status: nested.status, hostStreamId: nested.data.hostStreamId },
+    }).toEqual({
+      lifted: {
+        status: 200,
+        data: { id: created.data.id, hostStreamId: null, title: "Runbook", seq: 0, createdAt: created.data.createdAt },
+      },
+      liftedRow: { parentStreamId: null, visibility: Visibilities.PRIVATE },
+      nested: { status: 200, hostStreamId: to },
+    })
   })
 })

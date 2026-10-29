@@ -2,6 +2,8 @@
 // against the version-pinned public API.
 export const CALLBACK_TOKEN_HEADER = "X-Threa-Callback-Token"
 export const STREAM_TYPES = ["scratchpad", "channel", "dm", "thread", "system", "aside", "doc"] as const
+export const VISIBILITIES = ["public", "guest_public", "private"] as const
+export type Visibility = (typeof VISIBILITIES)[number]
 export const CONVERSATION_STATUSES = ["active", "stalled", "resolved"] as const
 export const MEMO_TYPES = ["message", "conversation"] as const
 export const KNOWLEDGE_TYPES = ["decision", "learning", "procedure", "context", "reference"] as const

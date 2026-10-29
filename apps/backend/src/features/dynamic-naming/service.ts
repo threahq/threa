@@ -1,4 +1,4 @@
-import type { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
 import { TitleSources } from "@threahq/types"
 import { withTransaction } from "../../db"
 import { assertStreamWritable } from "../streams"
@@ -40,17 +40,24 @@ export class DynamicNamingService {
     private readonly now: () => Date = () => new Date()
   ) {}
 
+  /** Whether the target still has an authority stream; throws when the initiator can no longer write it. */
+  private async authorize(client: PoolClient, adapter: DynamicNamingTargetAdapter, ref: TargetRef): Promise<boolean> {
+    const authorityStreamId = await adapter.resolveAuthorityStreamId(client, ref)
+    if (!authorityStreamId) return false
+    await assertStreamWritable(client, {
+      workspaceId: ref.workspaceId,
+      streamId: authorityStreamId,
+      principal: { kind: "user", userId: ref.initiatingUserId! },
+      typeReadOnly: adapter.authorityTypeReadOnly,
+    })
+    return true
+  }
+
   async recordStructuralEvent(ref: TargetRef, eventId: string): Promise<boolean> {
     const adapter = this.adapters.get(ref.targetKind)
     if (!adapter || !ref.initiatingUserId) return false
     const target = await withTransaction(this.pool, async (client) => {
-      const authorityStreamId = await adapter.resolveAuthorityStreamId(client, ref)
-      if (!authorityStreamId) return null
-      await assertStreamWritable(client, {
-        workspaceId: ref.workspaceId,
-        streamId: authorityStreamId,
-        principal: { kind: "user", userId: ref.initiatingUserId! },
-      })
+      if (!(await this.authorize(client, adapter, ref))) return null
       const snapshot = await adapter.lockAndValidate(client, ref)
       if (!snapshot) return null
       const ensured = await DynamicNamingStateRepository.ensure(client, {
@@ -83,13 +90,7 @@ export class DynamicNamingService {
     }
 
     const prepared = await withTransaction(this.pool, async (client) => {
-      const authorityStreamId = await adapter.resolveAuthorityStreamId(client, ref)
-      if (!authorityStreamId) return { status: "protected" as const }
-      await assertStreamWritable(client, {
-        workspaceId: ref.workspaceId,
-        streamId: authorityStreamId,
-        principal: { kind: "user", userId: ref.initiatingUserId! },
-      })
+      if (!(await this.authorize(client, adapter, ref))) return { status: "protected" as const }
       const target = await adapter.lockAndValidate(client, ref)
       if (!target) return { status: "protected" as const }
       const quietDeadline = this.quietDeadline(target)
@@ -149,16 +150,9 @@ export class DynamicNamingService {
       checkpoint: String(prepared.eligibility.checkpoint),
     })
 
-    const preProviderAuthorized = await withTransaction(this.pool, async (client) => {
-      const authorityStreamId = await adapter.resolveAuthorityStreamId(client, ref)
-      if (!authorityStreamId) return false
-      await assertStreamWritable(client, {
-        workspaceId: ref.workspaceId,
-        streamId: authorityStreamId,
-        principal: { kind: "user", userId: ref.initiatingUserId! },
-      })
-      return true
-    }).catch((error: unknown) => {
+    const preProviderAuthorized = await withTransaction(this.pool, (client) =>
+      this.authorize(client, adapter, ref)
+    ).catch((error: unknown) => {
       const denial = error as { code?: string }
       if (denial.code === "STREAM_READ_ONLY" || denial.code === "STREAM_NOT_FOUND") return false
       throw error
@@ -185,20 +179,13 @@ export class DynamicNamingService {
       return { status: "stale" }
     }
 
-    const providerAuthorized = await withTransaction(this.pool, async (client) => {
-      const authorityStreamId = await adapter.resolveAuthorityStreamId(client, ref)
-      if (!authorityStreamId) return false
-      await assertStreamWritable(client, {
-        workspaceId: ref.workspaceId,
-        streamId: authorityStreamId,
-        principal: { kind: "user", userId: ref.initiatingUserId! },
-      })
-      return true
-    }).catch((error: unknown) => {
-      const denial = error as { code?: string }
-      if (denial.code === "STREAM_READ_ONLY" || denial.code === "STREAM_NOT_FOUND") return false
-      throw error
-    })
+    const providerAuthorized = await withTransaction(this.pool, (client) => this.authorize(client, adapter, ref)).catch(
+      (error: unknown) => {
+        const denial = error as { code?: string }
+        if (denial.code === "STREAM_READ_ONLY" || denial.code === "STREAM_NOT_FOUND") return false
+        throw error
+      }
+    )
     if (!providerAuthorized) {
       await this.release(ref, renewed.claimToken!, renewed.version)
       return { status: "protected" }
@@ -232,13 +219,7 @@ export class DynamicNamingService {
     }
 
     const applied = await withTransaction(this.pool, async (client) => {
-      const authorityStreamId = await adapter.resolveAuthorityStreamId(client, ref)
-      if (!authorityStreamId) return null
-      await assertStreamWritable(client, {
-        workspaceId: ref.workspaceId,
-        streamId: authorityStreamId,
-        principal: { kind: "user", userId: ref.initiatingUserId! },
-      })
+      if (!(await this.authorize(client, adapter, ref))) return null
       const target = await adapter.lockAndValidate(client, {
         ...ref,
         expectedTitleRevision: prepared.target.titleRevision,

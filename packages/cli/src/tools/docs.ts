@@ -3,6 +3,7 @@ import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
 import { checkDocTask, commentOnDoc, createDoc, editDoc, listDocs, moveDoc, readDoc } from "../ops"
 import type { RefResolver } from "../resolver"
+import { VISIBILITIES } from "./constants"
 import { runTool } from "./result"
 
 const REASON =
@@ -14,7 +15,8 @@ export function registerDocTools(server: McpServer, client: ThreaApiClient, reso
     {
       title: "List docs",
       description:
-        "List docs newest first: id, hostStreamId, title, seq (edit counter), createdAt, archived. Without " +
+        "List docs newest first: id, hostStreamId (null for a top-level doc), title, seq (edit counter), createdAt, " +
+        "archived. Without " +
         "`stream_id` it lists every doc this key can read across the workspace; `stream_id` (a stream_ id or " +
         "`#channel-slug`) narrows to the docs one stream hosts. `query` matches doc titles case-insensitively. " +
         "Page by passing the previous response's `cursor` back as `after`; `hasMore` tells you when to stop. " +
@@ -80,18 +82,21 @@ export function registerDocTools(server: McpServer, client: ThreaApiClient, reso
     {
       title: "Create a doc",
       description:
-        "Create a doc hosted by a stream (`stream_id` accepts a stream_ id or `#channel-slug`). `markdown` is the " +
-        "initial body; `reason` is required when `markdown` is sent. " +
+        "Create a doc hosted by a stream (`stream_id` accepts a stream_ id or `#channel-slug`). Without `stream_id` " +
+        "the doc is top-level: like a channel, `visibility` (default private) with the key's user as its only " +
+        "member; only a user key creates one. `markdown` is the initial body; `reason` is required when " +
+        "`markdown` is sent. " +
         REASON,
       inputSchema: {
-        stream_id: z.string(),
+        stream_id: z.string().optional(),
+        visibility: z.enum(VISIBILITIES).optional(),
         title: z.string().optional(),
         markdown: z.string().optional(),
         reason: z.string().optional(),
       },
     },
-    async ({ stream_id, title, markdown, reason }) =>
-      runTool(() => createDoc(client, resolver, { streamRef: stream_id, title, markdown, reason }))
+    async ({ stream_id, visibility, title, markdown, reason }) =>
+      runTool(() => createDoc(client, resolver, { streamRef: stream_id, visibility, title, markdown, reason }))
   )
 
   server.registerTool(
@@ -146,14 +151,17 @@ export function registerDocTools(server: McpServer, client: ThreaApiClient, reso
       title: "Move a doc",
       description:
         "Move a doc to another host stream; content, history and threads come with it. `to_stream_id` takes a " +
-        "`stream_…` id or `#channel-slug`. Only the doc's creator or a workspace admin can move it, so a " +
-        "bot key moves only docs its bot created (403 DOC_MOVE_FORBIDDEN otherwise). The result is the doc with its new `hostStreamId`.",
+        "`stream_…` id or `#channel-slug`; null lifts the doc to the top level with `visibility` (default " +
+        "private), the key's user as its only member, and only a user key may do that. Only the doc's creator or " +
+        "a workspace admin can move it, so a bot key moves only docs its bot created (403 DOC_MOVE_FORBIDDEN " +
+        "otherwise). The result is the doc with its new `hostStreamId` (null at the top level).",
       inputSchema: {
         doc_id: z.string(),
-        to_stream_id: z.string(),
+        to_stream_id: z.string().nullable(),
+        visibility: z.enum(VISIBILITIES).optional(),
       },
     },
-    async ({ doc_id, to_stream_id }) =>
-      runTool(() => moveDoc(client, resolver, { docId: doc_id, toStreamRef: to_stream_id }))
+    async ({ doc_id, to_stream_id, visibility }) =>
+      runTool(() => moveDoc(client, resolver, { docId: doc_id, toStreamRef: to_stream_id, visibility }))
   )
 }

@@ -19,6 +19,7 @@ export type DocAgentRefusalCode =
   | "host_cannot_host_docs"
   | "e2e_host"
   | "title_empty"
+  | "visibility_inherited"
   | "forbidden"
 
 /**
@@ -51,7 +52,8 @@ export type DocAgentRewriteFailure =
 
 export interface DocAgentDocSummary {
   docId: string
-  hostStreamId: string
+  /** Null for a top-level doc. */
+  hostStreamId: string | null
   title: string | null
   seq: number
   createdAt: Date

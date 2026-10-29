@@ -10,10 +10,11 @@ import {
   encodeUpdateBase64,
   writeContentJson,
   ydocToContentJson,
+  type DocAgentContext,
   type HostedDocAgentContext,
 } from "../../src/features/docs"
 import { BotChannelService } from "../../src/features/api-keys"
-import { StreamEventRepository, StreamService } from "../../src/features/streams"
+import { StreamEventRepository, StreamRepository, StreamService } from "../../src/features/streams"
 import { UserRepository, WorkspaceRepository } from "../../src/features/workspaces"
 import { blockId, personaId, userId, workspaceId } from "../../src/lib/id"
 import { addTestMember, setupIsolatedTestDatabase, withTransaction } from "./setup"
@@ -503,6 +504,45 @@ describe("doc agent service", () => {
       status: "applied",
       copied: `<!-- ${target.attrs!.blockId} -->\nGCP key is live`,
       sections: ["AWS key is live", "GCP key is revoked"],
+    })
+  })
+
+  test("should create, read and edit a top-level doc, which only its readers reach", async () => {
+    const topLevel = (userId: string): DocAgentContext => ({
+      workspaceId: wsId,
+      hostStreamId: null,
+      principal: { kind: "user", userId },
+      actor: { actorId: persona, actorType: AuthorTypes.PERSONA },
+    })
+    const ctx = topLevel(owner)
+
+    const open = await agent.createDoc(ctx, { reason: "Start a plan", title: "Plan", visibility: "public" })
+    const closed = await agent.createDoc(ctx, { reason: "Start notes", markdown: "Private notes" })
+    if (open.status !== "created" || closed.status !== "created") throw new Error("Expected both docs created")
+    const edited = await agent.editDoc(ctx, {
+      docId: closed.docId,
+      reason: "Tighten",
+      edits: [{ old: "Private notes", new: "Private notes, kept short" }],
+    })
+    const [openRow, closedRow] = await Promise.all([
+      StreamRepository.findById(pool, wsId, open.docId),
+      StreamRepository.findById(pool, wsId, closed.docId),
+    ])
+
+    expect({
+      open: { hostStreamId: open.hostStreamId, visibility: openRow?.visibility, parent: openRow?.parentStreamId },
+      closed: { hostStreamId: closed.hostStreamId, visibility: closedRow?.visibility },
+      edited: edited.status,
+      markdown: await sectionMarkdown(closed.docId),
+      outsiderReadsOpen: (await agent.readDoc(topLevel(outsider), { docId: open.docId })).status,
+      outsiderReadsClosed: (await agent.readDoc(topLevel(outsider), { docId: closed.docId })).status,
+    }).toEqual({
+      open: { hostStreamId: null, visibility: "public", parent: null },
+      closed: { hostStreamId: null, visibility: "private" },
+      edited: "applied",
+      markdown: ["Private notes, kept short"],
+      outsiderReadsOpen: "ok",
+      outsiderReadsClosed: "not_found",
     })
   })
 })

@@ -2,6 +2,12 @@
 
 Generated from the version-change modules. Do not edit by hand.
 
+## 2026-10-29
+
+Docs can be top-level, with no host stream: such a doc's `hostStreamId` is null. `createDoc` without `streamId` creates one, with an optional `visibility`, and `moveDoc` with a null `toStreamId` lifts a doc to the top level. Pins before this version never see a top-level doc in `listDocs`.
+
+Affected operations: createDoc, getDoc, listDocs, moveDoc
+
 ## 2026-10-04
 
 Streams gain the `guest_public` visibility: readable by guests, who cannot browse `public` channels. A stream's `visibility`, and a `private` shared-message slot's `sourceVisibility`, can now be `guest_public`. Pins before this version see `public` there instead.

@@ -99,7 +99,7 @@ export class DocActivityService {
   private async fold(db: Querier, workspaceId: string, docId: string): Promise<DocActivityRollUpResult> {
     // Share-locked so a doc move waits for this row to land in the host read here, or lands first.
     const doc = await StreamRepository.findByIdForShare(db, workspaceId, docId)
-    if (!doc?.parentStreamId) {
+    if (!doc) {
       logger.warn({ workspaceId, docId }, "Doc activity roll-up found no doc to fold")
       return { status: "nothing" }
     }
@@ -123,7 +123,9 @@ export class DocActivityService {
       blockIds: [...presentIds],
     })
 
-    const host = await StreamRepository.findById(db, workspaceId, doc.parentStreamId)
+    // A top-level doc has no host timeline to fold into; its cursor still advances, so a later nesting
+    // does not fold its past edits.
+    const host = doc.parentStreamId ? await StreamRepository.findById(db, workspaceId, doc.parentStreamId) : null
     if (!host || host.archivedAt || doc.archivedAt) return { status: "skipped" }
 
     const authored = edits.filter((edit) => edit.actorId && edit.actorType && edit.actorType !== AuthorTypes.SYSTEM)

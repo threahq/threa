@@ -39,7 +39,12 @@ import {
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
 } from "@threahq/types"
 import { messageMetadataSchema, messageMetadataFilterSchema, sealedBodySchema } from "../messaging"
-import { botE2eKeyringFields, botIdentityKeyFields, bothOrNeitherBotIdentityKey } from "../../lib/schemas"
+import {
+  botE2eKeyringFields,
+  botIdentityKeyFields,
+  bothOrNeitherBotIdentityKey,
+  visibilitySchema,
+} from "../../lib/schemas"
 
 const PUBLIC_SEARCH_MAX_LIMIT = 50
 const PUBLIC_ATTACHMENT_SEARCH_MAX_LIMIT = 50
@@ -698,10 +703,12 @@ export const listDocsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(50),
 })
 
-// A body is a first write, so it carries the reason the timeline shows for it.
+// Without a stream the doc is top-level and takes its own visibility. A body is a first write, so it carries
+// the reason the timeline shows for it.
 export const createDocSchema = z
   .object({
-    streamId: docHostStreamId,
+    streamId: docHostStreamId.optional(),
+    visibility: visibilitySchema.optional(),
     title: z.string().trim().min(1).max(100).optional(),
     markdown: docMarkdown.min(1).optional(),
     reason: docReason.optional(),
@@ -721,9 +728,11 @@ export const commentOnDocSectionSchema = z.object({
   metadata: messageMetadataSchema.optional(),
 })
 
+// A null stream is the top level.
 export const moveDocSchema = z.object({
-  toStreamId: docHostStreamId,
-  fromStreamId: docHostStreamId.optional(),
+  toStreamId: docHostStreamId.nullable(),
+  fromStreamId: docHostStreamId.nullable().optional(),
+  visibility: visibilitySchema.optional(),
 })
 
 // Edits apply together: if one fails to match, nothing is written.

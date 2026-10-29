@@ -7,6 +7,7 @@ import {
   StreamTypes,
   type AuthorType,
   type StreamReadOnlyReason,
+  type Visibility,
 } from "@threahq/types"
 import { HttpError, StreamNotFoundError } from "../../lib/errors"
 import { blockId } from "../../lib/id"
@@ -63,7 +64,7 @@ export interface DocAgentTurn {
   personaId: string
 }
 
-/** Listing and creating need a host; reads and writes by id do not. */
+/** Listing a stream's docs needs its host; reads, writes and creates do not. */
 export type HostedDocAgentContext = DocAgentContext & { hostStreamId: string }
 
 const READ_ONLY_REFUSALS: Partial<Record<StreamReadOnlyReason, DocAgentRefusalCode>> = {
@@ -81,12 +82,12 @@ function refusalFor(error: HttpError): DocAgentAccessRefusal {
         ...(reason ? { reason } : {}),
       }
     }
-    case StreamErrorCodes.CHANNEL_MANAGEMENT_FORBIDDEN:
-      return { status: "refused", code: "forbidden" }
     case DocErrorCodes.HOST_TYPE_INVALID:
       return { status: "refused", code: "host_cannot_host_docs" }
     case DocErrorCodes.E2E_HOST_NOT_ALLOWED:
       return { status: "refused", code: "e2e_host" }
+    case DocErrorCodes.VISIBILITY_INHERITED:
+      return { status: "refused", code: "visibility_inherited" }
     default:
       return { status: "refused", code: "forbidden", ...(error.code ? { detail: error.code } : {}) }
   }
@@ -116,8 +117,14 @@ async function orLoggedError<T>(
   }
 }
 
-function summarize(doc: Stream, hostStreamId: string, seq: number): DocAgentDocSummary {
-  return { docId: doc.id, hostStreamId, title: doc.displayName ?? null, seq, createdAt: doc.createdAt }
+function summarize(doc: Stream, seq: number): DocAgentDocSummary {
+  return {
+    docId: doc.id,
+    hostStreamId: doc.parentStreamId,
+    title: doc.displayName ?? null,
+    seq,
+    createdAt: doc.createdAt,
+  }
 }
 
 export class DocAgentService {
@@ -179,7 +186,7 @@ export class DocAgentService {
       docs: docs.map((doc) => {
         const seq = seqs.get(doc.id)
         if (seq === undefined) throw new Error(`Doc ${doc.id} has no head row`)
-        return summarize(doc, ctx.hostStreamId, seq)
+        return summarize(doc, seq)
       }),
     }
   }
@@ -192,7 +199,7 @@ export class DocAgentService {
     const sections = await DocRepository.listSections(this.pool, ctx.workspaceId, doc.id)
     return {
       status: "ok",
-      ...summarize(doc, doc.parentStreamId, head.updateSeq),
+      ...summarize(doc, head.updateSeq),
       markdown: renderWithMarkers(sections),
     }
   }
@@ -242,15 +249,19 @@ export class DocAgentService {
     })
   }
 
-  /** The title commits with the doc row (blank leaves it untitled); the body lands as the actor's first write after it. */
+  /**
+   * Under `ctx.hostStreamId`, or top-level without one. The title commits with the doc row (blank leaves it
+   * untitled); the body lands as the actor's first write after it.
+   */
   async createDoc(
-    ctx: HostedDocAgentContext,
-    input: { reason: string; title?: string; markdown?: string }
+    ctx: DocAgentContext,
+    input: { reason: string; title?: string; markdown?: string; visibility?: Visibility }
   ): Promise<DocAgentCreateResult> {
     const created = await orRefusal(() =>
       this.streamService.createDoc({
         workspaceId: ctx.workspaceId,
-        parentStreamId: ctx.hostStreamId,
+        parentStreamId: ctx.hostStreamId ?? undefined,
+        visibility: input.visibility,
         principal: ctx.principal,
         displayName: input.title?.trim() || undefined,
       })
@@ -259,7 +270,7 @@ export class DocAgentService {
     const docId = created.id
     const result: Extract<DocAgentCreateResult, { status: "created" }> = {
       status: "created",
-      ...summarize(created, ctx.hostStreamId, 0),
+      ...summarize(created, 0),
       markdown: "",
     }
 
@@ -350,17 +361,14 @@ export class DocAgentService {
 
   /**
    * The doc when this context may read it: under the host when confined, and reachable by the principal.
-   * Parentage never changes after creation, so this needs no lock; a write's own lock rechecks archive state.
+   * Unlocked, so a concurrent move can stale the host check; a write's own lock rechecks authority and archive state.
    */
-  private async accessibleDoc(
-    ctx: DocAgentContext,
-    docId: string
-  ): Promise<(Stream & { parentStreamId: string }) | null> {
+  private async accessibleDoc(ctx: DocAgentContext, docId: string): Promise<Stream | null> {
     const stream = await StreamRepository.findById(this.pool, ctx.workspaceId, docId)
-    if (stream?.type !== StreamTypes.DOC || !stream.parentStreamId) return null
+    if (stream?.type !== StreamTypes.DOC) return null
     if (ctx.hostStreamId !== null && stream.parentStreamId !== ctx.hostStreamId) return null
     if (!(await this.canRead(ctx, stream.id))) return null
-    return { ...stream, parentStreamId: stream.parentStreamId }
+    return stream
   }
 
   private async canRead(ctx: DocAgentContext, streamId: string): Promise<boolean> {

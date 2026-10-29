@@ -96,12 +96,7 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
       const sharedTree = await findSharedTree(client, target.workspaceId, stream.id)
       const [conversation] = await viewConversationsAsPartner(client, target.workspaceId, sharedTree, [stored])
       const byId = await MessageRepository.findByIds(client, target.workspaceId, stored.messageIds)
-      const readable = await viewAsPartner(
-        client,
-        target.workspaceId,
-        sharedTree,
-        orderedPrimaryMessages(stored, byId)
-      )
+      const readable = await viewAsPartner(client, target.workspaceId, sharedTree, orderedPrimaryMessages(stored, byId))
       const messages = readable.slice(-DYNAMIC_NAMING_MAX_MESSAGES)
       const siblings = await viewConversationsAsPartner(
         client,

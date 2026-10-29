@@ -36,7 +36,7 @@ export function DocBacklinks({ workspaceId, docId }: DocBacklinksProps) {
 function BacklinkRow({ workspaceId, backlink }: { workspaceId: string; backlink: DocBacklink }) {
   const { getPanelUrl } = usePanel()
   const { label } = useLiveDocTitle(workspaceId, backlink.docId, backlink.title ?? "")
-  const host = useWorkspaceStream(workspaceId, backlink.hostStreamId, pickStreamLabel)
+  const host = useWorkspaceStream(workspaceId, backlink.hostStreamId ?? undefined, pickStreamLabel)
   const firstBlockId = backlink.blockIds[0]
   const handleClick = (event: MouseEvent) => {
     if (!firstBlockId || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return

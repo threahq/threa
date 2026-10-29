@@ -1,7 +1,9 @@
 import { checkDocTask, commentOnDoc, createDoc, editDoc, listDocs, moveDoc, readDoc } from "../ops"
+import { VISIBILITIES } from "../tools/constants"
 import {
   arrayFlag,
   boolFlag,
+  enumFlag,
   intFlag,
   renderList,
   stringFlag,
@@ -12,12 +14,17 @@ import {
 
 interface DocRow {
   id?: string
-  hostStreamId?: string
+  hostStreamId?: string | null
   archived?: boolean
   title?: string | null
   seq?: number
   markdown?: string
   touchedBlockIds?: string[]
+}
+
+function hostLabel(hostStreamId: string | null | undefined): string {
+  if (hostStreamId === null) return "(top level)"
+  return hostStreamId ?? "?"
 }
 
 const listVerb: VerbSpec = {
@@ -28,8 +35,8 @@ const listVerb: VerbSpec = {
     "threa docs list [<stream-ref>] [flags]\n\n" +
     "List docs this key can read, newest first. Without <stream-ref> it searches the whole workspace; " +
     "<stream-ref> (a stream_ id or #channel-slug) narrows to the docs that stream hosts. Each row is the doc id, " +
-    "its title (or (untitled)), its seq (the edit counter) and its host stream. Page by passing the previous " +
-    "response's cursor back as --after.\n\n" +
+    "its title (or (untitled)), its seq (the edit counter) and its host stream, or (top level) for a doc with " +
+    "none. Page by passing the previous response's cursor back as --after.\n\n" +
     "Flags:\n" +
     "  --query q    case-insensitive match on the doc title\n" +
     "  --archived   include archived docs and docs under archived hosts\n" +
@@ -55,7 +62,7 @@ const listVerb: VerbSpec = {
     renderList<DocRow>(
       payload,
       (d) =>
-        `${d.id ?? "?"}  ${d.title || "(untitled)"}  ${d.seq ?? "?"}  ${d.hostStreamId ?? "?"}` +
+        `${d.id ?? "?"}  ${d.title || "(untitled)"}  ${d.seq ?? "?"}  ${hostLabel(d.hostStreamId)}` +
         (d.archived ? "  [archived]" : ""),
       { empty: "(no docs)", cursorFlag: "after" }
     ),
@@ -134,31 +141,43 @@ const editVerb: VerbSpec = {
 
 const createVerb: VerbSpec = {
   name: "create",
-  summary: "Create a doc hosted by a stream",
-  usage: "threa docs create <stream-ref> [--title t] [--body text | --body -] [--reason r]",
+  summary: "Create a doc, hosted by a stream or top-level",
+  usage: "threa docs create [<stream-ref>] [--visibility v] [--title t] [--body text | --body -] [--reason r]",
   help:
-    "threa docs create <stream-ref> [flags]\n\n" +
-    "Create a doc hosted by a stream. <stream-ref> is a stream_ id or #channel-slug. The body is markdown; " +
-    "`--body -` reads it from stdin. --reason is required with --body.\n\n" +
+    "threa docs create [<stream-ref>] [flags]\n\n" +
+    "Create a doc hosted by a stream. <stream-ref> is a stream_ id or #channel-slug. Without it the doc is " +
+    "top-level: like a channel, private unless --visibility says otherwise, with you as its only member; only a " +
+    "user key creates one. The body is markdown; `--body -` reads it from stdin. --reason is required with --body.\n\n" +
     "Flags:\n" +
+    "  --visibility v private|public|guest_public, top-level docs only (default private)\n" +
     "  --title t      doc title\n" +
     "  --body text    initial markdown, or - to read stdin\n" +
     "  --reason r     one line shown to people on the stream's timeline (required with --body)\n" +
     "  --json         force JSON output\n" +
     "  --help         show this help",
   options: {
+    visibility: { type: "string" },
     title: { type: "string" },
     body: { type: "string" },
     reason: { type: "string" },
   },
   run: async (ctx, positionals, values) => {
     const ref = positionals[0]
-    if (!ref) throw new UsageError("docs create requires a <stream-ref> (a stream_ id or #channel-slug)")
+    const visibility = enumFlag(values, "visibility", VISIBILITIES)
+    if (ref && visibility) {
+      throw new UsageError("docs create --visibility is for top-level docs; a hosted doc takes its stream's")
+    }
     const rawBody = stringFlag(values, "body")
     const reason = stringFlag(values, "reason")
     if (rawBody !== undefined && !reason) throw new UsageError("docs create --body requires --reason")
     const markdown = rawBody === "-" ? await ctx.readStdin() : rawBody
-    return createDoc(ctx.client, ctx.resolver, { streamRef: ref, title: stringFlag(values, "title"), markdown, reason })
+    return createDoc(ctx.client, ctx.resolver, {
+      streamRef: ref,
+      visibility,
+      title: stringFlag(values, "title"),
+      markdown,
+      reason,
+    })
   },
   render: (payload) => {
     const d = (payload as { data?: DocRow }).data
@@ -265,36 +284,49 @@ const checkVerb: VerbSpec = {
 
 const moveVerb: VerbSpec = {
   name: "move",
-  summary: "Move a doc to another host stream",
-  usage: "threa docs move <doc-id> --to <stream-ref>",
+  summary: "Move a doc to another host stream or to the top level",
+  usage: "threa docs move <doc-id> (--to <stream-ref> | --top-level [--visibility v])",
   help:
-    "threa docs move <doc-id> --to <stream-ref> [flags]\n\n" +
-    "Move a doc to another stream; its content, history and threads come with it. Only the doc's creator or a " +
+    "threa docs move <doc-id> (--to <stream-ref> | --top-level) [flags]\n\n" +
+    "Move a doc to another stream; its content, history and threads come with it. --top-level lifts it out of " +
+    "its host instead: it becomes like a channel, private unless --visibility says otherwise, with you as its " +
+    "only member, and only a user key may lift it. Only the doc's creator or a " +
     "workspace admin can move it, so a bot key moves only docs its bot created. A 403 DOC_MOVE_FORBIDDEN means " +
     "the key's user or bot is neither; 400 " +
     "DOC_HOST_TYPE_INVALID or DOC_E2E_HOST_NOT_ALLOWED means the target cannot host docs.\n\n" +
     "Flags:\n" +
-    "  --to ref   the new host: a stream_… id or #channel-slug (required)\n" +
-    "  --json     print the envelope (the doc with its new hostStreamId)\n" +
-    "  --help     show this help",
+    "  --to ref        the new host: a stream_… id or #channel-slug\n" +
+    "  --top-level     lift the doc out of its host\n" +
+    "  --visibility v  private|public|guest_public, with --top-level only (default private)\n" +
+    "  --json          print the envelope (the doc with its new hostStreamId)\n" +
+    "  --help          show this help",
   options: {
     to: { type: "string" },
+    "top-level": { type: "boolean" },
+    visibility: { type: "string" },
   },
   run: async (ctx, positionals, values) => {
     const docId = positionals[0]
     if (!docId) throw new UsageError("docs move requires a <doc-id>")
-    const toStreamRef = stringFlag(values, "to")
-    if (!toStreamRef) throw new UsageError("docs move requires --to <stream-ref>")
-    return moveDoc(ctx.client, ctx.resolver, { docId, toStreamRef })
+    const to = stringFlag(values, "to")
+    const topLevel = boolFlag(values, "top-level")
+    if (Boolean(to) === Boolean(topLevel)) {
+      throw new UsageError("docs move takes one of --to <stream-ref> or --top-level")
+    }
+    const visibility = enumFlag(values, "visibility", VISIBILITIES)
+    if (to && visibility) {
+      throw new UsageError("docs move --visibility is for --top-level; a hosted doc takes its stream's")
+    }
+    return moveDoc(ctx.client, ctx.resolver, { docId, toStreamRef: to ?? null, visibility })
   },
   render: (payload) => {
-    const p = payload as { data?: { id?: string; hostStreamId?: string } }
-    return `moved ${p.data?.id ?? "?"} to ${p.data?.hostStreamId ?? "?"}`
+    const p = payload as { data?: { id?: string; hostStreamId?: string | null } }
+    return `moved ${p.data?.id ?? "?"} to ${hostLabel(p.data?.hostStreamId)}`
   },
 }
 
 export const docsNoun: NounSpec = {
   name: "docs",
-  summary: "List, read, create, edit, check tasks in, comment on, and move docs hosted by streams",
+  summary: "List, read, create, edit, check tasks in, comment on, and move docs",
   verbs: [listVerb, readVerb, editVerb, checkVerb, createVerb, commentVerb, moveVerb],
 }

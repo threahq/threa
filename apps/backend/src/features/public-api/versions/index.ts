@@ -252,6 +252,24 @@ function dropGuestPublicFromSpec(node: unknown): unknown {
   return node
 }
 
+/** Operations returning doc objects, whose `hostStreamId` is null for a top-level doc. */
+const DOC_OBJECT_OPERATIONS = new Set<OperationId>(["listDocs", "getDoc", "createDoc", "moveDoc"])
+
+/** Recursively rewrite the OpenAPI doc schema: `hostStreamId` back to a plain string. */
+function requireDocHostInSpec(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(requireDocHostInSpec)
+  if (node && typeof node === "object") {
+    const obj = node as Record<string, unknown>
+    const out = Object.fromEntries(Object.entries(obj).map(([key, value]) => [key, requireDocHostInSpec(value)]))
+    const props = obj.properties as Record<string, unknown> | undefined
+    if (props && "hostStreamId" in props) {
+      out.properties = { ...(out.properties as Record<string, unknown>), hostStreamId: { type: "string" } }
+    }
+    return out
+  }
+  return node
+}
+
 export const VERSION_CHANGES: VersionChange[] = [
   {
     version: "2026-07-22",
@@ -331,6 +349,24 @@ export const VERSION_CHANGES: VersionChange[] = [
       }
     },
     downgradeSpec: (spec) => dropGuestPublicFromSpec(spec) as OpenApiSpec,
+  },
+  {
+    version: "2026-10-29",
+    description:
+      "Docs can be top-level, with no host stream: such a doc's `hostStreamId` is null. `createDoc` without `streamId` creates one, with an optional `visibility`, and `moveDoc` with a null `toStreamId` lifts a doc to the top level. Pins before this version never see a top-level doc in `listDocs`.",
+    operations: DOC_OBJECT_OPERATIONS,
+    downgradeResponse: (payload, context) => {
+      if (context.operationId !== "listDocs") return payload
+      if (payload === null || typeof payload !== "object") return payload
+      const envelope = payload as Record<string, unknown>
+      if (!Array.isArray(envelope.data)) return payload
+      // As with unclaimed users, a short page keeps `hasMore` and `cursor` from the full listing.
+      return {
+        ...envelope,
+        data: envelope.data.filter((doc) => typeof (doc as Record<string, unknown>).hostStreamId === "string"),
+      }
+    },
+    downgradeSpec: (spec) => requireDocHostInSpec(spec) as OpenApiSpec,
   },
 ]
 

@@ -34,11 +34,13 @@ export async function countDocBlocks(db: Querier, workspaceId: string, docId: st
 export class DynamicNamingDocTarget implements DynamicNamingTargetAdapter {
   constructor(private readonly pool: Pool) {}
 
-  /** Writing a doc is writing its host, so the host answers the naming authority check. */
+  /** Whoever may write the doc may have it titled; a doc takes Yjs writes, never messages. */
+  readonly authorityTypeReadOnly = "none"
+
   async resolveAuthorityStreamId(client: PoolClient, params: DynamicNamingTargetLockParams): Promise<string | null> {
     if (params.targetKind !== "doc") return null
     const doc = await StreamRepository.findById(client, params.workspaceId, params.targetId)
-    return doc?.type === StreamTypes.DOC ? doc.parentStreamId : null
+    return doc?.type === StreamTypes.DOC ? doc.id : null
   }
 
   async lockAndValidate(

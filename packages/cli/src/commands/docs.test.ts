@@ -11,6 +11,10 @@ afterEach(() => {
 const STREAMS_LIST = "/api/v1/workspaces/ws_1/streams"
 const DOCS = "/api/v1/workspaces/ws_1/docs"
 
+function errorCode(result: { stderr: string }): string {
+  return (JSON.parse(result.stderr) as { code: string }).code
+}
+
 function lastCall(): { method?: string; url: URL; body: unknown } {
   const call = fetchSpy.mock.calls.at(-1)!
   const init = call[1] as RequestInit
@@ -128,7 +132,7 @@ test("docs edit with mismatched --old/--new counts is a usage error before any H
   })
 
   expect(result.exitCode).toBe(2)
-  expect((JSON.parse(result.stderr) as { code: string }).code).toBe("USAGE")
+  expect(errorCode(result)).toBe("USAGE")
   expect(fetchSpy).not.toHaveBeenCalled()
 })
 
@@ -154,7 +158,7 @@ test("docs create with --body but no --reason is a usage error before any HTTP",
   const result = await run(["docs", "create", "stream_1", "--body", "hi"], { config: TEST_CONFIG })
 
   expect(result.exitCode).toBe(2)
-  expect((JSON.parse(result.stderr) as { code: string }).code).toBe("USAGE")
+  expect(errorCode(result)).toBe("USAGE")
   expect(fetchSpy).not.toHaveBeenCalled()
 })
 
@@ -183,7 +187,7 @@ test("docs comment without --block is a usage error before any HTTP", async () =
   const result = await run(["docs", "comment", "stream_d1", "--body", "hi"], { config: TEST_CONFIG })
 
   expect(result.exitCode).toBe(2)
-  expect((JSON.parse(result.stderr) as { code: string }).code).toBe("USAGE")
+  expect(errorCode(result)).toBe("USAGE")
   expect(fetchSpy).not.toHaveBeenCalled()
 })
 
@@ -260,7 +264,7 @@ test("docs check with no matching item fails DOC_TASK_NOT_FOUND", async () => {
   const result = await check(["--item", "Ship"])
 
   expect(result.exitCode).toBe(1)
-  expect((JSON.parse(result.stderr) as { code: string }).code).toBe("DOC_TASK_NOT_FOUND")
+  expect(errorCode(result)).toBe("DOC_TASK_NOT_FOUND")
   expect(doc.edits).toEqual([])
 })
 
@@ -376,10 +380,65 @@ test("docs move resolves --to #slug and posts the target stream id", async () =>
   })
 })
 
-test("docs move without --to is a usage error before any HTTP", async () => {
-  const result = await run(["docs", "move", "stream_d1"], { config: TEST_CONFIG })
+test("docs move needs exactly one of --to or --top-level, before any HTTP", async () => {
+  const codes = await Promise.all(
+    [
+      ["docs", "move", "stream_d1"],
+      ["docs", "move", "stream_d1", "--to", "stream_1", "--top-level"],
+    ].map(async (argv) => {
+      const result = await run(argv, { config: TEST_CONFIG })
+      return [result.exitCode, errorCode(result)]
+    })
+  )
 
-  expect(result.exitCode).toBe(2)
-  expect((JSON.parse(result.stderr) as { code: string }).code).toBe("USAGE")
+  expect(codes).toEqual([
+    [2, "USAGE"],
+    [2, "USAGE"],
+  ])
+  expect(fetchSpy).not.toHaveBeenCalled()
+})
+
+test("docs move --top-level lifts the doc with its visibility and names the top level", async () => {
+  fetchSpy.mockResolvedValue(jsonResponse(200, { data: { id: "stream_d1", hostStreamId: null, title: null, seq: 3 } }))
+
+  const result = await run(["docs", "move", "stream_d1", "--top-level", "--visibility", "public", "-o", "text"], {
+    config: TEST_CONFIG,
+  })
+
+  const call = lastCall()
+  expect({ exitCode: result.exitCode, path: call.url.pathname, body: call.body, stdout: result.stdout.trim() }).toEqual(
+    {
+      exitCode: 0,
+      path: `${DOCS}/stream_d1/move`,
+      body: { toStreamId: null, visibility: "public" },
+      stdout: "moved stream_d1 to (top level)",
+    }
+  )
+})
+
+test("docs create without a stream creates a top-level doc with its visibility", async () => {
+  fetchSpy.mockResolvedValue(
+    jsonResponse(201, { data: { id: "stream_d2", hostStreamId: null, title: "Plan", seq: 0 } })
+  )
+
+  const result = await run(["docs", "create", "--title", "Plan", "--visibility", "public", "-o", "text"], {
+    config: TEST_CONFIG,
+  })
+
+  const call = lastCall()
+  expect({ exitCode: result.exitCode, body: call.body, stdout: result.stdout.trim() }).toEqual({
+    exitCode: 0,
+    body: { visibility: "public", title: "Plan" },
+    stdout: "created stream_d2  Plan",
+  })
+})
+
+test("docs create --visibility on a hosted doc is a usage error before any HTTP", async () => {
+  const result = await run(["docs", "create", "stream_1", "--visibility", "public"], { config: TEST_CONFIG })
+
+  expect({ exitCode: result.exitCode, code: errorCode(result) }).toEqual({
+    exitCode: 2,
+    code: "USAGE",
+  })
   expect(fetchSpy).not.toHaveBeenCalled()
 })

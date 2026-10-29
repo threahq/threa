@@ -8724,7 +8724,7 @@
         "operationId": "createDoc",
         "summary": "Create a doc",
         "tags": ["Docs"],
-        "description": "Create a doc under `streamId` as the key's actor (user keys as the owner, workspace keys as the bot). An optional `markdown` body is the first write and needs a `reason`; the host must accept writes from the key (403 STREAM_READ_ONLY otherwise). 400 DOC_HOST_TYPE_INVALID when the stream type cannot host docs. When the body cannot be applied after the doc exists, DOC_CREATE_INCOMPLETE carries the new doc's id.",
+        "description": "Create a doc under `streamId` as the key's actor (user keys as the owner, workspace keys as the bot). Without `streamId` the doc is top-level: private unless `visibility` says otherwise, with the key's user as its only member. Only a user key that may manage channels creates one (403 DOC_TOP_LEVEL_REQUIRES_USER for a workspace key, CHANNEL_MANAGEMENT_FORBIDDEN for a guest). A hosted doc takes its host's visibility (400 DOC_VISIBILITY_INHERITED when `visibility` comes with `streamId`). An optional `markdown` body is the first write and needs a `reason`; the host must accept writes from the key (403 STREAM_READ_ONLY otherwise). 400 DOC_HOST_TYPE_INVALID when the stream type cannot host docs. When the body cannot be applied after the doc exists, DOC_CREATE_INCOMPLETE carries the new doc's id.",
         "security": [{ "apiKey": ["docs:write"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -8745,11 +8745,11 @@
                 "type": "object",
                 "properties": {
                   "streamId": { "type": "string", "minLength": 1, "maxLength": 64 },
+                  "visibility": { "type": "string", "enum": ["public", "guest_public", "private"] },
                   "title": { "type": "string", "minLength": 1, "maxLength": 100 },
                   "markdown": { "type": "string", "minLength": 1, "maxLength": 100000 },
                   "reason": { "type": "string", "minLength": 1, "maxLength": 280 }
                 },
-                "required": ["streamId"],
                 "additionalProperties": false
               }
             }
@@ -9261,7 +9261,7 @@
         "operationId": "moveDoc",
         "summary": "Move a doc to another stream",
         "tags": ["Docs"],
-        "description": "Re-host the doc and its block comment threads under `toStreamId`; they take that stream's access, and share grants carried by messages stay. Only the doc's creator or a workspace admin may move it (403 DOC_MOVE_FORBIDDEN): a user key acts as its user, and a workspace key acts as its bot, so it may move only docs that bot created. The key must also write the doc and the target (403 STREAM_READ_ONLY). 404 NOT_FOUND when the key cannot read the doc or the target. `fromStreamId` is the host the caller saw; 409 DOC_MOVED_CONCURRENTLY when the doc has moved since. 400 DOC_HOST_TYPE_INVALID or DOC_E2E_HOST_NOT_ALLOWED for a target that cannot host docs. Moving to the current host changes nothing.",
+        "description": "Re-host the doc and its block comment threads under `toStreamId`; they take that stream's access, and share grants carried by messages stay. A null `toStreamId` lifts the doc to the top level with `visibility` (private by default) and the key's user as its only member; nesting a top-level doc drops its members. Only a user key lifts a doc (403 DOC_TOP_LEVEL_REQUIRES_USER). Only the doc's creator or a workspace admin may move it (403 DOC_MOVE_FORBIDDEN): a user key acts as its user, and a workspace key acts as its bot, so it may move only docs that bot created. The key must also write the doc and the target (403 STREAM_READ_ONLY). 404 NOT_FOUND when the key cannot read the doc or the target. `fromStreamId` is the host the caller saw (null for the top level); 409 DOC_MOVED_CONCURRENTLY when the doc has moved since. 400 DOC_HOST_TYPE_INVALID or DOC_E2E_HOST_NOT_ALLOWED for a target that cannot host docs. Moving to the current host changes nothing.",
         "security": [{ "apiKey": ["docs:write"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -9288,8 +9288,13 @@
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "properties": {
-                  "toStreamId": { "type": "string", "minLength": 1, "maxLength": 64 },
-                  "fromStreamId": { "type": "string", "minLength": 1, "maxLength": 64 }
+                  "toStreamId": {
+                    "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 64 }, { "type": "null" }]
+                  },
+                  "fromStreamId": {
+                    "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 64 }, { "type": "null" }]
+                  },
+                  "visibility": { "type": "string", "enum": ["public", "guest_public", "private"] }
                 },
                 "required": ["toStreamId"],
                 "additionalProperties": false
@@ -10432,7 +10437,7 @@
         "required": false,
         "schema": {
           "type": "string",
-          "enum": ["2026-07-12", "2026-07-22", "2026-07-24", "2026-08-21", "2026-10-01", "2026-10-04"]
+          "enum": ["2026-07-12", "2026-07-22", "2026-07-24", "2026-08-21", "2026-10-01", "2026-10-04", "2026-10-29"]
         },
         "description": "Selects the dated API version for this request. Each API key is pinned to a version when it is minted, and that pin applies when the header is absent. Send this header to override the pin per request (a valid header always wins). The value must be an exact member of the enum; an unknown or malformed value returns 400 with code INVALID_API_VERSION and the known versions in the error. Every response that resolved a version echoes it in a Threa-Version response header."
       }

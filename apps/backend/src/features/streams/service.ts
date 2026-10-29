@@ -413,6 +413,13 @@ function topLevelDocOwnerId(principal: StreamWritePrincipal): string {
   return principal.userId
 }
 
+function docAlreadyTopLevelError(): HttpError {
+  return new HttpError("The doc is already top-level; change its visibility in its settings", {
+    status: 400,
+    code: "VALIDATION_ERROR",
+  })
+}
+
 function docVisibilityInheritedError(): HttpError {
   return new HttpError("A doc under another stream takes that stream's visibility", {
     status: 400,
@@ -1224,10 +1231,7 @@ export class StreamService {
       }
       if (oldHostId === toStreamId) {
         if (params.visibility === undefined) return doc
-        throw new HttpError("The doc is already top-level; change its visibility in its settings", {
-          status: 400,
-          code: "VALIDATION_ERROR",
-        })
+        throw docAlreadyTopLevelError()
       }
 
       assertViewerStreamWritable(docAuthority.state)
@@ -1326,18 +1330,37 @@ export class StreamService {
     for (const botId of botIds) await this.revokeBotGrant(client, doc, botId)
   }
 
-  /** Who a move of `docId` under `toStreamId` takes read access from and gives it to; the caller must read both. */
+  /**
+   * Who a move of `docId` under `toStreamId`, or to the top level when null, takes read access from and gives
+   * it to; the caller must read the doc and the target.
+   */
   async previewDocMove(params: {
     workspaceId: string
     docId: string
-    toStreamId: string
+    toStreamId: string | null
+    visibility?: Visibility
     userId: string
   }): Promise<DocMovePreviewResponse> {
     const { workspaceId, docId, toStreamId, userId } = params
-    const readable = await listAccessibleStreamIds(this.pool, workspaceId, userId, [docId, toStreamId])
+    const lifting = toStreamId === null
+    if (!lifting && params.visibility !== undefined) throw docVisibilityInheritedError()
+    const readable = await listAccessibleStreamIds(
+      this.pool,
+      workspaceId,
+      userId,
+      lifting ? [docId] : [docId, toStreamId]
+    )
     const doc = readable.has(docId) ? await StreamRepository.findById(this.pool, workspaceId, docId) : null
-    if (doc?.type !== StreamTypes.DOC || !readable.has(toStreamId)) throw new StreamNotFoundError()
-    return countDocMoveReaders(this.pool, workspaceId, docId, toStreamId)
+    if (doc?.type !== StreamTypes.DOC || (!lifting && !readable.has(toStreamId))) throw new StreamNotFoundError()
+    // Mirrors moveDoc: staying put changes nothing, and a visibility there is refused.
+    if (doc.parentStreamId === toStreamId) {
+      if (params.visibility === undefined) return { losing: 0, gaining: 0 }
+      throw docAlreadyTopLevelError()
+    }
+    const destination = lifting
+      ? { visibility: params.visibility ?? TOP_LEVEL_DOC_DEFAULT_VISIBILITY, moverId: userId }
+      : { streamId: toStreamId }
+    return countDocMoveReaders(this.pool, workspaceId, docId, destination)
   }
 
   async createChannel(params: CreateChannelParams): Promise<Stream> {

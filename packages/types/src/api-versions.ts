@@ -10,6 +10,7 @@ export const API_VERSIONS = [
   "2026-08-21",
   "2026-10-01",
   "2026-10-04",
+  "2026-10-29",
 ] as const
 export type ApiVersion = (typeof API_VERSIONS)[number]
 export const CURRENT_API_VERSION: ApiVersion = API_VERSIONS[API_VERSIONS.length - 1]

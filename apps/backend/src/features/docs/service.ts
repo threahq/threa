@@ -398,7 +398,7 @@ export class DocService {
       return docs
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
         .flatMap((doc) =>
-          doc.type === StreamTypes.DOC && doc.parentStreamId
+          doc.type === StreamTypes.DOC
             ? [
                 {
                   docId: doc.id,

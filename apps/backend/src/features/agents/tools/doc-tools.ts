@@ -87,6 +87,7 @@ const REFUSAL_CAUSE = {
   host_cannot_host_docs: "this stream type cannot host docs",
   e2e_host: "encrypted streams cannot host docs",
   title_empty: "the title was empty",
+  visibility_inherited: "a doc under a stream takes that stream's visibility",
 } as const satisfies Record<DocAgentRefusalCode, string>
 
 const WRITTEN_DOC = /^(?:Applied to|Retitled|Created) doc (stream_\w+)(?: ("(?:[^"\\]|\\.)*"))?/

@@ -849,10 +849,10 @@ function paginated(itemSchema: z.ZodType) {
   })
 }
 
-// A doc is a stream of type "doc" hosted by a channel, scratchpad or DM; `seq` counts its writes.
+// A doc is a stream of type "doc", hosted by a channel, scratchpad or DM, or top-level with no host; `seq` counts its writes.
 const docSchema = z.object({
   id: z.string(),
-  hostStreamId: z.string(),
+  hostStreamId: z.string().nullable(),
   title: z.string().nullable(),
   seq: z.number().int(),
   createdAt: z.string().datetime(),
@@ -1961,9 +1961,13 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     summary: "Create a doc",
     description:
       "Create a doc under `streamId` as the key's actor (user keys as the owner, workspace keys as the bot). " +
-      "An optional `markdown` body is the first write and needs a `reason`; the host must accept writes from " +
-      "the key (403 STREAM_READ_ONLY otherwise). 400 DOC_HOST_TYPE_INVALID when the stream type cannot host docs. " +
-      "When the body cannot be applied after the doc exists, DOC_CREATE_INCOMPLETE carries the new doc's id.",
+      "Without `streamId` the doc is top-level: private unless `visibility` says otherwise, with the key's user" +
+      " as its only member. Only a user key that may manage channels creates one (403 " +
+      "DOC_TOP_LEVEL_REQUIRES_USER for a workspace key, CHANNEL_MANAGEMENT_FORBIDDEN for a guest). A hosted doc" +
+      " takes its host's visibility (400 DOC_VISIBILITY_INHERITED when `visibility` comes with `streamId`). An optional `markdown` body is the first write and needs a `reason`; the " +
+      "host must accept writes from the key (403 STREAM_READ_ONLY otherwise). 400 DOC_HOST_TYPE_INVALID when " +
+      "the stream type cannot host docs. When the body cannot be applied after the doc exists, " +
+      "DOC_CREATE_INCOMPLETE carries the new doc's id.",
     tags: ["Docs"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.DOCS_WRITE],
     parameters: [workspaceIdParam],
@@ -2018,12 +2022,15 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     summary: "Move a doc to another stream",
     description:
       "Re-host the doc and its block comment threads under `toStreamId`; they take that stream's access, and " +
-      "share grants carried by messages stay. Only the doc's creator or a workspace admin may move it (403 " +
-      "DOC_MOVE_FORBIDDEN): a user key acts as its user, and a workspace key acts as its bot, so it may move only " +
-      "docs that bot created. The key must also write the doc and the target (403 STREAM_READ_ONLY). 404 " +
-      "NOT_FOUND when the key cannot read the doc or the target. `fromStreamId` is the host the caller saw; 409 " +
-      "DOC_MOVED_CONCURRENTLY when the doc has moved since. 400 DOC_HOST_TYPE_INVALID or DOC_E2E_HOST_NOT_ALLOWED " +
-      "for a target that cannot host docs. Moving to the current host changes nothing.",
+      "share grants carried by messages stay. A null `toStreamId` lifts the doc to the top level with " +
+      "`visibility` (private by default) and the key's user as its only member; nesting a top-level doc drops " +
+      "its members. Only a user key lifts a doc (403 DOC_TOP_LEVEL_REQUIRES_USER). Only the doc's creator or a " +
+      "workspace admin may move it (403 DOC_MOVE_FORBIDDEN): a user key acts as its user, and a workspace key " +
+      "acts as its bot, so it may move only docs that bot created. The key must also write the doc and the " +
+      "target (403 STREAM_READ_ONLY). 404 NOT_FOUND when the key cannot read the doc or the target. " +
+      "`fromStreamId` is the host the caller saw (null for the top level); 409 DOC_MOVED_CONCURRENTLY when the " +
+      "doc has moved since. 400 DOC_HOST_TYPE_INVALID or DOC_E2E_HOST_NOT_ALLOWED for a target that cannot host" +
+      " docs. Moving to the current host changes nothing.",
     tags: ["Docs"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.DOCS_WRITE],
     parameters: [workspaceIdParam, docIdParam],

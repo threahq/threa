@@ -281,25 +281,39 @@ export function docGrantReadableSql(
   )`
 }
 
+/** Where a doc moves: under a stream, or to the top level with a visibility and the mover as its only member. */
+export type DocMoveDestination = { streamId: string } | { visibility: Visibility; moverId: string }
+
 /**
- * How many users a doc's move under `targetStreamId` takes read access from and gives it to. After the
- * move the doc reads through the target's root or a share grant, and grants do not move with it.
+ * How many users a doc's move takes read access from and gives it to. After the move the doc reads through
+ * the destination's root or a share grant, and grants do not move with it.
  */
 export async function countDocMoveReaders(
   db: Querier,
   workspaceId: string,
   docId: string,
-  targetStreamId: string
+  destination: DocMoveDestination
 ): Promise<{ losing: number; gaining: number }> {
   const reader = sql`reader.id`
+  const targetId = "streamId" in destination ? destination.streamId : null
+  const liftedVisibility = "visibility" in destination ? destination.visibility : null
+  // A lifted doc is its own root, so `ids` stands in for that root row: its `visibility` is the doc's to be.
+  const readsDestination =
+    "streamId" in destination
+      ? streamAccessPredicateSql(workspaceId, reader, "ids.target_id", { docGrants: false })
+      : composeSql`(${rootReadableWithoutMembershipSql(workspaceId, reader, "ids")} OR reader.id = ${destination.moverId})`
   const result = await db.query<{ losing: number; gaining: number }>(composeSql`
     WITH reach AS (
       SELECT
         ${streamAccessPredicateSql(workspaceId, reader, "ids.doc_id")} AS reads_doc,
-        ${streamAccessPredicateSql(workspaceId, reader, "ids.target_id", { docGrants: false })} AS reads_target,
+        ${readsDestination} AS reads_target,
         ${docGrantReadableSql(workspaceId, reader, "ids.doc_id")} AS granted
       FROM users reader
-      CROSS JOIN (SELECT ${docId}::text AS doc_id, ${targetStreamId}::text AS target_id) ids
+      CROSS JOIN (
+        SELECT ${docId}::text AS doc_id,
+          ${targetId}::text AS target_id,
+          ${liftedVisibility}::text AS visibility
+      ) ids
       WHERE reader.workspace_id = ${workspaceId}
     )
     SELECT
