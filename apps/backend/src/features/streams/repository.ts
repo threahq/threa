@@ -694,8 +694,9 @@ export const StreamRepository = {
 
   /**
    * Re-homes a doc under `parentStreamId` and re-roots the {@link listDocSubtreeIds} subtree on `root`,
-   * copying the root's settings the way creation does (INV-62). Threads take `threadCompanion`. Returns the
-   * moved ids.
+   * copying the root's settings the way creation does (INV-62). A null parent lifts the doc to the top
+   * level: `root` is then the doc itself, which roots on nothing. Threads take `threadCompanion`. Returns
+   * the moved ids.
    */
   async moveDocSubtree(
     db: Querier,
@@ -703,7 +704,7 @@ export const StreamRepository = {
       workspaceId: string
       docId: string
       fromRootStreamId: string
-      parentStreamId: string
+      parentStreamId: string | null
       root: Pick<Stream, "id" | "visibility" | "memoryMode">
       threadCompanion: { companionMode: CompanionMode; companionPersonaId: string | null }
     }
@@ -714,8 +715,8 @@ export const StreamRepository = {
       composeSql`
       ${docSubtreeCte(params.workspaceId, params.docId, params.fromRootStreamId)}
       UPDATE streams s
-      SET parent_stream_id = CASE WHEN s.id = ${params.docId} THEN ${params.parentStreamId} ELSE s.parent_stream_id END,
-        root_stream_id = ${params.root.id},
+      SET parent_stream_id = CASE WHEN s.id = ${params.docId} THEN ${params.parentStreamId}::text ELSE s.parent_stream_id END,
+        root_stream_id = CASE WHEN s.id = ${params.root.id} THEN NULL ELSE ${params.root.id}::text END,
         visibility = ${params.root.visibility},
         memory_mode = ${params.root.memoryMode},
         companion_mode = CASE WHEN s.type = ${StreamTypes.THREAD} THEN ${companionMode} ELSE s.companion_mode END,

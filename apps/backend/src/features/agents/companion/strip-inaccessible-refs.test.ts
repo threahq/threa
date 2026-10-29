@@ -364,6 +364,7 @@ describe("stripInaccessibleAgentRefs", () => {
       { id: "stream_doc_open", type: "doc", rootStreamId: "stream_target" } as any,
       { id: "stream_doc_private", type: "doc", rootStreamId: "stream_private" } as any,
       { id: "stream_doc_granted", type: "doc", rootStreamId: "stream_private" } as any,
+      { id: "stream_doc_top_level", type: "doc", rootStreamId: null } as any,
       { id: "stream_target", type: "channel", rootStreamId: null } as any,
     ])
 
@@ -371,20 +372,23 @@ describe("stripInaccessibleAgentRefs", () => {
       pool,
       workspaceId: "ws_1",
       targetStreamId: "stream_target",
-      accessibleStreamIds: ["stream_target", "stream_doc_open", "stream_doc_granted"],
+      accessibleStreamIds: ["stream_target", "stream_doc_open", "stream_doc_granted", "stream_doc_top_level"],
       contentJson: doc(
         paragraph(
           docEmbedNode("stream_doc_open"),
           docEmbedNode("stream_doc_private"),
           docEmbedNode("stream_doc_granted"),
+          docEmbedNode("stream_doc_top_level"),
           docEmbedNode("stream_target")
         )
       ),
     })
 
+    // A top-level doc in scope may be there through a grant alone: the scope cannot tell, so it drops.
     expect(result.dropped).toEqual([
       { type: "docEmbed", reason: "doc-out-of-scope", ids: { docId: "stream_doc_private" } },
       { type: "docEmbed", reason: "doc-out-of-scope", ids: { docId: "stream_doc_granted" } },
+      { type: "docEmbed", reason: "doc-out-of-scope", ids: { docId: "stream_doc_top_level" } },
       { type: "docEmbed", reason: "doc-not-found", ids: { docId: "stream_target" } },
     ])
     expect(JSON.stringify(result.contentJson)).toContain("stream_doc_open")

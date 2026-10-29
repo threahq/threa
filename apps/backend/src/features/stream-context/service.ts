@@ -81,7 +81,7 @@ export function createStreamContextService({ pool }: Dependencies) {
     // Only a doc can be read without its root: a share grant reads the doc, not its host's index.
     if (
       stream.type === StreamTypes.DOC &&
-      !(await checkStreamAccess(pool, rootStreamId, params.workspaceId, params.userId))
+      !(await checkStreamAccess(pool, rootStreamId, params.workspaceId, params.userId, { docGrants: false }))
     ) {
       throw notFound
     }

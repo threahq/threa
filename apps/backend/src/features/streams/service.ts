@@ -36,6 +36,7 @@ import {
   listAccessibleStreamIds,
   usersReadingWithoutMembership,
   type ReaderScope,
+  type StreamAccessOptions,
 } from "./access"
 import { findGuestPolicyClosedDmIds, isGuestDmOpenForUsers } from "./guest-dm-policy"
 import { resolveInboxClearMode } from "./inbox-clear-mode"
@@ -47,6 +48,7 @@ import {
   assertViewerStreamWritable,
   canHostAside,
   createStreamReadOnlyError,
+  isChannelLike,
   deriveStreamViewerState,
   lockEffectiveStreams,
   resolveLockedStreamAuthorities,
@@ -274,7 +276,10 @@ const createAsideParamsSchema = z.object({
 
 export interface CreateDocParams {
   workspaceId: string
-  parentStreamId: string
+  /** The host; omitted, the doc sits at the top level with its own members and visibility. */
+  parentStreamId?: string
+  /** Top-level docs only: a nested doc takes its root's. Defaults to private. */
+  visibility?: Visibility
   principal: StreamWritePrincipal
   displayName?: string
 }
@@ -282,9 +287,11 @@ export interface CreateDocParams {
 export interface MoveDocParams {
   workspaceId: string
   docId: string
-  /** The host the caller saw; omitted, the current host is taken as seen. */
-  fromStreamId?: string
-  toStreamId: string
+  /** The host the caller saw, null for the top level; omitted, the current host is taken as seen. */
+  fromStreamId?: string | null
+  /** The new host; null lifts the doc to the top level, where it takes `visibility` and the mover joins. */
+  toStreamId: string | null
+  visibility?: Visibility
   principal: StreamWritePrincipal
   /** Resolved by the caller's auth path; a bot principal is never an admin. */
   isWorkspaceAdmin: boolean
@@ -393,6 +400,20 @@ async function assertCanHostDocs(db: Querier, workspaceId: string, host: Pick<St
   }
 }
 
+function topLevelDocRequiresUserError(): HttpError {
+  return new HttpError("Only a person can own a top-level doc", {
+    status: 403,
+    code: DocErrorCodes.TOP_LEVEL_REQUIRES_USER,
+  })
+}
+
+function docVisibilityInheritedError(): HttpError {
+  return new HttpError("A doc under another stream takes that stream's visibility", {
+    status: 400,
+    code: DocErrorCodes.VISIBILITY_INHERITED,
+  })
+}
+
 async function lockLifecycleStreams(
   client: Querier,
   workspaceId: string,
@@ -465,12 +486,22 @@ export class StreamService {
   }
 
   /** Like {@link validateStreamAccess} but returns null instead of throwing. */
-  async tryAccess(streamId: string, workspaceId: string, userId: string): Promise<Stream | null> {
-    return this.checkAccess(streamId, workspaceId, userId)
+  async tryAccess(
+    streamId: string,
+    workspaceId: string,
+    userId: string,
+    options?: StreamAccessOptions
+  ): Promise<Stream | null> {
+    return this.checkAccess(streamId, workspaceId, userId, options)
   }
 
-  private async checkAccess(streamId: string, workspaceId: string, userId: string): Promise<Stream | null> {
-    return withClient(this.pool, async (client) => checkStreamAccess(client, streamId, workspaceId, userId))
+  private async checkAccess(
+    streamId: string,
+    workspaceId: string,
+    userId: string,
+    options?: StreamAccessOptions
+  ): Promise<Stream | null> {
+    return withClient(this.pool, async (client) => checkStreamAccess(client, streamId, workspaceId, userId, options))
   }
 
   async getScratchpadsByUser(workspaceId: string, userId: string): Promise<Stream[]> {
@@ -763,12 +794,10 @@ export class StreamService {
         })
       }
       case StreamTypes.DOC: {
-        if (!params.parentStreamId) {
-          throw new Error("parentStreamId is required for docs")
-        }
         return this.createDoc({
           workspaceId: params.workspaceId,
           parentStreamId: params.parentStreamId,
+          visibility: params.visibility,
           displayName: params.displayName,
           principal: { kind: "user", userId: params.createdBy },
         })
@@ -1055,12 +1084,14 @@ export class StreamService {
    * root, so access and write authority resolve through it unchanged (INV-62).
    */
   async createDoc(params: CreateDocParams): Promise<Stream> {
-    const { principal } = params
+    const { principal, parentStreamId } = params
+    if (!parentStreamId) return this.createTopLevelDoc(params)
+    if (params.visibility !== undefined) throw docVisibilityInheritedError()
     const createdBy = principalActorId(principal)
     return withTransaction(this.pool, async (client) => {
       const [authority] = await resolveLockedStreamAuthorities(client, {
         workspaceId: params.workspaceId,
-        streamIds: [params.parentStreamId],
+        streamIds: [parentStreamId],
         principal,
       })
       if (!authority) throw new StreamNotFoundError()
@@ -1117,35 +1148,61 @@ export class StreamService {
     })
   }
 
+  /** A top-level doc is its own root, like a channel: the creator joins, and others join to edit. */
+  private async createTopLevelDoc(params: CreateDocParams): Promise<Stream> {
+    const { workspaceId, principal } = params
+    if (principal.kind !== "user") throw topLevelDocRequiresUserError()
+    return withTransaction(this.pool, async (client) => {
+      await assertUserMayManageChannels(client, workspaceId, principal.userId)
+      const stream = await StreamRepository.insert(client, {
+        id: streamId(),
+        workspaceId,
+        type: StreamTypes.DOC,
+        visibility: params.visibility ?? Visibilities.PRIVATE,
+        createdBy: principal.userId,
+        displayName: params.displayName,
+        displayNameUpdatedByUserId: principal.userId,
+      })
+      await DocRepository.insertHead(client, { workspaceId, streamId: stream.id })
+      await StreamMemberRepository.insert(client, workspaceId, stream.id, principal.userId)
+      await OutboxRepository.insert(client, "stream:created", { workspaceId, streamId: stream.id, stream })
+      return stream
+    })
+  }
+
   /**
-   * Re-hosts a doc and its section threads under `toStreamId`; they take the new root's access (INV-62).
-   * Only the doc's creator or a workspace admin may move it, and they must write the doc and post in the
-   * target. `fromStreamId` pins the host the caller saw. A share grant stays, since it rides its message.
+   * Re-hosts a doc and its section threads under `toStreamId`, or lifts them to the top level with the doc
+   * as their root; they take the new root's access (INV-62). Only the doc's creator or a workspace admin may
+   * move it, and they must write the doc and post in the target. `fromStreamId` pins the host the caller saw.
+   * A share grant stays, since it rides its message.
    */
   async moveDoc(params: MoveDocParams): Promise<Stream> {
     const { workspaceId, docId, toStreamId, principal } = params
+    if (toStreamId === null && principal.kind !== "user") throw topLevelDocRequiresUserError()
+    if (toStreamId !== null && params.visibility !== undefined) throw docVisibilityInheritedError()
     return withTransaction(this.pool, async (client) => {
       // The subtree's rows join the ordered lock so the re-root below takes no lock out of order.
       const seen = await StreamRepository.findById(client, workspaceId, docId)
       const seenSubtreeIds =
-        seen?.type === StreamTypes.DOC && seen.rootStreamId
-          ? await StreamRepository.listDocSubtreeIds(client, workspaceId, docId, seen.rootStreamId)
+        seen?.type === StreamTypes.DOC
+          ? await StreamRepository.listDocSubtreeIds(client, workspaceId, docId, seen.rootStreamId ?? docId)
           : []
       const authorities = await resolveLockedStreamAuthorities(client, {
         workspaceId,
-        streamIds: [docId, toStreamId],
+        streamIds: toStreamId ? [docId, toStreamId] : [docId],
         alsoLockIds: seenSubtreeIds,
         principal,
         // Hosting types post messages freely; the doc itself takes Yjs writes, never messages.
         typeReadOnly: "none",
       })
       const docAuthority = authorities.find(({ target }) => target.id === docId)
-      const targetAuthority = authorities.find(({ target }) => target.id === toStreamId)
-      if (docAuthority?.target.type !== StreamTypes.DOC || !targetAuthority) throw new StreamNotFoundError()
+      const targetAuthority = toStreamId ? authorities.find(({ target }) => target.id === toStreamId) : null
+      if (docAuthority?.target.type !== StreamTypes.DOC || targetAuthority === undefined) {
+        throw new StreamNotFoundError()
+      }
       const doc = docAuthority.target
       const oldHostId = doc.parentStreamId
-      const oldRootId = doc.rootStreamId
-      if (!oldHostId || !oldRootId) throw new Error(`Doc ${doc.id} has no host stream`)
+      const oldRootId = doc.rootStreamId ?? doc.id
 
       const mover = principalActorId(principal)
       if (doc.createdBy !== mover && !(principal.kind === "user" && params.isWorkspaceAdmin)) {
@@ -1163,10 +1220,15 @@ export class StreamService {
       }
       if (oldHostId === toStreamId) return doc
 
-      const { target, root } = targetAuthority
-      await assertCanHostDocs(client, workspaceId, target)
       assertViewerStreamWritable(docAuthority.state)
-      assertViewerStreamWritable(targetAuthority.state)
+      if (targetAuthority) {
+        await assertCanHostDocs(client, workspaceId, targetAuthority.target)
+        assertViewerStreamWritable(targetAuthority.state)
+      } else {
+        await assertUserMayManageChannels(client, workspaceId, mover)
+      }
+      const target = targetAuthority?.target ?? null
+      const root = targetAuthority?.root ?? { ...doc, visibility: params.visibility ?? Visibilities.PRIVATE }
 
       // A thread committed under the doc after the unlocked read: lock it now, after the ordered set. A
       // cycle that opens is a deadlock, which withTransaction retries.
@@ -1181,7 +1243,7 @@ export class StreamService {
         workspaceId,
         docId,
         fromRootStreamId: oldRootId,
-        parentStreamId: target.id,
+        parentStreamId: target?.id ?? null,
         root,
         threadCompanion,
       })
@@ -1189,10 +1251,13 @@ export class StreamService {
       if (!moved) throw new StreamNotFoundError()
 
       await StreamContextRepository.reRootStreams(client, workspaceId, movedStreamIds, root.id)
-      await StreamContextRepository.deleteHostedDoc(client, workspaceId, oldHostId, docId)
+      if (oldHostId) await StreamContextRepository.deleteHostedDoc(client, workspaceId, oldHostId, docId)
       await endSessionLinksForStreams(client, { workspaceId, streamIds: movedStreamIds, cause: "doc_moved" })
+      // Nested, the doc reads through its root; its own rows would outlive the access they once granted.
+      if (!oldHostId) await StreamMemberRepository.deleteAllForStream(client, workspaceId, docId)
+      if (!target) await this.addToStream(client, moved, mover, mover)
 
-      const payload = { docId, fromStreamId: oldHostId, toStreamId: target.id } satisfies DocMovedEventPayload
+      const payload = { docId, fromStreamId: oldHostId, toStreamId: target?.id ?? null } satisfies DocMovedEventPayload
       const appendMoved = async (hostId: string) => {
         const event = await StreamEventRepository.insert(client, {
           id: eventId(),
@@ -1213,17 +1278,19 @@ export class StreamService {
         })
         return event
       }
-      await appendMoved(oldHostId)
-      const targetEvent = await appendMoved(target.id)
-      await StreamContextRepository.insertMany(client, [
-        hostedDocContextRow({
-          workspaceId,
-          hostStreamId: target.id,
-          rootStreamId: root.id,
-          docId,
-          createdEvent: targetEvent,
-        }),
-      ])
+      if (oldHostId) await appendMoved(oldHostId)
+      if (target) {
+        const targetEvent = await appendMoved(target.id)
+        await StreamContextRepository.insertMany(client, [
+          hostedDocContextRow({
+            workspaceId,
+            hostStreamId: target.id,
+            rootStreamId: root.id,
+            docId,
+            createdEvent: targetEvent,
+          }),
+        ])
+      }
       await OutboxRepository.insert(client, "access:narrowed", { workspaceId, streamId: docId })
       return moved
     })
@@ -2573,7 +2640,7 @@ export class StreamService {
       }
 
       const joinable =
-        stream.type === StreamTypes.CHANNEL &&
+        isChannelLike(stream) &&
         (await usersReadingWithoutMembership(client, workspaceId, stream.visibility, [memberId])).has(memberId)
       if (!joinable) {
         throw new HttpError("Can only join public channels", { status: 403, code: "NOT_PUBLIC_CHANNEL" })

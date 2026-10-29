@@ -359,5 +359,41 @@ describe("Stream Settings E2E", () => {
         visibility: "guest_public",
       })
     })
+
+    test("should set a top-level doc's visibility and refuse one on a hosted doc", async () => {
+      const client = new TestClient()
+      await loginAs(client, testEmail("vis-doc-owner"), "Visibility Doc Owner")
+      const workspace = await createWorkspace(client, `Visibility Doc WS ${testRunId}`)
+      const channel = await createChannel(client, workspace.id, `vis-doc-ch-${testRunId}`, "private")
+      const streamsPath = `/api/workspaces/${workspace.id}/streams`
+
+      const topLevel = await client.post<{ stream: { id: string; visibility: string } }>(streamsPath, {
+        type: "doc",
+        visibility: "public",
+      })
+      const hosted = await client.post<{ stream: { id: string } }>(streamsPath, {
+        type: "doc",
+        parentStreamId: channel.id,
+      })
+      const hostedWithVisibility = await client.post(streamsPath, {
+        type: "doc",
+        parentStreamId: channel.id,
+        visibility: "public",
+      })
+      const narrowed = await updateStream(client, workspace.id, topLevel.data.stream.id, { visibility: "private" })
+      const hostedUpdate = await updateStream(client, workspace.id, hosted.data.stream.id, { visibility: "public" })
+
+      expect({
+        created: [topLevel.status, topLevel.data.stream.visibility],
+        hostedWithVisibility: hostedWithVisibility.status,
+        narrowed: [narrowed.status, (await getStream(client, workspace.id, topLevel.data.stream.id)).visibility],
+        hostedUpdate: hostedUpdate.status,
+      }).toEqual({
+        created: [201, "public"],
+        hostedWithVisibility: 400,
+        narrowed: [200, "private"],
+        hostedUpdate: 400,
+      })
+    })
   })
 })

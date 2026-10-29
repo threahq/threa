@@ -56,7 +56,6 @@ const DRAFT_ID_PATTERN = /^draft_[A-Za-z0-9]{1,64}$/
 const DOC_UNSUPPORTED_CREATE_FIELDS = [
   "slug",
   "description",
-  "visibility",
   "companionMode",
   "companionPersonaId",
   "memberIds",
@@ -142,9 +141,9 @@ const createStreamSchema = z
     message: "parentStreamId is required for asides",
     path: ["parentStreamId"],
   })
-  .refine((data) => data.type !== "doc" || !!data.parentStreamId, {
-    message: "parentStreamId is required for docs",
-    path: ["parentStreamId"],
+  .refine((data) => data.type !== "doc" || !data.parentStreamId || data.visibility === undefined, {
+    message: "A doc under another stream takes that stream's visibility",
+    path: ["visibility"],
   })
   .refine((data) => data.type !== "doc" || data.parentAnchorId === undefined, {
     message: "A doc has no anchor",
@@ -440,8 +439,13 @@ const disallowedUpdateFields: Record<StreamType, Record<string, string> | null> 
   },
 }
 
-function updateSchemaForType(streamType: StreamType) {
-  const disallowed = disallowedUpdateFields[streamType]
+const disallowedTopLevelDocUpdateFields = { slug: "Docs do not have slugs" }
+
+function updateSchemaFor(stream: { type: StreamType; parentStreamId: string | null }) {
+  const disallowed =
+    stream.type === StreamTypes.DOC && !stream.parentStreamId
+      ? disallowedTopLevelDocUpdateFields
+      : disallowedUpdateFields[stream.type]
   if (disallowed === null) return null
 
   return updateStreamSchema.superRefine((data, ctx) => {
@@ -682,7 +686,7 @@ export function createStreamHandlers({
 
       const stream = await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
-      const schema = updateSchemaForType(stream.type)
+      const schema = updateSchemaFor(stream)
       if (!schema) {
         await streamService.assertWritable(streamId, workspaceId, { kind: "user", userId })
         throw new HttpError("Cannot update this stream type", { status: 403, code: "STREAM_IMMUTABLE" })
@@ -965,10 +969,10 @@ export function createStreamHandlers({
       const afterSequence = query.after ? BigInt(query.after) : undefined
 
       const stream = await streamService.validateStreamAccess(streamId, workspaceId, userId)
-      // A doc read through a share grant alone shows nothing of its host.
+      // A doc read through a share grant alone shows nothing of its host, nor its members when it has none.
       const hostHidden =
         stream.type === StreamTypes.DOC &&
-        !(await streamService.tryAccess(stream.rootStreamId ?? stream.id, workspaceId, userId))
+        !(await streamService.tryAccess(stream.rootStreamId ?? stream.id, workspaceId, userId, { docGrants: false }))
 
       // Start the scratchpad tool-policy reads now so they run alongside the
       // rest of bootstrap instead of serially after enrichment. Only scratchpads

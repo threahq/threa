@@ -2403,11 +2403,11 @@ export interface DocCreatedEventPayload {
   createdBy: string
 }
 
-/** Payload for `doc:moved`, written in both the old and the new host (broadcast, INV-61). */
+/** Payload for `doc:moved`, written in the old and the new host, whichever exist (broadcast, INV-61). Null = the top level. */
 export interface DocMovedEventPayload {
   docId: string
-  fromStreamId: string
-  toStreamId: string
+  fromStreamId: string | null
+  toStreamId: string | null
 }
 
 /** Who a move changes read access for; users only. */

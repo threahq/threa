@@ -281,14 +281,15 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
   // two participants; private streams (scratchpads, asides, private channels)
   // to the creator only (additional members learn via stream:member_added);
   // open streams to their audience plus the creator, who may be a guest outside
-  // it. Docs go to their host's audience like threads. The anchored branch is
+  // it. A nested doc goes to its host's audience like a thread; a top-level one
+  // routes like a channel. The anchored branch is
   // thread-only: an aside is anchored too, but routing it to the parent's
   // audience would broadcast a private stream to every host-stream member.
   if (isOutboxEventType(event, "stream:created")) {
     const payload = event.payload as StreamCreatedOutboxPayload
     const sharesParentAudience =
       (payload.stream.parentAnchorId && payload.stream.type === StreamTypes.THREAD) ||
-      payload.stream.type === StreamTypes.DOC
+      (payload.stream.type === StreamTypes.DOC && payload.stream.parentStreamId)
     if (sharesParentAudience) {
       return [streamGroup(payload.stream.parentStreamId ?? payload.streamId)]
     }
@@ -514,10 +515,12 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
     return [permissionScopedGroup]
   }
 
-  // A move reaches each host's room and the doc's own readers, who may hold neither host open.
+  // A move reaches each host's room and the doc's own readers, who may hold neither host open. A doc lifted
+  // to the top level also reaches its new open audience, like a created channel.
   if (isOutboxEventType(event, "stream:doc_moved")) {
     const { streamId, doc } = event.payload as StreamDocMovedOutboxPayload
-    return [streamGroup(streamId), streamGroup(doc.id), docReadersGroup(doc.id)]
+    const groups = [streamGroup(streamId), streamGroup(doc.id), docReadersGroup(doc.id)]
+    return doc.parentStreamId ? groups : [...groups, ...openAudienceGroups(doc.visibility)]
   }
 
   if (isStreamScopedEvent(event)) {

@@ -40,14 +40,19 @@ export async function assertUserMayManageChannels(db: Querier, workspaceId: stri
   })
 }
 
+/** A channel, or a doc at the top level: a shared root people join and that guests cannot manage. */
+export function isChannelLike(stream: Pick<AuthorityStream, "type" | "rootStreamId">): boolean {
+  return stream.type === StreamTypes.CHANNEL || (stream.type === StreamTypes.DOC && !stream.rootStreamId)
+}
+
 /** Bots and API keys pass: channel management is a restriction on user principals only. */
 export async function assertPrincipalMayManageChannel(
   db: Querier,
   workspaceId: string,
-  stream: Pick<AuthorityStream, "type">,
+  stream: Pick<AuthorityStream, "type" | "rootStreamId">,
   principal: StreamWritePrincipal
 ): Promise<void> {
-  if (stream.type !== StreamTypes.CHANNEL || principal.kind !== "user") return
+  if (!isChannelLike(stream) || principal.kind !== "user") return
   await assertUserMayManageChannels(db, workspaceId, principal.userId)
 }
 

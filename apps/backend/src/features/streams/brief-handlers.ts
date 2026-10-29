@@ -41,7 +41,10 @@ export function createStreamBriefHandlers({ pool, streamBriefService }: Dependen
       if (!stream) throw new StreamNotFoundError()
       const briefStreamId = resolveBriefStreamId(stream)
       // Only a doc can be read without its root: a share grant reads the doc, not its host's brief.
-      if (stream.type === StreamTypes.DOC && !(await checkStreamAccess(pool, briefStreamId, workspaceId, userId))) {
+      if (
+        stream.type === StreamTypes.DOC &&
+        !(await checkStreamAccess(pool, briefStreamId, workspaceId, userId, { docGrants: false }))
+      ) {
         throw new StreamNotFoundError()
       }
 

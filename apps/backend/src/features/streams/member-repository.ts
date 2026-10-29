@@ -216,6 +216,10 @@ export const StreamMemberRepository = {
     return result.rowCount !== null && result.rowCount > 0
   },
 
+  async deleteAllForStream(db: Querier, workspaceId: string, streamId: string): Promise<void> {
+    await db.query(sql`DELETE FROM stream_members WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}`)
+  },
+
   async countByStreamForUpdate(db: Querier, workspaceId: string, streamId: string): Promise<number> {
     // Lock rows first, then count — FOR UPDATE can't be used with aggregates
     const result = await db.query<{ count: string }>(sql`

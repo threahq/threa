@@ -79,13 +79,14 @@ export interface StreamAccessOptions {
 
 /**
  * Whether an access scope (an agent's `accessibleStreamIds`) reads a doc without a share grant: the scope
- * already holds grant-reached docs, and only the doc's root says the scope reads it on its own.
+ * already holds grant-reached docs, and only the doc's root says the scope reads it on its own. A top-level
+ * doc is its own root, so the scope cannot tell its own reach from a grant's: it fails closed.
  */
 export function scopeReadsDocWithoutGrant(
   scope: ReadonlySet<string>,
   doc: Pick<Stream, "id" | "rootStreamId">
 ): boolean {
-  return scope.has(doc.id) && scope.has(doc.rootStreamId ?? doc.id)
+  return doc.rootStreamId !== null && scope.has(doc.id) && scope.has(doc.rootStreamId)
 }
 
 /**
