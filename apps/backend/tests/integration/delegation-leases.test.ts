@@ -72,6 +72,8 @@ async function raceTransactions<T, U>(
   const clients = await Promise.all([pool.connect(), pool.connect()])
   try {
     await Promise.all(clients.map((client) => client.query("BEGIN ISOLATION LEVEL SERIALIZABLE")))
+    // BEGIN alone does not establish a snapshot, so pin both before either racing mutation can commit.
+    await Promise.all(clients.map((client) => client.query("SELECT 1 FROM delegated_tasks LIMIT 1")))
     const results = await Promise.allSettled([
       left(clients[0]).then(async (value) => (await clients[0].query("COMMIT"), value)),
       right(clients[1]).then(async (value) => (await clients[1].query("COMMIT"), value)),
