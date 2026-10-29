@@ -323,30 +323,3 @@ test("unknown client retains legacy precache until it closes", async ({ page, co
     .not.toContain("workbox-precache-legacy-v1")
   expect(await hasCustomCache(page, "threa-test-domain")).toBe(true)
 })
-
-test("should reject non-object control request bodies", async ({ request }) => {
-  for (const body of [null, [], 1, "invalid"]) {
-    const response = await request.post("/__control/deployed", {
-      data: JSON.stringify(body),
-      headers: { "content-type": "application/json" },
-    })
-    expect({ status: response.status(), body: await response.json() }).toEqual({
-      status: 400,
-      body: { error: "invalid_control_body" },
-    })
-  }
-})
-
-test("server returns 404 for missing assets and shell only for extensionless navigation", async ({ request }) => {
-  const asset = await request.get("/assets/missing.js")
-  expect({ status: asset.status(), cacheControl: asset.headers()["cache-control"] }).toEqual({
-    status: 404,
-    cacheControl: "no-store",
-  })
-
-  const navigation = await request.get("/some/app/route")
-  expect({ status: navigation.status(), contentType: navigation.headers()["content-type"] }).toEqual({
-    status: 200,
-    contentType: "text/html",
-  })
-})

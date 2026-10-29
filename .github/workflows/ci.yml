@@ -354,10 +354,14 @@ jobs:
         run: bun run --cwd apps/frontend build
 
   app-update-browser:
-    name: App Update Browser Proof
+    name: App Update Browser Proof (${{ matrix.browser }})
     needs: check-main-tip
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
     # The image ships the browsers' system packages. `playwright install-deps`
     # on the runner fetches them from the Azure Ubuntu mirror, which has stalled
     # past the job timeout and cancelled main's CI (no Cloudflare deploy).
@@ -384,10 +388,10 @@ jobs:
       # A no-op while the lockfile matches the image; after a Playwright bump it
       # fetches the matching browsers from the CDN, no apt involved.
       - name: Install Playwright browsers
-        run: bunx playwright install chromium firefox
+        run: bunx playwright install ${{ matrix.browser }}
 
       - name: Run app-update browser proof
-        run: bun run test:app-update
+        run: bun run test:app-update --project=${{ matrix.browser }}
         env:
           CI: true
 

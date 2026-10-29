@@ -12,38 +12,7 @@ export interface BuildInfo {
   buildRoot: string
 }
 
-const info: BuildInfo = JSON.parse(readFileSync(join(__dirname, ".build-info.json"), "utf-8"))
-
 const controlBodySchema = z.record(z.string(), z.unknown())
-
-const state = {
-  deployed: "A" as string,
-  latest: "A" as string,
-  failWorker: false,
-  failAssetPaths: new Set<string>(),
-  corruptAssetPaths: new Set<string>(),
-  stallBootstrapMs: 0,
-  bootstrapInFlight: 0,
-}
-
-function generation() {
-  const g = info.generations[state.deployed]
-  if (!g) throw new Error(`unknown deployed generation: ${state.deployed}`)
-  return g
-}
-
-function filePath(urlPath: string): string | null {
-  const g = generation()
-  if (urlPath === "/" || urlPath === "/index.html") return join(g.dist, "index.html")
-  if (urlPath === "/sw.js") return join(g.dist, "sw.js")
-  if (urlPath === "/version.json") return null // generated from state.latest
-
-  const candidate = resolve(g.dist, `.${urlPath}`)
-  if (candidate === g.dist || candidate.startsWith(g.dist + sep)) {
-    if (existsSync(candidate) && statSync(candidate).isFile()) return candidate
-  }
-  return urlPath.split("/").pop()?.includes(".") ? null : join(g.dist, "index.html")
-}
 
 function contentType(path: string): string {
   if (path.endsWith(".js") || path.endsWith(".mjs")) return "application/javascript"
@@ -57,153 +26,187 @@ function contentType(path: string): string {
   return "application/octet-stream"
 }
 
-async function handleControl(req: Request): Promise<Response> {
-  const url = new URL(req.url)
-  const path = url.pathname
-
-  if (path === "/__control/state" && req.method === "GET") {
-    return Response.json({
-      deployed: state.deployed,
-      latest: state.latest,
-      failWorker: state.failWorker,
-      bootstrapInFlight: state.bootstrapInFlight,
-      failAssets: [...state.failAssetPaths],
-      corruptAssets: [...state.corruptAssetPaths],
-      generations: Object.fromEntries(
-        Object.entries(info.generations).map(([k, g]) => [
-          k,
-          {
-            version: g.version,
-            buildId: g.buildId,
-            entryAsset: g.entryAsset,
-          },
-        ])
-      ),
-    })
+export function startAppUpdateServer(info: BuildInfo, port = 0): Server {
+  const state = {
+    deployed: "A" as string,
+    latest: "A" as string,
+    failWorker: false,
+    failAssetPaths: new Set<string>(),
+    corruptAssetPaths: new Set<string>(),
+    stallBootstrapMs: 0,
+    bootstrapInFlight: 0,
   }
 
-  if (req.method !== "POST") return new Response("method not allowed", { status: 405 })
-
-  let input: unknown = {}
-  try {
-    const text = await req.text()
-    if (text) input = JSON.parse(text)
-  } catch {
-    return Response.json({ error: "invalid_control_body" }, { status: 400 })
-  }
-  const parsed = controlBodySchema.safeParse(input)
-  if (!parsed.success) return Response.json({ error: "invalid_control_body" }, { status: 400 })
-  const body = parsed.data
-
-  if (path === "/__control/deployed") {
-    if (typeof body.version === "string") state.deployed = body.version
-  } else if (path === "/__control/latest") {
-    if (typeof body.version === "string") state.latest = body.version
-  } else if (path === "/__control/fail-worker") {
-    state.failWorker = body.fail === true
-  } else if (path === "/__control/fail-asset") {
-    if (typeof body.path === "string") state.failAssetPaths.add(body.path)
-  } else if (path === "/__control/clear-fail-asset") {
-    if (typeof body.path === "string") state.failAssetPaths.delete(body.path)
-  } else if (path === "/__control/corrupt-asset") {
-    if (typeof body.path === "string") state.corruptAssetPaths.add(body.path)
-  } else if (path === "/__control/clear-corrupt-asset") {
-    if (typeof body.path === "string") state.corruptAssetPaths.delete(body.path)
-  } else if (path === "/__control/stall-bootstrap") {
-    state.stallBootstrapMs = typeof body.ms === "number" ? body.ms : 0
-  } else if (path === "/__control/reset") {
-    state.stallBootstrapMs = 0
-    state.deployed = "A"
-    state.latest = "A"
-    state.failWorker = false
-    state.failAssetPaths.clear()
-    state.corruptAssetPaths.clear()
-  } else {
-    return new Response("unknown control command", { status: 404 })
+  function generation() {
+    const g = info.generations[state.deployed]
+    if (!g) throw new Error(`unknown deployed generation: ${state.deployed}`)
+    return g
   }
 
-  return Response.json({ ok: true })
-}
+  function filePath(urlPath: string): string | null {
+    const g = generation()
+    if (urlPath === "/" || urlPath === "/index.html") return join(g.dist, "index.html")
+    if (urlPath === "/sw.js") return join(g.dist, "sw.js")
+    if (urlPath === "/version.json") return null // generated from state.latest
 
-const port = process.env.APP_UPDATE_SERVER_PORT ? Number(process.env.APP_UPDATE_SERVER_PORT) : 0
+    const candidate = resolve(g.dist, `.${urlPath}`)
+    if (candidate === g.dist || candidate.startsWith(g.dist + sep)) {
+      if (existsSync(candidate) && statSync(candidate).isFile()) return candidate
+    }
+    return urlPath.split("/").pop()?.includes(".") ? null : join(g.dist, "index.html")
+  }
 
-const server: Server = Bun.serve({
-  hostname: "127.0.0.1",
-  port,
-  idleTimeout: 60,
-  async fetch(req) {
+  async function handleControl(req: Request): Promise<Response> {
     const url = new URL(req.url)
-    const pathname = url.pathname
+    const path = url.pathname
 
-    if (pathname.startsWith("/__control/")) return handleControl(req)
-    if (pathname === "/__ready") return new Response("ok")
-
-    if (pathname === "/recover/blank.html") {
-      return new Response("<!doctype html><title>blank</title>", {
-        headers: { "content-type": "text/html", "cache-control": "no-store" },
+    if (path === "/__control/state" && req.method === "GET") {
+      return Response.json({
+        deployed: state.deployed,
+        latest: state.latest,
+        failWorker: state.failWorker,
+        bootstrapInFlight: state.bootstrapInFlight,
+        failAssets: [...state.failAssetPaths],
+        corruptAssets: [...state.corruptAssetPaths],
+        generations: Object.fromEntries(
+          Object.entries(info.generations).map(([k, g]) => [
+            k,
+            {
+              version: g.version,
+              buildId: g.buildId,
+              entryAsset: g.entryAsset,
+            },
+          ])
+        ),
       })
     }
 
-    if (pathname.startsWith("/api/workspaces/") && pathname.endsWith("/bootstrap")) {
-      state.bootstrapInFlight++
-      try {
-        await new Promise((resolve) => setTimeout(resolve, state.stallBootstrapMs))
-      } finally {
-        state.bootstrapInFlight--
+    if (req.method !== "POST") return new Response("method not allowed", { status: 405 })
+
+    let input: unknown = {}
+    try {
+      const text = await req.text()
+      if (text) input = JSON.parse(text)
+    } catch {
+      return Response.json({ error: "invalid_control_body" }, { status: 400 })
+    }
+    const parsed = controlBodySchema.safeParse(input)
+    if (!parsed.success) return Response.json({ error: "invalid_control_body" }, { status: 400 })
+    const body = parsed.data
+
+    if (path === "/__control/deployed") {
+      if (typeof body.version === "string") state.deployed = body.version
+    } else if (path === "/__control/latest") {
+      if (typeof body.version === "string") state.latest = body.version
+    } else if (path === "/__control/fail-worker") {
+      state.failWorker = body.fail === true
+    } else if (path === "/__control/fail-asset") {
+      if (typeof body.path === "string") state.failAssetPaths.add(body.path)
+    } else if (path === "/__control/clear-fail-asset") {
+      if (typeof body.path === "string") state.failAssetPaths.delete(body.path)
+    } else if (path === "/__control/corrupt-asset") {
+      if (typeof body.path === "string") state.corruptAssetPaths.add(body.path)
+    } else if (path === "/__control/clear-corrupt-asset") {
+      if (typeof body.path === "string") state.corruptAssetPaths.delete(body.path)
+    } else if (path === "/__control/stall-bootstrap") {
+      state.stallBootstrapMs = typeof body.ms === "number" ? body.ms : 0
+    } else if (path === "/__control/reset") {
+      state.stallBootstrapMs = 0
+      state.deployed = "A"
+      state.latest = "A"
+      state.failWorker = false
+      state.failAssetPaths.clear()
+      state.corruptAssetPaths.clear()
+    } else {
+      return new Response("unknown control command", { status: 404 })
+    }
+
+    return Response.json({ ok: true })
+  }
+
+  return Bun.serve({
+    hostname: "127.0.0.1",
+    port,
+    idleTimeout: 60,
+    async fetch(req) {
+      const url = new URL(req.url)
+      const pathname = url.pathname
+
+      if (pathname.startsWith("/__control/")) return handleControl(req)
+      if (pathname === "/__ready") return new Response("ok")
+
+      if (pathname === "/recover/blank.html") {
+        return new Response("<!doctype html><title>blank</title>", {
+          headers: { "content-type": "text/html", "cache-control": "no-store" },
+        })
       }
-      return Response.json({ streams: [] }, { headers: { "cache-control": "no-store" } })
-    }
 
-    if (pathname === "/version.json") {
-      return Response.json({ version: state.latest, buildId: info.generations[state.latest]?.buildId ?? null })
-    }
+      if (pathname.startsWith("/api/workspaces/") && pathname.endsWith("/bootstrap")) {
+        state.bootstrapInFlight++
+        try {
+          await new Promise((resolve) => setTimeout(resolve, state.stallBootstrapMs))
+        } finally {
+          state.bootstrapInFlight--
+        }
+        return Response.json({ streams: [] }, { headers: { "cache-control": "no-store" } })
+      }
 
-    if (pathname === "/sw.js" && state.failWorker) {
-      return new Response("temporary failure", { status: 503 })
-    }
+      if (pathname === "/version.json") {
+        return Response.json({ version: state.latest, buildId: info.generations[state.latest]?.buildId ?? null })
+      }
 
-    const fp = filePath(pathname)
-    if (!fp || !existsSync(fp)) {
-      return new Response("not found", { status: 404, headers: { "cache-control": "no-store" } })
-    }
+      if (pathname === "/sw.js" && state.failWorker) {
+        return new Response("temporary failure", { status: 503 })
+      }
 
-    if (state.failAssetPaths.has(pathname)) {
-      return new Response("service unavailable", { status: 503 })
-    }
+      const fp = filePath(pathname)
+      if (!fp || !existsSync(fp)) {
+        return new Response("not found", { status: 404, headers: { "cache-control": "no-store" } })
+      }
 
-    let bytes = readFileSync(fp)
-    if (state.corruptAssetPaths.has(pathname)) {
-      bytes = Buffer.from(bytes)
-      bytes[bytes.length - 1] = bytes[bytes.length - 1] ^ 0xff
-    }
+      if (state.failAssetPaths.has(pathname)) {
+        return new Response("service unavailable", { status: 503 })
+      }
 
-    return new Response(bytes, {
-      headers: {
-        "content-type": contentType(fp),
-        "cache-control": "no-store",
-      },
-    })
-  },
-})
+      let bytes = readFileSync(fp)
+      if (state.corruptAssetPaths.has(pathname)) {
+        bytes = Buffer.from(bytes)
+        bytes[bytes.length - 1] = bytes[bytes.length - 1] ^ 0xff
+      }
 
-const serverUrl = `http://127.0.0.1:${server.port}`
-console.log(`APP_UPDATE_SERVER_URL=${serverUrl}`)
-void writeServerPort(server.port)
-
-let cleaningUp = false
-function cleanup(): void {
-  if (cleaningUp) return
-  cleaningUp = true
-  server.stop(true)
-  rmSync(info.buildRoot, { recursive: true, force: true })
-  rmSync(join(__dirname, ".build-info.json"), { force: true })
-  rmSync(join(__dirname, ".server-port"), { force: true })
+      return new Response(bytes, {
+        headers: {
+          "content-type": contentType(fp),
+          "cache-control": "no-store",
+        },
+      })
+    },
+  })
 }
 
-process.on("exit", cleanup)
-for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
-  process.on(signal, () => {
-    cleanup()
-    process.exit(0)
-  })
+if (import.meta.main) {
+  const info: BuildInfo = JSON.parse(readFileSync(join(__dirname, ".build-info.json"), "utf-8"))
+  const port = process.env.APP_UPDATE_SERVER_PORT ? Number(process.env.APP_UPDATE_SERVER_PORT) : 0
+  const server = startAppUpdateServer(info, port)
+  const serverUrl = `http://127.0.0.1:${server.port}`
+  console.log(`APP_UPDATE_SERVER_URL=${serverUrl}`)
+  void writeServerPort(server.port)
+
+  let cleaningUp = false
+  function cleanup(): void {
+    if (cleaningUp) return
+    cleaningUp = true
+    server.stop(true)
+    rmSync(info.buildRoot, { recursive: true, force: true })
+    rmSync(join(__dirname, ".build-info.json"), { force: true })
+    rmSync(join(__dirname, ".server-port"), { force: true })
+  }
+
+  process.on("exit", cleanup)
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    process.on(signal, () => {
+      cleanup()
+      process.exit(0)
+    })
+  }
 }
