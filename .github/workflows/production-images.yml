@@ -1,0 +1,152 @@
+name: Production Images
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: production-images-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Select production images
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.select.outputs.services }}
+      selected: ${{ steps.select.outputs.selected }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: paths
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            common:
+              - '.bun-version'
+              - '.dockerignore'
+              - 'package.json'
+              - 'bun.lock'
+              - 'patches/**'
+              - 'apps/*/package.json'
+              - 'packages/*/package.json'
+              - '.github/actions/**'
+              - '.github/workflows/production-images.yml'
+              - 'scripts/smoke-production-image.ts'
+            backend:
+              - 'Dockerfile.backend'
+              - 'apps/backend/**'
+              - 'extensions/bot-runtime-client/src/**'
+              - 'packages/types/**'
+              - 'packages/user-guide/**'
+              - 'packages/prosemirror/**'
+              - 'packages/crypto/**'
+              - 'packages/agent-runtime/**'
+              - 'packages/backend-common/**'
+              - 'packages/cli/**'
+            control-plane:
+              - 'Dockerfile.control-plane'
+              - 'apps/control-plane/**'
+              - 'packages/types/**'
+              - 'packages/backend-common/**'
+            db-read-proxy:
+              - 'Dockerfile.db-read-proxy'
+              - 'apps/db-read-proxy/**'
+              - 'packages/types/**'
+              - 'packages/backend-common/**'
+            enclave:
+              - 'Dockerfile.enclave'
+              - 'apps/enclave/**'
+              - 'packages/types/**'
+              - 'packages/prosemirror/**'
+              - 'packages/crypto/**'
+              - 'packages/agent-runtime/**'
+      - id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMON: ${{ steps.paths.outputs.common }}
+          BACKEND: ${{ steps.paths.outputs.backend }}
+          CONTROL_PLANE: ${{ steps.paths.outputs.control-plane }}
+          DB_READ_PROXY: ${{ steps.paths.outputs.db-read-proxy }}
+          ENCLAVE: ${{ steps.paths.outputs.enclave }}
+        run: |
+          if [[ "$EVENT_NAME" != pull_request || "$COMMON" == true ]]; then
+            services='["backend","control-plane","db-read-proxy","enclave"]'
+          else
+            services=$(jq -cn \
+              --arg backend "$BACKEND" \
+              --arg controlPlane "$CONTROL_PLANE" \
+              --arg dbReadProxy "$DB_READ_PROXY" \
+              --arg enclave "$ENCLAVE" \
+              '[
+                { id: "backend", changed: $backend },
+                { id: "control-plane", changed: $controlPlane },
+                { id: "db-read-proxy", changed: $dbReadProxy },
+                { id: "enclave", changed: $enclave }
+              ] | map(select(.changed == "true") | .id)')
+          fi
+
+          echo "services=$services" >> "$GITHUB_OUTPUT"
+          if [[ "$services" == '[]' ]]; then
+            echo 'selected=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'selected=true' >> "$GITHUB_OUTPUT"
+          fi
+
+  images:
+    name: Build and smoke ${{ matrix.service }}
+    needs: changes
+    if: needs.changes.outputs.selected == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.${{ matrix.service }}
+          tags: threa-production-smoke:${{ matrix.service }}
+          load: true
+          push: false
+          cache-from: type=gha,scope=production-${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=production-${{ matrix.service }}
+      - uses: ./.github/actions/setup-bun
+      - name: Smoke unchanged image command
+        run: bun scripts/smoke-production-image.ts '${{ matrix.service }}' 'threa-production-smoke:${{ matrix.service }}'
+
+  aggregate:
+    name: Production Images
+    if: always()
+    needs: [changes, images]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all selected image proofs
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SELECTED: ${{ needs.changes.outputs.selected }}
+          IMAGES_RESULT: ${{ needs.images.result }}
+        run: |
+          if [[ "$CHANGES_RESULT" != success ]]; then
+            echo "Image selection did not succeed: $CHANGES_RESULT" >&2
+            exit 1
+          fi
+          if [[ "$SELECTED" == false && "$IMAGES_RESULT" == skipped ]]; then
+            echo "No production images affected"
+            exit 0
+          fi
+          if [[ "$SELECTED" == true && "$IMAGES_RESULT" == success ]]; then
+            echo "All selected production images passed"
+            exit 0
+          fi
+          echo "Missing successful production image proof (selected=$SELECTED images=$IMAGES_RESULT)" >&2
+          exit 1
