@@ -330,60 +330,6 @@ export const ActivityRepository = {
     return { mentionsByStream, totalByStream, total }
   },
 
-  /**
-   * Unread counts for a batch of (user, stream) pairs in one set-based query
-   * (INV-56). Keyed `${userId}:${streamId}`; pairs with no unread rows map to
-   * zeros. Used to stamp absolute counts onto activity:created payloads.
-   */
-  async countUnreadForPairs(
-    db: Querier,
-    workspaceId: string,
-    pairs: Array<{ userId: string; streamId: string }>
-  ): Promise<Map<string, { mentionCount: number; totalCount: number }>> {
-    if (pairs.length === 0) return new Map()
-
-    const userIds = pairs.map((p) => p.userId)
-    const streamIds = pairs.map((p) => p.streamId)
-    const result = await db.query<{ user_id: string; stream_id: string; mention_count: string; total_count: string }>(
-      composeSql`
-      -- MATERIALIZED decides access once per pair; inlined, it reruns for every activity row joined.
-      WITH p AS MATERIALIZED (
-        SELECT
-          pair.user_id,
-          pair.stream_id,
-          ${streamAccessPredicateSql(workspaceId, sql`pair.user_id`, "pair.stream_id")} AS readable
-        FROM (
-          SELECT DISTINCT user_id, stream_id
-          FROM unnest(${userIds}::text[], ${streamIds}::text[]) AS pair(user_id, stream_id)
-        ) pair
-      )
-      SELECT
-        p.user_id,
-        p.stream_id,
-        COUNT(ua.id) FILTER (WHERE ua.activity_type = ANY(${MENTION_TYPES}::text[]))::text AS mention_count,
-        COUNT(ua.id)::text AS total_count
-      FROM p
-      LEFT JOIN user_activity ua
-        ON ua.user_id = p.user_id
-        AND ua.stream_id = p.stream_id
-        AND ua.workspace_id = ${workspaceId}
-        AND ua.read_at IS NULL
-        AND ua.is_self = FALSE
-        AND p.readable
-      GROUP BY p.user_id, p.stream_id
-    `
-    )
-
-    const map = new Map<string, { mentionCount: number; totalCount: number }>()
-    for (const row of result.rows) {
-      map.set(`${row.user_id}:${row.stream_id}`, {
-        mentionCount: Number(row.mention_count),
-        totalCount: Number(row.total_count),
-      })
-    }
-    return map
-  },
-
   async countUnreadForStream(
     db: Querier,
     userId: string,

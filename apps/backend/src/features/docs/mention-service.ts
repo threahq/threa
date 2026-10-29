@@ -190,7 +190,7 @@ export class DocMentionService {
         }))
       )
     }
-    await insertActivityCreatedEvents(db, workspaceId, activities)
+    await insertActivityCreatedEvents(db, activities)
     return activities
   }
 }

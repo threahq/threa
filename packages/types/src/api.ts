@@ -2240,17 +2240,6 @@ export interface Activity {
 export interface ActivityCreatedPayload {
   workspaceId: string
   targetUserId: string
-  /**
-   * The target user's absolute unread counts for the activity's stream
-   * (sync phase 2c). Clients set counters from these — never increment —
-   * so replayed/duplicated events converge. Optional: sync-log entries
-   * persisted before the field shipped lack it; consumers must fall back to
-   * legacy increment-or-skip handling for those.
-   */
-  counts?: {
-    mentionCount: number
-    activityCount: number
-  }
   activity: {
     id: string
     activityType: string

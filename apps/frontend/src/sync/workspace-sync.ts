@@ -2184,8 +2184,8 @@ export function registerWorkspaceSocketHandlers(
     // The held set is the source of truth (D3/D4): upsert the row by its stable
     // id so a replayed event (sync-log catch-up, INV-53) updates in place rather
     // than duplicating; the derived counts follow. Self rows are skipped inside
-    // upsertActivity. The payload's absolute `counts` are intentionally ignored —
-    // the badge derives from the held rows, never a separately maintained number.
+    // upsertActivity. The badge derives from the held rows, never a separately
+    // maintained number.
     const held: Activity = {
       id: a.id,
       workspaceId: payload.workspaceId,

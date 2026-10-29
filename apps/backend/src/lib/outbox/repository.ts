@@ -990,15 +990,6 @@ export interface InvitationRevokedOutboxPayload
 // User-scoped event payloads (delivered to a specific target user)
 export interface ActivityCreatedOutboxPayload extends WorkspaceScopedPayload {
   targetUserId: string
-  /**
-   * The target user's absolute unread counts for the activity's stream,
-   * computed after the row was inserted (sync phase 2c). Clients set
-   * counters from these — never increment — so replays converge.
-   */
-  counts: {
-    mentionCount: number
-    activityCount: number
-  }
   activity: {
     id: string
     activityType: string

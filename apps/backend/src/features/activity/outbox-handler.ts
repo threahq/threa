@@ -311,13 +311,6 @@ export class ActivityFeedHandler implements OutboxHandler {
   /**
    * Publish an activity:created outbox event for each activity row. Grouped in
    * one transaction per call to keep outbox writes batched.
-   *
-   * Each payload carries the target user's absolute unread counts for the
-   * stream (sync phase 2c): clients set counters from these instead of
-   * incrementing, so replayed/duplicated events converge. The activity rows
-   * are committed before this runs, so the counts include them; rows sharing
-   * a (user, stream) pair carry identical final counts, which is correct
-   * under absolute semantics.
    */
   private async publishActivityCreated(activities: Activity[]): Promise<void> {
     // A born-read recipient row (read_at set at insert because the recipient had
@@ -356,7 +349,7 @@ export class ActivityFeedHandler implements OutboxHandler {
         const publishable = group.filter((a) => a.isSelf || stillUnread.has(a.id))
         if (publishable.length === 0) continue
 
-        await insertActivityCreatedEvents(client, workspaceId, publishable)
+        await insertActivityCreatedEvents(client, publishable)
       }
     })
   }
