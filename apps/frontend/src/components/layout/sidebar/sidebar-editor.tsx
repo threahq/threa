@@ -1,7 +1,10 @@
-import { memo, useEffect, useMemo, useState } from "react"
+import { memo, useEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { CircleDot, Eye, EyeOff, FolderInput, GripVertical, Plus, RotateCcw, X } from "lucide-react"
 import {
   DndContext,
+  DragOverlay,
+  useDndContext,
   KeyboardSensor,
   PointerSensor,
   closestCenter,
@@ -10,6 +13,7 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type CollisionDetection,
 } from "@dnd-kit/core"
 import {
   SortableContext,
@@ -17,7 +21,6 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable"
-import { CSS } from "@dnd-kit/utilities"
 import {
   SIDEBAR_SECTION_KEYS,
   SIDEBAR_TYPE_SECTIONS,
@@ -31,7 +34,6 @@ import {
   quickLinkHasActiveState,
 } from "@threahq/types"
 import { cn } from "@/lib/utils"
-import { usePreferences } from "@/contexts"
 import { useSidebarConfig } from "@/hooks/use-sidebar-config"
 import { useWorkspaceLabels } from "@/stores/workspace-store"
 import type { CachedLabel } from "@/hooks"
@@ -71,6 +73,75 @@ const PRESET_LABELS: Record<SidebarBasePreset, string> = { smart: "Smart", all: 
 const ADD_PREFIX = "add:"
 /** Droppable id for the sections list, so a tray drop into an empty list appends. */
 const SECTIONS_DROPPABLE_ID = "sections-dropzone"
+const QUICK_LINKS_DROPPABLE_ID = "quicklinks-dropzone"
+
+type InsertionTarget = { index: number; rowId: string; edge: "before" | "after" }
+
+function insertionTarget(collisions: DragEndEvent["collisions"]): InsertionTarget | undefined {
+  return collisions?.[0]?.data?.insertion as InsertionTarget | undefined
+}
+
+function insertionCollision(ids: string[], listId: string): CollisionDetection {
+  return (args) => {
+    const { active, pointerCoordinates, droppableContainers, droppableRects } = args
+    const activeIndex = ids.indexOf(String(active.id))
+    let target: InsertionTarget
+    if (pointerCoordinates) {
+      const list = droppableContainers.find((container) => container.id === listId)?.node.current
+      const hit = document.elementFromPoint(pointerCoordinates.x, pointerCoordinates.y)
+      if (!list || !hit || !list.contains(hit)) return []
+      let gap = ids.length
+      for (let index = 0; index < ids.length; index++) {
+        const rect = droppableRects.get(ids[index]!)
+        if (rect && pointerCoordinates.y < rect.top + rect.height / 2) {
+          gap = index
+          break
+        }
+      }
+      target = {
+        index: gap - (activeIndex >= 0 && activeIndex < gap ? 1 : 0),
+        rowId: ids[gap] ?? ids.at(-1) ?? listId,
+        edge: gap < ids.length || ids.length === 0 ? "before" : "after",
+      }
+    } else if (ids.length === 0) {
+      target = { index: 0, rowId: listId, edge: "before" }
+    } else {
+      const collision = closestCenter({
+        ...args,
+        droppableContainers: droppableContainers.filter((container) => ids.includes(String(container.id))),
+      })[0]
+      if (!collision) return []
+      const index = ids.indexOf(String(collision.id))
+      target = {
+        index,
+        rowId: String(collision.id),
+        edge: activeIndex >= 0 && index > activeIndex ? "after" : "before",
+      }
+    }
+    const id = target.rowId
+    const droppableContainer = droppableContainers.find((container) => container.id === id)
+    if (!droppableContainer) return []
+    return [{ id, data: { droppableContainer, value: 1, insertion: target } }]
+  }
+}
+
+function InsertionMarker({ rowId }: { rowId: string }) {
+  const { collisions } = useDndContext()
+  const target = insertionTarget(collisions)
+  if (target?.rowId !== rowId) return null
+  return (
+    <span
+      aria-hidden
+      data-testid="sidebar-insertion-marker"
+      data-edge={target.edge}
+      data-index={target.index}
+      className={cn(
+        "pointer-events-none absolute inset-x-0 z-10 h-0.5 rounded-full bg-muted-foreground",
+        target.edge === "before" ? "-top-0.5 -translate-y-1/2" : "-bottom-0.5 translate-y-1/2"
+      )}
+    />
+  )
+}
 
 interface SidebarEditorDialogProps {
   workspaceId: string
@@ -94,10 +165,8 @@ export const SidebarEditorDialog = memo(function SidebarEditorDialog({
   onOpenChange,
 }: SidebarEditorDialogProps) {
   const { config, setConfig, setBasePreset } = useSidebarConfig(workspaceId)
-  const { preferences } = usePreferences()
-  // dnd-kit applies its reorder transition via an inline style, which the global
-  // `.reduced-motion` stylesheet rule can't reach — so gate it here.
-  const reduceMotion = preferences?.accessibility.reducedMotion ?? false
+  const editorSectionRef = useRef<HTMLElement>(null)
+  const canScroll = (element: Element) => element === editorSectionRef.current?.parentElement
   const labels = useWorkspaceLabels(workspaceId)
   const labelsById = useMemo(() => new Map(labels.map((label) => [label.id, label])), [labels])
 
@@ -137,24 +206,21 @@ export const SidebarEditorDialog = memo(function SidebarEditorDialog({
   // One drop handler for the sections context: a tray chip adds a section at the
   // drop position; a section drag reorders. Tray ids carry the ADD_PREFIX.
   const handleSectionsDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event
-    if (!over) return
+    const { active } = event
+    const target = insertionTarget(event.collisions)
+    if (!target) return
     const activeId = String(active.id)
 
     if (activeId.startsWith(ADD_PREFIX)) {
       const specId = activeId.slice(ADD_PREFIX.length)
       const spec = addableSpecs.find((s) => sectionIdForSpec(s) === specId)
       if (!spec) return
-      // Dropped on the list body (empty list) → append; on a section → insert there.
-      const index =
-        String(over.id) === SECTIONS_DROPPABLE_ID
-          ? config.sections.length
-          : config.sections.findIndex((s) => s.id === String(over.id))
-      setConfig(addSectionAt(config, spec, index === -1 ? config.sections.length : index))
+      setConfig(addSectionAt(config, spec, target.index))
       return
     }
 
-    if (activeId !== String(over.id)) setConfig(moveSection(config, activeId, String(over.id)))
+    const overId = config.sections[target.index]?.id
+    if (overId && activeId !== overId) setConfig(moveSection(config, activeId, overId))
   }
 
   return (
@@ -205,15 +271,20 @@ export const SidebarEditorDialog = memo(function SidebarEditorDialog({
             </div>
           </section>
 
-          <section className="space-y-2">
+          <section ref={editorSectionRef} className="space-y-2">
             <EditorGroupHeading>Sections</EditorGroupHeading>
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleSectionsDragEnd}>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={insertionCollision(sectionIds, SECTIONS_DROPPABLE_ID)}
+              autoScroll={{ canScroll }}
+              onDragEnd={handleSectionsDragEnd}
+            >
               <SectionsList
                 sections={config.sections}
                 sectionIds={sectionIds}
                 labelsById={labelsById}
                 quickLinks={config.quickLinks}
-                reduceMotion={reduceMotion}
+                canScroll={canScroll}
                 onRemoveSection={(id) => setConfig(removeSection(config, id))}
                 onRenameCustomSection={(sectionId, name) => setConfig(renameCustomSection(config, sectionId, name))}
                 onSetQuickLinkVisibility={(key, visibility) =>
@@ -222,6 +293,7 @@ export const SidebarEditorDialog = memo(function SidebarEditorDialog({
                 onMoveQuickLink={(activeKey, overKey) => setConfig(moveQuickLink(config, activeKey, overKey))}
               />
 
+              <EditorDragOverlay />
               <AddTray
                 specs={addableSpecs}
                 labelsById={labelsById}
@@ -256,7 +328,7 @@ function SectionsList({
   sectionIds,
   labelsById,
   quickLinks,
-  reduceMotion,
+  canScroll,
   onRemoveSection,
   onRenameCustomSection,
   onSetQuickLinkVisibility,
@@ -266,7 +338,7 @@ function SectionsList({
   sectionIds: string[]
   labelsById: Map<string, CachedLabel>
   quickLinks: SidebarQuickLink[]
-  reduceMotion: boolean
+  canScroll: (element: Element) => boolean
   onRemoveSection: (id: string) => void
   onRenameCustomSection: (sectionId: string, name: string) => void
   onSetQuickLinkVisibility: (key: SidebarQuickLink["key"], visibility: SidebarQuickLinkVisibility) => void
@@ -279,17 +351,18 @@ function SectionsList({
       <p
         ref={setNodeRef}
         className={cn(
-          "rounded-lg border border-dashed py-6 text-center text-sm text-muted-foreground",
-          isOver && "border-primary/60 bg-primary/5"
+          "relative rounded-lg border border-dashed py-6 text-center text-sm text-muted-foreground",
+          isOver && "border-muted-foreground/60 bg-muted-foreground/5"
         )}
       >
+        <InsertionMarker rowId={SECTIONS_DROPPABLE_ID} />
         Empty sidebar. Drag an item from below, or reset to a preset.
       </p>
     )
   }
 
   return (
-    <div ref={setNodeRef} className={cn("rounded-lg", isOver && "ring-2 ring-primary/40")}>
+    <div ref={setNodeRef} className={cn("rounded-lg", isOver && "ring-2 ring-muted-foreground/40")}>
       <SortableContext items={sectionIds} strategy={verticalListSortingStrategy}>
         <ul className="space-y-1">
           {sections.map((section) => (
@@ -298,7 +371,7 @@ function SectionsList({
               section={section}
               labelsById={labelsById}
               quickLinks={quickLinks}
-              reduceMotion={reduceMotion}
+              canScroll={canScroll}
               onRemove={() => onRemoveSection(section.id)}
               onRenameCustomSection={onRenameCustomSection}
               onSetQuickLinkVisibility={onSetQuickLinkVisibility}
@@ -317,7 +390,7 @@ function SortableSectionRow({
   section,
   labelsById,
   quickLinks,
-  reduceMotion,
+  canScroll,
   onRemove,
   onRenameCustomSection,
   onSetQuickLinkVisibility,
@@ -326,28 +399,25 @@ function SortableSectionRow({
   section: SidebarSection
   labelsById: Map<string, CachedLabel>
   quickLinks: SidebarQuickLink[]
-  reduceMotion: boolean
+  canScroll: (element: Element) => boolean
   onRemove: () => void
   onRenameCustomSection: (sectionId: string, name: string) => void
   onSetQuickLinkVisibility: (key: SidebarQuickLink["key"], visibility: SidebarQuickLinkVisibility) => void
   onMoveQuickLink: (activeKey: string, overKey: string) => void
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: section.id })
-  // Translate only, never scale: dnd-kit scales the dragged element to its drop
-  // target's size, which stretches a normal row to the tall Quick Links row.
-  const style = { transform: CSS.Translate.toString(transform), transition: reduceMotion ? undefined : transition }
   const name = sectionDisplayName(section, labelsById)
+  const { attributes, listeners, setNodeRef, isDragging } = useSortable({ id: section.id, data: { label: name } })
   const isQuickLinks = section.spec.kind === "quicklinks"
 
   return (
-    <li ref={setNodeRef} style={style} className={cn(isDragging && "relative z-10")}>
+    <li ref={setNodeRef} className={cn("relative", isDragging && "opacity-40")}>
+      <InsertionMarker rowId={section.id} />
       <div
         className={cn(
           "flex items-center gap-2 rounded-md border bg-card px-2 py-1.5",
           // When the nested links render below, square off the bottom so the row
           // and its sub-list read as one connected group, not two stacked cards.
-          isQuickLinks && "rounded-b-none border-b-0",
-          isDragging && "shadow-md"
+          isQuickLinks && "rounded-b-none border-b-0"
         )}
       >
         <DragHandle label={`Reorder ${name}`} attributes={attributes} listeners={listeners} />
@@ -367,7 +437,7 @@ function SortableSectionRow({
       {isQuickLinks && (
         <QuickLinksSectionBody
           quickLinks={quickLinks}
-          reduceMotion={reduceMotion}
+          canScroll={canScroll}
           onSetVisibility={onSetQuickLinkVisibility}
           onMove={onMoveQuickLink}
         />
@@ -381,12 +451,12 @@ function SortableSectionRow({
  *  to the sections list. Top-level per INV-18. */
 function QuickLinksSectionBody({
   quickLinks,
-  reduceMotion,
+  canScroll,
   onSetVisibility,
   onMove,
 }: {
   quickLinks: SidebarQuickLink[]
-  reduceMotion: boolean
+  canScroll: (element: Element) => boolean
   onSetVisibility: (key: SidebarQuickLink["key"], visibility: SidebarQuickLinkVisibility) => void
   onMove: (activeKey: string, overKey: string) => void
 }) {
@@ -397,59 +467,67 @@ function QuickLinksSectionBody({
   const keys = useMemo(() => quickLinks.map((l) => l.key), [quickLinks])
 
   const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event
-    if (over && active.id !== over.id) onMove(String(active.id), String(over.id))
+    const target = insertionTarget(event.collisions)
+    const overKey = target && keys[target.index]
+    if (overKey && event.active.id !== overKey) onMove(String(event.active.id), overKey)
   }
 
   // Continues the section card (it squared its bottom), indenting the links so
   // they read as sub-elements of the Quick Links block.
   return (
     <div className="rounded-b-md border border-t-0 bg-card/50 py-1.5 pl-3 pr-2">
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={insertionCollision(keys, QUICK_LINKS_DROPPABLE_ID)}
+        autoScroll={{ canScroll }}
+        onDragEnd={handleDragEnd}
+      >
         <SortableContext items={keys} strategy={verticalListSortingStrategy}>
-          <ul className="space-y-1 border-l border-border pl-3">
+          <QuickLinksDropList>
             {quickLinks.map((link) => (
               <SortableQuickLinkRow
                 key={link.key}
                 link={link}
-                reduceMotion={reduceMotion}
                 onSetVisibility={(visibility) => onSetVisibility(link.key, visibility)}
               />
             ))}
-          </ul>
+          </QuickLinksDropList>
         </SortableContext>
+        <EditorDragOverlay />
       </DndContext>
     </div>
+  )
+}
+
+function QuickLinksDropList({ children }: { children: React.ReactNode }) {
+  const { setNodeRef } = useDroppable({ id: QUICK_LINKS_DROPPABLE_ID })
+  return (
+    <ul ref={setNodeRef} className="space-y-1 border-l border-border pl-3">
+      {children}
+    </ul>
   )
 }
 
 /** A reorderable quick-link row with a tri-state visibility control. Top-level per INV-18. */
 function SortableQuickLinkRow({
   link,
-  reduceMotion,
   onSetVisibility,
 }: {
   link: SidebarQuickLink
-  reduceMotion: boolean
   onSetVisibility: (visibility: SidebarQuickLinkVisibility) => void
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: link.key })
-  // Translate only, never scale — see SortableSectionRow.
-  const style = { transform: CSS.Translate.toString(transform), transition: reduceMotion ? undefined : transition }
   const { label, icon: Icon } = QUICK_LINK_META[link.key]
+  const { attributes, listeners, setNodeRef, isDragging } = useSortable({ id: link.key, data: { label } })
 
   return (
     <li
       ref={setNodeRef}
-      style={style}
       className={cn(
-        // No border/bg of its own — the enclosing Quick Links sub-card already
-        // bounds these rows; a per-row border would stack a third border layer.
-        // A dragged row lifts onto its own card so it reads while floating.
-        "flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/40",
-        isDragging && "relative z-10 border bg-card shadow-md"
+        "relative flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/40",
+        isDragging && "opacity-40"
       )}
     >
+      <InsertionMarker rowId={link.key} />
       <DragHandle label={`Reorder ${label}`} attributes={attributes} listeners={listeners} />
       <span
         className={cn(
@@ -532,6 +610,7 @@ function DragHandle({
       type="button"
       className="flex h-6 w-6 shrink-0 cursor-grab touch-none items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
       aria-label={label}
+      data-vaul-no-drag
       {...attributes}
       {...listeners}
     >
@@ -714,11 +793,11 @@ function AddTrayChip({
   labelsById: Map<string, CachedLabel>
   onAdd: () => void
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id: `${ADD_PREFIX}${sectionIdForSpec(spec)}`,
-  })
-  const style = transform ? { transform: CSS.Translate.toString(transform) } : undefined
   const name = sectionDisplayName({ id: sectionIdForSpec(spec), spec }, labelsById)
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `${ADD_PREFIX}${sectionIdForSpec(spec)}`,
+    data: { label: name },
+  })
   const label = spec.kind === "label" ? labelsById.get(spec.labelId) : undefined
 
   return (
@@ -726,9 +805,9 @@ function AddTrayChip({
       <button
         ref={setNodeRef}
         type="button"
-        style={style}
         onClick={onAdd}
         aria-label={`Add ${name}`}
+        data-vaul-no-drag
         className={cn(
           // cursor-pointer (not grab): clicking to add is the primary action; the
           // grab cursor only appears once a drag is actually under way.
@@ -743,5 +822,24 @@ function AddTrayChip({
         {label ? <LabelChip label={label} className="pointer-events-none" /> : name}
       </button>
     </li>
+  )
+}
+
+function EditorDragOverlay() {
+  const { active } = useDndContext()
+  return createPortal(
+    <DragOverlay dropAnimation={null} transition="none" style={{ pointerEvents: "none", zIndex: 100 }}>
+      {active && (
+        <div
+          data-testid="sidebar-drag-preview"
+          aria-hidden
+          className="flex w-fit max-w-full items-center gap-2 rounded-md border bg-card px-2 py-1.5 text-sm font-medium shadow-md"
+        >
+          <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="truncate">{active.data.current?.label}</span>
+        </div>
+      )}
+    </DragOverlay>,
+    document.body
   )
 }
