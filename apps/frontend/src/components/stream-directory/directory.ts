@@ -30,7 +30,7 @@ export interface DirectoryStream {
   id: string
   type: StreamType
   visibility: Visibility
-  parentStreamId?: string | null
+  parentStreamId: string | null
   rootStreamId: string | null
   purpose?: string | null
   archivedAt: string | null

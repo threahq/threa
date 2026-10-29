@@ -6,6 +6,7 @@ function stream(id: string, overrides: Partial<DirectoryStream> = {}): Directory
     id,
     type: "channel",
     visibility: "public",
+    parentStreamId: null,
     rootStreamId: null,
     purpose: null,
     archivedAt: null,

@@ -42,6 +42,8 @@ export {
   DM_PARTICIPANT_COUNT,
   STREAM_TYPE_CAPABILITIES,
   streamTypeCapabilities,
+  streamCapabilities,
+  type StreamCapabilities,
   isAsideHostType,
   STREAM_READ_ONLY_REASONS,
   type StreamReadOnlyReason,

@@ -7,7 +7,7 @@ import { db } from "@/db"
 import { joinRoomBestEffort } from "@/lib/socket-room"
 import { applyStreamBootstrap, toCachedStreamBootstrap, type CachedStreamBootstrap } from "@/sync/stream-sync"
 import { deleteStreamSlots } from "@/stores/slot-store"
-import { streamTypeCapabilities } from "@threahq/types"
+import { streamCapabilities } from "@threahq/types"
 import type {
   Stream,
   StreamMember,
@@ -153,7 +153,7 @@ export function useCreateStream(workspaceId: string) {
   return useMutation({
     mutationFn: (data: CreateStreamInput) => streamService.create(workspaceId, data),
     onSuccess: async (newStream) => {
-      const { ownMembers } = streamTypeCapabilities(newStream.type)
+      const { ownMembers } = streamCapabilities(newStream)
       const membership: StreamMember = {
         streamId: newStream.id,
         memberId: newStream.createdBy,

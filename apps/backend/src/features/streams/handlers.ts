@@ -27,6 +27,7 @@ import {
   threaDocumentSchema,
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
   STREAM_DISPLAY_NAME_MAX_LENGTH,
+  streamCapabilities,
 } from "@threahq/types"
 import type { Pool } from "pg"
 import {
@@ -412,17 +413,6 @@ const listEventsAroundQuerySchema = z
 const streamBootstrapQuerySchema = z.object({
   after: numericString.optional(),
 })
-
-// Exhaustive: adding a StreamType forces a decision here
-const addMemberAllowed: Record<StreamType, boolean> = {
-  [StreamTypes.CHANNEL]: true,
-  [StreamTypes.THREAD]: true,
-  [StreamTypes.SCRATCHPAD]: false,
-  [StreamTypes.DM]: false,
-  [StreamTypes.SYSTEM]: false,
-  [StreamTypes.ASIDE]: false,
-  [StreamTypes.DOC]: false,
-}
 
 const disallowedUpdateFields: Record<StreamType, Record<string, string> | null> = {
   [StreamTypes.CHANNEL]: { displayName: "Channels cannot set displayName — use slug" },
@@ -1210,7 +1200,7 @@ export function createStreamHandlers({
 
       const stream = await streamService.validateStreamAccess(streamId, workspaceId, actorId)
 
-      if (!addMemberAllowed[stream.type]) {
+      if (!streamCapabilities(stream).addMembers) {
         throw new HttpError("Cannot add members to this stream type", { status: 400, code: "ADD_MEMBER_NOT_ALLOWED" })
       }
 
