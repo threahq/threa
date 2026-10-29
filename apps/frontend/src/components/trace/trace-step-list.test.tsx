@@ -108,7 +108,7 @@ describe("TraceStepList", () => {
 
   it.each([false, true])("should keep tools collapsed with null message IDs when running is %s", async (running) => {
     const user = userEvent.setup()
-    const step: AgentSessionStep = JSON.parse(JSON.stringify({ ...createStep(), messageId: null }))
+    const step = { ...createStep(), messageId: null } as unknown as AgentSessionStep
     renderList([thinking("think_1", 0, "Visible thinking prose"), step], running)
 
     const trigger = screen.getByRole("button", { name: /working/i })
@@ -141,7 +141,8 @@ describe("TraceStepList", () => {
     expect(screen.queryByText("Response prose")).not.toBeInTheDocument()
   })
 
-  it("should reveal a collapsed response when it becomes the highlighted message", () => {
+  it("should reveal a highlighted response and let the user collapse it again", async () => {
+    const user = userEvent.setup()
     const steps = [createStep({ stepType: "message_sent", content: "Linked response", messageId: "msg_reply" })]
     const view = renderList(steps)
     expect(screen.queryByText("Linked response")).not.toBeInTheDocument()
@@ -149,6 +150,12 @@ describe("TraceStepList", () => {
     view.rerender(listElement(steps, false, "msg_reply"))
     expect(screen.getByText("Linked response")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Response" })).toHaveAttribute("aria-expanded", "true")
+
+    await user.click(screen.getByRole("button", { name: "Response" }))
+    expect(screen.queryByText("Linked response")).not.toBeInTheDocument()
+
+    view.rerender(listElement([...steps], false, "msg_reply"))
+    expect(screen.queryByText("Linked response")).not.toBeInTheDocument()
   })
 
   it("previews the latest tool in the active phase and summarises settled phases as chips", () => {

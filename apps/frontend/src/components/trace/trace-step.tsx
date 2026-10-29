@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import {
   AgentReconsiderationDecisions,
@@ -83,8 +83,12 @@ export function TraceStep({
   onStopSession,
   onRedirectSession,
 }: TraceStepProps) {
-  const [detailsOpen, setDetailsOpen] = useState(false)
-  const open = !collapsible || highlighted || detailsOpen
+  const [detailsOpen, setDetailsOpen] = useState(highlighted)
+  const open = !collapsible || detailsOpen
+  useEffect(() => {
+    if (highlighted) setDetailsOpen(true)
+  }, [highlighted])
+
   const config = STEP_DISPLAY_CONFIG[step.stepType]
   const Icon = config.icon
 
