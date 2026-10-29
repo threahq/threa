@@ -5,6 +5,7 @@ import {
   StreamReadOnlyReasons,
   StreamTypes,
   isOpenVisibility,
+  isTopLevelDoc,
   type StreamReadOnlyReason,
   type StreamViewerState,
   type StreamType,
@@ -24,6 +25,7 @@ export type StreamWritePrincipal = { kind: "user"; userId: string } | { kind: "b
 interface AuthorityStream {
   id: string
   workspaceId: string
+  parentStreamId: string | null
   rootStreamId: string | null
   type: StreamType
   visibility: Visibility
@@ -41,15 +43,15 @@ export async function assertUserMayManageChannels(db: Querier, workspaceId: stri
 }
 
 /** A channel, or a doc at the top level: a shared root people join and that guests cannot manage. */
-export function isChannelLike(stream: Pick<AuthorityStream, "type" | "rootStreamId">): boolean {
-  return stream.type === StreamTypes.CHANNEL || (stream.type === StreamTypes.DOC && !stream.rootStreamId)
+export function isChannelLike(stream: Pick<AuthorityStream, "type" | "parentStreamId">): boolean {
+  return stream.type === StreamTypes.CHANNEL || isTopLevelDoc(stream)
 }
 
 /** Bots and API keys pass: channel management is a restriction on user principals only. */
 export async function assertPrincipalMayManageChannel(
   db: Querier,
   workspaceId: string,
-  stream: Pick<AuthorityStream, "type" | "rootStreamId">,
+  stream: Pick<AuthorityStream, "type" | "parentStreamId">,
   principal: StreamWritePrincipal
 ): Promise<void> {
   if (!isChannelLike(stream) || principal.kind !== "user") return

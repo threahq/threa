@@ -43,6 +43,7 @@ export {
   STREAM_TYPE_CAPABILITIES,
   streamTypeCapabilities,
   streamCapabilities,
+  isTopLevelDoc,
   type StreamCapabilities,
   isAsideHostType,
   STREAM_READ_ONLY_REASONS,

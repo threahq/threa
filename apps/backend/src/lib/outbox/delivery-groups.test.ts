@@ -153,26 +153,19 @@ describe("resolveDeliveryGroups — docs", () => {
     ).toEqual([streamGroup("stream_old_host"), streamGroup("stream_doc"), docReadersGroup("stream_doc")])
   })
 
-  for (const visibility of VISIBILITIES) {
-    it(`should also route a doc lifted to the top level as ${visibility} to its open audience`, () => {
-      expect(
-        resolveDeliveryGroups(
-          event("stream:doc_moved", {
-            workspaceId: "ws_1",
-            streamId: "stream_old_host",
-            event: {},
-            doc: { id: "stream_doc", type: StreamTypes.DOC, parentStreamId: null, visibility },
-            movedStreamIds: ["stream_doc"],
-          })
-        )
-      ).toEqual([
-        streamGroup("stream_old_host"),
-        streamGroup("stream_doc"),
-        docReadersGroup("stream_doc"),
-        ...OPEN_AUDIENCE[visibility],
-      ])
-    })
-  }
+  it("should keep a doc lifted to the top level to its old host, the doc and its readers", () => {
+    expect(
+      resolveDeliveryGroups(
+        event("stream:doc_moved", {
+          workspaceId: "ws_1",
+          streamId: "stream_old_host",
+          event: {},
+          doc: { id: "stream_doc", type: StreamTypes.DOC, parentStreamId: null, visibility: Visibilities.PUBLIC },
+          movedStreamIds: ["stream_doc"],
+        })
+      )
+    ).toEqual([streamGroup("stream_old_host"), streamGroup("stream_doc"), docReadersGroup("stream_doc")])
+  })
 
   it("should reach the doc's grant-only readers with its own content and lifecycle but not its threads when the stream is a doc", () => {
     const doc = {

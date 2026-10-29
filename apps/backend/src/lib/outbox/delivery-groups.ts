@@ -282,9 +282,9 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
   // to the creator only (additional members learn via stream:member_added);
   // open streams to their audience plus the creator, who may be a guest outside
   // it. A nested doc goes to its host's audience like a thread; a top-level one
-  // routes like a channel. The anchored branch is
-  // thread-only: an aside is anchored too, but routing it to the parent's
-  // audience would broadcast a private stream to every host-stream member.
+  // routes like a channel. The anchored branch is thread-only: an aside is
+  // anchored too, but routing it to the parent's audience would broadcast a
+  // private stream to every host-stream member.
   if (isOutboxEventType(event, "stream:created")) {
     const payload = event.payload as StreamCreatedOutboxPayload
     const sharesParentAudience =
@@ -519,8 +519,7 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
   // to the top level also reaches its new open audience, like a created channel.
   if (isOutboxEventType(event, "stream:doc_moved")) {
     const { streamId, doc } = event.payload as StreamDocMovedOutboxPayload
-    const groups = [streamGroup(streamId), streamGroup(doc.id), docReadersGroup(doc.id)]
-    return doc.parentStreamId ? groups : [...groups, ...openAudienceGroups(doc.visibility)]
+    return [streamGroup(streamId), streamGroup(doc.id), docReadersGroup(doc.id)]
   }
 
   if (isStreamScopedEvent(event)) {

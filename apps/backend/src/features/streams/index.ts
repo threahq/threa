@@ -34,6 +34,7 @@ export {
   rootReadableWithoutMembershipSql,
   scopeReadsDocWithoutGrant,
   streamAccessPredicateSql,
+  userReadsDocWithoutGrant,
   usersReadingWithoutMembership,
 } from "./access"
 export type { StreamAccessOptions } from "./access"

@@ -211,6 +211,11 @@ export function streamCapabilities(stream: { type: string; parentStreamId: strin
   return { ...type, ...placement! }
 }
 
+/** A doc with no host: its own root, with its own members and visibility, like a channel. */
+export function isTopLevelDoc(stream: { type: string; parentStreamId: string | null }): boolean {
+  return stream.type === StreamTypes.DOC && stream.parentStreamId === null
+}
+
 export function isAsideHostType(type: string): boolean {
   return streamTypeCapabilities(type).hostsAsides
 }

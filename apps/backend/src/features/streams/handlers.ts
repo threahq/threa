@@ -28,6 +28,7 @@ import {
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
   STREAM_DISPLAY_NAME_MAX_LENGTH,
   streamCapabilities,
+  isTopLevelDoc,
 } from "@threahq/types"
 import type { Pool } from "pg"
 import {
@@ -140,10 +141,6 @@ const createStreamSchema = z
   .refine((data) => data.type !== "aside" || !!data.parentStreamId, {
     message: "parentStreamId is required for asides",
     path: ["parentStreamId"],
-  })
-  .refine((data) => data.type !== "doc" || !data.parentStreamId || data.visibility === undefined, {
-    message: "A doc under another stream takes that stream's visibility",
-    path: ["visibility"],
   })
   .refine((data) => data.type !== "doc" || data.parentAnchorId === undefined, {
     message: "A doc has no anchor",
@@ -434,18 +431,15 @@ const disallowedUpdateFields: Record<StreamType, Record<string, string> | null> 
   },
   [StreamTypes.DOC]: {
     slug: "Docs do not have slugs",
-    visibility: "Docs inherit visibility from their host",
-    memoryMode: "Docs inherit memory settings from their host",
+    visibility: "Docs under another stream inherit its visibility",
+    memoryMode: "Docs under another stream inherit its memory settings",
   },
 }
 
-const disallowedTopLevelDocUpdateFields = { slug: "Docs do not have slugs" }
+const disallowedTopLevelDocUpdateFields = { slug: disallowedUpdateFields[StreamTypes.DOC]!.slug }
 
 function updateSchemaFor(stream: { type: StreamType; parentStreamId: string | null }) {
-  const disallowed =
-    stream.type === StreamTypes.DOC && !stream.parentStreamId
-      ? disallowedTopLevelDocUpdateFields
-      : disallowedUpdateFields[stream.type]
+  const disallowed = isTopLevelDoc(stream) ? disallowedTopLevelDocUpdateFields : disallowedUpdateFields[stream.type]
   if (disallowed === null) return null
 
   return updateStreamSchema.superRefine((data, ctx) => {
@@ -969,10 +963,9 @@ export function createStreamHandlers({
       const afterSequence = query.after ? BigInt(query.after) : undefined
 
       const stream = await streamService.validateStreamAccess(streamId, workspaceId, userId)
-      // A doc read through a share grant alone shows nothing of its host, nor its members when it has none.
+      // A doc read through a share grant alone shows nothing of its host, or of its own members when it is top-level.
       const hostHidden =
-        stream.type === StreamTypes.DOC &&
-        !(await streamService.tryAccess(stream.rootStreamId ?? stream.id, workspaceId, userId, { docGrants: false }))
+        stream.type === StreamTypes.DOC && !(await streamService.readsDocWithoutGrant(stream, workspaceId, userId))
 
       // Start the scratchpad tool-policy reads now so they run alongside the
       // rest of bootstrap instead of serially after enrichment. Only scratchpads
@@ -1006,8 +999,8 @@ export function createStreamHandlers({
         archivedAncestor,
         connectedWorkspaces,
       ] = await Promise.all([
-        streamService.getMembers(workspaceId, streamId),
-        streamService.getBotMemberIds(workspaceId, streamId),
+        hostHidden ? Promise.resolve([]) : streamService.getMembers(workspaceId, streamId),
+        hostHidden ? Promise.resolve([]) : streamService.getBotMemberIds(workspaceId, streamId),
         streamService.getMembership(workspaceId, streamId, userId),
         streamService.getViewerReadState(workspaceId, streamId, userId),
         eventService.getLatestSequence(workspaceId, streamId),

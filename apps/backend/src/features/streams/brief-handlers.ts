@@ -4,7 +4,7 @@ import type { Pool } from "pg"
 import { AuthorTypes, StreamTypes } from "@threahq/types"
 import { HttpError, StreamNotFoundError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
-import { checkStreamAccess } from "./access"
+import { checkStreamAccess, userReadsDocWithoutGrant } from "./access"
 import { resolveBriefStreamId, type StreamBriefService } from "./brief-service"
 
 interface Dependencies {
@@ -40,11 +40,8 @@ export function createStreamBriefHandlers({ pool, streamBriefService }: Dependen
       const stream = await checkStreamAccess(pool, streamId, workspaceId, userId)
       if (!stream) throw new StreamNotFoundError()
       const briefStreamId = resolveBriefStreamId(stream)
-      // Only a doc can be read without its root: a share grant reads the doc, not its host's brief.
-      if (
-        stream.type === StreamTypes.DOC &&
-        !(await checkStreamAccess(pool, briefStreamId, workspaceId, userId, { docGrants: false }))
-      ) {
+      // A share grant reads the doc, not its root's brief.
+      if (stream.type === StreamTypes.DOC && !(await userReadsDocWithoutGrant(pool, stream, workspaceId, userId))) {
         throw new StreamNotFoundError()
       }
 

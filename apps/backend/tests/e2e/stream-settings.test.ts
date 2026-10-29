@@ -384,14 +384,17 @@ describe("Stream Settings E2E", () => {
       const hostedUpdate = await updateStream(client, workspace.id, hosted.data.stream.id, { visibility: "public" })
 
       expect({
-        created: [topLevel.status, topLevel.data.stream.visibility],
+        created: { status: topLevel.status, visibility: topLevel.data.stream.visibility },
         hostedWithVisibility: hostedWithVisibility.status,
-        narrowed: [narrowed.status, (await getStream(client, workspace.id, topLevel.data.stream.id)).visibility],
+        narrowed: {
+          status: narrowed.status,
+          visibility: (await getStream(client, workspace.id, topLevel.data.stream.id)).visibility,
+        },
         hostedUpdate: hostedUpdate.status,
       }).toEqual({
-        created: [201, "public"],
+        created: { status: 201, visibility: "public" },
         hostedWithVisibility: 400,
-        narrowed: [200, "private"],
+        narrowed: { status: 200, visibility: "private" },
         hostedUpdate: 400,
       })
     })

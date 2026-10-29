@@ -11,7 +11,7 @@ import {
 import { HttpError } from "../../lib/errors"
 import { decodeKeysetCursor, encodeKeysetCursor } from "../../lib/keyset-cursor"
 import { E2eStreamsRepository } from "../e2e-streams"
-import { checkStreamAccess } from "../streams"
+import { checkStreamAccess, userReadsDocWithoutGrant } from "../streams"
 import { StreamContextReadRepository, type StreamContextFeedRow } from "./read-repository"
 
 interface Dependencies {
@@ -78,10 +78,10 @@ export function createStreamContextService({ pool }: Dependencies) {
     const stream = await checkStreamAccess(pool, params.streamId, params.workspaceId, params.userId)
     if (!stream) throw notFound
     const rootStreamId = stream.rootStreamId ?? stream.id
-    // Only a doc can be read without its root: a share grant reads the doc, not its host's index.
+    // A share grant reads the doc, not its root's index.
     if (
       stream.type === StreamTypes.DOC &&
-      !(await checkStreamAccess(pool, rootStreamId, params.workspaceId, params.userId, { docGrants: false }))
+      !(await userReadsDocWithoutGrant(pool, stream, params.workspaceId, params.userId))
     ) {
       throw notFound
     }
