@@ -1,5 +1,4 @@
-import { expect, type Locator, type Page } from "@playwright/test"
-import { readServerPort } from "./port"
+import { test, expect, type Locator, type Page } from "@playwright/test"
 import {
   SW_MSG_QUERY_STATUS,
   SW_MSG_STATUS_REPLY,
@@ -15,14 +14,10 @@ import {
  */
 export const SW_SETTLE_TIMEOUT = 20000
 
-let cachedUrl: string | null = null
-
 export async function serverUrl(): Promise<string> {
-  if (cachedUrl) return cachedUrl
-  const port = Number(process.env.APP_UPDATE_SERVER_PORT) || (await readServerPort())
-  if (!port) throw new Error("app-update server port is not known")
-  cachedUrl = `http://127.0.0.1:${port}`
-  return cachedUrl
+  const baseURL = test.info().project.use.baseURL
+  if (!baseURL) throw new Error("app-update project baseURL is not configured")
+  return baseURL
 }
 
 async function control(method: "GET" | "POST", path: string, body?: Record<string, unknown>) {

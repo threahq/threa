@@ -20,5 +20,4 @@ export default function cleanup(): void {
     // A failed build removes its own partial output.
   }
   rmSync(infoPath, { force: true })
-  rmSync(join(__dirname, ".server-port"), { force: true })
 }
