@@ -3404,6 +3404,8 @@ const TimelineMessageList = memo(function TimelineMessageList({
 
   const olderFetchCooldownRef = useRef(0)
   const newerFetchCooldownRef = useRef(0)
+  const olderFetchRecheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const edgePaginationRef = useRef<() => void>(() => {})
   const FETCH_COOLDOWN_MS = 500
 
   const handleStartReached = useCallback(() => {
@@ -3417,7 +3419,17 @@ const TimelineMessageList = memo(function TimelineMessageList({
     const scrollerScrollable = followingLiveTail && el ? el.scrollHeight > el.clientHeight + 1 : false
     if (!shouldPrefetchOlderHistory({ followingLiveTail, scrollerScrollable, hasOlderEvents, isFetchingOlder })) return
     const now = performance.now()
-    if (now < olderFetchCooldownRef.current) return
+    if (now < olderFetchCooldownRef.current) {
+      // A wheel at the clamped top may not emit another scroll after the cooldown.
+      // Re-enter the edge owner once, which rechecks current geometry and guards.
+      if (olderFetchRecheckTimerRef.current === null) {
+        olderFetchRecheckTimerRef.current = setTimeout(() => {
+          olderFetchRecheckTimerRef.current = null
+          edgePaginationRef.current()
+        }, olderFetchCooldownRef.current - now)
+      }
+      return
+    }
     const started = fetchOlderEvents()
     if (started !== false) {
       olderFetchCooldownRef.current = now + FETCH_COOLDOWN_MS
@@ -3494,6 +3506,14 @@ const TimelineMessageList = memo(function TimelineMessageList({
     handleStartReached,
     handleEndReached,
   ])
+  edgePaginationRef.current = handleScroll
+
+  useEffect(() => {
+    return () => {
+      if (olderFetchRecheckTimerRef.current !== null) clearTimeout(olderFetchRecheckTimerRef.current)
+      olderFetchRecheckTimerRef.current = null
+    }
+  }, [streamId])
 
   // virtua has no rangeChanged, so a window that fits the viewport (not
   // scrollable) would never fire a scroll to page in older history the user
