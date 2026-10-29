@@ -96,6 +96,21 @@ test("Escape closes the picker and returns the caret to the code", async ({ page
   await expect(editor.locator("pre code")).toHaveText("ab")
 })
 
+test("reopening the list while it closes still focuses the search", async ({ page }) => {
+  await openScratchpad(page)
+  const editor = composerEditor(page)
+  await editor.click()
+  await page.keyboard.type("``` ")
+  await page.keyboard.type("a")
+
+  await editor.getByRole("button", { name: "Code language: Plain text" }).click()
+  await page.getByPlaceholder("Search languages").fill("python")
+  await page.keyboard.press("Enter")
+  // No wait for the list to hide: the click lands during its exit animation.
+  await editor.getByRole("button", { name: "Code language: Python" }).click()
+  await expect(page.getByPlaceholder("Search languages")).toBeFocused()
+})
+
 test("a long line wraps, so the chip never scrolls out of view", async ({ page }) => {
   await openScratchpad(page)
   const editor = composerEditor(page)
