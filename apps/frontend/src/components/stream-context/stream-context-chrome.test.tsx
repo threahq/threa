@@ -49,11 +49,11 @@ describe("ContextTimeline virtualization wiring", () => {
     const { rerender } = render(<ContextTimeline items={[first]} renderItem={renderItem} onJumpToDate={onJumpToDate} />)
 
     await userEvent.click(screen.getByRole("button", { name: "Jump to a date — showing Today" }))
-    expect(screen.getByRole("button", { name: "Last year", exact: true })).toBeVisible()
+    expect(screen.getByRole("button", { name: "Last year" })).toBeVisible()
 
     rerender(<ContextTimeline items={[newer, first]} renderItem={renderItem} onJumpToDate={onJumpToDate} />)
 
-    await userEvent.click(screen.getByRole("button", { name: "Last year", exact: true }))
+    await userEvent.click(screen.getByRole("button", { name: "Last year" }))
     const picked = onJumpToDate.mock.calls[0]?.[0] as Date
     expect({ calls: onJumpToDate.mock.calls.length, date: picked?.toDateString() }).toEqual({
       calls: 1,
