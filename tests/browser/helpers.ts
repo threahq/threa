@@ -93,6 +93,17 @@ export async function loginAndCreateWorkspace(
   prefix: string,
   options?: { region?: TestRegion }
 ): Promise<{ testId: string; email: string; name: string; workspaceName: string }> {
+  const { workspaceId, ...metadata } = await loginAndCreateWorkspaceViaApi(page, prefix, options)
+  await page.goto(`/w/${workspaceId}`)
+  await expect(page.getByRole("button", { name: "+ New Scratchpad" })).toBeVisible({ timeout: 10000 })
+  return metadata
+}
+
+export async function loginAndCreateWorkspaceViaApi(
+  page: Page,
+  prefix: string,
+  options?: { region?: TestRegion }
+): Promise<{ testId: string; email: string; name: string; workspaceName: string; workspaceId: string }> {
   const testId = generateTestId()
   const email = `${prefix}-${testId}@example.com`
   const name = `${prefix} ${testId}`
@@ -118,10 +129,7 @@ export async function loginAndCreateWorkspace(
 
   await waitForWorkspaceProvisioned(page, workspaceId)
   await setAllSidebarPreset(page, workspaceId)
-  await page.goto(`/w/${workspaceId}`)
-  await expect(page.getByRole("button", { name: "+ New Scratchpad" })).toBeVisible({ timeout: 10000 })
-
-  return { testId, email, name, workspaceName }
+  return { testId, email, name, workspaceName, workspaceId }
 }
 
 /**

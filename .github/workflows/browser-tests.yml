@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  TOTAL_SHARDS: 4
+  TOTAL_SHARDS: 8
 
 jobs:
   build-frontend:
@@ -91,17 +91,34 @@ jobs:
           retention-days: 1
 
   browser-tests:
-    needs: build-frontend
+    env:
+      BROWSER_WORKERS: 3
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-latest
     timeout-minutes: 25
     continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
-        shard_index: [1, 2, 3, 4]
+        shard_index: [1, 2, 3, 4, 5, 6, 7, 8]
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check main tip
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: tip
+        uses: ./.github/actions/check-main-tip
+        with:
+          expected-sha: ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Reject obsolete main revision
+        if: steps.tip.outputs.is-tip == 'false'
+        run: exit 1
 
       - name: Start PostgreSQL
         run: |
@@ -217,6 +234,31 @@ jobs:
             fi
           done
 
+      - name: Wait for this run's frontend artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          deadline=$((SECONDS + 180))
+          while (( SECONDS < deadline )); do
+            jobs=$(timeout 10s gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=all&per_page=100")
+            producer=$(jq -c '[.[].jobs[] | select(.name == "build-frontend")] | max_by(.run_attempt) // empty' <<< "$jobs")
+            if [[ -n "$producer" ]]; then
+              conclusion=$(jq -r '.conclusion // empty' <<< "$producer")
+              if [[ -n "$conclusion" && "$conclusion" != success ]]; then
+                echo "::error::Frontend producer ended with $conclusion"
+                exit 1
+              fi
+              started=$(jq -r '.started_at' <<< "$producer")
+              artifacts=$(timeout 10s gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=browser-test-frontend&per_page=100")
+              if jq -e --arg started "$started" '.artifacts[] | select(.name == "browser-test-frontend" and .expired == false and .created_at >= $started)' <<< "$artifacts" > /dev/null; then
+                exit 0
+              fi
+            fi
+            sleep 3
+          done
+          echo "::error::Timed out waiting for this run's frontend artifact"
+          exit 1
+
       - name: Download frontend build
         uses: actions/download-artifact@v4
         with:
@@ -233,7 +275,7 @@ jobs:
         id: initial-run
         continue-on-error: true
         run: |
-          "$RUNNER_TEMP/in-playwright" bun run test:browser -- --reporter=line,blob,json --test-list=browser-shard-lists/shard-${{ matrix.shard_index }}.txt
+          "$RUNNER_TEMP/in-playwright" bun run test:browser -- --workers="$BROWSER_WORKERS" --reporter=line,blob,json --test-list=browser-shard-lists/shard-${{ matrix.shard_index }}.txt
         env:
           CI: true
           PLAYWRIGHT_TEST_DB_NAME: ${{ env.PLAYWRIGHT_TEST_DB_NAME }}
@@ -259,7 +301,7 @@ jobs:
             echo "::warning::No failed-test IDs found — retrying the shard after the infrastructure failure"
             retry_target=(--test-list=browser-shard-lists/shard-${{ matrix.shard_index }}.txt)
           fi
-          "$RUNNER_TEMP/in-playwright" bun run test:browser -- --reporter=line,blob "${retry_target[@]}" --retries=0
+          "$RUNNER_TEMP/in-playwright" bun run test:browser -- --workers="$BROWSER_WORKERS" --reporter=line,blob "${retry_target[@]}" --retries=0
         env:
           CI: true
           PLAYWRIGHT_TEST_DB_NAME: ${{ env.PLAYWRIGHT_TEST_DB_NAME }}
