@@ -255,8 +255,8 @@ export function ContextTimeline({
   onJumpToDate?: (date: Date) => void
 }) {
   // Flattened, not nested per day: virtua windows a flat child list, so a day
-  // marker is a row of its own rather than a wrapper around its group. Keyed on
-  // a stable item id — date labels repeat across years and would collide.
+  // marker is a row of its own rather than a wrapper around its group. Its local
+  // day identity preserves an open menu when the day's first item changes.
   //
   // The first group's lack of top padding is an explicit flag, NOT `first:pt-0`:
   // virtua wraps every child in its own item element, so `:first-child` would
@@ -270,7 +270,7 @@ export function ContextTimeline({
   const today = localStartOfDayMs(new Date())
   const groups = useMemo(() => groupItemsByDay(items, new Date(today)), [items, today])
   const rows = groups.flatMap((group, index) => [
-    <div key={`day:${group.items[0].key}`} className={index === 0 ? "pt-0" : "pt-3"}>
+    <div key={`day:${localStartOfDayMs(new Date(group.items[0].createdAt))}`} className={index === 0 ? "pt-0" : "pt-3"}>
       {onJumpToDate ? (
         <DayMarkerJump label={group.label} day={new Date(group.items[0].createdAt)} onJumpToDate={onJumpToDate} />
       ) : (
