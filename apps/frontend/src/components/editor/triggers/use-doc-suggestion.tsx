@@ -54,18 +54,20 @@ export function useDocSuggestion(hostStreamId?: string, excludeDocId?: string) {
     (props: {
       ref: React.RefObject<{ onKeyDown: (event: KeyboardEvent) => boolean } | null>
       items: DocSuggestionItem[]
+      query: string
       clientRect: (() => DOMRect | null) | null
       command: (item: DocSuggestionItem) => void
     }) => (
       <DocSuggestionList
         ref={props.ref}
-        items={props.items}
+        items={filterItems(docs, props.query)}
+        highlightResetKey={props.query}
         clientRect={props.clientRect}
         command={(item) => !isNewDoc(item) && props.command(item)}
         emptyState="No docs found"
       />
     ),
-    []
+    [docs, filterItems]
   )
 
   const { suggestionConfig, renderSuggestionList, isActive } = useSuggestion<DocSuggestionItem>({
