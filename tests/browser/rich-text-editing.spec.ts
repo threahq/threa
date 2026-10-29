@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test"
-import { loginAndCreateWorkspace, pressEditorShortcut, selectAllEditorContent } from "./helpers"
+import { loginAndCreateWorkspace, openComposerFixture, pressEditorShortcut, selectAllEditorContent } from "./helpers"
 
 /**
  * Tests for Linear-style rich text editing.
@@ -196,27 +196,29 @@ async function focusMobileComposer(page: import("@playwright/test").Page) {
   await expect(page.locator("[contenteditable='true']")).toBeVisible({ timeout: 5000 })
 }
 
+async function setupWorkspaceWithEditor(page: import("@playwright/test").Page) {
+  await loginAndCreateWorkspace(page, "richtext")
+
+  // Create a scratchpad for testing
+  const newScratchpadButton = page.getByRole("button", { name: "+ New Scratchpad" })
+  if ((page.viewportSize()?.width ?? 0) < 640) {
+    await newScratchpadButton.evaluate((button: HTMLElement) => button.click())
+  } else {
+    await newScratchpadButton.click()
+  }
+
+  if ((page.viewportSize()?.width ?? 0) < 640) {
+    await expect(page.getByText("Type a message...")).toBeVisible({ timeout: 5000 })
+    return
+  }
+
+  await expect(page.locator("[contenteditable='true']")).toBeVisible({ timeout: 5000 })
+}
+
 test.describe("Rich Text Editing", () => {
-  test.beforeEach(async ({ page }) => {
-    await loginAndCreateWorkspace(page, "richtext")
-
-    // Create a scratchpad for testing
-    const newScratchpadButton = page.getByRole("button", { name: "+ New Scratchpad" })
-    if ((page.viewportSize()?.width ?? 0) < 640) {
-      await newScratchpadButton.evaluate((button: HTMLElement) => button.click())
-    } else {
-      await newScratchpadButton.click()
-    }
-
-    if ((page.viewportSize()?.width ?? 0) < 640) {
-      await expect(page.getByText("Type a message...")).toBeVisible({ timeout: 5000 })
-      return
-    }
-
-    await expect(page.locator("[contenteditable='true']")).toBeVisible({ timeout: 5000 })
-  })
-
   test.describe("Inline Formatting - Input Rules", () => {
+    test.beforeEach(({ page }) => openComposerFixture(page))
+
     test("typing **text** converts to bold", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()
@@ -229,6 +231,8 @@ test.describe("Rich Text Editing", () => {
   })
 
   test.describe("Inline Formatting - Keyboard Shortcuts", () => {
+    test.beforeEach(({ page }) => openComposerFixture(page))
+
     test("Cmd+B toggles bold on selection", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()
@@ -248,6 +252,8 @@ test.describe("Rich Text Editing", () => {
   })
 
   test.describe("Block Formatting - Lists", () => {
+    test.beforeEach(({ page }) => openComposerFixture(page))
+
     test("typing '- ' creates bullet list", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()
@@ -299,6 +305,8 @@ test.describe("Rich Text Editing", () => {
   })
 
   test.describe("Block Formatting - Code Blocks", () => {
+    test.beforeEach(({ page }) => openComposerFixture(page))
+
     test("typing ``` + space creates code block", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()
@@ -333,6 +341,8 @@ test.describe("Rich Text Editing", () => {
   })
 
   test.describe("Block Formatting - Blockquotes", () => {
+    test.beforeEach(({ page }) => openComposerFixture(page))
+
     test("typing '> ' creates blockquote", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()
@@ -355,6 +365,8 @@ test.describe("Rich Text Editing", () => {
   })
 
   test.describe("Block Formatting - Headings", () => {
+    test.beforeEach(({ page }) => openComposerFixture(page))
+
     test("typing '# ' creates H1", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()
@@ -368,6 +380,8 @@ test.describe("Rich Text Editing", () => {
   })
 
   test.describe("Toolbar Buttons", () => {
+    test.beforeEach(({ page }) => openComposerFixture(page))
+
     test("bold button toggles bold", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       const boldButton = page.getByRole("button", { name: "Bold" }).first()
@@ -623,6 +637,10 @@ test.describe("Rich Text Editing", () => {
   })
 
   test.describe("Send Mode Integration", () => {
+    test.beforeEach(async ({ page }) => {
+      await setupWorkspaceWithEditor(page)
+    })
+
     test("Enter sends in enter-mode (formatting preserved)", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()
@@ -654,6 +672,8 @@ test.describe("Rich Text Editing", () => {
   })
 
   test.describe("Copy/Paste", () => {
+    test.beforeEach(({ page }) => openComposerFixture(page))
+
     test("paste markdown converts to styled text", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()
@@ -702,6 +722,8 @@ test.describe("Rich Text Editing", () => {
   })
 
   test.describe("Unified Newlines", () => {
+    test.beforeEach(({ page }) => openComposerFixture(page))
+
     test("Shift+Enter creates new paragraph (unified with Enter in cmdEnter mode)", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()
@@ -722,6 +744,8 @@ test.describe("Rich Text Editing", () => {
   })
 
   test.describe("VS Code-style Tab Indentation", () => {
+    test.beforeEach(({ page }) => openComposerFixture(page))
+
     test("Tab with multi-line selection indents all lines (preserves content)", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()
@@ -790,6 +814,8 @@ test.describe("Rich Text Editing", () => {
   })
 
   test.describe("Shift+Enter in Lists", () => {
+    test.beforeEach(({ page }) => openComposerFixture(page))
+
     test("Shift+Enter in list item creates new item (same as Enter)", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()
@@ -810,6 +836,8 @@ test.describe("Rich Text Editing", () => {
   })
 
   test.describe("Code Block with Shift+Enter", () => {
+    test.beforeEach(({ page }) => openComposerFixture(page))
+
     test("Shift+Enter after ``` creates code block (same as Enter)", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()
@@ -824,6 +852,8 @@ test.describe("Rich Text Editing", () => {
   })
 
   test.describe("Desktop Multiline Blocks", () => {
+    test.beforeEach(({ page }) => openComposerFixture(page))
+
     test("Shift+Enter twice keeps subsequent code inside the current code block", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()
@@ -891,6 +921,10 @@ test.describe("Rich Text Editing", () => {
   })
 
   test.describe("Mobile Multiline Blocks", () => {
+    test.beforeEach(async ({ page }) => {
+      await setupWorkspaceWithEditor(page)
+    })
+
     test.use({ viewport: { width: 390, height: 844 } })
 
     test("beforeinput exits a code block on the third newline", async ({ page }) => {

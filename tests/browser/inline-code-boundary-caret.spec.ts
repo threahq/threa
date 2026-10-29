@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace } from "./helpers"
+import { openComposerFixture } from "./helpers"
 
 type BoundaryTarget = "outside-start" | "inside-start" | "inside-end" | "outside-end"
 
@@ -410,11 +410,7 @@ async function getEffectiveCaretLeft(page: Page) {
 }
 
 test.describe("Inline code boundary caret", () => {
-  test.beforeEach(async ({ page }) => {
-    await loginAndCreateWorkspace(page, "inline-code-caret")
-    await page.getByRole("button", { name: "+ New Scratchpad" }).click()
-    await expect(page.locator("[contenteditable='true']")).toBeVisible({ timeout: 5000 })
-  })
+  test.beforeEach(({ page }) => openComposerFixture(page))
 
   for (const scenario of [
     { label: "paragraph", blockType: "paragraph" as const },
