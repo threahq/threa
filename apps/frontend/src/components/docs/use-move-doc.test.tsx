@@ -6,6 +6,8 @@ import { WORKSPACE_PERMISSION_SCOPES, type DocMovePreviewResponse } from "@threa
 import * as workspacesModule from "@/hooks/use-workspaces"
 import * as currentUserModule from "@/hooks/use-current-workspace-user-id"
 import * as manageChannelsModule from "@/lib/use-can-manage-channels"
+import * as workspaceStoreModule from "@/stores/workspace-store"
+import { createMockStream } from "@/test/fixtures"
 import { docsApi } from "@/api/docs"
 import { useMoveDoc } from "./use-move-doc"
 
@@ -104,5 +106,32 @@ describe("useMoveDoc", () => {
       fromStreamId: null,
       toStreamId: "stream_target",
     })
+  })
+
+  it("excludes itself and known nested descendants from move targets", () => {
+    const root = createMockStream({ id: "stream_doc", type: "doc" })
+    const child = createMockStream({
+      id: "stream_child",
+      type: "doc",
+      parentStreamId: root.id,
+      rootStreamId: root.id,
+    })
+    const grandchild = createMockStream({
+      id: "stream_grandchild",
+      type: "doc",
+      parentStreamId: child.id,
+      rootStreamId: root.id,
+    })
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreamsSelect").mockImplementation((_workspaceId, select) =>
+      select([root, child, grandchild] as never)
+    )
+    const { result } = renderMoveDoc({ userId: "usr_creator", admin: false })
+
+    expect({
+      self: result.current.isTarget(root as never),
+      child: result.current.isTarget(child as never),
+      grandchild: result.current.isTarget(grandchild as never),
+      otherHost: result.current.isTarget(createMockStream({ id: "stream_host2", type: "channel" }) as never),
+    }).toEqual({ self: false, child: false, grandchild: false, otherHost: true })
   })
 })

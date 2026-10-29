@@ -150,11 +150,12 @@ export function registerDocTools(server: McpServer, client: ThreaApiClient, reso
     {
       title: "Move a doc",
       description:
-        "Move a doc to another host stream; content, history and threads come with it. `to_stream_id` takes a " +
+        "Move a doc to another host stream; content, history, child docs and threads come with it. `to_stream_id` takes a " +
         "`stream_…` id or `#channel-slug`; null lifts the doc to the top level with `visibility` (default " +
         "private), the key's user as its only member, and only a user key may do that. Only the doc's creator or " +
         "a workspace admin can move it, so a bot key moves only docs its bot created (403 DOC_MOVE_FORBIDDEN " +
-        "otherwise). The result is the doc with its new `hostStreamId` (null at the top level).",
+        "otherwise). A doc cannot move under itself or a descendant (400 DOC_MOVE_CYCLE). " +
+        "The result is the doc with its new `hostStreamId` (null at the top level).",
       inputSchema: {
         doc_id: z.string(),
         to_stream_id: z.string().nullable(),

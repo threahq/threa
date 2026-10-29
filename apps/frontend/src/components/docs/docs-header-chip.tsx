@@ -12,6 +12,7 @@ import {
 import { usePanel } from "@/contexts"
 import { formatRelativeTime } from "@/lib/dates"
 import { STREAM_ICONS, streamLabel } from "@/lib/streams"
+import { panelIdsOf } from "@/lib/panel-tabs"
 import { useWorkspaceStreamsSelect, type CachedStream } from "@/stores/workspace-store"
 import { docListHref } from "./doc-list"
 
@@ -49,13 +50,22 @@ interface DocsHeaderChipProps {
 interface HostedDocItemsProps {
   docs: HostedDoc[]
   getPanelUrl: (panelId: string) => string
+  openPanelIds: readonly string[]
+  onActivate: (panelId: string) => void
 }
 
-function HostedDocItems({ docs, getPanelUrl }: HostedDocItemsProps) {
+function HostedDocItems({ docs, getPanelUrl, openPanelIds, onActivate }: HostedDocItemsProps) {
   const now = new Date()
   return docs.map((doc) => (
     <DropdownMenuItem key={doc.id} asChild>
-      <Link to={getPanelUrl(doc.id)} className="flex items-center gap-2">
+      <Link
+        to={getPanelUrl(doc.id)}
+        onClick={(event) => {
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+          if (openPanelIds.includes(doc.id)) onActivate(doc.id)
+        }}
+        className="flex items-center gap-2"
+      >
         <DocGlyph className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
         <span className="min-w-0 flex-1 truncate">{streamLabel(doc, "generic")}</span>
         <span className="shrink-0 text-xs text-muted-foreground">
@@ -68,7 +78,7 @@ function HostedDocItems({ docs, getPanelUrl }: HostedDocItemsProps) {
 
 /** A count of the host's docs that opens a menu of them, each opening in a pane, and the docs page filtered to the host. */
 export const DocsHeaderChip = memo(function DocsHeaderChip({ workspaceId, hostId, docs }: DocsHeaderChipProps) {
-  const { getPanelUrl } = usePanel()
+  const { getPanelUrl, layout, markCurrentPane } = usePanel()
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -83,7 +93,12 @@ export const DocsHeaderChip = memo(function DocsHeaderChip({ workspaceId, hostId
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
-        <HostedDocItems docs={docs} getPanelUrl={getPanelUrl} />
+        <HostedDocItems
+          docs={docs}
+          getPanelUrl={getPanelUrl}
+          openPanelIds={panelIdsOf(layout)}
+          onActivate={markCurrentPane}
+        />
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
           <Link to={docListHref(workspaceId, new URLSearchParams(), { host: hostId })}>All docs</Link>

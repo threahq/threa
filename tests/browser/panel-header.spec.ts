@@ -250,6 +250,7 @@ test("should show as many tabs as fit at their minimum width, whichever is on sh
     else {
       await more.click()
       await page.getByRole("menuitem", { name: title(index), exact: true }).click()
+      await expect(page.getByRole("menu")).toHaveCount(0)
     }
     await expect(strip.locator('[aria-current="page"]')).toHaveText(title(index))
     const { room, shown, narrowest, overflows } = await row()

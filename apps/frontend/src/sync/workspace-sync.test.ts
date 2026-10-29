@@ -2064,6 +2064,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     getCurrentStreamId: () => undefined,
     getCurrentUser: () => ({ id: "workos_1" }),
     subscribeStream: vi.fn(),
+    refreshWorkspace: vi.fn(),
   }
 
   it("revision-orders stream title events and ignores another workspace", async () => {
@@ -3128,6 +3129,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       getCurrentStreamId: () => undefined,
       getCurrentUser: () => ({ id: "workos_1" }),
       subscribeStream,
+      refreshWorkspace: vi.fn(),
     })
 
     emit("stream:created", {
@@ -3173,6 +3175,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       getCurrentStreamId: () => undefined,
       getCurrentUser: () => ({ id: "workos_1" }),
       subscribeStream,
+      refreshWorkspace: vi.fn(),
     })
 
     emit("stream:created", {
@@ -3215,6 +3218,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       getCurrentStreamId: () => undefined,
       getCurrentUser: () => ({ id: "workos_1" }),
       subscribeStream: vi.fn(),
+      refreshWorkspace: vi.fn(),
     })
     const privateDoc = (id: string, hostId: string) =>
       makeStream(id, {
@@ -3267,6 +3271,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       getCurrentStreamId: () => undefined,
       getCurrentUser: () => ({ id: "workos_1" }),
       subscribeStream: vi.fn(),
+      refreshWorkspace: vi.fn(),
     })
 
     emit("stream:created", {
@@ -3314,6 +3319,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       getCurrentStreamId: () => undefined,
       getCurrentUser: () => ({ id: "workos_1" }),
       subscribeStream,
+      refreshWorkspace: vi.fn(),
     })
 
     emit("stream:created", {
@@ -3366,6 +3372,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       getCurrentStreamId: () => undefined,
       getCurrentUser: () => ({ id: "workos_1" }),
       subscribeStream,
+      refreshWorkspace: vi.fn(),
     })
 
     emit("stream:member_added", {
@@ -3416,6 +3423,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       getCurrentStreamId: () => undefined,
       getCurrentUser: () => ({ id: "workos_1" }),
       subscribeStream: vi.fn(),
+      refreshWorkspace: vi.fn(),
     })
 
     emit("feature_flags:updated", {
@@ -3442,6 +3450,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       getCurrentStreamId: () => undefined,
       getCurrentUser: () => ({ id: "workos_1" }),
       subscribeStream: vi.fn(),
+      refreshWorkspace: vi.fn(),
     })
 
     emit("feature_flags:workspace_updated", {
@@ -3476,6 +3485,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       getCurrentStreamId: () => undefined,
       getCurrentUser: () => ({ id: "workos_1" }),
       subscribeStream: vi.fn(),
+      refreshWorkspace: vi.fn(),
     })
 
     emit("feature_flags:workspace_updated", { workspaceId: "ws_1", overrides: { calls: "off" } })
@@ -3533,6 +3543,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       getCurrentStreamId: () => undefined,
       getCurrentUser: () => ({ id: "workos_1" }),
       subscribeStream,
+      refreshWorkspace: vi.fn(),
     })
 
     emit("stream:created", {
@@ -3595,6 +3606,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       getCurrentStreamId: () => undefined,
       getCurrentUser: () => ({ id: "workos_1" }),
       subscribeStream: vi.fn(),
+      refreshWorkspace: vi.fn(),
     })
 
     const bot = {
@@ -3714,6 +3726,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       getCurrentStreamId: () => undefined,
       getCurrentUser: () => ({ id: "workos_1" }),
       subscribeStream,
+      refreshWorkspace: vi.fn(),
     })
 
     emit("stream:member_added", {
@@ -3769,6 +3782,7 @@ describe("registerWorkspaceSocketHandlers", () => {
         getCurrentStreamId: () => undefined,
         getCurrentUser: () => ({ id: "workos_1" }),
         subscribeStream: vi.fn(),
+        refreshWorkspace: vi.fn(),
       })
 
       emit("stream:member_added", { workspaceId: "ws_1", streamId: host.id, memberId: "member_1", stream: host })
@@ -3867,6 +3881,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       getCurrentStreamId: () => "stream_1",
       getCurrentUser: () => ({ id: "workos_1" }),
       subscribeStream,
+      refreshWorkspace: vi.fn(),
     })
 
     emit("stream:read", {
@@ -4521,6 +4536,7 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
       getCurrentStreamId: () => currentStreamId,
       getCurrentUser: () => ({ id: "workos_1" }),
       subscribeStream: vi.fn(),
+      refreshWorkspace: vi.fn(),
     })
     return { emit, cleanup }
   }
@@ -5258,6 +5274,7 @@ describe("agent-activity sidebar socket handlers", () => {
     getCurrentStreamId: () => undefined,
     getCurrentUser: () => ({ id: "workos_1" }),
     subscribeStream: vi.fn(),
+    refreshWorkspace: vi.fn(),
   }
 
   async function putStream(id: string, rootStreamId: string | null, parentAnchorId: string | null = null) {
@@ -5691,6 +5708,7 @@ describe("stream:member_removed board cleanup", () => {
     getCurrentStreamId: () => undefined,
     getCurrentUser: () => ({ id: "workos_1" }),
     subscribeStream: vi.fn(),
+    refreshWorkspace: vi.fn(),
   }
 
   function seededClient(visibility: "public" | "private") {
@@ -5861,6 +5879,7 @@ describe("stream:doc_moved", () => {
     getCurrentStreamId: () => undefined,
     getCurrentUser: () => ({ id: "workos_1" }),
     subscribeStream: vi.fn(),
+    refreshWorkspace: vi.fn(),
   }
   const doc = makeStream("doc_d", { type: "doc", parentStreamId: "chan_a", rootStreamId: "chan_a" })
   const section = makeStream("thread_s", { type: "thread", parentStreamId: "doc_d", rootStreamId: "chan_a" })
@@ -5961,6 +5980,7 @@ describe("stream:doc_moved", () => {
 
   it("prunes the doc and its sections, archived included, when the viewer cannot read the new host", async () => {
     const queryClient = await seed([makeStream("chan_a")], true)
+    handlerRefs.refreshWorkspace.mockClear()
     const { socket, emitAsync } = createTestSocket()
     const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
 
@@ -5984,39 +6004,119 @@ describe("stream:doc_moved", () => {
       },
       listed: ["doc_other"],
     })
+    expect(handlerRefs.refreshWorkspace).toHaveBeenCalledOnce()
     cleanup()
   })
 
   it("asks the server to re-list a pruned doc, which a share grant's reader gets back", async () => {
     const queryClient = await seed([makeStream("chan_a")], true)
-    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    let releaseRefresh!: () => void
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve
+    })
+    const refreshWorkspace = vi.fn(async () => {
+      await refreshGate
+      const { bootstrap } = await applyWorkspaceBootstrap(
+        "ws_1",
+        makeBootstrap({
+          streams: [
+            { ...makeStream("chan_a"), lastMessagePreview: null },
+            { ...movedDoc, lastMessagePreview: null },
+          ],
+        })
+      )
+      queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), bootstrap)
+    })
     const { socket, emitAsync } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, { ...handlerRefs, refreshWorkspace })
 
     await emitAsync("stream:doc_moved", moved)
     await vi.waitFor(async () => {
       expect(await db.streams.get(["ws_1", "doc_d"])).toBeUndefined()
     })
-    const invalidatedKeys = invalidate.mock.calls.map(([filters]) => filters?.queryKey)
-
-    // The refetch the invalidation triggers: the server lists the doc through the grant, without its root.
-    const { bootstrap: refetched } = await applyWorkspaceBootstrap(
-      "ws_1",
-      makeBootstrap({
-        streams: [
-          { ...makeStream("chan_a"), lastMessagePreview: null },
-          { ...movedDoc, lastMessagePreview: null },
-        ],
-      })
+    expect(refreshWorkspace).toHaveBeenCalledOnce()
+    expect(queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streams).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "doc_d" })])
     )
+    releaseRefresh()
+    await vi.waitFor(async () => {
+      expect((await db.streams.get(["ws_1", "doc_d"]))?.rootStreamId).toBe("chan_b")
+    })
+    const refreshed = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))!
 
     expect({
-      invalidatedBootstrap: invalidatedKeys.some(
-        (key) => JSON.stringify(key) === JSON.stringify(workspaceKeys.bootstrap("ws_1"))
-      ),
-      listed: refetched.streams.map((s) => s.id),
+      refreshed: refreshWorkspace.mock.calls.length,
+      listed: refreshed.streams.map((s) => s.id),
       stored: (await db.streams.get(["ws_1", "doc_d"]))?.rootStreamId,
-    }).toEqual({ invalidatedBootstrap: true, listed: ["chan_a", "doc_d"], stored: "chan_b" })
+    }).toEqual({ refreshed: 1, listed: ["chan_a", "doc_d"], stored: "chan_b" })
+    cleanup()
+  })
+
+  it("re-lists a lifted doc and its child doc only after pruning the cached subtree", async () => {
+    const queryClient = await seed([makeStream("chan_a")], true)
+    const childDoc = makeStream("doc_g", {
+      type: "doc",
+      parentStreamId: "doc_d",
+      rootStreamId: "chan_a",
+    })
+    await db.streams.put({ ...childDoc, _cachedAt: Date.now() })
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"), (old) => ({
+      ...old!,
+      streams: [...old!.streams, { ...childDoc, lastMessagePreview: null }],
+    }))
+
+    let releaseRefresh!: () => void
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve
+    })
+    let cacheAfterPrune: string[] | null = null
+    const liftedDoc = { ...doc, parentStreamId: null, rootStreamId: null }
+    const refreshWorkspace = vi.fn(async () => {
+      cacheAfterPrune = queryClient
+        .getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))!
+        .streams.filter((stream) => ["doc_d", "doc_g", "thread_s"].includes(stream.id))
+        .map((stream) => stream.id)
+      await refreshGate
+      const { bootstrap } = await applyWorkspaceBootstrap(
+        "ws_1",
+        makeBootstrap({
+          streams: [
+            { ...makeStream("chan_a"), lastMessagePreview: null },
+            { ...liftedDoc, lastMessagePreview: null },
+            { ...section, rootStreamId: "doc_d", lastMessagePreview: null },
+            { ...childDoc, rootStreamId: "doc_d", lastMessagePreview: null },
+          ],
+        })
+      )
+      queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), bootstrap)
+    })
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, { ...handlerRefs, refreshWorkspace })
+
+    await emitAsync("stream:doc_moved", {
+      ...moved,
+      doc: liftedDoc,
+      movedStreamIds: ["doc_d", "thread_s", "thread_old", "doc_g"],
+    })
+    await vi.waitFor(() => expect(refreshWorkspace).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(cacheAfterPrune).toEqual([]))
+    releaseRefresh()
+
+    await vi.waitFor(() => {
+      const streams = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))!.streams
+      expect(streams.map((stream) => stream.id)).toContain("doc_g")
+    })
+    expect(
+      queryClient
+        .getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))!
+        .streams.filter((stream) => ["doc_d", "doc_g", "thread_s"].includes(stream.id))
+        .map(({ id, parentStreamId, rootStreamId }) => ({ id, parentStreamId, rootStreamId }))
+        .sort((a, b) => a.id.localeCompare(b.id))
+    ).toEqual([
+      { id: "doc_d", parentStreamId: null, rootStreamId: null },
+      { id: "doc_g", parentStreamId: "doc_d", rootStreamId: "doc_d" },
+      { id: "thread_s", parentStreamId: "doc_d", rootStreamId: "doc_d" },
+    ])
     cleanup()
   })
 })
@@ -6056,6 +6156,7 @@ describe("stream:activity is the single preview writer", () => {
       getCurrentStreamId: () => currentStreamId,
       getCurrentUser: () => ({ id: "workos_1" }),
       subscribeStream: vi.fn(),
+      refreshWorkspace: vi.fn(),
     })
     return { emit, cleanup }
   }
@@ -6145,6 +6246,7 @@ describe("workspace users and personas that share an id across workspaces (real 
     getCurrentStreamId: () => undefined,
     getCurrentUser: () => ({ id: "workos_1" }),
     subscribeStream: vi.fn(),
+    refreshWorkspace: vi.fn(),
   }
 
   const byWorkspace = (a: { workspaceId: string }, b: { workspaceId: string }) =>
@@ -6360,6 +6462,7 @@ describe("a guest's people roster refresh (real IndexedDB)", () => {
       getCurrentStreamId: () => undefined,
       getCurrentUser: () => ({ id: "workos_1" }),
       subscribeStream: vi.fn(),
+      refreshWorkspace: vi.fn(),
     })
     const bootstrapUsers = () => queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.users
     return { emit, emitAsync, cleanup, bootstrapUsers, queryClient }
@@ -6640,6 +6743,7 @@ describe("a guest's people roster refresh (real IndexedDB)", () => {
       getCurrentStreamId: () => undefined,
       getCurrentUser: () => ({ id: "workos_1" }),
       subscribeStream: vi.fn(),
+      refreshWorkspace: vi.fn(),
     })
 
     emit("stream:member_added", memberAdded("usr_new"))

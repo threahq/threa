@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import { StreamTypes } from "@threahq/types"
+import type { Querier } from "../../db"
 import { docFirstLine, docHostFor } from "./hosted-docs"
 
 describe("docFirstLine", () => {
@@ -16,18 +17,29 @@ describe("docFirstLine", () => {
   })
 })
 
-describe("docHostFor", () => {
-  const channel = { id: "stream_channel", rootStreamId: null, e2eEnabled: false }
-  const thread = { id: "stream_thread", rootStreamId: "stream_channel", e2eEnabled: false }
+describe("docHostFor early returns", () => {
+  const db: Querier = {
+    query: async () => {
+      throw new Error("Early doc host resolution must not query the database")
+    },
+  }
+  const root = { id: "stream_root", type: StreamTypes.SCRATCHPAD, rootStreamId: null, e2eEnabled: false }
+  const thread = { ...root, id: "stream_thread", type: StreamTypes.THREAD, rootStreamId: root.id }
 
   test.each([
-    ["a channel hosts its own docs", channel, StreamTypes.CHANNEL, "stream_channel"],
-    ["a thread works on its root's docs", thread, StreamTypes.CHANNEL, "stream_channel"],
-    ["a scratchpad hosts its own docs", { ...channel, id: "stream_pad" }, StreamTypes.SCRATCHPAD, "stream_pad"],
-    ["a sealed stream has no doc host", { ...channel, e2eEnabled: true }, StreamTypes.SCRATCHPAD, null],
-    ["an aside cannot host docs", { ...channel, id: "stream_aside" }, StreamTypes.ASIDE, null],
-    ["a thread with no root found has no doc host", thread, null, null],
-  ])("%s", (_name, stream, rootType, expected) => {
-    expect(docHostFor(stream, rootType)).toBe(expected)
+    ["use a rootless scratchpad as its own doc host", root, StreamTypes.SCRATCHPAD, root.id],
+    [
+      "use a rootless channel as its own doc host",
+      { ...root, type: StreamTypes.CHANNEL },
+      StreamTypes.CHANNEL,
+      root.id,
+    ],
+    ["reject a sealed root", { ...root, e2eEnabled: true }, StreamTypes.SCRATCHPAD, null],
+    ["reject a sealed thread", { ...thread, e2eEnabled: true }, StreamTypes.CHANNEL, null],
+    ["reject a missing root type", thread, null, null],
+    ["reject an aside root", { ...root, type: StreamTypes.ASIDE }, StreamTypes.ASIDE, null],
+    ["reject a system root", { ...root, type: StreamTypes.SYSTEM }, StreamTypes.SYSTEM, null],
+  ])("should %s", async (_name, stream, rootType, expected) => {
+    expect(await docHostFor(db, "ws_test", stream, rootType)).toBe(expected)
   })
 })

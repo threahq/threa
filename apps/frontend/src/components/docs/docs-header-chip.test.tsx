@@ -39,6 +39,8 @@ describe("DocsHeaderChip", () => {
     )
     vi.spyOn(contextsModule, "usePanel").mockReturnValue({
       getPanelUrl: (panelId: string) => `/panel/${panelId}`,
+      layout: { columns: [] },
+      markCurrentPane: vi.fn(),
     } as unknown as ReturnType<typeof contextsModule.usePanel>)
   })
 

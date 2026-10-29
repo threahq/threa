@@ -152,24 +152,48 @@ async function outbox(eventType: string, docId: string) {
 describe("moving a doc", () => {
   test("should re-root the doc and its section threads on the target so access follows the new root", async () => {
     const { a, b, doc, thread } = await seed()
-    const before = await readers([doc.id, thread.id])
+    const childDoc = await streamService.create({
+      workspaceId: wsId,
+      type: "doc",
+      parentStreamId: doc.id,
+      createdBy: owner,
+    })
+    const childBlock = await write(childDoc.id, owner, "Child section")
+    const childThread = await streamService.createThread({
+      workspaceId: wsId,
+      parentStreamId: childDoc.id,
+      parentAnchorId: childBlock,
+      createdBy: owner,
+      principal: { kind: "user", userId: owner },
+    })
+    const subtreeIds = [doc.id, thread.id, childDoc.id, childThread.id]
+    const before = await readers(subtreeIds)
 
     const moved = await move({ docId: doc.id, fromStreamId: a.id, toStreamId: b.id })
 
     const threadRow = await streamService.getStreamById(wsId, thread.id)
+    const childDocRow = await streamService.getStreamById(wsId, childDoc.id)
+    const childThreadRow = await streamService.getStreamById(wsId, childThread.id)
+    const [moveEvent] = await outbox("stream:doc_moved", doc.id)
     expect({
       before,
-      after: await readers([doc.id, thread.id]),
+      after: await readers(subtreeIds),
       // Bob joined neither the thread nor the doc: the thread reads through B, its root (INV-62).
       bobReadsThread: (await checkStreamAccess(pool, thread.id, wsId, bob))?.id ?? null,
       doc: { parentStreamId: moved.parentStreamId, rootStreamId: moved.rootStreamId, visibility: moved.visibility },
       thread: { parentStreamId: threadRow?.parentStreamId, rootStreamId: threadRow?.rootStreamId },
+      childDoc: { parentStreamId: childDocRow?.parentStreamId, rootStreamId: childDocRow?.rootStreamId },
+      childThread: { parentStreamId: childThreadRow?.parentStreamId, rootStreamId: childThreadRow?.rootStreamId },
+      movedIds: [...(moveEvent?.movedStreamIds as string[])].sort(),
     }).toEqual({
-      before: { [alice]: [doc.id, thread.id].sort(), [bob]: [] },
-      after: { [alice]: [], [bob]: [doc.id, thread.id].sort() },
+      before: { [alice]: subtreeIds.sort(), [bob]: [] },
+      after: { [alice]: [], [bob]: subtreeIds.sort() },
       bobReadsThread: thread.id,
       doc: { parentStreamId: b.id, rootStreamId: b.id, visibility: "private" },
       thread: { parentStreamId: doc.id, rootStreamId: b.id },
+      childDoc: { parentStreamId: doc.id, rootStreamId: b.id },
+      childThread: { parentStreamId: childDoc.id, rootStreamId: b.id },
+      movedIds: subtreeIds.sort(),
     })
   })
 

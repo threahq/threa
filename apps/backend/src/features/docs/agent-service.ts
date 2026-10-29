@@ -16,6 +16,7 @@ import type { BotChannelService } from "../api-keys"
 import {
   StreamRepository,
   checkStreamAccess,
+  listAccessibleStreamIds,
   principalActorId,
   type Stream,
   type StreamService,
@@ -43,6 +44,7 @@ import type {
   DocAgentWriteResult,
 } from "./agent-types"
 import { DocRepository } from "./repository"
+import { listHostedDocCandidates } from "./hosted-docs"
 import type { DocService } from "./service"
 
 /**
@@ -170,11 +172,17 @@ export class DocAgentService {
   /** The host's active docs, newest first; `not_found` when the principal cannot read the host. */
   async listDocs(ctx: HostedDocAgentContext): Promise<DocAgentListResult> {
     if (!(await this.canRead(ctx, ctx.hostStreamId))) return { status: "not_found" }
-    const docs = await StreamRepository.list(this.pool, ctx.workspaceId, {
-      types: [StreamTypes.DOC],
-      parentStreamId: ctx.hostStreamId,
-      archiveStatus: ["active"],
-    })
+    const candidates = await listHostedDocCandidates(this.pool, ctx.workspaceId, ctx.hostStreamId)
+    const accessibleIds =
+      ctx.principal.kind === "user"
+        ? await listAccessibleStreamIds(
+            this.pool,
+            ctx.workspaceId,
+            ctx.principal.userId,
+            candidates.map((doc) => doc.id)
+          )
+        : new Set(await this.botChannelService.getAccessibleStreamIdsForBot(ctx.workspaceId, ctx.principal.botId))
+    const docs = candidates.filter((doc) => accessibleIds.has(doc.id))
     const heads = await DocRepository.listHeads(
       this.pool,
       ctx.workspaceId,
@@ -366,7 +374,8 @@ export class DocAgentService {
   private async accessibleDoc(ctx: DocAgentContext, docId: string): Promise<Stream | null> {
     const stream = await StreamRepository.findById(this.pool, ctx.workspaceId, docId)
     if (stream?.type !== StreamTypes.DOC) return null
-    if (ctx.hostStreamId !== null && stream.parentStreamId !== ctx.hostStreamId) return null
+    if (ctx.hostStreamId !== null && stream.id !== ctx.hostStreamId && stream.parentStreamId !== ctx.hostStreamId)
+      return null
     if (!(await this.canRead(ctx, stream.id))) return null
     return stream
   }

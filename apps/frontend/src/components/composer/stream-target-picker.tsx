@@ -38,6 +38,7 @@ const TYPE_GROUPS: { type: StreamType; heading: string }[] = [
   { type: StreamTypes.CHANNEL, heading: "Channels" },
   { type: StreamTypes.DM, heading: "Direct messages" },
   { type: StreamTypes.SCRATCHPAD, heading: "Scratchpads" },
+  { type: StreamTypes.DOC, heading: "Docs" },
 ]
 
 export interface StreamTargetPickerProps {
@@ -166,6 +167,7 @@ export interface StreamTargetListProps {
   filter?: (stream: CachedStream) => boolean
   recents?: string[]
   searchPlaceholder?: string
+  includeDocHosts?: boolean
 }
 
 /**
@@ -179,10 +181,11 @@ export function StreamTargetList({
   filter = isPostableStream,
   recents,
   searchPlaceholder = "Search or start a post…",
+  includeDocHosts = false,
 }: StreamTargetListProps) {
   const [search, setSearch] = useState("")
   const [sortMode, setSortMode] = useStoredStreamSortMode()
-  const groups = useStreamPickerGroups(workspaceId, { search, sortMode, filter })
+  const groups = useStreamPickerGroups(workspaceId, { search, sortMode, filter, includeDocHosts })
 
   const lower = search.toLowerCase()
   const isSearching = lower.length > 0

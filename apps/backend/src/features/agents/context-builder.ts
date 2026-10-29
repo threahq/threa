@@ -125,7 +125,7 @@ export interface StreamContext {
   temporal?: TemporalContext
   /** Participant timezone info (for multi-timezone awareness) */
   participantTimezones?: ParticipantTemporal[]
-  /** The docs of `docHostId`; absent when the turn has no doc host. */
+  /** The docs of the scoped host; absent when the turn has no doc host. */
   docs?: HostedDoc[]
 }
 
@@ -169,8 +169,8 @@ export interface BuildStreamContextOptions {
   includeAttachments?: boolean
   /** Whether to append completed link-preview card metadata to each message. */
   includeLinkPreviews?: boolean
-  /** The stream whose docs this turn can read and edit (`docHostFor`); its docs join the context. */
-  docHostId?: string | null
+  /** The stream whose docs this user can read and edit (`docHostFor`); its docs join the context. */
+  docScope?: { hostStreamId: string; userId: string } | null
   /** Doc ids open on the invoking user's device; marks the matching host docs as open. */
   openDocIds?: string[]
 }
@@ -269,8 +269,14 @@ export async function buildStreamContext(
     context.conversationHistory = pinned > 0 ? [...head, ...trimmed] : trimmed
   }
 
-  if (options?.docHostId) {
-    context.docs = await listHostedDocs(db, stream.workspaceId, options.docHostId, options.openDocIds)
+  if (options?.docScope) {
+    context.docs = await listHostedDocs(
+      db,
+      stream.workspaceId,
+      options.docScope.hostStreamId,
+      options.docScope.userId,
+      options.openDocIds
+    )
   }
 
   if (options?.includeAttachments) {

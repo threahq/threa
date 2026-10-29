@@ -68,7 +68,7 @@ function useCreateDocStream(workspaceId: string) {
 export function useCreateDoc(workspaceId: string, host: DocHost | undefined) {
   const { create: createDocStream, pending } = useCreateDocStream(workspaceId)
   const { openPanel } = usePanel()
-  const canWriteHost = useRootWriteAccess(workspaceId, host?.id ?? null)
+  const canWriteHost = useRootWriteAccess(workspaceId, host?.rootStreamId ?? host?.id ?? null)
   const { isArchived } = useEffectiveArchived({ workspaceId, stream: host, fallbackArchived: null })
   const enabled = Boolean(
     host && streamTypeCapabilities(host.type).hostsDocs && !host.e2eEnabled && !isArchived && canWriteHost === true

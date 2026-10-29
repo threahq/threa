@@ -288,12 +288,13 @@ const moveVerb: VerbSpec = {
   usage: "threa docs move <doc-id> (--to <stream-ref> | --top-level [--visibility v])",
   help:
     "threa docs move <doc-id> (--to <stream-ref> | --top-level) [flags]\n\n" +
-    "Move a doc to another stream; its content, history and threads come with it. --top-level lifts it out of " +
+    "Move a doc to another stream; its content, history, child docs and threads come with it. --top-level lifts it out of " +
     "its host instead: it becomes like a channel, private unless --visibility says otherwise, with you as its " +
     "only member, and only a user key may lift it. Only the doc's creator or a " +
     "workspace admin can move it, so a bot key moves only docs its bot created. A 403 DOC_MOVE_FORBIDDEN means " +
     "the key's user or bot is neither; 400 " +
-    "DOC_HOST_TYPE_INVALID or DOC_E2E_HOST_NOT_ALLOWED means the target cannot host docs.\n\n" +
+    "DOC_HOST_TYPE_INVALID or DOC_E2E_HOST_NOT_ALLOWED means the target cannot host docs. " +
+    "400 DOC_MOVE_CYCLE means the target is the doc itself or a descendant.\n\n" +
     "Flags:\n" +
     "  --to ref        the new host: a stream_… id or #channel-slug\n" +
     "  --top-level     lift the doc out of its host\n" +

@@ -23,17 +23,25 @@ let mutateAsync: ReturnType<typeof vi.fn>
 let isPending: boolean
 let openPanel: ReturnType<typeof vi.fn>
 let rootWriteAccess: boolean | null
+let rootWriteStreamId: string | null
 
 beforeEach(() => {
   vi.restoreAllMocks()
   isPending = false
   rootWriteAccess = true
+  rootWriteStreamId = null
   mutateAsync = vi.fn(async () => ({ id: "stream_doc" }))
   openPanel = vi.fn()
   // `spyOnExport` replaces the module getter, so the value IS the hook.
   spyOnExport(streamsModule, "useCreateStream").mockReturnValue((() => ({ mutateAsync, isPending })) as never)
   spyOnExport(contextsModule, "usePanel").mockReturnValue((() => ({ openPanel })) as never)
-  spyOnExport(docCanWrite, "useRootWriteAccess").mockReturnValue((() => rootWriteAccess) as never)
+  spyOnExport(docCanWrite, "useRootWriteAccess").mockImplementation(
+    () =>
+      ((_workspaceId: string, streamId: string | null) => {
+        rootWriteStreamId = streamId
+        return rootWriteAccess
+      }) as never
+  )
 })
 
 describe("useCreateDoc", () => {
@@ -46,7 +54,7 @@ describe("useCreateDoc", () => {
     ["a host whose write access is unresolved", false, channel, null],
     ["no host", false, undefined, true],
     ["a thread", false, { ...channel, type: StreamTypes.THREAD }, true],
-    ["a doc", false, { ...channel, type: StreamTypes.DOC }, true],
+    ["a doc", true, { ...channel, type: StreamTypes.DOC }, true],
     ["an encrypted host", false, { ...channel, e2eEnabled: true }, true],
     ["an archived host", false, { ...channel, archivedAt: "2026-10-01T00:00:00.000Z" }, true],
   ])("on %s, enabled is %s", (_label, enabled, host, writeAccess) => {
@@ -61,6 +69,16 @@ describe("useCreateDoc", () => {
 
     expect(mutateAsync.mock.calls).toEqual([[{ type: "doc", parentStreamId: "stream_host" }]])
     expect(openPanel.mock.calls).toEqual([["stream_doc", { beside: "stream_host" }]])
+  })
+
+  it("checks root membership when creating under a hosted doc", async () => {
+    const hostedDoc = { ...channel, id: "stream_nested_doc", type: StreamTypes.DOC, rootStreamId: "stream_private" }
+    const { result } = renderHook(() => useCreateDoc("ws_1", hostedDoc))
+    await act(() => result.current.run())
+
+    expect(rootWriteStreamId).toBe("stream_private")
+    expect(mutateAsync.mock.calls).toEqual([[{ type: "doc", parentStreamId: "stream_nested_doc" }]])
+    expect(openPanel.mock.calls).toEqual([["stream_doc", { beside: "stream_nested_doc" }]])
   })
 
   it("should create the doc with the trimmed title and resolve to it when a title is given", async () => {

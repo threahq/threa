@@ -22,6 +22,7 @@ import { joinSystemPrompt } from "./prompt/system-prompt"
 import * as episodeSummaries from "./episode-summaries"
 import * as turnDigests from "./turn-digests"
 import * as contextBuilder from "../context-builder"
+import * as docsModule from "../../docs"
 
 const persona: Persona = {
   id: "persona_1",
@@ -61,6 +62,49 @@ const deps = {
   conversationSummaryService: { updateForContext: mock(async () => null) } as never,
   preparedRecall: { recall: mock(async () => ({ outcome: "nothing_relevant", memos: [] })) } as never,
 }
+
+describe("buildAgentContext doc audience", () => {
+  afterEach(() => mock.restore())
+
+  for (const hasTrigger of [true, false]) {
+    it(`should list docs for the authorizing user ${hasTrigger ? "when the trigger has another author" : "when a follow-up has no trigger"}`, async () => {
+      if (hasTrigger) {
+        spyOn(MessageRepository, "findById").mockResolvedValue({
+          id: "msg_trigger",
+          authorType: "user",
+          authorId: "usr_author",
+          contentMarkdown: "Original request",
+        } as never)
+      }
+      spyOn(docsModule, "listHostedDocs").mockImplementation(async (_db, _workspaceId, hostStreamId, userId) => [
+        { docId: hostStreamId, title: `Visible to ${userId}`, firstLine: null, open: false },
+      ])
+
+      const context = await buildAgentContext(deps, {
+        workspaceId: "ws_1",
+        streamId: "stream_host",
+        stream: {
+          id: "stream_host",
+          workspaceId: "ws_1",
+          type: StreamTypes.DOC,
+          rootStreamId: null,
+          parentStreamId: null,
+          createdBy: "usr_author",
+        } as never,
+        messageId: hasTrigger ? "msg_trigger" : "followup_synthetic",
+        persona,
+        purpose: hasTrigger ? { kind: "catch_up" } : { kind: "follow_up", followUpId: "followup_1" },
+        policy: { episode: { kind: "stream" }, maxMessages: 10, maxChars: 10_000, carryDigests: false },
+        docScope: { hostStreamId: "stream_host", userId: "usr_editor" },
+      })
+
+      expect({ invokingUserId: context.invokingUserId, docs: context.streamContext.docs }).toEqual({
+        invokingUserId: hasTrigger ? "usr_author" : undefined,
+        docs: [{ docId: "stream_host", title: "Visible to usr_editor", firstLine: null, open: false }],
+      })
+    })
+  }
+})
 
 function fakeBrief(streamId: string): StreamBrief {
   return {

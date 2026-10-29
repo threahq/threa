@@ -620,6 +620,9 @@ export class SyncEngine {
           getCurrentStreamId: () => this.currentStreamId,
           getCurrentUser: () => this.currentUser,
           subscribeStream: (streamId: string) => void this.subscribeStream(streamId),
+          refreshWorkspace: () => {
+            void this.runBootstrap(true, { forceFull: true })
+          },
           getCatchUpBatch: () => this.activeCatchUpBatch,
           getLiveCommitBatch: () => this.liveCommitBatch,
         }

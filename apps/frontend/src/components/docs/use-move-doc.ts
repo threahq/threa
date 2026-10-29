@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
@@ -17,6 +17,7 @@ import { useCurrentWorkspaceUserId } from "@/hooks/use-current-workspace-user-id
 import { hasPermission } from "@/lib/permissions"
 import { useCanManageChannels } from "@/lib/use-can-manage-channels"
 import type { CachedStream } from "@/stores/workspace-store"
+import { useWorkspaceStreamsSelect } from "@/stores/workspace-store"
 import { applyDocMove } from "@/sync/workspace-sync"
 
 interface MovableDoc {
@@ -35,6 +36,7 @@ export type DocMoveDestination = { toStreamId: string } | { toStreamId: null; vi
 
 const MOVE_ERROR_BY_CODE: Record<string, string> = {
   [DocErrorCodes.MOVED_CONCURRENTLY]: "Someone else moved this doc first.",
+  [DocErrorCodes.MOVE_CYCLE]: "A doc can't be moved inside itself.",
   [DocErrorCodes.MOVE_FORBIDDEN]: "Only the doc's creator or a workspace admin can move it.",
   [DocErrorCodes.HOST_TYPE_INVALID]: "Docs can't live in that stream.",
   [DocErrorCodes.E2E_HOST_NOT_ALLOWED]: "Docs can't live in an encrypted stream.",
@@ -44,6 +46,23 @@ const MOVE_ERROR_BY_CODE: Record<string, string> = {
 const toastMoveError = (err: unknown) => {
   const code = ApiError.isApiError(err) ? err.code : undefined
   toast.error((code && MOVE_ERROR_BY_CODE[code]) ?? "Couldn't move the doc. Please try again.")
+}
+
+function isKnownDescendant(
+  docId: string | undefined,
+  targetId: string,
+  parentsById: ReadonlyMap<string, string | null>
+) {
+  if (!docId) return false
+  const visited = new Set<string>()
+  let parentId: string | null | undefined = targetId
+  while (parentId) {
+    if (parentId === docId) return true
+    if (visited.has(parentId)) return false
+    visited.add(parentId)
+    parentId = parentsById.get(parentId)
+  }
+  return false
 }
 
 /**
@@ -63,18 +82,26 @@ export function useMoveDoc(workspaceId: string, doc: MovableDoc | undefined, can
   const attemptRef = useRef(0)
 
   const docId = doc?.id
+  const selectParents = useCallback(
+    (streams: CachedStream[]) => (docId ? streams.map(({ id, parentStreamId }) => [id, parentStreamId] as const) : []),
+    [docId]
+  )
+  const parentLinks = useWorkspaceStreamsSelect(workspaceId, selectParents)
+  const parentsById = useMemo(() => new Map(parentLinks), [parentLinks])
   const enabled = Boolean(
     canMove && doc && !doc.archivedAt && ((currentUserId !== null && doc.createdBy === currentUserId) || isAdmin)
   )
 
   const isTarget = useCallback(
     (stream: CachedStream) =>
+      stream.id !== docId &&
       stream.id !== fromStreamId &&
+      !isKnownDescendant(docId, stream.id, parentsById) &&
       streamTypeCapabilities(stream.type).hostsDocs &&
       !stream.e2eEnabled &&
       !stream.originWorkspaceId &&
       !stream.disconnectedAt,
-    [fromStreamId]
+    [docId, fromStreamId, parentsById]
   )
 
   const move = useCallback(

@@ -645,7 +645,7 @@ export class PersonaAgent {
       rootStreamCreatedBy,
       isOnboardingTour,
     } = precheck
-    const docHostId = docHostFor(stream, rootStreamType)
+    const docHostId = await docHostFor(pool, workspaceId, stream, rootStreamType)
     // Listed docs come with read_doc's rules for them; a persona without that tool is told nothing.
     const listedDocHostId = docAgent && isToolEnabled(persona.enabledTools, AgentToolNames.READ_DOC) ? docHostId : null
 
@@ -905,7 +905,7 @@ export class PersonaAgent {
             subagentBrief: subagentKickoffBrief ? { title: subagentKickoffBrief.title } : undefined,
             invokingUserOverride,
             subagentModel: activeSubagentRun?.model,
-            docHostId: listedDocHostId,
+            docScope: listedDocHostId ? { hostStreamId: listedDocHostId, userId: input.initiatingUserId } : null,
           }
         )
 

@@ -61,8 +61,19 @@ export function PanelTabStrip({
   /** The header still has a control to fold, which hands the row its reserve back. */
   canFoldControls?: boolean
 }) {
-  const { layout, section, getTabUrl, closeTab, closeTabs, canCloseTab, splitTab, splits, setCurrentPane, focusTab } =
-    usePanel()
+  const {
+    layout,
+    section,
+    getTabUrl,
+    closeTab,
+    closeTabs,
+    canCloseTab,
+    splitTab,
+    splits,
+    setCurrentPane,
+    markCurrentPane,
+    focusTab,
+  } = usePanel()
   const currentPane = useCurrentPane()
   const panelIds = section?.ids ?? []
   const activePanelId = section?.active ?? null
@@ -246,8 +257,8 @@ export function PanelTabStrip({
                     to={getTabUrl(id)}
                     replace
                     onClick={() => {
-                      setCurrentPane(id)
                       focusHandoff.current = id
+                      markCurrentPane(id)
                     }}
                     className="max-w-64"
                   >

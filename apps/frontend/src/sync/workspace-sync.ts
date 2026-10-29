@@ -767,6 +767,7 @@ export function registerWorkspaceSocketHandlers(
     getCurrentStreamId: () => string | undefined
     getCurrentUser: () => { id: string } | null
     subscribeStream: (streamId: string) => void
+    refreshWorkspace: () => void
     /** Active only during a sync catch-up replay. When present, counter and
      *  preview updates fold into the batch instead of writing per-entry; the
      *  engine flushes the final state once when the window closes, so the badges
@@ -1939,8 +1940,8 @@ export function registerWorkspaceSocketHandlers(
         old ? { ...old, docs: old.docs.filter((item) => !movedIds.has(item.id)) } : old
       )
       await pruneUnreadableStreams((s) => movedIds.has(s.id))
-      // A share grant or an unjoined public root still reads the doc without its root cached; the server re-lists it.
-      void queryClient.invalidateQueries({ queryKey: workspaceKeys.bootstrap(workspaceId) })
+      // The cached bootstrap observers do not fetch; ask the SyncEngine to reload through its canonical owner.
+      refs.refreshWorkspace()
       void queryClient.invalidateQueries({ queryKey: docKeys.list(workspaceId) })
       return
     }

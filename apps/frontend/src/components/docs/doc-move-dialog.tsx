@@ -98,6 +98,7 @@ export function DocMoveDialog({ workspaceId, docTitle, open, onOpenChange, docMo
                 workspaceId={workspaceId}
                 onSelect={handleSelect}
                 filter={isTarget}
+                includeDocHosts
                 searchPlaceholder="Search streams…"
               />
             </>

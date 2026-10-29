@@ -1,7 +1,7 @@
 import { markdownLines, StreamTypes, streamTypeCapabilities, type StreamType } from "@threahq/types"
 import type { Querier } from "../../db"
 import { truncateCodePoints } from "../../lib/truncate"
-import { StreamRepository, resolveBriefStreamId, type Stream } from "../streams"
+import { StreamRepository, listAccessibleStreamIds, resolveBriefStreamId, type Stream } from "../streams"
 import { DocRepository } from "./repository"
 
 /** How a prompt names a doc with no title. */
@@ -18,15 +18,35 @@ export interface HostedDoc {
 }
 
 /**
- * The stream whose docs a turn on `stream` reads and edits: a thread's turn works on its root's docs.
+ * A turn works on its current or nearest ancestor doc, otherwise its root's docs.
  * Null where that root cannot host docs or the stream is sealed (a doc is server-side plaintext).
  */
-export function docHostFor(
-  stream: Pick<Stream, "id" | "rootStreamId" | "e2eEnabled">,
+export async function docHostFor(
+  db: Querier,
+  workspaceId: string,
+  stream: Pick<Stream, "id" | "type" | "rootStreamId" | "e2eEnabled">,
   rootStreamType: StreamType | null
-): string | null {
+): Promise<string | null> {
   if (!rootStreamType || !streamTypeCapabilities(rootStreamType).hostsDocs || stream.e2eEnabled) return null
+  if (stream.type === StreamTypes.DOC) return stream.id
+  if (!stream.rootStreamId) return resolveBriefStreamId(stream)
+  const nearestDoc = await StreamRepository.findNearestDocAncestor(db, workspaceId, stream.id)
+  if (nearestDoc) return nearestDoc
   return resolveBriefStreamId(stream)
+}
+
+export async function listHostedDocCandidates(
+  db: Querier,
+  workspaceId: string,
+  hostStreamId: string
+): Promise<Stream[]> {
+  const host = await StreamRepository.listByIds(db, workspaceId, [hostStreamId], { types: [StreamTypes.DOC] })
+  const children = await StreamRepository.list(db, workspaceId, {
+    types: [StreamTypes.DOC],
+    parentStreamId: hostStreamId,
+    archiveStatus: ["active"],
+  })
+  return [...host, ...children]
 }
 
 /** A host's active docs, newest first with the open ones ahead, capped at 20 with each doc's first line of text. */
@@ -34,18 +54,23 @@ export async function listHostedDocs(
   db: Querier,
   workspaceId: string,
   hostStreamId: string,
+  userId: string,
   openDocIds: readonly string[] = []
 ): Promise<HostedDoc[]> {
   const open = new Set(openDocIds)
-  const docs = await StreamRepository.list(db, workspaceId, {
-    types: [StreamTypes.DOC],
-    parentStreamId: hostStreamId,
-    archiveStatus: ["active"],
-  })
-  const kept = [...docs.filter((doc) => open.has(doc.id)), ...docs.filter((doc) => !open.has(doc.id))].slice(
-    0,
-    MAX_HOSTED_DOCS
+  const candidates = await listHostedDocCandidates(db, workspaceId, hostStreamId)
+  const accessible = await listAccessibleStreamIds(
+    db,
+    workspaceId,
+    userId,
+    candidates.map((doc) => doc.id)
   )
+  const docs = candidates.filter((doc) => accessible.has(doc.id))
+  const kept = [
+    ...docs.filter((doc) => doc.id === hostStreamId),
+    ...docs.filter((doc) => doc.id !== hostStreamId && open.has(doc.id)),
+    ...docs.filter((doc) => doc.id !== hostStreamId && !open.has(doc.id)),
+  ].slice(0, MAX_HOSTED_DOCS)
   const firstSections = await DocRepository.listFirstSections(
     db,
     workspaceId,
