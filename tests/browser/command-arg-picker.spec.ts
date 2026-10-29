@@ -166,6 +166,119 @@ test.describe("Command argument option picker", () => {
     }
   })
 
+  for (const inputType of ["insertParagraph", "insertLineBreak"] as const) {
+    test(`should accept the current model after same-task mobile replacement and ${inputType}`, async ({ browser }) => {
+      test.setTimeout(60000)
+      const ctx = await loginInNewContext(
+        browser,
+        `argpicker-mobile-${generateTestId()}@example.com`,
+        "ArgPickerMobile"
+      )
+
+      try {
+        await ctx.page.setViewportSize({ width: 390, height: 844 })
+        const testId = generateTestId()
+        const wsRes = await ctx.page.request.post("/api/workspaces", { data: { name: `ArgPicker WS ${testId}` } })
+        await expectApiOk(wsRes, "Workspace creation")
+        const { workspace } = (await wsRes.json()) as { workspace: { id: string } }
+        await waitForWorkspaceProvisioned(ctx.page, workspace.id)
+        const streamRes = await ctx.page.request.post(`/api/workspaces/${workspace.id}/streams`, {
+          data: { type: "channel", slug: `argpick-mobile-${testId}`, visibility: "public" },
+        })
+        await expectApiOk(streamRes, "Create public channel")
+        const { stream } = (await streamRes.json()) as { stream: { id: string } }
+        await ctx.page.route(
+          "**/bootstrap*",
+          injectCommands({
+            ...MODEL_COMMAND,
+            args: [
+              {
+                name: "model",
+                required: true,
+                suggestions: [
+                  { value: "codex:gpt-6.1-sol", label: "GPT-6.1 Sol" },
+                  { value: "claude:opus", label: "Claude Opus" },
+                ],
+              },
+            ],
+          })
+        )
+        await ctx.page.goto(`/w/${workspace.id}/s/${stream.id}`)
+        await ctx.page.getByText("Type a message...").evaluate((element: HTMLElement) => element.click())
+        const editor = ctx.page.locator("[contenteditable='true']")
+        await expect(editor).toBeVisible()
+        await editor.click()
+        await ctx.page.keyboard.type("/model")
+        const commandPopup = ctx.page.locator("[aria-label='Slash command suggestions']")
+        await commandPopup.getByRole("option", { name: /model/ }).first().click()
+        const argPopup = ctx.page.locator("[aria-label='Command option suggestions']")
+        await expect(argPopup).toBeVisible()
+        await ctx.page.keyboard.type("opus")
+        await expect(argPopup.getByRole("option", { name: /Claude Opus/ })).toHaveAttribute("aria-selected", "true")
+
+        const dispatched: string[] = []
+        ctx.page.on("request", (request) => {
+          if (request.method() === "POST" && /\/(commands\/dispatch|messages)(?:\?|$)/.test(request.url())) {
+            dispatched.push(request.url())
+          }
+        })
+        // Gboard can expose the removed query before inserting its correction.
+        await editor.evaluate((element) => {
+          const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+          let query: Text | null = null
+          while (walker.nextNode()) {
+            const candidate = walker.currentNode as Text
+            if (candidate.data.includes("opus")) query = candidate
+          }
+          if (!query) throw new Error("Model query not found")
+          const index = query.data.lastIndexOf("opus")
+          query.deleteData(index, 4)
+          const selection = window.getSelection()
+          const caret = document.createRange()
+          caret.setStart(query, index)
+          caret.collapse(true)
+          selection?.removeAllRanges()
+          selection?.addRange(caret)
+          element.dispatchEvent(
+            new InputEvent("beforeinput", {
+              bubbles: true,
+              cancelable: true,
+              inputType: "deleteContentBackward",
+            })
+          )
+        })
+        await expect(argPopup.getByRole("option", { name: /GPT-6.1 Sol/ })).toHaveAttribute("aria-selected", "true")
+
+        await editor.evaluate((element, newlineType) => {
+          const selection = window.getSelection()
+          const caret = document.createRange()
+          const paragraph = element.querySelector("p")
+          if (!paragraph) throw new Error("Composer paragraph not found")
+          const replacement = document.createTextNode("Opus")
+          paragraph.append(replacement)
+          caret.setStart(replacement, replacement.length)
+          caret.collapse(true)
+          selection?.removeAllRanges()
+          selection?.addRange(caret)
+          element.dispatchEvent(
+            new InputEvent("beforeinput", {
+              bubbles: true,
+              cancelable: true,
+              inputType: newlineType,
+            })
+          )
+        }, inputType)
+
+        await expect(argPopup).not.toBeVisible()
+        await expect(editor).toHaveText("/model claude:opus ")
+        await expect(editor.locator("p")).toHaveCount(1)
+        expect(dispatched).toEqual([])
+      } finally {
+        await ctx.context.close()
+      }
+    })
+  }
+
   test("dismisses the picker on Escape, leaving the command for free-form typing", async ({ browser }) => {
     test.setTimeout(60000)
     const ctx = await loginInNewContext(browser, `argpicker-esc-${Date.now()}@example.com`, "ArgPickerEsc")

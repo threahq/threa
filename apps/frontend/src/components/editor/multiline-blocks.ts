@@ -1,4 +1,5 @@
 import type { JSONContent, Editor } from "@tiptap/react"
+import { flushSync } from "react-dom"
 import { Fragment, Slice, type Node as ProseMirrorNode, type Schema } from "@tiptap/pm/model"
 import { NodeSelection, Selection, type Transaction, type EditorState } from "@tiptap/pm/state"
 import { parseMarkdown, type EmojiLookup, type MentionTypeLookup, type ParseMarkdownOptions } from "./editor-markdown"
@@ -920,7 +921,8 @@ export function handleBeforeInputNewline(
   const { view } = editor
   if (view.composing && !options.allowDuringComposition) return false
 
-  flushPendingDomSelection(editor, { cancelDeferred: true })
+  // React-backed pickers must read the flushed query before accepting Enter.
+  flushSync(() => flushPendingDomSelection(editor, { cancelDeferred: true }))
 
   const keydown = new KeyboardEvent("keydown", { key: "Enter", shiftKey: event.inputType === "insertLineBreak" })
   const handled = !!view.someProp("handleKeyDown", (handleKeyDown) => handleKeyDown(view, keydown))
