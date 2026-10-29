@@ -596,3 +596,55 @@ describe("SidebarStreamList — channel creators", () => {
     expect(renderCreators({ hasUserStreams })).toBe(0)
   })
 })
+
+describe("SidebarStreamList — doc creator", () => {
+  beforeEach(() => stubSidebarContexts())
+  afterEach(() => vi.restoreAllMocks())
+
+  function renderDocs({
+    onCreateDoc,
+    hasUserStreams = true,
+  }: { onCreateDoc?: () => void; hasUserStreams?: boolean } = {}) {
+    const docs = {
+      section: { id: "docs", spec: { kind: "type", streamType: "doc" } },
+      items: [],
+    } as unknown as ResolvedSection
+    render(
+      <MemoryRouter initialEntries={["/w/workspace_1"]}>
+        <SidebarStreamList
+          workspaceId="workspace_1"
+          hasError={false}
+          hasUserStreams={hasUserStreams}
+          processedStreams={[makeStream("stream_a")]}
+          resolvedSections={[docs]}
+          labelsById={new Map()}
+          getUnreadCount={() => 0}
+          getMentionCount={() => 0}
+          getSectionState={() => "open"}
+          toggleSectionState={vi.fn()}
+          onCreateScratchpad={vi.fn()}
+          onCreateDoc={onCreateDoc}
+          onFileStreamToSection={vi.fn()}
+          onAssignStreamLabel={vi.fn()}
+          onStreamMovedFromLabel={vi.fn()}
+          onSectionViewChange={vi.fn()}
+          homeHintFor={() => null}
+          boardMode={null}
+          onClearInbox={vi.fn()}
+        />
+      </MemoryRouter>
+    )
+    return screen.queryAllByRole("button", { name: /New Doc/ })
+  }
+
+  it("should create a top-level doc from the empty Docs section's + when the viewer may", () => {
+    const onCreateDoc = vi.fn()
+    const [add] = renderDocs({ onCreateDoc })
+    fireEvent.click(add)
+    expect(onCreateDoc).toHaveBeenCalledTimes(1)
+  })
+
+  it("should offer no doc creator when the viewer cannot create top-level docs", () => {
+    expect(renderDocs()).toEqual([])
+  })
+})

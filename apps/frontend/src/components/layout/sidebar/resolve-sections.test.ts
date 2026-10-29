@@ -236,7 +236,7 @@ describe("resolveSections — static order", () => {
 })
 
 describe("resolveSections — All preset", () => {
-  it("should sort scratchpads by activity and channels and DMs by name, with system then virtual DMs last", () => {
+  it("should sort scratchpads by activity and channels, DMs and docs by name, with system then virtual DMs last", () => {
     const processedStreams = [
       makeItem({ id: "sp_a", type: StreamTypes.SCRATCHPAD, displayName: "Alpha", activity: 5 }),
       makeItem({ id: "sp_z", type: StreamTypes.SCRATCHPAD, displayName: "Zulu", activity: 10 }),
@@ -245,12 +245,15 @@ describe("resolveSections — All preset", () => {
       makeItem({ id: "dm_z", type: StreamTypes.DM, displayName: "Zed", activity: 9 }),
       makeItem({ id: "dm_a", type: StreamTypes.DM, displayName: "Ann", activity: 1 }),
       makeItem({ id: "sys_1", type: StreamTypes.SYSTEM, displayName: "System" }),
+      makeItem({ id: "doc_r", type: StreamTypes.DOC, displayName: "Roadmap", activity: 9 }),
+      makeItem({ id: "doc_b", type: StreamTypes.DOC, displayName: "Brief", activity: 1 }),
     ]
     const virtualDmStreams = [makeItem({ id: "vdm_1", type: StreamTypes.DM, displayName: "Aaron", activity: 0 })]
 
     expect(shape({ processedStreams, virtualDmStreams, getUnreadCount: () => 0 }, ALL_SIDEBAR_CONFIG)).toEqual([
       { id: "scratchpads", items: ["sp_z", "sp_a"] },
       { id: "channels", items: ["ch_a", "ch_b"] },
+      { id: "docs", items: ["doc_b", "doc_r"] },
       { id: "dms", items: ["dm_a", "dm_z", "sys_1", "vdm_1"] },
     ])
   })
@@ -981,6 +984,8 @@ describe("resolveSections thread tree", () => {
       thread("t_dm", "dm_hidden"),
       thread("t_sys", "sys_hidden"),
       thread("t_aside", "aside_1"),
+      makeItem({ id: "doc_1", type: StreamTypes.DOC, section: "other" }),
+      thread("t_doc", "doc_1"),
     ]
     const streamTypeById = new Map<string, StreamItemData["type"]>([
       ["c_1", StreamTypes.CHANNEL],
@@ -988,12 +993,14 @@ describe("resolveSections thread tree", () => {
       ["dm_hidden", StreamTypes.DM],
       ["sys_hidden", StreamTypes.SYSTEM],
       ["aside_1", StreamTypes.ASIDE],
+      ["doc_1", StreamTypes.DOC],
     ])
 
-    const getUnreadCount = unreadFrom(new Set(["t_ch", "t_sp", "t_dm", "t_sys", "t_aside"]))
+    const getUnreadCount = unreadFrom(new Set(["t_ch", "t_sp", "t_dm", "t_sys", "t_aside", "t_doc"]))
     expect(tree({ processedStreams, streamTypeById, getUnreadCount }, ALL_SIDEBAR_CONFIG)).toEqual([
       { id: "scratchpads", items: ["sp_1", "sp_1>t_sp"] },
       { id: "channels", items: ["c_1", "c_1>t_ch"] },
+      { id: "docs", items: ["doc_1", "doc_1>t_doc"] },
       { id: "dms", items: ["t_dm", "t_sys"] },
     ])
   })

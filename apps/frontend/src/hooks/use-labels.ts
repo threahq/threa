@@ -337,7 +337,7 @@ export function selectLabelStreams(
     if (assignment.labelId === labelId) streamIds.add(assignment.resourceId)
   }
   if (streamIds.size === 0) return []
-  // Docs never list in the sidebar, but a label's page is where a labeled doc is found again.
+  // Hosted docs never list in the sidebar, but a label's page is where a labeled doc is found again.
   const hidden = hiddenStreamIds(streams)
   return streams
     .filter(

@@ -1,19 +1,30 @@
 import { useState } from "react"
-import { Hash } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { streamsApi } from "@/api"
 import { useComposerHeightPublish } from "@/hooks"
-import type { StreamMember } from "@threahq/types"
+import { StreamTypes, type StreamMember } from "@threahq/types"
+import { getStreamTypeLabel, STREAM_ICONS } from "@/lib/streams"
 
 interface JoinChannelBarProps {
   workspaceId: string
   streamId: string
-  channelName: string
+  streamName: string
+  /** A public top-level doc is joined like a channel, to edit it. */
+  streamType?: typeof StreamTypes.CHANNEL | typeof StreamTypes.DOC
   onJoined: (membership: StreamMember) => void
   onHeightChange?: (px: number, opts: { initial: boolean }) => void
 }
 
-export function JoinChannelBar({ workspaceId, streamId, channelName, onJoined, onHeightChange }: JoinChannelBarProps) {
+export function JoinChannelBar({
+  workspaceId,
+  streamId,
+  streamName,
+  streamType = StreamTypes.CHANNEL,
+  onJoined,
+  onHeightChange,
+}: JoinChannelBarProps) {
+  const Icon = STREAM_ICONS[streamType]
+  const noun = getStreamTypeLabel(streamType)
   const [isJoining, setIsJoining] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // The join bar stands in for the composer for non-members, so it must own
@@ -30,7 +41,7 @@ export function JoinChannelBar({ workspaceId, streamId, channelName, onJoined, o
       const membership = await streamsApi.join(workspaceId, streamId)
       onJoined(membership)
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to join channel")
+      setError(e instanceof Error ? e.message : `Failed to join ${noun.toLowerCase()}`)
     } finally {
       setIsJoining(false)
     }
@@ -41,12 +52,12 @@ export function JoinChannelBar({ workspaceId, streamId, channelName, onJoined, o
       <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
         <span>You're viewing</span>
         <span className="inline-flex items-center gap-0.5 font-medium text-foreground">
-          <Hash className="h-3.5 w-3.5" />
-          {channelName}
+          <Icon className="h-3.5 w-3.5" />
+          {streamName}
         </span>
       </div>
       <Button onClick={handleJoin} disabled={isJoining} size="sm">
-        {isJoining ? "Joining..." : "Join Channel"}
+        {isJoining ? "Joining..." : `Join ${noun}`}
       </Button>
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>

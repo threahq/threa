@@ -1,3 +1,4 @@
+import { useCallback } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useSocket, useStreamService } from "@/contexts"
 import { debugBootstrap } from "@/lib/bootstrap-debug"
@@ -411,15 +412,13 @@ export function useAddStreamMember(workspaceId: string, streamId: string) {
   })
 }
 
-/** Joins a public channel as the viewer; the sidebar reads memberships from IDB, so the row lands there. */
-export function useJoinStream(workspaceId: string) {
-  const streamService = useStreamService()
+/** Lands the viewer's new membership; the sidebar and write checks read memberships from IDB, so the row lands there. */
+export function useLandJoinedMembership(workspaceId: string) {
   const queryClient = useQueryClient()
   const syncEngine = useOptionalSyncEngine()
 
-  return useMutation({
-    mutationFn: (streamId: string) => streamService.join(workspaceId, streamId),
-    onSuccess: async (membership) => {
+  return useCallback(
+    async (membership: StreamMember) => {
       void syncEngine?.subscribeStream(membership.streamId)
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
         if (!old || old.streamMemberships.some((m) => m.streamId === membership.streamId)) return old
@@ -432,6 +431,18 @@ export function useJoinStream(workspaceId: string) {
         _cachedAt: Date.now(),
       })
     },
+    [queryClient, syncEngine, workspaceId]
+  )
+}
+
+/** Joins a public stream as the viewer. */
+export function useJoinStream(workspaceId: string) {
+  const streamService = useStreamService()
+  const landJoinedMembership = useLandJoinedMembership(workspaceId)
+
+  return useMutation({
+    mutationFn: (streamId: string) => streamService.join(workspaceId, streamId),
+    onSuccess: landJoinedMembership,
   })
 }
 

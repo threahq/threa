@@ -31,6 +31,7 @@ import { usePanel } from "@/contexts"
 import { useActors, type ActorLookup } from "@/hooks"
 import { useDebouncedUrlText } from "@/hooks/use-debounced-url-text"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
+import { useCreateTopLevelDoc } from "@/hooks/use-create-doc"
 import { STREAM_ICONS, resolveDmDisplayName, streamLabel } from "@/lib/streams"
 import { cn } from "@/lib/utils"
 import {
@@ -58,6 +59,7 @@ export function DocsPage() {
 }
 
 function DocsPageInner({ workspaceId }: { workspaceId: string }) {
+  const createDoc = useCreateTopLevelDoc(workspaceId)
   const [searchParams, setSearchParams] = useSearchParams()
   const filters = useMemo(() => readDocListFilters(searchParams), [searchParams])
   const cachedStreams = useWorkspaceStreams(workspaceId)
@@ -130,7 +132,13 @@ function DocsPageInner({ workspaceId }: { workspaceId: string }) {
         back={{ to: `/w/${workspaceId}`, label: "Back to workspace" }}
         icon={<DocGlyph className="h-5 w-5 shrink-0 text-muted-foreground" />}
         title="Docs"
-      />
+      >
+        {createDoc.enabled && (
+          <Button size="sm" disabled={createDoc.pending} onClick={() => void createDoc.run()}>
+            New doc
+          </Button>
+        )}
+      </PagePaneHeader>
 
       <div className="border-b px-4 py-2">
         <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-2">
@@ -366,7 +374,7 @@ function EditorStack({
 const EMPTY_COPY = {
   empty: {
     title: "No docs yet",
-    body: "Docs you create in channels, scratchpads and DMs show up here, last edited first.",
+    body: "Docs you can read appear here, last edited first.",
     icon: DocGlyph,
     accent: "bg-primary/10 text-primary",
   },

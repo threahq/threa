@@ -1,7 +1,7 @@
 import { Fragment, memo, useMemo, type ReactNode } from "react"
 import { useLocation } from "react-router-dom"
 import { CheckCheck, Inbox, ListX } from "lucide-react"
-import { MAX_BOARD_SCOPE_STREAMS } from "@threahq/types"
+import { BOARD_SCOPE_STREAM_TYPES, MAX_BOARD_SCOPE_STREAMS } from "@threahq/types"
 import { useSidebar, type CollapseState } from "@/contexts"
 import { useBoardSelection } from "@/hooks/use-board-selection"
 import {
@@ -167,6 +167,8 @@ interface SidebarStreamListProps {
   onCreateScratchpad: () => void | Promise<void>
   /** Omitted for viewers who cannot create channels: no creator renders. */
   onCreateChannel?: () => void | Promise<void>
+  /** Omitted for viewers who cannot create top-level docs: no creator renders. */
+  onCreateDoc?: () => void | Promise<void>
   /**
    * Dropdown actions for the Scratchpads "+" button. When provided, the button
    * opens this menu (Scratchpad / Quick Note / Encrypted Scratchpad) instead of
@@ -233,6 +235,7 @@ export const SidebarStreamList = memo(function SidebarStreamList({
   toggleSectionState,
   onCreateScratchpad,
   onCreateChannel,
+  onCreateDoc,
   scratchpadAddMenuActions,
   quickLinksSlot,
   onFileStreamToSection,
@@ -284,6 +287,7 @@ export const SidebarStreamList = memo(function SidebarStreamList({
       onSectionViewChange,
       onCreateScratchpad,
       onCreateChannel,
+      onCreateDoc,
       scratchpadAddMenuActions,
       onClearInbox,
       workspaceId,
@@ -314,7 +318,7 @@ export const SidebarStreamList = memo(function SidebarStreamList({
     )
   }
 
-  // Add-button wiring is per stream type (Scratchpads / Channels expose creators).
+  // Add-button wiring is per stream type (Scratchpads / Channels / Docs expose creators).
   const addWiringFor = (spec: SidebarSectionSpec): AddWiring | undefined => {
     if (spec.kind !== "type") return undefined
     if (spec.streamType === "scratchpad") {
@@ -329,6 +333,9 @@ export const SidebarStreamList = memo(function SidebarStreamList({
     }
     if (spec.streamType === "channel" && onCreateChannel) {
       return { onAdd: () => void onCreateChannel(), addTooltip: "+ New Channel" }
+    }
+    if (spec.streamType === "doc" && onCreateDoc) {
+      return { onAdd: () => void onCreateDoc(), addTooltip: "+ New Doc" }
     }
     return undefined
   }
@@ -388,11 +395,13 @@ export const SidebarStreamList = memo(function SidebarStreamList({
     // (Channels/DMs/Scratchpads) focuses the board's type axis (`?is=`),
     // and Unread focuses the unread axis (`?unread=true`) — both live
     // aggregate filters, not a one-time snapshot of the current ids.
-    if (boardMode && section.spec.kind === "type") {
-      filterActive = isSoleValue(selection.scopeStreamTypes, section.spec.streamType)
-      titleHref = filterActive
-        ? boardMode.clearAxisHref(BOARD_TYPE_PARAM)
-        : boardMode.typeFocusHref(section.spec.streamType)
+    // The board's type axis has no docs: a Docs section titles as plain text there.
+    const boardType = BOARD_SCOPE_STREAM_TYPES.find(
+      (type) => section.spec.kind === "type" && type === section.spec.streamType
+    )
+    if (boardMode && boardType) {
+      filterActive = isSoleValue(selection.scopeStreamTypes, boardType)
+      titleHref = filterActive ? boardMode.clearAxisHref(BOARD_TYPE_PARAM) : boardMode.typeFocusHref(boardType)
       titleActionLabel = filterActive
         ? `Clear board filter ${presentation.label}`
         : `Filter board by ${presentation.label}`

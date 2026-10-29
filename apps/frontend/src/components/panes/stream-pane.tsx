@@ -55,10 +55,11 @@ import { useStreamSettings } from "@/components/stream-settings/use-stream-setti
 import { useExplorerUrlState } from "@/components/attachment-explorer"
 import { useOutcomesUrlState } from "@/components/agent-outcomes"
 import { StreamContent, TimelineSkeleton, AgentActivityHeaderChip } from "@/components/timeline"
+import { JoinChannelBar } from "@/components/timeline/join-channel-bar"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { DocPaneBody } from "@/components/docs/doc-pane-body"
 import { docExportActions } from "@/components/docs/doc-export-actions"
-import { useDocCanWrite } from "@/components/docs/use-doc-can-write"
+import { useDocCanWrite, useDocJoin } from "@/components/docs/use-doc-can-write"
 import { DocMoveDialog } from "@/components/docs/doc-move-dialog"
 import { useMoveDoc } from "@/components/docs/use-move-doc"
 import { useDocSync } from "@/components/docs/use-doc-sync"
@@ -89,6 +90,7 @@ import {
   LabelableResourceTypes,
   StreamTypes,
   streamTypeCapabilities,
+  isTopLevelDoc as isTopLevelDocStream,
 } from "@threahq/types"
 import { getStreamTypeLabel, offersArchiveToggle, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamSheet } from "@/components/stream-sheet"
@@ -200,8 +202,10 @@ export function StreamPane({
   const isChannel = stream?.type === StreamTypes.CHANNEL
   const isDm = stream?.type === StreamTypes.DM
   const isDoc = stream?.type === StreamTypes.DOC
-  // A doc's body is its editor: no timeline to search, move, browse or summarize, and no settings of its own.
+  // A doc's body is its editor: no timeline to search, move, browse or summarize. Only a top-level doc, its own
+  // root, has settings and members of its own.
   const hasTimeline = !isDoc
+  const isTopLevelDoc = stream ? isTopLevelDocStream(stream) : false
   const docTitle = useLiveDocTitle(workspaceId, isDoc ? streamId : undefined, "").title
   const canWriteDoc = useDocCanWrite(workspaceId, stream)
   const docSync = useDocSync(workspaceId, isDoc ? streamId : null)
@@ -212,6 +216,7 @@ export function StreamPane({
   )
   const createDoc = useCreateDoc(workspaceId, isDraft ? undefined : stream)
   const currentUserId = useCurrentWorkspaceUserId(workspaceId)
+  const { canJoin: offersDocJoin, landJoinedMembership } = useDocJoin(workspaceId, stream)
   const docRow = useWorkspaceStream(workspaceId, isDoc ? streamId : undefined, pickArchiveOwner)
   const docRoot = useWorkspaceStream(
     workspaceId,
@@ -349,6 +354,14 @@ export function StreamPane({
         icon: AppWindow,
         // A link naming the panes goes to the router; a bare link to this doc from inside its pane only flashes it.
         href: `/w/${workspaceId}/s/${streamId}?${PANEL_PARAM}=${streamId}`,
+      })
+    }
+    if (isTopLevelDoc) {
+      streamMenuActions.push({
+        id: "stream-settings",
+        label: "Settings",
+        icon: Settings,
+        onSelect: () => openStreamSettings(streamId),
       })
     }
     streamMenuActions.push(labelsAction)
@@ -1031,6 +1044,15 @@ export function StreamPane({
         </div>
       </PaneHeader>
       {(isChannel || isDm) && !isDraft && <RejoinBar workspaceId={workspaceId} streamId={streamId} />}
+      {offersDocJoin && (
+        <JoinChannelBar
+          workspaceId={workspaceId}
+          streamId={streamId}
+          streamName={docTitle || streamName}
+          streamType={StreamTypes.DOC}
+          onJoined={(membership) => void landJoinedMembership(membership)}
+        />
+      )}
       <div
         className="relative isolate flex-1 overflow-hidden"
         role={isPageStream ? "main" : undefined}

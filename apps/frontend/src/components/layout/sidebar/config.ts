@@ -1,4 +1,4 @@
-import { FileEdit, Hash, User, type LucideIcon } from "lucide-react"
+import { File, FileEdit, Hash, User, type LucideIcon } from "lucide-react"
 import type { SectionKey, UrgencyLevel } from "./types"
 
 export const URGENCY_COLORS: Record<UrgencyLevel, string> = {
@@ -18,6 +18,7 @@ export const BADGE_CONFIG: Record<string, BadgeConfig> = {
   channel: { icon: Hash, color: "text-[hsl(200_60%_50%)]" },
   scratchpad: { icon: FileEdit, color: "text-primary" },
   dm: { icon: User, color: "text-muted-foreground" },
+  doc: { icon: File, color: "text-muted-foreground" },
 }
 
 interface SmartSectionConfig {

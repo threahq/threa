@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/responsive-alert-dialog"
 import { ChannelSlugInput } from "./channel-slug-input"
 import { DescriptionSection } from "./description-section"
-import { canChangeArchiveState, getStreamName } from "@/lib/streams"
+import { canChangeArchiveState, getStreamName, getStreamTypeLabel } from "@/lib/streams"
 import { useUpdateStream, useArchiveStream, useUnarchiveStream, useSetNotificationLevel } from "@/hooks"
 import { useRenameStream } from "@/hooks/use-rename-stream"
 import { useCanManageChannels } from "@/lib/use-can-manage-channels"
@@ -35,6 +35,7 @@ import {
   type StreamType,
   type NotificationLevel,
   type Visibility,
+  isChannelLike,
 } from "@threahq/types"
 import { toast } from "sonner"
 
@@ -60,23 +61,26 @@ export function GeneralTab({
   const isDm = stream.type === StreamTypes.DM
   const isThread = stream.type === StreamTypes.THREAD
   const isSystem = stream.type === StreamTypes.SYSTEM
+  const channelLike = isChannelLike(stream)
   const canManageChannels = useCanManageChannels(workspaceId)
-  const channelLocked = isChannel && !canManageChannels
+  const channelLocked = channelLike && !canManageChannels
 
   // Build sections dynamically so we never render orphan or stacked dividers
   const sections: React.ReactNode[] = []
 
-  sections.push(
-    <NotificationSection
-      key="notifications"
-      workspaceId={workspaceId}
-      streamId={stream.id}
-      streamType={stream.type}
-      notificationLevel={notificationLevel}
-    />
-  )
+  if (stream.type !== StreamTypes.DOC) {
+    sections.push(
+      <NotificationSection
+        key="notifications"
+        workspaceId={workspaceId}
+        streamId={stream.id}
+        streamType={stream.type}
+        notificationLevel={notificationLevel}
+      />
+    )
+  }
 
-  if (isChannel) {
+  if (channelLike) {
     sections.push(
       <VisibilitySection key="visibility" workspaceId={workspaceId} stream={stream} locked={channelLocked} />
     )
@@ -228,17 +232,17 @@ function NotificationSection({
   )
 }
 
-function visibilityChangeCopy(from: Visibility, to: Visibility): string {
+function visibilityChangeCopy(from: Visibility, to: Visibility, noun: string): string {
   if (to === Visibilities.PRIVATE) {
-    return "Making this channel private will hide it from non-members. They won't be able to find or join it."
+    return `Making this ${noun} private will hide it from non-members. They won't be able to find or join it.`
   }
   if (to === Visibilities.GUEST_PUBLIC) {
-    return "Members and guests will be able to find this channel, join it and read its history."
+    return `Members and guests will be able to find this ${noun}, join it and read its history.`
   }
   if (from === Visibilities.GUEST_PUBLIC) {
-    return "Guests who haven't joined will lose access to this channel. Members will still be able to find and join it."
+    return `Guests who haven't joined will lose access to this ${noun}. Members will still be able to find and join it.`
   }
-  return "Making this channel public will make it visible to all workspace members. Anyone will be able to join."
+  return `Making this ${noun} public will make it visible to all workspace members. Anyone will be able to join.`
 }
 
 function VisibilitySection({ workspaceId, stream, locked }: { workspaceId: string; stream: Stream; locked: boolean }) {
@@ -279,7 +283,12 @@ function VisibilitySection({ workspaceId, stream, locked }: { workspaceId: strin
           <ResponsiveAlertDialogHeader>
             <ResponsiveAlertDialogTitle>Change visibility?</ResponsiveAlertDialogTitle>
             <ResponsiveAlertDialogDescription>
-              {pendingVisibility && visibilityChangeCopy(stream.visibility, pendingVisibility)}
+              {pendingVisibility &&
+                visibilityChangeCopy(
+                  stream.visibility,
+                  pendingVisibility,
+                  getStreamTypeLabel(stream.type).toLowerCase()
+                )}
             </ResponsiveAlertDialogDescription>
           </ResponsiveAlertDialogHeader>
           <ResponsiveAlertDialogFooter>

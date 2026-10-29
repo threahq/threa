@@ -44,6 +44,7 @@ export {
   streamTypeCapabilities,
   streamCapabilities,
   isTopLevelDoc,
+  isChannelLike,
   type StreamCapabilities,
   isAsideHostType,
   STREAM_READ_ONLY_REASONS,

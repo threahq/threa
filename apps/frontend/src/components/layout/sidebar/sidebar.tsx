@@ -5,6 +5,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom"
 import { replaceEqualDeep } from "@tanstack/react-query"
 import { useAuth } from "@/auth"
 import { useCreateEncryptedScratchpad } from "@/hooks/use-create-encrypted-scratchpad"
+import { useCreateTopLevelDoc } from "@/hooks/use-create-doc"
 import { useE2eUnlockOptional } from "@/components/encryption/e2e-unlock-provider"
 import { getE2eSessionState } from "@/stores/e2e-session-store"
 import { useSealedNamePendingResolver } from "@/hooks/use-decrypted-stream-name"
@@ -182,6 +183,7 @@ const SidebarBody = memo(function SidebarBody({
   const { getMentionCount, getActivityCount, unreadActivityCount } = useActivityCounts(workspaceId)
   const { openCreateChannel } = useCreateChannel()
   const canManageChannels = useCanManageChannels(workspaceId)
+  const { enabled: canCreateTopLevelDoc, run: createTopLevelDoc } = useCreateTopLevelDoc(workspaceId)
   const guestDmOpen = useGuestDmOpen(workspaceId)
   const { user } = useAuth()
   const assignLabel = useAssignLabel(workspaceId)
@@ -701,6 +703,10 @@ const SidebarBody = memo(function SidebarBody({
     openCreateChannel()
   })
 
+  const handleCreateDoc = useStableCallback(async () => {
+    if (await createTopLevelDoc()) collapseOnMobile()
+  })
+
   // Drag-and-drop drop: file the stream into the target custom section.
   // setStreamCustomSection keeps membership exclusive (removed from any other).
   const handleFileStreamToSection = useStableCallback((streamId: string, customSectionId: string) => {
@@ -836,6 +842,7 @@ const SidebarBody = memo(function SidebarBody({
             toggleSectionState={toggleSectionState}
             onCreateScratchpad={handleCreateScratchpad}
             onCreateChannel={canManageChannels ? handleCreateChannel : undefined}
+            onCreateDoc={canCreateTopLevelDoc ? handleCreateDoc : undefined}
             scratchpadAddMenuActions={scratchpadAddMenuActions}
             onFileStreamToSection={handleFileStreamToSection}
             onAssignStreamLabel={handleAssignStreamLabel}

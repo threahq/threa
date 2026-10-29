@@ -176,7 +176,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
     )
     const isSearchableThread = (s: StreamLike) =>
       wantsThreads && getStreamName(s) != null && !hiddenRootIds.has(s.rootStreamId ?? s.id)
-    // Docs never list in the sidebar, so the palette finds them by title the way it finds threads.
+    // Hosted docs never list in the sidebar, so the palette finds every doc by title the way it finds threads.
     // A live doc under an archived host is sealed with it, as on the docs page; archived ones list as archived.
     const sealedIds = wantsDocs ? collectSealedStreamIds(activeStreams) : new Set<string>()
     const isSearchableDoc = (s: StreamLike) =>

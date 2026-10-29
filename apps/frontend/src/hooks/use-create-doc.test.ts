@@ -1,13 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { createElement, type ReactNode } from "react"
 import { act, renderHook } from "@testing-library/react"
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import { toast } from "sonner"
 import { StreamTypes } from "@threahq/types"
 import { spyOnExport } from "@/test"
 import { ApiError } from "@/api/client"
 import * as contextsModule from "@/contexts"
 import * as docCanWrite from "@/components/docs/use-doc-can-write"
+import * as canManageChannelsModule from "@/lib/use-can-manage-channels"
 import * as streamsModule from "./use-streams"
-import { useCreateDoc } from "./use-create-doc"
+import { useCreateDoc, useCreateTopLevelDoc } from "./use-create-doc"
 
 const channel = {
   id: "stream_host",
@@ -94,5 +97,51 @@ describe("useCreateDoc", () => {
 
     expect(toastError.mock.calls).toEqual([[message]])
     expect(openPanel).not.toHaveBeenCalled()
+  })
+})
+
+describe("useCreateTopLevelDoc", () => {
+  let canManageChannels: boolean
+
+  beforeEach(() => {
+    canManageChannels = true
+    spyOnExport(canManageChannelsModule, "useCanManageChannels").mockReturnValue((() => canManageChannels) as never)
+  })
+
+  function renderTopLevel() {
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(
+        MemoryRouter,
+        { initialEntries: ["/w/ws_1"] },
+        createElement(Routes, null, createElement(Route, { path: "*", element: children }))
+      )
+    return renderHook(() => ({ create: useCreateTopLevelDoc("ws_1"), path: useLocation().pathname }), { wrapper })
+  }
+
+  it("should create a doc with no host and go to it", async () => {
+    const { result } = renderTopLevel()
+    await act(() => result.current.create.run())
+
+    expect({ calls: mutateAsync.mock.calls, path: result.current.path }).toEqual({
+      calls: [[{ type: "doc" }]],
+      path: "/w/ws_1/s/stream_doc",
+    })
+  })
+
+  it("should be disabled for a viewer who can't manage channels", () => {
+    canManageChannels = false
+    expect(renderTopLevel().result.current.create.enabled).toBe(false)
+  })
+
+  it("should toast a failed create and stay put", async () => {
+    const toastError = vi.spyOn(toast, "error")
+    mutateAsync.mockRejectedValueOnce(new ApiError(500, "INTERNAL_ERROR", "nope"))
+    const { result } = renderTopLevel()
+    await act(() => result.current.create.run())
+
+    expect({ toasts: toastError.mock.calls, path: result.current.path }).toEqual({
+      toasts: [["Couldn't create the doc. Please try again."]],
+      path: "/w/ws_1",
+    })
   })
 })

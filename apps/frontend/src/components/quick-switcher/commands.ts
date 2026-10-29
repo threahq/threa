@@ -17,6 +17,7 @@ import {
   PenSquare,
   Search,
   FileEdit,
+  FilePlus,
   Lock,
   Settings,
   StickyNote,
@@ -103,6 +104,8 @@ export interface CommandContext {
   createSavedTodo: (title: string) => Promise<void>
   /** Create a doc in the stream in view and open it beside it. Absent when that stream can't host one. */
   createDoc?: () => Promise<unknown>
+  /** Create a top-level doc and go to it. Absent when the stream in view hosts docs, or the viewer can't. */
+  createTopLevelDoc?: () => Promise<unknown>
   /** Open a private aside on the stream in view. Absent when that stream can't host one. */
   openAside?: (streamId: string) => Promise<void>
   /** Settle the stream in view out of the Inbox. Absent when it isn't in the Inbox. */
@@ -259,6 +262,17 @@ export const commands: Command[] = [
     action: ({ closeDialog, openCreateChannel }) => {
       closeDialog()
       openCreateChannel()
+    },
+  },
+  {
+    id: "new-doc",
+    label: "New Doc",
+    icon: FilePlus,
+    keywords: ["create", "add", "document", "write", "page"],
+    action: ({ closeDialog, createTopLevelDoc }) => {
+      if (!createTopLevelDoc) return
+      closeDialog()
+      void createTopLevelDoc()
     },
   },
   {

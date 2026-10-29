@@ -25,6 +25,7 @@ import {
 } from "@/stores/workspace-store"
 import {
   StreamTypes,
+  isTopLevelDoc,
   WORKSPACE_PERMISSION_SCOPES,
   type Stream,
   type StreamBootstrap,
@@ -115,6 +116,9 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
       case StreamTypes.DM:
       case StreamTypes.THREAD:
         return ["general", "companion", "members"]
+      // A hosted doc takes its host's settings; a top-level doc is its own root.
+      case StreamTypes.DOC:
+        return isTopLevelDoc(resolvedStream) ? ["general", "members"] : ["general"]
       case StreamTypes.SYSTEM:
       default:
         return ["general"]
