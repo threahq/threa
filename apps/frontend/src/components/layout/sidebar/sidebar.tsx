@@ -864,6 +864,7 @@ const SidebarBody = memo(function SidebarBody({
               currentUser={currentUser}
               onCreateScratchpad={handleCreateScratchpad}
               onCreateChannel={canManageChannels ? handleCreateChannel : undefined}
+              onCreateDoc={canCreateTopLevelDoc ? handleCreateDoc : undefined}
               scratchpadAddMenuActions={scratchpadAddMenuActions}
               onEditLayout={hasUserStreams && !isBoardPage ? openLayoutEditor : undefined}
               onShowGettingStarted={gettingStarted.canRestore ? gettingStarted.restore : undefined}

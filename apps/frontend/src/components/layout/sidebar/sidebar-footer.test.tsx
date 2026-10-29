@@ -198,8 +198,30 @@ describe("SidebarFooter", () => {
     // The provided scratchpad flavors plus the appended channel creator.
     expect(screen.getByText("New Scratchpad")).toBeInTheDocument()
     expect(screen.getByText("New Quick Note")).toBeInTheDocument()
+    expect(screen.queryByText("New Doc")).not.toBeInTheDocument()
     await user.click(screen.getByText("New Channel"))
     expect(onCreateChannel).toHaveBeenCalled()
+  })
+
+  it.each(["touch", "mouse"] as const)("should offer New Doc on %s and close after selection", async (mode) => {
+    isTouch.value = mode === "touch"
+    const user = userEvent.setup()
+    const onCreateDoc = vi.fn()
+
+    renderWithRouter(
+      <SidebarFooter
+        workspaceId="workspace_1"
+        onCreateScratchpad={vi.fn()}
+        onCreateDoc={onCreateDoc}
+        currentUser={currentUserFixture}
+      />
+    )
+
+    await user.click(screen.getByRole("button", { name: "New" }))
+    await user.click(screen.getByText("New Doc"))
+
+    expect(onCreateDoc).toHaveBeenCalledOnce()
+    expect(screen.queryByText("New Doc")).not.toBeInTheDocument()
   })
 
   it("should leave New Channel out of the create drawer when the viewer cannot create channels", async () => {
@@ -209,6 +231,7 @@ describe("SidebarFooter", () => {
       <SidebarFooter
         workspaceId="workspace_1"
         onCreateScratchpad={vi.fn()}
+        onCreateDoc={vi.fn()}
         scratchpadAddMenuActions={[
           { id: "new-scratchpad", label: "New Scratchpad", icon: UserIcon, onSelect: vi.fn() },
           { id: "new-quick-note", label: "New Quick Note", icon: UserIcon, onSelect: vi.fn() },
@@ -223,7 +246,8 @@ describe("SidebarFooter", () => {
       scratchpad: screen.queryByText("New Scratchpad") !== null,
       quickNote: screen.queryByText("New Quick Note") !== null,
       channel: screen.queryByText("New Channel") !== null,
-    }).toEqual({ scratchpad: true, quickNote: true, channel: false })
+      doc: screen.queryByText("New Doc") !== null,
+    }).toEqual({ scratchpad: true, quickNote: true, channel: false, doc: true })
   })
 
   it("opens the desktop dropdown from the account row trigger", async () => {

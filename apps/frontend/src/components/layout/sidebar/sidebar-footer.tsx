@@ -30,11 +30,13 @@ import { getAdminPortalUrl } from "@/lib/admin-url"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { getInitials } from "@/lib/initials"
+import { STREAM_ICONS } from "@/lib/streams"
 import { cn } from "@/lib/utils"
 import {
   getAvatarUrl,
   resolveActiveStatus,
   resolveNotificationPause,
+  StreamTypes,
   type Theme,
   type User,
   type WorkspaceBootstrap,
@@ -71,6 +73,7 @@ interface SidebarFooterProps {
   onCreateScratchpad: () => void | Promise<void>
   /** Omitted for viewers who cannot create channels: the "New Channel" action is left out. */
   onCreateChannel?: () => void | Promise<void>
+  onCreateDoc?: () => void | Promise<void>
   scratchpadAddMenuActions?: SidebarActionItem[]
   /**
    * Opens the sidebar layout editor. Undefined on the surfaces that have nothing
@@ -232,6 +235,7 @@ export const SidebarFooter = memo(function SidebarFooter({
   currentUser,
   onCreateScratchpad,
   onCreateChannel,
+  onCreateDoc,
   scratchpadAddMenuActions,
   onEditLayout,
   onShowGettingStarted,
@@ -314,15 +318,31 @@ export const SidebarFooter = memo(function SidebarFooter({
   useNotificationPauseAutoExpiry(workspaceId, currentUser)
 
   const createActions = useMemo<SidebarActionItem[]>(() => {
-    const scratchpadActions: SidebarActionItem[] = scratchpadAddMenuActions ?? [
-      { id: "new-scratchpad", label: "New Scratchpad", icon: FileText, onSelect: onCreateScratchpad },
+    const actions: SidebarActionItem[] = [
+      ...(scratchpadAddMenuActions ?? [
+        { id: "new-scratchpad", label: "New Scratchpad", icon: FileText, onSelect: onCreateScratchpad },
+      ]),
     ]
-    if (!onCreateChannel) return scratchpadActions
-    return [
-      ...scratchpadActions,
-      { id: "new-channel", label: "New Channel", icon: Hash, onSelect: onCreateChannel, separatorBefore: true },
-    ]
-  }, [scratchpadAddMenuActions, onCreateScratchpad, onCreateChannel])
+    if (onCreateChannel) {
+      actions.push({
+        id: "new-channel",
+        label: "New Channel",
+        icon: Hash,
+        onSelect: onCreateChannel,
+        separatorBefore: true,
+      })
+    }
+    if (onCreateDoc) {
+      actions.push({
+        id: "new-doc",
+        label: "New Doc",
+        icon: STREAM_ICONS[StreamTypes.DOC],
+        onSelect: onCreateDoc,
+        separatorBefore: !onCreateChannel,
+      })
+    }
+    return actions
+  }, [scratchpadAddMenuActions, onCreateScratchpad, onCreateChannel, onCreateDoc])
 
   const handleOpenSettings = useCallback(() => {
     collapseOnMobile()
@@ -606,8 +626,8 @@ const CREATE_BUTTON_CLASS = cn(
 
 /**
  * The always-visible "New" control, sharing the footer's single row with the
- * account button. Opens a menu of every stream flavor (scratchpad variants +
- * channel): a bottom drawer on touch, a dropdown for mouse input, mirroring the
+ * account button. Opens a menu of every stream flavor: a bottom drawer on
+ * touch, a dropdown for mouse input, mirroring the
  * account menu beside it. Top-level per INV-18.
  */
 function SidebarCreateButton({ actions, isTouch }: { actions: SidebarActionItem[]; isTouch: boolean }) {

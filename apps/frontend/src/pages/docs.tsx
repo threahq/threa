@@ -1,11 +1,12 @@
 import { memo, useCallback, useMemo } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
-import { AlertCircle, Check, ChevronDown, Filter, Search } from "lucide-react"
+import { AlertCircle, Check, ChevronDown, Filter, Plus, Search } from "lucide-react"
 import { StreamTypes, type DocEditor } from "@threahq/types"
 import { PagePaneHeader } from "@/components/panes"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -138,9 +139,21 @@ function DocsPageInner({ workspaceId }: { workspaceId: string }) {
         title="Docs"
       >
         {createDoc.enabled && (
-          <Button size="sm" disabled={createDoc.pending} onClick={() => void createDoc.run()}>
-            New doc
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-11 w-11 shrink-0 text-muted-foreground sm:h-8 sm:w-8"
+                aria-label="New doc"
+                disabled={createDoc.pending}
+                onClick={() => void createDoc.run()}
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>New doc</TooltipContent>
+          </Tooltip>
         )}
       </PagePaneHeader>
 
