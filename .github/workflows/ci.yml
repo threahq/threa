@@ -6,6 +6,7 @@ on:
     paths:
       - ".bun-version"
       - ".github/actions/**"
+      - "Dockerfile*"
       - "apps/**"
       - "packages/**"
       - "extensions/**"
@@ -364,19 +365,20 @@ jobs:
         uses: dorny/paths-filter@v3
         with:
           filters: |
-            permissions:
+            toolchain:
               - '.bun-version'
               - '.github/actions/**'
+            permissions:
               - 'packages/types/src/api-keys.ts'
               - 'packages/types/src/workspace-permissions.ts'
               - 'scripts/sync-workos-permissions.ts'
 
       - name: Setup Bun
-        if: github.event_name == 'push' || steps.filter.outputs.permissions == 'true'
+        if: github.event_name == 'push' || steps.filter.outputs.permissions == 'true' || steps.filter.outputs.toolchain == 'true'
         uses: ./.github/actions/setup-bun
 
       - name: Install dependencies
-        if: github.event_name == 'push' || steps.filter.outputs.permissions == 'true'
+        if: github.event_name == 'push' || steps.filter.outputs.permissions == 'true' || steps.filter.outputs.toolchain == 'true'
         run: bun install --frozen-lockfile
 
       # On PRs: check for drift when permission files change
