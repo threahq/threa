@@ -3,6 +3,7 @@ import { collectSealedStreamIds, streamLabel } from "@/lib/streams"
 
 /** The `/docs` page's filters, each one search param (INV-59). */
 export const DOC_LIST_PARAMS = { query: "q", host: "host", label: "label", editor: "editor" } as const
+export const DOC_LIST_TOP_LEVEL = "top-level"
 
 export interface DocListFilters {
   query: string
@@ -32,6 +33,7 @@ export interface DocRow {
   title: string
   /** Null when the viewer cannot read the host (a doc readable only through a share grant). */
   host: DocListStream | null
+  isTopLevel: boolean
   /** The last edit, else when the doc was created. */
   activityAt: string
   edited: boolean
@@ -117,6 +119,7 @@ export function buildDocRows({
         doc,
         title: streamLabel(doc, "generic"),
         host: doc.parentStreamId ? (streamById.get(doc.parentStreamId) ?? null) : null,
+        isTopLevel: doc.parentStreamId === null || (doc.parentStreamId === undefined && item?.isTopLevel === true),
         activityAt: lastEditedAt ?? doc.createdAt,
         edited: lastEditedAt !== null,
         editors: item?.editors ?? [],
@@ -131,7 +134,8 @@ export function filterDocRows(rows: readonly DocRow[], filters: DocListFilters) 
   return rows.filter(
     (row) =>
       (query === "" || row.title.toLowerCase().includes(query)) &&
-      (filters.host === null || row.doc.parentStreamId === filters.host) &&
+      (filters.host === null ||
+        (filters.host === DOC_LIST_TOP_LEVEL ? row.isTopLevel : row.doc.parentStreamId === filters.host)) &&
       (filters.label === null || row.labelIds.includes(filters.label)) &&
       (filters.editor === null || row.editors.some((editor) => editor.actorId === filters.editor))
   )

@@ -123,6 +123,7 @@ describe("DocService.list", () => {
       id: doc.id,
       displayName: null,
       createdAt: new Date(doc.createdAt).toISOString(),
+      isTopLevel: false,
       lastEditedAt: null,
       editors: [],
     })
@@ -164,5 +165,30 @@ describe("DocService.list", () => {
     })
 
     expect((await listFor(viewer)).map((entry) => entry.id)).toContain(doc.id)
+  })
+
+  test("should report top-level placement for standalone docs and hosted placement for share-granted docs", async () => {
+    const rootDoc = await streamService.create({ workspaceId: wsId, type: "doc", createdBy: owner })
+    const hostedDoc = await createDoc((await createChannel("private")).id)
+    const open = await createChannel("public")
+    await eventService.createMessage({
+      workspaceId: wsId,
+      streamId: open.id,
+      authorId: owner,
+      authorType: "user",
+      contentJson: {
+        type: "doc",
+        content: [
+          { type: "paragraph", content: [{ type: "docEmbed", attrs: { docId: hostedDoc.id, title: "Plan" } }] },
+        ],
+      },
+      contentMarkdown: "shared",
+      confirmedPrivacyWarning: true,
+    })
+
+    const ownerDocs = await listFor(owner)
+    const viewerDocs = await listFor(viewer)
+    expect(ownerDocs.find(({ id }) => id === rootDoc.id)?.isTopLevel).toBe(true)
+    expect(viewerDocs.find(({ id }) => id === hostedDoc.id)?.isTopLevel).toBe(false)
   })
 })

@@ -2528,6 +2528,7 @@ export interface DocListItem {
   id: string
   displayName: string | null
   createdAt: string
+  isTopLevel: boolean
   lastEditedAt: string | null
   editors: DocEditor[]
 }

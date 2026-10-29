@@ -55,10 +55,16 @@ export const docsApi = {
   },
 
   /** How many users the move would take read access from, and give it to. */
-  previewMove(workspaceId: string, docId: string, toStreamId: string): Promise<DocMovePreviewResponse> {
-    return api.get<DocMovePreviewResponse>(
-      `/api/workspaces/${workspaceId}/docs/${docId}/move-preview?toStreamId=${encodeURIComponent(toStreamId)}`
-    )
+  previewMove(
+    workspaceId: string,
+    docId: string,
+    destination: Pick<MoveDocInput, "toStreamId" | "visibility">
+  ): Promise<DocMovePreviewResponse> {
+    const query = new URLSearchParams()
+    if (destination.toStreamId !== null) query.set("toStreamId", destination.toStreamId)
+    if (destination.visibility) query.set("visibility", destination.visibility)
+    const search = query.size ? `?${query}` : ""
+    return api.get<DocMovePreviewResponse>(`/api/workspaces/${workspaceId}/docs/${docId}/move-preview${search}`)
   },
 
   move(workspaceId: string, docId: string, input: MoveDocInput): Promise<{ stream: Stream }> {

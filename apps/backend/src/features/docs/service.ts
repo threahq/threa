@@ -364,6 +364,7 @@ export class DocService {
         id: doc.id,
         displayName: doc.displayName,
         createdAt: doc.createdAt.toISOString(),
+        isTopLevel: doc.isTopLevel,
         lastEditedAt: editors[0]?.lastEditedAt ?? null,
         editors,
       }

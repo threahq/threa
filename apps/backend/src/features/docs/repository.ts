@@ -42,6 +42,7 @@ interface DocWithEditorsRow {
   id: string
   display_name: string | null
   created_at: Date
+  is_top_level: boolean
   editors: { actorId: string; actorType: AuthorType; lastEditedAt: string }[]
 }
 
@@ -49,6 +50,7 @@ export interface DocWithEditors {
   id: string
   displayName: string | null
   createdAt: Date
+  isTopLevel: boolean
   /** Newest first. */
   editors: { actorId: string; actorType: AuthorType; lastEditedAt: Date }[]
 }
@@ -174,7 +176,7 @@ export const DocRepository = {
    */
   async listWithEditors(db: Querier, workspaceId: string, readable: QueryConfig): Promise<DocWithEditors[]> {
     const result = await db.query<DocWithEditorsRow>(composeSql`
-      SELECT s.id, s.display_name, s.created_at,
+      SELECT s.id, s.display_name, s.created_at, (s.parent_stream_id IS NULL) AS is_top_level,
         COALESCE(
           JSON_AGG(
             JSON_BUILD_OBJECT('actorId', e.actor_id, 'actorType', e.actor_type, 'lastEditedAt', e.last_edited_at)
@@ -188,13 +190,14 @@ export const DocRepository = {
         AND s.type = ${StreamTypes.DOC}
         AND ${sql`NOT ${sql.raw(effectivelyArchivedSql("s"))}`}
         AND ${readable}
-      GROUP BY s.id, s.display_name, s.created_at
+      GROUP BY s.id, s.display_name, s.created_at, s.parent_stream_id
       ORDER BY MAX(e.last_edited_at) DESC NULLS LAST, s.created_at DESC, s.id
     `)
     return result.rows.map((row) => ({
       id: row.id,
       displayName: row.display_name,
       createdAt: row.created_at,
+      isTopLevel: row.is_top_level,
       editors: row.editors.map((editor) => ({ ...editor, lastEditedAt: new Date(editor.lastEditedAt) })),
     }))
   },

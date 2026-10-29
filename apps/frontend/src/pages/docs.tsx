@@ -18,6 +18,7 @@ import { LabelGlyph } from "@/components/labels/label-chip"
 import { SidebarLabelsProvider, StreamLabelDots } from "@/components/layout/sidebar/sidebar-labels"
 import {
   buildDocRows,
+  DOC_LIST_TOP_LEVEL,
   docFilterOptions,
   docListHref,
   filterDocRows,
@@ -96,11 +97,14 @@ function DocsPageInner({ workspaceId }: { workspaceId: string }) {
   )
   const { draft, setDraft } = useDebouncedUrlText({ value: filters.query, onCommit: commitQuery })
 
-  const hostOptions: FilterOption[] = options.hosts.map(({ host, name }) => ({
-    value: host.id,
-    label: name,
-    icon: <HostGlyph host={host} />,
-  }))
+  const hostOptions: FilterOption[] = [
+    { value: DOC_LIST_TOP_LEVEL, label: "Top level", icon: <DocGlyph className="h-3.5 w-3.5" /> },
+    ...options.hosts.map(({ host, name }) => ({
+      value: host.id,
+      label: name,
+      icon: <HostGlyph host={host} />,
+    })),
+  ]
   const labelOptions: FilterOption[] = labels
     .filter((label) => !label.archivedAt && options.labelIds.has(label.id))
     .sort((a, b) => a.name.localeCompare(b.name))
