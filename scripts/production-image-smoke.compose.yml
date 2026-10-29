@@ -1,0 +1,113 @@
+x-common-app-environment: &common-app-environment
+  NODE_ENV: production
+  DATABASE_URL: postgresql://threa:synthetic-password@postgres:5432/threa
+  CORS_ALLOWED_ORIGINS: https://synthetic.invalid
+  WORKOS_API_KEY: sk_test_synthetic
+  WORKOS_CLIENT_ID: client_synthetic
+  WORKOS_REDIRECT_URI: https://synthetic.invalid/api/auth/callback
+  WORKOS_COOKIE_PASSWORD: synthetic-cookie-password-at-least-32-characters
+  SESSION_COOKIE_NAME: wos_session
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: threa
+      POSTGRES_PASSWORD: synthetic-password
+      POSTGRES_DB: threa
+    volumes:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U threa -d threa"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks: [smoke]
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.47
+    command: server -s3 -dir=/data -ip=seaweedfs -s3.port=8333
+    volumes:
+      - /data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8333/"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks: [smoke]
+
+  backend:
+    image: ${SMOKE_IMAGE:?set SMOKE_IMAGE}
+    environment:
+      <<: *common-app-environment
+      OPENROUTER_API_KEY: sk-or-synthetic
+      S3_REGION: us-east-1
+      S3_BUCKET: synthetic-bucket
+      S3_ENDPOINT: http://seaweedfs:8333
+      S3_ACCESS_KEY_ID: synthetic-access-key
+      S3_SECRET_ACCESS_KEY: synthetic-secret-key
+      ATTACHMENT_MALWARE_SCAN_ENABLED: "false"
+      DATABASE_WARM_POOL_COUNT: "1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const r=await fetch('http://127.0.0.1:3001/health');if(!r.ok)process.exit(1)"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks: [smoke]
+
+  control-plane:
+    image: ${SMOKE_IMAGE:?set SMOKE_IMAGE}
+    environment:
+      <<: *common-app-environment
+      INTERNAL_API_KEY: synthetic-internal-api-key
+      CLOUDFLARE_KV_ACCOUNT_ID: synthetic-account
+      CLOUDFLARE_KV_NAMESPACE_ID: synthetic-namespace
+      CLOUDFLARE_KV_API_TOKEN: synthetic-token
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const r=await fetch('http://127.0.0.1:3003/readyz');if(!r.ok)process.exit(1)"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks: [smoke]
+
+  db-read-proxy:
+    image: ${SMOKE_IMAGE:?set SMOKE_IMAGE}
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://threa:synthetic-password@postgres:5432/threa
+      DB_READ_PROXY_SECRET: synthetic-proxy-secret-at-least-32-characters
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const r=await fetch('http://127.0.0.1:3010/readyz');if(!r.ok)process.exit(1)"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks: [smoke]
+
+  enclave:
+    image: ${SMOKE_IMAGE:?set SMOKE_IMAGE}
+    environment:
+      NODE_ENV: production
+      ENCLAVE_INTERNAL_API_KEY: synthetic-enclave-internal-key
+      BACKEND_BASE_URL: http://unreachable-backend:3001
+      OPENROUTER_API_KEY: sk-or-synthetic
+    healthcheck:
+      test: ["CMD", "node", "--input-type=module", "-e", "const r=await fetch('http://127.0.0.1:3011/healthz');if(!r.ok)process.exit(1)"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks: [smoke]
+
+networks:
+  smoke:
+    internal: true
