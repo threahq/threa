@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { createElement, Fragment, createRef } from "react"
 import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { subYears } from "date-fns"
 import * as streamContextListModule from "./stream-context-list"
 import { chipsFromCounts, ContextTimeline, filterCategories, filterCount, parseFilter } from "./stream-context-chrome"
 import type { ContextItem } from "@/lib/stream-context/types"
@@ -38,6 +40,26 @@ describe("ContextTimeline virtualization wiring", () => {
 
   const items = [item("a", "2026-07-20T10:00:00.000Z"), item("b", "2026-07-19T10:00:00.000Z")]
   const renderItem = (i: ContextItem) => <span key={i.key}>{i.key}</span>
+
+  it("should keep the date menu open when a newer item arrives on the same day", async () => {
+    const now = new Date()
+    const first = item("first", new Date(now.getFullYear(), now.getMonth(), now.getDate(), 10).toISOString())
+    const newer = item("newer", new Date(now.getFullYear(), now.getMonth(), now.getDate(), 11).toISOString())
+    const onJumpToDate = vi.fn()
+    const { rerender } = render(<ContextTimeline items={[first]} renderItem={renderItem} onJumpToDate={onJumpToDate} />)
+
+    await userEvent.click(screen.getByRole("button", { name: "Jump to a date — showing Today" }))
+    expect(screen.getByRole("button", { name: "Last year", exact: true })).toBeVisible()
+
+    rerender(<ContextTimeline items={[newer, first]} renderItem={renderItem} onJumpToDate={onJumpToDate} />)
+
+    await userEvent.click(screen.getByRole("button", { name: "Last year", exact: true }))
+    const picked = onJumpToDate.mock.calls[0]?.[0] as Date
+    expect({ calls: onJumpToDate.mock.calls.length, date: picked?.toDateString() }).toEqual({
+      calls: 1,
+      date: subYears(now, 1).toDateString(),
+    })
+  })
 
   it("hands its rows to the virtualization seam when the panel supplies a scroller", () => {
     const seam = vi

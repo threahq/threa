@@ -11,7 +11,7 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
  * loaded; the derive path (sealed streams only) has component coverage alone.
  */
 
-test.describe.configure({ timeout: 600_000 })
+test.describe.configure({ timeout: 120_000 })
 
 /** More than two pages (the endpoint serves 40), so a jump has to page. */
 const MESSAGE_COUNT = 60
@@ -90,8 +90,10 @@ test("jumps past the start of history on the indexed path", async ({ page }) => 
   await page
     .getByRole("button", { name: /Jump to a date/ })
     .first()
-    .click()
-  await page.getByRole("button", { name: "Last year", exact: true }).click()
+    .click({ timeout: 10_000 })
+  const lastYear = page.getByRole("button", { name: "Last year", exact: true })
+  await expect(lastYear).toBeVisible({ timeout: 10_000 })
+  await lastYear.click({ timeout: 10_000 })
 
   // Past the start of history the answer is the oldest artifact there is, so the
   // list ends up at its bottom. Two ways this falls short and both are real
