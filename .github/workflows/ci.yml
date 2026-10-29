@@ -2,7 +2,6 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
     paths:
       - ".bun-version"
       - ".github/actions/**"
@@ -20,12 +19,33 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  check-main-tip:
+    name: Check main tip
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check main tip
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: tip
+        uses: ./.github/actions/check-main-tip
+        with:
+          expected-sha: ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Reject obsolete main revision
+        if: steps.tip.outputs.is-tip == 'false'
+        run: exit 1
+
   lint:
     name: Lint
+    needs: check-main-tip
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -45,6 +65,7 @@ jobs:
 
   typecheck:
     name: Typecheck
+    needs: check-main-tip
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -63,8 +84,13 @@ jobs:
         run: bun run typecheck
 
   test:
-    name: Tests
+    name: Tests (${{ matrix.partition }})
+    needs: check-main-tip
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [remaining, backend-integration]
 
     services:
       postgres:
@@ -97,6 +123,7 @@ jobs:
           bun install --frozen-lockfile --cwd extensions/bot-runtime-client
 
       - name: Run scripts tests
+        if: matrix.partition == 'remaining'
         run: bun run test:scripts
 
       - name: Create test databases
@@ -121,6 +148,7 @@ jobs:
           done
 
       - name: Run backend tests
+        if: matrix.partition == 'remaining'
         run: bun run test
         env:
           TEST_DATABASE_URL: postgresql://threa:threa@localhost:5454/threa_test
@@ -130,6 +158,7 @@ jobs:
           S3_SECRET_ACCESS_KEY: minioadmin
 
       - name: Run backend integration tests
+        if: matrix.partition == 'backend-integration'
         run: bun run --cwd apps/backend test:integration tests/integration/
         env:
           TEST_DATABASE_URL: postgresql://threa:threa@localhost:5454/threa_test
@@ -139,20 +168,25 @@ jobs:
           S3_SECRET_ACCESS_KEY: minioadmin
 
       - name: Run control-plane tests
+        if: matrix.partition == 'remaining'
         run: bun run --cwd apps/control-plane test
         env:
           TEST_DATABASE_URL: postgresql://threa:threa@localhost:5454/threa_control_plane_test
 
       - name: Run workspace-router tests
+        if: matrix.partition == 'remaining'
         run: bun run --cwd apps/workspace-router test
 
       - name: Run enclave tests
+        if: matrix.partition == 'remaining'
         run: bun run --cwd apps/enclave test
 
       - name: Run cli tests
+        if: matrix.partition == 'remaining'
         run: bun run --cwd packages/cli test
 
       - name: Run shared package tests
+        if: matrix.partition == 'remaining'
         run: |
           bun run --cwd packages/types test
           bun run --cwd packages/backend-common test
@@ -162,6 +196,7 @@ jobs:
 
   frontend-tests:
     name: Frontend Tests (${{ matrix.shard_index }}/${{ strategy.job-total }})
+    needs: check-main-tip
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -184,6 +219,7 @@ jobs:
 
   extension-tests:
     name: Extension Tests
+    needs: check-main-tip
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -254,6 +290,7 @@ jobs:
 
   public-site-build:
     name: Public Site Build
+    needs: check-main-tip
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -296,6 +333,7 @@ jobs:
 
   frontend-prod-build:
     name: Frontend Production Build
+    needs: check-main-tip
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -317,6 +355,7 @@ jobs:
 
   app-update-browser:
     name: App Update Browser Proof
+    needs: check-main-tip
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     # The image ships the browsers' system packages. `playwright install-deps`
@@ -354,7 +393,12 @@ jobs:
 
   workos-permissions:
     name: WorkOS Permissions
+    needs: check-main-tip
     runs-on: ubuntu-latest
+    concurrency:
+      group: workos-permissions-${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'production' || github.run_id }}
+      cancel-in-progress: false
+      queue: max
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -389,8 +433,21 @@ jobs:
           WORKOS_API_KEY: ${{ secrets.WORKOS_PROD_API_KEY }}
 
       # On every merge to main: sync permissions to production WorkOS
+      - name: Check main tip
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: tip
+        uses: ./.github/actions/check-main-tip
+        with:
+          expected-sha: ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Reject obsolete main revision
+        if: steps.tip.outputs.is-tip == 'false'
+        run: exit 1
+
       - name: Sync permissions to WorkOS
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: bun run workos:sync
         env:
           WORKOS_API_KEY: ${{ secrets.WORKOS_PROD_API_KEY }}

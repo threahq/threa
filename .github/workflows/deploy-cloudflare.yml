@@ -21,23 +21,24 @@ jobs:
   check-tip:
     name: Check main tip
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success'
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     outputs:
       is-tip: ${{ steps.tip.outputs.is-tip }}
     steps:
-      - name: Compare head_sha with main
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check main tip
         id: tip
+        uses: ./.github/actions/check-main-tip
+        with:
+          expected-sha: ${{ github.event.workflow_run.head_sha }}
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          tip=$(gh api "repos/${{ github.repository }}/commits/main" --jq .sha)
-          if [ "$tip" = "$HEAD_SHA" ]; then
-            echo "is-tip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "is-tip=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Skipping deploy of $HEAD_SHA: main is at $tip"
-          fi
 
   deploy-frontend:
     name: Deploy Frontend

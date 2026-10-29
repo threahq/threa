@@ -47,6 +47,40 @@ jobs:
               return
             }
 
+            if (workflow === "CI" && conclusion === "failure") {
+              try {
+                const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {
+                  ...repo,
+                  run_id: run.id,
+                  attempt_number: run.run_attempt,
+                })
+                let staleFailures = 0
+                let otherFailures = 0
+                for (const job of jobs) {
+                  let jobStaleFailures = 0
+                  for (const step of job.steps ?? []) {
+                    if (step.conclusion === "failure" && step.name === "Reject obsolete main revision") {
+                      jobStaleFailures += 1
+                    } else if (!["success", "skipped"].includes(step.conclusion)) {
+                      otherFailures += 1
+                    }
+                  }
+                  staleFailures += jobStaleFailures
+                  if (!["success", "skipped", "failure"].includes(job.conclusion)) otherFailures += 1
+                  if (job.conclusion === "failure" && !(job.steps ?? []).some((step) => step.conclusion === "failure")) {
+                    otherFailures += 1
+                  }
+                  if (job.conclusion !== "failure" && jobStaleFailures > 0) otherFailures += 1
+                }
+                if (staleFailures > 0 && otherFailures === 0) {
+                  core.info(`Suppressing obsolete-main CI failure for ${headSha}`)
+                  return
+                }
+              } catch (err) {
+                core.warning(`obsolete-main comparison failed; retaining alert: ${err.message}`)
+              }
+            }
+
             const icon = { success: "✅", failure: "❌", timed_out: "⏱" }[conclusion] ?? "⚠️"
             const status = { success: "succeeded", failure: "failed", timed_out: "timed out" }[conclusion] ?? conclusion
             const short = (s) => s.slice(0, 7)

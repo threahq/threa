@@ -1,0 +1,39 @@
+name: Check main tip
+description: Compare an expected commit SHA with the current main tip
+
+inputs:
+  expected-sha:
+    description: Commit SHA expected at the tip of main
+    required: true
+
+outputs:
+  is-tip:
+    description: Whether the expected SHA is the current main tip
+    value: ${{ steps.compare.outputs.is-tip }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compare expected SHA with main
+      id: compare
+      shell: bash
+      env:
+        EXPECTED_SHA: ${{ inputs.expected-sha }}
+      run: |
+        if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+          echo "::error::Expected SHA is not a 40-character hexadecimal commit SHA"
+          exit 1
+        fi
+
+        actual_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+        if [[ ! "$actual_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+          echo "::error::GitHub returned a malformed main-tip SHA"
+          exit 1
+        fi
+
+        if [[ "${actual_sha,,}" == "${EXPECTED_SHA,,}" ]]; then
+          echo "is-tip=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "is-tip=false" >> "$GITHUB_OUTPUT"
+          echo "::notice::Expected revision is no longer the tip of main"
+        fi
