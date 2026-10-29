@@ -2,11 +2,11 @@ import { readFileSync, statSync } from "node:fs"
 import { basename, resolve } from "node:path"
 import { encryptAttachmentBytes, type AttachmentRef } from "./crypto"
 import {
-  findLocalImageLinks,
-  imageAttachmentLink,
-  redactLocalImageLinks,
+  findLocalFileLinks,
+  fileAttachmentLink,
+  redactLocalFileLinks,
   uploadEach,
-  uploadLocalImageLinks,
+  uploadLocalFileLinks,
 } from "./local-images"
 
 export interface UploadedAttachment {
@@ -36,14 +36,14 @@ export function extractAttachmentDirectives(markdown: string): { markdown: strin
   return { markdown: lines.join("\n").trim(), paths }
 }
 
-/** True when sending the reply would upload local files: `THREA_ATTACH:` lines or images embedded from disk. */
+/** True when sending the reply would upload local files: `THREA_ATTACH:` lines, local images, or explicit deliverable links. */
 export function hasReplyAttachments(markdown: string): boolean {
-  return extractAttachmentDirectives(markdown).paths.length > 0 || findLocalImageLinks(markdown).length > 0
+  return extractAttachmentDirectives(markdown).paths.length > 0 || findLocalFileLinks(markdown).length > 0
 }
 
-/** Directive lines and embedded images name local paths; trace text shows that a file was attached, never where it lives. */
+/** Directive lines and local file links name local paths; trace text shows that a file was attached, never where it lives. */
 export function redactAttachDirectives(text: string): string {
-  return redactLocalImageLinks(text.replace(/^THREA_ATTACH:\s*.+$/gm, "THREA_ATTACH: [local path omitted]"))
+  return redactLocalFileLinks(text.replace(/^THREA_ATTACH:\s*.+$/gm, "THREA_ATTACH: [local path omitted]"))
 }
 
 function guessMimeType(path: string): string {
@@ -58,6 +58,12 @@ function guessMimeType(path: string): string {
   if (lower.endsWith(".txt")) return "text/plain"
   if (lower.endsWith(".csv")) return "text/csv"
   if (lower.endsWith(".json")) return "application/json"
+  if (lower.endsWith(".mp4")) return "video/mp4"
+  if (lower.endsWith(".webm")) return "video/webm"
+  if (lower.endsWith(".mov")) return "video/quicktime"
+  if (lower.endsWith(".mp3")) return "audio/mpeg"
+  if (lower.endsWith(".wav")) return "audio/wav"
+  if (lower.endsWith(".ogg")) return "audio/ogg"
   if (lower.endsWith(".pdf")) return "application/pdf"
   return "application/octet-stream"
 }
@@ -73,7 +79,7 @@ function failureNote(failed: string[]): string {
 }
 
 /**
- * Resolve a reply's local files: each image embedded from disk (`![alt](/path)`)
+ * Resolve a reply's local files: each local image or explicit deliverable link
  * uploads and becomes an inline `attachment:<id>` link in place, and each
  * `THREA_ATTACH:` file uploads and is listed under the reply. The backend
  * associates those links with the posted message. Upload failures surface as a
@@ -91,14 +97,14 @@ export async function uploadReplyAttachments(
     return uploader.uploadAttachment(form)
   }
   const { markdown: stripped, paths } = extractAttachmentDirectives(markdown)
-  const images = await uploadLocalImageLinks(stripped, cwd, uploadFile, imageAttachmentLink)
+  const files = await uploadLocalFileLinks(stripped, cwd, uploadFile, fileAttachmentLink)
   const directives = await uploadEach(paths, uploadFile)
   const listed = directives.uploaded.map(([, attachment]) => attachment)
-  const failed = [...images.failed, ...directives.failed]
+  const failed = [...files.failed, ...directives.failed]
   const links = listed.length > 0 ? ["Attachments:", ...listed.map((a) => `- [${a.filename}](attachment:${a.id})`)] : []
   return {
-    markdown: [images.markdown.trim(), links.join("\n"), failureNote(failed)].filter(Boolean).join("\n\n"),
-    uploaded: [...images.uploaded, ...listed],
+    markdown: [files.markdown.trim(), links.join("\n"), failureNote(failed)].filter(Boolean).join("\n\n"),
+    uploaded: [...files.uploaded, ...listed],
     failed,
   }
 }
@@ -111,8 +117,8 @@ export async function uploadReplyAttachments(
 const MAX_SEALED_ATTACHMENTS_PER_MESSAGE = 16
 
 /**
- * Resolve local files in SEALED output (`THREA_ATTACH:` lines and images
- * embedded from disk, which are removed from the text): encrypt each file under a
+ * Resolve local files in SEALED output (`THREA_ATTACH:` lines and local file
+ * links, which are removed from the text): encrypt each file under a
  * fresh single-use key, upload only the ciphertext (`e2e=true`, placeholder
  * name/mime), and return the refs to seal into the message payload plus the ids
  * the wire body binds to the message row. No `attachment:<id>` links are added:
@@ -150,10 +156,10 @@ export async function uploadSealedReplyAttachments(
   const { markdown: stripped, paths } = extractAttachmentDirectives(markdown)
   // Explicit directives claim the capped slots before embedded images.
   const directives = await uploadEach(paths, uploadFile)
-  const images = await uploadLocalImageLinks(stripped, cwd, uploadFile, () => "")
-  const failed = [...directives.failed, ...images.failed]
+  const files = await uploadLocalFileLinks(stripped, cwd, uploadFile, () => "")
+  const failed = [...directives.failed, ...files.failed]
   return {
-    markdown: [images.markdown.trim(), failureNote(failed)].filter(Boolean).join("\n\n"),
+    markdown: [files.markdown.trim(), failureNote(failed)].filter(Boolean).join("\n\n"),
     refs,
     attachmentIds: refs.map((ref) => ref.attachmentId),
   }

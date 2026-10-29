@@ -2,13 +2,13 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { findLocalImageLinks, imageAttachmentLink, redactLocalImageLinks, uploadLocalImageLinks } from "./local-images"
+import { findLocalFileLinks, fileAttachmentLink, redactLocalFileLinks, uploadLocalFileLinks } from "./local-images"
 
 function paths(markdown: string): string[] {
-  return findLocalImageLinks(markdown).map((link) => link.path)
+  return findLocalFileLinks(markdown).map((link) => link.path)
 }
 
-describe("findLocalImageLinks", () => {
+describe("findLocalFileLinks", () => {
   test("finds absolute, relative, angle-bracketed, titled and file: targets", () => {
     const markdown = [
       "![one](/tmp/one.png)",
@@ -74,8 +74,8 @@ describe("findLocalImageLinks", () => {
     expect(paths(markdown)).toEqual(["/tmp/quote.png", "/tmp/continuation.png"])
   })
 
-  test("skips escaped images and plain links", () => {
-    expect(paths("\\![escaped](/tmp/a.png) and [link](/tmp/b.png)")).toEqual([])
+  test("skips escaped images", () => {
+    expect(paths("\\![escaped](/tmp/a.png)")).toEqual([])
   })
 
   test("only image files count, so an echoed key or env file never uploads", () => {
@@ -149,14 +149,15 @@ describe("findLocalImageLinks", () => {
       }
       return best
     }
-    fastest(200)
+    fastest(400)
+    fastest(1_600)
     // Linear work grows 4x; a quadratic scan would grow 16x.
     expect(fastest(1_600) / fastest(400)).toBeLessThan(8)
   })
 
   test("a stray `![` never swallows the prose before a later image", () => {
     const markdown = "Press ![ to open\n\nmore text ![ and [this] too\n\n![shot](/tmp/s.png)"
-    expect(findLocalImageLinks(markdown)).toEqual([
+    expect(findLocalFileLinks(markdown)).toEqual([
       { start: markdown.indexOf("![shot"), end: markdown.length, alt: "shot", path: "/tmp/s.png" },
     ])
   })
@@ -169,7 +170,7 @@ describe("findLocalImageLinks", () => {
 
   test("keeps offsets past a leading byte-order mark", () => {
     const markdown = "\uFEFFSee ![shot](/tmp/shot.png)"
-    const [link] = findLocalImageLinks(markdown)
+    const [link] = findLocalFileLinks(markdown)
     expect(markdown.slice(link!.start, link!.end)).toBe("![shot](/tmp/shot.png)")
   })
 
@@ -179,19 +180,19 @@ describe("findLocalImageLinks", () => {
 
   test("keeps offsets into the original text", () => {
     const markdown = "Before `code` ![shot](/tmp/shot.png) after"
-    const [link] = findLocalImageLinks(markdown)
+    const [link] = findLocalFileLinks(markdown)
     expect(link).toEqual({ start: 14, end: 36, alt: "shot", path: "/tmp/shot.png" })
     expect(markdown.slice(link!.start, link!.end)).toBe("![shot](/tmp/shot.png)")
   })
 })
 
-describe("imageAttachmentLink", () => {
+describe("fileAttachmentLink", () => {
   test("labels by alt text, falling back to the escaped filename, with the chip metadata title", () => {
     const image = { mimeType: "image/png", sizeBytes: 12 }
     expect([
-      imageAttachmentLink({ ...image, id: "attach_1", filename: "a.png" }, { alt: "Direction\n1" }),
-      imageAttachmentLink({ ...image, id: "attach_2", filename: "[draft].png" }, { alt: " " }),
-      imageAttachmentLink({ ...image, id: "attach_3", filename: "c.png" }, { alt: "a [b ] c\\d `e`" }),
+      fileAttachmentLink({ ...image, id: "attach_1", filename: "a.png" }, { alt: "Direction\n1" }),
+      fileAttachmentLink({ ...image, id: "attach_2", filename: "[draft].png" }, { alt: " " }),
+      fileAttachmentLink({ ...image, id: "attach_3", filename: "c.png" }, { alt: "a [b ] c\\d `e`" }),
     ]).toEqual([
       '[Direction 1](attachment:attach_1 "threa-attachment:filename=a.png&mimeType=image%2Fpng&sizeBytes=12")',
       '[\\[draft\\].png](attachment:attach_2 "threa-attachment:filename=%5Bdraft%5D.png&mimeType=image%2Fpng&sizeBytes=12")',
@@ -200,10 +201,10 @@ describe("imageAttachmentLink", () => {
   })
 })
 
-describe("redactLocalImageLinks", () => {
+describe("redactLocalFileLinks", () => {
   test("hides every local image path, in code, HTML blocks and footnotes too, and leaves web images alone", () => {
     expect(
-      redactLocalImageLinks(
+      redactLocalFileLinks(
         [
           "See ![shot](/home/u/shot.png), ![web](https://x.test/w.png) and `![c](/tmp/c.png)`",
           "<details>",
@@ -226,12 +227,12 @@ describe("redactLocalImageLinks", () => {
   test("scans a large trace in a few milliseconds", () => {
     const trace = "const x = a[i] ![ (b) `c` ".repeat(10_000) + "![shot](/tmp/s.png)"
     const started = performance.now()
-    expect(redactLocalImageLinks(trace).endsWith("[image: local path omitted]")).toBe(true)
+    expect(redactLocalFileLinks(trace).endsWith("[image: local path omitted]")).toBe(true)
     expect(performance.now() - started).toBeLessThan(200)
   })
 
   test("hides escaped and nested-parenthesis paths", () => {
-    expect(redactLocalImageLinks("![a](/tmp/a\\).png) ![b](/tmp/b((1)).png)")).toBe(
+    expect(redactLocalFileLinks("![a](/tmp/a\\).png) ![b](/tmp/b((1)).png)")).toBe(
       "[image: local path omitted] [image: local path omitted]"
     )
   })
@@ -239,20 +240,20 @@ describe("redactLocalImageLinks", () => {
   test("scans many unclosed parenthesized titles in linear time", () => {
     const trace = "![a](b (".repeat(20_000)
     const started = performance.now()
-    expect(redactLocalImageLinks(trace)).toBe(trace)
-    expect(findLocalImageLinks(trace)).toEqual([])
+    expect(redactLocalFileLinks(trace)).toBe(trace)
+    expect(findLocalFileLinks(trace)).toEqual([])
     expect(performance.now() - started).toBeLessThan(200)
   })
 })
 
-describe("uploadLocalImageLinks", () => {
+describe("uploadLocalFileLinks", () => {
   test("uploads each path once, rewrites every embed, and drops failures with a reason", async () => {
     const dir = mkdtempSync(join(tmpdir(), "local-images-"))
     writeFileSync(join(dir, "a.png"), "png")
     writeFileSync(join(dir, "id_rsa"), "key")
     symlinkSync(join(dir, "id_rsa"), join(dir, "logo.png"))
     const calls: string[] = []
-    const result = await uploadLocalImageLinks(
+    const result = await uploadLocalFileLinks(
       [
         "A ![one](a.png)",
         `B ![again](${dir}/a.png)`,
@@ -273,14 +274,17 @@ describe("uploadLocalImageLinks", () => {
         markdown:
           "A [one](attachment:attach_1)\nB [again](attachment:attach_2)\nC \nD \nE ![web](https://x.test/e.png)",
         uploaded: [{ id: "attach_1" }, { id: "attach_2" }],
-        failed: [expect.stringMatching(/^missing\.png: ENOENT\b/), "logo.png: it links to a file that is not an image"],
+        failed: [
+          expect.stringMatching(/^missing\.png: ENOENT\b/),
+          "logo.png: it links to a file that is not an allowed deliverable",
+        ],
       },
     })
   })
 
   test("returns the markdown untouched when nothing is local", async () => {
     const markdown = "No images, just `![code](/tmp/x.png)`."
-    const result = await uploadLocalImageLinks(
+    const result = await uploadLocalFileLinks(
       markdown,
       "/",
       async () => {
@@ -289,5 +293,54 @@ describe("uploadLocalImageLinks", () => {
       () => ""
     )
     expect(result).toEqual({ markdown, uploaded: [], failed: [] })
+  })
+})
+
+test("should recognize only explicit allowlisted deliverable links", () => {
+  const allowed = [
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "webp",
+    "svg",
+    "md",
+    "pdf",
+    "html",
+    "csv",
+    "txt",
+    "mp4",
+    "webm",
+    "mov",
+    "mp3",
+    "wav",
+    "ogg",
+  ]
+  expect(paths(allowed.map((ext) => `[file](/tmp/out.${ext})`).join(" "))).toEqual(
+    allowed.map((ext) => `/tmp/out.${ext}`)
+  )
+  expect(
+    paths(
+      "[env](/tmp/.env) [key](/tmp/key.pem) [archive](/tmp/out.zip) [config](/tmp/out.json) [source](/tmp/out.ts) [relative](out.md) /tmp/bare.pdf"
+    )
+  ).toEqual([])
+})
+
+test("should reject a deliverable symlink to a secret before uploading", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "local-files-"))
+  writeFileSync(join(dir, ".env"), "synthetic secret")
+  symlinkSync(join(dir, ".env"), join(dir, "report.md"))
+  const result = await uploadLocalFileLinks(
+    `[report](${dir}/report.md)`,
+    dir,
+    async () => {
+      throw new Error("must not upload")
+    },
+    () => "uploaded"
+  )
+  expect(result).toEqual({
+    markdown: "",
+    uploaded: [],
+    failed: [`${dir}/report.md: it links to a file that is not an allowed deliverable`],
   })
 })
