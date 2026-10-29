@@ -764,3 +764,13 @@ export async function renameDoc(page: Page, workspaceId: string, docId: string, 
     "Rename doc"
   )
 }
+
+export async function openComposerFixture(page: Page): Promise<void> {
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: { id: "user_synthetic", email: "synthetic@example.test", name: "Synthetic User" },
+    })
+  )
+  await page.goto("/browser-fixtures/composer.html")
+  await expect(page.locator("[contenteditable='true']")).toBeVisible({ timeout: 5000 })
+}
