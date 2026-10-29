@@ -2188,17 +2188,13 @@ describe("SyncEngine sync cursor (active mode)", () => {
     }
   }
 
-  function activityCountsEntry(
-    syncId: string,
-    counts: { mentionCount: number; activityCount: number }
-  ): SyncCatchUpResponse["entries"][number] {
+  function activityEntry(syncId: string): SyncCatchUpResponse["entries"][number] {
     return {
       syncId,
       eventType: "activity:created",
       payload: {
         workspaceId: "ws_1",
         targetUserId: "member_1",
-        counts,
         activity: { id: `act_${syncId}`, streamId: "stream_x", activityType: "mention", isSelf: false },
       },
       createdAt: new Date().toISOString(),
@@ -2232,7 +2228,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
       .fn()
       .mockResolvedValueOnce({
         entries: [
-          activityCountsEntry("11", { mentionCount: 2, activityCount: 2 }),
+          activityEntry("11"),
           {
             syncId: "12",
             eventType: "stream:read",
@@ -2246,7 +2242,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
             },
             createdAt: new Date().toISOString(),
           },
-          activityCountsEntry("13", { mentionCount: 0, activityCount: 1 }),
+          activityEntry("13"),
         ],
         head: "13",
       })
@@ -2293,11 +2289,11 @@ describe("SyncEngine sync cursor (active mode)", () => {
       .fn()
       .mockResolvedValueOnce({
         entries: [
-          activityCountsEntry("11", { mentionCount: 0, activityCount: 1 }),
+          activityEntry("11"),
           streamReadEntry("12", 5),
-          activityCountsEntry("13", { mentionCount: 0, activityCount: 1 }),
+          activityEntry("13"),
           streamReadEntry("14", 5),
-          activityCountsEntry("15", { mentionCount: 0, activityCount: 2 }),
+          activityEntry("15"),
         ],
         head: "15",
       })
@@ -2517,11 +2513,11 @@ describe("SyncEngine sync cursor (active mode)", () => {
     // Live duplicate of log entry 11 lands during the pause window. Its log
     // copy applies below; the held set upserts by id, so the duplicate is
     // idempotent — entries 11 and 12 are two distinct rows (derived count 2).
-    const duplicate = activityCountsEntry("11", { mentionCount: 0, activityCount: 2 })
+    const duplicate = activityEntry("11")
     socket.trigger("activity:created", { ...(duplicate.payload as object), syncId: "11" })
 
     resolveFirstPage!({
-      entries: [duplicate, activityCountsEntry("12", { mentionCount: 0, activityCount: 1 })],
+      entries: [duplicate, activityEntry("12")],
       head: "12",
     })
 

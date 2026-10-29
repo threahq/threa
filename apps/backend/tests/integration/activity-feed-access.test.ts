@@ -82,14 +82,13 @@ describe("activity feed access", () => {
     return row!.id
   }
 
-  /** Everything the reader sees of their activity: feed, bootstrap counts, a stream's counts, push-payload counts. */
+  /** Everything the reader sees of their activity: feed, bootstrap counts, and a stream's counts. */
   async function view(ws: string, userId: string, sid: string) {
-    const [feed, unread, grouped, forStream, pairs] = await Promise.all([
+    const [feed, unread, grouped, forStream] = await Promise.all([
       activityService.listFeed(userId, ws),
       activityService.listFeed(userId, ws, { unreadOnly: true, othersOnly: true }),
       activityService.getUnreadCounts(userId, ws),
       activityService.getUnreadCountsForStream(userId, ws, sid),
-      ActivityRepository.countUnreadForPairs(pool, ws, [{ userId, streamId: sid }]),
     ])
     return {
       feed: feed.map((a) => a.id),
@@ -98,7 +97,6 @@ describe("activity feed access", () => {
       totalByStream: Object.fromEntries(grouped.totalByStream),
       mentionsByStream: Object.fromEntries(grouped.mentionsByStream),
       forStream,
-      forPair: pairs.get(`${userId}:${sid}`),
     }
   }
 
@@ -110,7 +108,6 @@ describe("activity feed access", () => {
       totalByStream: { [sid]: ids.length },
       mentionsByStream: { [sid]: ids.length },
       forStream: { mentionCount: ids.length, totalCount: ids.length },
-      forPair: { mentionCount: ids.length, totalCount: ids.length },
     }
   }
 
@@ -121,7 +118,6 @@ describe("activity feed access", () => {
     totalByStream: {},
     mentionsByStream: {},
     forStream: { mentionCount: 0, totalCount: 0 },
-    forPair: { mentionCount: 0, totalCount: 0 },
   }
 
   test("should hide a private channel's rows once the reader is removed and bring them back when re-added", async () => {
@@ -188,24 +184,6 @@ describe("activity feed access", () => {
       feed: [reminder!.id, keptRow, goneRow],
       unread: [goneRow],
       total: 1,
-    })
-  })
-
-  test("should decide push-payload counts per user, not per stream", async () => {
-    const { ws, owner, reader } = await workspaceWithUsers()
-    const room = await channel(ws, owner, Visibilities.PRIVATE)
-    await StreamMemberRepository.insertMany(pool, ws, room.id, [owner, reader])
-    await mention(ws, reader, room.id, owner)
-    await mention(ws, owner, room.id, reader)
-    await StreamMemberRepository.delete(pool, ws, room.id, reader)
-
-    const pairs = await ActivityRepository.countUnreadForPairs(pool, ws, [
-      { userId: owner, streamId: room.id },
-      { userId: reader, streamId: room.id },
-    ])
-    expect(Object.fromEntries(pairs)).toEqual({
-      [`${owner}:${room.id}`]: { mentionCount: 1, totalCount: 1 },
-      [`${reader}:${room.id}`]: { mentionCount: 0, totalCount: 0 },
     })
   })
 

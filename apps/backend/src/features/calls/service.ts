@@ -48,7 +48,7 @@ import {
 import type { Stream } from "../streams"
 import { UserRepository } from "../workspaces"
 import type { FeatureFlagService } from "../feature-flags"
-import { ActivityRepository } from "../activity"
+import { ActivityRepository, insertActivityCreatedEvents } from "../activity"
 import { OutboxRepository } from "../../lib/outbox"
 import { checkCallAccess } from "./access"
 import {
@@ -3024,11 +3024,10 @@ export class CallService {
 
   /**
    * Insert the missed-call activity row for the invitee of an expired ring and
-   * emit its `activity:created` (with the invitee's absolute unread counts, sync
-   * phase 2c) so the badge and push land the same way a mention or DM message
-   * would. The call row supplies the host stream and mode; a missing inviter/stream
-   * degrades the context fields, but a missing call row skips the activity entirely
-   * — there is no stream to land the miss on.
+   * emit its `activity:created` so the badge and push land the same way a
+   * mention or DM message would. The call row supplies the host stream and
+   * mode; a missing inviter/stream degrades the context fields, but a missing
+   * call row skips the activity entirely — there is no stream to land the miss on.
    */
   private async recordMissedCall(client: PoolClient, invitation: CallInvitation): Promise<void> {
     const call = await CallRepository.findById(client, invitation.workspaceId, invitation.callId)
@@ -3052,30 +3051,7 @@ export class CallService {
       context,
     })
     if (!activity) return
-    const counts = await ActivityRepository.countUnreadForPairs(client, invitation.workspaceId, [
-      { userId: invitation.inviteeUserId, streamId: call.streamId },
-    ])
-    const pair = counts.get(`${invitation.inviteeUserId}:${call.streamId}`)
-    await OutboxRepository.insert(client, "activity:created", {
-      workspaceId: invitation.workspaceId,
-      targetUserId: invitation.inviteeUserId,
-      counts: {
-        mentionCount: pair?.mentionCount ?? 0,
-        activityCount: pair?.totalCount ?? 0,
-      },
-      activity: {
-        id: activity.id,
-        activityType: activity.activityType,
-        streamId: activity.streamId,
-        messageId: activity.messageId,
-        actorId: activity.actorId,
-        actorType: activity.actorType,
-        context: activity.context,
-        createdAt: activity.createdAt.toISOString(),
-        isSelf: activity.isSelf,
-        emoji: activity.emoji,
-      },
-    })
+    await insertActivityCreatedEvents(client, [activity])
   }
 
   /**

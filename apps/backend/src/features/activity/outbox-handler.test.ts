@@ -267,9 +267,6 @@ describe("ActivityFeedHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
     const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
-    const countsSpy = spyOn(ActivityRepository, "countUnreadForPairs").mockResolvedValue(
-      new Map([["usr_alice:stream_test", { mentionCount: 3, totalCount: 5 }]])
-    )
     spyOn(ActivityRepository, "findStillUnreadIds").mockResolvedValue(new Set(["activity_test123"]))
 
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback) => {
@@ -283,11 +280,9 @@ describe("ActivityFeedHandler", () => {
 
     await new Promise((r) => setTimeout(r, 300))
 
-    expect(countsSpy).toHaveBeenCalledWith({}, "ws_test", [{ userId: "usr_alice", streamId: "stream_test" }])
     expect(insertSpy).toHaveBeenCalledWith({}, "activity:created", {
       workspaceId: "ws_test",
       targetUserId: "usr_alice",
-      counts: { mentionCount: 3, activityCount: 5 },
       activity: {
         id: "activity_test123",
         activityType: "mention",
@@ -327,9 +322,6 @@ describe("ActivityFeedHandler", () => {
     const event = makeMessageCreatedEvent(1n)
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
     const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
-    spyOn(ActivityRepository, "countUnreadForPairs").mockResolvedValue(
-      new Map([["usr_behind:stream_test", { mentionCount: 0, totalCount: 1 }]])
-    )
     spyOn(ActivityRepository, "findStillUnreadIds").mockResolvedValue(new Set(["act_unread"]))
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback) => callback({} as any))
 
@@ -376,7 +368,6 @@ describe("ActivityFeedHandler", () => {
     const event = makeMessageCreatedEvent(1n)
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
     const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
-    spyOn(ActivityRepository, "countUnreadForPairs").mockResolvedValue(new Map())
     // The locked re-read reports only one row still unread.
     spyOn(ActivityRepository, "findStillUnreadIds").mockResolvedValue(new Set(["act_still_unread"]))
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback) => callback({} as any))
@@ -390,7 +381,6 @@ describe("ActivityFeedHandler", () => {
     expect(insertSpy).toHaveBeenCalledWith({}, "activity:created", {
       workspaceId: "ws_test",
       targetUserId: "usr_b",
-      counts: { mentionCount: 0, activityCount: 0 },
       activity: {
         id: "act_still_unread",
         activityType: "message",
@@ -433,7 +423,6 @@ describe("ActivityFeedHandler", () => {
     const event = makeMessageCreatedEvent(1n)
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
     const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
-    spyOn(ActivityRepository, "countUnreadForPairs").mockResolvedValue(new Map())
     spyOn(ActivityRepository, "findStillUnreadIds").mockResolvedValue(new Set())
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback) => callback({} as any))
 
@@ -446,7 +435,6 @@ describe("ActivityFeedHandler", () => {
     expect(insertSpy).toHaveBeenCalledWith({}, "activity:created", {
       workspaceId: "ws_test",
       targetUserId: "usr_author",
-      counts: { mentionCount: 0, activityCount: 0 },
       activity: {
         id: "act_self",
         activityType: "message",
@@ -509,9 +497,6 @@ describe("ActivityFeedHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
     const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
-    spyOn(ActivityRepository, "countUnreadForPairs").mockResolvedValue(
-      new Map([["usr_bob:stream_test", { mentionCount: 1, totalCount: 1 }]])
-    )
     spyOn(ActivityRepository, "findStillUnreadIds").mockResolvedValue(new Set(["activity_existing"]))
 
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback) => {
@@ -528,7 +513,6 @@ describe("ActivityFeedHandler", () => {
     const want = {
       workspaceId: "ws_test",
       targetUserId: "usr_bob",
-      counts: { mentionCount: 1, activityCount: 1 },
       activity: {
         id: "activity_existing",
         activityType: "mention",

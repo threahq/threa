@@ -1292,6 +1292,8 @@ describe("CallService sweeps", () => {
     spyOn(CallRepository, "findById").mockResolvedValue(fakeCall({ streamId: "stream_dm", mode: "audio_only" }))
     const activityInsert = spyOn(activityModule.ActivityRepository, "insert").mockResolvedValue({
       id: "act_1",
+      workspaceId: "ws_1",
+      userId: "usr_peer",
       activityType: "missed_call",
       streamId: "stream_dm",
       messageId: null,
@@ -1302,7 +1304,6 @@ describe("CallService sweeps", () => {
       isSelf: false,
       emoji: null,
     } as never)
-    spyOn(activityModule.ActivityRepository, "countUnreadForPairs").mockResolvedValue(new Map())
     const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
 
     await makeService().expireStaleRings(NOW)
