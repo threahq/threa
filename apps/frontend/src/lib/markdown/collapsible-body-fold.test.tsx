@@ -83,6 +83,23 @@ describe("CollapsibleBody trailing content", () => {
     vi.unstubAllGlobals()
   })
 
+  it("should measure height-based folds without reading computed line styles on mount or resize", () => {
+    const resize = captureResizeObservers()
+    const computedStyle = vi.mocked(window.getComputedStyle)
+    computedStyle.mockClear()
+    render(
+      <MarkdownBlockProvider messageId="msg_1">
+        <CollapsibleBody kind="message" content="body" collapseAtHeight={420} collapseToHeight={240}>
+          <span>body</span>
+        </CollapsibleBody>
+      </MarkdownBlockProvider>
+    )
+    resize()
+
+    expect(computedStyle).not.toHaveBeenCalled()
+    expect(screen.getByRole("button", { name: "Show more" })).toBeInTheDocument()
+  })
+
   it("folds attachments and previews inside the clamp, outside the message's block scope", async () => {
     const user = userEvent.setup()
     render(

@@ -28,8 +28,11 @@ beforeEach(async () => {
   } as unknown as ReturnType<typeof syncEngineModule.useSyncEngine>)
   vi.spyOn(workspaceEmojiModule, "useWorkspaceEmoji").mockReturnValue({
     emojis: [],
+    emojiWeights: {},
     toEmoji: () => null,
-  } as unknown as ReturnType<typeof workspaceEmojiModule.useWorkspaceEmoji>)
+    toShortcode: () => null,
+    getEmoji: () => undefined,
+  })
 })
 
 describe("useMessageReactions", () => {

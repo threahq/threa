@@ -4,8 +4,9 @@ export interface MeasuredLines {
   /**
    * Visual line count = rendered content height ÷ computed line-height.
    * `null` until a real layout exists (first paint, JSDOM with no layout
-   * engine, detached node). Consumers treat `null` as "not measured yet" and
-   * render the block expanded with no collapse chrome.
+   * engine, detached node), or when line measurement is disabled. Line-based
+   * consumers treat `null` as "not measured yet" and render expanded with no
+   * collapse chrome.
    */
   lineCount: number | null
   /** Computed line-height in CSS px, used to build the collapsed clamp. */
@@ -46,30 +47,28 @@ function resolveLineHeightPx(el: HTMLElement): number {
  */
 export function useMeasuredLineCount(
   ref: RefObject<HTMLElement | null>,
-  deps: ReadonlyArray<unknown>
+  deps: ReadonlyArray<unknown>,
+  { measureLines = true }: { measureLines?: boolean } = {}
 ): MeasuredLines & { remeasure: () => void } {
   const [measured, setMeasured] = useState<MeasuredLines>(UNMEASURED)
 
   const remeasure = useCallback(() => {
     const node = ref.current
     if (!node) return
-    const lineHeightPx = resolveLineHeightPx(node)
     const height = node.scrollHeight
-    if (lineHeightPx <= 0 || height <= 0) {
+    const lineHeightPx = measureLines ? resolveLineHeightPx(node) : null
+    if (height <= 0 || (lineHeightPx !== null && lineHeightPx <= 0)) {
       // No layout engine (JSDOM) or not yet attached — stay unmeasured so
       // consumers fall back to "expanded, no chrome".
       return
     }
-    const lineCount = height / lineHeightPx
+    const lineCount = lineHeightPx === null ? null : height / lineHeightPx
     setMeasured((prev) =>
-      prev.lineCount !== null &&
-      Math.abs(prev.lineCount - lineCount) < 0.01 &&
-      prev.lineHeightPx === lineHeightPx &&
-      prev.heightPx === height
+      prev.lineHeightPx === lineHeightPx && prev.heightPx === height
         ? prev
         : { lineCount, lineHeightPx, heightPx: height }
     )
-  }, [ref])
+  }, [ref, measureLines])
 
   useLayoutEffect(() => {
     const el = ref.current

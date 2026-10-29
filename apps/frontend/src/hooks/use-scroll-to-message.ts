@@ -300,10 +300,12 @@ export function useScrollToMessage({
           // deep-link behavior, unchanged.
           const desiredTop = sr.top + topOffsetPx
           const delta = align === "start" ? er.top - desiredTop : (er.top + er.bottom) / 2 - scCenter
-          if (Math.abs(delta) > 2) {
+          const before = scroller.scrollTop
+          // At either edge, the browser can only reach the clamped position.
+          const reachableTop = Math.max(0, Math.min(before + delta, scroller.scrollHeight - scroller.clientHeight))
+          if (Math.abs(reachableTop - before) > 2) {
             programmaticScrollAtRef.current = performance.now()
-            const before = scroller.scrollTop
-            scroller.scrollTop += delta
+            scroller.scrollTop = reachableTop
             // Re-detach when the correction moved the reader: a scroll event at
             // the bottom (or a tail append) can re-arm follow between ticks. A
             // target clamped at the tail moves nothing and keeps that follow.
