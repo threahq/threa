@@ -3,14 +3,10 @@ import { join, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { Server } from "bun"
 import { z } from "../../apps/frontend/node_modules/zod/index.js"
-import { writeServerPort } from "./support/port"
+import type { BuildInfo } from "./build"
+export type { BuildInfo } from "./build"
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url))
-
-export interface BuildInfo {
-  generations: Record<string, { version: string; buildId: string; dist: string; entryAsset: string }>
-  buildRoot: string
-}
 
 const controlBodySchema = z.record(z.string(), z.unknown())
 
@@ -186,20 +182,27 @@ export function startAppUpdateServer(info: BuildInfo, port = 0): Server {
 
 if (import.meta.main) {
   const info: BuildInfo = JSON.parse(readFileSync(join(__dirname, ".build-info.json"), "utf-8"))
-  const port = process.env.APP_UPDATE_SERVER_PORT ? Number(process.env.APP_UPDATE_SERVER_PORT) : 0
-  const server = startAppUpdateServer(info, port)
-  const serverUrl = `http://127.0.0.1:${server.port}`
-  console.log(`APP_UPDATE_SERVER_URL=${serverUrl}`)
-  void writeServerPort(server.port)
-
+  const servers: Server[] = []
   let cleaningUp = false
   function cleanup(): void {
     if (cleaningUp) return
     cleaningUp = true
-    server.stop(true)
+    for (const server of servers) server.stop(true)
     rmSync(info.buildRoot, { recursive: true, force: true })
     rmSync(join(__dirname, ".build-info.json"), { force: true })
-    rmSync(join(__dirname, ".server-port"), { force: true })
+  }
+
+  try {
+    for (const key of ["APP_UPDATE_CHROMIUM_PORT", "APP_UPDATE_FIREFOX_PORT"]) {
+      const port = Number(process.env[key])
+      if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`Invalid ${key}`)
+      const server = startAppUpdateServer(info, port)
+      servers.push(server)
+      console.log(`${key}=${server.port}`)
+    }
+  } catch (error) {
+    cleanup()
+    throw error
   }
 
   process.on("exit", cleanup)
