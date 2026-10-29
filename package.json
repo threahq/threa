@@ -39,7 +39,7 @@
     "typecheck": "bun scripts/typecheck.ts",
     "eval": "bun run --cwd apps/backend eval --",
     "test": "bun run --cwd apps/backend test",
-    "test:scripts": "bun test ./scripts/",
+    "test:scripts": "bun test ./scripts/ ./tests/app-update/server.test.ts",
     "monitor": "bun scripts/monitor/cli.ts",
     "typecheck:monitor": "tsc --noEmit -p scripts/monitor/tsconfig.json",
     "test:unit": "bun run --cwd apps/backend test:unit",
