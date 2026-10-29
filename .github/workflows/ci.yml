@@ -238,7 +238,7 @@ jobs:
               - '.github/workflows/ci.yml'
 
       - name: Setup Bun
-        if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
+        if: github.event_name != 'pull_request' || steps.filter.outputs.extensions == 'true'
         uses: ./.github/actions/setup-bun
 
       # Extensions live outside the root Bun workspaces (apps/*, packages/*):
@@ -250,7 +250,7 @@ jobs:
       # test typechecks against the canonical packages/crypto sources, whose
       # deps (@hpke/*) resolve from the root node_modules.
       - name: Install extension dependencies
-        if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
+        if: github.event_name != 'pull_request' || steps.filter.outputs.extensions == 'true'
         run: |
           bun install --frozen-lockfile
           bun install --frozen-lockfile --cwd extensions/bot-runtime-client
@@ -264,7 +264,7 @@ jobs:
           bun install --frozen-lockfile --cwd extensions/t3code-remote
 
       - name: Typecheck extensions
-        if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
+        if: github.event_name != 'pull_request' || steps.filter.outputs.extensions == 'true'
         run: |
           bun run --cwd extensions/bot-runtime-client typecheck
           bun run --cwd extensions/harness-client typecheck
@@ -276,7 +276,7 @@ jobs:
           bun run --cwd extensions/t3code-remote typecheck
 
       - name: Run extension tests
-        if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
+        if: github.event_name != 'pull_request' || steps.filter.outputs.extensions == 'true'
         run: |
           bun run --cwd extensions/bot-runtime-client test
           bun run --cwd extensions/harness-client test
@@ -311,24 +311,24 @@ jobs:
               - '.github/workflows/ci.yml'
 
       - name: Setup Bun
-        if: github.event_name == 'push' || steps.filter.outputs.site == 'true'
+        if: github.event_name != 'pull_request' || steps.filter.outputs.site == 'true'
         uses: ./.github/actions/setup-bun
 
       - name: Install dependencies
-        if: github.event_name == 'push' || steps.filter.outputs.site == 'true'
+        if: github.event_name != 'pull_request' || steps.filter.outputs.site == 'true'
         run: bun install --frozen-lockfile
 
       # The full build, not just astro check: build-llms.ts runs post-build and
       # fails on any docs page missing its PAGES entry — a guard that otherwise
       # only fires in the deploy workflow, after merge (see #1383).
       - name: Build public site
-        if: github.event_name == 'push' || steps.filter.outputs.site == 'true'
+        if: github.event_name != 'pull_request' || steps.filter.outputs.site == 'true'
         run: bun run --cwd apps/public-site build
 
       # After the build: the markdown-negotiation test resolves each page route
       # against the mirrors that build just wrote.
       - name: Test public site
-        if: github.event_name == 'push' || steps.filter.outputs.site == 'true'
+        if: github.event_name != 'pull_request' || steps.filter.outputs.site == 'true'
         run: bun run --cwd apps/public-site test
 
   frontend-prod-build:
@@ -444,11 +444,11 @@ jobs:
               - 'scripts/sync-workos-permissions.ts'
 
       - name: Setup Bun
-        if: github.event_name == 'push' || steps.filter.outputs.permissions == 'true' || steps.filter.outputs.toolchain == 'true'
+        if: github.event_name != 'pull_request' || steps.filter.outputs.permissions == 'true' || steps.filter.outputs.toolchain == 'true'
         uses: ./.github/actions/setup-bun
 
       - name: Install dependencies
-        if: github.event_name == 'push' || steps.filter.outputs.permissions == 'true' || steps.filter.outputs.toolchain == 'true'
+        if: github.event_name != 'pull_request' || steps.filter.outputs.permissions == 'true' || steps.filter.outputs.toolchain == 'true'
         run: bun install --frozen-lockfile
 
       # On PRs: check for drift when permission files change
