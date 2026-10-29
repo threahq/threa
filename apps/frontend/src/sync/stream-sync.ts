@@ -237,6 +237,7 @@ export async function getPersistedTail(workspaceId: string, streamId: string): P
     .between([workspaceId, streamId, 0], [workspaceId, streamId, Number.MAX_SAFE_INTEGER], true, true)
     .reverse()
     .filter((event) => event._status == null)
+    .until((event) => event.broadcastSequence != null, true)
     .limit(TAIL_SCAN_LIMIT)
     .toArray()
 
