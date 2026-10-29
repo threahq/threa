@@ -257,6 +257,14 @@ export default defineConfig({
     // Maps are uploaded to PostHog and deleted before deploy (deploy-cloudflare.yml).
     sourcemap: "hidden",
     rollupOptions: {
+      ...(isE2ETest
+        ? {
+            input: {
+              app: path.resolve(__dirname, "index.html"),
+              composer: path.resolve(__dirname, "browser-fixtures/composer.html"),
+            },
+          }
+        : {}),
       output: {
         // KaTeX's 261 kB of JS gets its own chunk to keep the entry chunk down.
         // The chunk is still a static import of the entry, so it loads before
