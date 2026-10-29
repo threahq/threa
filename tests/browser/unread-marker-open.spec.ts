@@ -1,5 +1,13 @@
 import { test, expect, type Page, type Browser } from "@playwright/test"
-import { accountStorageKey, loginAndCreateWorkspace, loginInNewContext, createChannel, expectApiOk } from "./helpers"
+import {
+  accountStorageKey,
+  loginAndCreateWorkspace,
+  loginInNewContext,
+  createChannel,
+  expectApiOk,
+  openPhoneSidebar,
+  expandCollapsedSidebarSections,
+} from "./helpers"
 
 /**
  * Open-at-unread-marker (unreadOpenPosition: "marker"): a stream with unreads
@@ -35,7 +43,7 @@ async function seedFrom(page: Page, workspaceId: string, streamId: string, count
   }
 }
 
-async function setUpUnreadChannel(browser: Browser, ownerPage: Page) {
+async function setUpUnreadChannel(browser: Browser, ownerPage: Page, unreadCount = 25) {
   const owner = await loginAndCreateWorkspace(ownerPage, "marker-open")
   const testId = owner.testId
   const prefix = `[${testId}]`
@@ -89,12 +97,100 @@ async function setUpUnreadChannel(browser: Browser, ownerPage: Page) {
       { timeout: 10000, message: "second user's first post should be accepted after joining" }
     )
     .toBe(201)
-  await seedFrom(other.page, workspaceId, streamId, 24, `${prefix}-unread`, 2)
+  await seedFrom(other.page, workspaceId, streamId, unreadCount - 1, `${prefix}-unread`, 2)
 
   return { testId, prefix, workspaceId, streamId, otherContext: other.context }
 }
 
 test.describe("Unread marker open", () => {
+  for (const viewport of [
+    { name: "desktop", width: 1024, height: 500 },
+    { name: "phone", width: 388, height: 854 },
+  ]) {
+    test(`should promptly reveal a warm offline unread target clamped at the tail on ${viewport.name}`, async ({
+      page,
+      browser,
+      context,
+    }) => {
+      const { prefix, workspaceId, streamId, otherContext } = await setUpUnreadChannel(browser, page, 1)
+      try {
+        await page.setViewportSize({ width: viewport.width, height: viewport.height })
+        await page.goto(`/w/${workspaceId}/s/${streamId}`)
+        const unread = page
+          .locator("main [data-message-id]")
+          .filter({ hasText: `${prefix}-unread msg-001` })
+          .first()
+        await expect(unread).toBeVisible({ timeout: 20_000 })
+        await expect(page.getByTestId("settle-mask")).toHaveCount(0)
+        const messageId = await unread.getAttribute("data-message-id")
+        if (!messageId) throw new Error("Unread target has no message id")
+
+        if (viewport.name === "phone") await openPhoneSidebar(page)
+        await page.getByRole("link", { name: "Drafts", exact: true }).first().click()
+        await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/drafts`))
+        await expectApiOk(
+          await page.request.post(`/api/workspaces/${workspaceId}/streams/${streamId}/unread`, {
+            data: { messageId },
+          }),
+          "Mark the cached target unread"
+        )
+        if (viewport.name === "phone") await openPhoneSidebar(page)
+        await expandCollapsedSidebarSections(page)
+        const link = page
+          .getByRole("navigation", { name: "Sidebar navigation" })
+          .locator(`a[href="/w/${workspaceId}/s/${streamId}"]`)
+          .first()
+        await expect(link).toBeVisible()
+        await expect(link.locator("span.font-semibold").first()).toBeVisible()
+        await context.setOffline(true)
+
+        const timing = page.evaluate(
+          ({ messageId, streamId }) =>
+            new Promise<{ firstMountedAt: number; revealedAt: number; masked: boolean }>((resolve, reject) => {
+              let firstMountedAt: number | null = null
+              let masked = false
+              const started = performance.now()
+              const tick = () => {
+                const row = document.querySelector<HTMLElement>(
+                  `[data-stream-scroller="${streamId}"] [data-message-id="${messageId}"]`
+                )
+                const mask = document.querySelector('[data-testid="settle-mask"]')
+                if (row) {
+                  firstMountedAt ??= performance.now()
+                  masked ||= Boolean(mask)
+                  if (!mask) {
+                    resolve({ firstMountedAt, revealedAt: performance.now(), masked })
+                    return
+                  }
+                }
+                if (performance.now() - started > 10_000) {
+                  reject(new Error("Unread target did not reveal"))
+                  return
+                }
+                requestAnimationFrame(tick)
+              }
+              requestAnimationFrame(tick)
+            }),
+          { messageId, streamId }
+        )
+        await link.click()
+        const measured = await timing
+        expect(measured.masked, "the unread landing should take over the settle mask").toBe(true)
+        expect(measured.revealedAt - measured.firstMountedAt).toBeLessThan(800)
+        await expect(unread).toBeInViewport()
+        const position = await unread.boundingBox()
+        await page.waitForTimeout(1000)
+        const heldPosition = await unread.boundingBox()
+        expect(position).not.toBeNull()
+        expect(heldPosition).not.toBeNull()
+        expect(Math.abs(heldPosition!.y - position!.y)).toBeLessThanOrEqual(3)
+      } finally {
+        await context.setOffline(false)
+        await otherContext.close()
+      }
+    })
+  }
+
   test("sidebar switch into an unread stream paints at the divider — no tail flash, and it holds", async ({
     page,
     browser,

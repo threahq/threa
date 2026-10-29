@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react"
+import { useCallback } from "react"
 import { toast } from "sonner"
 import { isPermanentApiError } from "@/api"
 import { messagesApi } from "@/api/messages"
@@ -35,17 +35,8 @@ interface UseMessageReactionsResult {
 }
 
 export function useMessageReactions(workspaceId: string, messageId: string): UseMessageReactionsResult {
-  const { emojis, toEmoji } = useWorkspaceEmoji(workspaceId)
+  const { toEmoji, toShortcode } = useWorkspaceEmoji(workspaceId)
   const syncEngine = useSyncEngine()
-
-  // Reverse lookup: emoji character → shortcode
-  const emojiToShortcode = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const entry of emojis) {
-      map.set(entry.emoji, entry.shortcode)
-    }
-    return map
-  }, [emojis])
 
   const addReaction = useCallback(
     async (emoji: string) => {
@@ -63,7 +54,7 @@ export function useMessageReactions(workspaceId: string, messageId: string): Use
 
       // Bump the local emoji weight once the reaction is made or queued, so the
       // quick-bar re-ranks without needing a page reload. Fire-and-forget — non-critical.
-      const shortcode = emojiToShortcode.get(emoji)
+      const shortcode = toShortcode(emoji)
       if (shortcode) {
         db.workspaceMetadata.get(workspaceId).then((meta) => {
           if (!meta) return
@@ -73,7 +64,7 @@ export function useMessageReactions(workspaceId: string, messageId: string): Use
         })
       }
     },
-    [workspaceId, messageId, syncEngine, emojiToShortcode]
+    [workspaceId, messageId, syncEngine, toShortcode]
   )
 
   const removeReaction = useCallback(
@@ -116,7 +107,7 @@ export function useMessageReactions(workspaceId: string, messageId: string): Use
   const toggleByEmoji = useCallback(
     async (emoji: string, reactions: Record<string, string[]>, currentUserId: string | null) => {
       if (!currentUserId) return
-      const shortcode = emojiToShortcode.get(emoji)
+      const shortcode = toShortcode(emoji)
       if (shortcode) {
         // Reactions dict keys are colon-wrapped (":laughing:"), check both formats
         const colonWrapped = `:${shortcode}:`
@@ -128,7 +119,7 @@ export function useMessageReactions(workspaceId: string, messageId: string): Use
       }
       await addReaction(emoji)
     },
-    [emojiToShortcode, addReaction, removeReaction]
+    [toShortcode, addReaction, removeReaction]
   )
 
   return { addReaction, removeReaction, toggleReaction, toggleByEmoji }

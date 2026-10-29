@@ -81,7 +81,9 @@ export function CollapsibleBody({
   onHeight,
 }: CollapsibleBodyProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null)
-  const { lineCount, lineHeightPx, heightPx, remeasure } = useMeasuredLineCount(bodyRef, [content])
+  const { lineCount, lineHeightPx, heightPx, remeasure } = useMeasuredLineCount(bodyRef, [content], {
+    measureLines: threshold !== undefined,
+  })
   // Taking over nested folds strips their chrome, which can shrink the body
   // back under the threshold and hand the folds back — a loop on every resize.
   // While taken over, the stripped chrome still counts toward the body's size.
