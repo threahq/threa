@@ -2,13 +2,28 @@ name: Browser E2E Tests
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - ".bun-version"
+      - ".github/actions/**"
+      - "apps/**"
+      - "packages/**"
+      - "tests/browser/**"
+      - "playwright.config.ts"
+      - "scripts/test-silent.ts"
+      - "scripts/browser-ci.ts"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/browser-tests.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  TOTAL_SHARDS: 4
+  TOTAL_SHARDS: 8
 
 jobs:
   build-frontend:
@@ -77,17 +92,17 @@ jobs:
 
   browser-tests:
     env:
-      BROWSER_WORKERS: 8
+      BROWSER_WORKERS: 3
     permissions:
       contents: read
       actions: read
-    runs-on: threa-ci-16cpu
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
-        shard_index: [1, 2, 3, 4]
+        shard_index: [1, 2, 3, 4, 5, 6, 7, 8]
 
     steps:
       - uses: actions/checkout@v4
@@ -161,35 +176,8 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # Browsers and their OS libraries come preinstalled in Microsoft's image,
-      # replacing a `playwright install-deps` that spent 9-16 minutes on apt.
-      # The tag is derived from the locked version: a mismatch means Playwright
-      # can't find its browsers. Postgres/MinIO stay on the host and the tests
-      # reach them on localhost through --network host.
-      - name: Pull Playwright image
-        run: |
-          version="$(bun -p 'require("@playwright/test/package.json").version')"
-          image="mcr.microsoft.com/playwright:v${version}-noble"
-          for attempt in 1 2 3 4 5; do
-            if docker pull "$image"; then
-              break
-            fi
-            echo "docker pull playwright failed (attempt $attempt/5) — retrying in $((attempt * 5))s"
-            sleep $((attempt * 5))
-          done
-          bun_bin="$(readlink -f "$(command -v bun)")"
-          cat > "$RUNNER_TEMP/in-playwright" <<EOF
-          #!/usr/bin/env bash
-          exec docker run --rm --init --ipc=host --network host \\
-            --user "\$(id -u):\$(id -g)" -e HOME=/tmp \\
-            -e PLAYWRIGHT_JSON_OUTPUT_FILE \\
-            -e CI -e PLAYWRIGHT_TEST_DB_NAME -e PLAYWRIGHT_FRONTEND_PREBUILT \\
-            -e PATH=/opt/bun:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \\
-            -v "$bun_bin:/opt/bun/bun:ro" -v "$bun_bin:/opt/bun/bunx:ro" \\
-            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" -w "$GITHUB_WORKSPACE" \\
-            "$image" "\$@"
-          EOF
-          chmod +x "$RUNNER_TEMP/in-playwright"
+      - name: Install Chromium
+        run: bunx playwright install chromium
 
       - name: Derive browser test database name
         run: |
@@ -256,11 +244,23 @@ jobs:
           name: browser-shard-lists
           path: browser-shard-lists/
 
+      - name: Select browser shard topology
+        run: |
+          list="browser-shard-lists/shard-${{ matrix.shard_index }}.txt"
+          test -s "$list"
+          if rg -Fxq '[chromium] > stream-connections.spec.ts' "$list"; then
+            single_region=0
+          else
+            single_region=1
+          fi
+          echo "PLAYWRIGHT_SINGLE_REGION=$single_region" >> "$GITHUB_ENV"
+          echo "Shard ${{ matrix.shard_index }}: PLAYWRIGHT_SINGLE_REGION=$single_region"
+
       - name: Run browser tests
         id: initial-run
         continue-on-error: true
         run: |
-          "$RUNNER_TEMP/in-playwright" bun run test:browser -- --workers="$BROWSER_WORKERS" --reporter=line,blob,json --test-list=browser-shard-lists/shard-${{ matrix.shard_index }}.txt
+          bun run test:browser -- --workers="$BROWSER_WORKERS" --reporter=line,blob,json --test-list=browser-shard-lists/shard-${{ matrix.shard_index }}.txt
         env:
           CI: true
           PLAYWRIGHT_TEST_DB_NAME: ${{ env.PLAYWRIGHT_TEST_DB_NAME }}
@@ -286,7 +286,7 @@ jobs:
             echo "::warning::No failed-test IDs found — retrying the shard after the infrastructure failure"
             retry_target=(--test-list=browser-shard-lists/shard-${{ matrix.shard_index }}.txt)
           fi
-          "$RUNNER_TEMP/in-playwright" bun run test:browser -- --workers="$BROWSER_WORKERS" --reporter=line,blob "${retry_target[@]}" --retries=0
+          bun run test:browser -- --workers="$BROWSER_WORKERS" --reporter=line,blob "${retry_target[@]}" --retries=0
         env:
           CI: true
           PLAYWRIGHT_TEST_DB_NAME: ${{ env.PLAYWRIGHT_TEST_DB_NAME }}
