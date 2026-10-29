@@ -8,6 +8,7 @@ import * as net from "net"
  * - Local: Uses docker-compose.test.yml with separate ports to avoid dev conflicts
  */
 const isCI = !!process.env.CI
+const singleRegion = process.env.PLAYWRIGHT_SINGLE_REGION === "1"
 const DB_PORT = isCI ? 5454 : 5455
 const MINIO_PORT = isCI ? 9000 : 9002
 
@@ -158,7 +159,9 @@ const sharedBackendEnv = {
 
 const routerRegions = {
   local: { apiUrl: `http://localhost:${backendPort}`, wsUrl: `ws://localhost:${backendPort}` },
-  "local-2": { apiUrl: `http://localhost:${backend2Port}`, wsUrl: `ws://localhost:${backend2Port}` },
+  ...(!singleRegion && {
+    "local-2": { apiUrl: `http://localhost:${backend2Port}`, wsUrl: `ws://localhost:${backend2Port}` },
+  }),
 }
 
 function regionalBackendServer(region: string, port: number, databaseName: string) {
@@ -256,7 +259,7 @@ export default defineConfig({
       env: { FAKE_CF_PORT: String(fakeCfPort) },
     },
     regionalBackendServer("local", backendPort, dbName),
-    regionalBackendServer("local-2", backend2Port, r2DbName),
+    ...(!singleRegion ? [regionalBackendServer("local-2", backend2Port, r2DbName)] : []),
     {
       command: `${setupBrowserInfraCommand} && bun run test:browser:control-plane`,
       url: `http://localhost:${controlPlanePort}/readyz`,
@@ -270,7 +273,7 @@ export default defineConfig({
         INTERNAL_API_KEY: internalApiKey,
         REGIONS: JSON.stringify({
           local: { internalUrl: `http://localhost:${backendPort}` },
-          "local-2": { internalUrl: `http://localhost:${backend2Port}` },
+          ...(!singleRegion && { "local-2": { internalUrl: `http://localhost:${backend2Port}` } }),
         }),
         CORS_ALLOWED_ORIGINS: `http://localhost:${controlPlanePort},http://localhost:${frontendPort}`,
         GLOBAL_RATE_LIMIT_MAX: "10000",
