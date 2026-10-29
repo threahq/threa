@@ -391,7 +391,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     pool,
     analytics: posthog ? { posthogToken: posthog.projectToken, posthogHost: posthog.host } : null,
   })
-  const docs = createDocHandlers({ docService })
+  const docs = createDocHandlers({ docService, streamService })
   const streamBriefService = new StreamBriefService({ pool })
   const streamBrief = createStreamBriefHandlers({ pool, streamBriefService })
   const stream = createStreamHandlers({
@@ -947,6 +947,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     audit("docs.get_section", "read"),
     docs.getSection
   )
+  app.get(
+    "/api/workspaces/:workspaceId/docs/:docId/move-preview",
+    ...authed,
+    audit("docs.preview_move", "read"),
+    docs.previewMove
+  )
+  app.post("/api/workspaces/:workspaceId/docs/:docId/move", ...authed, audit("docs.move", "write"), docs.move)
   app.post(
     "/api/workspaces/:workspaceId/docs/:docId/updates",
     ...authed,
@@ -2416,6 +2423,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     docAgentService,
     pool,
     eventService,
+    streamService,
     getAccessibleStreamIds,
   })
   const delegationPublicApi = createDelegationPublicApiHandlers({
@@ -2485,6 +2493,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     createDoc: docPublicApi.createDoc,
     editDoc: docPublicApi.editDoc,
     commentOnDocSection: docPublicApi.commentOnDocSection,
+    moveDoc: docPublicApi.moveDoc,
     updateStream: publicApi.updateStream,
     archiveStream: publicApi.archiveStream,
     unarchiveStream: publicApi.unarchiveStream,

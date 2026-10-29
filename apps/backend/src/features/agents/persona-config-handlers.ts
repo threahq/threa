@@ -3,11 +3,11 @@ import type { Request, Response } from "express"
 import {
   personaConfigPatchSchema,
   personaCustomConfigSchema,
-  permissionsForRole,
   PERSONA_NAME_MAX_CHARS,
   WORKSPACE_PERMISSION_SCOPES,
 } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
+import { sessionHasPermission } from "../../middleware/workspace-permission"
 import { validateRequest } from "../../lib/validation"
 import { getVisibleBuiltInAgentConfig } from "./built-in-agents"
 import type { PersonaCaller, PersonaConfigService } from "./persona-config-service"
@@ -41,23 +41,12 @@ const forkPersonaSchema = z.object({
 })
 
 /**
- * Whether the caller holds workspace-admin, resolved with the same JWT-claim ›
- * role-fallback order as `requireWorkspacePermission` so opening the persona
- * routes to plain `authed` keeps non-admin behavior on built-in/workspace rows
- * equivalent (user-scoped-personas). Persona routes are session-only (`authed`),
- * so the API-key branches don't apply.
+ * The persona caller, admin by the same rule as `requireWorkspacePermission`'s session branch, so the
+ * plain `authed` persona routes treat non-admins on built-in and workspace rows as the gated routes
+ * would (user-scoped-personas). Persona routes are session-only.
  */
-function callerIsWorkspaceAdmin(req: Request): boolean {
-  const admin = WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN
-  return (
-    req.authUser?.permissions?.includes(admin) ??
-    (req.user != null && (permissionsForRole(req.user.role) as readonly string[]).includes(admin)) ??
-    false
-  )
-}
-
 function resolveCaller(req: Request): PersonaCaller {
-  return { userId: req.user!.id, isAdmin: callerIsWorkspaceAdmin(req) }
+  return { userId: req.user!.id, isAdmin: sessionHasPermission(req, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN) }
 }
 
 const putCustomSchema = z.object({

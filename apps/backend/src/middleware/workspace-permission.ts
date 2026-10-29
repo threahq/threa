@@ -6,6 +6,16 @@ const unauthenticated = () => new HttpError("Not authenticated", { status: 401, 
 const insufficient = () => new HttpError("Insufficient permissions", { status: 403, code: "FORBIDDEN" })
 
 /**
+ * The session JWT's permission claim when present, honored verbatim even when empty; otherwise the
+ * expansion of `req.user.role`. A user API key carries no claim, so it resolves to its owner's role.
+ */
+export function sessionHasPermission(req: Request, slug: WorkspacePermissionSlug): boolean {
+  const claim = req.authUser?.permissions
+  if (claim != null) return claim.includes(slug)
+  return req.user != null && (permissionsForRole(req.user.role) as readonly string[]).includes(slug)
+}
+
+/**
  * Gate a route on a workspace permission slug.
  *
  * Resolution order:
@@ -34,12 +44,7 @@ export function createRequireWorkspacePermission() {
       // composition that threads both chains can't silently grant via API-key
       // scopes after the JWT explicitly denied.
       if (req.authUser) {
-        const claim = req.authUser.permissions
-        const allowed =
-          claim != null
-            ? claim.includes(slug)
-            : req.user != null && (permissionsForRole(req.user.role) as readonly string[]).includes(slug)
-        if (allowed) next()
+        if (sessionHasPermission(req, slug)) next()
         else next(insufficient())
         return
       }

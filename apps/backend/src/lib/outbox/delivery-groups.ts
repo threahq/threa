@@ -17,6 +17,7 @@ import {
   type OutboxEvent,
   type OutboxEventType,
   type StreamCreatedOutboxPayload,
+  type StreamDocMovedOutboxPayload,
   type StreamMemberAddedOutboxPayload,
   type ActivityCreatedOutboxPayload,
   type StreamDisplayNameUpdatedPayload,
@@ -511,6 +512,12 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
   const permissionScopedGroup = PERMISSION_GROUP_BY_EVENT.get(event.eventType)
   if (permissionScopedGroup) {
     return [permissionScopedGroup]
+  }
+
+  // A move reaches each host's room and the doc's own readers, who may hold neither host open.
+  if (isOutboxEventType(event, "stream:doc_moved")) {
+    const { streamId, doc } = event.payload as StreamDocMovedOutboxPayload
+    return [streamGroup(streamId), streamGroup(doc.id), docReadersGroup(doc.id)]
   }
 
   if (isStreamScopedEvent(event)) {

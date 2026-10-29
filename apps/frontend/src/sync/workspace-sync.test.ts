@@ -22,6 +22,7 @@ import { scheduledKeys } from "@/hooks/use-scheduled"
 import { memoKeys } from "@/hooks/use-memos"
 import { conversationKeys } from "@/hooks/use-conversations"
 import { invitationKeys } from "@/api/invitations"
+import { docKeys } from "@/api/docs"
 import { workspacesApi } from "@/api/workspaces"
 import {
   DEFAULT_SIDEBAR_CONFIG,
@@ -33,6 +34,7 @@ import {
   type SavedMessageView,
   type ScheduledMessageView,
   type Stream,
+  type DocListResponse,
   type StreamBootstrap,
   type StreamConnection,
   type StreamMember,
@@ -5779,6 +5781,171 @@ describe("stream:member_removed board cleanup", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(await db.conversations.get(["ws_1", "conv_x"])).toBeDefined()
+    cleanup()
+  })
+})
+
+describe("stream:doc_moved", () => {
+  const handlerRefs = {
+    getCurrentStreamId: () => undefined,
+    getCurrentUser: () => ({ id: "workos_1" }),
+    subscribeStream: vi.fn(),
+  }
+  const doc = makeStream("doc_d", { type: "doc", parentStreamId: "chan_a", rootStreamId: "chan_a" })
+  const section = makeStream("thread_s", { type: "thread", parentStreamId: "doc_d", rootStreamId: "chan_a" })
+  const archivedSection = makeStream("thread_old", {
+    type: "thread",
+    parentStreamId: "doc_d",
+    rootStreamId: "chan_a",
+    archivedAt: "2026-10-01T00:00:00.000Z",
+  })
+  const movedDoc = {
+    ...doc,
+    parentStreamId: "chan_b",
+    rootStreamId: "chan_b",
+    visibility: "private" as const,
+    memoryMode: "off" as const,
+  }
+  const moved = {
+    workspaceId: "ws_1",
+    streamId: "chan_a",
+    doc: movedDoc,
+    movedStreamIds: ["doc_d", "thread_s", "thread_old"],
+    threadCompanion: { companionMode: "on" as const, companionPersonaId: "persona_ariadne" },
+  }
+
+  async function seed(hosts: Stream[], cachedDoc: boolean) {
+    const queryClient = new QueryClient()
+    const active = cachedDoc ? [doc, section] : [section]
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({
+        users: [makeWorkspaceUser()] as never,
+        streams: [...hosts, ...active].map((s) => ({ ...s, lastMessagePreview: null })) as StreamWithPreview[],
+        archivedStreams: [archivedSection],
+      })
+    )
+    queryClient.setQueryData(docKeys.list("ws_1"), {
+      docs: [{ id: "doc_d" }, { id: "doc_other" }],
+    } as unknown as DocListResponse)
+    queryClient.setQueryData(streamKeys.detail("ws_1", "thread_s"), section)
+    await db.streams.clear()
+    await db.streams.bulkPut([...active, archivedSection].map((s) => ({ ...s, _cachedAt: Date.now() })))
+    return queryClient
+  }
+
+  const snapshot = async (queryClient: QueryClient) => {
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))!
+    const pick = (s: Partial<Stream> | undefined) =>
+      s && {
+        id: s.id,
+        parentStreamId: s.parentStreamId,
+        rootStreamId: s.rootStreamId,
+        visibility: s.visibility,
+        memoryMode: s.memoryMode,
+        companionMode: s.companionMode,
+        companionPersonaId: s.companionPersonaId,
+      }
+    const stored = await db.streams.where("workspaceId").equals("ws_1").sortBy("id")
+    return {
+      cached: bootstrap.streams.filter((s) => s.id === "doc_d" || s.id.startsWith("thread_")).map(pick),
+      archived: bootstrap.archivedStreams?.map(pick),
+      stored: stored.map(pick),
+      detail: pick(queryClient.getQueryData<Stream>(streamKeys.detail("ws_1", "thread_s"))),
+      listed: queryClient.getQueryData<DocListResponse>(docKeys.list("ws_1"))?.docs.map((d) => d.id),
+    }
+  }
+
+  it("re-roots the doc and its sections under a new host the viewer reads, adding a doc it lacked", async () => {
+    const queryClient = await seed([makeStream("chan_a"), makeStream("chan_b", { visibility: "private" })], false)
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    await emitAsync("stream:doc_moved", moved)
+    await emitAsync("stream:doc_moved", { ...moved, streamId: "chan_b" })
+
+    const rehosted = (id: string, parentStreamId: string) => ({
+      id,
+      parentStreamId,
+      rootStreamId: "chan_b",
+      visibility: "private",
+      memoryMode: "off",
+      companionMode: "off",
+      companionPersonaId: null,
+    })
+    const thread = (id: string) => ({
+      ...rehosted(id, "doc_d"),
+      companionMode: "on",
+      companionPersonaId: "persona_ariadne",
+    })
+    expect(await snapshot(queryClient)).toEqual({
+      cached: [thread("thread_s"), rehosted("doc_d", "chan_b")],
+      archived: [thread("thread_old")],
+      stored: [rehosted("doc_d", "chan_b"), thread("thread_old"), thread("thread_s")],
+      detail: thread("thread_s"),
+      listed: ["doc_d", "doc_other"],
+    })
+    cleanup()
+  })
+
+  it("prunes the doc and its sections, archived included, when the viewer cannot read the new host", async () => {
+    const queryClient = await seed([makeStream("chan_a")], true)
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    await emitAsync("stream:doc_moved", moved)
+    await vi.waitFor(async () => {
+      expect(await db.streams.get(["ws_1", "thread_old"])).toBeUndefined()
+    })
+
+    expect(await snapshot(queryClient)).toEqual({
+      cached: [],
+      archived: [],
+      stored: [],
+      detail: {
+        id: "thread_s",
+        parentStreamId: "doc_d",
+        rootStreamId: "chan_a",
+        visibility: "public",
+        memoryMode: undefined,
+        companionMode: "off",
+        companionPersonaId: null,
+      },
+      listed: ["doc_other"],
+    })
+    cleanup()
+  })
+
+  it("asks the server to re-list a pruned doc, which a share grant's reader gets back", async () => {
+    const queryClient = await seed([makeStream("chan_a")], true)
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    await emitAsync("stream:doc_moved", moved)
+    await vi.waitFor(async () => {
+      expect(await db.streams.get(["ws_1", "doc_d"])).toBeUndefined()
+    })
+    const invalidatedKeys = invalidate.mock.calls.map(([filters]) => filters?.queryKey)
+
+    // The refetch the invalidation triggers: the server lists the doc through the grant, without its root.
+    const { bootstrap: refetched } = await applyWorkspaceBootstrap(
+      "ws_1",
+      makeBootstrap({
+        streams: [
+          { ...makeStream("chan_a"), lastMessagePreview: null },
+          { ...movedDoc, lastMessagePreview: null },
+        ],
+      })
+    )
+
+    expect({
+      invalidatedBootstrap: invalidatedKeys.some(
+        (key) => JSON.stringify(key) === JSON.stringify(workspaceKeys.bootstrap("ws_1"))
+      ),
+      listed: refetched.streams.map((s) => s.id),
+      stored: (await db.streams.get(["ws_1", "doc_d"]))?.rootStreamId,
+    }).toEqual({ invalidatedBootstrap: true, listed: ["chan_a", "doc_d"], stored: "chan_b" })
     cleanup()
   })
 })

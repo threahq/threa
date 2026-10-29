@@ -98,6 +98,8 @@ import type {
   DraftDeletedPayload,
   PersonaListItem,
   StreamConnectionUpdatedPayload,
+  DocListResponse,
+  CompanionMode,
 } from "@threahq/types"
 import { cachedPersonaFromListItem } from "@/lib/personas"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
@@ -116,6 +118,7 @@ import { putStreamConnection } from "@/stores/stream-connections-store"
 import { activityKeys } from "@/hooks/use-activity"
 import { memoKeys } from "@/hooks/use-memos"
 import { invitationKeys } from "@/api/invitations"
+import { docKeys } from "@/api/docs"
 import { savedSuggestionKeys } from "@/hooks/use-saved-suggestions"
 import { persistScheduledRows, removeScheduledRow, scheduledKeys } from "@/hooks/use-scheduled"
 import { unsharedReferenceKeys } from "@/hooks/use-unshared-references"
@@ -189,6 +192,11 @@ interface WorkspaceUserPayload {
   setupCompleted: boolean
   email: string
   joinedAt: string
+}
+
+interface StreamDocMovedPayload extends Required<MovedDocSubtree> {
+  workspaceId: string
+  streamId: string
 }
 
 interface StreamPayload {
@@ -1730,41 +1738,10 @@ export function registerWorkspaceSocketHandlers(
       removeAgentSession(workspaceId, sessionId)
     })
 
-  const mergeIntoStreamCaches = async (streamId: string, incoming: Partial<Stream>) => {
-    const merge = <T extends Partial<Stream>>(old: T): T => mergeStreamByRevision(old, incoming)
-    queryClient.setQueryData(streamKeys.detail(workspaceId, streamId), (old: unknown) => {
-      if (!old || typeof old !== "object") return old
-      return merge(old as Stream)
-    })
-
-    queryClient.setQueryData(streamKeys.bootstrap(workspaceId, streamId), (old: unknown) => {
-      if (!old || typeof old !== "object") return old
-      const bootstrap = old as { stream?: Stream }
-      if (!bootstrap.stream) return old
-      return { ...old, stream: merge(bootstrap.stream) }
-    })
-
-    queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), (old: unknown) => {
-      if (!old || typeof old !== "object") return old
-      const bootstrap = old as { streams?: Stream[] }
-      if (!bootstrap.streams) return old
-      return {
-        ...bootstrap,
-        streams: bootstrap.streams.map((s) => (s.id === streamId ? merge(s) : s)),
-      }
-    })
-
-    await db.transaction("rw", [db.streams], async () => {
-      const old = await db.streams.get([workspaceId, streamId])
-      if (!old) return
-      await db.streams.update([workspaceId, streamId], { ...merge(old), _cachedAt: Date.now() })
-    })
-  }
-
   // Handle stream display name updated (from auto-naming service)
   const handleStreamDisplayNameUpdated = async (payload: StreamDisplayNameUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
-    await mergeIntoStreamCaches(payload.streamId, {
+    await mergeIntoStreamCaches(queryClient, workspaceId, payload.streamId, {
       displayName: payload.displayName,
       displayNameSource: payload.source,
       displayNameRevision: payload.revision,
@@ -1773,7 +1750,7 @@ export function registerWorkspaceSocketHandlers(
 
   const handleStreamMessageCount = async (payload: StreamMessageCountPayload) => {
     if (payload.workspaceId !== workspaceId) return
-    await mergeIntoStreamCaches(payload.streamId, {
+    await mergeIntoStreamCaches(queryClient, workspaceId, payload.streamId, {
       messageCount: payload.messageCount,
       messageCountRevision: payload.messageCountRevision,
     })
@@ -1913,6 +1890,56 @@ export function registerWorkspaceSocketHandlers(
     refreshGuestRosterForUnknown(payload.event.actorId)
   }
 
+  // Archived threads live only in IndexedDB and `archivedStreams`, so the active cache alone would miss them.
+  const pruneUnreadableStreams = async (
+    isUnreadable: (stream: { id: string; rootStreamId?: string | null }) => boolean
+  ) => {
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
+    const candidates = [
+      ...(bootstrap?.streams ?? []),
+      ...(bootstrap?.archivedStreams ?? []),
+      ...(await db.streams.where("workspaceId").equals(workspaceId).toArray()),
+    ]
+    const unreadableIds = new Set(candidates.filter(isUnreadable).map((s) => s.id))
+    if (unreadableIds.size === 0) return
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (current) =>
+      current
+        ? {
+            ...current,
+            streams: current.streams?.filter((s) => !unreadableIds.has(s.id)),
+            archivedStreams: current.archivedStreams?.filter((s) => !unreadableIds.has(s.id)),
+          }
+        : current
+    )
+    await Promise.all(
+      [...unreadableIds].flatMap((streamId) => [
+        db.streams.delete([workspaceId, streamId]),
+        deleteStreamSlots(db, workspaceId, streamId),
+      ])
+    )
+  }
+
+  const handleStreamDocMoved = async (payload: StreamDocMovedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    const { doc, movedStreamIds } = payload
+    const movedIds = new Set(movedStreamIds)
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
+    if (!bootstrap) return
+
+    if (!bootstrap.streams.some((s) => s.id === doc.rootStreamId)) {
+      queryClient.setQueryData<DocListResponse>(docKeys.list(workspaceId), (old) =>
+        old ? { ...old, docs: old.docs.filter((item) => !movedIds.has(item.id)) } : old
+      )
+      await pruneUnreadableStreams((s) => movedIds.has(s.id))
+      // A share grant or an unjoined public root still reads the doc without its root cached; the server re-lists it.
+      void queryClient.invalidateQueries({ queryKey: workspaceKeys.bootstrap(workspaceId) })
+      void queryClient.invalidateQueries({ queryKey: docKeys.list(workspaceId) })
+      return
+    }
+
+    await applyDocMove(queryClient, workspaceId, payload)
+  }
+
   const handleStreamMemberRemoved = async (payload: { workspaceId: string; streamId: string; memberId: string }) => {
     if (payload.workspaceId !== workspaceId) return
 
@@ -1953,35 +1980,22 @@ export function registerWorkspaceSocketHandlers(
 
     const removedStream = old.streams?.find((s) => s.id === payload.streamId)
     const shouldRemoveFromSidebar = removedStream?.visibility === "private"
-    // Threads carry no access of their own (INV-62): a private root's revocation takes them along.
-    // Archived threads live only in IndexedDB and `archivedStreams`, so the active cache alone would miss them.
-    const candidates = shouldRemoveFromSidebar
-      ? [
-          ...(old.streams ?? []),
-          ...(old.archivedStreams ?? []),
-          ...(await db.streams.where("workspaceId").equals(workspaceId).toArray()),
-        ]
-      : []
-    const unreadableIds = new Set(
-      candidates.filter((s) => s.id === payload.streamId || s.rootStreamId === payload.streamId).map((s) => s.id)
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (current) =>
+      current
+        ? {
+            ...current,
+            streamMemberships: current.streamMemberships.filter((m: StreamMember) => m.streamId !== payload.streamId),
+          }
+        : current
     )
-    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (current) => {
-      if (!current) return current
-      return {
-        ...current,
-        streamMemberships: current.streamMemberships.filter((m: StreamMember) => m.streamId !== payload.streamId),
-        streams: current.streams?.filter((s) => !unreadableIds.has(s.id)),
-        archivedStreams: current.archivedStreams?.filter((s) => !unreadableIds.has(s.id)),
-      }
-    })
 
     await Promise.all([
       db.streamMemberships.delete(`${workspaceId}:${payload.streamId}`),
       db.streamReadState.delete(`${workspaceId}:${payload.streamId}`),
-      ...[...unreadableIds].flatMap((streamId) => [
-        db.streams.delete([workspaceId, streamId]),
-        deleteStreamSlots(db, workspaceId, streamId),
-      ]),
+      // Threads carry no access of their own (INV-62): a private root's revocation takes them along.
+      ...(shouldRemoveFromSidebar
+        ? [pruneUnreadableStreams((s) => s.id === payload.streamId || s.rootStreamId === payload.streamId)]
+        : []),
       // The cards this stream contributed are unreadable now — drop them
       // rather than leave them rendering off the cache.
       ...(shouldRemoveFromSidebar ? [removeBoardConversationsForStream(workspaceId, payload.streamId)] : []),
@@ -2697,6 +2711,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("stream:member_added", handleStreamMemberAdded)
   socket.on("stream:member_joined", handleStreamMemberJoined)
   socket.on("stream:member_removed", handleStreamMemberRemoved)
+  socket.on("stream:doc_moved", handleStreamDocMoved)
   socket.on("user_preferences:updated", handleUserPreferencesUpdated)
   socket.on("sidebar_config:updated", handleSidebarConfigUpdated)
   socket.on("workspace_settings:updated", handleWorkspaceSettingsUpdated)
@@ -2773,6 +2788,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("stream:member_added", handleStreamMemberAdded)
     socket.off("stream:member_joined", handleStreamMemberJoined)
     socket.off("stream:member_removed", handleStreamMemberRemoved)
+    socket.off("stream:doc_moved", handleStreamDocMoved)
     socket.off("user_preferences:updated", handleUserPreferencesUpdated)
     socket.off("sidebar_config:updated", handleSidebarConfigUpdated)
     socket.off("workspace_settings:updated", handleWorkspaceSettingsUpdated)
@@ -2848,6 +2864,80 @@ async function hasArchivedAncestorInCache(workspaceId: string, stream: Stream): 
   const rows = await db.streams.where("workspaceId").equals(workspaceId).toArray()
   const byId = new Map(rows.map((row) => [row.id, row]))
   return findArchivedAncestor(stream, (id) => byId.get(id)).sealedBy !== null
+}
+
+/**
+ * Merge a stream change into every cache that holds the stream, by revision. `incoming` may derive the change from
+ * the cached row, for a change that depends on the stream's type.
+ */
+async function mergeIntoStreamCaches(
+  queryClient: QueryClient,
+  workspaceId: string,
+  streamId: string,
+  incoming: Partial<Stream> | ((cached: Partial<Stream>) => Partial<Stream>)
+): Promise<void> {
+  const merge = <T extends Partial<Stream>>(old: T): T =>
+    mergeStreamByRevision(old, typeof incoming === "function" ? incoming(old) : incoming)
+  queryClient.setQueryData(streamKeys.detail(workspaceId, streamId), (old: unknown) => {
+    if (!old || typeof old !== "object") return old
+    return merge(old as Stream)
+  })
+
+  queryClient.setQueryData(streamKeys.bootstrap(workspaceId, streamId), (old: unknown) => {
+    if (!old || typeof old !== "object") return old
+    const bootstrap = old as { stream?: Stream }
+    if (!bootstrap.stream) return old
+    return { ...old, stream: merge(bootstrap.stream) }
+  })
+
+  queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+    if (!old?.streams) return old
+    const mergeRow = <T extends Partial<Stream>>(s: T): T => (s.id === streamId ? merge(s) : s)
+    return { ...old, streams: old.streams.map(mergeRow), archivedStreams: old.archivedStreams?.map(mergeRow) }
+  })
+
+  await db.transaction("rw", [db.streams], async () => {
+    const old = await db.streams.get([workspaceId, streamId])
+    if (!old) return
+    await db.streams.update([workspaceId, streamId], { ...merge(old), _cachedAt: Date.now() })
+  })
+}
+
+export interface MovedDocSubtree {
+  doc: Stream
+  movedStreamIds: string[]
+  /** The companion every moved thread takes; absent when only the doc itself is known to have moved. */
+  threadCompanion?: { companionMode: CompanionMode; companionPersonaId: string | null }
+}
+
+/**
+ * Re-home a moved doc and its subtree in every stream cache: the doc takes the server's row, the streams below it the
+ * new root's access settings. Idempotent, so the mover's own response and the later socket event apply alike.
+ */
+export async function applyDocMove(
+  queryClient: QueryClient,
+  workspaceId: string,
+  move: MovedDocSubtree
+): Promise<void> {
+  const { doc, movedStreamIds, threadCompanion } = move
+  const rootFields = { rootStreamId: doc.rootStreamId, visibility: doc.visibility, memoryMode: doc.memoryMode }
+  const threadFields = { ...rootFields, ...threadCompanion }
+
+  queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) =>
+    old && !old.streams.some((s) => s.id === doc.id)
+      ? { ...old, streams: [...old.streams, { ...doc, lastMessagePreview: null }] }
+      : old
+  )
+  await upsertStreamRow(doc)
+  await Promise.all(
+    movedStreamIds.map((id) =>
+      mergeIntoStreamCaches(queryClient, workspaceId, id, (cached) => {
+        if (id === doc.id) return doc
+        return cached.type === StreamTypes.THREAD ? threadFields : rootFields
+      })
+    )
+  )
+  void queryClient.invalidateQueries({ queryKey: docKeys.list(workspaceId) })
 }
 
 async function upsertStreamRow(stream: Stream): Promise<void> {

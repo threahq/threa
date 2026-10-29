@@ -662,6 +662,16 @@ export async function createDoc(client: ThreaApiClient, resolver: RefResolver, p
   })
 }
 
+export async function moveDoc(
+  client: ThreaApiClient,
+  resolver: RefResolver,
+  p: { docId: string; toStreamRef: string }
+): Promise<unknown> {
+  return client.post(`/docs/${encodeURIComponent(p.docId)}/move`, {
+    toStreamId: await resolver.resolveStream(p.toStreamRef),
+  })
+}
+
 export interface ListDelegationsParams {
   status?: "open"
   since?: string

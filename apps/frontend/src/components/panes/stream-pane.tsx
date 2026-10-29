@@ -59,6 +59,8 @@ import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { DocPaneBody } from "@/components/docs/doc-pane-body"
 import { docExportActions } from "@/components/docs/doc-export-actions"
 import { useDocCanWrite } from "@/components/docs/use-doc-can-write"
+import { DocMoveDialog } from "@/components/docs/doc-move-dialog"
+import { useMoveDoc } from "@/components/docs/use-move-doc"
 import { useDocSync } from "@/components/docs/use-doc-sync"
 import { useDocDeepLinkLanding } from "@/components/docs/use-doc-deep-link-landing"
 import { useLiveDocTitle } from "@/components/docs/use-live-doc-title"
@@ -222,6 +224,11 @@ export function StreamPane({
     fallbackArchived: null,
   })
   const canChangeDocArchive = isDoc && offersArchiveToggle(currentUserId, docRow, docRoot, ancestorArchived)
+  const docMove = useMoveDoc(
+    workspaceId,
+    isDoc && docRow ? { ...docRow, parentStreamId: stream?.parentStreamId } : undefined,
+    canWriteDoc === true && !ancestorArchived
+  )
   // Only the stream page sets a list beside its stream; under an aside it would land out of sight.
   const offersList = (isChannel || isDm) && hasTabs && offersContext
   const dmPeerUserId = isDm ? dmPeers.find((p) => p.streamId === streamId)?.userId : null
@@ -240,6 +247,7 @@ export function StreamPane({
   const [pendingName, setPendingName] = useState<string | null>(null)
   const [isMenuDrawerOpen, setIsMenuDrawerOpen] = useState(false)
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
+  const [moveDocOpen, setMoveDocOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const isScratchpad = stream?.type === StreamTypes.SCRATCHPAD
@@ -390,6 +398,15 @@ export function StreamPane({
       icon: Pencil,
       onSelect: handleStartRename,
       separatorBefore: streamMenuActions.length > 0,
+    })
+  }
+  if (docMove.enabled) {
+    streamMenuActions.push({
+      id: "move-doc",
+      label: "Move to…",
+      icon: CornerDownRight,
+      onSelect: () => setMoveDocOpen(true),
+      separatorBefore: true,
     })
   }
   // Archive/unarchive stay available regardless of lock state.
@@ -1039,6 +1056,15 @@ export function StreamPane({
           </StreamEncryptionGate>
         </StreamErrorBoundary>
       </div>
+      {docMove.enabled && (
+        <DocMoveDialog
+          workspaceId={workspaceId}
+          docTitle={docTitle || streamName}
+          open={moveDocOpen}
+          onOpenChange={setMoveDocOpen}
+          docMove={docMove}
+        />
+      )}
       {stream && !isDraft && (
         <LabelPicker
           workspaceId={workspaceId}

@@ -422,6 +422,16 @@ function selectStreamsWithPreviewSql(workspaceId: string) {
   `
 }
 
+/** `WITH RECURSIVE subtree`: the doc, then children whose root is still `rootStreamId`. */
+function docSubtreeCte(workspaceId: string, docId: string, rootStreamId: string) {
+  return composeSql`WITH RECURSIVE subtree AS (
+    SELECT id FROM streams WHERE workspace_id = ${workspaceId} AND id = ${docId}
+    UNION ALL
+    SELECT s.id FROM streams s JOIN subtree t ON s.parent_stream_id = t.id
+    WHERE s.workspace_id = ${workspaceId} AND s.root_stream_id = ${rootStreamId}
+  )`
+}
+
 /**
  * System-purpose streams (e.g. a persona-editor test scratchpad) are real,
  * fully-functional streams but not user-facing channels — every workspace
@@ -664,6 +674,58 @@ export const StreamRepository = {
       )
       SELECT id FROM subtree
     `)
+    return result.rows.map((row) => row.id)
+  },
+
+  /**
+   * The doc plus every stream below it that reads through `rootStreamId`, the doc's current root. An
+   * aside opened on a section thread is its own root, so it and its threads stay out (INV-62).
+   */
+  async listDocSubtreeIds(db: Querier, workspaceId: string, docId: string, rootStreamId: string): Promise<string[]> {
+    const result = await db.query<{ id: string }>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- `subtree` is the docSubtreeCte fragment, pinned there
+      composeSql`
+      ${docSubtreeCte(workspaceId, docId, rootStreamId)}
+      SELECT id FROM subtree
+    `
+    )
+    return result.rows.map((row) => row.id)
+  },
+
+  /**
+   * Re-homes a doc under `parentStreamId` and re-roots the {@link listDocSubtreeIds} subtree on `root`,
+   * copying the root's settings the way creation does (INV-62). Threads take `threadCompanion`. Returns the
+   * moved ids.
+   */
+  async moveDocSubtree(
+    db: Querier,
+    params: {
+      workspaceId: string
+      docId: string
+      fromRootStreamId: string
+      parentStreamId: string
+      root: Pick<Stream, "id" | "visibility" | "memoryMode">
+      threadCompanion: { companionMode: CompanionMode; companionPersonaId: string | null }
+    }
+  ): Promise<string[]> {
+    const { companionMode, companionPersonaId } = params.threadCompanion
+    const result = await db.query<{ id: string }>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- `subtree` is the docSubtreeCte fragment, pinned there
+      composeSql`
+      ${docSubtreeCte(params.workspaceId, params.docId, params.fromRootStreamId)}
+      UPDATE streams s
+      SET parent_stream_id = CASE WHEN s.id = ${params.docId} THEN ${params.parentStreamId} ELSE s.parent_stream_id END,
+        root_stream_id = ${params.root.id},
+        visibility = ${params.root.visibility},
+        memory_mode = ${params.root.memoryMode},
+        companion_mode = CASE WHEN s.type = ${StreamTypes.THREAD} THEN ${companionMode} ELSE s.companion_mode END,
+        companion_persona_id = CASE WHEN s.type = ${StreamTypes.THREAD} THEN ${companionPersonaId}::text ELSE s.companion_persona_id END,
+        updated_at = NOW()
+      FROM subtree
+      WHERE s.workspace_id = ${params.workspaceId} AND s.id = subtree.id
+      RETURNING s.id
+    `
+    )
     return result.rows.map((row) => row.id)
   },
 

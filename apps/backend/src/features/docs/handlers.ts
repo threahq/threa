@@ -1,17 +1,22 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import type {
-  DocBacklinksResponse,
-  DocListResponse,
-  DocSectionResponse,
-  DocThreadsResponse,
-  DocUpdatesResponse,
+import {
+  WORKSPACE_PERMISSION_SCOPES,
+  type DocMovePreviewResponse,
+  type DocBacklinksResponse,
+  type DocListResponse,
+  type DocSectionResponse,
+  type DocThreadsResponse,
+  type DocUpdatesResponse,
 } from "@threahq/types"
 import { validateRequest } from "../../lib/validation"
+import { sessionHasPermission } from "../../middleware/workspace-permission"
+import type { StreamService } from "../streams"
 import type { DocService } from "./service"
 
 interface Dependencies {
   docService: DocService
+  streamService: Pick<StreamService, "moveDoc" | "previewDocMove">
 }
 
 /** ~3 MB decoded, under the 10 MB JSON body limit with room for a pasted long document. */
@@ -35,7 +40,11 @@ const postUpdateSchema = z.object({
   update: z.base64().min(1).max(MAX_UPDATE_BASE64_LENGTH),
 })
 
-export function createDocHandlers({ docService }: Dependencies) {
+const movePreviewQuerySchema = z.object({ toStreamId: z.string().min(1) })
+
+const moveSchema = z.object({ fromStreamId: z.string().min(1), toStreamId: z.string().min(1) })
+
+export function createDocHandlers({ docService, streamService }: Dependencies) {
   return {
     async list(req: Request, res: Response) {
       validateRequest(listQuerySchema, req.query)
@@ -83,6 +92,32 @@ export function createDocHandlers({ docService }: Dependencies) {
         blockId,
       })
       res.json({ section } satisfies DocSectionResponse)
+    },
+
+    async previewMove(req: Request, res: Response) {
+      const { docId } = validateRequest(paramsSchema, req.params)
+      const { toStreamId } = validateRequest(movePreviewQuerySchema, req.query)
+      const preview = await streamService.previewDocMove({
+        workspaceId: req.workspaceId!,
+        userId: req.user!.id,
+        docId,
+        toStreamId,
+      })
+      res.json(preview satisfies DocMovePreviewResponse)
+    },
+
+    async move(req: Request, res: Response) {
+      const { docId } = validateRequest(paramsSchema, req.params)
+      const { fromStreamId, toStreamId } = validateRequest(moveSchema, req.body)
+      const stream = await streamService.moveDoc({
+        workspaceId: req.workspaceId!,
+        docId,
+        fromStreamId,
+        toStreamId,
+        principal: { kind: "user", userId: req.user!.id },
+        isWorkspaceAdmin: sessionHasPermission(req, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+      })
+      res.json({ stream })
     },
 
     async postUpdate(req: Request, res: Response) {

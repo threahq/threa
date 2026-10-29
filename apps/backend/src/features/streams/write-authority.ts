@@ -243,42 +243,83 @@ export interface LockedStreamFacts {
   ancestorArchived: boolean
 }
 
+/** A doc move racing every attempt is a bug or a storm, not a retry budget problem. */
+const MAX_CHAIN_LOCK_ATTEMPTS = 3
+
 /**
  * Locks each target, every ancestor up its `parent_stream_id` chain, and its
- * access root, in one id-ordered statement. The archived state a write must
- * respect lives anywhere on that chain (a thread under an archived thread, an
- * aside under an archived host), so the whole chain is locked, not just the
- * root. The chain is read unlocked first: parent and root ids never change
- * after insert, so the id set cannot go stale before the lock lands.
+ * access root, plus `alsoLockIds`, in one id-ordered statement. The archived
+ * state a write must respect lives anywhere on that chain (a thread under an
+ * archived thread, an aside under an archived host), so the whole chain is
+ * locked, not just the root. The chain is read unlocked first, and a doc move
+ * re-parents and re-roots rows, so a locked row can point at a stream the read
+ * did not find. Then the chain is read again and the grown set locked: rows
+ * already held stay held, so the retry can lock out of id order, and the
+ * deadlock that rarely opens is one withTransaction retries.
  */
 export async function lockEffectiveStreams(
   db: Querier,
   workspaceId: string,
-  streamIds: readonly string[]
+  streamIds: readonly string[],
+  alsoLockIds: readonly string[] = []
 ): Promise<LockedStreamFacts[]> {
   const targetIds = [...new Set(streamIds)].sort()
   if (targetIds.length === 0) return []
-  const chainIds = await StreamRepository.listAncestorChainIds(db, workspaceId, targetIds)
-  const locked = await StreamRepository.findByIdsForUpdateBlocking(db, workspaceId, chainIds)
-  const lockedById = new Map(locked.map((stream) => [stream.id, stream]))
-  return targetIds.map((targetId) => {
+  const requested = new Set(alsoLockIds)
+  for (let attempt = 0; attempt < MAX_CHAIN_LOCK_ATTEMPTS; attempt++) {
+    const before = requested.size
+    for (const id of await StreamRepository.listAncestorChainIds(db, workspaceId, targetIds)) requested.add(id)
+    // A re-read that finds nothing new means the missing link is gone, not moved.
+    if (attempt > 0 && requested.size === before) throw inaccessibleStream()
+    const locked = await StreamRepository.findByIdsForUpdateBlocking(db, workspaceId, [...requested])
+    const facts = factsFromLockedChains(
+      workspaceId,
+      targetIds,
+      new Map(locked.map((stream) => [stream.id, stream])),
+      requested
+    )
+    if (facts) return facts
+  }
+  throw new Error(
+    `Stream chains of ${targetIds.join(", ")} kept changing across ${MAX_CHAIN_LOCK_ATTEMPTS} lock attempts`
+  )
+}
+
+/** Null when a locked row names a parent or root outside `requested`: the chain moved after it was read. */
+function factsFromLockedChains(
+  workspaceId: string,
+  targetIds: readonly string[],
+  lockedById: ReadonlyMap<string, Stream>,
+  requested: ReadonlySet<string>
+): LockedStreamFacts[] | null {
+  const facts: LockedStreamFacts[] = []
+  for (const targetId of targetIds) {
     const target = lockedById.get(targetId)
-    const root = target && lockedById.get(target.rootStreamId ?? target.id)
-    if (!target || !root || target.workspaceId !== workspaceId || root.workspaceId !== workspaceId) {
+    if (!target || target.workspaceId !== workspaceId) throw inaccessibleStream()
+    const rootId = target.rootStreamId ?? target.id
+    const root = lockedById.get(rootId)
+    if (!root) {
+      if (!requested.has(rootId)) return null
       throw inaccessibleStream()
     }
+    if (root.workspaceId !== workspaceId) throw inaccessibleStream()
     let ancestorArchived = false
     for (let parentId = target.parentStreamId; parentId; ) {
       const parent = lockedById.get(parentId)
-      if (!parent || parent.workspaceId !== workspaceId) throw inaccessibleStream()
+      if (!parent) {
+        if (!requested.has(parentId)) return null
+        throw inaccessibleStream()
+      }
+      if (parent.workspaceId !== workspaceId) throw inaccessibleStream()
       if (parent.archivedAt) {
         ancestorArchived = true
         break
       }
       parentId = parent.parentStreamId
     }
-    return { target, root, ancestorArchived }
-  })
+    facts.push({ target, root, ancestorArchived })
+  }
+  return facts
 }
 
 function inaccessibleStream(): StreamNotFoundError {
@@ -294,11 +335,13 @@ export async function resolveLockedStreamAuthorities(
   params: {
     workspaceId: string
     streamIds: readonly string[]
+    /** Rows the caller writes later, locked in the same ordered statement and not resolved. */
+    alsoLockIds?: readonly string[]
     principal: StreamWritePrincipal
     typeReadOnly?: TypeReadOnlyRule
   }
 ): Promise<LockedStreamAuthority[]> {
-  const facts = await lockEffectiveStreams(db, params.workspaceId, params.streamIds)
+  const facts = await lockEffectiveStreams(db, params.workspaceId, params.streamIds, params.alsoLockIds)
   if (facts.length === 0) return []
 
   const principal = params.principal

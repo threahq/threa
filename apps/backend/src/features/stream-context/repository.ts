@@ -44,6 +44,31 @@ export const StreamContextRepository = {
     return result.rowCount ?? 0
   },
 
+  /** A moved doc's subtree takes the new root; the rows stay on the streams they were written on. */
+  async reRootStreams(db: Querier, workspaceId: string, streamIds: string[], rootStreamId: string): Promise<number> {
+    if (streamIds.length === 0) return 0
+    const result = await db.query(sql`
+      UPDATE stream_context_items
+      SET root_stream_id = ${rootStreamId}
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ANY(${streamIds})
+    `)
+    return result.rowCount ?? 0
+  },
+
+  /** The row a doc's hosting writes on its host; a chip of the doc inside a message is a separate row and stays. */
+  async deleteHostedDoc(db: Querier, workspaceId: string, hostStreamId: string, docId: string): Promise<number> {
+    const result = await db.query(sql`
+      DELETE FROM stream_context_items
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${hostStreamId}
+        AND category = 'doc'
+        AND ref_id = ${docId}
+        AND source_message_id IS NULL
+    `)
+    return result.rowCount ?? 0
+  },
+
   async deleteByMessageId(
     db: Querier,
     workspaceId: string,

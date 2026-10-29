@@ -2414,6 +2414,24 @@ export interface DocCreatedEventPayload {
   createdBy: string
 }
 
+/** Payload for `doc:moved`, written in both the old and the new host (broadcast, INV-61). */
+export interface DocMovedEventPayload {
+  docId: string
+  fromStreamId: string
+  toStreamId: string
+}
+
+/** Who a move changes read access for; users only. */
+export interface DocMovePreviewResponse {
+  losing: number
+  gaining: number
+}
+
+export interface MoveDocInput {
+  fromStreamId: string
+  toStreamId: string
+}
+
 /** Payload for `doc:edited` in the doc stream: one applied Yjs update; the event row carries the actor. */
 export interface DocEditedEventPayload {
   seq: number

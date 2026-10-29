@@ -85,7 +85,15 @@ function buildService(now: () => Date = () => new Date(Date.now() + DOC_ACTIVITY
     sent.push(args)
     return "queued"
   }
-  return { service: new DocActivityService({ pool, jobQueue: { send } as never, now }), sent }
+  return {
+    service: new DocActivityService({
+      pool,
+      jobQueue: { send } as never,
+      botChannelService: new BotChannelService({ pool }),
+      now,
+    }),
+    sent,
+  }
 }
 
 async function hostActivity(hostId: string) {

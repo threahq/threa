@@ -6,7 +6,9 @@ import { contextItemsFromEvent } from "@/lib/stream-context/rows"
 import type { CachedEvent } from "@/db"
 import {
   deleteContextRowsForMessage,
+  dropMovedDocContextRow,
   putLocalContextRows,
+  putMovedDocContextRows,
   readStreamContextRows,
   reparentContextRows,
   replaceContextRowsForMessage,
@@ -267,6 +269,79 @@ describe("stream-context-store", () => {
       rootStreamId: ROOT,
     })
     expect(await db.streamContextItems.get([WORKSPACE_ID, "link:a:msg_2"])).toMatchObject({ streamId: ROOT })
+  })
+
+  it("keeps a moved doc's row on its latest host when older doc:moved events replay", async () => {
+    const DOC_KEY = "doc:stream_doc:"
+    const movedRows = (eventId: string, fromStreamId: string, toStreamId: string) =>
+      contextItemsFromEvent(
+        {
+          ...messageEvent("unused", "https://example.com", "2026-07-01T10:00:00.000Z", toStreamId),
+          id: eventId,
+          eventType: "doc:moved",
+          payload: { docId: "stream_doc", fromStreamId, toStreamId },
+        },
+        { workspaceId: WORKSPACE_ID, streamId: toStreamId, rootStreamId: toStreamId }
+      )
+    // A→B then B→C, each applied live; the server reconciles C's row.
+    await putMovedDocContextRows(movedRows("event_01B", "stream_a", "stream_b"))
+    await putMovedDocContextRows(movedRows("event_01C", "stream_b", "stream_c"))
+    await dropMovedDocContextRow(WORKSPACE_ID, "stream_b", "stream_doc", "event_01C")
+    await seedStreamContextItems(WORKSPACE_ID, "stream_c", [
+      serverItem({
+        key: DOC_KEY,
+        category: "doc",
+        refKind: "doc",
+        refId: "stream_doc",
+        groupKey: "stream_doc",
+        streamId: "stream_c",
+        sourceMessageId: null,
+        anchorEventId: "event_01C",
+        detail: { title: "Rotation tracker" },
+      }),
+    ])
+
+    // Catch-up replays both moves on every host.
+    await putMovedDocContextRows(movedRows("event_01B", "stream_a", "stream_b"))
+    await dropMovedDocContextRow(WORKSPACE_ID, "stream_a", "stream_doc", "event_01B")
+    await putMovedDocContextRows(movedRows("event_01C", "stream_b", "stream_c"))
+    await dropMovedDocContextRow(WORKSPACE_ID, "stream_b", "stream_doc", "event_01C")
+
+    const row = await db.streamContextItems.get([WORKSPACE_ID, DOC_KEY])
+    expect({
+      streamId: row?.streamId,
+      anchorEventId: row?.anchorEventId,
+      status: row?._status,
+      detail: row?.detail,
+    }).toEqual({
+      streamId: "stream_c",
+      anchorEventId: "event_01C",
+      status: undefined,
+      detail: { title: "Rotation tracker" },
+    })
+  })
+
+  it("drops a moved doc's row from the host it left, and only from that host", async () => {
+    const DOC_KEY = "doc:stream_doc:"
+    await putMovedDocContextRows(
+      contextItemsFromEvent(
+        {
+          ...messageEvent("unused", "https://example.com", "2026-07-01T10:00:00.000Z", "stream_b"),
+          id: "event_01B",
+          eventType: "doc:moved",
+          payload: { docId: "stream_doc", fromStreamId: "stream_a", toStreamId: "stream_b" },
+        },
+        { workspaceId: WORKSPACE_ID, streamId: "stream_b", rootStreamId: "stream_b" }
+      )
+    )
+    await dropMovedDocContextRow(WORKSPACE_ID, "stream_a", "stream_doc", "event_01B")
+    const kept = await db.streamContextItems.get([WORKSPACE_ID, DOC_KEY])
+    await dropMovedDocContextRow(WORKSPACE_ID, "stream_b", "stream_doc", "event_01C")
+
+    expect({ kept: kept?.streamId, afterLeaving: await db.streamContextItems.get([WORKSPACE_ID, DOC_KEY]) }).toEqual({
+      kept: "stream_b",
+      afterLeaving: undefined,
+    })
   })
 })
 

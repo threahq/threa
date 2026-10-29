@@ -8,6 +8,7 @@ import { StreamRepository } from "../streams"
 import type { StreamService } from "../streams"
 import { serializeBotRuntimePresence, type BotRuntimeService } from "../bot-runtimes"
 import { canManageBot } from "../../middleware/bot-management"
+import { sessionHasPermission } from "../../middleware/workspace-permission"
 import type { AvatarService } from "../workspaces"
 import type { BotApiKeyService } from "./bot-api-key-service"
 import { serializeBot } from "./handlers"
@@ -24,7 +25,6 @@ import {
   BOT_TRAITS,
   BOT_TYPES,
   BotTypes,
-  permissionsForRole,
   WORKSPACE_PERMISSION_SCOPES,
   type BotApiKey,
   type BotProfile,
@@ -115,18 +115,14 @@ export function createBotHandlers({
 
       // Gate depends on the `type` field in the request body, which isn't
       // known at route registration time, so the check lives in the handler.
-      const hasCreatePerm = (slug: WorkspacePermissionSlug): boolean =>
-        req.authUser?.permissions?.includes(slug) ??
-        (req.user != null && (permissionsForRole(req.user.role) as readonly string[]).includes(slug)) ??
-        false
       if (type === BotTypes.PERSONAL) {
-        if (!hasCreatePerm(WORKSPACE_PERMISSION_SCOPES.BOTS_CREATE_PERSONAL)) {
+        if (!sessionHasPermission(req, WORKSPACE_PERMISSION_SCOPES.BOTS_CREATE_PERSONAL)) {
           throw new HttpError("Insufficient permissions to create personal bots", {
             status: 403,
             code: "FORBIDDEN",
           })
         }
-      } else if (!hasCreatePerm(WORKSPACE_PERMISSION_SCOPES.BOTS_CREATE_SHARED)) {
+      } else if (!sessionHasPermission(req, WORKSPACE_PERMISSION_SCOPES.BOTS_CREATE_SHARED)) {
         throw new HttpError("Insufficient permissions to create shared bots", {
           status: 403,
           code: "FORBIDDEN",

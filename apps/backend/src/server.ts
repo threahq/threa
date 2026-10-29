@@ -1447,7 +1447,7 @@ export async function startServer(): Promise<ServerInstance> {
 
   jobQueue.registerHandler(
     JobQueues.DOC_ACTIVITY_ROLLUP,
-    createDocActivityWorker(new DocActivityService({ pool, jobQueue })),
+    createDocActivityWorker(new DocActivityService({ pool, jobQueue, botChannelService })),
     { tier: QueueTiers.LIGHT, fairness: QueueFairness.NONE }
   )
 
