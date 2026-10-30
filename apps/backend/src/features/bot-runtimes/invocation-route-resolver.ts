@@ -25,7 +25,7 @@ import { resolveRuntimeKindConfig } from "./runtime-kind-config"
 
 export interface CanonicalInvocationRoute {
   actorId: string
-  trigger: BotInvocationTrigger
+  trigger: Exclude<BotInvocationTrigger, "runtime-origin">
   requiredCapability: BotInvocationCapability
   rootStreamId: string
   activeStreamId: string

@@ -1071,7 +1071,7 @@ async function recordEnclaveUsage(
   pool: Pool,
   costService: AICostServiceLike,
   params: {
-    session: { id: string; streamId: string; triggerMessageId: string }
+    session: { id: string; streamId: string; triggerMessageId: string | null }
     workspaceId: string
     model: string
     usage: z.infer<typeof turnUsageSchema>
@@ -1082,6 +1082,7 @@ async function recordEnclaveUsage(
     // The invoking user is the trigger message's author (the session row
     // stores only the trigger message id). Origin is always "user": the
     // enclave runs solely for user-sent E2E scratchpad messages.
+    if (!session.triggerMessageId) throw new Error("Enclave session requires a message source")
     const triggerMessage = await MessageRepository.findById(pool, params.workspaceId, session.triggerMessageId)
     // The enclave routes exclusively through OpenRouter and reports the bare
     // model id (the `openrouter:` prefix is stripped at dispatch), so re-derive

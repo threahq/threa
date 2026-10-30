@@ -54,3 +54,14 @@ test("should retain only valid posted and owed run IDs from disk", () => {
   )
   expect(createFileThreadStore(path).load()).toEqual({ threads: {}, posted: { a: ["run_1"] }, owed: { a: ["run_3"] } })
 })
+
+test("should persist attachment identity and owed delivery together across file-store restart", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "t3threads-")), "threads.json")
+  const state = {
+    threads: { stream_root: "thread_a" },
+    attachments: { thread_a: { run_1: "request_1" } },
+    owed: { thread_a: ["run_1"] },
+  }
+  createFileThreadStore(path).save(state)
+  expect(createFileThreadStore(path).load()).toEqual(state)
+})

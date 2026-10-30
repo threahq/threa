@@ -282,6 +282,15 @@ export const briefRuntimeSessionSchema = z.object({
   thread: z.object({ anchorId: z.string().min(1).max(128), displayName: z.string().min(1).max(100) }).optional(),
 })
 
+export const adoptRuntimeRunSchema = z.object({
+  instanceId: z.string().min(1).max(128),
+  runtimeSessionId: z.string().min(1).max(256),
+  responseStreamId: z.string().min(1).max(64),
+  externalRunId: z.string().min(1).max(256),
+  attachmentRequestId: z.string().min(1).max(256),
+  claimTtlSeconds: z.number().int().min(15).max(300).optional().default(60),
+})
+
 export const claimInvocationSchema = z.object({
   runtimeKind: z.enum(BOT_RUNTIME_KINDS),
   instanceId: z.string().min(1).max(128),

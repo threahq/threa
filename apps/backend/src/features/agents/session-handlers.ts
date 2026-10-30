@@ -58,7 +58,9 @@ export function createAgentSessionHandlers({ pool }: Dependencies) {
         }
 
         const relatedSessions = (
-          await AgentSessionRepository.listByTriggerMessage(pool, workspaceId, session.triggerMessageId)
+          session.triggerMessageId
+            ? await AgentSessionRepository.listByTriggerMessage(pool, workspaceId, session.triggerMessageId)
+            : []
         ).filter((relatedSession) => relatedSession.streamId === session.streamId)
         const sessionIds = [...new Set([session.id, ...relatedSessions.map((relatedSession) => relatedSession.id)])]
         const rerunContextBySessionId = await StreamEventRepository.listRerunContextBySessionIds(

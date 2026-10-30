@@ -216,7 +216,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
             promptMarkdown: renewed.promptMarkdown,
             mentionedActorSlugs: renewed.mentionedActorSlugs,
           }
-        } else if (needsUpdate) {
+        } else if (needsUpdate && renewed.trigger !== "runtime-origin") {
           const bikKeyIds = await RuntimeE2eKeysRepository.listEligibleKeyIdsForInstance(db, {
             workspaceId: renewed.workspaceId,
             botId: renewed.actorId,

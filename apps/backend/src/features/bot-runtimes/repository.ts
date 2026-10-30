@@ -116,16 +116,14 @@ export function resolveControlTarget(
   }
 }
 
-export interface BotInvocation {
+interface BotInvocationBase {
   id: string
   workspaceId: string
   rootStreamId: string
   activeStreamId: string
-  sourceMessageId: string
   responseStreamId: string
   actorType: "bot"
   actorId: string
-  trigger: BotInvocationTrigger
   requiredCapability: BotInvocationCapability
   promptMarkdown: string
   sourceMessageRevision: number
@@ -149,6 +147,12 @@ export interface BotInvocation {
   updatedAt: Date
   completedAt: Date | null
 }
+
+export type BotInvocation = BotInvocationBase &
+  (
+    | { trigger: Exclude<BotInvocationTrigger, "runtime-origin">; sourceMessageId: string }
+    | { trigger: "runtime-origin"; sourceMessageId: null }
+  )
 
 interface StreamActiveActorRow {
   id: string
@@ -203,7 +207,9 @@ interface BotInvocationRow {
   workspace_id: string
   root_stream_id: string
   active_stream_id: string
-  source_message_id: string
+  source_message_id: string | null
+  external_run_id: string | null
+  attachment_request_ids: string[]
   response_stream_id: string
   actor_type: string
   actor_id: string
@@ -318,7 +324,7 @@ async function findInvocationActorSource(
   params: { workspaceId: string; botId: string; invocationId: string }
 ): Promise<(BotInvocationActorSourceIdentity & { trigger: string }) | null> {
   const result = await db.query<BotInvocationActorSourceRow & { trigger: string }>(sql`
-    SELECT workspace_id, source_message_id, actor_type, actor_id, trigger
+    SELECT workspace_id, COALESCE(source_message_id, id) AS source_message_id, actor_type, actor_id, trigger
     FROM bot_invocations
     WHERE id = ${params.invocationId}
       AND workspace_id = ${params.workspaceId}
@@ -445,6 +451,8 @@ function mapInvocation(row: BotInvocationRow): BotInvocation {
   assertKnown(row.trigger, knownInvocationTriggers, "invocation trigger")
   assertKnown(row.required_capability, knownInvocationCapabilities, "invocation capability")
   assertKnown(row.status, knownInvocationStatuses, "invocation status")
+  if ((row.trigger === "runtime-origin") !== (row.source_message_id === null))
+    throw new Error("Invalid invocation source")
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -477,7 +485,7 @@ function mapInvocation(row: BotInvocationRow): BotInvocation {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     completedAt: row.completed_at,
-  }
+  } as BotInvocation
 }
 
 export const StreamActiveActorRepository = {
@@ -1124,7 +1132,107 @@ function sealedStreamClaimGateSql(instanceId: string): QueryConfig {
   )`
 }
 
+export class RuntimeAttachmentConflict extends Error {}
+
 export const BotInvocationRepository = {
+  async adoptRuntimeRun(
+    db: Querier,
+    params: {
+      id: string
+      workspaceId: string
+      botId: string
+      instanceId: string
+      runtimeSessionId: string
+      externalRunId: string
+      attachmentRequestId: string
+      rootStreamId: string
+      responseStreamId: string
+      authorUserId: string
+      claimToken: string
+      claimTtlSeconds: number
+    }
+  ): Promise<BotInvocation> {
+    const recoverClaim = async (row: BotInvocationRow): Promise<BotInvocation> => {
+      const recovered = await db.query<BotInvocationRow>(sql`
+        UPDATE bot_invocations SET
+          status = CASE WHEN attempts >= ${BOT_CLAIM_MAX_ATTEMPTS} THEN 'parked' ELSE 'claimed' END,
+          error_message = CASE WHEN attempts >= ${BOT_CLAIM_MAX_ATTEMPTS}
+            THEN COALESCE(error_message, 'Claim attempts exhausted without completion') ELSE error_message END,
+          claim_token = ${params.claimToken}, claimed_runtime_session_claim_token = ${params.claimToken},
+          claimed_by_instance_id = ${params.instanceId}, claimed_runtime_session_id = ${params.runtimeSessionId},
+          claim_expires_at = NOW() + (${params.claimTtlSeconds} || ' seconds')::interval,
+          attempts = attempts + 1, updated_at = NOW()
+        WHERE id = ${row.id} AND workspace_id = ${params.workspaceId}
+          AND status = 'claimed' AND (
+            claim_expires_at <= NOW()
+            OR claimed_by_instance_id IS DISTINCT FROM ${params.instanceId}
+            OR claimed_runtime_session_id IS DISTINCT FROM ${params.runtimeSessionId}
+          )
+        RETURNING *
+      `)
+      return mapInvocation(recovered.rows[0] ?? row)
+    }
+    await acquireLocks(
+      db,
+      [
+        ["runtime_attachment_request", params.workspaceId, params.botId, params.attachmentRequestId].join("\u001f"),
+        [
+          "runtime_attachment_run",
+          params.workspaceId,
+          params.botId,
+          params.instanceId,
+          params.runtimeSessionId,
+          params.externalRunId,
+        ].join("\u001f"),
+      ],
+      (key) => key
+    )
+    const previous = await db.query<BotInvocationRow>(sql`
+      SELECT * FROM bot_invocations WHERE workspace_id = ${params.workspaceId} AND actor_id = ${params.botId}
+        AND trigger = 'runtime-origin' AND attachment_request_ids @> ARRAY[${params.attachmentRequestId}]::text[]
+      FOR UPDATE
+    `)
+    if (previous.rows[0]) {
+      const row = previous.rows[0]
+      if (
+        row.external_run_id !== params.externalRunId ||
+        row.target_instance_id !== params.instanceId ||
+        row.target_runtime_session_id !== params.runtimeSessionId ||
+        row.response_stream_id !== params.responseStreamId
+      )
+        throw new RuntimeAttachmentConflict("Attachment request identity cannot be reused for another run")
+      return recoverClaim(row)
+    }
+    const active = await db.query<BotInvocationRow>(sql`
+      UPDATE bot_invocations SET attachment_request_ids = array_append(attachment_request_ids, ${params.attachmentRequestId})
+      WHERE workspace_id = ${params.workspaceId} AND actor_id = ${params.botId} AND trigger = 'runtime-origin'
+        AND target_instance_id = ${params.instanceId} AND target_runtime_session_id = ${params.runtimeSessionId}
+        AND external_run_id = ${params.externalRunId} AND status = 'claimed'
+      RETURNING *
+    `)
+    if (active.rows[0]) {
+      if (active.rows[0].response_stream_id !== params.responseStreamId)
+        throw new RuntimeAttachmentConflict("Run is attached to another stream")
+      return recoverClaim(active.rows[0])
+    }
+    const created = await db.query<BotInvocationRow>(sql`
+      INSERT INTO bot_invocations (
+        id, workspace_id, root_stream_id, active_stream_id, source_message_id, response_stream_id,
+        actor_type, actor_id, trigger, required_capability, prompt_markdown, author_user_id,
+        status, target_instance_id, target_runtime_session_id, claimed_by_instance_id, claimed_runtime_session_id,
+        claimed_runtime_session_claim_token, claim_token, claim_expires_at, attempts,
+        source_message_revision, claimed_source_message_revision, external_run_id, attachment_request_ids
+      ) VALUES (
+        ${params.id}, ${params.workspaceId}, ${params.rootStreamId}, ${params.responseStreamId}, NULL, ${params.responseStreamId},
+        'bot', ${params.botId}, 'runtime-origin', 'active-scratchpad', '', ${params.authorUserId},
+        'claimed', ${params.instanceId}, ${params.runtimeSessionId}, ${params.instanceId}, ${params.runtimeSessionId},
+        ${params.claimToken}, ${params.claimToken}, NOW() + (${params.claimTtlSeconds} || ' seconds')::interval, 1,
+        0, 0, ${params.externalRunId}, ARRAY[${params.attachmentRequestId}]::text[]
+      ) RETURNING *
+    `)
+    return mapInvocation(created.rows[0]!)
+  },
+
   async isBotInvocationSession(db: Querier, workspaceId: string, sessionId: string): Promise<boolean> {
     const result = await db.query<{ exists: boolean }>(sql`
       SELECT EXISTS (SELECT 1 FROM bot_invocations WHERE id = ${sessionId} AND workspace_id = ${workspaceId}) AS exists
@@ -1390,7 +1498,7 @@ export const BotInvocationRepository = {
   async insertIdempotent(
     db: Querier,
     params: Omit<
-      BotInvocation,
+      Extract<BotInvocation, { sourceMessageId: string }>,
       | "status"
       | "claimedByInstanceId"
       | "claimedRuntimeSessionId"
@@ -1526,6 +1634,7 @@ export const BotInvocationRepository = {
       WHERE i.workspace_id = ${params.workspaceId}
         AND i.actor_type = 'bot'
         AND i.actor_id = ${params.botId}
+        AND i.trigger <> 'runtime-origin'
         AND i.required_capability = ANY(${params.supportedCapabilities})
         AND EXISTS (
           SELECT 1 FROM bot_runtime_instances r
@@ -1594,7 +1703,8 @@ export const BotInvocationRepository = {
         WHERE i.workspace_id = ${params.workspaceId}
           AND i.actor_type = 'bot'
           AND i.actor_id = ${params.botId}
-          AND i.required_capability = ANY(${params.supportedCapabilities})
+          AND i.trigger <> 'runtime-origin'
+        AND i.required_capability = ANY(${params.supportedCapabilities})
           AND EXISTS (
             SELECT 1 FROM bot_runtime_instances r
             WHERE r.workspace_id = ${params.workspaceId}
@@ -1732,21 +1842,20 @@ export const BotInvocationRepository = {
   },
 
   /**
-   * `locksHeld`: the caller already holds the source and actor advisory locks, so this must not
-   * re-acquire them, and it takes `FOR UPDATE` because it re-reads the row it is about to renew —
-   * the two always move together.
+   * `row-lock` requires the caller to hold source and actor advisory locks before locking the renewal row.
    */
   async findClaimControl(
     db: Querier,
     params: { workspaceId: string; botId: string; invocationId: string; instanceId: string; claimToken: string },
-    options: { locksHeld?: boolean } = {}
+    options: { mode?: "snapshot" | "source-locks" | "row-lock" } = {}
   ): Promise<BotInvocation | null> {
-    if (!options.locksHeld) {
+    const mode = options.mode ?? "source-locks"
+    if (mode === "source-locks") {
       const identity = await findInvocationActorSource(db, params)
       if (!identity) return null
       await acquireActorSourceLocks(db, [identity])
     }
-    const rowLockSql: QueryConfig = { text: options.locksHeld ? "FOR UPDATE" : "", values: [] }
+    const rowLockSql: QueryConfig = { text: mode === "row-lock" ? "FOR UPDATE" : "", values: [] }
     const result = await db.query<BotInvocationRow>(composeSql`SELECT * FROM bot_invocations
       WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId}
         AND actor_type = 'bot' AND actor_id = ${params.botId}
@@ -1795,12 +1904,16 @@ export const BotInvocationRepository = {
       const identity = await findInvocationActorSource(lockedDb, params)
       if (!identity) return null
       if (!options.locksHeld) await acquireActorSourceLocks(lockedDb, [identity])
-      if (identity.trigger !== "session-control" && !(await lockCanonicalInvocationSource(lockedDb, params)))
+      if (
+        identity.trigger !== "session-control" &&
+        identity.trigger !== "runtime-origin" &&
+        !(await lockCanonicalInvocationSource(lockedDb, params))
+      )
         return null
       const result =
         await lockedDb.query<BotInvocationRow>(composeSql`UPDATE bot_invocations i SET status = 'completed', completed_at = NOW(), updated_at = NOW()
         WHERE i.id = ${params.invocationId} AND i.workspace_id = ${params.workspaceId} AND i.actor_type = 'bot' AND i.actor_id = ${params.botId} AND i.status = 'claimed' AND i.claim_token = ${params.claimToken} AND (${params.instanceId ?? null}::text IS NULL OR i.claimed_by_instance_id = ${params.instanceId ?? null}) AND i.claim_expires_at > NOW()
-          AND (i.trigger = 'session-control' OR EXISTS (
+          AND (i.trigger IN ('session-control', 'runtime-origin') OR EXISTS (
             SELECT 1 FROM messages m JOIN streams s ON s.id = m.stream_id
             WHERE m.id = i.source_message_id
               AND m.workspace_id = i.workspace_id
@@ -1834,12 +1947,16 @@ export const BotInvocationRepository = {
       const identity = await findInvocationActorSource(lockedDb, params)
       if (!identity) return null
       await acquireActorSourceLocks(lockedDb, [identity])
-      if (identity.trigger !== "session-control" && !(await lockCanonicalInvocationSource(lockedDb, params)))
+      if (
+        identity.trigger !== "session-control" &&
+        identity.trigger !== "runtime-origin" &&
+        !(await lockCanonicalInvocationSource(lockedDb, params))
+      )
         return null
       const result =
         await lockedDb.query<BotInvocationRow>(composeSql`UPDATE bot_invocations i SET status = 'failed', error_message = ${params.errorMessage}, updated_at = NOW()
         WHERE i.id = ${params.invocationId} AND i.workspace_id = ${params.workspaceId} AND i.actor_type = 'bot' AND i.actor_id = ${params.botId} AND i.status = 'claimed' AND (${params.instanceId ?? null}::text IS NULL OR i.claimed_by_instance_id = ${params.instanceId ?? null}) AND i.claim_token = ${params.claimToken} AND i.claim_expires_at > NOW()
-          AND (i.trigger = 'session-control' OR EXISTS (
+          AND (i.trigger IN ('session-control', 'runtime-origin') OR EXISTS (
             SELECT 1 FROM messages m JOIN streams s ON s.id = m.stream_id
             WHERE m.id = i.source_message_id
               AND m.workspace_id = i.workspace_id
@@ -1868,7 +1985,7 @@ export const BotInvocationRepository = {
   ): Promise<BotInvocation[]> {
     return withTransactionIfPool(db, async (lockedDb) => {
       const candidates = await lockedDb.query<BotInvocationActorSourceRow & { id: string; trigger: string }>(sql`
-        SELECT id, workspace_id, source_message_id, actor_type, actor_id, trigger
+        SELECT id, workspace_id, COALESCE(source_message_id, id) AS source_message_id, actor_type, actor_id, trigger
         FROM bot_invocations
         WHERE workspace_id = ${params.workspaceId}
           AND actor_type = 'bot'
@@ -1880,9 +1997,11 @@ export const BotInvocationRepository = {
       if (candidates.rows.length === 0) return []
 
       await acquireActorSourceLocks(lockedDb, candidates.rows.map(mapActorSourceIdentity))
-      const sessionControlIds = candidates.rows.filter((row) => row.trigger === "session-control").map((row) => row.id)
+      const sessionControlIds = candidates.rows
+        .filter((row) => row.trigger === "session-control" || row.trigger === "runtime-origin")
+        .map((row) => row.id)
       const messageCandidateIds = candidates.rows
-        .filter((row) => row.trigger !== "session-control")
+        .filter((row) => row.trigger !== "session-control" && row.trigger !== "runtime-origin")
         .map((row) => row.id)
       const canonicalMessageCandidates =
         messageCandidateIds.length === 0
@@ -1914,7 +2033,7 @@ export const BotInvocationRepository = {
           AND claim_expires_at < NOW()
           AND attempts >= ${params.maxAttempts}
           AND (
-            trigger = 'session-control'
+            trigger IN ('session-control', 'runtime-origin')
             OR EXISTS (
               SELECT 1 FROM messages m JOIN streams s ON s.id = m.stream_id
               WHERE m.id = bot_invocations.source_message_id
@@ -1966,7 +2085,8 @@ export const BotInvocationRepository = {
         WHERE i.workspace_id = ${params.workspaceId}
           AND i.actor_type = 'bot'
           AND i.actor_id = ${params.botId}
-          AND i.required_capability = ANY(${params.supportedCapabilities})
+          AND i.trigger <> 'runtime-origin'
+        AND i.required_capability = ANY(${params.supportedCapabilities})
           AND (i.target_instance_id IS NULL OR i.target_instance_id = ${params.instanceId})
           AND (i.target_runtime_session_id IS NULL OR i.target_runtime_session_id = ${params.runtimeSessionId})
           AND (i.status = 'pending' OR (i.status = 'claimed' AND i.claim_expires_at < NOW()))

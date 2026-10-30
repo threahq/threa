@@ -663,7 +663,7 @@ export interface SerializedBotInvocation {
   workspaceId: string
   rootStreamId: string
   activeStreamId: string
-  sourceMessageId: string
+  sourceMessageId: string | null
   responseStreamId: string
   actorType: "bot"
   actorId: string

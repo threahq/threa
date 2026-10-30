@@ -3,7 +3,7 @@ import type { AgentSessionStartedPayload, AgentStepType, StreamEvent } from "@th
 export interface RunningAgentSessionEvent {
   sessionId: string
   personaName: string
-  triggerMessageId: string
+  triggerMessageId: string | null
   currentStepType: AgentStepType | null
   stepCount?: number
   messageCount?: number

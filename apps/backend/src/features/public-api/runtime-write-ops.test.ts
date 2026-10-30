@@ -9,7 +9,9 @@ import { MessageRepository } from "../messaging"
 import { AgentSessionRepository } from "../agents"
 import { BotChannelAccessRepository } from "../api-keys"
 
-function invocation(overrides: Partial<BotInvocation> = {}): BotInvocation {
+function invocation(
+  overrides: Partial<Extract<BotInvocation, { sourceMessageId: string }>> = {}
+): Extract<BotInvocation, { sourceMessageId: string }> {
   return {
     id: "binv_1",
     workspaceId: "ws_1",

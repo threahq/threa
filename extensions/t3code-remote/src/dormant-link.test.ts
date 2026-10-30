@@ -295,3 +295,27 @@ describe("DormantLink", () => {
     })
   })
 })
+
+test("should wake an idle link for adoption after its wind-down settles", async () => {
+  const ending = deferred<void>()
+  const { link, state, nudge } = harness({ target: "stream_root", windDown: () => ending.promise })
+  state.archived = false
+  state.now = 91 * MINUTE
+  await link.tick()
+  await nudge()
+  const waking = link.ensureAwake()
+  await tick()
+  expect(state.revived).toEqual([])
+  ending.resolve()
+  expect(await waking).toBe(true)
+  expect(state.events).toEqual(["wound down", "held", "revived"])
+  await link.stop()
+})
+
+test("should refuse adoption wake for an archived scratchpad", async () => {
+  const { link, state } = harness()
+  link.sleep("stream_root")
+  expect(await link.ensureAwake()).toBe(false)
+  expect(state.revived).toEqual([])
+  await link.stop()
+})

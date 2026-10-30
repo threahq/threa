@@ -10,6 +10,7 @@ import * as agentTraceModule from "@/hooks/use-agent-trace"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { AgentSessionStep } from "@threahq/types"
 import { seedAgentActivity, updateAgentSessionProgress, resetAgentActivityStore } from "@/stores/agent-activity-store"
+import { groupTimelineItems } from "./event-list"
 import { AgentSessionEvent } from "./agent-session-event"
 
 const WS = "ws_1"
@@ -77,6 +78,46 @@ function renderEvent(ui: React.ReactElement) {
 }
 
 describe("AgentSessionEvent", () => {
+  it("should display source-less work and its completion through the existing timeline card", () => {
+    const started = createSessionEvent("agent_session:started", {
+      sessionId: "session_attached",
+      personaId: "persona_1",
+      personaName: "T3 Code",
+      triggerMessageId: null,
+      startedAt: "2026-02-19T18:00:00.000Z",
+    })
+    const card = (events: StreamEvent[]) => {
+      const item = groupTimelineItems(events, "usr_1")[0]!
+      if (item.type !== "session_group") throw new Error("Expected session card")
+      return (
+        <AgentSessionEvent
+          workspaceId={WS}
+          events={item.events}
+          sessionVersion={item.sessionVersion}
+          onStopSession={vi.fn()}
+        />
+      )
+    }
+    const view = renderEvent(card([started]))
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument()
+    expect(screen.getByText("T3 Code is working…")).toBeInTheDocument()
+    view.unmount()
+    renderEvent(
+      card([
+        started,
+        createSessionEvent("agent_session:completed", {
+          sessionId: "session_attached",
+          stepCount: 1,
+          messageCount: 1,
+          duration: 1000,
+          completedAt: "2026-02-19T18:00:01.000Z",
+        }),
+      ])
+    )
+    expect(screen.getByText("Session complete")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument()
+  })
+
   it("shows the session version badge", () => {
     const events: StreamEvent[] = [
       createSessionEvent("agent_session:started", {

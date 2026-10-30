@@ -71,6 +71,80 @@ describe("T3Client", () => {
     ])
   })
 
+  test("should round-trip pending questions, configuration and forks through the current MCP tools", async () => {
+    const calls: unknown[] = []
+    const selection = { instanceId: "codex", model: "gpt-5.5" }
+    const question = { id: "runner", header: "Runner", question: "Which runner?", options: [] }
+    const fetch = async (_url: string, init: RequestInit) => {
+      const { method, id, params } = JSON.parse(String(init.body))
+      if (method === "initialize")
+        return Response.json({ jsonrpc: "2.0", id, result: {} }, { headers: { "mcp-session-id": "current" } })
+      if (method === "notifications/initialized") return new Response(null, { status: 202 })
+      calls.push(params)
+      const args = params.arguments
+      let result: unknown
+      if (params.name === "t3_pending_request") {
+        if (args.action === "list") result = { requestIds: ["request_1"] }
+        else if (args.action === "read") result = { requestId: args.requestId, questions: [question] }
+        else if (args.action === "respond") result = { accepted: true }
+      } else if (params.name === "t3_thread_configure") {
+        result = args.modelSelection ? { sequence: 2 } : { modelSelection: selection, runtimeMode: "full-access" }
+      } else if (params.name === "t3_thread_transfer" && args.action === "fork") {
+        result = { targetThreadId: "thread_fork" }
+      }
+      return sse({
+        jsonrpc: "2.0",
+        id,
+        result:
+          result === undefined
+            ? { isError: true, content: [{ text: `Tool ${params.name} not found` }] }
+            : { structuredContent: result },
+      })
+    }
+    const client = new T3Client("http://t3.test", tokens(), fetch)
+    const threadId = "thread_1"
+    const pending = await client.call("t3_pending_request", { action: "list", threadId })
+    const requestId = pending.requestIds[0]!
+    const read = await client.call("t3_pending_request", { action: "read", threadId, requestId })
+    const answered = await client.call("t3_pending_request", {
+      action: "respond",
+      threadId,
+      requestId,
+      answers: { runner: "Bun" },
+    })
+    const config = await client.call("t3_thread_configure", { threadId })
+    const configured = await client.call("t3_thread_configure", { threadId, modelSelection: config.modelSelection })
+    const fork = await client.call("t3_thread_transfer", {
+      action: "fork",
+      threadId,
+      sourcePoint: { type: "latest_stable" },
+      title: "Branch",
+    })
+
+    expect({ pending, read, answered, config, configured, fork, calls }).toEqual({
+      pending: { requestIds: ["request_1"] },
+      read: { requestId, questions: [question] },
+      answered: { accepted: true },
+      config: { modelSelection: selection, runtimeMode: "full-access" },
+      configured: { sequence: 2 },
+      fork: { targetThreadId: "thread_fork" },
+      calls: [
+        { name: "t3_pending_request", arguments: { action: "list", threadId } },
+        { name: "t3_pending_request", arguments: { action: "read", threadId, requestId } },
+        {
+          name: "t3_pending_request",
+          arguments: { action: "respond", threadId, requestId, answers: { runner: "Bun" } },
+        },
+        { name: "t3_thread_configure", arguments: { threadId } },
+        { name: "t3_thread_configure", arguments: { threadId, modelSelection: selection } },
+        {
+          name: "t3_thread_transfer",
+          arguments: { action: "fork", threadId, sourcePoint: { type: "latest_stable" }, title: "Branch" },
+        },
+      ],
+    })
+  })
+
   test("a tool error carries the orchestrator's code", async () => {
     const server = fakeServer((method) =>
       method === "tools/call"

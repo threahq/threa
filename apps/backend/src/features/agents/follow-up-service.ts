@@ -367,7 +367,7 @@ export class AgentFollowUpService {
       const pending = await AgentFollowUpRepository.findById(client, params.workspaceId, params.followUpId)
       if (!pending) return { fired: false }
       const sourceSession = await AgentSessionRepository.findById(client, params.workspaceId, pending.sessionId)
-      const triggerMessage = sourceSession
+      const triggerMessage = sourceSession?.triggerMessageId
         ? await MessageRepository.findById(client, params.workspaceId, sourceSession.triggerMessageId)
         : null
       if (!sourceSession || !triggerMessage || triggerMessage.authorType !== AuthorTypes.USER) {

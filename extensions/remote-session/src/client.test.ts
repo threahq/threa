@@ -141,3 +141,23 @@ describe("ThreaClient.briefSession", () => {
     })
   })
 })
+
+it("should post runtime adoption identity and preserve terminal response", async () => {
+  fetchSpy.mockImplementation(jsonFetch({ data: { status: "completed", invocationId: "binv_old" } }))
+  const client = new ThreaClient({ baseUrl: "https://example.test", workspaceId: "ws_1", apiKey: "key" })
+  const body = {
+    instanceId: "instance",
+    runtimeSessionId: "session",
+    responseStreamId: "stream",
+    externalRunId: "run",
+    attachmentRequestId: "request",
+    claimTtlSeconds: 120,
+  }
+  expect(await client.adoptRuntimeRun(body)).toEqual({ status: "completed", invocationId: "binv_old" })
+  const [url, init] = fetchSpy.mock.calls[0]!
+  expect({ url, method: init?.method, body: JSON.parse(init?.body as string) }).toEqual({
+    url: "https://example.test/api/v1/workspaces/ws_1/bot-invocations/adopt",
+    method: "POST",
+    body,
+  })
+})

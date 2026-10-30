@@ -84,6 +84,15 @@ export class DormantLink {
     this.enter(rootStreamId, "pending")
   }
 
+  async ensureAwake(): Promise<boolean> {
+    if (this.stopped || this.mode === "archived") return false
+    this.touch()
+    if (this.mode === "pending") this.leave()
+    else if (this.rootStreamId) await this.wake()
+    await this.settling
+    return !this.stopped && !this.rootStreamId
+  }
+
   async stop(): Promise<void> {
     this.stopped = true
     this.watcher?.disconnect()

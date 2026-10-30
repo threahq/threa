@@ -60,6 +60,7 @@ import {
   endRuntimeSessionSchema,
   briefRuntimeSessionSchema,
   claimInvocationSchema,
+  adoptRuntimeRunSchema,
   renewInvocationClaimSchema,
   reportInvocationProgressSchema,
   completeInvocationSchema,
@@ -633,7 +634,7 @@ const claimedInvocationSchema = z.object({
   sourceMessageId: z.string(),
   responseStreamId: z.string(),
   actor: z.object({ type: z.literal("bot"), id: z.string(), slug: z.string() }),
-  trigger: z.enum(BOT_INVOCATION_TRIGGERS),
+  trigger: z.enum(BOT_INVOCATION_TRIGGERS).exclude(["runtime-origin"]),
   requiredCapability: z.enum(BOT_INVOCATION_CAPABILITIES),
   promptMarkdown: z.string(),
   sourceRevision: z.number().int().min(0),
@@ -1004,6 +1005,7 @@ export type OperationId =
   | "rebindBotRuntimeSession"
   | "endBotRuntimeSession"
   | "briefBotRuntimeSession"
+  | "adoptBotRuntimeRun"
   | "claimBotInvocation"
   | "renewBotInvocationClaim"
   | "reportBotInvocationProgress"
@@ -1325,6 +1327,31 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     responseSchema: dataEnvelope(briefedRuntimeSessionSchema),
     canReturn404: true,
     successStatus: 201,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/bot-invocations/adopt",
+    operationId: "adoptBotRuntimeRun",
+    summary: "Follow an existing runtime run",
+    tags: ["Bot invocations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE],
+    parameters: [workspaceIdParam],
+    requestSchema: adoptRuntimeRunSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(
+      z.union([
+        z.object({
+          status: z.literal("claimed"),
+          invocation: claimedInvocationSchema.extend({
+            trigger: z.literal("runtime-origin"),
+            sourceMessageId: z.null(),
+          }),
+        }),
+        z.object({ status: z.enum(["completed", "failed", "cancelled", "parked"]), invocationId: z.string() }),
+      ])
+    ),
+    canReturn404: true,
+    canReturn409: true,
   },
   {
     method: "post",

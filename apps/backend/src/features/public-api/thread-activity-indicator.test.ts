@@ -1,3 +1,4 @@
+import { BotRuntimeService } from "../bot-runtimes"
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Request, Response } from "express"
 import type { Server } from "socket.io"
@@ -96,6 +97,7 @@ function arrangeClaim(params: { responseStream: typeof THREAD | typeof ROOT; ins
   } as never)
   spyOn(dbModule, "withTransaction").mockImplementation(((_pool: unknown, fn: (c: unknown) => unknown) =>
     fn({})) as never)
+  spyOn(StreamEventRepository, "getLatestSequence").mockResolvedValue(7n)
   spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue(
     (params.inserted ? { id: "binv_1", createdAt: new Date("2026-09-06T09:00:00.000Z") } : null) as never
   )
@@ -123,6 +125,7 @@ function arrangeClaim(params: { responseStream: typeof THREAD | typeof ROOT; ins
     attachmentService: {} as PublicApiDeps["attachmentService"],
     botChannelService: {} as PublicApiDeps["botChannelService"],
     botRuntimeService: {
+      startInvocationSessionInTransaction: BotRuntimeService.prototype.startInvocationSessionInTransaction,
       claimNextInvocation: mock(() => Promise.resolve(invocation)),
       findActiveClaimForUpdate: mock(() => Promise.resolve(invocation)),
     } as unknown as PublicApiDeps["botRuntimeService"],

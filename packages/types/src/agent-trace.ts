@@ -103,7 +103,7 @@ export interface AgentSession {
   id: string
   streamId: string
   personaId: string
-  triggerMessageId: string
+  triggerMessageId: string | null
   triggerMessageRevision?: number | null
   supersedesSessionId?: string | null
   rerunContext?: AgentSessionRerunContext | null
@@ -140,7 +140,7 @@ export interface AgentSessionProgressPayload {
   workspaceId: string
   streamId: string
   sessionId: string
-  triggerMessageId: string
+  triggerMessageId: string | null
   personaName: string
   stepCount: number
   messageCount: number
@@ -160,7 +160,7 @@ export interface AgentSessionStartedPayload {
   sessionId: string
   personaId: string
   personaName: string
-  triggerMessageId: string
+  triggerMessageId: string | null
   rerunContext?: AgentSessionRerunContext | null
   /** Bootstrap-only snapshot for running sessions; live updates still use agent_session:progress. */
   stepCount?: number
@@ -274,7 +274,7 @@ export interface AgentSessionSubstepPayload {
   workspaceId: string
   streamId: string
   sessionId: string
-  triggerMessageId: string
+  triggerMessageId: string | null
   /** The step type this substep belongs to (e.g. "workspace_search"). */
   stepType: AgentStepType
   /**
@@ -295,7 +295,7 @@ export interface AgentSessionSubstepPayload {
 // Emitted to the parent stream's room when agent session starts (for immediate inline indicator)
 export interface AgentActivityStartedPayload {
   sessionId: string
-  triggerMessageId: string
+  triggerMessageId: string | null
   personaName: string
   /** Thread stream ID - allows frontend to link directly to thread before stream:created arrives */
   threadStreamId: string
@@ -306,5 +306,5 @@ export interface AgentActivityStartedPayload {
 // Emitted to channel room when agent session ends (for inline indicator cleanup)
 export interface AgentActivityEndedPayload {
   sessionId: string
-  triggerMessageId: string
+  triggerMessageId: string | null
 }

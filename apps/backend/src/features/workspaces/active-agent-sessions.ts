@@ -6,7 +6,7 @@ export interface RunningSessionRow {
   streamId: string
   rootStreamId: string
   parentAnchorId: string | null
-  triggerMessageId: string
+  triggerMessageId: string | null
   personaId: string
   startedAt: Date
   currentStepType: AgentStepType | null

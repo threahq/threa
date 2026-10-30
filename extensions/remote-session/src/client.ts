@@ -92,6 +92,23 @@ export interface ClaimedInvocation {
   sealedAttachments?: { prompt: AttachmentRef[]; history: AttachmentRef[] }
 }
 
+export type RuntimeOriginClaimedInvocation = Omit<ClaimedInvocation, "sourceMessageId" | "trigger"> & {
+  trigger: "runtime-origin"
+  sourceMessageId: null
+}
+
+export type RoutedInvocation = ClaimedInvocation | RuntimeOriginClaimedInvocation
+
+export interface AdoptRuntimeRunInput {
+  responseStreamId: string
+  externalRunId: string
+  attachmentRequestId: string
+}
+
+export type AdoptRuntimeRunResponse =
+  | { status: "claimed"; invocation: RuntimeOriginClaimedInvocation }
+  | { status: "completed" | "failed" | "cancelled" | "parked"; invocationId: string }
+
 export class ThreaApiError extends Error {
   constructor(
     message: string,
@@ -220,6 +237,16 @@ export class ThreaClient {
   /** Starts a turn on a linked session; with `thread`, the bot opens a thread on `anchorId` and the turn answers there. */
   async briefSession(body: BriefSessionBody): Promise<BriefedSession> {
     const result = await this.request<{ data: BriefedSession }>(this.workspacePath("/bot-runtime/sessions/brief"), {
+      method: "POST",
+      body: JSON.stringify(body),
+    })
+    return result.data
+  }
+
+  async adoptRuntimeRun(
+    body: AdoptRuntimeRunInput & { instanceId: string; runtimeSessionId: string; claimTtlSeconds: number }
+  ): Promise<AdoptRuntimeRunResponse> {
+    const result = await this.request<{ data: AdoptRuntimeRunResponse }>(this.workspacePath("/bot-invocations/adopt"), {
       method: "POST",
       body: JSON.stringify(body),
     })

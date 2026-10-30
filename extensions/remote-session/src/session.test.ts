@@ -75,6 +75,9 @@ function makeFakeClient() {
     fail: [] as Array<{ id: string; body: Record<string, unknown> }>,
   }
   const client = {
+    adoptRuntimeRun: async (): Promise<import("./client").AdoptRuntimeRunResponse> => {
+      throw new Error("unexpected adoption")
+    },
     claim: async (): Promise<ClaimedInvocation | null> => null,
     sendMessage: async (streamId: string, body: Record<string, unknown>) => {
       calls.sendMessage.push({ streamId, body })
@@ -617,7 +620,7 @@ describe("RemoteSession.onReplyTimeout", () => {
 
     await fireIdleTimeout(session, "binv_silent")
 
-    expect(calls.complete[0]?.body.finalMessageMarkdown).toContain("without sending a reply")
+    expect(calls.complete[0]?.body.finalMessageMarkdown).toContain("This Threa request closed without a reply")
     expect(calls.complete[0]?.body.noResponse).toBeUndefined()
     expect((session as unknown as { inflight: Map<string, unknown> }).inflight.has("binv_silent")).toBe(false)
   })
@@ -719,7 +722,7 @@ describe("RemoteSession.endTurn", () => {
   test("posts the no-reply note when there is neither a post nor final text", async () => {
     expect(await ended({ sentCount: 0, finalText: "   " })).toEqual({
       result: { ok: true, message: "sent", closedTurn: true },
-      finalMessageMarkdown: expect.stringContaining("without sending a reply"),
+      finalMessageMarkdown: expect.stringContaining("This Threa request closed without a reply"),
       noResponse: undefined,
       completions: 1,
       inflight: false,
@@ -6117,6 +6120,322 @@ describe("session-control options", () => {
       expect(h.connects()).toBe(0)
     } finally {
       h.cleanup()
+    }
+  })
+})
+
+describe("runtime run adoption", () => {
+  function setup(
+    onSync?: (params: ObserveClaimParams) => void | Promise<void>,
+    steer?: SessionControlActuator["steer"]
+  ) {
+    const fake = makeFakeClient()
+    const wire = makeFakeTransport(onSync)
+    const deliveries: DeliveredTurn[] = []
+    const interrupts: string[] = []
+    const session = makeSession(fake.client, wire.transport, {
+      deliverTurn: async (turn) => {
+        deliveries.push(turn)
+      },
+      sessionControl: {
+        commands: ["stop"],
+        steer,
+        interrupt: (streamId) => {
+          interrupts.push(streamId ?? "")
+          return true
+        },
+        runCommand: async () => ({ ok: true }),
+      },
+    })
+    Object.assign(session, { link: { rootStreamId: "stream_root" } })
+    const invocation = {
+      ...makeInvocation({}),
+      sourceMessageId: null,
+      sourceRevision: 0,
+      trigger: "runtime-origin" as const,
+    }
+    const adopt = spyOn(fake.client, "adoptRuntimeRun").mockResolvedValue({ status: "claimed", invocation })
+    return { ...fake, ...wire, session, deliveries, interrupts, invocation, adopt }
+  }
+  const input = { responseStreamId: "stream_root", externalRunId: "run_1", attachmentRequestId: "request_1" }
+
+  for (const mode of ["steer", "defer", "enqueue"] as const) {
+    test(`should preserve an in-flight ordinary claim when adoption wins (${mode})`, async () => {
+      const steers: string[] = []
+      const f = setup(undefined, async (content) => {
+        steers.push(content)
+        return mode !== "defer"
+      })
+      const pendingClaim = gate()
+      const ordinary =
+        mode === "enqueue" ? enqueuedMessage("binv_input", "stream_root") : plainMessage("binv_input", "stream_root")
+      const claim = spyOn(f.client, "claim").mockImplementationOnce(async () => {
+        await pendingClaim.promise
+        return ordinary
+      })
+      try {
+        const draining = claimDrain(f.session)
+        await flush()
+        expect(claim.mock.calls[0]?.[0].excludeResponseStreamIds ?? []).toEqual([])
+        await f.session.adoptRuntimeRun(input)
+        pendingClaim.open()
+        await draining
+        expect({ deliveries: f.deliveries, failed: f.calls.fail }).toEqual({ deliveries: [], failed: [] })
+        expect(steers).toEqual(mode === "enqueue" ? [] : ["binv_input"])
+        await f.session.reply(f.invocation.id, "Attached work finished")
+        await flush()
+        if (mode === "steer") {
+          expect(f.calls.complete.find((call) => call.id === ordinary.id)?.body).toMatchObject({ noResponse: true })
+          expect(f.deliveries).toEqual([])
+        } else {
+          await waitUntil(() => f.deliveries.length > 0)
+          expect(f.deliveries.map((turn) => turn.invocationId)).toEqual([ordinary.id])
+        }
+      } finally {
+        pendingClaim.open()
+        await f.session.shutdown()
+      }
+    })
+  }
+
+  test("should reuse one observed route for concurrent adoption and complete through existing output", async () => {
+    let syncs = 0
+    const f = setup(() => {
+      syncs += 1
+    })
+    try {
+      const [first, second] = await Promise.all([f.session.adoptRuntimeRun(input), f.session.adoptRuntimeRun(input)])
+      expect(first.status).toBe("claimed")
+      if (first.status !== "claimed" || second.status !== "claimed") throw new Error("not claimed")
+      expect(second.signal).toBe(first.signal)
+      expect({ observers: f.observations.size, syncs }).toEqual({ observers: 1, syncs: 1 })
+      expect(f.observations.get(f.invocation.id)?.params).toMatchObject({ claimTtlSeconds: 120, sourceRevision: 0 })
+      expect(await f.session.recordSteps(f.invocation.id, [{ stepType: "thinking", content: "Following work" }])).toBe(
+        true
+      )
+      expect(await f.session.reply(f.invocation.id, "Finished")).toMatchObject({ ok: true })
+      expect(f.calls.complete[0]).toMatchObject({ id: f.invocation.id, body: { finalMessageMarkdown: "Finished" } })
+      expect(first.signal.aborted).toBe(true)
+      expect({ deliveries: f.deliveries, interrupts: f.interrupts }).toEqual({ deliveries: [], interrupts: [] })
+      expect(f.observations.get(f.invocation.id)?.unregistered).toBe(true)
+    } finally {
+      await f.session.shutdown()
+    }
+  })
+
+  test("should replace an expired claim generation and ignore callbacks from its old observer", async () => {
+    const f = setup()
+    try {
+      const first = await f.session.adoptRuntimeRun(input)
+      if (first.status !== "claimed") throw new Error("not claimed")
+      const oldObserver = f.observations.get(f.invocation.id)!
+      f.adopt.mockResolvedValue({
+        status: "claimed",
+        invocation: { ...f.invocation, claimToken: "rotated-token" },
+      })
+      const second = await f.session.adoptRuntimeRun(input)
+      if (second.status !== "claimed") throw new Error("not claimed")
+      expect({ ended: first.signal.aborted, live: second.signal.aborted, disposed: oldObserver.disposed }).toEqual({
+        ended: true,
+        live: false,
+        disposed: true,
+      })
+      expect(f.observations.get(f.invocation.id)?.params.claimToken).toBe("rotated-token")
+      await oldObserver.lose()
+      await oldObserver.cancel()
+      expect(second.signal.aborted).toBe(false)
+      expect(await f.session.reply(f.invocation.id, "Finished")).toMatchObject({ ok: true })
+      expect(f.calls.complete[0]).toMatchObject({ body: { claimToken: "rotated-token" } })
+      expect(f.interrupts).toEqual([])
+    } finally {
+      await f.session.shutdown()
+    }
+  })
+
+  test("should preserve accepted and ambiguous interim identities across credential rotation", async () => {
+    const f = setup()
+    const send = spyOn(f.client, "sendInvocationMessage")
+    try {
+      await f.session.adoptRuntimeRun(input)
+      expect(await f.session.sendInterim(f.invocation.id, "First")).toMatchObject({ ok: true })
+      send.mockRejectedValueOnce(new Error("network"))
+      expect(await f.session.sendInterim(f.invocation.id, "Uncertain")).toMatchObject({ ok: false, retryable: true })
+      f.adopt.mockResolvedValue({ status: "claimed", invocation: { ...f.invocation, claimToken: "rotated-token" } })
+      await f.session.adoptRuntimeRun(input)
+      expect(await f.session.sendInterim(f.invocation.id, "Uncertain")).toMatchObject({ ok: true })
+      expect(await f.session.sendInterim(f.invocation.id, "Next")).toMatchObject({ ok: true })
+      const bodies = send.mock.calls.map((call) => call[1])
+      expect(
+        bodies.map(({ clientMessageId, content, claimToken }) => ({ clientMessageId, content, claimToken }))
+      ).toEqual([
+        { clientMessageId: `remote-send-${f.invocation.id}-1`, content: "First", claimToken: "tok" },
+        { clientMessageId: `remote-send-${f.invocation.id}-2`, content: "Uncertain", claimToken: "tok" },
+        { clientMessageId: `remote-send-${f.invocation.id}-2`, content: "Uncertain", claimToken: "rotated-token" },
+        { clientMessageId: `remote-send-${f.invocation.id}-3`, content: "Next", claimToken: "rotated-token" },
+      ])
+    } finally {
+      await f.session.shutdown()
+    }
+  })
+
+  test("should retain a queued retry identity while its claim refresh waits behind a write", async () => {
+    const f = setup()
+    const send = spyOn(f.client, "sendInvocationMessage").mockRejectedValueOnce(new Error("network"))
+    const pending = gate()
+    try {
+      await f.session.adoptRuntimeRun(input)
+      await f.session.sendInterim(f.invocation.id, "Uncertain")
+      send.mockImplementationOnce(async () => {
+        await pending.promise
+      })
+      const blocked = f.session.sendInterim(f.invocation.id, "Blocking")
+      await flush()
+      f.adopt.mockResolvedValue({ status: "claimed", invocation: { ...f.invocation, claimToken: "rotated-token" } })
+      const adopting = f.session.adoptRuntimeRun(input)
+      await flush()
+      const retry = f.session.sendInterim(f.invocation.id, "Uncertain")
+      pending.open()
+      await blocked
+      await adopting
+      expect(await retry).toMatchObject({ ok: true })
+      expect(await f.session.sendInterim(f.invocation.id, "Uncertain")).toMatchObject({ ok: true })
+      expect(
+        send.mock.calls.map(([, body]) => ({
+          content: body.content,
+          clientMessageId: body.clientMessageId,
+          claimToken: body.claimToken,
+        }))
+      ).toEqual([
+        { content: "Uncertain", clientMessageId: `remote-send-${f.invocation.id}-1`, claimToken: "tok" },
+        { content: "Blocking", clientMessageId: `remote-send-${f.invocation.id}-2`, claimToken: "tok" },
+        { content: "Uncertain", clientMessageId: `remote-send-${f.invocation.id}-1`, claimToken: "rotated-token" },
+        { content: "Uncertain", clientMessageId: `remote-send-${f.invocation.id}-3`, claimToken: "rotated-token" },
+      ])
+    } finally {
+      pending.open()
+      await f.session.shutdown()
+    }
+  })
+
+  test("should fence lost ownership without interrupting native work", async () => {
+    const f = setup()
+    try {
+      const result = await f.session.adoptRuntimeRun(input)
+      if (result.status !== "claimed") throw new Error("not claimed")
+      await f.observations.get(f.invocation.id)!.lose()
+      expect(result.signal.aborted).toBe(true)
+      expect(await f.session.recordSteps(f.invocation.id, [{ stepType: "thinking", content: "late" }])).toBe(false)
+      expect(f.interrupts).toEqual([])
+    } finally {
+      await f.session.shutdown()
+    }
+  })
+
+  test("should return a terminal request without registering a route", async () => {
+    const f = setup()
+    f.adopt.mockResolvedValue({ status: "completed", invocationId: "binv_old" })
+    try {
+      expect(await f.session.adoptRuntimeRun(input)).toEqual({ status: "completed", invocationId: "binv_old" })
+      expect(f.observations.size).toBe(0)
+    } finally {
+      await f.session.shutdown()
+    }
+  })
+
+  test("should fail a claim arriving after shutdown without leaving an observer", async () => {
+    const f = setup()
+    const pending = gate()
+    f.adopt.mockImplementation(async () => {
+      await pending.promise
+      return { status: "claimed", invocation: f.invocation }
+    })
+    const task = f.session.adoptRuntimeRun(input)
+    await flush()
+    await f.session.shutdown()
+    pending.open()
+    await expect(task).rejects.toThrow("Session changed")
+    expect(f.calls.fail).toMatchObject([{ id: f.invocation.id }])
+    expect({ observers: f.observations.size, interrupts: f.interrupts }).toEqual({ observers: 0, interrupts: [] })
+  })
+
+  test("should dispose an observation when shutdown races initial sync", async () => {
+    const pending = gate()
+    const f = setup(async () => pending.promise)
+    const task = f.session.adoptRuntimeRun(input)
+    await flush()
+    await f.session.shutdown()
+    pending.open()
+    await expect(task).rejects.toThrow("observation ended")
+    expect(f.observations.get(f.invocation.id)?.disposed).toBe(true)
+    expect(f.interrupts).toEqual([])
+  })
+
+  test("should preserve pending output and its retry id when adopting again", async () => {
+    const f = setup()
+    const send = spyOn(f.client, "sendInvocationMessage").mockRejectedValueOnce(new Error("network"))
+    try {
+      await f.session.adoptRuntimeRun(input)
+      expect(await f.session.sendInterim(f.invocation.id, "Progress")).toMatchObject({ ok: false, retryable: true })
+      await f.session.adoptRuntimeRun(input)
+      expect(await f.session.sendInterim(f.invocation.id, "Progress")).toMatchObject({ ok: true })
+      expect(send.mock.calls[1]).toEqual(send.mock.calls[0])
+    } finally {
+      await f.session.shutdown()
+    }
+  })
+
+  test("should fence archive observation without interrupting native work", async () => {
+    const f = setup()
+    try {
+      const result = await f.session.adoptRuntimeRun(input)
+      if (result.status !== "claimed") throw new Error("not claimed")
+      await (
+        f.session as unknown as { handleSessionArchived: (payload: unknown) => Promise<void> }
+      ).handleSessionArchived({ runtimeSessionId: "rts-test", rootStreamId: "stream_root" })
+      expect(result.signal.aborted).toBe(true)
+      await expect(f.session.adoptRuntimeRun(input)).rejects.toThrow("live session link")
+      expect(f.interrupts).toEqual([])
+    } finally {
+      await f.session.shutdown()
+    }
+  })
+
+  test("should retain explicit stop control for adopted work", async () => {
+    const f = setup()
+    try {
+      const result = await f.session.adoptRuntimeRun(input)
+      if (result.status !== "claimed") throw new Error("not claimed")
+      await (
+        f.session as unknown as { handleSessionControl: (invocation: ClaimedInvocation) => Promise<void> }
+      ).handleSessionControl(
+        makeInvocation({
+          id: "binv_stop",
+          trigger: "session-control",
+          metadata: { command: { executionKind: "bot-runtime", id: "cmd_stop", name: "stop", args: "" } },
+        })
+      )
+      expect({ interrupts: f.interrupts, ended: result.signal.aborted }).toEqual({
+        interrupts: ["stream_root"],
+        ended: true,
+      })
+      expect(f.calls.complete).toContainEqual(
+        expect.objectContaining({ id: f.invocation.id, body: expect.objectContaining({ noResponse: true }) })
+      )
+    } finally {
+      await f.session.shutdown()
+    }
+  })
+
+  test("should propagate encrypted adoption rejection without sending a prompt", async () => {
+    const f = setup()
+    f.adopt.mockRejectedValue(new ThreaApiError("unsupported", 409, "ENCRYPTED_RUNTIME_ADOPTION_UNSUPPORTED"))
+    try {
+      await expect(f.session.adoptRuntimeRun(input)).rejects.toMatchObject({
+        code: "ENCRYPTED_RUNTIME_ADOPTION_UNSUPPORTED",
+      })
+      expect({ deliveries: f.deliveries, observers: f.observations.size }).toEqual({ deliveries: [], observers: 0 })
+    } finally {
+      await f.session.shutdown()
     }
   })
 })

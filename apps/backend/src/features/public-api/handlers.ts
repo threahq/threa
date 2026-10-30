@@ -170,6 +170,7 @@ import {
   endRuntimeSessionSchema,
   briefRuntimeSessionSchema,
   claimInvocationSchema,
+  adoptRuntimeRunSchema,
   renewInvocationClaimSchema,
   completeInvocationSchema,
   failInvocationSchema,
@@ -436,6 +437,28 @@ async function resolveConversationStreams(
   if (streamIds.length === 0) return new Map()
   const streams = await StreamRepository.findByIds(pool, workspaceId, streamIds)
   return new Map(streams.map((stream) => [stream.id, stream]))
+}
+
+function serializeInvocationClaim(invocation: BotInvocation, bot: Pick<Bot, "slug"> | null) {
+  return {
+    id: invocation.id,
+    workspaceId: invocation.workspaceId,
+    rootStreamId: invocation.rootStreamId,
+    activeStreamId: invocation.activeStreamId,
+    sourceMessageId: invocation.sourceMessageId,
+    responseStreamId: invocation.responseStreamId,
+    actor: { type: "bot" as const, id: invocation.actorId, slug: bot?.slug ?? "" },
+    trigger: invocation.trigger,
+    requiredCapability: invocation.requiredCapability,
+    promptMarkdown: invocation.promptMarkdown,
+    sourceRevision: invocation.sourceMessageRevision,
+    authorUserId: invocation.authorUserId,
+    mentionedActorSlugs: invocation.mentionedActorSlugs,
+    claimToken: invocation.claimToken!,
+    claimExpiresAt: invocation.claimExpiresAt!.toISOString(),
+    runtimeSessionId: invocation.targetRuntimeSessionId,
+    metadata: invocation.metadata,
+  }
 }
 
 // Label domain dates are already ISO strings on the wire shape; the only
@@ -774,6 +797,11 @@ async function buildSealedClaimContext(
   invocation: BotInvocation,
   instanceId: string
 ): Promise<SealedTurnContext> {
+  if (invocation.trigger === "runtime-origin")
+    throw new HttpError("Runtime adoption has no sealed source", {
+      status: 409,
+      code: "ENCRYPTED_RUNTIME_ADOPTION_UNSUPPORTED",
+    })
   const bikKeyIds = await RuntimeE2eKeysRepository.listEligibleKeyIdsForInstance(pool, {
     workspaceId: invocation.workspaceId,
     botId: invocation.actorId,
@@ -1182,7 +1210,7 @@ export function createPublicApiHandlers({
 
   async function terminalizeBotDenial(params: {
     error: unknown
-    session: { id: string; workspaceId: string; streamId: string; personaId: string; triggerMessageId: string }
+    session: { id: string; workspaceId: string; streamId: string; personaId: string; triggerMessageId: string | null }
     stream: Stream
     botId: string
     callbackToken: string
@@ -1799,6 +1827,28 @@ export function createPublicApiHandlers({
       })
     },
 
+    async adoptBotRuntimeRun(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const data = validateRequest(adoptRuntimeRunSchema, req.body)
+      const invocation = await botRuntimeService.adoptRuntimeRun({
+        ...data,
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        claimToken: randomUUID(),
+      })
+      setAuditSubjects(res, [{ type: "bot_invocation", id: invocation.id }])
+      if (invocation.status !== "claimed") {
+        return res.json({ data: { status: invocation.status, invocationId: invocation.id } })
+      }
+      const bot = await BotRepository.findById(pool, invocation.workspaceId, invocation.actorId)
+      res.json({
+        data: {
+          status: "claimed",
+          invocation: serializeInvocationClaim(invocation, bot),
+        },
+      })
+    },
+
     async claimBotInvocation(req: Request, res: Response) {
       if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
       const data = validateRequest(claimInvocationSchema, req.body)
@@ -1892,52 +1942,23 @@ export function createPublicApiHandlers({
             claimValidForSession = false
             return
           }
-          const latestSequence = await eventService.getLatestSequence(
-            invocation.workspaceId,
-            invocation.responseStreamId
+          const session = await botRuntimeService.startInvocationSessionInTransaction(
+            client,
+            invocation,
+            bot,
+            callbackBinding
           )
-          const session = await AgentSessionRepository.insertRunningOrSkip(client, {
-            id: invocation.id,
-            workspaceId: invocation.workspaceId,
-            streamId: invocation.responseStreamId,
-            personaId: bot.id,
-            triggerMessageId: invocation.sourceMessageId,
-            initialSequence: latestSequence ?? 0n,
-            ...callbackBinding,
-          })
           if (!session) return
           startedInThread = parentActivityTarget(
             await StreamRepository.findById(client, invocation.workspaceId, invocation.responseStreamId)
           )
-          const streamEvent = await StreamEventRepository.insert(client, {
-            id: eventId(),
-            workspaceId: invocation.workspaceId,
-            streamId: invocation.responseStreamId,
-            eventType: "agent_session:started",
-            payload: {
-              sessionId: session.id,
-              personaId: bot.id,
-              personaName: bot.name,
-              triggerMessageId: invocation.sourceMessageId,
-              rerunContext: null,
-              startedAt: session.createdAt.toISOString(),
-            },
-            actorId: bot.id,
-            actorType: AuthorTypes.BOT,
-          })
-          await OutboxRepository.insert(client, "agent_session:started", {
-            workspaceId: req.workspaceId!,
-            streamId: invocation.responseStreamId,
-            rootStreamId: invocation.rootStreamId,
-            event: streamEvent,
-          })
         })
       }
       if (!claimValidForSession) {
         res.locals.auditSkip = true
         return res.json({ data: null })
       }
-      if (startedInThread && bot) {
+      if (startedInThread && bot && invocation.sourceMessageId !== null) {
         emitAgentActivityStarted(io, {
           workspaceId: invocation.workspaceId,
           sessionId: invocation.id,
@@ -1947,26 +1968,11 @@ export function createPublicApiHandlers({
           target: startedInThread,
         })
       }
-      const context = await buildClaimContext(pool, invocation, verdict)
+      const context =
+        invocation.trigger === "runtime-origin" ? undefined : await buildClaimContext(pool, invocation, verdict)
       res.json({
         data: {
-          id: invocation.id,
-          workspaceId: invocation.workspaceId,
-          rootStreamId: invocation.rootStreamId,
-          activeStreamId: invocation.activeStreamId,
-          sourceMessageId: invocation.sourceMessageId,
-          responseStreamId: invocation.responseStreamId,
-          actor: { type: "bot", id: invocation.actorId, slug: bot?.slug ?? "" },
-          trigger: invocation.trigger,
-          requiredCapability: invocation.requiredCapability,
-          promptMarkdown: invocation.promptMarkdown,
-          sourceRevision: invocation.sourceMessageRevision,
-          authorUserId: invocation.authorUserId,
-          mentionedActorSlugs: invocation.mentionedActorSlugs,
-          claimToken: invocation.claimToken!,
-          claimExpiresAt: invocation.claimExpiresAt!.toISOString(),
-          runtimeSessionId: invocation.targetRuntimeSessionId,
-          metadata: invocation.metadata,
+          ...serializeInvocationClaim(invocation, bot),
           ...(context && { context }),
           ...(sealedContext && { sealedContext }),
           ...(sealedAck && { sealedAck }),
@@ -2805,7 +2811,7 @@ export function createPublicApiHandlers({
               // trace in the same transaction — the completed event's stepCount
               // and the rows land together (INV-7).
               let synthesizedSteps: AgentSessionStep[] = []
-              if (steps.length === 0 && message) {
+              if (steps.length === 0 && message && completed.trigger !== "runtime-origin") {
                 const author = await UserRepository.findById(client, req.workspaceId!, completed.authorUserId)
                 synthesizedSteps = await synthesizeReplyOnlyBotTrace(client, {
                   workspaceId: req.workspaceId!,

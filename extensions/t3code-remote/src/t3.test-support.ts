@@ -73,7 +73,9 @@ export function fakeT3() {
   const calls: Array<{ name: T3ToolName; args: Record<string, unknown> }> = []
   const items = new Map<string, ThreadItem[]>()
   const scripts = new Map<string, ScriptStep[]>()
-  const failures: Partial<Record<T3ToolName, Error[]>> = {}
+  const failures: Partial<
+    Record<T3ToolName, Array<{ error: Error; matches?: (args: Record<string, unknown>) => boolean }>>
+  > = {}
   const holds: Partial<Record<T3ToolName, Promise<void>[]>> = {}
   const wakers = new Map<string, Array<() => void>>()
   const continuations = new Map<string, string>()
@@ -238,11 +240,12 @@ export function fakeT3() {
       }
     },
     t3_thread_interrupt: () => ({ status: "interrupt_requested" }),
-    t3_thread_configuration: (args) => ({
-      modelSelection: models.get(args.threadId) ?? { instanceId: "codex", model: "gpt-5.5" },
-      runtimeMode: "full-access",
-    }),
     t3_thread_configure: (args) => {
+      if (!args.modelSelection)
+        return {
+          modelSelection: models.get(args.threadId) ?? { instanceId: "codex", model: "gpt-5.5" },
+          runtimeMode: "full-access",
+        }
       models.set(args.threadId, args.modelSelection)
       return { sequence: 1 }
     },
@@ -251,7 +254,7 @@ export function fakeT3() {
       archived.add(args.threadId)
       return { sequence: 1 }
     },
-    t3_thread_fork: (args) => {
+    t3_thread_transfer: (args) => {
       const targetThreadId = `thread_${++threads}`
       const model = models.get(args.threadId)
       if (model) models.set(targetThreadId, model)
@@ -289,15 +292,17 @@ export function fakeT3() {
         },
       ],
     }),
-    t3_pending_request_list: (args) => ({
-      requestIds: [...pending].filter(([, request]) => request.threadId === args.threadId).map(([id]) => id),
-    }),
-    t3_pending_request_read: (args) => ({
-      requestId: args.requestId,
-      questions: pendingRequest("t3_pending_request_read", args.requestId).questions,
-    }),
-    t3_pending_request_respond: (args) => {
-      const request = pendingRequest("t3_pending_request_respond", args.requestId)
+    t3_pending_request: (args) => {
+      if (args.action === "list")
+        return {
+          requestIds: [...pending].filter(([, request]) => request.threadId === args.threadId).map(([id]) => id),
+        }
+      if (args.action === "read")
+        return {
+          requestId: args.requestId,
+          questions: pendingRequest("t3_pending_request", args.requestId).questions,
+        }
+      const request = pendingRequest("t3_pending_request", args.requestId)
       // Like T3, only an answer sent as a message is checked.
       if (request.startsRun) {
         for (const question of request.questions) {
@@ -322,8 +327,11 @@ export function fakeT3() {
     call: async <K extends T3ToolName>(name: K, args: T3Tools[K]["args"]): Promise<T3Tools[K]["result"]> => {
       calls.push({ name, args: args as Record<string, unknown> })
       await holds[name]?.shift()
-      const failure = failures[name]?.shift()
-      if (failure) throw failure
+      const queued = failures[name]?.[0]
+      if (queued && (!queued.matches || queued.matches(args as Record<string, unknown>))) {
+        failures[name]!.shift()
+        throw queued.error
+      }
       return handlers[name](args)
     },
     upload: async (relativeUrl: string, bytes: Uint8Array) => {
@@ -336,13 +344,17 @@ export function fakeT3() {
     calls,
     uploads,
     replaceActivity: (threadId: string, activity: ThreadItem[]) => items.set(threadId, activity),
-    callsOf: (name: T3ToolName) => calls.filter((call) => call.name === name).map((call) => call.args),
+    callsOf: (name: T3ToolName, action?: string) =>
+      calls
+        .filter((call) => call.name === name && (action === undefined || call.args.action === action))
+        .map((call) => call.args),
     script: (runId: string, steps: ScriptStep[]) => {
       scripts.set(runId, [...(scripts.get(runId) ?? []), ...steps])
       for (const wake of wakers.get(runId) ?? []) wake()
       wakers.delete(runId)
     },
-    failNext: (name: T3ToolName, error: Error) => (failures[name] ??= []).push(error),
+    failNext: (name: T3ToolName, error: Error, matches?: (args: Record<string, unknown>) => boolean) =>
+      (failures[name] ??= []).push({ error, matches }),
     /** The next call to `name` waits until the returned release runs. */
     holdNext: (name: T3ToolName) => {
       let release = () => {}
@@ -392,11 +404,32 @@ export function fakeSession(rootStreamId = "stream_root") {
   const fails: Array<{ invocationId: string; errorMessage: string }> = []
   const decisions: Array<{ input: DecisionRequestInput; signal?: AbortSignal }> = []
   const outcomes: Array<DecisionOutcome | DecisionAbandonedError> = []
+  const adoptions: Array<{ responseStreamId: string; externalRunId: string; attachmentRequestId: string }> = []
+  const observations = new Map<string, AbortController>()
   let answer: (() => void) | undefined
   let settle: () => void = () => {}
   let settled = new Promise<void>((resolve) => (settle = resolve))
   const session: BridgeSession = {
     rootStreamId,
+    adoptRuntimeRun: async (input) => {
+      adoptions.push(input)
+      const abort = new AbortController()
+      observations.set(`adopt-${input.externalRunId}`, abort)
+      return { status: "claimed", invocationId: `adopt-${input.externalRunId}`, signal: abort.signal }
+    },
+    postToInvocation: async (invocationId, body) => {
+      const failure = postFailures.shift()
+      if (failure) throw failure
+      posts.push({
+        streamId: adoptions.find((input) => `adopt-${input.externalRunId}` === invocationId)!.responseStreamId,
+        text: body.content,
+        clientMessageId: body.clientMessageId,
+      })
+    },
+    endTurn: async (id) => {
+      observations.get(id)?.abort()
+      return { ok: true, message: "" }
+    },
     recordSteps: async (invocationId, frames, statusText) => {
       steps.push({ invocationId, frames, ...(statusText === undefined ? {} : { statusText }) })
       return true
@@ -413,11 +446,6 @@ export function fakeSession(rootStreamId = "stream_root") {
       const result = interimResults.shift() ?? { ok: true, message: "" }
       if (result.ok) interims.push({ invocationId, text })
       return result
-    },
-    postToStream: async (streamId, text, clientMessageId) => {
-      const failure = postFailures.shift()
-      if (failure) throw failure
-      posts.push({ streamId, text, clientMessageId })
     },
     isEncrypted: async (streamId) => encrypted.has(streamId),
     failTurn: async (invocationId, errorMessage) => {
@@ -443,6 +471,8 @@ export function fakeSession(rootStreamId = "stream_root") {
   }
   return {
     session,
+    adoptions,
+    observations,
     steps,
     replies,
     posts,
