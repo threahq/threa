@@ -41,8 +41,82 @@ describe("LinkPreviewCard", () => {
 
     render(<LinkPreviewCard preview={preview} />)
 
-    expect(screen.getByText("Open link:")).toBeInTheDocument()
     expect(screen.getByText("x.com/someone/status/1234567890")).toBeInTheDocument()
+  })
+
+  it("should keep collapsed navigation separate from its toggle and strip excerpt markdown", () => {
+    const toggle = vi.fn()
+    const preview = makeGitHubPreview({
+      title: "Read this",
+      description: "**Useful** [details](https://example.com)",
+      contentType: "pdf",
+    })
+    render(<LinkPreviewCard preview={preview} isCollapsed onToggleCollapse={toggle} />)
+    const link = screen.getByRole("link", { name: "Read this" })
+    const button = screen.getByRole("button", { name: "Expand preview" })
+    expect({
+      href: link.getAttribute("href"),
+      nested: button.contains(link),
+      expanded: button.getAttribute("aria-expanded"),
+      controlled: document.getElementById(button.getAttribute("aria-controls")!)?.hidden,
+    }).toEqual({ href: preview.url, nested: false, expanded: "false", controlled: true })
+    expect(screen.getByText("PDF")).toBeInTheDocument()
+    expect(screen.getByText("Useful details")).toBeInTheDocument()
+    fireEvent.click(button)
+    expect(toggle).toHaveBeenCalledWith(preview.id)
+  })
+
+  it("should recover its fixed favicon slot when the favicon URL changes", () => {
+    const preview = makeGitHubPreview({ title: "Title" })
+    const { container, rerender } = render(<LinkPreviewCard preview={preview} isCollapsed />)
+    const favicon = container.querySelector('img[src="https://github.com/favicon.ico"]')!
+    const slot = favicon.parentElement!
+    fireEvent.error(favicon)
+    expect({ slot: slot.isConnected, fallback: !!slot.querySelector("svg"), image: slot.querySelector("img") }).toEqual(
+      { slot: true, fallback: true, image: null }
+    )
+    rerender(<LinkPreviewCard preview={{ ...preview, faviconUrl: "https://example.com/new.ico" }} isCollapsed />)
+    expect(container.querySelector('img[src="https://example.com/new.ico"]')).toBeInTheDocument()
+  })
+
+  it.each([
+    {
+      type: "linear_issue",
+      label: "Linear issue",
+      data: {
+        title: "Track release",
+        identifier: "DEMO-12",
+        state: { name: "In progress", color: "#123456" },
+        assignee: null,
+      },
+    },
+    {
+      type: "linear_comment",
+      label: "Linear comment",
+      data: {
+        parent: { title: "Track release", identifier: "DEMO-12", state: { name: "In progress" } },
+        body: "**Ready** for review",
+      },
+    },
+    {
+      type: "linear_project",
+      label: "Linear project",
+      data: { name: "Track release", description: "**Ready** for review", status: "in_progress" },
+    },
+    {
+      type: "linear_document",
+      label: "Linear document",
+      data: { title: "Track release", summary: "**Ready** for review" },
+    },
+  ])("should identify a collapsed $label from existing provider data", ({ type, label, data }) => {
+    const preview = makeGitHubPreview({
+      url: "https://linear.app/demo/issue/DEMO-12",
+      previewData: { type, data, organization: { name: "Demo" } } as LinkPreviewSummary["previewData"],
+    })
+    render(<LinkPreviewCard preview={preview} isCollapsed />)
+    expect(screen.getByRole("link", { name: "Track release" })).toHaveAttribute("href", preview.url)
+    expect(screen.getByText(label)).toBeInTheDocument()
+    expect(screen.getByText(type === "linear_issue" ? "DEMO-12 · In progress" : "Ready for review")).toBeInTheDocument()
   })
 
   it("keeps the thumbnail box footprint when the image fails to load (INV-21)", () => {
@@ -235,7 +309,7 @@ describe("LinkPreviewCard", () => {
     expect(screen.getByText(/octocat\/hello-world/)).toBeInTheDocument()
   })
 
-  it("watches the expanded GitHub card again after it folds to a chip and back", () => {
+  it("should watch GitHub cards while expanded and collapsed", () => {
     const observed: Element[] = []
     vi.stubGlobal(
       "IntersectionObserver",
@@ -271,6 +345,8 @@ describe("LinkPreviewCard", () => {
 
     const { rerender } = render(<LinkPreviewCard preview={preview} workspaceId="ws_1" isCollapsed={false} />)
     rerender(<LinkPreviewCard preview={preview} workspaceId="ws_1" isCollapsed />)
+    expect(observed.at(-1)?.isConnected).toBe(true)
+    expect(screen.getByText(/#42 · Open · 1 approved/)).toBeInTheDocument()
     rerender(<LinkPreviewCard preview={preview} workspaceId="ws_1" isCollapsed={false} />)
     vi.unstubAllGlobals()
 

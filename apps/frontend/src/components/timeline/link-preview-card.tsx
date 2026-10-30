@@ -1,5 +1,5 @@
 import { useMediaGallery } from "@/contexts"
-import { useState, useCallback, useEffect, useMemo, type ReactNode } from "react"
+import { useState, useCallback, useEffect, useMemo, useId, type ReactNode } from "react"
 import {
   ExternalLink,
   X,
@@ -31,6 +31,8 @@ import {
   linkPreviewDomain as getDomain,
 } from "@/components/gallery/link-preview-gallery-id"
 import { isVideoPreview, videoPlaybackSrc } from "@/components/gallery/video-embed"
+import { stripMarkdownToInline } from "@/lib/markdown/strip"
+import { classifyLinkPreview } from "./link-preview-policy"
 import { LinkPreviewBody } from "./link-preview-body"
 import { useReportPreviewVisible } from "@/hooks/use-report-preview-visible"
 import {
@@ -141,12 +143,12 @@ export function LinkPreviewCard({
     providerPreview && !isLinearPreview(providerPreview) && !isVideoPreview(providerPreview) ? providerPreview : null
   const linearPreview = isLinearPreview(providerPreview) ? providerPreview : null
 
-  // GitHub cards only: feeds the viewport-nudge conditional refresh, which is
-  // how previews from repos without webhook coverage stay fresh while watched.
+  const bodyId = useId()
+  const presentation = previewPresentation(preview)
   const visibilityRef = useReportPreviewVisible({
     workspaceId,
     previewId: preview.id,
-    enabled: githubPreview !== null && !isCollapsedProp,
+    enabled: githubPreview !== null,
   })
 
   const handleDismiss = useCallback(
@@ -169,84 +171,142 @@ export function LinkPreviewCard({
 
   const headerIcon = resolveHeaderIcon(githubPreview, linearPreview, preview.contentType)
   const headerLabel = resolveHeaderLabel(githubPreview, linearPreview, preview.siteName, domain)
-  const headerFavicon = !githubPreview && !linearPreview ? preview.faviconUrl : null
 
-  if (isCollapsedProp) {
-    return (
-      <div className={previewCardClassName(isHighlighted)}>
-        <PreviewCardHeader
-          collapsed
-          icon={headerIcon}
-          label={preview.title || headerLabel}
-          faviconUrl={headerFavicon}
-          onToggleCollapse={handleToggleCollapse}
-          onDismiss={onDismiss ? handleDismiss : undefined}
-        />
-      </div>
-    )
+  let body: ReactNode = null
+  if (!isCollapsedProp) {
+    if (preview.contentType === "image") {
+      body = <ImagePreviewContent preview={preview} messageId={messageId ?? ""} />
+    } else if (videoPreview) {
+      body = <VideoPreviewContent video={videoPreview} workspaceId={workspaceId} />
+    } else {
+      body = (
+        <LinkPreviewBody messageId={messageId} previewId={preview.id}>
+          <ProviderContent preview={preview} imageError={imageError} onImageError={() => setImageError(true)} />
+        </LinkPreviewBody>
+      )
+    }
   }
 
-  if (preview.contentType === "image") {
-    // data-native-context makes the row long-press hook defer to the browser's
-    // native menu (via `deferToNativeLinks`), so long-pressing the image still
-    // gets "save/copy image" on touch instead of the app drawer — the tap opens
-    // the gallery, and the gallery gates download/copy off for external images.
-    return (
-      <div data-native-context="true" className={previewCardClassName(isHighlighted)}>
-        <PreviewCardHeader
-          icon={<ContentTypeIcon contentType="image" />}
-          label={preview.siteName ?? domain}
-          faviconUrl={preview.faviconUrl}
-          onToggleCollapse={handleToggleCollapse}
-          onDismiss={onDismiss ? handleDismiss : undefined}
-        />
-        <ImagePreviewContent preview={preview} messageId={messageId ?? ""} />
-      </div>
-    )
-  }
-
-  if (preview.contentType === "video" && videoPreview) {
-    return (
-      <div data-native-context="true" className={previewCardClassName(isHighlighted)}>
-        <PreviewCardHeader
-          icon={<ContentTypeIcon contentType="video" />}
-          label={preview.siteName ?? domain}
-          faviconUrl={preview.faviconUrl}
-          onToggleCollapse={handleToggleCollapse}
-          onDismiss={onDismiss ? handleDismiss : undefined}
-        />
-        <VideoPreviewContent video={videoPreview} workspaceId={workspaceId} />
-      </div>
-    )
-  }
-
-  // data-native-context tells the message-level long-press hook to skip its
-  // timer so long-pressing anywhere on the card gets the browser's native link
-  // menu (via the inner <a>) instead of the message drawer.
   return (
     <div ref={visibilityRef} data-native-context="true" className={previewCardClassName(isHighlighted)}>
       <PreviewCardHeader
         icon={headerIcon}
         label={headerLabel}
-        faviconUrl={headerFavicon}
+        presentation={presentation}
+        url={preview.url}
+        faviconUrl={preview.faviconUrl}
+        collapsed={isCollapsedProp}
+        bodyId={bodyId}
         onToggleCollapse={handleToggleCollapse}
         onDismiss={onDismiss ? handleDismiss : undefined}
       />
-
-      {/* Clamped to a shared body height so a message with mixed preview types
-          (e.g. a PR + a diff) lines up. */}
-      <LinkPreviewBody messageId={messageId} previewId={preview.id}>
-        <a
-          href={preview.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="block hover:bg-muted/20 transition-colors"
-        >
-          <ProviderContent preview={preview} imageError={imageError} onImageError={() => setImageError(true)} />
-        </a>
-      </LinkPreviewBody>
+      <div id={bodyId} hidden={isCollapsedProp}>
+        {body}
+      </div>
     </div>
   )
+}
+
+interface PreviewPresentation {
+  title: string
+  type: string
+  summary: string
+}
+
+function previewPresentation(preview: LinkPreviewSummary): PreviewPresentation {
+  const provider = preview.previewData
+  const category = classifyLinkPreview(preview)
+  let title = preview.title || getGenericFallbackLabel(preview.url)
+  let type: string = {
+    image: "Image",
+    video: "Video",
+    github: "GitHub",
+    linear: "Linear",
+    website: "Website",
+    pdf: "PDF",
+  }[category]
+  let summary = preview.description ?? ""
+  if (provider) {
+    switch (provider.type) {
+      case "github_pr": {
+        const data = provider.data as GitHubPrPreviewData
+        title = data.title
+        type = "GitHub pull request"
+        summary = `#${data.number} · ${PR_STATE_LABELS[data.state]}`
+        const reviews = reviewSummaryParts(data.reviewStatusSummary)
+        if (reviews.length) summary += ` · ${reviews.join(" · ")}`
+        break
+      }
+      case "github_issue": {
+        const data = provider.data as GitHubIssuePreviewData
+        title = data.title
+        type = "GitHub issue"
+        summary = `#${data.number} · ${data.state === "open" ? "Open" : "Closed"} · ${data.commentCount} comments`
+        break
+      }
+      case "github_commit": {
+        const data = provider.data as GitHubCommitPreviewData
+        title = data.message.split("\n")[0]
+        type = "GitHub commit"
+        summary = `${data.shortSha} · ${data.filesChanged} files · +${data.additions} −${data.deletions}`
+        break
+      }
+      case "github_file": {
+        const data = provider.data as GitHubFilePreviewData
+        title = data.path
+        type = "GitHub file"
+        summary = `${data.ref}${data.language ? ` · ${data.language}` : ""} · ${formatLineRange(data)}`
+        break
+      }
+      case "github_diff": {
+        const data = provider.data as GitHubDiffPreviewData
+        title = data.path
+        type = "GitHub diff"
+        summary = `PR #${data.pullRequest.number} · ${PR_STATE_LABELS[data.pullRequest.state]} · ${capitalizeChangeType(data.changeType)}${formatDiffAnchor(data)}`
+        break
+      }
+      case "github_comment": {
+        const data = provider.data as GitHubCommentPreviewData
+        type = "GitHub comment"
+        title = preview.title || data.parent.title
+        summary = data.body || `${data.author?.login ?? "Unknown"} · #${data.parent.number}`
+        break
+      }
+      case "linear_issue": {
+        const data = provider.data as LinearIssuePreviewData
+        title = data.title
+        type = "Linear issue"
+        summary = `${data.identifier} · ${data.state.name}${data.assignee ? ` · ${data.assignee.displayName}` : ""}`
+        break
+      }
+      case "linear_comment": {
+        const data = provider.data as LinearCommentPreviewData
+        title = data.parent.title
+        type = "Linear comment"
+        summary = data.body || `${data.parent.identifier} · ${data.parent.state.name}`
+        break
+      }
+      case "linear_project": {
+        const data = provider.data as LinearProjectPreviewData
+        title = data.name
+        type = "Linear project"
+        summary = data.description || formatLinearStatus(data.status)
+        break
+      }
+      case "linear_document": {
+        const data = provider.data as LinearDocumentPreviewData
+        title = data.title
+        type = "Linear document"
+        summary = data.summary || data.parentProject?.name || ""
+        break
+      }
+      case "video":
+        title = provider.title || title
+        summary = provider.authorName || summary
+        break
+    }
+  }
+  return { title, type, summary: stripMarkdownToInline(summary) }
 }
 
 function previewCardClassName(isHighlighted?: boolean): string {
@@ -258,67 +318,68 @@ function previewCardClassName(isHighlighted?: boolean): string {
   )
 }
 
-/**
- * Card chrome header shared by every preview family: collapse toggle, provider
- * icon, optional favicon, source label, and dismiss. `faviconUrl` is null when
- * the provider already carries its own icon (GitHub/Linear). A folded card is
- * this row alone, so folding keeps the card's width and header height; the
- * whole row then expands it.
- */
 function PreviewCardHeader({
   icon,
   label,
+  presentation,
+  url,
   faviconUrl,
   collapsed = false,
+  bodyId,
   onToggleCollapse,
   onDismiss,
 }: {
   icon: ReactNode
   label: string
+  presentation: PreviewPresentation
+  url: string
   faviconUrl: string | null
   collapsed?: boolean
+  bodyId: string
   onToggleCollapse: (e: React.MouseEvent) => void
   onDismiss?: (e: React.MouseEvent) => void
 }) {
   return (
-    <div className={cn("flex items-center gap-1.5 px-3 py-1.5 bg-muted/30", !collapsed && "border-b")}>
-      {collapsed ? (
-        <button
-          type="button"
-          onClick={onToggleCollapse}
-          aria-expanded={false}
-          title={label}
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
-          {icon}
-          {faviconUrl && <PreviewFavicon src={faviconUrl} />}
+    <div className={cn("flex items-start gap-1 bg-muted/30 p-2", !collapsed && "border-b")}>
+      <button
+        type="button"
+        onClick={onToggleCollapse}
+        aria-label={collapsed ? "Expand preview" : "Collapse preview"}
+        aria-expanded={!collapsed}
+        aria-controls={bodyId}
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+      </button>
+      <div className="min-w-0 flex-1 py-1">
+        <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <PreviewFavicon key={faviconUrl} src={faviconUrl} fallback={icon} />
           <span className="truncate">{label}</span>
-        </button>
-      ) : (
-        <>
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            aria-label="Collapse preview"
-            aria-expanded
-          >
-            <ChevronDown className="h-3 w-3" />
-          </button>
-          {icon}
-          {faviconUrl && <PreviewFavicon src={faviconUrl} />}
-          <span className="text-xs text-muted-foreground truncate">{label}</span>
-          <ExternalLink className="h-3 w-3 text-muted-foreground/50 shrink-0 ml-auto" />
-        </>
-      )}
-      <div className="reveal-actions flex gap-1">
-        {onDismiss && (
-          <Button variant="ghost" size="icon" className="h-5 w-5" onClick={onDismiss} aria-label="Dismiss preview">
-            <X className="h-3 w-3" />
-          </Button>
+        </div>
+        <p className="mt-1 text-[11px] text-muted-foreground">{presentation.type}</p>
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-0.5 block text-sm font-semibold leading-snug text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <span className="line-clamp-2">{presentation.title}</span>
+        </a>
+        {collapsed && presentation.summary && (
+          <p className="mt-1 line-clamp-1 text-xs leading-relaxed text-muted-foreground">{presentation.summary}</p>
         )}
       </div>
+      {onDismiss && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-10 w-10 shrink-0"
+          onClick={onDismiss}
+          aria-label="Dismiss preview"
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      )}
     </div>
   )
 }
@@ -438,34 +499,27 @@ function VideoPreviewContent({ video, workspaceId }: { video: VideoPreview; work
             referrerPolicy="strict-origin-when-cross-origin"
           />
         ) : (
-          <>
-            <button
-              type="button"
-              onClick={() => setPlaying(true)}
-              className="group/play absolute inset-0 flex cursor-pointer items-center justify-center"
-              aria-label={`Play video: ${title}`}
-            >
-              {video.posterUrl && !posterError ? (
-                <img
-                  src={video.posterUrl}
-                  alt=""
-                  loading="lazy"
-                  onError={() => setPosterError(true)}
-                  className="absolute inset-0 h-full w-full object-cover"
-                />
-              ) : (
-                <div className="absolute inset-0 bg-gradient-to-br from-muted to-muted/40" />
-              )}
-              <span className="relative flex h-14 w-14 items-center justify-center rounded-full bg-black/60 text-white shadow-lg backdrop-blur-sm transition-transform group-hover/play:scale-110">
-                <Play className="h-7 w-7 translate-x-0.5" fill="currentColor" />
-              </span>
-            </button>
-            {video.title && (
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-2.5">
-                <span className="line-clamp-1 text-xs font-medium text-white">{video.title}</span>
-              </div>
+          <button
+            type="button"
+            onClick={() => setPlaying(true)}
+            className="group/play absolute inset-0 flex cursor-pointer items-center justify-center"
+            aria-label={`Play video: ${title}`}
+          >
+            {video.posterUrl && !posterError ? (
+              <img
+                src={video.posterUrl}
+                alt=""
+                loading="lazy"
+                onError={() => setPosterError(true)}
+                className="absolute inset-0 h-full w-full object-cover"
+              />
+            ) : (
+              <div className="absolute inset-0 bg-gradient-to-br from-muted to-muted/40" />
             )}
-          </>
+            <span className="relative flex h-14 w-14 items-center justify-center rounded-full bg-black/60 text-white shadow-lg backdrop-blur-sm transition-transform group-hover/play:scale-110">
+              <Play className="h-7 w-7 translate-x-0.5" fill="currentColor" />
+            </span>
+          </button>
         )}
         {/* Expand-to-gallery stays mounted in both the facade and playing states
             (z-10 above the iframe) so fullscreen is reachable after playback
@@ -583,9 +637,6 @@ function GenericPreviewContent({
   imageError: boolean
   onImageError: () => void
 }) {
-  const fallbackLabel = getGenericFallbackLabel(preview.url)
-  const hasPrimaryMetadata = Boolean(preview.title || preview.description || preview.imageUrl)
-
   // Text intentionally flows at natural height — `LinkPreviewBody` clips the
   // whole card to a shared ceiling and reveals a "Show more" toggle when
   // overflow occurs. Pre-truncating with `line-clamp-*` hid overflow from
@@ -595,13 +646,9 @@ function GenericPreviewContent({
       <AccentGlow />
       <div className="relative flex gap-3.5">
         <div className="min-w-0 flex-1">
-          {preview.title && <h4 className="text-sm font-semibold leading-snug text-foreground">{preview.title}</h4>}
           {preview.description && (
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{preview.description}</p>
-          )}
-          {!hasPrimaryMetadata && (
-            <p className="text-xs text-muted-foreground">
-              Open link: <span className="font-medium text-foreground">{fallbackLabel}</span>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              {stripMarkdownToInline(preview.description)}
             </p>
           )}
         </div>
@@ -655,7 +702,6 @@ function GitHubPrContent({ data }: { data: GitHubPrPreviewData }) {
             </StatePill>
             <MonoTag>#{data.number}</MonoTag>
           </div>
-          <h4 className="mt-1.5 text-sm font-semibold leading-snug text-foreground line-clamp-2">{data.title}</h4>
           <FieldGrid className="mt-3">
             <Field label="Branch">
               <span title={`${data.headBranch} → ${data.baseBranch}`}>
@@ -676,13 +722,17 @@ function GitHubPrContent({ data }: { data: GitHubPrPreviewData }) {
   )
 }
 
-function ReviewSummary({ summary }: { summary: GitHubPrPreviewData["reviewStatusSummary"] }) {
+function reviewSummaryParts(summary: GitHubPrPreviewData["reviewStatusSummary"]): string[] {
   const parts: string[] = []
   if (summary.approvals > 0) parts.push(`${summary.approvals} approved`)
   if (summary.changesRequested > 0) parts.push(`${summary.changesRequested} changes requested`)
   if (summary.pendingReviewers > 0) parts.push(`${summary.pendingReviewers} pending`)
-  if (parts.length === 0) return null
+  return parts
+}
 
+function ReviewSummary({ summary }: { summary: GitHubPrPreviewData["reviewStatusSummary"] }) {
+  const parts = reviewSummaryParts(summary)
+  if (parts.length === 0) return null
   return <p className="mt-2.5 text-[11px] text-muted-foreground">{parts.join(" · ")}</p>
 }
 
@@ -707,7 +757,6 @@ function GitHubIssueContent({ data }: { data: GitHubIssuePreviewData }) {
               </span>
             )}
           </div>
-          <h4 className="mt-1.5 text-sm font-semibold leading-snug text-foreground line-clamp-2">{data.title}</h4>
           {data.labels.length > 0 && (
             <div className="mt-2.5 flex flex-wrap gap-1">
               {data.labels.slice(0, 5).map((label) => (
@@ -727,8 +776,6 @@ function GitHubIssueContent({ data }: { data: GitHubIssuePreviewData }) {
 }
 
 function GitHubCommitContent({ data }: { data: GitHubCommitPreviewData }) {
-  const firstLine = data.message.split("\n")[0]
-
   return (
     <div className="relative overflow-hidden p-3">
       <AccentGlow />
@@ -739,7 +786,6 @@ function GitHubCommitContent({ data }: { data: GitHubCommitPreviewData }) {
             <MonoTag>{data.shortSha}</MonoTag>
             <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80">Commit</span>
           </div>
-          <h4 className="mt-1.5 text-sm font-semibold leading-snug text-foreground line-clamp-2">{firstLine}</h4>
           <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
             <span>
               {data.filesChanged} file{data.filesChanged !== 1 ? "s" : ""}
@@ -777,9 +823,6 @@ function GitHubFileContent({ preview, data }: { preview: LinkPreviewSummary; dat
     <div className="relative overflow-hidden p-3">
       <AccentGlow />
       <div className="relative min-w-0">
-        {preview.title && (
-          <h4 className="text-sm font-semibold leading-snug text-foreground line-clamp-1">{preview.title}</h4>
-        )}
         <p className="mt-0.5 text-xs text-muted-foreground line-clamp-1">
           {preview.previewData && "repository" in preview.previewData && preview.previewData.repository.fullName}
           {" · "}
@@ -809,7 +852,6 @@ function GitHubDiffContent({ data }: { data: GitHubDiffPreviewData }) {
     <div className="relative overflow-hidden p-3">
       <AccentGlow color={stateColor} />
       <div className="relative min-w-0">
-        <h4 className="text-sm font-semibold leading-snug text-foreground line-clamp-1">{data.path}</h4>
         <p className="mt-0.5 text-xs text-muted-foreground">
           PR #{data.pullRequest.number} · {data.pullRequest.title} · {capitalizeChangeType(data.changeType)}
           {data.language ? ` · ${data.language}` : ""}
@@ -980,7 +1022,6 @@ function LinearIssueContent({ data }: { data: LinearIssuePreviewData }) {
             <StatePill color={data.state.color}>{data.state.name}</StatePill>
             <MonoTag>{data.identifier}</MonoTag>
           </div>
-          <h4 className="mt-1.5 text-sm font-semibold leading-snug text-foreground line-clamp-2">{data.title}</h4>
           {data.summary && (
             <div className="mt-2.5 border-l-2 pl-2.5" style={{ borderColor: colorWithAlpha(data.state.color, 0.65) }}>
               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/80">Summary</p>
@@ -1028,7 +1069,6 @@ function LinearCommentContent({ data }: { data: LinearCommentPreviewData }) {
             <span className="text-muted-foreground">commented on</span>
             <MonoTag>{data.parent.identifier}</MonoTag>
           </div>
-          <p className="mt-1 text-xs font-medium leading-snug text-foreground line-clamp-2">{data.parent.title}</p>
           {data.body && (
             <div className="mt-2.5 flex gap-2">
               <div
@@ -1066,7 +1106,6 @@ function LinearProjectContent({ data }: { data: LinearProjectPreviewData }) {
             )}
             <span className="text-[10px] font-medium text-muted-foreground">Project</span>
           </div>
-          <h4 className="mt-1.5 text-sm font-semibold leading-snug text-foreground line-clamp-2">{data.name}</h4>
           {data.description && (
             <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground line-clamp-2">{data.description}</p>
           )}
@@ -1092,7 +1131,6 @@ function LinearDocumentContent({ data }: { data: LinearDocumentPreviewData }) {
       <div className="relative flex items-start gap-2.5">
         <LinearActorAvatar actor={data.updatedBy} className="mt-0.5 ring-2 ring-background" />
         <div className="min-w-0 flex-1">
-          <h4 className="text-sm font-semibold leading-snug text-foreground line-clamp-2">{data.title}</h4>
           {data.parentProject && <p className="mt-0.5 text-xs text-muted-foreground">in {data.parentProject.name}</p>}
           {data.summary && <p className="mt-1.5 text-xs text-muted-foreground line-clamp-3">{data.summary}</p>}
         </div>
@@ -1119,16 +1157,20 @@ function formatLinearStatus(status: string): string {
     .join(" ")
 }
 
-function PreviewFavicon({ src }: { src: string }) {
+function PreviewFavicon({ src, fallback }: { src: string | null; fallback: ReactNode }) {
+  const [failed, setFailed] = useState(false)
   return (
-    <img
-      src={src}
-      alt=""
-      className="h-3.5 w-3.5 shrink-0 rounded-sm"
-      loading="lazy"
-      onError={(e) => {
-        ;(e.target as HTMLImageElement).style.display = "none"
-      }}
-    />
+    <span className="relative flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden="true">
+      {fallback}
+      {src && !failed && (
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          className="absolute inset-0 h-4 w-4 rounded-sm bg-card object-contain"
+          onError={() => setFailed(true)}
+        />
+      )}
+    </span>
   )
 }

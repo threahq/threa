@@ -9,6 +9,12 @@ import { __resetCollapseCacheForTests } from "@/lib/markdown/collapse-cache"
 import { LinkPreviewList } from "./link-preview-list"
 import type { LinkPreviewSummary } from "@threahq/types"
 
+function toggleForTitle(title: string) {
+  return within(
+    screen.getByRole("link", { name: title }).closest('[data-native-context="true"]') as HTMLElement
+  ).getByRole("button", { name: /^(Expand|Collapse) preview$/ })
+}
+
 function renderList(previews: LinkPreviewSummary[]) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -117,12 +123,12 @@ describe("LinkPreviewList", () => {
     expect(screen.getByRole("button", { name: "Collapse preview" })).toBeInTheDocument()
   })
 
-  it("opens the first three previews and folds the rest to chips", () => {
+  it("should open the first three previews and collapse the rest", () => {
     renderList(many)
 
-    for (let i = 0; i < 3; i++) expect(screen.getByText(`Description ${i}`)).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Title 3" })).toHaveAttribute("aria-expanded", "false")
-    expect(screen.getByRole("button", { name: "Title 4" })).toHaveAttribute("aria-expanded", "false")
+    for (let i = 0; i < 3; i++) expect(toggleForTitle(`Title ${i}`)).toHaveAttribute("aria-expanded", "true")
+    expect(toggleForTitle("Title 3")).toHaveAttribute("aria-expanded", "false")
+    expect(toggleForTitle("Title 4")).toHaveAttribute("aria-expanded", "false")
     expect(screen.queryByText(/more preview/)).not.toBeInTheDocument()
   })
 
@@ -132,17 +138,18 @@ describe("LinkPreviewList", () => {
     } as ReturnType<typeof contextsModule.usePreferences>)
     renderList([preview])
 
-    expect(screen.queryByText("Preview description")).not.toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Preview title" })).toBeInTheDocument()
+    expect(screen.getByText("Preview description")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Preview title" })).toBeInTheDocument()
+    expect(toggleForTitle("Preview title")).toHaveAttribute("aria-expanded", "false")
   })
 
   it("should preserve a manually opened preview across remount and default changes", async () => {
     const user = userEvent.setup()
     const { unmount } = renderList(many)
 
-    await user.click(screen.getByRole("button", { name: "Title 3" }))
-    expect(screen.getByText("Description 3")).toBeInTheDocument()
-    expect(screen.queryByText("Description 4")).not.toBeInTheDocument()
+    await user.click(toggleForTitle("Title 3"))
+    expect(toggleForTitle("Title 3")).toHaveAttribute("aria-expanded", "true")
+    expect(toggleForTitle("Title 4")).toHaveAttribute("aria-expanded", "false")
 
     unmount()
     vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
@@ -150,8 +157,8 @@ describe("LinkPreviewList", () => {
     } as ReturnType<typeof contextsModule.usePreferences>)
     renderList(many)
 
-    expect(screen.getByText("Description 3")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Title 4" })).toHaveAttribute("aria-expanded", "false")
+    expect(toggleForTitle("Title 3")).toHaveAttribute("aria-expanded", "true")
+    expect(toggleForTitle("Title 4")).toHaveAttribute("aria-expanded", "false")
   })
 
   it("keeps a lone web preview open next to an in-app card", async () => {
@@ -168,7 +175,7 @@ describe("LinkPreviewList", () => {
     }
     renderList([messagePreview, preview])
 
-    expect(screen.getByText("Preview description")).toBeInTheDocument()
+    expect(toggleForTitle("Preview title")).toHaveAttribute("aria-expanded", "true")
     await waitFor(() => expect(screen.getByText("This message was deleted")).toBeInTheDocument())
   })
 
@@ -186,23 +193,23 @@ describe("LinkPreviewList", () => {
         url: `https://app.threa.io/w/ws_123/s/stream_1?m=msg_${i}`,
       })
     )
-    const chips = [0, 1].map((i) => ({ ...preview, id: `p_web_${i}`, title: `Web ${i}` }))
-    renderList([...cards, ...chips])
+    const websites = [0, 1].map((i) => ({ ...preview, id: `p_web_${i}`, title: `Web ${i}` }))
+    renderList([...cards, ...websites])
 
     await waitFor(() => expect(screen.getAllByText("This message was deleted")).toHaveLength(3))
-    expect(screen.getByRole("link", { name: "Web 0 Preview description" })).toBeInTheDocument()
-    expect(screen.getByRole("link", { name: "Web 1 Preview description" })).toBeInTheDocument()
+    expect(toggleForTitle("Web 0")).toHaveAttribute("aria-expanded", "true")
+    expect(toggleForTitle("Web 1")).toHaveAttribute("aria-expanded", "true")
     expect(screen.getByRole("button", { name: "Show 1 more preview" })).toBeInTheDocument()
   })
 
-  it("shows every chip without the three-preview cap when the preference says collapsed", () => {
+  it("should show every collapsed row without a cap when the preference says collapsed", () => {
     vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
       preferences: { linkPreviewDefault: "collapsed" },
     } as ReturnType<typeof contextsModule.usePreferences>)
-    const { container } = renderList(many)
+    renderList(many)
 
     for (let i = 0; i < 5; i++) {
-      expect(within(container).getByRole("button", { name: `Title ${i}` })).toBeInTheDocument()
+      expect(toggleForTitle(`Title ${i}`)).toHaveAttribute("aria-expanded", "false")
     }
     expect(screen.queryByText(/more preview/)).not.toBeInTheDocument()
   })

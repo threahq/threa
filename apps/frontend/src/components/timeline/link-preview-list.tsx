@@ -209,7 +209,7 @@ function WebPreviewItem({
       onToggleCollapse={toggle}
     />
   )
-  return open ? <div className="basis-full min-w-0">{card}</div> : card
+  return <div className="basis-full min-w-0">{card}</div>
 }
 
 /** Normalize URL for hover comparison (strip trailing slash, lowercase) */
