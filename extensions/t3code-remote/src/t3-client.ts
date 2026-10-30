@@ -54,6 +54,7 @@ export interface ThreadSummary {
   status: RunStatus | "idle"
   /** The thread's newest run, queued ones included. */
   latestRunId: string | null
+  activeRunId: string | null
   providerInstanceId: string
   model: string
   archived: boolean
@@ -129,7 +130,13 @@ export interface T3Tools {
       itemId?: string
       textOffset?: number
     }
-    result: { thread: ThreadSummary; items: ThreadItem[]; nextPosition: number | null; hasMore: boolean }
+    result: {
+      thread: ThreadSummary
+      recentRuns: Array<{ runId: string; ordinal: number; status: RunStatus | "idle" }>
+      items: ThreadItem[]
+      nextPosition: number | null
+      hasMore: boolean
+    }
   }
   t3_thread_interrupt: {
     args: { threadId: string; runId?: string; reason?: string }
