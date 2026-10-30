@@ -374,7 +374,7 @@ describe("sealed claim hydration + delivery", () => {
         if (phase === "finished") await fireIdleTimeout(session, "binv_sealed")
         expect(session.isInflight("binv_sealed")).toBe(false)
         expect(await openSealed(calls.completeSealed[0]!.body.reply as SealedReplyBody)).toContain(
-          "without sending a reply"
+          "This Threa request closed without a reply."
         )
       } finally {
         await session.shutdown()
@@ -840,7 +840,7 @@ describe("sealed output paths", () => {
     expect(calls.complete).toHaveLength(0)
     expect(calls.completeSealed).toHaveLength(1)
     const body = calls.completeSealed[0]!.body
-    expect(await openSealed(body.reply as SealedReplyBody)).toContain("without sending a reply")
+    expect(await openSealed(body.reply as SealedReplyBody)).toContain("This Threa request closed without a reply.")
   })
 
   test("endTurn seals the final assistant text as the reply when the turn posted nothing", async () => {
@@ -981,7 +981,7 @@ describe("sealed late delivery after completion", () => {
     expect(completeSealedAttempts[1]).toEqual(completeSealedAttempts[0])
     const timeoutReply = completeSealedAttempts[0]!.body.reply as SealedReplyBody
     expect(timeoutReply.messageId).toBe((completeSealedAttempts[1]!.body.reply as SealedReplyBody).messageId)
-    expect(await openSealed(timeoutReply)).toContain("without sending a reply")
+    expect(await openSealed(timeoutReply)).toContain("This Threa request closed without a reply.")
     expect(calls.sealedMessages).toHaveLength(1)
     expect(await openSealed(calls.sealedMessages[0]!.body)).toBe("Here it is.")
   })
