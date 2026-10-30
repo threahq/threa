@@ -218,6 +218,7 @@ export function LedgerRow({
           onOpenChange={setDrawerOpen}
           context={menuContext}
           authorName={authorName}
+          sentAt={message.createdAt}
         />
       )}
       {labelPickerOpen && (

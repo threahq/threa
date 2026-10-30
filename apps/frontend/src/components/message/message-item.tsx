@@ -585,6 +585,7 @@ export function MessageItem({
           onOpenChange={setDrawerOpen}
           context={menuContext}
           authorName={authorName}
+          sentAt={message.createdAt}
         />
       )}
       {mobilePickerOpen && (
