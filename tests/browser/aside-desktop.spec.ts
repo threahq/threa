@@ -1,5 +1,11 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk, expectPaneFlash, panesSettled } from "./helpers"
+import {
+  loginAndCreateWorkspaceViaApi,
+  createChannelViaApi,
+  expectApiOk,
+  expectPaneFlash,
+  panesSettled,
+} from "./helpers"
 
 /**
  * The desktop aside surface end to end: open from a message beside the host
@@ -16,12 +22,17 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk, expectPaneFlash, p
 
 test.describe.configure({ timeout: 150_000 })
 
-const MESSAGE_COUNT = 40
 const AGENT_REPLY_TIMEOUT = 45_000
 
-async function seedMessages(page: Page, workspaceId: string, streamId: string, prefix: string): Promise<void> {
+async function seedMessages(
+  page: Page,
+  workspaceId: string,
+  streamId: string,
+  prefix: string,
+  count: number
+): Promise<void> {
   // In order: the tests pick rows by number and expect msg-(n+1) right below msg-n.
-  for (let n = 1; n <= MESSAGE_COUNT; n++) {
+  for (let n = 1; n <= count; n++) {
     await expectApiOk(
       await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
         data: { streamId, content: `${prefix} msg-${String(n).padStart(3, "0")}` },
@@ -29,14 +40,6 @@ async function seedMessages(page: Page, workspaceId: string, streamId: string, p
       `Send message ${n}`
     )
   }
-}
-
-function extractIds(page: Page): { workspaceId: string; streamId: string } {
-  const url = page.url()
-  const workspaceMatch = url.match(/\/w\/([^/]+)/)
-  const streamMatch = url.match(/\/s\/([^/?]+)/)
-  if (!workspaceMatch || !streamMatch) throw new Error(`Could not extract IDs from URL: ${url}`)
-  return { workspaceId: workspaceMatch[1], streamId: streamMatch[1] }
 }
 
 function hostScroller(page: Page, streamId: string): Locator {
@@ -117,10 +120,12 @@ async function expectSilent(page: Page, asideId: string): Promise<void> {
 
 test.describe("Aside — desktop surface", () => {
   let testId: string
+  let workspaceId: string
 
   test.beforeEach(async ({ page }) => {
-    const result = await loginAndCreateWorkspace(page, "aside")
+    const result = await loginAndCreateWorkspaceViaApi(page, "aside")
     testId = result.testId
+    workspaceId = result.workspaceId
     // Wide enough that the default 480px pane beside a 260px sidebar never reflows the 800px-max timeline
     // column, so any host scroll movement on open is the surface's doing, not a reflow.
     await page.setViewportSize({ width: 1920, height: 600 })
@@ -129,12 +134,12 @@ test.describe("Aside — desktop surface", () => {
   test("opens from a message beside the host without scrolling it, and the companion answers in the aside", async ({
     page,
   }) => {
-    await createChannel(page, `aside-${testId}`)
-    const { workspaceId, streamId } = extractIds(page)
+    const streamId = await createChannelViaApi(page, workspaceId, `aside-${testId}`, "public")
     const prefix = `[${testId}]`
-    await seedMessages(page, workspaceId, streamId, prefix)
+    const messageCount = 40
+    await seedMessages(page, workspaceId, streamId, prefix, messageCount)
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
-    await expect(hostRow(page, streamId, prefix, MESSAGE_COUNT)).toBeVisible({ timeout: 20000 })
+    await expect(hostRow(page, streamId, prefix, messageCount)).toBeVisible({ timeout: 20000 })
 
     // Detach from the tail: at the tail the timeline follows the bottom, so a
     // row growing in view (the anchor row) legitimately moves the viewport —
@@ -233,7 +238,8 @@ test.describe("Aside — desktop surface", () => {
 
   test("truncates a long host name in the header short of the pane's controls", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 })
-    await createChannel(page, `aside-${testId}-`.padEnd(50, "x"))
+    const streamId = await createChannelViaApi(page, workspaceId, `aside-${testId}-`.padEnd(50, "x"), "public")
+    await page.goto(`/w/${workspaceId}/s/${streamId}`)
     await page.getByTestId("aside-header-chip").click()
     await expect(asidePane(page)).toBeVisible({ timeout: 15000 })
     await panesSettled(page)
@@ -251,17 +257,17 @@ test.describe("Aside — desktop surface", () => {
   })
 
   test("a thread opens as a tab beside the aside, and neither the host nor the aside remounts", async ({ page }) => {
-    await createChannel(page, `aside-${testId}`)
-    const { workspaceId, streamId } = extractIds(page)
+    const streamId = await createChannelViaApi(page, workspaceId, `aside-${testId}`, "public")
     const prefix = `[${testId}]`
-    await seedMessages(page, workspaceId, streamId, prefix)
+    const messageCount = 40
+    await seedMessages(page, workspaceId, streamId, prefix, messageCount)
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
-    await expect(hostRow(page, streamId, prefix, MESSAGE_COUNT)).toBeVisible({ timeout: 20000 })
+    await expect(hostRow(page, streamId, prefix, messageCount)).toBeVisible({ timeout: 20000 })
     // A remount would drop these marks along with the reader's scroll and draft.
     await hostScroller(page, streamId).evaluate((element) => element.setAttribute("data-spec-mark", "kept"))
     const hostKept = page.locator(`[data-stream-scroller="${streamId}"][data-spec-mark="kept"]`)
 
-    await openMessageActions(page, streamId, prefix, MESSAGE_COUNT)
+    await openMessageActions(page, streamId, prefix, messageCount)
     await page.getByRole("menuitem", { name: "Open an aside here" }).click()
     await expect(asidePane(page)).toBeVisible({ timeout: 15000 })
     await asidePane(page).evaluate((element) => element.setAttribute("data-spec-mark", "kept"))
@@ -269,7 +275,7 @@ test.describe("Aside — desktop surface", () => {
     const aside = `aside:${streamId}`
 
     // By keyboard: the link only shows on hover, and the rows under the pointer move as the pane settles.
-    await hostRow(page, streamId, prefix, MESSAGE_COUNT - 2)
+    await hostRow(page, streamId, prefix, messageCount - 2)
       .getByRole("link", { name: "Reply in thread" })
       .focus()
     await page.keyboard.press("Enter")
@@ -332,15 +338,15 @@ test.describe("Aside — desktop surface", () => {
   })
 
   test("lives in the URL as a pane of its host: Back closes it, and a reload leaves it closed", async ({ page }) => {
-    await createChannel(page, `aside-${testId}`)
-    const { workspaceId, streamId } = extractIds(page)
+    const streamId = await createChannelViaApi(page, workspaceId, `aside-${testId}`, "public")
     const prefix = `[${testId}]`
-    await seedMessages(page, workspaceId, streamId, prefix)
+    const messageCount = 1
+    await seedMessages(page, workspaceId, streamId, prefix, messageCount)
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
-    await expect(hostRow(page, streamId, prefix, MESSAGE_COUNT)).toBeVisible({ timeout: 20000 })
+    await expect(hostRow(page, streamId, prefix, messageCount)).toBeVisible({ timeout: 20000 })
     const panelParam = () => new URL(page.url()).searchParams.get("panel")
 
-    await openMessageActions(page, streamId, prefix, MESSAGE_COUNT)
+    await openMessageActions(page, streamId, prefix, messageCount)
     await page.getByRole("menuitem", { name: "Open an aside here" }).click()
     await expect(asidePane(page)).toBeVisible({ timeout: 15000 })
     const asideId = await asidePane(page).getAttribute("data-aside-id")
@@ -361,14 +367,14 @@ test.describe("Aside — desktop surface", () => {
     await asidePane(page).getByTestId("aside-anchor-line").click()
     await expect.poll(() => new URL(page.url()).searchParams.get("m")).toBeTruthy()
     await expect(hostScroller(page, streamId).locator(".animate-highlight-flash")).toContainText(
-      `${prefix} msg-${String(MESSAGE_COUNT).padStart(3, "0")}`,
+      `${prefix} msg-${String(messageCount).padStart(3, "0")}`,
       { timeout: 10000 }
     )
     expect(panelParam()).toBe(`aside:${streamId}`)
 
     // The pane names no aside, so a reload has none to show and drops it.
     await page.reload()
-    await expect(hostRow(page, streamId, prefix, MESSAGE_COUNT)).toBeVisible({ timeout: 20000 })
+    await expect(hostRow(page, streamId, prefix, messageCount)).toBeVisible({ timeout: 20000 })
     await expect.poll(panelParam).toBeNull()
     await expectNoAsideChrome(page)
     await expect(anchorRow(page, streamId)).toHaveAttribute("data-state", "closed")
@@ -377,13 +383,13 @@ test.describe("Aside — desktop surface", () => {
   test("opened as a sheet over an open thread, leaves the thread's Close to the thread", async ({ page }) => {
     // Too narrow to split, with a fine pointer: the aside is a sheet from the start.
     await page.setViewportSize({ width: 900, height: 700 })
-    await createChannel(page, `aside-${testId}`)
-    const { workspaceId, streamId } = extractIds(page)
+    const streamId = await createChannelViaApi(page, workspaceId, `aside-${testId}`, "public")
     const prefix = `[${testId}]`
-    await seedMessages(page, workspaceId, streamId, prefix)
+    const messageCount = 3
+    await seedMessages(page, workspaceId, streamId, prefix, messageCount)
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
-    await expect(hostRow(page, streamId, prefix, MESSAGE_COUNT)).toBeVisible({ timeout: 20000 })
-    await hostRow(page, streamId, prefix, MESSAGE_COUNT - 2)
+    await expect(hostRow(page, streamId, prefix, messageCount)).toBeVisible({ timeout: 20000 })
+    await hostRow(page, streamId, prefix, messageCount - 2)
       .getByRole("link", { name: "Reply in thread" })
       .focus()
     await page.keyboard.press("Enter")
@@ -410,13 +416,13 @@ test.describe("Aside — desktop surface", () => {
   test("a draft expanded beside an open aside floats over it, and the aside stays out of reach until it docks", async ({
     page,
   }) => {
-    await createChannel(page, `aside-${testId}`)
-    const { workspaceId, streamId } = extractIds(page)
+    const streamId = await createChannelViaApi(page, workspaceId, `aside-${testId}`, "public")
     const prefix = `[${testId}]`
-    await seedMessages(page, workspaceId, streamId, prefix)
+    const messageCount = 1
+    await seedMessages(page, workspaceId, streamId, prefix, messageCount)
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
-    await expect(hostRow(page, streamId, prefix, MESSAGE_COUNT)).toBeVisible({ timeout: 20000 })
-    await openMessageActions(page, streamId, prefix, MESSAGE_COUNT)
+    await expect(hostRow(page, streamId, prefix, messageCount)).toBeVisible({ timeout: 20000 })
+    await openMessageActions(page, streamId, prefix, messageCount)
     await page.getByRole("menuitem", { name: "Open an aside here" }).click()
     await expect(asidePane(page)).toBeVisible({ timeout: 15000 })
 
@@ -445,14 +451,13 @@ test.describe("Aside — desktop surface", () => {
   test("folds away on navigation, leaves the next stream clean, and resumes silently from the anchor row", async ({
     page,
   }) => {
-    await createChannel(page, `elsewhere-${testId}`)
-    const { workspaceId, streamId: otherStreamId } = extractIds(page)
-    await createChannel(page, `aside-${testId}`)
-    const { streamId } = extractIds(page)
+    const otherStreamId = await createChannelViaApi(page, workspaceId, `elsewhere-${testId}`, "public")
+    const streamId = await createChannelViaApi(page, workspaceId, `aside-${testId}`, "public")
     const prefix = `[${testId}]`
-    await seedMessages(page, workspaceId, streamId, prefix)
+    const messageCount = 1
+    await seedMessages(page, workspaceId, streamId, prefix, messageCount)
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
-    await expect(hostRow(page, streamId, prefix, MESSAGE_COUNT)).toBeVisible({ timeout: 20000 })
+    await expect(hostRow(page, streamId, prefix, messageCount)).toBeVisible({ timeout: 20000 })
 
     // Entry point: the /aside slash command in the host composer.
     const hostEditor = page.getByRole("main").locator("[data-editor-zone='main'] [contenteditable='true']").first()
