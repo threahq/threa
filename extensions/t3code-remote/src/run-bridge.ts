@@ -711,20 +711,52 @@ export class T3TurnRunner {
    * still going.
    */
   private async unaccountedRuns(threadId: string): Promise<{ runs: string[]; latest: string | null }> {
-    const { items, thread } = await this.readActivity(threadId, this.cursors.get(threadId), 1)
+    const { items, thread, recentRuns } = await this.readActivity(threadId, this.cursors.get(threadId), 1)
     const latest = thread.latestRunId
     const status = thread.status
     const runIds = new Set(
       items.flatMap((item) => (item.runId !== null && item.visibility === "local" ? [item.runId] : []))
     )
+    if (thread.activeRunId) runIds.add(thread.activeRunId)
+    const recent = [...recentRuns].sort((a, b) => a.ordinal - b.ordinal).map((run) => run.runId)
+    for (const runId of recent) runIds.delete(runId)
+    for (const runId of recent) runIds.add(runId)
     if (latest) runIds.add(latest)
+    const ordered = [...runIds]
+    const runStatuses = new Map(recentRuns.map((run) => [run.runId, run.status]))
+    if (thread.activeRunId) runStatuses.set(thread.activeRunId, status)
+    const delivered = this.state.delivered?.[threadId]
+    const activeHasItem = items.some((item) => item.visibility === "local" && item.runId === thread.activeRunId)
+    if (
+      !this.accounted.has(threadId) &&
+      (delivered === undefined || !runIds.has(delivered) || (thread.activeRunId !== null && !activeHasItem))
+    ) {
+      for (const runId of ordered) {
+        if (runStatuses.has(runId)) continue
+        const result = await this.client.call("t3_thread_wait", { threadId, runId, timeoutMs: 1 })
+        runStatuses.set(runId, result.runId === runId ? result.status : "completed")
+        if (result.runId !== null && result.runId !== runId) {
+          runStatuses.set(result.runId, result.status)
+          if (!runIds.has(result.runId)) {
+            runIds.add(result.runId)
+            ordered.push(result.runId)
+          }
+        }
+      }
+    }
+    if (thread.activeRunId) {
+      const activeIndex = ordered.indexOf(thread.activeRunId)
+      const queuedIndex = ordered.findIndex((runId) => runStatuses.get(runId) === "queued")
+      if (queuedIndex !== -1 && queuedIndex < activeIndex) {
+        ordered.splice(activeIndex, 1)
+        ordered.splice(queuedIndex, 0, thread.activeRunId)
+      }
+    }
     if (!this.accounted.has(threadId)) {
-      const ordered = [...runIds]
-      const delivered = this.state.delivered?.[threadId]
       const through = delivered === undefined ? -1 : ordered.indexOf(delivered)
       if (delivered !== undefined && through === -1)
         this.log(`thread ${threadId} no longer lists delivered run ${delivered}; only a run still going will post`)
-      const going = latest !== null && GOING_RUN_STATUSES.has(status) ? [latest] : []
+      const going = ordered.filter((runId) => GOING_RUN_STATUSES.has(runStatuses.get(runId) ?? "idle"))
       const after = ordered.slice(through + 1)
       const recorded = this.state.posted?.[threadId] ?? []
       const posted = recorded.filter((runId) => after.includes(runId))
@@ -757,7 +789,7 @@ export class T3TurnRunner {
       cursor = { itemId: item.itemId }
     }
     this.advanceCursor(threadId, cursor)
-    return { runs: [...runIds].filter((runId) => !this.isAccounted(threadId, runId)), latest }
+    return { runs: ordered.filter((runId) => !this.isAccounted(threadId, runId)), latest }
   }
 
   /** Posts the replies of runs T3 started by itself, in order, after the ones already being relayed. */
@@ -1432,7 +1464,8 @@ export class T3TurnRunner {
       if (position !== undefined && (page.items[0]?.itemId !== anchor!.itemId || page.items[0]?.position !== position))
         throw new Error("T3 Code activity moved while reading; retrying from the saved item.")
       items.push(...(items.length === 0 || position === undefined ? page.items : page.items.slice(1)))
-      if (!page.hasMore || page.nextPosition === null) return { items, thread: page.thread }
+      if (!page.hasMore || page.nextPosition === null)
+        return { items, thread: page.thread, recentRuns: page.recentRuns }
       const last = page.items.at(-1)!
       anchor = { itemId: last.itemId }
       anchorPosition = last.position

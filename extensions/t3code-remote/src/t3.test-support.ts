@@ -108,6 +108,12 @@ export function fakeT3() {
   // A queued run starts once the runs ahead of it end, so the running run is the earliest one still going.
   const activeRun = (threadId: string) =>
     threadRuns.get(threadId)?.find((runId) => !ended.has(runId) && !waiting.has(runId))
+  const runStatus = (threadId: string, runId: string): T3Tools["t3_thread_wait"]["result"]["status"] => {
+    const terminal = ended.get(runId)
+    if (terminal) return terminal as T3Tools["t3_thread_wait"]["result"]["status"]
+    if (waiting.has(runId)) return "waiting"
+    return activeRun(threadId) === runId ? "running" : "queued"
+  }
   // Like T3, only a running run takes a steer; with none, the send is refused.
   const steerRun = (threadId: string) => {
     if (steerDelivery !== "steered") return startRun(threadId)
@@ -168,6 +174,13 @@ export function fakeT3() {
       return { attachmentId: `t3att_${prepared}`, relativeUrl: `/api/attachments/upload/tok_${prepared}` }
     },
     t3_thread_wait: async (args) => {
+      if (args.timeoutMs === 1) {
+        return {
+          runId: args.runId,
+          status: runStatus(args.threadId, args.runId),
+          timedOut: !ended.has(args.runId),
+        }
+      }
       const { runId, status } = await nextStep(args.threadId, args.runId)
       return {
         runId,
@@ -185,15 +198,21 @@ export function fakeT3() {
             ? ("waiting" as const)
             : ("idle" as const),
         latestRunId: latestRuns.get(args.threadId) ?? null,
+        activeRunId: activeRun(args.threadId) ?? null,
         providerInstanceId: models.get(args.threadId)?.instanceId ?? "codex",
         model: models.get(args.threadId)?.model ?? "gpt-5.5",
         archived: archived.has(args.threadId),
       }
+      const recentRuns = (threadRuns.get(args.threadId) ?? [])
+        .map((runId, index) => ({ runId, ordinal: index + 1, status: runStatus(args.threadId, runId) }))
+        .reverse()
+        .slice(0, 10)
       if (args.itemId !== undefined) {
         const text = continuations.get(args.itemId) ?? ""
         const found = (items.get(args.threadId) ?? []).find((candidate) => candidate.itemId === args.itemId)!
         return {
           thread,
+          recentRuns,
           items: found
             ? [
                 {
@@ -212,6 +231,7 @@ export function fakeT3() {
       const page = visible.slice(0, limit)
       return {
         thread,
+        recentRuns,
         items: page,
         nextPosition: page.at(-1)?.position ?? null,
         hasMore: visible.length > limit,

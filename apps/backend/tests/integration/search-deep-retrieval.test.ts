@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
-import { setupTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
+import { setupIsolatedTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository, StreamMemberRepository } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging/event-service"
@@ -46,13 +46,14 @@ function makeReversingScorer() {
 
 describe("Message deep search retrieval", () => {
   let pool: Pool
+  let cleanup: () => Promise<void>
 
   beforeAll(async () => {
-    pool = await setupTestDatabase()
+    ;({ pool, cleanup } = await setupIsolatedTestDatabase("deep_search_retrieval"))
   })
 
   afterAll(async () => {
-    await pool.end()
+    await cleanup()
   })
 
   /**

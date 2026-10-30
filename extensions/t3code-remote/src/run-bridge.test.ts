@@ -1410,6 +1410,145 @@ describe("RunTrace", () => {
 describe("runs T3 starts by itself", () => {
   const LINKED: ThreadState = { threads: { stream_root: "thread_1" }, model: MODEL }
 
+  for (const delivered of ["run_1", "run_3"]) {
+    test(`should order a silent failure before a newer reply after restart (delivered: ${delivered})`, async () => {
+      const { t3, session, runner, saved } = setup({
+        state: { ...LINKED, delivered: { thread_1: delivered } },
+      })
+      t3.startInT3("thread_1")
+      t3.addItems("thread_1", [item(1, "assistant_message", { text: "First." })])
+      t3.endInT3("run_1")
+      t3.startInT3("thread_1")
+      t3.script("run_2", [{ status: "failed" }])
+      await t3.client.call("t3_thread_wait", { threadId: "thread_1", runId: "run_2", timeoutMs: 2000 })
+      t3.startInT3("thread_1")
+      t3.addItems("thread_1", [item(2, "assistant_message", { runId: "run_3", text: "Third." })])
+      t3.endInT3("run_3")
+
+      await runner.watch()
+      await until(() => !runner.busy)
+      await runner.watch()
+
+      expect({ posts: session.posts, delivered: saved.at(-1)?.delivered ?? { thread_1: delivered } }).toEqual({
+        posts:
+          delivered === "run_1"
+            ? [
+                { streamId: "stream_root", text: "The T3 Code run failed.", clientMessageId: "t3run-run_2" },
+                { streamId: "stream_root", text: "Third.", clientMessageId: "t3run-run_3" },
+              ]
+            : [],
+        delivered: { thread_1: "run_3" },
+      })
+    })
+  }
+
+  test("should leave an empty thread and terminal history alone when no run is active", async () => {
+    const { t3, session, runner } = setup({ state: LINKED })
+    await runner.watch()
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [item(1, "assistant_message", { text: "Old reply." })])
+    t3.endInT3("run_1")
+    const restarted = setup({ state: LINKED, t3 })
+    await restarted.runner.watch()
+    expect({ posts: [...session.posts, ...restarted.session.posts], waits: t3.callsOf("t3_thread_wait") }).toEqual({
+      posts: [],
+      waits: [],
+    })
+  })
+
+  for (const activeHasActivity of [false, true]) {
+    test(`should follow an active run before a newer queued run at startup (activity: ${activeHasActivity})`, async () => {
+      const { t3, session, runner, saved } = setup({ state: LINKED })
+      t3.startInT3("thread_1")
+      if (activeHasActivity) t3.addItems("thread_1", [item(1, "command_execution", { text: "$ pwd" })])
+      t3.startInT3("thread_1")
+      await runner.watch()
+      await idle()
+      expect(t3.callsOf("t3_thread_wait")).toEqual([{ threadId: "thread_1", runId: "run_1", timeoutMs: 2000 }])
+      t3.script("run_1", [{ status: "completed", items: [item(2, "assistant_message", { text: "First." })] }])
+      t3.script("run_2", [
+        { status: "completed", items: [item(3, "assistant_message", { runId: "run_2", text: "Second." })] },
+      ])
+      await until(() => !runner.busy)
+      await runner.watch()
+      expect({
+        posts: session.posts,
+        sends: t3.callsOf("t3_thread_send"),
+        interrupts: t3.callsOf("t3_thread_interrupt"),
+        delivered: saved.at(-1)?.delivered,
+      }).toEqual({
+        posts: [
+          { streamId: "stream_root", text: "First.", clientMessageId: "t3run-run_1" },
+          { streamId: "stream_root", text: "Second.", clientMessageId: "t3run-run_2" },
+        ],
+        sends: [],
+        interrupts: [],
+        delivered: { thread_1: "run_2" },
+      })
+    })
+  }
+
+  test("should discover a silent active run outside the recent runs window", async () => {
+    const { t3, session, runner } = setup({ state: LINKED })
+    for (let index = 1; index <= 11; index++) t3.startInT3("thread_1")
+    await runner.watch()
+    await idle()
+    expect(t3.callsOf("t3_thread_wait")).toEqual([{ threadId: "thread_1", runId: "run_1", timeoutMs: 2000 }])
+    for (let index = 1; index <= 11; index++) {
+      t3.script(`run_${index}`, [
+        {
+          status: "completed",
+          items: [item(index, "assistant_message", { runId: `run_${index}`, text: `Reply ${index}.` })],
+        },
+      ])
+    }
+    await until(() => !runner.busy)
+    await runner.watch()
+    expect(session.posts).toEqual(
+      Array.from({ length: 11 }, (_, index) => ({
+        streamId: "stream_root",
+        text: `Reply ${index + 1}.`,
+        clientMessageId: `t3run-run_${index + 1}`,
+      }))
+    )
+  })
+
+  for (const activeHasItem of [false, true]) {
+    for (const delivered of [undefined, "run_1"]) {
+      test(`should retain queued runs outside the recent window (active item: ${activeHasItem}, delivered: ${delivered})`, async () => {
+        const { t3, session, runner } = setup({
+          state: { ...LINKED, ...(delivered ? { delivered: { thread_1: delivered } } : {}) },
+        })
+        t3.startInT3("thread_1")
+        t3.addItems("thread_1", [item(1, "assistant_message", { runId: "run_1", text: "Historical." })])
+        t3.endInT3("run_1")
+        for (let index = 2; index <= 14; index++) {
+          t3.startInT3("thread_1")
+          if (index !== 2 || activeHasItem)
+            t3.addItems("thread_1", [item(index, "user_message", { runId: `run_${index}`, text: `Prompt ${index}.` })])
+        }
+        await runner.watch()
+        for (let index = 2; index <= 14; index++) {
+          t3.script(`run_${index}`, [
+            {
+              status: "completed",
+              items: [item(index + 14, "assistant_message", { runId: `run_${index}`, text: `Reply ${index}.` })],
+            },
+          ])
+        }
+        await until(() => !runner.busy)
+        await runner.watch()
+        expect(session.posts).toEqual(
+          Array.from({ length: 13 }, (_, index) => ({
+            streamId: "stream_root",
+            text: `Reply ${index + 2}.`,
+            clientMessageId: `t3run-run_${index + 2}`,
+          }))
+        )
+      })
+    }
+  }
+
   async function settledTurn(
     t3: ReturnType<typeof setup>["t3"],
     session: ReturnType<typeof setup>["session"],
