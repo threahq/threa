@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
+import { loginAndCreateWorkspaceViaApi, createChannelViaApi, expectApiOk } from "./helpers"
 
 /**
  * Landing-at-last-location: a reader who detached from the tail and reloads
@@ -41,16 +41,6 @@ async function seedMessages(
       `Send message ${i}`
     )
   }
-}
-
-function extractIds(page: Page): { workspaceId: string; streamId: string } {
-  const url = page.url()
-  const workspaceMatch = url.match(/\/w\/([^/]+)/)
-  const streamMatch = url.match(/\/s\/([^/?]+)/)
-  if (!workspaceMatch || !streamMatch) {
-    throw new Error(`Could not extract IDs from URL: ${url}`)
-  }
-  return { workspaceId: workspaceMatch[1], streamId: streamMatch[1] }
 }
 
 function messageLocator(page: Page, prefix: string, num: number) {
@@ -107,21 +97,20 @@ async function topVisibleMessageNum(page: Page): Promise<number | null> {
 
 test.describe("Timeline anchor restore", () => {
   let testId: string
+  let workspaceId: string
 
   test.beforeEach(async ({ page }) => {
-    const result = await loginAndCreateWorkspace(page, "anchor-restore")
+    const result = await loginAndCreateWorkspaceViaApi(page, "anchor-restore")
     testId = result.testId
+    workspaceId = result.workspaceId
   })
 
   test("reload lands on the detached reading position, not the tail, and holds it", async ({ page }) => {
     const channelName = `anchor-${testId}`
-    await createChannel(page, channelName)
+    const streamId = await createChannelViaApi(page, workspaceId, channelName, "public")
 
-    // Short viewport → genuine virtualization, same rationale as the
-    // infinite-scroll specs. Shrunk after createChannel (sidebar overlap).
     await page.setViewportSize({ width: 1024, height: 400 })
 
-    const { workspaceId, streamId } = extractIds(page)
     const prefix = `[${testId}]`
 
     await seedMessages(page, workspaceId, streamId, MESSAGE_COUNT, prefix)
@@ -237,10 +226,9 @@ test.describe("Timeline anchor restore", () => {
 
   test("reload while at the tail stays at the tail (no stale-anchor restore)", async ({ page }) => {
     const channelName = `anchor-tail-${testId}`
-    await createChannel(page, channelName)
+    const streamId = await createChannelViaApi(page, workspaceId, channelName, "public")
     await page.setViewportSize({ width: 1024, height: 400 })
 
-    const { workspaceId, streamId } = extractIds(page)
     const prefix = `[${testId}]`
 
     await seedMessages(page, workspaceId, streamId, MESSAGE_COUNT, prefix)

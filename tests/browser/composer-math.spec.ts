@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Locator } from "@playwright/test"
-import { clickComposerToolbarButton, expectApiOk, loginAndCreateWorkspace } from "./helpers"
+import { clickComposerToolbarButton, expectApiOk, loginAndCreateWorkspace, openComposerFixture } from "./helpers"
 
 /**
  * Math in the composer is a node, so the Σ button opens an edit block the way
@@ -30,23 +30,24 @@ function messageRows(page: Page): Locator {
   return page.getByRole("main").locator("[data-message-id]")
 }
 
-test.describe("Composer math", () => {
-  test.beforeEach(async ({ page }) => {
-    await loginAndCreateWorkspace(page, "composer-math")
-    const workspaceId = page.url().match(/\/w\/([^/]+)/)?.[1] ?? ""
-    expect(workspaceId).not.toBe("")
-    const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
-      data: { type: "scratchpad" },
-    })
-    await expectApiOk(response, "Create scratchpad")
-    const { stream } = (await response.json()) as { stream: { id: string } }
-
-    await page.goto(`/w/${workspaceId}/s/${stream.id}`)
-    await expect(composerEditor(page)).toBeVisible({ timeout: 10000 })
-    await composerEditor(page).click()
+async function setupWorkspaceWithEditor(page: Page) {
+  await loginAndCreateWorkspace(page, "composer-math")
+  const workspaceId = page.url().match(/\/w\/([^/]+)/)?.[1] ?? ""
+  expect(workspaceId).not.toBe("")
+  const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
+    data: { type: "scratchpad" },
   })
+  await expectApiOk(response, "Create scratchpad")
+  const { stream } = (await response.json()) as { stream: { id: string } }
 
+  await page.goto(`/w/${workspaceId}/s/${stream.id}`)
+  await expect(composerEditor(page)).toBeVisible({ timeout: 10000 })
+  await composerEditor(page).click()
+}
+
+test.describe("Composer math", () => {
   test("the Math button opens an edit block, and the message sends what it drew", async ({ page }) => {
+    await setupWorkspaceWithEditor(page)
     await page.keyboard.type("Euler: ")
     await clickComposerToolbarButton(page, "Math")
 
@@ -74,6 +75,7 @@ test.describe("Composer math", () => {
   })
 
   test("Send with the TeX field still open sends the equation", async ({ page }) => {
+    await setupWorkspaceWithEditor(page)
     await page.keyboard.type("Euler: ")
     await clickComposerToolbarButton(page, "Math")
     await page.keyboard.type("e^{i\\pi}+1=0")
@@ -86,6 +88,8 @@ test.describe("Composer math", () => {
   })
 
   test("tapping an equation opens its TeX again", async ({ page }) => {
+    await openComposerFixture(page)
+    await composerEditor(page).click()
     await clickComposerToolbarButton(page, "Math")
     await page.keyboard.type("x^2")
     await page.keyboard.press("Enter")
@@ -100,6 +104,7 @@ test.describe("Composer math", () => {
   // Shift+Enter is the key that carries the block triggers in both send modes —
   // ``` opens a code block on it for the same reason.
   test("`$$` and Shift+Enter opens a display equation", async ({ page }) => {
+    await setupWorkspaceWithEditor(page)
     await page.keyboard.type("$$")
     await page.keyboard.press("Shift+Enter")
 
@@ -117,6 +122,8 @@ test.describe("Composer math", () => {
   })
 
   test("the caret arrows into an equation and back out the other side", async ({ page }) => {
+    await openComposerFixture(page)
+    await composerEditor(page).click()
     await page.keyboard.type("a ")
     await clickComposerToolbarButton(page, "Math")
     await page.keyboard.type("x^2")
@@ -140,6 +147,7 @@ test.describe("Composer math", () => {
   })
 
   test("the toggle makes an equation a block, and then Enter adds lines to it", async ({ page }) => {
+    await setupWorkspaceWithEditor(page)
     await clickComposerToolbarButton(page, "Math")
     await page.keyboard.type("a=1")
     // The phone path to a display equation: its keyboard has no Shift.

@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test"
+import { test, expect, request, type Page } from "@playwright/test"
 import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
 
 /**
@@ -32,32 +32,52 @@ const TOTAL = 185
 const MATCH_POSITIONS = [45, 175]
 
 async function seedMessages(page: Page, workspaceId: string, streamId: string): Promise<void> {
-  const BATCH_SIZE = 10
-  const send = async (i: number) => {
-    const matchIndex = MATCH_POSITIONS.indexOf(i)
-    const content =
-      matchIndex >= 0
-        ? `Note ${i}: the pelican lands here (match ${matchIndex + 1} of ${MATCH_POSITIONS.length}).`
-        : `Filler ${i}: routine update about nothing in particular.`
-    // TOTAL exceeds the 120/min message-create rate limit — wait out 429s.
-    // The workspace-router worker occasionally restarts mid-request (503);
-    // retry those too.
-    for (let attempt = 0; ; attempt++) {
-      const response = await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
-        data: { streamId, content },
-      })
-      if (response.ok()) return
-      if ((response.status() === 429 || response.status() >= 500) && attempt < 30) {
-        await new Promise((resolve) => setTimeout(resolve, 5000))
-        continue
+  const otherAuthor = await request.newContext({ baseURL: new URL(page.url()).origin })
+  try {
+    await expectApiOk(
+      await otherAuthor.post("/api/dev/login", {
+        data: { email: `search-seed-${streamId}@example.com`, name: "Search seed author" },
+      }),
+      "Log in second seed author"
+    )
+    await expectApiOk(
+      await otherAuthor.post(`/api/dev/workspaces/${workspaceId}/join`, { data: { role: "member" } }),
+      "Second seed author joins workspace"
+    )
+    await expectApiOk(
+      await otherAuthor.post(`/api/workspaces/${workspaceId}/streams/${streamId}/join`),
+      "Second seed author joins channel"
+    )
+
+    const BATCH_SIZE = 10
+    const send = async (i: number) => {
+      const matchIndex = MATCH_POSITIONS.indexOf(i)
+      const content =
+        matchIndex >= 0
+          ? `Note ${i}: the pelican lands here (match ${matchIndex + 1} of ${MATCH_POSITIONS.length}).`
+          : `Filler ${i}: routine update about nothing in particular.`
+      // Alternating authors keeps each below the 120/min message-create limit.
+      const author = i % 2 === 0 ? page.request : otherAuthor
+      for (let attempt = 0; ; attempt++) {
+        const response = await author.post(`/api/workspaces/${workspaceId}/messages`, {
+          data: { streamId, content },
+        })
+        if (response.ok()) return
+        // The workspace-router worker occasionally restarts mid-request (503).
+        if (response.status() === 503 && attempt < 30) {
+          await new Promise((resolve) => setTimeout(resolve, 5000))
+          continue
+        }
+        await expectApiOk(response, `Send message ${i}`)
       }
-      await expectApiOk(response, `Send message ${i}`)
     }
-  }
-  for (let start = 1; start <= TOTAL; start += BATCH_SIZE) {
-    const batch: Promise<void>[] = []
-    for (let i = start; i <= Math.min(start + BATCH_SIZE - 1, TOTAL); i++) batch.push(send(i))
-    await Promise.all(batch)
+    for (let start = 1; start <= TOTAL; start += BATCH_SIZE) {
+      const batch: Promise<void>[] = []
+      for (let i = start; i <= Math.min(start + BATCH_SIZE - 1, TOTAL); i++) batch.push(send(i))
+      await Promise.all(batch)
+    }
+  } finally {
+    await otherAuthor.dispose()
   }
 }
 

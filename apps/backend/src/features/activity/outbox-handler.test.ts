@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { OutboxRepository } from "../../lib/outbox"
-import * as cursorLockModule from "@threahq/backend-common"
+import { mockCursorLock } from "../../lib/outbox/cursor-lock.test-helper"
 import * as dbModule from "../../db"
 import { ActivityFeedHandler } from "./outbox-handler"
 import type { ActivityService } from "./service"
@@ -8,19 +8,6 @@ import { ActivityRepository } from "./repository"
 import type { ProcessResult } from "@threahq/backend-common"
 import { AuthorTypes } from "@threahq/types"
 import { E2eStreamsRepository } from "../e2e-streams"
-
-function makeFakeCursorLock(onRun?: (result: ProcessResult) => void) {
-  return () => ({
-    run: mock(async (processor: (cursor: bigint, processedIds: bigint[]) => Promise<ProcessResult>) => {
-      const result = await processor(0n, [])
-      onRun?.(result)
-    }),
-  })
-}
-
-function mockCursorLock(onRun?: (result: ProcessResult) => void) {
-  ;(spyOn(cursorLockModule, "CursorLock") as any).mockImplementation(makeFakeCursorLock(onRun))
-}
 
 function createHandler() {
   const activityService = {
@@ -37,11 +24,11 @@ function createHandler() {
     markAllAsRead: mock(async () => {}),
   } as unknown as ActivityService
 
-  mockCursorLock()
+  const completed = mockCursorLock()
 
   const handler = new ActivityFeedHandler({} as any, activityService)
 
-  return { handler, activityService }
+  return { handler, completed, activityService }
 }
 
 // Mirrors what the composer/API path emits: the markdown body plus the
@@ -110,10 +97,10 @@ describe("ActivityFeedHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
 
-    const { handler, activityService } = createHandler()
+    const { handler, completed, activityService } = createHandler()
     handler.handle()
 
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(activityService.processMessageMentions).toHaveBeenCalledWith({
       workspaceId: "ws_test",
@@ -134,10 +121,10 @@ describe("ActivityFeedHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
 
-    const { handler, activityService } = createHandler()
+    const { handler, completed, activityService } = createHandler()
     handler.handle()
 
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(activityService.processMessageMentions).toHaveBeenCalled()
   })
@@ -149,10 +136,10 @@ describe("ActivityFeedHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
 
-    const { handler, activityService } = createHandler()
+    const { handler, completed, activityService } = createHandler()
     handler.handle()
 
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(activityService.processMessageMentions).not.toHaveBeenCalled()
   })
@@ -164,10 +151,10 @@ describe("ActivityFeedHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
 
-    const { handler, activityService } = createHandler()
+    const { handler, completed, activityService } = createHandler()
     handler.handle()
 
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(activityService.processMessageMentions).not.toHaveBeenCalled()
   })
@@ -177,10 +164,10 @@ describe("ActivityFeedHandler", () => {
       { id: 1n, eventType: "stream:created", payload: {}, createdAt: new Date() },
     ] as any)
 
-    const { handler, activityService } = createHandler()
+    const { handler, completed, activityService } = createHandler()
     handler.handle()
 
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(activityService.processMessageMentions).not.toHaveBeenCalled()
     expect(activityService.processReactionAdded).not.toHaveBeenCalled()
@@ -202,10 +189,10 @@ describe("ActivityFeedHandler", () => {
       },
     ] as any)
 
-    const { handler, activityService } = createHandler()
+    const { handler, completed, activityService } = createHandler()
     handler.handle()
 
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(activityService.processReactionAdded).toHaveBeenCalledWith({
       workspaceId: "ws_test",
@@ -233,10 +220,10 @@ describe("ActivityFeedHandler", () => {
       },
     ] as any)
 
-    const { handler, activityService } = createHandler()
+    const { handler, completed, activityService } = createHandler()
     handler.handle()
 
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(activityService.processReactionRemoved).toHaveBeenCalledWith({
       workspaceId: "ws_test",
@@ -273,12 +260,12 @@ describe("ActivityFeedHandler", () => {
       return callback({} as any)
     })
 
-    const { handler, activityService } = createHandler()
+    const { handler, completed, activityService } = createHandler()
     ;(activityService.processMessageMentions as any).mockResolvedValue([createdActivity])
 
     handler.handle()
 
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(insertSpy).toHaveBeenCalledWith({}, "activity:created", {
       workspaceId: "ws_test",
@@ -325,11 +312,11 @@ describe("ActivityFeedHandler", () => {
     spyOn(ActivityRepository, "findStillUnreadIds").mockResolvedValue(new Set(["act_unread"]))
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback) => callback({} as any))
 
-    const { handler, activityService } = createHandler()
+    const { handler, completed, activityService } = createHandler()
     ;(activityService.processMessageNotifications as any).mockResolvedValue([bornRead, unread])
 
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(insertSpy).toHaveBeenCalledWith(
       {},
@@ -372,11 +359,11 @@ describe("ActivityFeedHandler", () => {
     spyOn(ActivityRepository, "findStillUnreadIds").mockResolvedValue(new Set(["act_still_unread"]))
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback) => callback({} as any))
 
-    const { handler, activityService } = createHandler()
+    const { handler, completed, activityService } = createHandler()
     ;(activityService.processMessageNotifications as any).mockResolvedValue([readBeforePublish, stillUnread])
 
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(insertSpy).toHaveBeenCalledWith({}, "activity:created", {
       workspaceId: "ws_test",
@@ -426,11 +413,11 @@ describe("ActivityFeedHandler", () => {
     spyOn(ActivityRepository, "findStillUnreadIds").mockResolvedValue(new Set())
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback) => callback({} as any))
 
-    const { handler, activityService } = createHandler()
+    const { handler, completed, activityService } = createHandler()
     ;(activityService.processSelfMessageActivity as any).mockResolvedValue(selfRow)
 
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(insertSpy).toHaveBeenCalledWith({}, "activity:created", {
       workspaceId: "ws_test",
@@ -454,7 +441,7 @@ describe("ActivityFeedHandler", () => {
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([])
 
     let result: ProcessResult | undefined
-    mockCursorLock((r) => {
+    const completed = mockCursorLock((r) => {
       result = r
     })
 
@@ -468,7 +455,7 @@ describe("ActivityFeedHandler", () => {
     const handler = new ActivityFeedHandler({} as any, activityService)
     handler.handle()
 
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(result).toEqual({ status: "no_events" })
   })
@@ -503,12 +490,12 @@ describe("ActivityFeedHandler", () => {
       return callback({} as any)
     })
 
-    const { handler, activityService } = createHandler()
+    const { handler, completed, activityService } = createHandler()
     ;(activityService.processMessageMentions as any).mockResolvedValue([preExistingActivity])
 
     handler.handle()
 
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     const want = {
       workspaceId: "ws_test",
@@ -535,10 +522,10 @@ describe("ActivityFeedHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
 
-    const { handler, activityService } = createHandler()
+    const { handler, completed, activityService } = createHandler()
     handler.handle()
 
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(activityService.processMessageMentions).not.toHaveBeenCalled()
     expect(activityService.processMessageNotifications).not.toHaveBeenCalled()
@@ -562,10 +549,10 @@ describe("ActivityFeedHandler", () => {
       },
     ] as any)
 
-    const { handler, activityService } = createHandler()
+    const { handler, completed, activityService } = createHandler()
     handler.handle()
 
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(activityService.processReactionAdded).not.toHaveBeenCalled()
   })
@@ -587,10 +574,10 @@ describe("ActivityFeedHandler", () => {
       },
     ] as any)
 
-    const { handler, activityService } = createHandler()
+    const { handler, completed, activityService } = createHandler()
     handler.handle()
 
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(activityService.processReactionRemoved).not.toHaveBeenCalled()
   })
@@ -603,7 +590,7 @@ describe("ActivityFeedHandler", () => {
     ] as any)
 
     let result: ProcessResult | undefined
-    mockCursorLock((r) => {
+    const completed = mockCursorLock((r) => {
       result = r
     })
 
@@ -617,7 +604,7 @@ describe("ActivityFeedHandler", () => {
     const handler = new ActivityFeedHandler({} as any, activityService)
     handler.handle()
 
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(result).toEqual({ status: "processed", processedIds: [1n, 2n, 3n] })
   })

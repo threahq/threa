@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
+import { loginAndCreateWorkspaceViaApi, createChannelViaApi, expectApiOk } from "./helpers"
 
 /**
  * A section's header never scrolls: as the panel narrows, the labels fold
@@ -16,11 +16,8 @@ async function post(page: Page, workspaceId: string, streamId: string, content: 
 }
 
 async function seedThreads(page: Page, count: number, title = (index: number) => `parent number ${index + 1}`) {
-  await loginAndCreateWorkspace(page, "panel-header")
-  await createChannel(page, `header-${Date.now().toString(36)}`)
-  const url = page.url()
-  const workspaceId = url.match(/\/w\/([^/]+)/)![1]
-  const streamId = url.match(/\/s\/([^/?]+)/)![1]
+  const { workspaceId } = await loginAndCreateWorkspaceViaApi(page, "panel-header")
+  const streamId = await createChannelViaApi(page, workspaceId, `header-${Date.now().toString(36)}`, "public")
   const threads: string[] = []
   for (let index = 0; index < count; index++) {
     const parentId = await post(page, workspaceId, streamId, title(index))

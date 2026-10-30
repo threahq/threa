@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { OutboxRepository } from "./repository"
-import * as cursorLockModule from "@threahq/backend-common"
+import { mockCursorLock } from "./cursor-lock.test-helper"
 import { BroadcastHandler } from "./broadcast-handler"
 import { SyncLogRepository } from "../../features/sync"
 import * as workspacesModule from "../../features/workspaces"
@@ -8,19 +8,6 @@ import { UserRepository } from "../../features/workspaces"
 import type { ProcessResult } from "@threahq/backend-common"
 import type { OutboxEvent } from "./repository"
 import { CALLS_NAMESPACE, callRoom } from "../call-routing"
-
-function makeFakeCursorLock(onRun?: (result: ProcessResult) => void) {
-  return () => ({
-    run: mock(async (processor: (cursor: bigint, processedIds: bigint[]) => Promise<ProcessResult>) => {
-      const result = await processor(0n, [])
-      onRun?.(result)
-    }),
-  })
-}
-
-function mockCursorLock(onRun?: (result: ProcessResult) => void) {
-  ;(spyOn(cursorLockModule, "CursorLock") as any).mockImplementation(makeFakeCursorLock(onRun))
-}
 
 interface MockEmitChain {
   to: (room: string) => MockEmitChain
@@ -84,11 +71,11 @@ function createMockIo() {
 }
 
 function createHandler() {
-  mockCursorLock()
+  const completed = mockCursorLock()
   const { io, emitChains, roomMoves } = createMockIo()
   const botNamespace = io.of("/bot")
-  const handler = new BroadcastHandler({} as any, io as any, botNamespace as any)
-  return { handler, io, emitChains, roomMoves }
+  const handler = new BroadcastHandler({} as any, io as any, botNamespace as any, { debounceMs: 0, maxWaitMs: 0 })
+  return { handler, completed, io, emitChains, roomMoves }
 }
 
 function makeEvent(id: bigint, eventType: string, payload: Record<string, unknown>): OutboxEvent {
@@ -120,9 +107,9 @@ describe("BroadcastHandler", () => {
     })
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((resolve) => setTimeout(resolve, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: callRoom("call_1"),
@@ -140,9 +127,9 @@ describe("BroadcastHandler", () => {
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
     spyOn(UserRepository, "findById").mockResolvedValue({ id: "usr_alice", role: "member" } as never)
 
-    const { handler, roomMoves } = createHandler()
+    const { handler, completed, roomMoves } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(roomMoves).toEqual([
       {
@@ -161,9 +148,9 @@ describe("BroadcastHandler", () => {
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
     spyOn(UserRepository, "findById").mockResolvedValue({ id: "usr_alice", role: "guest" } as never)
 
-    const { handler, roomMoves } = createHandler()
+    const { handler, completed, roomMoves } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(roomMoves).toEqual([
       {
@@ -189,9 +176,9 @@ describe("BroadcastHandler", () => {
     )
     const appendSpy = spyOn(SyncLogRepository, "appendForWorkspace").mockResolvedValue(new Map())
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect({
       audienceQuery: audienceSpy.mock.calls.map((call) => call.slice(1)),
@@ -218,9 +205,9 @@ describe("BroadcastHandler", () => {
       new Map([[1n, { syncId: 7n, groups: ["permission:workspace:browse", "user:usr_alice", "user:usr_old_guest"] }]])
     )
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains.map((emitted) => emitted.room).sort()).toEqual([
       "ws:ws_1:permission:workspace:browse",
@@ -236,9 +223,9 @@ describe("BroadcastHandler", () => {
       new Map([["usr_gone", ["usr_guest"]]])
     )
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect({
       audienceQuery: audienceSpy.mock.calls.map((call) => call.slice(1)),
@@ -258,9 +245,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "ws:ws_1:user:usr_alice",
@@ -279,9 +266,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "ws:ws_1:user:usr_alice",
@@ -300,9 +287,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "ws:ws_1:stream:stream_1",
@@ -321,9 +308,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "ws:ws_1:user:usr_carol",
@@ -342,9 +329,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "ws:ws_1:stream:stream_1",
@@ -367,9 +354,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "ws:ws_1:stream:stream_1",
@@ -396,9 +383,9 @@ describe("BroadcastHandler", () => {
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([message, docUpdate])
     const appendSpy = spyOn(SyncLogRepository, "appendForWorkspace").mockResolvedValue(new Map())
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect({
       logged: appendSpy.mock.calls.flatMap((call) => call[2].map((entry) => entry.eventType)),
@@ -421,9 +408,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toEqual([
       { room: "ws:ws_1:permission:workspace:browse", eventType: "stream:updated", payload: event.payload },
@@ -440,9 +427,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "ws:ws_1:stream:stream_parent",
@@ -460,9 +447,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "ws:ws_1:stream:stream_parent",
@@ -480,9 +467,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toEqual([
       { room: "ws:ws_1:permission:workspace:browse", eventType: "stream:created", payload: event.payload },
@@ -505,9 +492,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "ws:ws_1:user:usr_alice",
@@ -532,9 +519,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "ws:ws_1:user:usr_bob",
@@ -554,9 +541,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "ws:ws_1:user:usr_alice",
@@ -581,9 +568,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toEqual([
       { room: "ws:ws_1:permission:workspace:browse", eventType: "stream:display_name_updated", payload: event.payload },
@@ -601,9 +588,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "ws:ws_1:stream:stream_dm",
@@ -629,15 +616,15 @@ describe("BroadcastHandler", () => {
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event1, event2])
 
     let result: ProcessResult | undefined
-    mockCursorLock((r) => {
+    const completed = mockCursorLock((r) => {
       result = r
     })
 
     const { io } = createMockIo()
     const botNamespace = io.of("/bot")
-    const handler = new BroadcastHandler({} as any, io as any, botNamespace as any)
+    const handler = new BroadcastHandler({} as any, io as any, botNamespace as any, { debounceMs: 0, maxWaitMs: 0 })
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(result).toEqual({ status: "processed", processedIds: [1n, 2n] })
   })
@@ -652,9 +639,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "ws:ws_1:stream:stream_thread",
@@ -681,9 +668,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "ws:ws_1:stream:stream_thread",
@@ -709,9 +696,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "ws:ws_1:stream:stream_a",
@@ -737,9 +724,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     // Viewers get the full card event on the stream room, as before.
     expect(emitChains.some((e) => e.room === "ws:ws_1:stream:stream_a")).toBe(true)
@@ -764,9 +751,9 @@ describe("BroadcastHandler", () => {
       },
     })
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
     expect(emitChains).toContainEqual({
       room: "bot:ws_1",
       eventType: "delegation:available",
@@ -787,9 +774,9 @@ describe("BroadcastHandler", () => {
       },
     })
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
     expect(emitChains.some((e) => e.eventType === "delegation:available")).toBe(false)
   })
 
@@ -813,9 +800,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     // Viewers get the full patch event on the stream room.
     expect(emitChains.some((e) => e.room === "ws:ws_1:stream:stream_a")).toBe(true)
@@ -852,9 +839,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([denied, approvedNoDelegation])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains.some((e) => e.eventType === "delegation:available")).toBe(false)
   })
@@ -874,9 +861,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "bot:ws_1:bot:bot_alice",
@@ -899,9 +886,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "bot:ws_1:bot:bot_alice:instance:inst_42",
@@ -924,9 +911,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     // Session room plus the read-only supervisor room, and NOT the instance
     // room: the per-session subscriber is a strict subset of the per-instance
@@ -963,9 +950,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     // Nothing for a supervisor to act on: no session is named, so no local row
     // maps to it.
@@ -991,9 +978,9 @@ describe("BroadcastHandler", () => {
     })
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((resolve) => setTimeout(resolve, 300))
+    await completed
 
     expect(emitChains.filter((entry) => entry.eventType === "bot:session_restored").map((entry) => entry.room)).toEqual(
       [
@@ -1017,9 +1004,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     const rooms = emitChains
       .filter((e) => e.eventType === "bot:active_actor_changed")
@@ -1052,9 +1039,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue(events)
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     const resyncEmits = emitChains.filter((e) => e.eventType === "bot:resync")
     expect(resyncEmits.map((e) => e.room)).toEqual([
@@ -1074,9 +1061,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     const grants = emitChains.filter((e) => e.eventType === "bot:e2e_grant")
     expect(grants).toEqual([
@@ -1098,9 +1085,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "ws:ws_1:user:usr_alice",
@@ -1121,9 +1108,9 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(emitChains).toContainEqual({
       room: "ws:ws_1:user:usr_bob",
@@ -1143,9 +1130,9 @@ describe("BroadcastHandler", () => {
         new Map(entries.map((e, i) => [e.outboxEventId, { syncId: BigInt(100 + i), groups: e.groups }]))
     )
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     const callsByWorkspace = new Map(appendSpy.mock.calls.map((call) => [call[1], call[2]]))
     expect(callsByWorkspace.get("ws_1")).toEqual([
@@ -1179,9 +1166,9 @@ describe("BroadcastHandler", () => {
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
     const appendSpy = spyOn(SyncLogRepository, "appendForWorkspace").mockResolvedValue(new Map())
 
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(appendSpy.mock.calls).toHaveLength(0)
     expect(emitChains).toContainEqual({
@@ -1199,15 +1186,15 @@ describe("BroadcastHandler", () => {
     spyOn(SyncLogRepository, "appendForWorkspace").mockRejectedValue(new Error("sync log unavailable"))
 
     let result: ProcessResult | undefined
-    mockCursorLock((r) => {
+    const completed = mockCursorLock((r) => {
       result = r
     })
 
     const { io, emitChains } = createMockIo()
     const botNamespace = io.of("/bot")
-    const handler = new BroadcastHandler({} as any, io as any, botNamespace as any)
+    const handler = new BroadcastHandler({} as any, io as any, botNamespace as any, { debounceMs: 0, maxWaitMs: 0 })
     handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
+    await completed
 
     expect(result?.status).toBe("error")
     expect(emitChains).toHaveLength(0)
@@ -1253,9 +1240,9 @@ describe("BroadcastHandler", () => {
       }),
     ]
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue(events)
-    const { handler, emitChains } = createHandler()
+    const { handler, completed, emitChains } = createHandler()
     handler.handle()
-    await new Promise((resolve) => setTimeout(resolve, 300))
+    await completed
 
     expect(emitChains.filter((entry) => entry.eventType.startsWith("bot_invocation:"))).toEqual([
       {

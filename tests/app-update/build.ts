@@ -92,7 +92,6 @@ export async function buildGenerations(versions: string[]): Promise<BuildInfo> {
   } catch (error) {
     rmSync(buildRoot, { recursive: true, force: true })
     rmSync(BUILD_INFO_PATH, { force: true })
-    rmSync(join(__dirname, ".server-port"), { force: true })
     throw error
   } finally {
     process.chdir(previousCwd)

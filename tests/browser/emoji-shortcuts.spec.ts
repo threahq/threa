@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test"
-import { loginAndCreateWorkspace } from "./helpers"
+import { loginAndCreateWorkspace, openComposerFixture } from "./helpers"
 import { DESKTOP_GRID_COLUMNS } from "../../apps/frontend/src/lib/emoji-picker"
 
 // Emoji is inserted as plain text (the unicode character), not a `[data-type='emoji']`
@@ -32,8 +32,15 @@ test.describe("Emoji Shortcuts", () => {
     return editor
   }
 
+  async function setupComposerEditor(page: import("@playwright/test").Page) {
+    await openComposerFixture(page)
+    const editor = page.locator("[contenteditable='true']")
+    await editor.click()
+    return editor
+  }
+
   test("should show emoji picker when typing colon", async ({ page }) => {
-    const editor = await setupWorkspaceWithEditor(page)
+    const editor = await setupComposerEditor(page)
 
     // Type ":" to trigger emoji picker
     await page.keyboard.type(":")
@@ -43,7 +50,7 @@ test.describe("Emoji Shortcuts", () => {
   })
 
   test("should filter emojis when typing query after colon", async ({ page }) => {
-    const editor = await setupWorkspaceWithEditor(page)
+    const editor = await setupComposerEditor(page)
 
     // Type ":" first and wait for grid
     await page.keyboard.type(":")
@@ -60,7 +67,7 @@ test.describe("Emoji Shortcuts", () => {
   })
 
   test("should insert emoji when clicking on grid item", async ({ page }) => {
-    const editor = await setupWorkspaceWithEditor(page)
+    const editor = await setupComposerEditor(page)
 
     // Type ":fire" to search
     await page.keyboard.type(":fire")
@@ -79,7 +86,7 @@ test.describe("Emoji Shortcuts", () => {
   })
 
   test("should insert emoji when pressing Enter on selected item", async ({ page }) => {
-    const editor = await setupWorkspaceWithEditor(page)
+    const editor = await setupComposerEditor(page)
 
     // Type ":smile" to search
     await page.keyboard.type(":smile")
@@ -98,7 +105,7 @@ test.describe("Emoji Shortcuts", () => {
   })
 
   test("should insert emoji when pressing Tab on selected item", async ({ page }) => {
-    const editor = await setupWorkspaceWithEditor(page)
+    const editor = await setupComposerEditor(page)
 
     // Type ":heart" to search
     await page.keyboard.type(":heart")
@@ -117,7 +124,7 @@ test.describe("Emoji Shortcuts", () => {
   })
 
   test("should match emojis by alias shortcodes", async ({ page }) => {
-    const editor = await setupWorkspaceWithEditor(page)
+    const editor = await setupComposerEditor(page)
 
     // Type ":thumbsup" - alias for 👍 (primary shortcode is "+1")
     await page.keyboard.type(":thumbsup")
@@ -134,7 +141,7 @@ test.describe("Emoji Shortcuts", () => {
   })
 
   test("should auto-convert :shortcode: when typing closing colon", async ({ page }) => {
-    const editor = await setupWorkspaceWithEditor(page)
+    const editor = await setupComposerEditor(page)
 
     // Type a complete shortcode with closing colon
     await page.keyboard.type(":fire:")
@@ -147,7 +154,7 @@ test.describe("Emoji Shortcuts", () => {
   })
 
   test("should close emoji picker when pressing Escape", async ({ page }) => {
-    const editor = await setupWorkspaceWithEditor(page)
+    const editor = await setupComposerEditor(page)
 
     // Type ":" to trigger picker
     await page.keyboard.type(":")
@@ -163,7 +170,7 @@ test.describe("Emoji Shortcuts", () => {
   })
 
   test("Up/Down commit to the grid, then every arrow moves the highlight", async ({ page }) => {
-    const editor = await setupWorkspaceWithEditor(page)
+    const editor = await setupComposerEditor(page)
 
     await page.keyboard.type(":")
     await expect(page.locator("[data-emoji-grid]")).toBeVisible({ timeout: 2000 })
@@ -190,7 +197,7 @@ test.describe("Emoji Shortcuts", () => {
   })
 
   test("Down then Right then Enter inserts the highlighted emoji, not the first", async ({ page }) => {
-    const editor = await setupWorkspaceWithEditor(page)
+    const editor = await setupComposerEditor(page)
 
     await page.keyboard.type(":")
     await expect(page.locator("[data-emoji-grid]")).toBeVisible({ timeout: 2000 })
@@ -210,7 +217,7 @@ test.describe("Emoji Shortcuts", () => {
   })
 
   test("Left moves the caret inside the query to fix a typo, and the grid follows", async ({ page }) => {
-    const editor = await setupWorkspaceWithEditor(page)
+    const editor = await setupComposerEditor(page)
 
     await page.keyboard.type(":smle")
     await expect(page.locator("[data-emoji-grid]")).toBeVisible({ timeout: 2000 })
@@ -233,7 +240,7 @@ test.describe("Emoji Shortcuts", () => {
   })
 
   test("arrowing through existing text never opens the grid at a colon", async ({ page }) => {
-    const editor = await setupWorkspaceWithEditor(page)
+    const editor = await setupComposerEditor(page)
 
     await page.keyboard.type("ratio : 5")
     await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()

@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk, panesSettled } from "./helpers"
+import { loginAndCreateWorkspaceViaApi, createChannelViaApi, expectApiOk, panesSettled } from "./helpers"
 
 /**
  * The route names the stream pane the reader works in and `?panel=` holds the
@@ -62,10 +62,8 @@ async function settledScroll(target: Locator): Promise<number> {
 }
 
 async function seedChannelWithThread(page: Page) {
-  await loginAndCreateWorkspace(page, "pane-route")
-  await createChannel(page, `route-${Date.now().toString(36)}`)
-  const workspaceId = page.url().match(/\/w\/([^/]+)/)![1]
-  const channel = streamIdOf(page)
+  const { workspaceId } = await loginAndCreateWorkspaceViaApi(page, "pane-route")
+  const channel = await createChannelViaApi(page, workspaceId, `route-${Date.now().toString(36)}`, "public")
   const ids: string[] = []
   for (let i = 0; i < 30; i++) {
     ids.push(await post(page, workspaceId, channel, `channel line ${String(i).padStart(2, "0")} gives it a scroll`))
@@ -79,7 +77,7 @@ async function seedChannelWithThread(page: Page) {
   for (let i = 0; i < 30; i++) {
     await post(page, workspaceId, thread, `thread line ${String(i).padStart(2, "0")} gives it a scroll`)
   }
-  await page.reload()
+  await page.goto(`/w/${workspaceId}/s/${channel}`)
   await expect(scroller(page, channel)).toBeVisible({ timeout: 30_000 })
   await page
     .locator(`[data-message-id="${parentId}"]`)
@@ -233,17 +231,14 @@ test("should keep both panes mounted when the first column's stream moves into a
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 1000 })
-  await loginAndCreateWorkspace(page, "pane-route-drag")
+  const { workspaceId } = await loginAndCreateWorkspaceViaApi(page, "pane-route-drag")
   const suffix = Date.now().toString(36)
   const names = { a: `route-a-${suffix}`, b: `route-b-${suffix}` }
-  await createChannel(page, names.b)
-  const streamB = streamIdOf(page)
-  await createChannel(page, names.a)
-  const streamA = streamIdOf(page)
-  const workspaceId = page.url().match(/\/w\/([^/]+)/)![1]
+  const streamB = await createChannelViaApi(page, workspaceId, names.b, "public")
+  const streamA = await createChannelViaApi(page, workspaceId, names.a, "public")
   await post(page, workspaceId, streamA, "said in a")
   await post(page, workspaceId, streamB, "said in b")
-  await page.reload()
+  await page.goto(`/w/${workspaceId}/s/${streamA}`)
   await expect(pane(page, streamA).getByText("said in a")).toBeVisible({ timeout: 30_000 })
 
   await drag(page, sidebarRow(page, names.b), await at(pane(page, streamA), 0.95, 0.4), async () => {

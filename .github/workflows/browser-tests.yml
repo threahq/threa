@@ -4,26 +4,30 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-  pull_request:
-    paths:
-      - ".bun-version"
-      - ".github/actions/**"
-      - "apps/**"
-      - "packages/**"
-      - "tests/browser/**"
-      - "playwright.config.ts"
-      - "scripts/test-silent.ts"
-      - "scripts/browser-ci.ts"
-      - "package.json"
-      - "bun.lock"
-      - ".github/workflows/browser-tests.yml"
+  workflow_call:
+    inputs:
+      mode:
+        type: string
+        required: true
+      files:
+        type: string
+        required: true
+      shards:
+        type: string
+        required: true
+      shard-count:
+        type: number
+        required: true
+    outputs:
+      result:
+        value: ${{ jobs.evaluate-results.outputs.result }}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: browser-child-${{ github.run_id }}
+  cancel-in-progress: false
 
 env:
-  TOTAL_SHARDS: 4
+  TOTAL_SHARDS: ${{ inputs.shard-count || 8 }}
 
 jobs:
   build-frontend:
@@ -58,10 +62,17 @@ jobs:
           restore-keys: browser-timings-v1-
 
       - name: Plan balanced browser shards
+        env:
+          SELECTED_FILES: ${{ inputs.files }}
+          SELECTED_MODE: ${{ inputs.mode }}
         run: |
           mkdir -p browser-shard-lists
           bunx playwright test --list --reporter=json > browser-inventory.json
           args=(--inventory browser-inventory.json --shards "$TOTAL_SHARDS" --output-dir browser-shard-lists --summary browser-shard-plan.md)
+          if [[ "$SELECTED_MODE" == targeted ]]; then
+            printf '%s' "$SELECTED_FILES" > selected-files.json
+            args+=(--files selected-files.json)
+          fi
           if [[ -f .cache/browser-ci/timings.json ]]; then
             args+=(--history .cache/browser-ci/timings.json)
           else
@@ -91,17 +102,34 @@ jobs:
           retention-days: 1
 
   browser-tests:
-    needs: build-frontend
-    runs-on: ubuntu-latest
+    env:
+      BROWSER_WORKERS: 3
+    permissions:
+      contents: read
+      actions: read
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
-        shard_index: [1, 2, 3, 4]
+        shard_index: ${{ fromJSON(inputs.shards || '[1,2,3,4,5,6,7,8]') }}
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check main tip
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: tip
+        uses: ./.github/actions/check-main-tip
+        with:
+          expected-sha: ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Reject obsolete main revision
+        if: steps.tip.outputs.is-tip == 'false'
+        run: exit 1
 
       - name: Start PostgreSQL
         run: |
@@ -159,35 +187,8 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # Browsers and their OS libraries come preinstalled in Microsoft's image,
-      # replacing a `playwright install-deps` that spent 9-16 minutes on apt.
-      # The tag is derived from the locked version: a mismatch means Playwright
-      # can't find its browsers. Postgres/MinIO stay on the host and the tests
-      # reach them on localhost through --network host.
-      - name: Pull Playwright image
-        run: |
-          version="$(bun -p 'require("@playwright/test/package.json").version')"
-          image="mcr.microsoft.com/playwright:v${version}-noble"
-          for attempt in 1 2 3 4 5; do
-            if docker pull "$image"; then
-              break
-            fi
-            echo "docker pull playwright failed (attempt $attempt/5) — retrying in $((attempt * 5))s"
-            sleep $((attempt * 5))
-          done
-          bun_bin="$(readlink -f "$(command -v bun)")"
-          cat > "$RUNNER_TEMP/in-playwright" <<EOF
-          #!/usr/bin/env bash
-          exec docker run --rm --init --ipc=host --network host \\
-            --user "\$(id -u):\$(id -g)" -e HOME=/tmp \\
-            -e PLAYWRIGHT_JSON_OUTPUT_FILE \\
-            -e CI -e PLAYWRIGHT_TEST_DB_NAME -e PLAYWRIGHT_FRONTEND_PREBUILT \\
-            -e PATH=/opt/bun:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \\
-            -v "$bun_bin:/opt/bun/bun:ro" -v "$bun_bin:/opt/bun/bunx:ro" \\
-            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" -w "$GITHUB_WORKSPACE" \\
-            "$image" "\$@"
-          EOF
-          chmod +x "$RUNNER_TEMP/in-playwright"
+      - name: Install Chromium
+        run: bunx playwright install chromium
 
       - name: Derive browser test database name
         run: |
@@ -217,6 +218,31 @@ jobs:
             fi
           done
 
+      - name: Wait for this run's frontend artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          deadline=$((SECONDS + 180))
+          while (( SECONDS < deadline )); do
+            jobs=$(timeout 10s gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=all&per_page=100")
+            producer=$(jq -c '[.[].jobs[] | select(.name == "build-frontend" or (.name | endswith("/ build-frontend")))] | max_by(.run_attempt) // empty' <<< "$jobs")
+            if [[ -n "$producer" ]]; then
+              conclusion=$(jq -r '.conclusion // empty' <<< "$producer")
+              if [[ -n "$conclusion" && "$conclusion" != success ]]; then
+                echo "::error::Frontend producer ended with $conclusion"
+                exit 1
+              fi
+              started=$(jq -r '.started_at' <<< "$producer")
+              artifacts=$(timeout 10s gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=browser-test-frontend&per_page=100")
+              if jq -e --arg started "$started" '.artifacts[] | select(.name == "browser-test-frontend" and .expired == false and .created_at >= $started)' <<< "$artifacts" > /dev/null; then
+                exit 0
+              fi
+            fi
+            sleep 3
+          done
+          echo "::error::Timed out waiting for this run's frontend artifact"
+          exit 1
+
       - name: Download frontend build
         uses: actions/download-artifact@v4
         with:
@@ -229,11 +255,25 @@ jobs:
           name: browser-shard-lists
           path: browser-shard-lists/
 
+      - name: Select browser shard topology
+        run: |
+          list="browser-shard-lists/shard-${{ matrix.shard_index }}.txt"
+          test -s "$list"
+          single_region=1
+          while IFS= read -r group || [[ -n "$group" ]]; do
+            if [[ "$group" == '[chromium] > stream-connections.spec.ts' ]]; then
+              single_region=0
+              break
+            fi
+          done < "$list"
+          echo "PLAYWRIGHT_SINGLE_REGION=$single_region" >> "$GITHUB_ENV"
+          echo "Shard ${{ matrix.shard_index }}: PLAYWRIGHT_SINGLE_REGION=$single_region"
+
       - name: Run browser tests
         id: initial-run
         continue-on-error: true
         run: |
-          "$RUNNER_TEMP/in-playwright" bun run test:browser -- --reporter=line,blob,json --test-list=browser-shard-lists/shard-${{ matrix.shard_index }}.txt
+          bun run test:browser -- --workers="$BROWSER_WORKERS" --reporter=line,blob,json --test-list=browser-shard-lists/shard-${{ matrix.shard_index }}.txt
         env:
           CI: true
           PLAYWRIGHT_TEST_DB_NAME: ${{ env.PLAYWRIGHT_TEST_DB_NAME }}
@@ -259,7 +299,7 @@ jobs:
             echo "::warning::No failed-test IDs found — retrying the shard after the infrastructure failure"
             retry_target=(--test-list=browser-shard-lists/shard-${{ matrix.shard_index }}.txt)
           fi
-          "$RUNNER_TEMP/in-playwright" bun run test:browser -- --reporter=line,blob "${retry_target[@]}" --retries=0
+          bun run test:browser -- --workers="$BROWSER_WORKERS" --reporter=line,blob "${retry_target[@]}" --retries=0
         env:
           CI: true
           PLAYWRIGHT_TEST_DB_NAME: ${{ env.PLAYWRIGHT_TEST_DB_NAME }}
@@ -318,9 +358,15 @@ jobs:
 
   evaluate-results:
     runs-on: ubuntu-latest
-    needs: browser-tests
+    outputs:
+      result: ${{ steps.summary.outcome }}
+    needs: [build-frontend, browser-tests]
     if: always()
     steps:
+      - name: Require frontend build
+        env:
+          PRODUCER: ${{ needs.build-frontend.result }}
+        run: test "$PRODUCER" = success
       - name: Download shard result markers
         uses: actions/download-artifact@v4
         with:
@@ -328,6 +374,7 @@ jobs:
           pattern: shard-result-*
 
       - name: Summarize results
+        id: summary
         env:
           SHARD_JOBS_RESULT: ${{ needs.browser-tests.result }}
         run: |

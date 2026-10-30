@@ -4,6 +4,7 @@
  */
 
 import { expect } from "bun:test"
+import { getIsolatedTestTemplate } from "../setup"
 import { Pool, type PoolClient } from "pg"
 import { BLOCK_ID_PATTERN, type JSONContent } from "@threahq/types"
 import { BLOCK_ID_NODE_TYPES } from "@threahq/prosemirror/schema"
@@ -94,6 +95,7 @@ export async function setupIsolatedTestDatabase(label: string): Promise<{ pool: 
     .replaceAll(/[^a-z0-9]/g, "_")
     .slice(0, 24)
   const databaseName = `threa_test_${safeLabel}_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`
+  const template = await getIsolatedTestTemplate()
   const target = getTestDatabaseTarget()
   const adminPool = new Pool({ connectionString: target.adminUrl })
   const databaseIdentifier = quoteDatabaseIdentifier(databaseName)
@@ -101,13 +103,12 @@ export async function setupIsolatedTestDatabase(label: string): Promise<{ pool: 
   let databaseCreated = false
 
   try {
-    await adminPool.query(`CREATE DATABASE ${databaseIdentifier}`)
+    await adminPool.query(`CREATE DATABASE ${databaseIdentifier} TEMPLATE ${quoteDatabaseIdentifier(template)}`)
     databaseCreated = true
 
     const connectionUrl = new URL(target.connectionUrl)
     connectionUrl.pathname = `/${databaseName}`
     pool = createDatabasePool(connectionUrl.toString())
-    await createMigrator(pool).up()
   } catch (error) {
     if (pool) await pool.end()
     if (databaseCreated) await adminPool.query(`DROP DATABASE ${databaseIdentifier} WITH (FORCE)`)

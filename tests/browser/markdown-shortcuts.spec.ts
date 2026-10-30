@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test"
-import { loginAndCreateWorkspace, pressEditorShortcut, selectAllEditorContent } from "./helpers"
+import { loginAndCreateWorkspace, openComposerFixture, pressEditorShortcut, selectAllEditorContent } from "./helpers"
 
 /**
  * Tests for formatting keyboard shortcuts.
@@ -15,15 +15,9 @@ import { loginAndCreateWorkspace, pressEditorShortcut, selectAllEditorContent } 
  */
 
 test.describe("Formatting Shortcuts", () => {
-  test.beforeEach(async ({ page }) => {
-    await loginAndCreateWorkspace(page, "formatting")
-
-    // Create a scratchpad to test in
-    await page.getByRole("button", { name: "+ New Scratchpad" }).click()
-    await expect(page.locator("[contenteditable='true']")).toBeVisible({ timeout: 5000 })
-  })
-
   test.describe("without selection (cursor only)", () => {
+    test.beforeEach(({ page }) => openComposerFixture(page))
+
     test("Cmd+B should toggle bold and allow typing bold text", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()
@@ -88,6 +82,8 @@ test.describe("Formatting Shortcuts", () => {
   })
 
   test.describe("with text selection", () => {
+    test.beforeEach(({ page }) => openComposerFixture(page))
+
     test("Cmd+B should make selected text bold", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()
@@ -129,6 +125,12 @@ test.describe("Formatting Shortcuts", () => {
   })
 
   test.describe("shortcuts work after sending message", () => {
+    test.beforeEach(async ({ page }) => {
+      await loginAndCreateWorkspace(page, "formatting")
+      await page.getByRole("button", { name: "+ New Scratchpad" }).click()
+      await expect(page.locator("[contenteditable='true']")).toBeVisible({ timeout: 5000 })
+    })
+
     test("should work on fresh editor after send", async ({ page }) => {
       const editor = page.locator("[data-editor-zone='main'] [contenteditable='true']")
       await editor.click()
@@ -158,6 +160,8 @@ test.describe("Formatting Shortcuts", () => {
   })
 
   test.describe("toolbar buttons produce same result as shortcuts", () => {
+    test.beforeEach(({ page }) => openComposerFixture(page))
+
     test("bold toolbar button should apply bold formatting", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()
@@ -207,8 +211,7 @@ test.describe("Ctrl+A and Ctrl+E on Mac", () => {
     await page.addInitScript(() => {
       Object.defineProperty(navigator, "platform", { get: () => "MacIntel" })
     })
-    await loginAndCreateWorkspace(page, "ctrl-e")
-    await page.getByRole("button", { name: "+ New Scratchpad" }).click()
+    await openComposerFixture(page)
 
     const editor = page.locator("[contenteditable='true']")
     await expect(editor).toBeVisible({ timeout: 5000 })

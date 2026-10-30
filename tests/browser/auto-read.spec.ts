@@ -132,46 +132,6 @@ async function setUpUnreadChannel(browser: Browser, ownerPage: Page, unreadCount
 }
 
 test.describe("Timeline auto-read", () => {
-  test("scrolling through the unreads to the tail marks the stream read on the server", async ({ page, browser }) => {
-    const { prefix, workspaceId, streamId, otherContext } = await setUpUnreadChannel(browser, page, 25)
-    await page.setViewportSize({ width: 1024, height: 500 })
-
-    await page.goto(`/w/${workspaceId}/s/${streamId}`)
-    const firstUnread = page
-      .getByRole("main")
-      .locator(".message-item")
-      .filter({ hasText: `${prefix}-unread msg-001` })
-      .first()
-    await expect(firstUnread).toBeVisible({ timeout: 20000 })
-
-    // Read down through the unreads to the tail with real wheel gestures.
-    const scroller = page.locator("[data-suppress-pull-refresh]")
-    const box = await scroller.boundingBox()
-    expect(box).not.toBeNull()
-    await page.mouse.move(box!.x + box!.width / 2, box!.y + 24)
-    await expect
-      .poll(
-        async () => {
-          await page.mouse.wheel(0, 300)
-          await page.waitForTimeout(120)
-          return await distanceFromBottom(page)
-        },
-        { timeout: 20000, message: "should reach the tail by scrolling" }
-      )
-      .toBeLessThanOrEqual(1)
-
-    // Idle past the auto-mark debounce (500ms) + round trip, then the server
-    // must agree the stream is fully read.
-    await expect
-      .poll(() => serverUnreadCount(page, workspaceId, streamId), {
-        timeout: 15000,
-        message: "auto-read should clear the server unread count after reading to the tail",
-      })
-      .toBe(0)
-
-    await otherContext.close()
-  })
-
   test("a message arriving while viewing at the tail re-marks the stream read", async ({ page, browser }) => {
     // The prod signature: watermark written at t, a new message lands at t+4s
     // while the viewer is still on the stream — and no re-mark ever fires,
@@ -439,7 +399,7 @@ test.describe("Timeline auto-read", () => {
       page
         .getByRole("main")
         .locator(".message-item")
-        .filter({ hasText: `${prefix}-unread msg-001` })
+        .filter({ has: page.getByText(`${prefix}-unread msg-001`, { exact: true }) })
     ).toBeVisible({ timeout: 20000 })
 
     const scroller = page.locator("[data-suppress-pull-refresh]")

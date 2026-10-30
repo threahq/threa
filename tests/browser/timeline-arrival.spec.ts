@@ -144,7 +144,7 @@ async function expectAppearedPinned(page: Page, text: string) {
   expect(frames.length, "the arrival never laid out").toBeGreaterThan(0)
   const offBottom = frames.filter((f) => f.distance > AT_BOTTOM_PX)
   const misplaced = [frames[0].arrivalGap, ...laterGaps].filter((g) => g !== finalGap)
-  expect({ misplaced, offBottom }).toEqual({ misplaced: [], offBottom: [] })
+  expect({ misplaced, offBottom }, `Final arrival gap: ${finalGap}px`).toEqual({ misplaced: [], offBottom: [] })
 }
 
 async function expectPinnedArrival(page: Page, workspaceId: string, streamId: string) {

@@ -130,6 +130,19 @@ describe("browser CI reporting", () => {
 })
 
 describe("browser CI shard planning", () => {
+  test("should select only requested files and reject missing files", () => {
+    const inventory = report(Array.from({ length: 5 }, (_, index) => ({ file: `f${index}.spec.ts` })))
+    const files = ["tests/browser/f0.spec.ts", "tests/browser/f2.spec.ts", "tests/browser/f4.spec.ts"]
+    const plan = planShards(inventory, undefined, 3, files)
+    expect(plan.shards.flatMap((shard) => shard.groups).sort()).toEqual([
+      "[chromium] > f0.spec.ts",
+      "[chromium] > f2.spec.ts",
+      "[chromium] > f4.spec.ts",
+    ])
+    expect(() => planShards(inventory, undefined, 3, ["tests/browser/missing.spec.ts"])).toThrow(
+      "missing from inventory"
+    )
+  })
   test("should use count balancing when history has no positive observations", () => {
     const inventory = report(Array.from({ length: 8 }, (_, index) => ({ file: `f${index}.spec.ts` })))
     const expected = planShards(inventory, undefined, 4)

@@ -21,6 +21,7 @@ interface DocSuggestionListProps {
   command: (item: DocListItem) => void
   placement?: Placement
   emptyState?: ReactNode
+  highlightResetKey?: string
   /** The "New doc" row's doc is being created. */
   creatingNewDoc?: boolean
 }
@@ -53,7 +54,7 @@ function NewDocRow({ item, creating }: { item: NewDocItem; creating: boolean }) 
  * and for `/doc` the row that creates one.
  */
 export const DocSuggestionList = forwardRef<DocSuggestionListRef, DocSuggestionListProps>(function DocSuggestionList(
-  { items, clientRect, command, placement, emptyState = "No docs found", creatingNewDoc = false },
+  { items, clientRect, command, placement, emptyState = "No docs found", creatingNewDoc = false, highlightResetKey },
   ref
 ) {
   const { workspaceId } = useParams<{ workspaceId: string }>()
@@ -76,6 +77,7 @@ export const DocSuggestionList = forwardRef<DocSuggestionListRef, DocSuggestionL
       placement={placement}
       width="w-80"
       emptyState={emptyState}
+      highlightResetKey={highlightResetKey}
     />
   )
 })

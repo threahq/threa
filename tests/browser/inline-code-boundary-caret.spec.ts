@@ -1,5 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace } from "./helpers"
+import { expect, test, type Page, type Route } from "@playwright/test"
+import { openComposerFixture } from "./helpers"
 
 type BoundaryTarget = "outside-start" | "inside-start" | "inside-end" | "outside-end"
 
@@ -410,11 +410,7 @@ async function getEffectiveCaretLeft(page: Page) {
 }
 
 test.describe("Inline code boundary caret", () => {
-  test.beforeEach(async ({ page }) => {
-    await loginAndCreateWorkspace(page, "inline-code-caret")
-    await page.getByRole("button", { name: "+ New Scratchpad" }).click()
-    await expect(page.locator("[contenteditable='true']")).toBeVisible({ timeout: 5000 })
-  })
+  test.beforeEach(({ page }) => openComposerFixture(page))
 
   for (const scenario of [
     { label: "paragraph", blockType: "paragraph" as const },
@@ -508,11 +504,61 @@ test.describe("Inline code boundary caret", () => {
       previousLeft = currentLeft
     }
   })
+})
 
-  test("keeps the synthetic outside-end caret on the last wrapped line when inline code ends a block", async ({
-    page,
-  }) => {
-    const metrics = await page.evaluate(async () => {
+test("Inline code boundary caret keeps the synthetic outside-end caret on the last wrapped line when inline code ends a block and its font loads", async ({
+  page,
+}) => {
+  let releaseFont!: () => void
+  const fontHeld = new Promise<void>((resolve) => {
+    releaseFont = resolve
+  })
+  let fontRequested = false
+  const holdFont = async (route: Route) => {
+    fontRequested = true
+    await fontHeld
+    await route.continue()
+  }
+  await page.route("**/fonts/commit-mono-*.woff2", holdFont)
+
+  const measure = () =>
+    page.evaluate(() => {
+      const code = document.querySelector<HTMLElement>("[contenteditable='true']")?.querySelector<HTMLElement>("code")
+      const overlay = document.querySelector<HTMLElement>("[data-inline-code-boundary-overlay='true']")
+      const codeTextNode = code?.firstChild
+
+      if (!code || !(codeTextNode instanceof Text) || !overlay) {
+        throw new Error("Wrapped inline code geometry missing")
+      }
+
+      const endRange = document.createRange()
+      endRange.setStart(codeTextNode, codeTextNode.length)
+      endRange.setEnd(codeTextNode, codeTextNode.length)
+      const endRect = endRange.getBoundingClientRect()
+      const codeRects = Array.from(code.getClientRects()).filter((rect) => rect.width > 0 || rect.height > 0)
+      const lastCodeRect = codeRects[codeRects.length - 1]
+      const overlayRect = overlay.getBoundingClientRect()
+
+      if (!lastCodeRect) {
+        throw new Error("Wrapped inline code fragments missing")
+      }
+
+      return {
+        insideEndLeft: endRect.left,
+        lastCodeRight: lastCodeRect.right,
+        overlayLeft: overlayRect.left,
+      }
+    })
+
+  const expectOutsideEnd = async () => {
+    const metrics = await measure()
+    expect(Math.abs(metrics.overlayLeft - metrics.lastCodeRight)).toBeLessThan(1.25)
+    expect(metrics.overlayLeft - metrics.insideEndLeft).toBeGreaterThan(1)
+  }
+
+  try {
+    await openComposerFixture(page)
+    await page.evaluate(async () => {
       const editorElement = document.querySelector<HTMLElement>("[contenteditable='true']")
       const editor = editorElement?.editor
 
@@ -554,35 +600,19 @@ test.describe("Inline code boundary caret", () => {
       editor.view.dispatch(editor.state.tr.setStoredMarks([]))
       editor.view.focus()
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-
-      const code = editorElement.querySelector<HTMLElement>("code")
-      const overlay = document.querySelector<HTMLElement>("[data-inline-code-boundary-overlay='true']")
-      const codeTextNode = code?.firstChild
-
-      if (!code || !(codeTextNode instanceof Text) || !overlay) {
-        throw new Error("Wrapped inline code geometry missing")
-      }
-
-      const endRange = document.createRange()
-      endRange.setStart(codeTextNode, codeTextNode.length)
-      endRange.setEnd(codeTextNode, codeTextNode.length)
-      const endRect = endRange.getBoundingClientRect()
-      const codeRects = Array.from(code.getClientRects()).filter((rect) => rect.width > 0 || rect.height > 0)
-      const lastCodeRect = codeRects[codeRects.length - 1]
-      const overlayRect = overlay.getBoundingClientRect()
-
-      if (!lastCodeRect) {
-        throw new Error("Wrapped inline code fragments missing")
-      }
-
-      return {
-        insideEndLeft: endRect.left,
-        lastCodeRight: lastCodeRect.right,
-        overlayLeft: overlayRect.left,
-      }
     })
+    await expect.poll(() => fontRequested).toBe(true)
+    expect(await page.evaluate(() => document.fonts.status)).toBe("loading")
+    await expectOutsideEnd()
 
-    expect(Math.abs(metrics.overlayLeft - metrics.lastCodeRight)).toBeLessThan(1.25)
-    expect(metrics.overlayLeft - metrics.insideEndLeft).toBeGreaterThan(1)
-  })
+    releaseFont()
+    await page.evaluate(async () => {
+      await document.fonts.ready
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    })
+    await expectOutsideEnd()
+  } finally {
+    releaseFont()
+    await page.unrouteAll({ behavior: "wait" })
+  }
 })

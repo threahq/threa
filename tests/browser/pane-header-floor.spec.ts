@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk, panesSettled } from "./helpers"
+import { loginAndCreateWorkspaceViaApi, createChannelViaApi, expectApiOk, panesSettled } from "./helpers"
 
 test.describe.configure({ timeout: 300_000 })
 
@@ -149,11 +149,13 @@ async function squeeze(page: Page, pane: Locator): Promise<{ narrowest: number; 
 }
 
 async function seedChannel(page: Page) {
-  await loginAndCreateWorkspace(page, "header-floor")
-  await createChannel(page, `a-channel-with-a-rather-long-name-${Date.now().toString(36)}`)
-  const url = page.url()
-  const workspaceId = url.match(/\/w\/([^/]+)/)![1]
-  const streamId = url.match(/\/s\/([^/?]+)/)![1]
+  const { workspaceId } = await loginAndCreateWorkspaceViaApi(page, "header-floor")
+  const streamId = await createChannelViaApi(
+    page,
+    workspaceId,
+    `a-channel-with-a-rather-long-name-${Date.now().toString(36)}`,
+    "public"
+  )
   const parentId = await post(page, workspaceId, streamId, "a parent message with quite a long opening line")
   const created = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
     data: { type: "thread", parentStreamId: streamId, parentAnchorId: parentId },

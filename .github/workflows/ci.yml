@@ -2,29 +2,58 @@ name: CI
 
 on:
   pull_request:
-    paths:
-      - ".bun-version"
-      - ".github/actions/**"
-      - "Dockerfile*"
-      - "apps/**"
-      - "packages/**"
-      - "extensions/**"
-      - "tests/**"
-      - "scripts/**"
-      - "package.json"
-      - "bun.lock"
-      - ".github/workflows/ci.yml"
+    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review, edited]
   push:
     branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: ${{ github.event_name == 'pull_request' && ((github.event.action == 'labeled' && github.event.label.name != 'ci:full') || (github.event.action == 'unlabeled' && github.event.label.name != 'ci:full') || (github.event.action == 'edited' && !github.event.changes.base)) && format('ci-ignored-{0}', github.run_id) || format('ci-{0}', github.event.pull_request.number || github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  plan:
+    name: Select CI plan
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.relevance.outputs.relevant }}
+      mode: ${{ steps.policy.outputs.mode }}
+      full: ${{ steps.policy.outputs.full }}
+      run_frontend: ${{ steps.policy.outputs.run_frontend }}
+      frontend_sources: ${{ steps.policy.outputs.frontend_sources }}
+      frontend_tests: ${{ steps.policy.outputs.frontend_tests }}
+      browser_files: ${{ steps.policy.outputs.browser_files }}
+      frontend_shards: ${{ steps.policy.outputs.frontend_shards }}
+      browser_shards: ${{ steps.policy.outputs.browser_shards }}
+      browser_shard_count: ${{ steps.policy.outputs.browser_shard_count }}
+    steps:
+      - id: relevance
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
+          BASE_CHANGED: ${{ toJSON(github.event.changes.base) }}
+        run: |
+          relevant=true
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            if [[ ( "$ACTION" == unlabeled && "$LABEL" != ci:full ) || ( "$ACTION" == labeled && "$LABEL" != ci:full ) || ( "$ACTION" == edited && "$BASE_CHANGED" == null ) ]]; then
+              relevant=false
+            fi
+          fi
+          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.relevance.outputs.relevant == 'true'
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-bun
+        if: steps.relevance.outputs.relevant == 'true'
+      - id: policy
+        if: steps.relevance.outputs.relevant == 'true'
+        run: bun scripts/ci-policy.ts --event "$GITHUB_EVENT_PATH" --event-name "$GITHUB_EVENT_NAME" --json "$RUNNER_TEMP/ci-plan.json"
+
   check-main-tip:
     name: Check main tip
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -45,7 +74,12 @@ jobs:
 
   lint:
     name: Lint
-    needs: check-main-tip
+    needs: [plan, check-main-tip]
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.relevant == 'true' &&
+          (needs.check-main-tip.result == 'success' ||
+           (needs.check-main-tip.result == 'skipped' &&
+            (github.event_name != 'push' || github.ref != 'refs/heads/main'))) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -65,7 +99,12 @@ jobs:
 
   typecheck:
     name: Typecheck
-    needs: check-main-tip
+    needs: [plan, check-main-tip]
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.relevant == 'true' &&
+          (needs.check-main-tip.result == 'success' ||
+           (needs.check-main-tip.result == 'skipped' &&
+            (github.event_name != 'push' || github.ref != 'refs/heads/main'))) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -85,12 +124,17 @@ jobs:
 
   test:
     name: Tests (${{ matrix.partition }})
-    needs: check-main-tip
+    needs: [plan, check-main-tip]
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.relevant == 'true' && needs.plan.outputs.full == 'true' &&
+          (needs.check-main-tip.result == 'success' ||
+           (needs.check-main-tip.result == 'skipped' &&
+            (github.event_name != 'push' || github.ref != 'refs/heads/main'))) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        partition: [remaining, backend-integration]
+        partition: [backend, backend-integration, packages]
 
     services:
       postgres:
@@ -123,7 +167,7 @@ jobs:
           bun install --frozen-lockfile --cwd extensions/bot-runtime-client
 
       - name: Run scripts tests
-        if: matrix.partition == 'remaining'
+        if: matrix.partition == 'packages'
         run: bun run test:scripts
 
       - name: Create test databases
@@ -148,7 +192,7 @@ jobs:
           done
 
       - name: Run backend tests
-        if: matrix.partition == 'remaining'
+        if: matrix.partition == 'backend'
         run: bun run test
         env:
           TEST_DATABASE_URL: postgresql://threa:threa@localhost:5454/threa_test
@@ -168,25 +212,25 @@ jobs:
           S3_SECRET_ACCESS_KEY: minioadmin
 
       - name: Run control-plane tests
-        if: matrix.partition == 'remaining'
+        if: matrix.partition == 'packages'
         run: bun run --cwd apps/control-plane test
         env:
           TEST_DATABASE_URL: postgresql://threa:threa@localhost:5454/threa_control_plane_test
 
       - name: Run workspace-router tests
-        if: matrix.partition == 'remaining'
+        if: matrix.partition == 'packages'
         run: bun run --cwd apps/workspace-router test
 
       - name: Run enclave tests
-        if: matrix.partition == 'remaining'
+        if: matrix.partition == 'packages'
         run: bun run --cwd apps/enclave test
 
       - name: Run cli tests
-        if: matrix.partition == 'remaining'
+        if: matrix.partition == 'packages'
         run: bun run --cwd packages/cli test
 
       - name: Run shared package tests
-        if: matrix.partition == 'remaining'
+        if: matrix.partition == 'packages'
         run: |
           bun run --cwd packages/types test
           bun run --cwd packages/backend-common test
@@ -196,13 +240,19 @@ jobs:
 
   frontend-tests:
     name: Frontend Tests (${{ matrix.shard_index }}/${{ strategy.job-total }})
-    needs: check-main-tip
+    needs: [plan, check-main-tip]
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.relevant == 'true' &&
+          needs.plan.outputs.run_frontend == 'true' &&
+          (needs.check-main-tip.result == 'success' ||
+           (needs.check-main-tip.result == 'skipped' &&
+            (github.event_name != 'push' || github.ref != 'refs/heads/main'))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        shard_index: [1, 2, 3, 4]
+        shard_index: ${{ fromJSON(needs.plan.outputs.frontend_shards) }}
 
     steps:
       - name: Checkout
@@ -215,30 +265,30 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run frontend tests
-        run: bun run --cwd apps/frontend test -- --shard=${{ matrix.shard_index }}/${{ strategy.job-total }}
+        if: needs.plan.outputs.full == 'true'
+        run: bun run --cwd apps/frontend test -- --shard=${{ matrix.shard_index }}/6
+
+      - name: Run related frontend tests
+        if: needs.plan.outputs.mode == 'targeted'
+        env:
+          FRONTEND_SOURCES: ${{ needs.plan.outputs.frontend_sources }}
+          FRONTEND_TESTS: ${{ needs.plan.outputs.frontend_tests }}
+        run: bun scripts/frontend-ci.ts
 
   extension-tests:
     name: Extension Tests
-    needs: check-main-tip
+    needs: [plan, check-main-tip]
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.relevant == 'true' && needs.plan.outputs.full == 'true' &&
+          (needs.check-main-tip.result == 'success' ||
+           (needs.check-main-tip.result == 'skipped' &&
+            (github.event_name != 'push' || github.ref != 'refs/heads/main'))) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check for extension changes
-        if: github.event_name == 'pull_request'
-        id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            extensions:
-              - '.bun-version'
-              - '.github/actions/**'
-              - 'extensions/**'
-              - '.github/workflows/ci.yml'
-
       - name: Setup Bun
-        if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
         uses: ./.github/actions/setup-bun
 
       # Extensions live outside the root Bun workspaces (apps/*, packages/*):
@@ -250,7 +300,6 @@ jobs:
       # test typechecks against the canonical packages/crypto sources, whose
       # deps (@hpke/*) resolve from the root node_modules.
       - name: Install extension dependencies
-        if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
         run: |
           bun install --frozen-lockfile
           bun install --frozen-lockfile --cwd extensions/bot-runtime-client
@@ -264,7 +313,6 @@ jobs:
           bun install --frozen-lockfile --cwd extensions/t3code-remote
 
       - name: Typecheck extensions
-        if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
         run: |
           bun run --cwd extensions/bot-runtime-client typecheck
           bun run --cwd extensions/harness-client typecheck
@@ -276,7 +324,6 @@ jobs:
           bun run --cwd extensions/t3code-remote typecheck
 
       - name: Run extension tests
-        if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
         run: |
           bun run --cwd extensions/bot-runtime-client test
           bun run --cwd extensions/harness-client test
@@ -290,50 +337,42 @@ jobs:
 
   public-site-build:
     name: Public Site Build
-    needs: check-main-tip
+    needs: [plan, check-main-tip]
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.relevant == 'true' && needs.plan.outputs.full == 'true' &&
+          (needs.check-main-tip.result == 'success' ||
+           (needs.check-main-tip.result == 'skipped' &&
+            (github.event_name != 'push' || github.ref != 'refs/heads/main'))) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check for public-site changes
-        if: github.event_name == 'pull_request'
-        id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            site:
-              - '.bun-version'
-              - '.github/actions/**'
-              - 'apps/public-site/**'
-              - 'packages/user-guide/**'
-              - 'packages/types/**'
-              - '.github/workflows/ci.yml'
-
       - name: Setup Bun
-        if: github.event_name == 'push' || steps.filter.outputs.site == 'true'
         uses: ./.github/actions/setup-bun
 
       - name: Install dependencies
-        if: github.event_name == 'push' || steps.filter.outputs.site == 'true'
         run: bun install --frozen-lockfile
 
       # The full build, not just astro check: build-llms.ts runs post-build and
       # fails on any docs page missing its PAGES entry — a guard that otherwise
       # only fires in the deploy workflow, after merge (see #1383).
       - name: Build public site
-        if: github.event_name == 'push' || steps.filter.outputs.site == 'true'
         run: bun run --cwd apps/public-site build
 
       # After the build: the markdown-negotiation test resolves each page route
       # against the mirrors that build just wrote.
       - name: Test public site
-        if: github.event_name == 'push' || steps.filter.outputs.site == 'true'
         run: bun run --cwd apps/public-site test
 
   frontend-prod-build:
     name: Frontend Production Build
-    needs: check-main-tip
+    needs: [plan, check-main-tip]
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.relevant == 'true' &&
+          (needs.check-main-tip.result == 'success' ||
+           (needs.check-main-tip.result == 'skipped' &&
+            (github.event_name != 'push' || github.ref != 'refs/heads/main'))) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -376,14 +415,15 @@ jobs:
           overwrite: true
 
   app-update-browser:
-    name: App Update Browser Proof (${{ matrix.browser }})
-    needs: check-main-tip
+    name: App Update Browser Proof
+    needs: [plan, check-main-tip]
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.relevant == 'true' && needs.plan.outputs.full == 'true' &&
+          (needs.check-main-tip.result == 'success' ||
+           (needs.check-main-tip.result == 'skipped' &&
+            (github.event_name != 'push' || github.ref != 'refs/heads/main'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        browser: [chromium, firefox]
     # The image ships the browsers' system packages. `playwright install-deps`
     # on the runner fetches them from the Azure Ubuntu mirror, which has stalled
     # past the job timeout and cancelled main's CI (no Cloudflare deploy).
@@ -410,16 +450,21 @@ jobs:
       # A no-op while the lockfile matches the image; after a Playwright bump it
       # fetches the matching browsers from the CDN, no apt involved.
       - name: Install Playwright browsers
-        run: bunx playwright install ${{ matrix.browser }}
+        run: bunx playwright install chromium firefox
 
       - name: Run app-update browser proof
-        run: bun run test:app-update --project=${{ matrix.browser }}
+        run: bun run test:app-update
         env:
           CI: true
 
   workos-permissions:
     name: WorkOS Permissions
-    needs: check-main-tip
+    needs: [plan, check-main-tip]
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.relevant == 'true' &&
+          (needs.check-main-tip.result == 'success' ||
+           (needs.check-main-tip.result == 'skipped' &&
+            (github.event_name != 'push' || github.ref != 'refs/heads/main'))) }}
     runs-on: ubuntu-latest
     concurrency:
       group: workos-permissions-${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'production' || github.run_id }}
@@ -444,11 +489,11 @@ jobs:
               - 'scripts/sync-workos-permissions.ts'
 
       - name: Setup Bun
-        if: github.event_name == 'push' || steps.filter.outputs.permissions == 'true' || steps.filter.outputs.toolchain == 'true'
+        if: github.event_name != 'pull_request' || steps.filter.outputs.permissions == 'true' || steps.filter.outputs.toolchain == 'true'
         uses: ./.github/actions/setup-bun
 
       - name: Install dependencies
-        if: github.event_name == 'push' || steps.filter.outputs.permissions == 'true' || steps.filter.outputs.toolchain == 'true'
+        if: github.event_name != 'pull_request' || steps.filter.outputs.permissions == 'true' || steps.filter.outputs.toolchain == 'true'
         run: bun install --frozen-lockfile
 
       # On PRs: check for drift when permission files change
@@ -477,3 +522,85 @@ jobs:
         run: bun run workos:sync
         env:
           WORKOS_API_KEY: ${{ secrets.WORKOS_PROD_API_KEY }}
+
+  browser-proof:
+    name: Browser proof
+    needs: plan
+    if: github.event_name == 'pull_request' && needs.plan.result == 'success' && needs.plan.outputs.relevant == 'true'
+    uses: ./.github/workflows/browser-tests.yml
+    with:
+      mode: ${{ needs.plan.outputs.mode }}
+      files: ${{ needs.plan.outputs.browser_files }}
+      shards: ${{ needs.plan.outputs.browser_shards }}
+      shard-count: ${{ fromJSON(needs.plan.outputs.browser_shard_count) }}
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+
+  image-proof:
+    name: Image proof
+    needs: plan
+    if: github.event_name == 'pull_request' && needs.plan.result == 'success' && needs.plan.outputs.relevant == 'true'
+    uses: ./.github/workflows/production-images.yml
+    with:
+      called: true
+      full: ${{ needs.plan.outputs.full == 'true' }}
+    permissions:
+      contents: read
+      pull-requests: read
+
+  merge-verification:
+    name: ${{ needs.plan.outputs.relevant == 'false' && 'Ignored PR event' || 'Merge verification' }}
+    if: always() && github.event_name == 'pull_request'
+    needs:
+      [
+        plan,
+        lint,
+        typecheck,
+        test,
+        frontend-tests,
+        extension-tests,
+        public-site-build,
+        frontend-prod-build,
+        app-update-browser,
+        workos-permissions,
+        browser-proof,
+        image-proof,
+      ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require current full verification
+        env:
+          RELEVANT: ${{ needs.plan.outputs.relevant }}
+          PLAN_RESULT: ${{ needs.plan.result }}
+          MODE: ${{ needs.plan.outputs.mode }}
+          LINT: ${{ needs.lint.result }}
+          TYPECHECK: ${{ needs.typecheck.result }}
+          TEST: ${{ needs.test.result }}
+          FRONTEND: ${{ needs.frontend-tests.result }}
+          EXTENSIONS: ${{ needs.extension-tests.result }}
+          SITE: ${{ needs.public-site-build.result }}
+          FRONTEND_BUILD: ${{ needs.frontend-prod-build.result }}
+          APP_UPDATE: ${{ needs.app-update-browser.result }}
+          WORKOS: ${{ needs.workos-permissions.result }}
+          BROWSER: ${{ needs.browser-proof.outputs.result }}
+          BROWSER_CALL: ${{ needs.browser-proof.result }}
+          IMAGES: ${{ needs.image-proof.outputs.result }}
+          IMAGES_CALL: ${{ needs.image-proof.result }}
+        run: |
+          if [[ "$RELEVANT" == false && "$PLAN_RESULT" == success ]]; then
+            echo 'Ignored PR event'
+            exit 0
+          fi
+          if [[ "$PLAN_RESULT" != success || "$MODE" != full ]]; then
+            echo "Full verification required (plan=$PLAN_RESULT mode=$MODE)" >&2
+            exit 1
+          fi
+          for proof in LINT TYPECHECK TEST FRONTEND EXTENSIONS SITE FRONTEND_BUILD APP_UPDATE WORKOS BROWSER_CALL BROWSER IMAGES_CALL IMAGES; do
+            result="${!proof}"
+            if [[ "$result" != success ]]; then
+              echo "Required proof $proof ended ${result:-without a result}" >&2
+              exit 1
+            fi
+          done

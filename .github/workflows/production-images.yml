@@ -1,7 +1,17 @@
 name: Production Images
 
 on:
-  pull_request:
+  workflow_call:
+    inputs:
+      called:
+        type: boolean
+        required: true
+      full:
+        type: boolean
+        required: true
+    outputs:
+      result:
+        value: ${{ jobs.aggregate.outputs.result }}
   push:
     branches: [main]
   workflow_dispatch:
@@ -11,8 +21,8 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: production-images-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: production-images-child-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   changes:
@@ -23,7 +33,7 @@ jobs:
       selected: ${{ steps.select.outputs.selected }}
     steps:
       - uses: actions/checkout@v4
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || inputs.called
         with:
           fetch-depth: 0
       - name: Require the complete push range
@@ -37,11 +47,11 @@ jobs:
           git cat-file -e "$BEFORE^{commit}"
           git cat-file -e "$AFTER^{commit}"
       - id: paths
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name != 'workflow_dispatch' && !inputs.full
         uses: dorny/paths-filter@v3
         with:
-          base: ${{ github.event_name == 'push' && github.event.before || '' }}
-          ref: ${{ github.event_name == 'push' && github.sha || '' }}
+          base: ${{ github.event_name == 'push' && github.event.before || inputs.called && github.event.pull_request.base.sha || '' }}
+          ref: ${{ github.event_name == 'push' && github.sha || inputs.called && github.event.pull_request.head.sha || '' }}
           filters: |
             common:
               - '.bun-version'
@@ -53,6 +63,7 @@ jobs:
               - 'packages/*/package.json'
               - '.github/actions/**'
               - '.github/workflows/production-images.yml'
+              - 'scripts/production-images.bake.hcl'
               - 'scripts/production-image-smoke.compose.yml'
               - 'scripts/smoke-production-image.sh'
             backend:
@@ -86,13 +97,14 @@ jobs:
       - id: select
         env:
           EVENT_NAME: ${{ github.event_name }}
+          FULL: ${{ inputs.full }}
           COMMON: ${{ steps.paths.outputs.common }}
           BACKEND: ${{ steps.paths.outputs.backend }}
           CONTROL_PLANE: ${{ steps.paths.outputs.control-plane }}
           DB_READ_PROXY: ${{ steps.paths.outputs.db-read-proxy }}
           ENCLAVE: ${{ steps.paths.outputs.enclave }}
         run: |
-          if [[ "$EVENT_NAME" != workflow_dispatch ]]; then
+          if [[ "$EVENT_NAME" != workflow_dispatch && "$FULL" != true ]]; then
             for changed in "$COMMON" "$BACKEND" "$CONTROL_PLANE" "$DB_READ_PROXY" "$ENCLAVE"; do
               if [[ "$changed" != true && "$changed" != false ]]; then
                 echo "Image selection returned an invalid result: $changed" >&2
@@ -101,7 +113,7 @@ jobs:
             done
           fi
 
-          if [[ "$EVENT_NAME" == workflow_dispatch || "$COMMON" == true ]]; then
+          if [[ "$EVENT_NAME" == workflow_dispatch || "$FULL" == true || "$COMMON" == true ]]; then
             services='["backend","control-plane","db-read-proxy","enclave"]'
           else
             services=$(jq -cn \
@@ -125,36 +137,45 @@ jobs:
           fi
 
   images:
-    name: Build and smoke ${{ matrix.service }}
+    name: Build and smoke production images
     needs: changes
     if: needs.changes.outputs.selected == 'true'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        service: ${{ fromJSON(needs.changes.outputs.services) }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+        id: buildx
         with:
-          context: .
-          file: Dockerfile.${{ matrix.service }}
-          tags: threa-production-smoke:${{ matrix.service }}
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 2
+      - uses: docker/bake-action@v6
+        with:
+          source: .
+          files: scripts/production-images.bake.hcl
+          targets: ${{ join(fromJSON(needs.changes.outputs.services), ',') }}
+          builder: ${{ steps.buildx.outputs.name }}
           load: true
           push: false
-          cache-from: type=gha,scope=production-${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=production-${{ matrix.service }}
-      - name: Smoke unchanged image command
-        run: exec scripts/smoke-production-image.sh '${{ matrix.service }}' 'threa-production-smoke:${{ matrix.service }}'
+      - name: Smoke unchanged image commands
+        env:
+          SERVICES: ${{ needs.changes.outputs.services }}
+        run: |
+          set -Eeuo pipefail
+          while IFS= read -r service; do
+            scripts/smoke-production-image.sh "$service" "threa-production-smoke:$service"
+          done < <(jq -r '.[]' <<< "$SERVICES")
 
   aggregate:
     name: Production Images
+    outputs:
+      result: ${{ steps.proof.outcome }}
     if: always()
     needs: [changes, images]
     runs-on: ubuntu-latest
     steps:
       - name: Require all selected image proofs
+        id: proof
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           SELECTED: ${{ needs.changes.outputs.selected }}
