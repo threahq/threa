@@ -4,26 +4,27 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-  pull_request:
-    paths:
-      - ".bun-version"
-      - ".github/actions/**"
-      - "apps/**"
-      - "packages/**"
-      - "tests/browser/**"
-      - "playwright.config.ts"
-      - "scripts/test-silent.ts"
-      - "scripts/browser-ci.ts"
-      - "package.json"
-      - "bun.lock"
-      - ".github/workflows/browser-tests.yml"
+  workflow_call:
+    inputs:
+      mode:
+        type: string
+        required: true
+      files:
+        type: string
+        required: true
+      shards:
+        type: string
+        required: true
+    outputs:
+      result:
+        value: ${{ jobs.evaluate-results.outputs.result }}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: browser-child-${{ github.run_id }}
+  cancel-in-progress: false
 
 env:
-  TOTAL_SHARDS: 8
+  TOTAL_SHARDS: ${{ fromJSON(inputs.shards || '[1,2,3,4,5,6,7,8]').length }}
 
 jobs:
   build-frontend:
@@ -58,10 +59,17 @@ jobs:
           restore-keys: browser-timings-v1-
 
       - name: Plan balanced browser shards
+        env:
+          SELECTED_FILES: ${{ inputs.files }}
+          SELECTED_MODE: ${{ inputs.mode }}
         run: |
           mkdir -p browser-shard-lists
           bunx playwright test --list --reporter=json > browser-inventory.json
           args=(--inventory browser-inventory.json --shards "$TOTAL_SHARDS" --output-dir browser-shard-lists --summary browser-shard-plan.md)
+          if [[ "$SELECTED_MODE" == targeted ]]; then
+            printf '%s' "$SELECTED_FILES" > selected-files.json
+            args+=(--files selected-files.json)
+          fi
           if [[ -f .cache/browser-ci/timings.json ]]; then
             args+=(--history .cache/browser-ci/timings.json)
           else
@@ -102,7 +110,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard_index: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard_index: ${{ fromJSON(inputs.shards || '[1,2,3,4,5,6,7,8]') }}
 
     steps:
       - uses: actions/checkout@v4
@@ -214,7 +222,7 @@ jobs:
           deadline=$((SECONDS + 180))
           while (( SECONDS < deadline )); do
             jobs=$(timeout 10s gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=all&per_page=100")
-            producer=$(jq -c '[.[].jobs[] | select(.name == "build-frontend")] | max_by(.run_attempt) // empty' <<< "$jobs")
+            producer=$(jq -c '[.[].jobs[] | select(.name == "build-frontend" or (.name | endswith("/ build-frontend")))] | max_by(.run_attempt) // empty' <<< "$jobs")
             if [[ -n "$producer" ]]; then
               conclusion=$(jq -r '.conclusion // empty' <<< "$producer")
               if [[ -n "$conclusion" && "$conclusion" != success ]]; then
@@ -347,9 +355,15 @@ jobs:
 
   evaluate-results:
     runs-on: ubuntu-latest
-    needs: browser-tests
+    outputs:
+      result: ${{ steps.summary.outcome }}
+    needs: [build-frontend, browser-tests]
     if: always()
     steps:
+      - name: Require frontend build
+        env:
+          PRODUCER: ${{ needs.build-frontend.result }}
+        run: test "$PRODUCER" = success
       - name: Download shard result markers
         uses: actions/download-artifact@v4
         with:
@@ -357,6 +371,7 @@ jobs:
           pattern: shard-result-*
 
       - name: Summarize results
+        id: summary
         env:
           SHARD_JOBS_RESULT: ${{ needs.browser-tests.result }}
         run: |
