@@ -102,6 +102,62 @@ describe("loadStreamEvents", () => {
     await db.events.clear()
   })
 
+  it.each([
+    ["floored window", () => loadStreamEvents(WORKSPACE_ID, "stream_1", 1)],
+    ["capped window", () => loadStreamEvents(WORKSPACE_ID, "stream_1", null)],
+    ["initial tail", () => loadStreamTail(WORKSPACE_ID, "stream_1", null, 1)],
+  ] as const)("should finish the %s before a later write to another stream", async (_name, read) => {
+    const persisted = makeRealEvent("stream_1", "1")
+    const pending = makeOptimisticEvent("stream_1", "client_pending", "2")
+    await db.events.bulkPut([persisted, pending])
+    const completionOrder: string[] = []
+    let writer: Promise<void> | undefined
+    const interposeWriter = (index: IDBIndex, request: IDBRequest) => {
+      if (index.name !== "[workspaceId+streamId+_sequenceNum]") return
+      request.addEventListener(
+        "success",
+        () => {
+          if (writer) return
+          const transaction = db.backendDB().transaction("eventsByWorkspace", "readwrite")
+          writer = new Promise<void>((resolve, reject) => {
+            transaction.addEventListener("complete", () => {
+              completionOrder.push("later writer")
+              resolve()
+            })
+            transaction.addEventListener("abort", () => reject(transaction.error))
+          })
+          transaction.objectStore("eventsByWorkspace").put(makeRealEvent("other_stream", "1"))
+        },
+        { once: true }
+      )
+    }
+    const getAll = IDBIndex.prototype.getAll
+    const openCursor = IDBIndex.prototype.openCursor
+    const getAllSpy = vi.spyOn(IDBIndex.prototype, "getAll").mockImplementation(function (this: IDBIndex, ...args) {
+      const request = getAll.apply(this, args)
+      interposeWriter(this, request)
+      return request
+    })
+    const cursorSpy = vi.spyOn(IDBIndex.prototype, "openCursor").mockImplementation(function (this: IDBIndex, ...args) {
+      const request = openCursor.apply(this, args)
+      interposeWriter(this, request)
+      return request
+    })
+    try {
+      const events = await read()
+      completionOrder.push("timeline ready")
+      await writer
+      expect({ events, completionOrder }).toEqual({
+        events: [persisted, pending],
+        completionOrder: ["timeline ready", "later writer"],
+      })
+    } finally {
+      getAllSpy.mockRestore()
+      cursorSpy.mockRestore()
+      await writer
+    }
+  })
+
   it("returns events ASC by _sequenceNum with no floor", async () => {
     const streamId = "stream_1"
     await db.events.bulkPut([
