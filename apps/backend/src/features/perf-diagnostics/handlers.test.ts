@@ -53,6 +53,27 @@ async function failure(body: unknown): Promise<HttpError> {
 }
 
 describe("perf-capture create handler", () => {
+  it("should retain timeline read and background write measurements on upload", async () => {
+    const samples = [
+      { name: "timeline.rangeReadStarted", at: 1, count: 1 },
+      { name: "timeline.rangeRead", at: 2, value: 4 },
+      { name: "timeline.rangeRows", at: 3, value: 50 },
+      { name: "timeline.unsentReadStarted", at: 4, count: 1 },
+      { name: "timeline.unsentRead", at: 5, value: 6 },
+      { name: "timeline.unsentRows", at: 6, value: 0 },
+      { name: "stream.appendStarted", at: 7, count: 1 },
+      { name: "stream.appendTx", at: 8, value: 3 },
+      { name: "stream.patchStarted", at: 9, count: 1 },
+      { name: "stream.eventPatch", at: 10, value: 2 },
+    ]
+    const res = response()
+    await handlers.create(request({ ...validCapture, samples }), res)
+    expect({ statusCode: res.statusCode, capture: captured.at(-1) }).toEqual({
+      statusCode: 201,
+      capture: { ...validCapture, samples },
+    })
+  })
+
   it("stores a valid capture", async () => {
     const res = response()
     await handlers.create(request(validCapture), res)

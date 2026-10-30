@@ -1182,6 +1182,9 @@ export async function updateMessageEvent(
   // `false` (not a bare return) is what tells Dexie to SKIP the row: any
   // other return value re-puts it, which would fire observability for every
   // same-id row in another stream.
+  const capture = getPerfCapture()
+  capture.count("stream.patchStarted")
+  const stop = capture.time("stream.eventPatch")
   await database.events
     .where("[workspaceId+payload.messageId]")
     .equals([workspaceId, messageId])
@@ -1189,6 +1192,7 @@ export async function updateMessageEvent(
       if (event.streamId !== streamId || event.eventType !== "message_created") return false
       patch(event)
     })
+    .finally(stop)
 }
 
 /**
@@ -1935,41 +1939,46 @@ function bindStreamSocketHandlers(
     // Same transactional shape as handleMessageCreated: dedupe, gap-read, and
     // put must be atomic, or a concurrent append can land between the gap read
     // and this write and make the cursor lie in either direction.
-    await db.transaction("rw", [db.events, db.pendingOperations], async () => {
-      const existing = await db.events.get([workspaceId, payload.event.id])
-      if (existing) return
-      // Tail-gap check must read the latest BEFORE this write advances it.
-      if (wantsSequenceGap()) {
-        gapAfterSequence = detectSequenceGap(await getPersistedTail(workspaceId, streamId), payload.event)
-      }
-      const commandClientId =
-        payload.event.eventType === "command_dispatched"
-          ? (payload.event.payload as { clientCommandId?: string }).clientCommandId
-          : undefined
-      const commandCandidate = commandClientId ? await db.events.get([workspaceId, commandClientId]) : undefined
-      const optimisticCommand = commandCandidate?._status != null ? commandCandidate : undefined
-      await db.events.put(cachedEvent)
-      await resolveUnknownOptimisticAnchors(workspaceId, streamId)
-      if (commandClientId && optimisticCommand) {
-        await bumpLaterOptimisticAnchors(
-          workspaceId,
-          streamId,
-          optimisticCommand._sequenceNum,
-          sequenceToNum(payload.event.sequence),
-          optimisticCommand.id
-        )
-        await db.events.bulkDelete([
-          [workspaceId, commandClientId],
-          [workspaceId, `${commandClientId}:failed`],
-        ])
-        const operations = await db.pendingOperations.where("type").equals("dispatch_command").toArray()
-        await db.pendingOperations.bulkDelete(
-          operations
-            .filter((operation) => operation.payload.optimisticEventId === commandClientId)
-            .map((operation) => operation.id)
-        )
-      }
-    })
+    const capture = getPerfCapture()
+    capture.count("stream.appendStarted")
+    const stop = capture.time("stream.appendTx")
+    await db
+      .transaction("rw", [db.events, db.pendingOperations], async () => {
+        const existing = await db.events.get([workspaceId, payload.event.id])
+        if (existing) return
+        // Tail-gap check must read the latest BEFORE this write advances it.
+        if (wantsSequenceGap()) {
+          gapAfterSequence = detectSequenceGap(await getPersistedTail(workspaceId, streamId), payload.event)
+        }
+        const commandClientId =
+          payload.event.eventType === "command_dispatched"
+            ? (payload.event.payload as { clientCommandId?: string }).clientCommandId
+            : undefined
+        const commandCandidate = commandClientId ? await db.events.get([workspaceId, commandClientId]) : undefined
+        const optimisticCommand = commandCandidate?._status != null ? commandCandidate : undefined
+        await db.events.put(cachedEvent)
+        await resolveUnknownOptimisticAnchors(workspaceId, streamId)
+        if (commandClientId && optimisticCommand) {
+          await bumpLaterOptimisticAnchors(
+            workspaceId,
+            streamId,
+            optimisticCommand._sequenceNum,
+            sequenceToNum(payload.event.sequence),
+            optimisticCommand.id
+          )
+          await db.events.bulkDelete([
+            [workspaceId, commandClientId],
+            [workspaceId, `${commandClientId}:failed`],
+          ])
+          const operations = await db.pendingOperations.where("type").equals("dispatch_command").toArray()
+          await db.pendingOperations.bulkDelete(
+            operations
+              .filter((operation) => operation.payload.optimisticEventId === commandClientId)
+              .map((operation) => operation.id)
+          )
+        }
+      })
+      .finally(stop)
     if (gapAfterSequence !== null) {
       notifySequenceGap({ streamId, afterSequence: gapAfterSequence })
     }

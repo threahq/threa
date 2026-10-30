@@ -23,7 +23,7 @@ import { commandsApi } from "@/api"
 import { clearDecryptCache, getCachedDecryption } from "@/lib/crypto/decrypt-cache"
 import { NO_CAPTURE, PerfCapture, armPerfCapture } from "@/lib/perf/capture"
 import { applyStreamReadOrdinal } from "./unread-counters"
-import { sharedMessageSlotKey } from "@threahq/types"
+import { performanceSampleSchema, sharedMessageSlotKey } from "@threahq/types"
 import {
   resetAgentActivityStore,
   getAgentActivityForAnchor,
@@ -1665,6 +1665,50 @@ describe("updateMessageEvent", () => {
   beforeEach(async () => {
     await db.events.clear()
   })
+
+  it.each([false, true])(
+    "should close patch diagnostics and preserve the outcome when the updater throws: %s",
+    async (fails) => {
+      const payload = { messageId: "evt_patch_diagnostic", contentMarkdown: "test" }
+      const event: CachedEvent = {
+        ...makeEvent({ id: payload.messageId, streamId: "stream_patch", sequence: "1", payload }),
+        workspaceId: "ws_1",
+        _sequenceNum: 1,
+        _cachedAt: 1,
+      }
+      await db.events.put(event)
+      const capture = new PerfCapture()
+      armPerfCapture(capture)
+      try {
+        const failure = new Error("patch rejected")
+        const write = updateMessageEvent("ws_1", event.streamId, event.id, (payload) => {
+          if (fails) throw failure
+          return { ...payload, replyCount: 5 }
+        })
+        const started = capture.snapshot().map((sample) => sample.name)
+        if (fails) await expect(write).rejects.toBe(failure)
+        else await write
+
+        expect({
+          started,
+          payload: (await db.events.get(["ws_1", event.id]))?.payload,
+          samples: capture.snapshot().map((sample) => {
+            const { at: _at, ...measurement } = performanceSampleSchema.parse(sample)
+            return measurement
+          }),
+        }).toEqual({
+          started: ["stream.patchStarted"],
+          payload: fails ? payload : { ...payload, replyCount: 5 },
+          samples: [
+            { name: "stream.patchStarted", count: 1 },
+            { name: "stream.eventPatch", value: expect.any(Number) },
+          ],
+        })
+      } finally {
+        armPerfCapture(NO_CAPTURE)
+      }
+    }
+  )
 
   it("updates a message payload in place", async () => {
     const streamId = "stream_update"
@@ -5061,6 +5105,43 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  it("should capture append diagnostics while persisting an agent lifecycle event", async () => {
+    const streamId = "stream_append_diagnostic"
+    const event = makeEvent({
+      id: "evt_append_diagnostic",
+      streamId,
+      sequence: "1",
+      eventType: "agent_session:started",
+    })
+    const { socket, emit } = createCountingSocket()
+    const release = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient())
+    const capture = new PerfCapture()
+    armPerfCapture(capture)
+    try {
+      const write = emit("agent_session:started", { workspaceId: "ws_1", streamId, event })
+      const started = capture.snapshot().map((sample) => sample.name)
+      await write
+      expect({
+        started,
+        event: await db.events.get(["ws_1", event.id]),
+        samples: capture.snapshot().map((sample) => {
+          const { at: _at, ...measurement } = performanceSampleSchema.parse(sample)
+          return measurement
+        }),
+      }).toEqual({
+        started: ["stream.appendStarted"],
+        event: { ...event, workspaceId: "ws_1", _sequenceNum: 1, _cachedAt: expect.any(Number) },
+        samples: [
+          { name: "stream.appendStarted", count: 1 },
+          { name: "stream.appendTx", value: expect.any(Number) },
+        ],
+      })
+    } finally {
+      armPerfCapture(NO_CAPTURE)
+      release()
+    }
   })
 
   it("two registrations against one event source bind the listener set once", async () => {

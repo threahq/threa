@@ -27,6 +27,8 @@ import { requestStreamEventReadRefresh } from "./stream-event-read-refresh"
 import { emitDraftPromoted, getDraftPromotionEvents } from "@/lib/draft-promotions"
 import { whenReadsSettled } from "./apply-window"
 import { BOARD_RAIL_EVENT_TYPES } from "@/lib/board/board-rail-event-types"
+import { NO_CAPTURE, PerfCapture, armPerfCapture } from "@/lib/perf/capture"
+import { performanceSampleSchema } from "@threahq/types"
 
 const WORKSPACE_ID = "ws_1"
 
@@ -97,6 +99,66 @@ function makeOptimisticEvent(
   }
 }
 
+describe("timeline read diagnostics", () => {
+  afterEach(async () => {
+    armPerfCapture(NO_CAPTURE)
+    await db.events.clear()
+  })
+
+  it.each([
+    ["floored window", () => loadStreamEvents(WORKSPACE_ID, "stream_1", 1), 3, true, [0, 1, 2]],
+    ["capped window", () => loadStreamEvents(WORKSPACE_ID, "stream_1", null), 3, true, [0, 1, 2]],
+    ["initial tail", () => loadStreamTail(WORKSPACE_ID, "stream_1", null, 1), 3, true, [0, 1, 2]],
+    ["anchored tail", () => loadStreamTail(WORKSPACE_ID, "stream_1", 2), 2, false, [1, 2]],
+    ["anchored prefix", () => loadStreamPrefix(WORKSPACE_ID, "stream_1", 1, 2), 1, false, [0]],
+  ] as const)(
+    "should record the %s read phases without changing its window",
+    async (_name, read, rangeRows, hasUnsent, expectedEventIndexes) => {
+      const events = [
+        makeRealEvent("stream_1", "1"),
+        makeRealEvent("stream_1", "2"),
+        makeOptimisticEvent("stream_1", "client_1", "3"),
+      ]
+      await db.events.bulkPut([
+        ...events,
+        makeOptimisticEvent("stream_2", "client_2", "4"),
+        { ...makeOptimisticEvent("stream_1", "client_3", "5"), workspaceId: "ws_2" },
+      ])
+      const capture = new PerfCapture()
+      armPerfCapture(capture)
+      const pending = read()
+      const started = capture.snapshot().map(({ name }) => name)
+      const result = await pending
+      const samples = capture.snapshot().map((sample) => {
+        const { at: _at, ...measurement } = performanceSampleSchema.parse(sample)
+        return measurement
+      })
+      expect({
+        started,
+        events: result,
+        measurements: samples.sort((a, b) => a.name.localeCompare(b.name)),
+      }).toEqual({
+        started: hasUnsent
+          ? ["timeline.rangeReadStarted", "timeline.unsentReadStarted"]
+          : ["timeline.rangeReadStarted"],
+        events: expectedEventIndexes.map((index) => events[index]),
+        measurements: [
+          { name: "timeline.rangeRead", value: expect.any(Number) },
+          { name: "timeline.rangeReadStarted", count: 1 },
+          { name: "timeline.rangeRows", value: rangeRows },
+          ...(hasUnsent
+            ? [
+                { name: "timeline.unsentRead", value: expect.any(Number) },
+                { name: "timeline.unsentReadStarted", count: 1 },
+                { name: "timeline.unsentRows", value: 3 },
+              ]
+            : []),
+        ],
+      })
+    }
+  )
+})
+
 describe("loadStreamEvents", () => {
   beforeEach(async () => {
     await db.events.clear()
@@ -143,6 +205,7 @@ describe("loadStreamEvents", () => {
       interposeWriter(this, request)
       return request
     })
+    armPerfCapture(new PerfCapture())
     try {
       const events = await read()
       completionOrder.push("timeline ready")
@@ -152,6 +215,7 @@ describe("loadStreamEvents", () => {
         completionOrder: ["timeline ready", "later writer"],
       })
     } finally {
+      armPerfCapture(NO_CAPTURE)
       getAllSpy.mockRestore()
       cursorSpy.mockRestore()
       await writer
@@ -788,6 +852,7 @@ describe("bounded timeline read — tail and prefix", () => {
     const first = new Promise<void>((resolve) => {
       resolveFirst = resolve
     })
+    armPerfCapture(new PerfCapture())
     const subscription = liveQuery(read).subscribe(() => {
       emissions += 1
       resolveFirst?.()
@@ -800,6 +865,7 @@ describe("bounded timeline read — tail and prefix", () => {
       return emissions - baseline
     } finally {
       subscription.unsubscribe()
+      armPerfCapture(NO_CAPTURE)
     }
   }
 
