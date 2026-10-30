@@ -40,13 +40,23 @@ test.describe("Performance capture", () => {
     // first paint (which the cached reveal can produce) does not mean the
     // bootstrap write has landed — poll rather than exporting once. The phases
     // are pinned outside the ring buffer, so nothing evicts them once recorded.
-    const BOOTSTRAP_PHASES = ["bootstrap.fetch", "bootstrap.tx", "bootstrap.seed"] as const
+    const CAPTURE_PHASES = [
+      "bootstrap.fetch",
+      "bootstrap.tx",
+      "bootstrap.seed",
+      "timeline.rangeReadStarted",
+      "timeline.rangeRead",
+      "timeline.rangeRows",
+      "timeline.unsentReadStarted",
+      "timeline.unsentRead",
+      "timeline.unsentRows",
+    ] as const
     await expect
       .poll(async () => [...new Set((await readCapture(page)).samples.map((s) => s.name))].sort(), {
         timeout: 30_000,
-        message: "capture should record every bootstrap phase",
+        message: "capture should record bootstrap and timeline read phases",
       })
-      .toEqual(expect.arrayContaining([...BOOTSTRAP_PHASES]))
+      .toEqual(expect.arrayContaining([...CAPTURE_PHASES]))
 
     const capture = await readCapture(page)
 

@@ -1,10 +1,10 @@
-import Dexie from "dexie"
+import Dexie, { type Collection } from "dexie"
 import { replaceEqualDeep } from "@tanstack/react-query"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
 import { getDraftPromotionEvents, releaseDraftPromotionEvents } from "@/lib/draft-promotions"
-import { getPerfCapture } from "@/lib/perf/capture"
+import { getPerfCapture, NO_CAPTURE } from "@/lib/perf/capture"
 import { trackPendingRead } from "./apply-window"
 import { getWorkspaceTableRow, hasResolvedSharedEntry, subscribeWorkspaceTableRow } from "./workspace-table-registry"
 
@@ -25,6 +25,22 @@ export const TIMELINE_TAIL_EVENTS = 200
 
 /** No-op kept for clearAllCachedData compat; events live only in IDB now. */
 export function resetStreamStoreCache(): void {}
+
+function readTimelineEvents(collection: Collection<CachedEvent, [string, string]>, kind: "range" | "unsent") {
+  const capture = getPerfCapture()
+  if (capture === NO_CAPTURE) return collection.toArray()
+
+  // Elapsed time includes the wait behind earlier writers, not just IDB execution.
+  capture.count(kind === "range" ? "timeline.rangeReadStarted" : "timeline.unsentReadStarted")
+  const stop = capture.time(kind === "range" ? "timeline.rangeRead" : "timeline.unsentRead")
+  return collection
+    .toArray()
+    .then((rows) => {
+      capture.mark(kind === "range" ? "timeline.rangeRows" : "timeline.unsentRows", rows.length)
+      return rows
+    })
+    .finally(stop)
+}
 
 /**
  * Read events for a stream from IndexedDB, sorted ASC by `_sequenceNum`.
@@ -67,7 +83,7 @@ export async function loadStreamEvents(
   // index — Dexie only indexes rows where the value is present, so this is the
   // handful of unsent rows app-wide, not an O(history) scan of the stream.
   const [base, unsentForStream] = await Promise.all([
-    hasFloor ? range.toArray() : range.reverse().limit(DEFAULT_IDB_EVENT_LIMIT).toArray(),
+    readTimelineEvents(hasFloor ? range : range.reverse().limit(DEFAULT_IDB_EVENT_LIMIT), "range"),
     loadUnsentStreamEvents(workspaceId, streamId, fromSequenceNum),
   ])
   if (!hasFloor) base.sort((a, b) => a._sequenceNum - b._sequenceNum)
@@ -83,7 +99,7 @@ async function loadUnsentStreamEvents(
   streamId: string,
   floor: number | null
 ): Promise<CachedEvent[]> {
-  const unsent = await db.events.where("_status").anyOf(["pending", "failed", "editing"]).toArray()
+  const unsent = await readTimelineEvents(db.events.where("_status").anyOf(["pending", "failed", "editing"]), "unsent")
   return unsent.filter(
     (e) => e.workspaceId === workspaceId && e.streamId === streamId && (floor === null || e._sequenceNum >= floor)
   )
@@ -112,24 +128,28 @@ export async function loadStreamTail(
   scanFloor: number | null = null
 ): Promise<CachedEvent[]> {
   if (tailFloor !== null) {
-    return await db.events
-      .where("[workspaceId+streamId+_sequenceNum]")
-      .between([workspaceId, streamId, tailFloor], [workspaceId, streamId, Dexie.maxKey], true, true)
-      .toArray()
+    return await readTimelineEvents(
+      db.events
+        .where("[workspaceId+streamId+_sequenceNum]")
+        .between([workspaceId, streamId, tailFloor], [workspaceId, streamId, Dexie.maxKey], true, true),
+      "range"
+    )
   }
 
   const [base, unsentForStream] = await Promise.all([
-    db.events
-      .where("[workspaceId+streamId+_sequenceNum]")
-      .between(
-        scanFloor === null ? [workspaceId, streamId, Dexie.minKey] : [workspaceId, streamId, scanFloor],
-        [workspaceId, streamId, Dexie.maxKey],
-        true,
-        true
-      )
-      .reverse()
-      .limit(TIMELINE_TAIL_EVENTS)
-      .toArray(),
+    readTimelineEvents(
+      db.events
+        .where("[workspaceId+streamId+_sequenceNum]")
+        .between(
+          scanFloor === null ? [workspaceId, streamId, Dexie.minKey] : [workspaceId, streamId, scanFloor],
+          [workspaceId, streamId, Dexie.maxKey],
+          true,
+          true
+        )
+        .reverse()
+        .limit(TIMELINE_TAIL_EVENTS),
+      "range"
+    ),
     loadUnsentStreamEvents(workspaceId, streamId, scanFloor),
   ])
   base.sort((a, b) => a._sequenceNum - b._sequenceNum)
@@ -158,15 +178,17 @@ export async function loadStreamPrefix(
   tailFloor: number | null
 ): Promise<CachedEvent[]> {
   if (tailFloor === null) return await loadStreamEvents(workspaceId, streamId, floor)
-  return await db.events
-    .where("[workspaceId+streamId+_sequenceNum]")
-    .between(
-      floor === null ? [workspaceId, streamId, Dexie.minKey] : [workspaceId, streamId, floor],
-      [workspaceId, streamId, tailFloor],
-      true,
-      false
-    )
-    .toArray()
+  return await readTimelineEvents(
+    db.events
+      .where("[workspaceId+streamId+_sequenceNum]")
+      .between(
+        floor === null ? [workspaceId, streamId, Dexie.minKey] : [workspaceId, streamId, floor],
+        [workspaceId, streamId, tailFloor],
+        true,
+        false
+      ),
+    "range"
+  )
 }
 
 type OrderableStreamEvent = Pick<CachedEvent, "id" | "sequence" | "createdAt"> &
