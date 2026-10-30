@@ -145,7 +145,12 @@ describe("CI policy", () => {
         reason: string
         frontendSources: string[]
       }
-      return { ...plan, runFrontend: readFileSync(githubOutput, "utf8").match(/^run_frontend=(true|false)$/m)?.[1] }
+      const outputs = readFileSync(githubOutput, "utf8")
+      return {
+        ...plan,
+        runFrontend: outputs.match(/^run_frontend=(true|false)$/m)?.[1],
+        browserShardCount: outputs.match(/^browser_shard_count=(\d+)$/m)?.[1],
+      }
     }
     try {
       git("init", "-q")
@@ -165,11 +170,13 @@ describe("CI policy", () => {
         mode: "targeted",
         frontendSources: ["apps/frontend/src/pages/saved.tsx"],
         runFrontend: "true",
+        browserShardCount: "3",
       })
       expect(run(base, narrow, ["ci:full"])).toMatchObject({
         mode: "full",
         reason: "ci:full label",
         runFrontend: "true",
+        browserShardCount: "8",
       })
       mkdirSync(join(repo, "tests/browser"), { recursive: true })
       writeFileSync(join(repo, "tests/browser/doc-title.spec.ts"), "export {}\n")

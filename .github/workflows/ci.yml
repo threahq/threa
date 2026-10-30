@@ -25,6 +25,7 @@ jobs:
       browser_files: ${{ steps.policy.outputs.browser_files }}
       frontend_shards: ${{ steps.policy.outputs.frontend_shards }}
       browser_shards: ${{ steps.policy.outputs.browser_shards }}
+      browser_shard_count: ${{ steps.policy.outputs.browser_shard_count }}
     steps:
       - id: relevance
         env:
@@ -531,6 +532,7 @@ jobs:
       mode: ${{ needs.plan.outputs.mode }}
       files: ${{ needs.plan.outputs.browser_files }}
       shards: ${{ needs.plan.outputs.browser_shards }}
+      shard-count: ${{ fromJSON(needs.plan.outputs.browser_shard_count) }}
     permissions:
       contents: read
       actions: read
