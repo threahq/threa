@@ -60,20 +60,17 @@ export async function loadStreamEvents(
   // what guarantees it. Bounded by `DEFAULT_IDB_EVENT_LIMIT`, and `useLiveQuery`
   // re-runs the floored (sort-free) branch for every steady-state write, so the
   // cost lands only on the one pre-bootstrap read.
-  let base: CachedEvent[]
-  if (hasFloor) {
-    base = await range.toArray()
-  } else {
-    base = await range.reverse().limit(DEFAULT_IDB_EVENT_LIMIT).toArray()
-    base.sort((a, b) => a._sequenceNum - b._sequenceNum)
-  }
 
   // Pending/failed optimistic events may have placeholder sequences outside the
   // scanned window (the current scheme uses `Date.now()`, so they sort to the
   // very top and are usually already in `base`). Drive this off the `_status`
   // index — Dexie only indexes rows where the value is present, so this is the
   // handful of unsent rows app-wide, not an O(history) scan of the stream.
-  const unsentForStream = await loadUnsentStreamEvents(workspaceId, streamId, hasFloor ? fromSequenceNum : null)
+  const [base, unsentForStream] = await Promise.all([
+    hasFloor ? range.toArray() : range.reverse().limit(DEFAULT_IDB_EVENT_LIMIT).toArray(),
+    loadUnsentStreamEvents(workspaceId, streamId, fromSequenceNum),
+  ])
+  if (!hasFloor) base.sort((a, b) => a._sequenceNum - b._sequenceNum)
   if (unsentForStream.length === 0) return base
 
   const loadedIds = new Set(base.map((e) => e.id))
@@ -121,20 +118,21 @@ export async function loadStreamTail(
       .toArray()
   }
 
-  const base = await db.events
-    .where("[workspaceId+streamId+_sequenceNum]")
-    .between(
-      scanFloor === null ? [workspaceId, streamId, Dexie.minKey] : [workspaceId, streamId, scanFloor],
-      [workspaceId, streamId, Dexie.maxKey],
-      true,
-      true
-    )
-    .reverse()
-    .limit(TIMELINE_TAIL_EVENTS)
-    .toArray()
+  const [base, unsentForStream] = await Promise.all([
+    db.events
+      .where("[workspaceId+streamId+_sequenceNum]")
+      .between(
+        scanFloor === null ? [workspaceId, streamId, Dexie.minKey] : [workspaceId, streamId, scanFloor],
+        [workspaceId, streamId, Dexie.maxKey],
+        true,
+        true
+      )
+      .reverse()
+      .limit(TIMELINE_TAIL_EVENTS)
+      .toArray(),
+    loadUnsentStreamEvents(workspaceId, streamId, scanFloor),
+  ])
   base.sort((a, b) => a._sequenceNum - b._sequenceNum)
-
-  const unsentForStream = await loadUnsentStreamEvents(workspaceId, streamId, scanFloor)
   if (unsentForStream.length === 0) return base
 
   const loadedIds = new Set(base.map((e) => e.id))
