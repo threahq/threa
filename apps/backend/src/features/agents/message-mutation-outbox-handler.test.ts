@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { AuthorTypes } from "@threahq/types"
 import * as dbModule from "../../db"
-import type { ProcessResult } from "@threahq/backend-common"
-import * as cursorLockModule from "@threahq/backend-common"
+import { mockCursorLock } from "../../lib/outbox/cursor-lock.test-helper"
 import { OutboxRepository } from "../../lib/outbox"
 import { BotInvocationRepository } from "../bot-runtimes"
 import { MessageVersionRepository } from "../messaging"
@@ -10,19 +9,6 @@ import { StreamEventRepository, StreamRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { AgentMessageMutationHandler } from "./message-mutation-outbox-handler"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./session-repository"
-
-function makeFakeCursorLock(onRun?: (result: ProcessResult) => void) {
-  return () => ({
-    run: mock(async (processor: (cursor: bigint, processedIds: bigint[]) => Promise<ProcessResult>) => {
-      const result = await processor(0n, [])
-      onRun?.(result)
-    }),
-  })
-}
-
-function mockCursorLock(onRun?: (result: ProcessResult) => void) {
-  ;(spyOn(cursorLockModule, "CursorLock") as any).mockImplementation(makeFakeCursorLock(onRun))
-}
 
 function makeSession(overrides: Partial<AgentSession> = {}): AgentSession {
   return {
@@ -56,7 +42,7 @@ function makeSession(overrides: Partial<AgentSession> = {}): AgentSession {
 }
 
 function createHandler(botInvocationOwned: boolean | ((sessionId: string) => boolean) = false) {
-  mockCursorLock()
+  const completed = mockCursorLock()
   spyOn(BotInvocationRepository, "isBotInvocationSession").mockImplementation(async (_db, _workspaceId, sessionId) =>
     typeof botInvocationOwned === "function" ? botInvocationOwned(sessionId) : botInvocationOwned
   )
@@ -70,13 +56,9 @@ function createHandler(botInvocationOwned: boolean | ((sessionId: string) => boo
     send: mock(async () => "queue_1"),
   } as any
 
-  const handler = new AgentMessageMutationHandler({} as any, jobQueue, eventService)
+  const handler = new AgentMessageMutationHandler({} as any, jobQueue, eventService, { debounceMs: 0, maxWaitMs: 0 })
 
-  return { handler, eventService, jobQueue, findLatestVersion }
-}
-
-async function waitForDebounce(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 300))
+  return { handler, completed, eventService, jobQueue, findLatestVersion }
 }
 
 describe("AgentMessageMutationHandler", () => {
@@ -167,10 +149,10 @@ describe("AgentMessageMutationHandler", () => {
       createdAt: new Date("2026-02-19T11:30:00.000Z"),
       completedAt: new Date("2026-02-19T12:01:00.000Z"),
     })
-    const { handler, eventService, jobQueue, findLatestVersion } = createHandler()
+    const { handler, completed, eventService, jobQueue, findLatestVersion } = createHandler()
     handler.handle()
 
-    await waitForDebounce()
+    await completed
 
     expect(getRevisionSpy).toHaveBeenCalledWith({}, "ws_1", "msg_invoke_1")
     expect(findLatestVersion).toHaveBeenCalledWith({}, "ws_1", "msg_invoke_1")
@@ -256,10 +238,10 @@ describe("AgentMessageMutationHandler", () => {
 
     const updateStatusSpy = spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(null)
 
-    const { handler, eventService, jobQueue } = createHandler()
+    const { handler, completed, eventService, jobQueue } = createHandler()
     handler.handle()
 
-    await waitForDebounce()
+    await completed
 
     expect(updateStatusSpy).toHaveBeenCalledWith(
       {},
@@ -325,10 +307,10 @@ describe("AgentMessageMutationHandler", () => {
       createdAt: new Date("2026-02-19T11:30:00.000Z"),
       completedAt: new Date("2026-02-19T11:59:00.000Z"),
     })
-    const { handler, eventService, jobQueue } = createHandler()
+    const { handler, completed, eventService, jobQueue } = createHandler()
     handler.handle()
 
-    await waitForDebounce()
+    await completed
 
     expect(eventService.deleteMessageInternal).not.toHaveBeenCalled()
     expect(jobQueue.send).toHaveBeenCalledWith(
@@ -395,10 +377,10 @@ describe("AgentMessageMutationHandler", () => {
       createdAt: new Date("2026-02-19T11:30:00.000Z"),
       completedAt: new Date("2026-02-19T12:02:00.000Z"),
     })
-    const { handler, eventService, jobQueue } = createHandler()
+    const { handler, completed, eventService, jobQueue } = createHandler()
     handler.handle()
 
-    await waitForDebounce()
+    await completed
 
     expect(updateStatusSpy).not.toHaveBeenCalled()
     expect(eventService.deleteMessageInternal).not.toHaveBeenCalled()
@@ -501,10 +483,10 @@ describe("AgentMessageMutationHandler", () => {
       createdAt: new Date("2026-02-19T11:30:00.000Z"),
       completedAt: new Date("2026-02-19T12:01:00.000Z"),
     })
-    const { handler, eventService, jobQueue } = createHandler()
+    const { handler, completed, eventService, jobQueue } = createHandler()
     handler.handle()
 
-    await waitForDebounce()
+    await completed
 
     expect(AgentSessionRepository.updateStatus).toHaveBeenCalledWith(
       {},
@@ -585,10 +567,10 @@ describe("AgentMessageMutationHandler", () => {
       completedAt: new Date("2026-02-19T12:05:00.000Z"),
     })
 
-    const { handler, eventService, jobQueue } = createHandler()
+    const { handler, completed, eventService, jobQueue } = createHandler()
     handler.handle()
 
-    await waitForDebounce()
+    await completed
 
     expect(getRevisionSpy).not.toHaveBeenCalled()
     expect(updateStatusSpy).not.toHaveBeenCalled()
@@ -646,10 +628,10 @@ describe("AgentMessageMutationHandler", () => {
       completedAt: new Date("2026-02-19T12:08:00.000Z"),
     })
 
-    const { handler, eventService, jobQueue } = createHandler()
+    const { handler, completed, eventService, jobQueue } = createHandler()
     handler.handle()
 
-    await waitForDebounce()
+    await completed
 
     expect(updateStatusSpy).not.toHaveBeenCalled()
     expect(eventService.deleteMessageInternal).not.toHaveBeenCalled()
@@ -735,10 +717,10 @@ describe("AgentMessageMutationHandler", () => {
       createdAt: new Date("2026-02-19T11:00:00.000Z"),
       completedAt: new Date("2026-02-19T12:11:00.000Z"),
     })
-    const { handler, eventService, jobQueue, findLatestVersion } = createHandler()
+    const { handler, completed, eventService, jobQueue, findLatestVersion } = createHandler()
     handler.handle()
 
-    await waitForDebounce()
+    await completed
 
     expect(getRevisionSpy).not.toHaveBeenCalled()
     expect(findLatestVersion).toHaveBeenCalledWith({}, "ws_1", "msg_referenced_1")
@@ -822,10 +804,10 @@ describe("AgentMessageMutationHandler", () => {
       completedAt: new Date("2026-02-19T12:00:00.000Z"),
     })
 
-    const { handler, eventService, jobQueue } = createHandler()
+    const { handler, completed, eventService, jobQueue } = createHandler()
     handler.handle()
 
-    await waitForDebounce()
+    await completed
 
     expect(getRevisionSpy).not.toHaveBeenCalled()
     expect(updateStatusSpy).not.toHaveBeenCalled()
@@ -884,10 +866,10 @@ describe("AgentMessageMutationHandler", () => {
       completedAt: new Date("2026-02-19T12:00:00.000Z"),
     })
 
-    const { handler, eventService, jobQueue } = createHandler()
+    const { handler, completed, eventService, jobQueue } = createHandler()
     handler.handle()
 
-    await waitForDebounce()
+    await completed
 
     expect(updateStatusSpy).not.toHaveBeenCalled()
     expect(eventService.deleteMessageInternal).not.toHaveBeenCalled()
@@ -919,10 +901,10 @@ describe("AgentMessageMutationHandler", () => {
     const findLatestByStreamSpy = spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
     const updateStatusSpy = spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(null)
 
-    const { handler, eventService, jobQueue } = createHandler()
+    const { handler, completed, eventService, jobQueue } = createHandler()
     handler.handle()
 
-    await waitForDebounce()
+    await completed
 
     expect(findByTriggerSpy).not.toHaveBeenCalled()
     expect(findLatestByStreamSpy).not.toHaveBeenCalled()
@@ -955,10 +937,10 @@ describe("AgentMessageMutationHandler", () => {
     const findLatestByStreamSpy = spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
     const updateStatusSpy = spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(null)
 
-    const { handler, eventService, jobQueue } = createHandler()
+    const { handler, completed, eventService, jobQueue } = createHandler()
     handler.handle()
 
-    await waitForDebounce()
+    await completed
 
     expect(findByTriggerSpy).not.toHaveBeenCalled()
     expect(findLatestByStreamSpy).not.toHaveBeenCalled()
@@ -985,10 +967,10 @@ describe("AgentMessageMutationHandler", () => {
       .mockResolvedValue(null)
     const revision = spyOn(MessageVersionRepository, "getCurrentRevision")
     const update = spyOn(AgentSessionRepository, "updateStatus")
-    const { handler, jobQueue } = createHandler(true)
+    const { handler, completed, jobQueue } = createHandler(true)
 
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     expect(BotInvocationRepository.isBotInvocationSession).toHaveBeenCalledWith({}, "ws_1", "binv_1")
     expect({
@@ -1024,10 +1006,10 @@ describe("AgentMessageMutationHandler", () => {
     spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(
       makeSession({ status: SessionStatuses.SUPERSEDED, error: "Superseded by invoking message edit" })
     )
-    const { handler, jobQueue } = createHandler((sessionId) => sessionId.startsWith("session_bot_"))
+    const { handler, completed, jobQueue } = createHandler((sessionId) => sessionId.startsWith("session_bot_"))
 
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     expect(find.mock.calls.map((call) => [call[1], call[3]])).toEqual([
       ["ws_1", undefined],
@@ -1078,10 +1060,10 @@ describe("AgentMessageMutationHandler", () => {
     spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(
       makeSession({ status: SessionStatuses.SUPERSEDED, error: "Superseded by referenced message edit" })
     )
-    const { handler, jobQueue } = createHandler((sessionId) => sessionId.startsWith("session_bot_"))
+    const { handler, completed, jobQueue } = createHandler((sessionId) => sessionId.startsWith("session_bot_"))
 
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     expect(find.mock.calls.map((call) => [call[1], call[3]])).toEqual([
       ["ws_1", undefined],
@@ -1125,10 +1107,10 @@ describe("AgentMessageMutationHandler", () => {
       .mockResolvedValueOnce({ id: "binv_1", createdAt: new Date() } as any)
       .mockResolvedValue(null)
     const update = spyOn(AgentSessionRepository, "updateStatus")
-    const { handler, jobQueue } = createHandler(true)
+    const { handler, completed, jobQueue } = createHandler(true)
 
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     expect(BotInvocationRepository.isBotInvocationSession).toHaveBeenCalledWith({}, "ws_1", "binv_1")
     expect({ updates: update.mock.calls.length, jobs: jobQueue.send.mock.calls.length }).toEqual({
@@ -1148,10 +1130,10 @@ describe("AgentMessageMutationHandler", () => {
     ])
     spyOn(AgentSessionRepository, "listByTriggerMessage").mockResolvedValue([{ id: "binv_1" }] as any)
     const update = spyOn(AgentSessionRepository, "updateStatus")
-    const { handler, eventService } = createHandler(true)
+    const { handler, completed, eventService } = createHandler(true)
 
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     expect(BotInvocationRepository.isBotInvocationSession).toHaveBeenCalledWith({}, "ws_1", "binv_1")
     expect({
@@ -1288,10 +1270,10 @@ describe("AgentMessageMutationHandler", () => {
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback) => callback({} as any))
 
-    const { handler, eventService } = createHandler()
+    const { handler, completed, eventService } = createHandler()
     handler.handle()
 
-    await waitForDebounce()
+    await completed
 
     expect(AgentSessionRepository.updateStatus).toHaveBeenCalledWith(
       expect.anything(),

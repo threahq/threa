@@ -1,27 +1,8 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import * as cursorLockModule from "@threahq/backend-common"
-import type { ProcessResult } from "@threahq/backend-common"
+import { mockCursorLock } from "./cursor-lock.test-helper"
 import { OutboxRepository } from "./repository"
 import type { OutboxEvent } from "./repository"
 import { DebouncedOutboxHandler } from "./debounced-handler"
-
-// Replace CursorLock.run with a fake that invokes the processor once with
-// cursor 0 and no in-flight ids. This exercises the real
-// processEvents/processEvent path without a database. The returned promise
-// resolves with the ProcessResult when the batch completes, so tests await
-// actual completion instead of sleeping through real debounce timers.
-function mockCursorLock(): Promise<ProcessResult> {
-  let resolve: (result: ProcessResult) => void
-  const completed = new Promise<ProcessResult>((r) => {
-    resolve = r
-  })
-  ;(spyOn(cursorLockModule, "CursorLock") as any).mockImplementation(() => ({
-    run: mock(async (processor: (cursor: bigint, processedIds: bigint[]) => Promise<ProcessResult>) => {
-      resolve(await processor(0n, []))
-    }),
-  }))
-  return completed
-}
 
 function makeEvent(id: bigint, eventType: string): OutboxEvent {
   return { id, eventType, payload: {}, createdAt: new Date() } as unknown as OutboxEvent
