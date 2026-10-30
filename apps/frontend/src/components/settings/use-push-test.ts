@@ -9,7 +9,7 @@ import {
 import { ApiError, api } from "@/api/client"
 import { getDeviceKey } from "@/hooks/use-push-notifications"
 
-/** Settings waits this long for device reports after sending a test. */
+/** Settings allows this much time for device reports after sending a test. */
 const PUSH_TEST_REPORT_WINDOW_MS = 60_000
 const POLL_INTERVAL_MS = 2_000
 const POLL_REQUEST_TIMEOUT_MS = 5_000
