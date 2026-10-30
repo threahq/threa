@@ -3074,6 +3074,77 @@ describe("getPersistedTail", () => {
     await db.events.clear()
   })
 
+  function tailEvent(sequence: number, overrides: Partial<CachedEvent> = {}): CachedEvent {
+    return {
+      ...makeEvent({ id: `evt_tail_${sequence}`, streamId: "stream_tail", sequence: String(sequence) }),
+      workspaceId: "ws_1",
+      _sequenceNum: sequence,
+      _cachedAt: Date.now(),
+      ...overrides,
+    }
+  }
+
+  it("should stop the native cursor at the newest persisted broadcast stamp", async () => {
+    await db.events.bulkPut(
+      Array.from({ length: 60 }, (_, index) => tailEvent(100 - index, { broadcastSequence: String(60 - index) }))
+    )
+    const visited: string[] = []
+    const openCursor = IDBIndex.prototype.openCursor
+    const cursorSpy = vi.spyOn(IDBIndex.prototype, "openCursor").mockImplementation(function (
+      this: IDBIndex,
+      ...args: Parameters<IDBIndex["openCursor"]>
+    ) {
+      const request = openCursor.apply(this, args)
+      if (this.name === "[workspaceId+streamId+_sequenceNum]") {
+        request.addEventListener("success", () => {
+          if (request.result) visited.push((request.result.value as CachedEvent).id)
+        })
+      }
+      return request
+    })
+    try {
+      expect({ tail: await getPersistedTail("ws_1", "stream_tail"), visited }).toEqual({
+        tail: { latestSequence: "100", latestBroadcastSequence: "60" },
+        visited: ["evt_tail_100"],
+      })
+    } finally {
+      cursorSpy.mockRestore()
+    }
+  })
+
+  it.each([50, 51])(
+    "should bound the stamp search to fifty persisted rows when the stamp is at position %i",
+    async (position) => {
+      const statuses = ["pending", "sent", "failed", "editing"] as const
+      await db.events.bulkPut([
+        ...Array.from({ length: 51 }, (_, index) =>
+          tailEvent(100 - index, { broadcastSequence: index + 1 === position ? "1" : null })
+        ),
+        ...Array.from({ length: 52 }, (_, index) =>
+          tailEvent(1_000 + index, { _status: statuses[index % statuses.length], broadcastSequence: "999" })
+        ),
+      ])
+
+      expect(await getPersistedTail("ws_1", "stream_tail")).toEqual({
+        latestSequence: "100",
+        latestBroadcastSequence: position === 50 ? "1" : null,
+      })
+    }
+  )
+
+  it("should retain a zero stamp while isolating the workspace and stream", async () => {
+    await db.events.bulkPut([
+      tailEvent(100, { broadcastSequence: "0" }),
+      tailEvent(200, { workspaceId: "ws_2", broadcastSequence: "20" }),
+      tailEvent(300, { streamId: "stream_other", broadcastSequence: "30" }),
+    ])
+
+    expect(await getPersistedTail("ws_1", "stream_tail")).toEqual({
+      latestSequence: "100",
+      latestBroadcastSequence: "0",
+    })
+  })
+
   it("finds the highest broadcast stamp below an unstamped global tail", async () => {
     const streamId = "stream_tail_scan"
     await db.events.bulkPut([
