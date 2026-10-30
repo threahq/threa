@@ -620,7 +620,7 @@ describe("RemoteSession.onReplyTimeout", () => {
 
     await fireIdleTimeout(session, "binv_silent")
 
-    expect(calls.complete[0]?.body.finalMessageMarkdown).toContain("without sending a reply")
+    expect(calls.complete[0]?.body.finalMessageMarkdown).toContain("This Threa request closed without a reply")
     expect(calls.complete[0]?.body.noResponse).toBeUndefined()
     expect((session as unknown as { inflight: Map<string, unknown> }).inflight.has("binv_silent")).toBe(false)
   })
@@ -722,7 +722,7 @@ describe("RemoteSession.endTurn", () => {
   test("posts the no-reply note when there is neither a post nor final text", async () => {
     expect(await ended({ sentCount: 0, finalText: "   " })).toEqual({
       result: { ok: true, message: "sent", closedTurn: true },
-      finalMessageMarkdown: expect.stringContaining("without sending a reply"),
+      finalMessageMarkdown: expect.stringContaining("This Threa request closed without a reply"),
       noResponse: undefined,
       completions: 1,
       inflight: false,

@@ -2486,7 +2486,7 @@ export class RemoteSession {
   }
 
   private async prepareTimeout(route: TurnRoute): Promise<PreparedClose> {
-    const note = "_The session ended the turn without sending a reply._"
+    const note = "_This Threa request closed without a reply._"
     const noResponse = route.sentCount > 0
     const sealing = route.invocation.sealing
     const sourceRevision = route.invocation.sourceRevision
