@@ -550,7 +550,7 @@ describe("T3TurnRunner", () => {
     await runner.deliverTurn(turn())
     await session.settled()
 
-    expect(session.fails).toEqual([{ invocationId: "binv_1", errorMessage: "The T3 Code run ended rolled back." }])
+    expect(session.fails).toEqual([{ invocationId: "binv_1", errorMessage: "The T3 Code run was rolled back." }])
   })
 
   test("stops a run that waits on an approval and fails the turn", async () => {
@@ -1450,7 +1450,7 @@ describe("runs T3 starts by itself", () => {
         posts:
           delivered === "run_1"
             ? [
-                { streamId: "stream_root", text: "The T3 Code run ended failed.", clientMessageId: "t3run-run_2" },
+                { streamId: "stream_root", text: "The T3 Code run failed.", clientMessageId: "t3run-run_2" },
                 { streamId: "stream_root", text: "Third.", clientMessageId: "t3run-run_3" },
               ]
             : [],
@@ -3297,6 +3297,30 @@ describe("runtime run attachment", () => {
     for (const runId of ["run_1", "run_2", "run_3"]) t3.script(runId, [{ status: "completed" }])
     await until(() => !runner.busy)
     expect(session.adoptions.map((input) => input.externalRunId)).toEqual(["run_1", "run_2", "run_3"])
+  })
+
+  test("should attach the queued run when the head attachment closes during adoption", async () => {
+    const { t3, session, runner } = setup({ state })
+    t3.startInT3("thread_1")
+    t3.startInT3("thread_1")
+    const adopt = session.session.adoptRuntimeRun
+    session.session.adoptRuntimeRun = async (input) => {
+      if (input.externalRunId === "run_1") {
+        t3.endInT3("run_1")
+        return { status: "completed", invocationId: "old" }
+      }
+      return adopt(input)
+    }
+    try {
+      expect({
+        result: await runner.attach("stream_root"),
+        adopted: session.adoptions.map((input) => input.externalRunId),
+      }).toEqual({ result: "Following the existing T3 Code run.", adopted: ["run_2"] })
+      t3.script("run_2", [{ status: "completed" }])
+      await until(() => !runner.busy)
+    } finally {
+      runner.shutdown()
+    }
   })
 
   test("should reopen a terminal attachment only while native work remains live", async () => {

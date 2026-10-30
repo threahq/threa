@@ -1351,6 +1351,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
       ])
     ),
     canReturn404: true,
+    canReturn409: true,
   },
   {
     method: "post",

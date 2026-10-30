@@ -449,16 +449,6 @@ export function fakeSession(rootStreamId = "stream_root") {
     },
     isEncrypted: async (streamId) => encrypted.has(streamId),
     failTurn: async (invocationId, errorMessage) => {
-      if (invocationId.startsWith("adopt-")) {
-        const runId = invocationId.slice(6)
-        posts.push({
-          streamId: adoptions.find((input) => input.externalRunId === runId)!.responseStreamId,
-          text: errorMessage,
-          clientMessageId: `t3run-${runId}`,
-        })
-        settle()
-        return true
-      }
       fails.push({ invocationId, errorMessage })
       settle()
       return true

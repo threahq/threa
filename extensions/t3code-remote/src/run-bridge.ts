@@ -973,7 +973,8 @@ export class T3TurnRunner {
         })
         return this.observeRuntime(streamId, relay, true)
       }
-      relay.ready.reject(new Error("The attachment is already closed; no live T3 Code run remains."))
+      if (relay.queue.length === 0)
+        relay.ready.reject(new Error("The attachment is already closed; no live T3 Code run remains."))
       return
     }
     relay.ready.resolve()
@@ -1589,7 +1590,16 @@ export class T3TurnRunner {
     for (let failures = 0; !run.abort.signal.aborted; failures++) {
       try {
         if (status !== "completed") {
-          const reason = trace.lastError ?? `The T3 Code run ended ${status.replace("_", " ")}.`
+          const reason =
+            trace.lastError ??
+            (status === "failed" ? "The T3 Code run failed." : `The T3 Code run was ${status.replace("_", " ")}.`)
+          if (run.runtimeOrigin) {
+            await this.session.postToInvocation(invocationId, {
+              content: reason,
+              clientMessageId: `t3run-${run.runId}`,
+            })
+            if (run.abort.signal.aborted) return false
+          }
           if (!(await this.session.failTurn(invocationId, reason))) {
             this.log(`turn ${invocationId} was already closed; run ${run.runId} ${status}: ${reason}`)
           }
