@@ -304,6 +304,7 @@ export function main(args = process.argv.slice(2)): void {
       browser_files: JSON.stringify(plan.browserFiles),
       frontend_shards: JSON.stringify(plan.frontendShards),
       browser_shards: JSON.stringify(plan.browserShards),
+      browser_shard_count: String(plan.browserShards.length),
     }
     appendFileSync(
       process.env.GITHUB_OUTPUT,
