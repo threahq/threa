@@ -10,9 +10,9 @@ import { LinkPreviewList } from "./link-preview-list"
 import type { LinkPreviewSummary } from "@threahq/types"
 
 function toggleForTitle(title: string) {
-  return within(
-    screen.getByRole("link", { name: title }).closest('[data-native-context="true"]') as HTMLElement
-  ).getByRole("button", { name: /^(Expand|Collapse) preview$/ })
+  return within(screen.getByText(title).closest('[data-native-context="true"]') as HTMLElement).getByRole("button", {
+    name: /^(Expand|Collapse) preview(?:$|:)/,
+  })
 }
 
 function renderList(previews: LinkPreviewSummary[]) {
@@ -138,8 +138,7 @@ describe("LinkPreviewList", () => {
     } as ReturnType<typeof contextsModule.usePreferences>)
     renderList([preview])
 
-    expect(screen.getByText("Preview description")).toBeInTheDocument()
-    expect(screen.getByRole("link", { name: "Preview title" })).toBeInTheDocument()
+    expect(screen.getByText("Preview title")).toBeInTheDocument()
     expect(toggleForTitle("Preview title")).toHaveAttribute("aria-expanded", "false")
   })
 

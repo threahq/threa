@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test"
 import type { GitHubPreview, LinearPreview, VideoPreview } from "@threahq/types"
 import { ulid } from "ulid"
-import { createChannel, expectApiOk, loginAndCreateWorkspace, workspaceIdFromUrl } from "./helpers"
+import { createChannelViaApi, expectApiOk, loginAndCreateWorkspace, workspaceIdFromUrl } from "./helpers"
 import { runTestSql } from "./global-setup"
 
 const fetchedAt = "2026-04-08T10:00:00.000Z"
@@ -31,7 +31,7 @@ const linear: LinearPreview = {
   organization: { id: "example-org", name: "Example team", urlKey: "example" },
   data: {
     identifier: "EX-42",
-    title: "Show a useful collapsed summary",
+    title: "Keep issue previews compact",
     summary: "Keep the **important context** visible.",
     state: { name: "In Progress", type: "started", color: "5E6AD2" },
     priority: { label: "High", value: 2 },
@@ -59,7 +59,7 @@ const video: VideoPreview = {
 }
 const fixtures = {
   pullRequest: { title: "Make previews useful at a glance", url: github.url, contentType: "website", data: github },
-  linearIssue: { title: "Show a useful collapsed summary", url: linear.url, contentType: "website", data: linear },
+  linearIssue: { title: "Keep issue previews compact", url: linear.url, contentType: "website", data: linear },
   article: {
     title: "Notes on clear interfaces",
     url: "https://preview.example.test/article",
@@ -76,9 +76,10 @@ function card(page: Page, title: string) {
 
 async function seed(page: Page) {
   const { testId } = await loginAndCreateWorkspace(page, "preview-chrome")
-  await createChannel(page, `chrome-${testId}`)
   const workspaceId = workspaceIdFromUrl(page)
-  const streamId = new URL(page.url()).pathname.match(/\/s\/([^/]+)/)![1]
+  const streamId = await createChannelViaApi(page, workspaceId, `chrome-${testId}`)
+  await page.goto(`/w/${workspaceId}/s/${streamId}`)
+  await expect(page.getByRole("heading", { name: `#chrome-${testId}`, level: 1 })).toBeVisible({ timeout: 30_000 })
   await expectApiOk(
     await page.request.patch(`/api/workspaces/${workspaceId}/preferences`, {
       data: { linkPreviewDefault: "collapsed", theme: "light" },
@@ -117,7 +118,7 @@ async function seed(page: Page) {
 for (const mobile of [false, true]) {
   test.describe(mobile ? "Phone preview chrome" : "Desktop preview chrome", () => {
     test.use({ viewport: { width: 1280, height: 900 }, isMobile: mobile, hasTouch: mobile })
-    test("should identify folded previews and keep navigation separate from expansion", async ({
+    test("should keep collapsed previews compact and preserve expanded details", async ({
       page,
       context,
     }, testInfo) => {
@@ -139,18 +140,12 @@ for (const mobile of [false, true]) {
       const pr = card(page, fixtures.pullRequest.title)
       const toggle = pr.getByRole("button", { name: /Expand preview/ })
       await expect(toggle).toHaveAttribute("aria-expanded", "false")
-      await expect(pr).toContainText("#42")
-      await expect(pr).toContainText(/Open/i)
-      await expect(card(page, fixtures.linearIssue.title)).toContainText("EX-42")
-      await expect(card(page, fixtures.linearIssue.title)).toContainText("In Progress")
-      await expect(card(page, fixtures.article.title)).toContainText("A clear first line with useful context.")
-      await expect(card(page, fixtures.pdf.title)).toContainText("PDF")
-      await expect(card(page, fixtures.video.title)).toContainText(/Video/i)
       for (const fixture of Object.values(fixtures)) {
-        await expect(card(page, fixture.title).getByRole("link", { name: fixture.title, exact: true })).toHaveAttribute(
-          "href",
-          fixture.url
-        )
+        const preview = card(page, fixture.title)
+        await expect(preview.getByRole("button", { name: /Expand preview/ })).toHaveAttribute("aria-expanded", "false")
+        await expect(preview.getByText(fixture.title, { exact: true })).toBeVisible()
+        await expect(preview.getByRole("link")).toHaveCount(0)
+        expect((await preview.boundingBox())!.height).toBeLessThanOrEqual(34)
       }
 
       await pr.scrollIntoViewIfNeeded()
@@ -161,24 +156,41 @@ for (const mobile of [false, true]) {
       expect(Math.abs(after!.height - before!.height)).toBeLessThanOrEqual(1)
       expect(Math.abs(after!.y - before!.y)).toBeLessThanOrEqual(1)
 
-      const popupPromise = page.waitForEvent("popup")
-      await pr.getByRole("link", { name: fixtures.pullRequest.title, exact: true }).click()
-      const popup = await popupPromise
-      await expect(popup).toHaveURL(github.url)
-      await popup.close()
-      await expect(toggle).toHaveAttribute("aria-expanded", "false")
-
       await toggle.focus()
       await page.keyboard.press("Enter")
       const collapse = pr.getByRole("button", { name: /Collapse preview/ })
       await expect(collapse).toHaveAttribute("aria-expanded", "true")
       await expect(pr.getByText(fixtures.pullRequest.title, { exact: true })).toHaveCount(1)
+      await expect(pr).toContainText("#42")
       await expect(pr).toContainText("preview-headers")
       await expect(pr).toContainText("+120")
       await expect(pr).toContainText("1 approved")
-      await page.screenshot({ path: testInfo.outputPath(`${mobile ? "phone" : "desktop"}-preview-expanded.png`) })
+      const popupPromise = page.waitForEvent("popup")
+      await pr.getByRole("link", { name: fixtures.pullRequest.title, exact: true }).click()
+      const popup = await popupPromise
+      await expect(popup).toHaveURL(github.url)
+      await popup.close()
+      await expect(collapse).toHaveAttribute("aria-expanded", "true")
+      await page.screenshot({
+        path: testInfo.outputPath(`${mobile ? "phone" : "desktop"}-compact-preview-expanded.png`),
+      })
       await collapse.click()
       await expect(toggle).toHaveAttribute("aria-expanded", "false")
+
+      for (const fixture of Object.values(fixtures)) {
+        const preview = card(page, fixture.title)
+        await preview.getByRole("button", { name: /Expand preview/ }).click()
+        await expect(preview.getByRole("link", { name: fixture.title, exact: true })).toHaveAttribute(
+          "href",
+          fixture.url
+        )
+        await expect(preview.getByText(fixture.title, { exact: true })).toHaveCount(1)
+        if (fixture === fixtures.linearIssue) {
+          await expect(preview).toContainText("EX-42")
+          await expect(preview).toContainText("In Progress")
+        }
+        await preview.getByRole("button", { name: /Collapse preview/ }).click()
+      }
 
       for (const theme of ["light", "dark"]) {
         await expectApiOk(
@@ -188,8 +200,13 @@ for (const mobile of [false, true]) {
         if (theme === "dark") await expect(page.locator("html")).toHaveClass(/dark/)
         else await expect(page.locator("html")).not.toHaveClass(/dark/)
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+        for (const fixture of Object.values(fixtures)) {
+          expect((await card(page, fixture.title).boundingBox())!.height).toBeLessThanOrEqual(34)
+        }
         await pr.scrollIntoViewIfNeeded()
-        await page.screenshot({ path: testInfo.outputPath(`${mobile ? "phone" : "desktop"}-previews-${theme}.png`) })
+        await page.screenshot({
+          path: testInfo.outputPath(`${mobile ? "phone" : "desktop"}-compact-previews-${theme}.png`),
+        })
       }
     })
   })

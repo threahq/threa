@@ -210,7 +210,6 @@ export function LinkPreviewCard({
 interface PreviewPresentation {
   title: string
   type: string
-  summary: string
 }
 
 function previewPresentation(preview: LinkPreviewSummary): PreviewPresentation {
@@ -225,88 +224,74 @@ function previewPresentation(preview: LinkPreviewSummary): PreviewPresentation {
     website: "Website",
     pdf: "PDF",
   }[category]
-  let summary = preview.description ?? ""
   if (provider) {
     switch (provider.type) {
       case "github_pr": {
         const data = provider.data as GitHubPrPreviewData
         title = data.title
         type = "GitHub pull request"
-        summary = `#${data.number} · ${PR_STATE_LABELS[data.state]}`
-        const reviews = reviewSummaryParts(data.reviewStatusSummary)
-        if (reviews.length) summary += ` · ${reviews.join(" · ")}`
         break
       }
       case "github_issue": {
         const data = provider.data as GitHubIssuePreviewData
         title = data.title
         type = "GitHub issue"
-        summary = `#${data.number} · ${data.state === "open" ? "Open" : "Closed"} · ${data.commentCount} comments`
         break
       }
       case "github_commit": {
         const data = provider.data as GitHubCommitPreviewData
         title = data.message.split("\n")[0]
         type = "GitHub commit"
-        summary = `${data.shortSha} · ${data.filesChanged} files · +${data.additions} −${data.deletions}`
         break
       }
       case "github_file": {
         const data = provider.data as GitHubFilePreviewData
         title = data.path
         type = "GitHub file"
-        summary = `${data.ref}${data.language ? ` · ${data.language}` : ""} · ${formatLineRange(data)}`
         break
       }
       case "github_diff": {
         const data = provider.data as GitHubDiffPreviewData
         title = data.path
         type = "GitHub diff"
-        summary = `PR #${data.pullRequest.number} · ${PR_STATE_LABELS[data.pullRequest.state]} · ${capitalizeChangeType(data.changeType)}${formatDiffAnchor(data)}`
         break
       }
       case "github_comment": {
         const data = provider.data as GitHubCommentPreviewData
         type = "GitHub comment"
         title = preview.title || data.parent.title
-        summary = data.body || `${data.author?.login ?? "Unknown"} · #${data.parent.number}`
         break
       }
       case "linear_issue": {
         const data = provider.data as LinearIssuePreviewData
         title = data.title
         type = "Linear issue"
-        summary = `${data.identifier} · ${data.state.name}${data.assignee ? ` · ${data.assignee.displayName}` : ""}`
         break
       }
       case "linear_comment": {
         const data = provider.data as LinearCommentPreviewData
         title = data.parent.title
         type = "Linear comment"
-        summary = data.body || `${data.parent.identifier} · ${data.parent.state.name}`
         break
       }
       case "linear_project": {
         const data = provider.data as LinearProjectPreviewData
         title = data.name
         type = "Linear project"
-        summary = data.description || formatLinearStatus(data.status)
         break
       }
       case "linear_document": {
         const data = provider.data as LinearDocumentPreviewData
         title = data.title
         type = "Linear document"
-        summary = data.summary || data.parentProject?.name || ""
         break
       }
       case "video":
         title = provider.title || title
-        summary = provider.authorName || summary
         break
     }
   }
-  return { title, type, summary: stripMarkdownToInline(summary) }
+  return { title, type }
 }
 
 function previewCardClassName(isHighlighted?: boolean): string {
@@ -340,44 +325,57 @@ function PreviewCardHeader({
   onDismiss?: (e: React.MouseEvent) => void
 }) {
   return (
-    <div className={cn("flex items-start gap-1 bg-muted/30 p-2", !collapsed && "border-b")}>
-      <button
-        type="button"
-        onClick={onToggleCollapse}
-        aria-label={collapsed ? "Expand preview" : "Collapse preview"}
-        aria-expanded={!collapsed}
-        aria-controls={bodyId}
-        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-      </button>
-      <div className="min-w-0 flex-1 py-1">
-        <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-          <PreviewFavicon key={faviconUrl} src={faviconUrl} fallback={icon} />
-          <span className="truncate">{label}</span>
-        </div>
-        <p className="mt-1 text-[11px] text-muted-foreground">{presentation.type}</p>
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-0.5 block text-sm font-semibold leading-snug text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    <div className={cn("flex items-center gap-1.5 px-3 py-1.5 bg-muted/30", !collapsed && "border-b")}>
+      {collapsed ? (
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          aria-label={`Expand preview: ${presentation.title}`}
+          aria-expanded={false}
+          aria-controls={bodyId}
+          title={presentation.title}
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <span className="line-clamp-2">{presentation.title}</span>
-        </a>
-        {collapsed && presentation.summary && (
-          <p className="mt-1 line-clamp-1 text-xs leading-relaxed text-muted-foreground">{presentation.summary}</p>
-        )}
-      </div>
+          <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
+          <PreviewFavicon key={faviconUrl} src={faviconUrl} fallback={icon} />
+          <span className="truncate">{presentation.title}</span>
+        </button>
+      ) : (
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              aria-label="Collapse preview"
+              aria-expanded
+              aria-controls={bodyId}
+              className="flex shrink-0 items-center hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <ChevronDown className="h-3 w-3" aria-hidden="true" />
+            </button>
+            <PreviewFavicon key={faviconUrl} src={faviconUrl} fallback={icon} />
+            <span className="truncate">{label}</span>
+            <span className="shrink-0 text-[11px]">· {presentation.type}</span>
+          </div>
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-0.5 block text-sm font-semibold leading-snug text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span className="line-clamp-2">{presentation.title}</span>
+          </a>
+        </div>
+      )}
       {onDismiss && (
         <Button
           variant="ghost"
           size="icon"
-          className="h-10 w-10 shrink-0"
+          className="h-5 w-5 shrink-0"
           onClick={onDismiss}
           aria-label="Dismiss preview"
         >
-          <X className="h-4 w-4" />
+          <X className="h-3 w-3" />
         </Button>
       )}
     </div>

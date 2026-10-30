@@ -44,26 +44,21 @@ describe("LinkPreviewCard", () => {
     expect(screen.getByText("x.com/someone/status/1234567890")).toBeInTheDocument()
   })
 
-  it("should keep collapsed navigation separate from its toggle and strip excerpt markdown", () => {
+  it("should expand from its compact collapsed title button and link its expanded title", () => {
     const toggle = vi.fn()
-    const preview = makeGitHubPreview({
-      title: "Read this",
-      description: "**Useful** [details](https://example.com)",
-      contentType: "pdf",
-    })
-    render(<LinkPreviewCard preview={preview} isCollapsed onToggleCollapse={toggle} />)
-    const link = screen.getByRole("link", { name: "Read this" })
-    const button = screen.getByRole("button", { name: "Expand preview" })
+    const preview = makeGitHubPreview({ title: "Read this", contentType: "pdf" })
+    const { rerender } = render(<LinkPreviewCard preview={preview} isCollapsed onToggleCollapse={toggle} />)
+    const button = screen.getByRole("button", { name: "Expand preview: Read this" })
     expect({
-      href: link.getAttribute("href"),
-      nested: button.contains(link),
+      title: button.textContent,
       expanded: button.getAttribute("aria-expanded"),
       controlled: document.getElementById(button.getAttribute("aria-controls")!)?.hidden,
-    }).toEqual({ href: preview.url, nested: false, expanded: "false", controlled: true })
-    expect(screen.getByText("PDF")).toBeInTheDocument()
-    expect(screen.getByText("Useful details")).toBeInTheDocument()
+    }).toEqual({ title: "Read this", expanded: "false", controlled: true })
     fireEvent.click(button)
     expect(toggle).toHaveBeenCalledWith(preview.id)
+    rerender(<LinkPreviewCard preview={preview} onToggleCollapse={toggle} />)
+    expect(screen.getByRole("link", { name: "Read this" })).toHaveAttribute("href", preview.url)
+    expect(screen.getByText("· PDF")).toBeInTheDocument()
   })
 
   it("should recover its fixed favicon slot when the favicon URL changes", () => {
@@ -108,15 +103,13 @@ describe("LinkPreviewCard", () => {
       label: "Linear document",
       data: { title: "Track release", summary: "**Ready** for review" },
     },
-  ])("should identify a collapsed $label from existing provider data", ({ type, label, data }) => {
+  ])("should identify a collapsed $label from existing provider data", ({ type, data }) => {
     const preview = makeGitHubPreview({
       url: "https://linear.app/demo/issue/DEMO-12",
       previewData: { type, data, organization: { name: "Demo" } } as LinkPreviewSummary["previewData"],
     })
     render(<LinkPreviewCard preview={preview} isCollapsed />)
-    expect(screen.getByRole("link", { name: "Track release" })).toHaveAttribute("href", preview.url)
-    expect(screen.getByText(label)).toBeInTheDocument()
-    expect(screen.getByText(type === "linear_issue" ? "DEMO-12 · In progress" : "Ready for review")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Expand preview: Track release" })).toHaveTextContent("Track release")
   })
 
   it("keeps the thumbnail box footprint when the image fails to load (INV-21)", () => {
@@ -346,7 +339,7 @@ describe("LinkPreviewCard", () => {
     const { rerender } = render(<LinkPreviewCard preview={preview} workspaceId="ws_1" isCollapsed={false} />)
     rerender(<LinkPreviewCard preview={preview} workspaceId="ws_1" isCollapsed />)
     expect(observed.at(-1)?.isConnected).toBe(true)
-    expect(screen.getByText(/#42 · Open · 1 approved/)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Expand preview: Add feature" })).toHaveTextContent("Add feature")
     rerender(<LinkPreviewCard preview={preview} workspaceId="ws_1" isCollapsed={false} />)
     vi.unstubAllGlobals()
 
