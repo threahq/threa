@@ -178,7 +178,7 @@ export function LinkPreviewCard({
       body = <ImagePreviewContent preview={preview} messageId={messageId ?? ""} />
     } else if (videoPreview) {
       body = <VideoPreviewContent video={videoPreview} workspaceId={workspaceId} />
-    } else {
+    } else if (providerPreview || preview.description || preview.imageUrl) {
       body = (
         <LinkPreviewBody messageId={messageId} previewId={preview.id}>
           <ProviderContent preview={preview} imageError={imageError} onImageError={() => setImageError(true)} />
@@ -346,7 +346,7 @@ function PreviewCardHeader({
             <button
               type="button"
               onClick={onToggleCollapse}
-              aria-label="Collapse preview"
+              aria-label={`Collapse preview: ${presentation.title}`}
               aria-expanded
               aria-controls={bodyId}
               className="flex shrink-0 items-center hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

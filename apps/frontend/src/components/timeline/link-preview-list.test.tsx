@@ -120,7 +120,7 @@ describe("LinkPreviewList", () => {
     renderList([preview])
 
     expect(screen.getByText("Preview description")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Collapse preview" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Collapse preview: Preview title" })).toBeInTheDocument()
   })
 
   it("should open the first three previews and collapse the rest", () => {

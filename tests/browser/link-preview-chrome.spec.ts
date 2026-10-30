@@ -90,13 +90,14 @@ async function seed(page: Page) {
   for (const fixture of Object.values(fixtures)) {
     const data = fixture.data ? `'${JSON.stringify(fixture.data).replaceAll("'", "''")}'::jsonb` : "NULL"
     const type = fixture.data ? `'${fixture.data.type}'` : "NULL"
+    const description = fixture === fixtures.article ? "NULL" : "'A **clear first line** with useful context.'"
     runTestSql(`
       INSERT INTO link_previews
         (id, workspace_id, url, normalized_url, title, description, favicon_url, site_name,
          content_type, preview_type, preview_data, status, fetched_at, expires_at)
       VALUES
         ('lp_${ulid()}', '${workspaceId}', '${fixture.url}', '${fixture.url}', '${fixture.title}',
-         'A **clear first line** with useful context.', 'https://preview.example.test/favicon.svg', 'Example',
+         ${description}, 'https://preview.example.test/favicon.svg', 'Example',
          '${fixture.contentType}', ${type}, ${data}, 'completed', NOW(), NOW() + INTERVAL '1 day')
     `)
   }
@@ -158,7 +159,7 @@ for (const mobile of [false, true]) {
 
       await toggle.focus()
       await page.keyboard.press("Enter")
-      const collapse = pr.getByRole("button", { name: /Collapse preview/ })
+      const collapse = pr.getByRole("button", { name: `Collapse preview: ${fixtures.pullRequest.title}`, exact: true })
       await expect(collapse).toHaveAttribute("aria-expanded", "true")
       await expect(pr.getByText(fixtures.pullRequest.title, { exact: true })).toHaveCount(1)
       await expect(pr).toContainText("#42")
@@ -189,7 +190,14 @@ for (const mobile of [false, true]) {
           await expect(preview).toContainText("EX-42")
           await expect(preview).toContainText("In Progress")
         }
-        await preview.getByRole("button", { name: /Collapse preview/ }).click()
+        const collapse = preview.getByRole("button", { name: `Collapse preview: ${fixture.title}`, exact: true })
+        if (fixture === fixtures.article) {
+          const bodyId = await collapse.getAttribute("aria-controls")
+          expect(
+            await page.evaluate((id) => document.getElementById(id!)!.getBoundingClientRect().height, bodyId)
+          ).toBe(0)
+        }
+        await collapse.click()
       }
 
       for (const theme of ["light", "dark"]) {

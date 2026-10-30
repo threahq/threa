@@ -27,7 +27,7 @@ function makeGitHubPreview(overrides: Partial<LinkPreviewSummary> = {}): LinkPre
 }
 
 describe("LinkPreviewCard", () => {
-  it("renders a resilient fallback when generic metadata is empty", () => {
+  it("should show a linked fallback without an empty body when generic metadata is missing", () => {
     const preview = makeGitHubPreview({
       url: "https://x.com/someone/status/1234567890",
       title: null,
@@ -41,7 +41,9 @@ describe("LinkPreviewCard", () => {
 
     render(<LinkPreviewCard preview={preview} />)
 
-    expect(screen.getByText("x.com/someone/status/1234567890")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "x.com/someone/status/1234567890" })).toHaveAttribute("href", preview.url)
+    const toggle = screen.getByRole("button", { name: /Collapse preview/ })
+    expect(document.getElementById(toggle.getAttribute("aria-controls")!)).toBeEmptyDOMElement()
   })
 
   it("should expand from its compact collapsed title button and link its expanded title", () => {
@@ -59,6 +61,11 @@ describe("LinkPreviewCard", () => {
     rerender(<LinkPreviewCard preview={preview} onToggleCollapse={toggle} />)
     expect(screen.getByRole("link", { name: "Read this" })).toHaveAttribute("href", preview.url)
     expect(screen.getByText("· PDF")).toBeInTheDocument()
+    const collapse = screen.getByRole("button", { name: "Collapse preview: Read this" })
+    expect(collapse).toHaveAttribute("aria-expanded", "true")
+    toggle.mockClear()
+    fireEvent.click(collapse)
+    expect(toggle).toHaveBeenCalledWith(preview.id)
   })
 
   it("should recover its fixed favicon slot when the favicon URL changes", () => {
