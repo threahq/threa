@@ -142,34 +142,23 @@ export interface T3Tools {
     args: { threadId: string; runId?: string; reason?: string }
     result: { status: string }
   }
-  t3_pending_request_list: {
-    args: { threadId: string }
-    /** Pending user questions only; approvals are not listed. */
-    result: { requestIds: string[] }
-  }
-  t3_pending_request_read: {
-    args: { threadId: string; requestId: string }
-    result: { requestId: string; questions: PendingQuestion[] }
-  }
-  t3_pending_request_respond: {
-    /** Keyed by question id; every provider takes a string answer. */
-    args: { threadId: string; requestId: string; answers: Record<string, string> }
+  t3_pending_request: {
+    args:
+      | { action: "list"; threadId: string }
+      | { action: "read"; threadId: string; requestId: string }
+      | { action: "respond"; threadId: string; requestId: string; answers: Record<string, string> }
     result: unknown
   }
-  t3_thread_configuration: {
-    args: { threadId: string }
-    result: { modelSelection: ModelSelection; runtimeMode: T3Access }
-  }
   t3_thread_configure: {
-    args: { threadId: string; modelSelection: ModelSelection }
-    result: { sequence: number }
+    args: { threadId: string; modelSelection?: ModelSelection }
+    result: unknown
   }
   t3_thread_organize: {
     args: { threadId: string; action: "archive" }
     result: unknown
   }
-  t3_thread_fork: {
-    args: { threadId: string; sourcePoint: { type: "latest_stable" }; title: string }
+  t3_thread_transfer: {
+    args: { action: "fork"; threadId: string; sourcePoint: { type: "latest_stable" }; title: string }
     result: { targetThreadId: string }
   }
   orchestrator_capabilities: {
@@ -221,6 +210,16 @@ export class T3Client {
     this.fetchImpl = fetchImpl ?? fetch
   }
 
+  call(name: "t3_pending_request", args: { action: "list"; threadId: string }): Promise<{ requestIds: string[] }>
+  call(
+    name: "t3_pending_request",
+    args: { action: "read"; threadId: string; requestId: string }
+  ): Promise<{ requestId: string; questions: PendingQuestion[] }>
+  call(
+    name: "t3_thread_configure",
+    args: { threadId: string; modelSelection?: undefined }
+  ): Promise<{ modelSelection: ModelSelection; runtimeMode: T3Access }>
+  call<K extends T3ToolName>(name: K, args: T3Tools[K]["args"]): Promise<T3Tools[K]["result"]>
   async call<K extends T3ToolName>(name: K, args: T3Tools[K]["args"]): Promise<T3Tools[K]["result"]> {
     await this.open()
     let message: JsonRpcMessage | undefined

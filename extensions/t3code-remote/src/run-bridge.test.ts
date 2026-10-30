@@ -6,7 +6,7 @@ import { ThreaApiError, type DownloadedAttachment } from "@threahq/remote-sessio
 import { T3AuthError } from "./auth"
 import { createFileThreadStore } from "./connector"
 import { RunTrace, T3TurnRunner, type RunTraceMode, type ThreadState } from "./run-bridge"
-import { T3ToolError, type PendingQuestion } from "./t3-client"
+import { T3ToolError, type PendingQuestion, type T3ToolName, type T3Tools } from "./t3-client"
 import { DECISION, fakeSession, fakeT3, item, picked, turn, until } from "./t3.test-support"
 
 const MODEL = { instanceId: "codex", model: "gpt-5.5" }
@@ -36,7 +36,7 @@ function setup(
 
 function refuseRunWait(t3: ReturnType<typeof fakeT3>, runId: string): () => void {
   const call = t3.client.call
-  t3.client.call = (async (name, args) => {
+  t3.client.call = (async <K extends T3ToolName>(name: K, args: T3Tools[K]["args"]) => {
     if (name === "t3_thread_wait" && (args as { runId?: string }).runId === runId)
       throw new T3AuthError("Run `threa-t3code login`")
     return call(name, args)
@@ -434,8 +434,8 @@ describe("T3TurnRunner", () => {
     await runner.deliverTurn(turn({ streamId: "stream_thread", content: "Branch off here" }))
     await session.settled()
 
-    expect(t3.callsOf("t3_thread_fork")).toEqual([
-      { threadId: "thread_root", sourcePoint: { type: "latest_stable" }, title: "Branch off here" },
+    expect(t3.callsOf("t3_thread_transfer")).toEqual([
+      { action: "fork", threadId: "thread_root", sourcePoint: { type: "latest_stable" }, title: "Branch off here" },
     ])
     expect(t3.callsOf("t3_thread_send")).toEqual([expect.objectContaining({ threadId: "thread_1" })])
     expect(saved.at(-1)).toEqual({
@@ -460,7 +460,7 @@ describe("T3TurnRunner", () => {
     await session.settled()
 
     expect({
-      forks: t3.callsOf("t3_thread_fork"),
+      forks: t3.callsOf("t3_thread_transfer"),
       launches: t3.callsOf("t3_thread_launch"),
       saved: saved.at(-1),
     }).toEqual({
@@ -495,7 +495,7 @@ describe("T3TurnRunner", () => {
     await runner.deliverTurn(turn({ invocationId: "binv_2", streamId: "stream_thread", sourceMessageId: "msg_2" }))
     await session.settled()
 
-    expect({ forks: t3.callsOf("t3_thread_fork"), launches: t3.callsOf("t3_thread_launch") }).toEqual({
+    expect({ forks: t3.callsOf("t3_thread_transfer"), launches: t3.callsOf("t3_thread_launch") }).toEqual({
       forks: [],
       launches: [
         expect.objectContaining({ title: "helper", modelSelection: MODEL }),
@@ -526,7 +526,7 @@ describe("T3TurnRunner", () => {
     await runner.deliverTurn(turn({ streamId: "stream_channel", rootStreamId: "stream_channel" }))
     await session.settled()
 
-    expect({ forks: t3.callsOf("t3_thread_fork"), launches: t3.callsOf("t3_thread_launch") }).toEqual({
+    expect({ forks: t3.callsOf("t3_thread_transfer"), launches: t3.callsOf("t3_thread_launch") }).toEqual({
       forks: [],
       launches: [expect.objectContaining({ title: "Fix the flaky test", scratch: true })],
     })
@@ -622,8 +622,13 @@ describe("T3TurnRunner", () => {
         ...ref,
       },
     ])
-    expect(t3.callsOf("t3_pending_request_respond")).toEqual([
-      { threadId: "thread_1", requestId: "req_1", answers: { runner: "vitest", watch: "only on CI" } },
+    expect(t3.callsOf("t3_pending_request", "respond")).toEqual([
+      {
+        action: "respond",
+        threadId: "thread_1",
+        requestId: "req_1",
+        answers: { runner: "vitest", watch: "only on CI" },
+      },
     ])
 
     t3.script("run_1", [
@@ -650,7 +655,7 @@ describe("T3TurnRunner", () => {
     expect(session.decisions.map(({ signal }) => signal?.aborted)).toEqual([true])
     t3.script("run_1", [{ status: "completed", items: [item(2, "assistant_message", { text: "Done" })] }])
     await session.settled()
-    expect({ replies: session.replies, responds: t3.callsOf("t3_pending_request_respond") }).toEqual({
+    expect({ replies: session.replies, responds: t3.callsOf("t3_pending_request", "respond") }).toEqual({
       replies: [{ invocationId: "binv_1", text: "Done" }],
       responds: [],
     })
@@ -670,7 +675,7 @@ describe("T3TurnRunner", () => {
 
     expect({
       interrupts: t3.callsOf("t3_thread_interrupt"),
-      responds: t3.callsOf("t3_pending_request_respond"),
+      responds: t3.callsOf("t3_pending_request", "respond"),
       fails: session.fails,
     }).toEqual({
       interrupts: [{ threadId: "thread_1", runId: "run_1", reason: "Stopped from Threa" }],
@@ -704,7 +709,7 @@ describe("T3TurnRunner", () => {
 
   test("a question T3 won't read fails the turn with why", async () => {
     const { t3, session, runner } = setup()
-    t3.failNext("t3_pending_request_read", new Error("request not found"))
+    t3.failNext("t3_pending_request", new Error("request not found"), (args) => args.action === "read")
     t3.ask("thread_1", "req_1", [question("runner")])
     t3.script("run_1", [{ status: "waiting", items: [asking()] }])
     await runner.deliverTurn(turn())
@@ -744,13 +749,13 @@ describe("T3TurnRunner", () => {
     expect({
       busyWhileAsking,
       busy: runner.busy,
-      responds: t3.callsOf("t3_pending_request_respond"),
+      responds: t3.callsOf("t3_pending_request", "respond"),
       replies: session.replies,
       fails: session.fails,
     }).toEqual({
       busyWhileAsking: true,
       busy: false,
-      responds: [{ threadId: "thread_1", requestId: "req_1", answers: { runner: "Bun" } }],
+      responds: [{ action: "respond", threadId: "thread_1", requestId: "req_1", answers: { runner: "Bun" } }],
       replies: [{ invocationId: "binv_1", text: "Bun it is" }],
       fails: [],
     })
@@ -827,7 +832,7 @@ describe("T3TurnRunner", () => {
     session.answer(picked("option_0"))
     await until(() => session.decisions.length === 2)
     session.answer(picked("option_0"))
-    await until(() => t3.callsOf("t3_pending_request_respond").length === 2)
+    await until(() => t3.callsOf("t3_pending_request", "respond").length === 2)
     t3.script("run_3", [
       {
         status: "completed",
@@ -884,7 +889,7 @@ describe("T3TurnRunner", () => {
     await idle()
 
     session.answer(picked("option_0"))
-    await until(() => t3.callsOf("t3_pending_request_respond").length === 1)
+    await until(() => t3.callsOf("t3_pending_request", "respond").length === 1)
     await t3.client.call("t3_thread_send", { threadId: "thread_1", message: "Unrelated", mode: "queue" })
     t3.script("run_1", [
       { status: "completed", items: [answered(), item(2, "assistant_message", { text: "Bun it is" })] },
@@ -943,13 +948,13 @@ describe("T3TurnRunner", () => {
 
     expect({
       cards: session.decisions.map(({ input, signal }) => ({ ref: input.externalRef, withdrawn: signal?.aborted })),
-      responds: t3.callsOf("t3_pending_request_respond"),
+      responds: t3.callsOf("t3_pending_request", "respond"),
     }).toEqual({
       cards: [
         { ref: "req_1", withdrawn: true },
         { ref: "req_2", withdrawn: false },
       ],
-      responds: [{ threadId: "thread_1", requestId: "req_2", answers: { watch: "Bun" } }],
+      responds: [{ action: "respond", threadId: "thread_1", requestId: "req_2", answers: { watch: "Bun" } }],
     })
   })
 
@@ -986,12 +991,12 @@ describe("T3TurnRunner", () => {
     expect({
       withdrawn: session.decisions.map(({ signal }) => signal?.aborted),
       sends: t3.callsOf("t3_thread_send"),
-      responds: t3.callsOf("t3_pending_request_respond"),
+      responds: t3.callsOf("t3_pending_request", "respond"),
       replies: session.replies,
     }).toEqual({
       withdrawn: [true],
       sends: [],
-      responds: [{ threadId: "thread_1", requestId: "req_1", answers: { runner: "Use Bun" } }],
+      responds: [{ action: "respond", threadId: "thread_1", requestId: "req_1", answers: { runner: "Use Bun" } }],
       replies: [{ invocationId: "binv_1", text: "Using Bun" }],
     })
   })
@@ -1009,7 +1014,7 @@ describe("T3TurnRunner", () => {
     expect({
       open: session.decisions.map(({ signal }) => signal?.aborted),
       sends: t3.callsOf("t3_thread_send").map(({ message }) => message),
-      responds: t3.callsOf("t3_pending_request_respond"),
+      responds: t3.callsOf("t3_pending_request", "respond"),
     }).toEqual({ open: [false], sends: [expect.stringContaining("\n\nUse Bun")], responds: [] })
     runner.shutdown()
   })
@@ -1027,7 +1032,7 @@ describe("T3TurnRunner", () => {
     expect({
       open: session.decisions.map(({ signal }) => signal?.aborted),
       sends: t3.callsOf("t3_thread_send").map(({ message, mode }) => ({ message, mode })),
-      responds: t3.callsOf("t3_pending_request_respond"),
+      responds: t3.callsOf("t3_pending_request", "respond"),
     }).toEqual({
       open: [false],
       sends: [{ message: expect.stringContaining("\n\nDeploy it, using Bun"), mode: "steer" }],
@@ -1050,7 +1055,7 @@ describe("T3TurnRunner", () => {
     expect({
       open: session.decisions.map(({ signal }) => signal?.aborted),
       sends: t3.callsOf("t3_thread_send").map(({ message, mode }) => ({ message, mode })),
-      responds: t3.callsOf("t3_pending_request_respond"),
+      responds: t3.callsOf("t3_pending_request", "respond"),
       followed: t3.callsOf("t3_thread_wait").at(-1)?.runId,
     }).toEqual({
       open: [false],
@@ -1076,7 +1081,7 @@ describe("T3TurnRunner", () => {
 
     expect({
       aborted: session.decisions.map(({ signal }) => signal?.aborted),
-      responds: t3.callsOf("t3_pending_request_respond"),
+      responds: t3.callsOf("t3_pending_request", "respond"),
       fails: session.fails,
     }).toEqual({ aborted: [true], responds: [], fails: [] })
   })
@@ -1976,7 +1981,7 @@ describe("runs T3 starts by itself", () => {
     t3.addItems("thread_1", [item(3, "assistant_message", { runId: "run_3", text: "Deployed." })])
     t3.endInT3("run_3")
     const call = t3.client.call
-    t3.client.call = (async (name, args) => {
+    t3.client.call = (async <K extends T3ToolName>(name: K, args: T3Tools[K]["args"]) => {
       if (name === "t3_thread_wait" && (args as { runId?: string }).runId === "run_3")
         throw new T3AuthError("Run `threa-t3code login`")
       return call(name, args)
@@ -2875,7 +2880,7 @@ test("should show an earlier pending question without assigning it to the queued
   expect({
     frames: session.frames(),
     cards: session.decisions,
-    answers: t3.callsOf("t3_pending_request_respond"),
+    answers: t3.callsOf("t3_pending_request", "respond"),
   }).toEqual({
     frames: [
       {
@@ -2952,18 +2957,20 @@ test.each(["anchor", "tool-98"])("should retry a page when activity shifts after
   )
   const final = item(203, "assistant_message", { itemId: "final", text: "Done." })
   let shifted = false
-  const read = spyOn(t3.client, "call").mockImplementation(async (name, args) => {
-    const result = await call(name, args)
-    if (name === "t3_thread_read" && "itemId" in args && args.itemId === shiftAt && !shifted) {
-      shifted = true
-      t3.replaceActivity("thread_1", [
-        { ...anchor, position: 0 },
-        ...tools.map((tool) => ({ ...tool, position: tool.position - 100 })),
-        { ...final, position: 103 },
-      ])
+  const read = spyOn(t3.client, "call").mockImplementation(
+    async <K extends T3ToolName>(name: K, args: T3Tools[K]["args"]) => {
+      const result = await call(name, args)
+      if (name === "t3_thread_read" && "itemId" in args && args.itemId === shiftAt && !shifted) {
+        shifted = true
+        t3.replaceActivity("thread_1", [
+          { ...anchor, position: 0 },
+          ...tools.map((tool) => ({ ...tool, position: tool.position - 100 })),
+          { ...final, position: 103 },
+        ])
+      }
+      return result
     }
-    return result
-  })
+  )
   try {
     t3.script("run_1", [{ status: "completed", items: [...tools, final] }])
     await session.settled()
@@ -2994,22 +3001,24 @@ test.each([false, true])(
     await until(() => t3.callsOf("t3_thread_wait").length >= 2)
     const call = t3.client.call.bind(t3.client)
     let shifted = false
-    const read = spyOn(t3.client, "call").mockImplementation(async (name, args) => {
-      const result = await call(name, args)
-      if (name === "t3_thread_read" && "view" in args && args.view === "activity" && !shifted) {
-        shifted = true
-        t3.replaceActivity(
-          "thread_1",
-          update
-            ? [{ ...held, position: 100 }, item(101, "assistant_message", { itemId: "final", text: "Done." })]
-            : [
-                { ...tool, position: 0, status: "completed" },
-                { ...held, position: 1 },
-              ]
-        )
+    const read = spyOn(t3.client, "call").mockImplementation(
+      async <K extends T3ToolName>(name: K, args: T3Tools[K]["args"]) => {
+        const result = await call(name, args)
+        if (name === "t3_thread_read" && "view" in args && args.view === "activity" && !shifted) {
+          shifted = true
+          t3.replaceActivity(
+            "thread_1",
+            update
+              ? [{ ...held, position: 100 }, item(101, "assistant_message", { itemId: "final", text: "Done." })]
+              : [
+                  { ...tool, position: 0, status: "completed" },
+                  { ...held, position: 1 },
+                ]
+          )
+        }
+        return result
       }
-      return result
-    })
+    )
     try {
       t3.script("run_1", [
         {
@@ -3059,11 +3068,13 @@ test.each([1, 150])("should preserve a capped final through %s continuation read
   const { t3, session, runner, saved } = setup()
   const call = t3.client.call.bind(t3.client)
   let remaining = failures
-  const read = spyOn(t3.client, "call").mockImplementation(async (name, args) => {
-    if (name === "t3_thread_read" && "textOffset" in args && remaining-- > 0)
-      throw new Error("Temporary continuation outage")
-    return call(name, args)
-  })
+  const read = spyOn(t3.client, "call").mockImplementation(
+    async <K extends T3ToolName>(name: K, args: T3Tools[K]["args"]) => {
+      if (name === "t3_thread_read" && "textOffset" in args && remaining-- > 0)
+        throw new Error("Temporary continuation outage")
+      return call(name, args)
+    }
+  )
   t3.continueText("final", "First part. Done.")
   t3.script("run_1", [
     {
@@ -3177,7 +3188,7 @@ describe("runtime run attachment", () => {
       streamId: "stream_root",
     })
     session.answer(picked("option_0"))
-    await until(() => t3.callsOf("t3_pending_request_respond").length > 0)
+    await until(() => t3.callsOf("t3_pending_request", "respond").length > 0)
     t3.script("run_1", [{ status: "completed" }])
     await until(() => !runner.busy)
     expect(t3.callsOf("t3_thread_send")).toEqual([])

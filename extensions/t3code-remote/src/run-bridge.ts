@@ -1019,7 +1019,7 @@ export class T3TurnRunner {
       const existing = this.threadFor(turn.streamId)
       if (existing) {
         const [pending, unaccounted] = await Promise.all([
-          this.client.call("t3_pending_request_list", { threadId: existing }),
+          this.client.call("t3_pending_request", { action: "list", threadId: existing }),
           this.unaccountedRuns(existing),
         ]).catch((error) => this.unlessGone(error, turn.streamId, existing))
         stale = pending.requestIds
@@ -1097,7 +1097,8 @@ export class T3TurnRunner {
     // Only a thread under the scratchpad inherits; a mention elsewhere starts its own, so scratchpad context never leaks into a channel.
     if (rootThread && turn.streamId !== root && turn.rootStreamId === root) {
       const fork = await this.client
-        .call("t3_thread_fork", {
+        .call("t3_thread_transfer", {
+          action: "fork",
           threadId: rootThread,
           sourcePoint: { type: "latest_stable" },
           title: titleFor(turn.content),
@@ -1289,7 +1290,7 @@ export class T3TurnRunner {
           }
           let progress = RUN_STATE_TEXT[waited.status]
           if (waited.status === "queued" && run.asked.size > 0) {
-            const pending = await this.client.call("t3_pending_request_list", { threadId: run.threadId })
+            const pending = await this.client.call("t3_pending_request", { action: "list", threadId: run.threadId })
             if (pending.requestIds.some((id) => run.asked.has(id)))
               progress = "Queued in T3 Code. Answer the earlier run's pending question in T3 Code to continue."
           }
@@ -1409,7 +1410,7 @@ export class T3TurnRunner {
   private async withdrawAnsweredCard(run: OpenRun): Promise<void> {
     const requestId = run.asking?.requestId
     if (!requestId) return
-    const { requestIds } = await this.client.call("t3_pending_request_list", { threadId: run.threadId })
+    const { requestIds } = await this.client.call("t3_pending_request", { action: "list", threadId: run.threadId })
     const asking = run.asking
     if (requestIds.includes(requestId) || asking?.requestId !== requestId) return
     asking.abort.abort()
@@ -1427,12 +1428,12 @@ export class T3TurnRunner {
     run.asking = asking
     asking.done = (async () => {
       try {
-        const { requestIds } = await this.client.call("t3_pending_request_list", { threadId: run.threadId })
+        const { requestIds } = await this.client.call("t3_pending_request", { action: "list", threadId: run.threadId })
         for (const requestId of requestIds) {
           if (run.asked.has(requestId)) continue
           asking.requestId = requestId
           const read = await this.whilePending(run, requestId, () =>
-            this.client.call("t3_pending_request_read", { threadId: run.threadId, requestId })
+            this.client.call("t3_pending_request", { action: "read", threadId: run.threadId, requestId })
           )
           if (!read) continue
           const { questions } = read.result
@@ -1477,7 +1478,7 @@ export class T3TurnRunner {
           // An answer to a question asked as a message starts a run; one the user queued in T3 meanwhile isn't it.
           const before = await this.latestRunId(run.threadId)
           const sent = await this.whilePending(run, requestId, () =>
-            this.client.call("t3_pending_request_respond", { threadId: run.threadId, requestId, answers })
+            this.client.call("t3_pending_request", { action: "respond", threadId: run.threadId, requestId, answers })
           )
           run.asked.add(requestId)
           if (!sent) continue
@@ -1510,7 +1511,7 @@ export class T3TurnRunner {
     try {
       return { result: await call() }
     } catch (error) {
-      const { requestIds } = await this.client.call("t3_pending_request_list", { threadId: run.threadId })
+      const { requestIds } = await this.client.call("t3_pending_request", { action: "list", threadId: run.threadId })
       if (requestIds.includes(requestId)) throw error
       return undefined
     }

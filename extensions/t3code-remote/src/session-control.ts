@@ -137,7 +137,7 @@ export function createT3SessionControl(
     else {
       const [read, configuration] = await Promise.allSettled([
         client.call("t3_thread_read", { threadId, limit: 1 }),
-        client.call("t3_thread_configuration", { threadId }),
+        client.call("t3_thread_configure", { threadId }),
       ])
       if (read.status === "fulfilled") {
         const { thread } = read.value
@@ -228,7 +228,7 @@ export function createT3SessionControl(
     let thread: ModelSelection | undefined
     if (threadId) {
       try {
-        thread = (await client.call("t3_thread_configuration", { threadId })).modelSelection
+        thread = (await client.call("t3_thread_configure", { threadId })).modelSelection
       } catch (error) {
         return { ok: false, message: `Could not read \`${threadId}\`'s model: ${errorText(error)}` }
       }

@@ -125,7 +125,7 @@ describe("T3 session control", () => {
     const { t3, runner, control } = setup({ threads: {}, model: { instanceId: "codex", model: "gpt-5.5" } })
     t3.script("run_1", [{ status: "running" }])
     await runner.deliverTurn(turn())
-    t3.failNext("t3_thread_configuration", new Error("busy"))
+    t3.failNext("t3_thread_configure", new Error("busy"))
 
     expect(await control.runCommand("status", "", CONTEXT)).toEqual({
       ok: true,
@@ -210,7 +210,7 @@ describe("T3 session control", () => {
     const selection = { ...codex, options: [{ id: "reasoningEffort", value: "high" }] }
     expect({ levels, configured: t3.callsOf("t3_thread_configure"), model: saved.at(-1)?.model, result }).toEqual({
       levels: ["low", "medium", "high", "xhigh"],
-      configured: [{ threadId: "thread_a", modelSelection: selection }],
+      configured: [{ threadId: "thread_a" }, { threadId: "thread_a", modelSelection: selection }],
       model: selection,
       result: { ok: true, summary: "Set thinking to high" },
     })
@@ -231,6 +231,7 @@ describe("T3 session control", () => {
 
     expect({ configured: t3.callsOf("t3_thread_configure"), model: saved.at(-1)?.model }).toEqual({
       configured: [
+        { threadId: "thread_a" },
         {
           threadId: "thread_a",
           modelSelection: {
@@ -263,6 +264,7 @@ describe("T3 session control", () => {
     expect({ result, configured: t3.callsOf("t3_thread_configure"), model: saved.at(-1)?.model }).toEqual({
       result: { ok: true, summary: "Set thinking to high" },
       configured: [
+        { threadId: "thread_a" },
         {
           threadId: "thread_a",
           modelSelection: { ...opus, options: [...opus.options, { id: "effort", value: "high" }] },
@@ -287,7 +289,7 @@ describe("T3 session control", () => {
         message:
           "Set thinking to high for new threads, but `thread_a` runs codex::gpt-5.5-mini, which doesn't offer it.",
       },
-      configured: [],
+      configured: [{ threadId: "thread_a" }],
       model: { instanceId: "codex", model: "gpt-5.5", options: [{ id: "reasoningEffort", value: "high" }] },
     })
   })
@@ -308,7 +310,7 @@ describe("T3 session control", () => {
     const codex = { instanceId: "codex", model: "gpt-5.5" }
     const { t3, saved, control } = setup({ threads: { stream_root: "thread_a" }, model: codex })
     t3.threadModel("thread_a", codex)
-    t3.failNext("t3_thread_configure", new Error("thread is running"))
+    t3.failNext("t3_thread_configure", new Error("thread is running"), (args) => !!args.modelSelection)
 
     const result = await control.runCommand("thinking", "high", CONTEXT)
 
@@ -342,13 +344,13 @@ describe("T3 session control", () => {
       threads: { stream_root: "thread_a" },
       model: { instanceId: "codex", model: "gpt-5.5" },
     })
-    t3.failNext("t3_thread_configuration", new Error("thread not found"))
+    t3.failNext("t3_thread_configure", new Error("thread not found"))
 
     const result = await control.runCommand("thinking", "high", CONTEXT)
 
     expect({ result, configured: t3.callsOf("t3_thread_configure"), saved }).toEqual({
       result: { ok: false, message: "Could not read `thread_a`'s model: thread not found" },
-      configured: [],
+      configured: [{ threadId: "thread_a" }],
       saved: [],
     })
   })
