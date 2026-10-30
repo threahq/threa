@@ -1,8 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import type { StreamEvent } from "@threahq/types"
-import { __resetCollapseCacheForTests, getBlockCollapse } from "@/lib/markdown/collapse-cache"
+import {
+  __resetCollapseCacheForTests,
+  getBlockCollapse,
+  getRunCollapseMembers,
+  setBlockCollapse,
+} from "@/lib/markdown/collapse-cache"
 import { composeRunFoldKey, createRunFoldStore, foldAuthorRuns, type RunFold, type RunFoldStore } from "./run-fold"
-import type { TimelineItem } from "./event-list"
+import { annotateConversationRevivals, type TimelineItem } from "./event-list"
 
 const AUTHOR = "usr_author"
 const VIEWER = "usr_viewer"
@@ -138,6 +143,73 @@ describe("foldAuthorRuns", () => {
     expect(describeRows(fold(store, items))).toEqual(["msg_1", "msg_2 folded +2", "msg_5"])
     // A fresh timeline (reload) folds it before anything is measured.
     expect(describeRows(fold(createRunFoldStore(), items))).toEqual(["msg_1", "msg_2 folded +2", "msg_5"])
+  })
+
+  it("should retain saved members when a bounded membership list omits their conversation", () => {
+    const store = createRunFoldStore()
+    measure(store, 1, 3, 200)
+    collapse(store, run(1, 3), "msg_3")
+    const pending = [message(1), message(2), message(3, true), message(4, true)]
+    expect(describeRows(fold(createRunFoldStore(), pending))).toEqual(["msg_1 folded +2", "msg_4"])
+    const omitted = annotateConversationRevivals(
+      pending,
+      new Map([["msg_unrelated", "conv_newer"]]),
+      new Map(),
+      new Set()
+    )
+    expect(describeRows(fold(createRunFoldStore(), omitted))).toEqual(["msg_1 folded +2", "msg_4"])
+  })
+
+  it("should preserve physical and known conversation boundaries while restoring saved members", () => {
+    const store = createRunFoldStore()
+    measure(store, 1, 3, 200)
+    collapse(store, run(1, 3), "msg_3")
+    const deleted = message(2)
+    if (deleted.type === "event") deleted.event.payload = { messageId: "msg_2", deletedAt: "2026-10-30" }
+    for (const middle of [deleted, message(2, false, VIEWER), { type: "day_divider", dayStartMs: 0 } as TimelineItem]) {
+      expect(describeRows(fold(createRunFoldStore(), [message(1), middle, message(3, true)]))).toEqual([
+        "msg_1",
+        middle.type === "day_divider" ? "day_divider" : "msg_2",
+        "msg_3",
+      ])
+    }
+    const changed = annotateConversationRevivals(
+      [message(1), message(2, true), message(3, true)],
+      new Map([
+        ["msg_1", "conv_a"],
+        ["msg_2", "conv_b"],
+      ]),
+      new Map(),
+      new Set()
+    )
+    expect(describeRows(fold(createRunFoldStore(), changed))).toEqual(["msg_1", "msg_2", "msg_3"])
+  })
+
+  it("should honor reveal and explicit reopen before conversation membership arrives", () => {
+    const store = createRunFoldStore()
+    measure(store, 1, 3, 200)
+    collapse(store, run(1, 3), "msg_3")
+    const pending = [message(1), message(2), message(3, true)]
+    const reloaded = createRunFoldStore()
+    const revealed = fold(reloaded, pending, { revealMessageIds: ["msg_2"] })
+    expect(describeRows(revealed)).toEqual(["msg_1 open", "msg_2 open", "msg_3 open last"])
+    reloaded.setCollapsed(foldOf(revealed, "msg_3"), false)
+    expect(describeRows(fold(createRunFoldStore(), pending))).toEqual(["msg_1", "msg_2", "msg_3"])
+  })
+
+  it("should preserve legacy preferences until an explicit collapse records members", () => {
+    const key = composeRunFoldKey("msg_1")
+    setBlockCollapse(key, "msg_1", "run", true)
+    const store = createRunFoldStore()
+    const folded = fold(store, run(1, 3))
+    expect(describeRows(folded)).toEqual(["msg_1 folded +2"])
+    expect(getRunCollapseMembers(key)).toBeUndefined()
+
+    store.setCollapsed(foldOf(folded, "msg_1"), false)
+    measure(store, 1, 3, 200)
+    collapse(store, run(1, 3), "msg_3")
+    expect(getRunCollapseMembers(key)).toEqual(["msg_1", "msg_2", "msg_3"])
+    expect(describeRows(fold(createRunFoldStore(), run(1, 4)))).toEqual(["msg_1 folded +2", "msg_4"])
   })
 
   it("opens a collapsed run for good when the viewer opens it", () => {

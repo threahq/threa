@@ -729,6 +729,7 @@ export interface CachedMarkdownBlockCollapse {
    * `MarkdownBlockKind` (kept as a literal here to keep the db layer dependency-free). */
   kind: "code" | "blockquote" | "quote-reply" | "description" | "message" | "board-card" | "run"
   collapsed: boolean
+  memberIds?: string[]
   updatedAt: number
 }
 
