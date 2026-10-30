@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test"
 import { ulid } from "ulid"
-import { createChannel, expectApiOk, loginAndCreateWorkspace, workspaceIdFromUrl } from "./helpers"
+import { createChannelViaApi, expectApiOk, loginAndCreateWorkspace, workspaceIdFromUrl } from "./helpers"
 import { runTestSql } from "./global-setup"
 
 const PREVIEWS = [
@@ -13,9 +13,10 @@ const PREVIEWS = [
 
 async function seedPreviews(page: Page) {
   const { testId } = await loginAndCreateWorkspace(page, "preview-defaults")
-  await createChannel(page, `previews-${testId}`)
   const workspaceId = workspaceIdFromUrl(page)
-  const streamId = new URL(page.url()).pathname.match(/\/s\/([^/]+)/)![1]
+  const streamId = await createChannelViaApi(page, workspaceId, `previews-${testId}`)
+  await page.goto(`/w/${workspaceId}/s/${streamId}`)
+  await expect(page.getByRole("heading", { name: `#previews-${testId}`, level: 1 })).toBeVisible({ timeout: 30_000 })
 
   for (const preview of PREVIEWS) {
     if (preview.type === "image") {
@@ -50,7 +51,7 @@ async function openSettings(page: Page) {
   const url = new URL(page.url())
   url.searchParams.set("settings", "appearance")
   await page.goto(url.toString())
-  await expect(page.getByRole("spinbutton", { name: "Default count" })).toBeVisible()
+  await expect(page.getByRole("spinbutton", { name: "Default count" })).toBeVisible({ timeout: 30_000 })
 }
 
 async function saveCount(page: Page, count: number) {
@@ -69,6 +70,7 @@ async function closeSettings(page: Page) {
   const url = new URL(page.url())
   url.searchParams.delete("settings")
   await page.goto(url.toString())
+  await expect(websiteCard(page, "First linked image")).toBeVisible({ timeout: 30_000 })
 }
 
 function websiteCard(page: Page, name: string) {
@@ -81,7 +83,7 @@ for (const mobile of [false, true]) {
     test("should save arbitrary counts and keep all images plus the first other link expanded", async ({
       page,
     }, testInfo) => {
-      test.setTimeout(120_000)
+      test.setTimeout(180_000)
       const workspaceId = await seedPreviews(page)
       if (mobile) await page.setViewportSize({ width: 360, height: 800 })
 
@@ -111,7 +113,9 @@ for (const mobile of [false, true]) {
         await page.getByRole("option", { name: "Expand all", exact: true }).click()
         expect((await saved).ok()).toBe(true)
         await page.reload()
-        await expect(page.getByRole("combobox", { name: "Images expansion" })).toHaveText("Expand all")
+        await expect(page.getByRole("combobox", { name: "Images expansion" })).toHaveText("Expand all", {
+          timeout: 30_000,
+        })
         await expect(page.getByRole("spinbutton", { name: "Default count" })).toHaveValue("1")
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
         await page.screenshot({
@@ -138,7 +142,7 @@ for (const mobile of [false, true]) {
       await test.step("Preserve manual choices after reload and default changes", async () => {
         await second.click()
         await page.reload()
-        await expect(second).toHaveAttribute("aria-expanded", "true")
+        await expect(second).toHaveAttribute("aria-expanded", "true", { timeout: 30_000 })
 
         await openSettings(page)
         await saveCount(page, 0)

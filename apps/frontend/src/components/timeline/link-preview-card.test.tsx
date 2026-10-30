@@ -27,7 +27,7 @@ function makeGitHubPreview(overrides: Partial<LinkPreviewSummary> = {}): LinkPre
 }
 
 describe("LinkPreviewCard", () => {
-  it("renders a resilient fallback when generic metadata is empty", () => {
+  it("should show a linked fallback without an empty body when generic metadata is missing", () => {
     const preview = makeGitHubPreview({
       url: "https://x.com/someone/status/1234567890",
       title: null,
@@ -41,8 +41,82 @@ describe("LinkPreviewCard", () => {
 
     render(<LinkPreviewCard preview={preview} />)
 
-    expect(screen.getByText("Open link:")).toBeInTheDocument()
-    expect(screen.getByText("x.com/someone/status/1234567890")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "x.com/someone/status/1234567890" })).toHaveAttribute("href", preview.url)
+    const toggle = screen.getByRole("button", { name: /Collapse preview/ })
+    expect(document.getElementById(toggle.getAttribute("aria-controls")!)).toBeEmptyDOMElement()
+  })
+
+  it("should expand from its compact collapsed title button and link its expanded title", () => {
+    const toggle = vi.fn()
+    const preview = makeGitHubPreview({ title: "Read this", contentType: "pdf" })
+    const { rerender } = render(<LinkPreviewCard preview={preview} isCollapsed onToggleCollapse={toggle} />)
+    const button = screen.getByRole("button", { name: "Expand preview: Read this" })
+    expect({
+      title: button.textContent,
+      expanded: button.getAttribute("aria-expanded"),
+      controlled: document.getElementById(button.getAttribute("aria-controls")!)?.hidden,
+    }).toEqual({ title: "Read this", expanded: "false", controlled: true })
+    fireEvent.click(button)
+    expect(toggle).toHaveBeenCalledWith(preview.id)
+    rerender(<LinkPreviewCard preview={preview} onToggleCollapse={toggle} />)
+    expect(screen.getByRole("link", { name: "Read this" })).toHaveAttribute("href", preview.url)
+    expect(screen.getByText("· PDF")).toBeInTheDocument()
+    const collapse = screen.getByRole("button", { name: "Collapse preview: Read this" })
+    expect(collapse).toHaveAttribute("aria-expanded", "true")
+    toggle.mockClear()
+    fireEvent.click(collapse)
+    expect(toggle).toHaveBeenCalledWith(preview.id)
+  })
+
+  it("should recover its fixed favicon slot when the favicon URL changes", () => {
+    const preview = makeGitHubPreview({ title: "Title" })
+    const { container, rerender } = render(<LinkPreviewCard preview={preview} isCollapsed />)
+    const favicon = container.querySelector('img[src="https://github.com/favicon.ico"]')!
+    const slot = favicon.parentElement!
+    fireEvent.error(favicon)
+    expect({ slot: slot.isConnected, fallback: !!slot.querySelector("svg"), image: slot.querySelector("img") }).toEqual(
+      { slot: true, fallback: true, image: null }
+    )
+    rerender(<LinkPreviewCard preview={{ ...preview, faviconUrl: "https://example.com/new.ico" }} isCollapsed />)
+    expect(container.querySelector('img[src="https://example.com/new.ico"]')).toBeInTheDocument()
+  })
+
+  it.each([
+    {
+      type: "linear_issue",
+      label: "Linear issue",
+      data: {
+        title: "Track release",
+        identifier: "DEMO-12",
+        state: { name: "In progress", color: "#123456" },
+        assignee: null,
+      },
+    },
+    {
+      type: "linear_comment",
+      label: "Linear comment",
+      data: {
+        parent: { title: "Track release", identifier: "DEMO-12", state: { name: "In progress" } },
+        body: "**Ready** for review",
+      },
+    },
+    {
+      type: "linear_project",
+      label: "Linear project",
+      data: { name: "Track release", description: "**Ready** for review", status: "in_progress" },
+    },
+    {
+      type: "linear_document",
+      label: "Linear document",
+      data: { title: "Track release", summary: "**Ready** for review" },
+    },
+  ])("should identify a collapsed $label from existing provider data", ({ type, data }) => {
+    const preview = makeGitHubPreview({
+      url: "https://linear.app/demo/issue/DEMO-12",
+      previewData: { type, data, organization: { name: "Demo" } } as LinkPreviewSummary["previewData"],
+    })
+    render(<LinkPreviewCard preview={preview} isCollapsed />)
+    expect(screen.getByRole("button", { name: "Expand preview: Track release" })).toHaveTextContent("Track release")
   })
 
   it("keeps the thumbnail box footprint when the image fails to load (INV-21)", () => {
@@ -235,7 +309,7 @@ describe("LinkPreviewCard", () => {
     expect(screen.getByText(/octocat\/hello-world/)).toBeInTheDocument()
   })
 
-  it("watches the expanded GitHub card again after it folds to a chip and back", () => {
+  it("should watch GitHub cards while expanded and collapsed", () => {
     const observed: Element[] = []
     vi.stubGlobal(
       "IntersectionObserver",
@@ -271,6 +345,8 @@ describe("LinkPreviewCard", () => {
 
     const { rerender } = render(<LinkPreviewCard preview={preview} workspaceId="ws_1" isCollapsed={false} />)
     rerender(<LinkPreviewCard preview={preview} workspaceId="ws_1" isCollapsed />)
+    expect(observed.at(-1)?.isConnected).toBe(true)
+    expect(screen.getByRole("button", { name: "Expand preview: Add feature" })).toHaveTextContent("Add feature")
     rerender(<LinkPreviewCard preview={preview} workspaceId="ws_1" isCollapsed={false} />)
     vi.unstubAllGlobals()
 
