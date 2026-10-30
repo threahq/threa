@@ -399,7 +399,7 @@ test.describe("Timeline auto-read", () => {
       page
         .getByRole("main")
         .locator(".message-item")
-        .filter({ hasText: `${prefix}-unread msg-001` })
+        .filter({ has: page.getByText(`${prefix}-unread msg-001`, { exact: true }) })
     ).toBeVisible({ timeout: 20000 })
 
     const scroller = page.locator("[data-suppress-pull-refresh]")
