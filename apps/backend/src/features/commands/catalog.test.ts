@@ -5,8 +5,8 @@ describe("session-control command catalog", () => {
   it("defines command info for every canonical runtime command", () => {
     const commands = listSessionControlCommandInfos()
     expect(commands.map((command) => command.name)).toEqual([...SESSION_CONTROL_COMMAND_NAMES])
-    expect(commands.find((command) => command.name === "attach")).toEqual({
-      name: "attach",
+    expect(commands.find((command) => command.name === "reattach")).toEqual({
+      name: "reattach",
       description: "Follow existing work in the linked session",
       kind: "bot-runtime",
       scope: "stream",

@@ -156,27 +156,27 @@ function paragraphChildTypes(doc: JSONContent): (string | undefined)[] {
   return (paragraph?.content ?? []).map((node) => node.type)
 }
 
-describe("/attach runtime command", () => {
+describe("/reattach runtime command", () => {
   it.each(["keyboard", "pointer"])(
-    "should select attach independently from attachment with %s input",
+    "should select reattach independently from attachment with %s input",
     async (input) => {
       spyOnExport(streamCommandsModule, "useStreamCommands").mockReturnValue((() => [
         {
-          name: "attach",
+          name: "reattach",
           description: "Follow existing work in the linked session",
           kind: "bot-runtime",
           scope: "stream",
         },
       ]) as never)
       const { editor, getContent } = mountEditor()
-      typeText(editor, "/attach")
+      typeText(editor, "/reattach")
       const option = await screen.findByRole("option", { name: /Follow existing work in the linked session/ })
-      expect(await screen.findByRole("option", { name: /\/attachment/ })).toBeInTheDocument()
+      expect(screen.queryByRole("option", { name: /\/attachment/ })).not.toBeInTheDocument()
       if (input === "keyboard") pressKey(editor, "Enter")
       else fireEvent.click(option)
       await waitFor(() =>
         expect(getContent().content?.[0]?.content).toContainEqual(
-          expect.objectContaining({ type: "slashCommand", attrs: expect.objectContaining({ name: "attach" }) })
+          expect.objectContaining({ type: "slashCommand", attrs: expect.objectContaining({ name: "reattach" }) })
         )
       )
       expect(screen.queryByRole("listbox", { name: "Attachment suggestions" })).not.toBeInTheDocument()

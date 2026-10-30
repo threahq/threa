@@ -28,14 +28,14 @@ describe("command writable-authority classification", () => {
 })
 
 describe("session-control command advertisement", () => {
-  it("should offer attach only when the runtime advertises it", () => {
+  it("should offer reattach only when the runtime advertises it", () => {
     const advertised = (commands: string[]) =>
       resolveAdvertisedSessionControlCommandNames(
         presence({ supportsSessionControlCommands: true, sessionControlCommands: commands })
       )
     expect({
-      supported: advertised(["attach"]).has("attach"),
-      unsupported: advertised(["stop"]).has("attach"),
+      supported: advertised(["reattach"]).has("reattach"),
+      unsupported: advertised(["stop"]).has("reattach"),
     }).toEqual({ supported: true, unsupported: false })
   })
 

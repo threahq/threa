@@ -18,7 +18,7 @@ export const SESSION_CONTROL_COMMAND_NAMES = [
   "kick",
   "status",
   "run",
-  "attach",
+  "reattach",
   "reconnect",
   "clear",
   "key",
@@ -140,7 +140,7 @@ export function listSessionControlCommandInfos(): CommandInfo[] {
       args: [{ name: "command", required: true, description: "Slash command to run, e.g. /compact" }],
     },
     {
-      name: "attach",
+      name: "reattach",
       description: "Follow existing work in the linked session",
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,

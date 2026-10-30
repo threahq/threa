@@ -10,6 +10,9 @@ T3 server works the same as a local one.
 
 ## Running it
 
+Version 0.1.14 requires T3's consolidated question, configuration and transfer APIs, verified against
+`0.1.6-nightly.20261030.3917`.
+
 ```sh
 npm install -g @threahq/t3code-remote
 threa-t3code
@@ -115,6 +118,8 @@ A damaged `threads.json` or `token.json` stops the connector at start instead of
 
 ## Commands
 
+- `/reattach` follows existing work in the linked T3 thread without sending a new prompt. Background runs create
+  visible Threa sessions automatically. Encrypted unsolicited replay is unsupported.
 - `/stop` interrupts the open runs and closes their turns.
 - A message sent while a run is open is steered into it when T3 accepts that, and otherwise queued as the next turn.
 - `/status` shows the T3 thread of the stream it is typed in, the scratchpad or a thread under it, with its model,

@@ -389,7 +389,7 @@ export function createT3SessionControl(
   }
 
   return {
-    commands: ["attach", "stop", "status", "model", "thinking", "compact", "clear", "spawn", "done"],
+    commands: ["reattach", "stop", "status", "model", "thinking", "compact", "clear", "spawn", "done"],
     get spawnRuntimes() {
       return installedSpawnRuntimes(runtimes())
     },
@@ -407,7 +407,7 @@ export function createT3SessionControl(
     },
     runCommand: async (name, args, context) => {
       switch (name) {
-        case "attach":
+        case "reattach":
           try {
             return { ok: true, message: await runner.attach(context.streamId) }
           } catch (error) {
