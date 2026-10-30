@@ -53,6 +53,7 @@ jobs:
               - 'packages/*/package.json'
               - '.github/actions/**'
               - '.github/workflows/production-images.yml'
+              - 'scripts/production-images.bake.hcl'
               - 'scripts/production-image-smoke.compose.yml'
               - 'scripts/smoke-production-image.sh'
             backend:
@@ -125,28 +126,34 @@ jobs:
           fi
 
   images:
-    name: Build and smoke ${{ matrix.service }}
+    name: Build and smoke production images
     needs: changes
     if: needs.changes.outputs.selected == 'true'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        service: ${{ fromJSON(needs.changes.outputs.services) }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+        id: buildx
         with:
-          context: .
-          file: Dockerfile.${{ matrix.service }}
-          tags: threa-production-smoke:${{ matrix.service }}
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 2
+      - uses: docker/bake-action@v6
+        with:
+          source: .
+          files: scripts/production-images.bake.hcl
+          targets: ${{ join(fromJSON(needs.changes.outputs.services), ',') }}
+          builder: ${{ steps.buildx.outputs.name }}
           load: true
           push: false
-          cache-from: type=gha,scope=production-${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=production-${{ matrix.service }}
-      - name: Smoke unchanged image command
-        run: exec scripts/smoke-production-image.sh '${{ matrix.service }}' 'threa-production-smoke:${{ matrix.service }}'
+      - name: Smoke unchanged image commands
+        env:
+          SERVICES: ${{ needs.changes.outputs.services }}
+        run: |
+          set -Eeuo pipefail
+          while IFS= read -r service; do
+            scripts/smoke-production-image.sh "$service" "threa-production-smoke:$service"
+          done < <(jq -r '.[]' <<< "$SERVICES")
 
   aggregate:
     name: Production Images
