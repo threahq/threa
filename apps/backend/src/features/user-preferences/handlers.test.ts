@@ -366,3 +366,21 @@ describe("updatePreferencesSchema push buttons", () => {
     })
   })
 })
+
+describe("link preview preference validation", () => {
+  it("should accept arbitrary safe positive counts and zero type overrides", () => {
+    const input = {
+      linkPreviewDefault: "open",
+      linkPreviewOpenCount: 100,
+      linkPreviewTypeOverrides: { image: "all", website: 0 },
+    } as const
+    expect(updatePreferencesSchema.parse(input)).toEqual(input)
+  })
+  it("should reject invalid counts and unsupported categories", () => {
+    for (const value of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])
+      expect(updatePreferencesSchema.safeParse({ linkPreviewOpenCount: value }).success).toBe(false)
+    for (const value of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1])
+      expect(updatePreferencesSchema.safeParse({ linkPreviewTypeOverrides: { image: value } }).success).toBe(false)
+    expect(updatePreferencesSchema.safeParse({ linkPreviewTypeOverrides: { other: 3 } }).success).toBe(false)
+  })
+})

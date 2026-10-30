@@ -76,6 +76,12 @@ export const LinkPreviewDefaults = {
   COLLAPSED: "collapsed",
 } as const satisfies Record<string, LinkPreviewDefault>
 
+export const LINK_PREVIEW_CATEGORIES = ["image", "video", "github", "linear", "website", "pdf"] as const
+export type LinkPreviewCategory = (typeof LINK_PREVIEW_CATEGORIES)[number]
+export type LinkPreviewLimit = number | "all"
+export type LinkPreviewTypeOverrides = Partial<Record<LinkPreviewCategory, LinkPreviewLimit>>
+export const DEFAULT_LINK_PREVIEW_OPEN_COUNT = 3
+
 // Message send mode - how Enter key behaves in composer
 export const MESSAGE_SEND_MODE_OPTIONS = ["enter", "cmdEnter"] as const
 export type MessageSendMode = (typeof MESSAGE_SEND_MODE_OPTIONS)[number]
@@ -374,6 +380,8 @@ export interface UserPreferences {
   /** Whether files picked on mobile are also inserted into the message body at the caret. */
   mobileInlineAttachments: boolean
   linkPreviewDefault: LinkPreviewDefault
+  linkPreviewOpenCount: LinkPreviewLimit
+  linkPreviewTypeOverrides: LinkPreviewTypeOverrides
   /**
    * What dragging a labeled stream out of its sidebar label section does to that
    * label. "ask" prompts each time; "always"/"never" act without prompting.
@@ -535,6 +543,8 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   messageSendMode: "enter",
   mobileInlineAttachments: true,
   linkPreviewDefault: "open",
+  linkPreviewOpenCount: DEFAULT_LINK_PREVIEW_OPEN_COUNT,
+  linkPreviewTypeOverrides: {},
   labelRemoveOnMove: "ask",
   unreadOpenPosition: "latest",
   inboxClearMode: "interaction",
@@ -591,6 +601,8 @@ export interface UpdateUserPreferencesInput {
   messageSendMode?: MessageSendMode
   mobileInlineAttachments?: boolean
   linkPreviewDefault?: LinkPreviewDefault
+  linkPreviewOpenCount?: LinkPreviewLimit
+  linkPreviewTypeOverrides?: LinkPreviewTypeOverrides
   labelRemoveOnMove?: LabelRemoveOnMove
   unreadOpenPosition?: UnreadOpenPosition
   inboxClearMode?: InboxClearMode

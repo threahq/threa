@@ -77,6 +77,8 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "messageSendMode",
     "mobileInlineAttachments",
     "linkPreviewDefault",
+    "linkPreviewOpenCount",
+    "linkPreviewTypeOverrides",
     "labelRemoveOnMove",
     "unreadOpenPosition",
     "inboxClearMode",

@@ -1014,6 +1014,11 @@ export {
   ComposerActionSides,
   // Link preview default
   LINK_PREVIEW_DEFAULT_OPTIONS,
+  LINK_PREVIEW_CATEGORIES,
+  DEFAULT_LINK_PREVIEW_OPEN_COUNT,
+  type LinkPreviewCategory,
+  type LinkPreviewLimit,
+  type LinkPreviewTypeOverrides,
   type LinkPreviewDefault,
   LinkPreviewDefaults,
   // Label-remove-on-move behavior

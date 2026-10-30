@@ -33,6 +33,31 @@ describe("User Preferences - Sparse Override Pattern", () => {
     testUserId = userId()
   })
 
+  test("should round trip preview modes, counts and overrides through sparse storage and outbox", async () => {
+    await service.updatePreferences(testWorkspaceId, testUserId, { linkPreviewDefault: "collapsed" })
+    expect(await service.getPreferences(testWorkspaceId, testUserId)).toMatchObject({
+      linkPreviewDefault: "collapsed",
+      linkPreviewOpenCount: 3,
+      linkPreviewTypeOverrides: {},
+    })
+    const updates = {
+      linkPreviewDefault: "open" as const,
+      linkPreviewOpenCount: "all" as const,
+      linkPreviewTypeOverrides: { image: 0, website: 12 },
+    }
+    await service.updatePreferences(testWorkspaceId, testUserId, updates)
+    expect(await service.getPreferences(testWorkspaceId, testUserId)).toMatchObject(updates)
+    const events = await pool.query("SELECT payload FROM outbox WHERE event_type = $1", ["user_preferences:updated"])
+    expect(events.rows.map((row) => row.payload)).toContainEqual(
+      expect.objectContaining({ preferences: expect.objectContaining(updates) })
+    )
+    await service.updatePreferences(testWorkspaceId, testUserId, {
+      linkPreviewOpenCount: 3,
+      linkPreviewTypeOverrides: {},
+    })
+    expect(await UserPreferencesRepository.findOverrides(pool, testWorkspaceId, testUserId)).toEqual([])
+  })
+
   describe("getPreferences", () => {
     test("should return defaults when no overrides exist", async () => {
       const prefs = await service.getPreferences(testWorkspaceId, testUserId)

@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils"
 import { usePreferences } from "@/contexts"
 import { useLinkPreviewDismissal } from "@/hooks/use-link-preview-dismissals"
 import { useLinkPreviewOpen } from "@/hooks/use-link-preview-collapse"
+import { resolveLinkPreviewDefaults } from "./link-preview-policy"
 import { LinkPreviewCard } from "./link-preview-card"
 import { InAppLinkPreviewCard } from "./in-app-link-preview-card"
 import {
@@ -24,9 +25,6 @@ function isAppLinkChipUrl(url: string): boolean {
   const href = path ? appLinkHrefFromGoPath(path) : null
   return href !== null && parseAppLinkHref(href) !== null
 }
-
-/** Previews a message opens as cards; web previews past it start as one-line chips. */
-const MAX_OPEN_CARDS = 3
 
 interface LinkPreviewListProps {
   renderBeforePreviews?: (items: GalleryItem[]) => ReactNode
@@ -125,19 +123,7 @@ export function LinkPreviewList({
     [messageId, visiblePreviews]
   )
 
-  // In-app previews have no chip form, so past the cap they hide behind "Show more"
-  // while web previews fold to chips, which share lines and never count.
-  const collapsedByPreference = preferences?.linkPreviewDefault === "collapsed"
-  let openCount = 0
-  const displayedPreviews = visiblePreviews.flatMap((preview) => {
-    if (isInAppLinkContentType(preview.contentType)) {
-      openCount++
-      return isExpanded || openCount <= MAX_OPEN_CARDS ? [{ preview, defaultOpen: true }] : []
-    }
-    const defaultOpen = !collapsedByPreference && openCount < MAX_OPEN_CARDS
-    if (defaultOpen) openCount++
-    return [{ preview, defaultOpen }]
-  })
+  const displayedPreviews = resolveLinkPreviewDefaults(visiblePreviews, preferences, isExpanded)
   const hiddenCount = visiblePreviews.length - displayedPreviews.length
 
   return (
