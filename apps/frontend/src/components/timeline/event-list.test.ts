@@ -56,7 +56,7 @@ function createSessionStartedEvent(
   id: string,
   sequence: string,
   sessionId: string,
-  triggerMessageId: string
+  triggerMessageId: string | null
 ): StreamEvent {
   return createEvent({
     id,
@@ -103,6 +103,16 @@ function createSessionFailedEvent(id: string, sequence: string, sessionId: strin
 }
 
 describe("groupTimelineItems", () => {
+  it("should retain separate source-less sessions and group their terminal events by session id", () => {
+    const first = createSessionStartedEvent("start_1", "1", "session_1", null)
+    const second = createSessionStartedEvent("start_2", "2", "session_2", null)
+    const completed = createSessionCompletedEvent("complete_1", "3", "session_1")
+    expect(groupTimelineItems([first, second, completed], "member_123")).toEqual([
+      { type: "session_group", sessionId: "session_1", sessionVersion: 1, events: [first, completed] },
+      { type: "session_group", sessionId: "session_2", sessionVersion: 1, events: [second] },
+    ])
+  })
+
   it("replaces the previous session card when a superseding session starts", () => {
     const events: StreamEvent[] = [
       createSessionStartedEvent("event_s1_started", "1", "session_1", "msg_1"),

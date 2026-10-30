@@ -21,7 +21,7 @@ interface SessionRow {
   workspace_id: string
   stream_id: string
   persona_id: string
-  trigger_message_id: string
+  trigger_message_id: string | null
   trigger_message_revision: number | null
   supersedes_session_id: string | null
   status: string
@@ -75,7 +75,7 @@ export interface AgentSession {
   workspaceId: string
   streamId: string
   personaId: string
-  triggerMessageId: string
+  triggerMessageId: string | null
   triggerMessageRevision: number | null
   supersedesSessionId: string | null
   status: SessionStatus
@@ -356,7 +356,8 @@ export const AgentSessionRepository = {
     // solely for enclave-dispatched sessions, which are always created here.
     // Keeping them off the shared InsertSessionParams means `insert()` callers
     // can't pass values that would be silently dropped.
-    params: Omit<InsertSessionParams, "status"> & {
+    params: Omit<InsertSessionParams, "status" | "triggerMessageId"> & {
+      triggerMessageId: string | null
       initialSequence: bigint
       callbackTokenHash?: string
       replyKeyGeneration?: number
@@ -753,7 +754,7 @@ export const AgentSessionRepository = {
       streamId: string
       rootStreamId: string
       parentAnchorId: string | null
-      triggerMessageId: string
+      triggerMessageId: string | null
       personaId: string
       startedAt: Date
       currentStepType: StepType | null
@@ -764,7 +765,7 @@ export const AgentSessionRepository = {
       stream_id: string
       root_stream_id: string
       parent_anchor_id: string | null
-      trigger_message_id: string
+      trigger_message_id: string | null
       persona_id: string
       started_at: Date
       current_step_type: string | null

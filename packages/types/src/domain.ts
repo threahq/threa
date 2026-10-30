@@ -416,16 +416,14 @@ export interface BotRuntimeSessionLink {
   updatedAt: string
 }
 
-export interface BotInvocation {
+interface BotInvocationBase {
   id: string
   workspaceId: string
   rootStreamId: string
   activeStreamId: string
-  sourceMessageId: string
   responseStreamId: string
   actorType: "bot"
   actorId: string
-  trigger: BotInvocationTrigger
   requiredCapability: BotInvocationCapability
   promptMarkdown: string
   authorUserId: string
@@ -445,6 +443,12 @@ export interface BotInvocation {
   updatedAt: string
   completedAt: string | null
 }
+
+export type BotInvocation = BotInvocationBase &
+  (
+    | { trigger: Exclude<BotInvocationTrigger, "runtime-origin">; sourceMessageId: string }
+    | { trigger: "runtime-origin"; sourceMessageId: null }
+  )
 
 /**
  * Stream participation only — membership carries no read state. The read

@@ -24,7 +24,9 @@ import * as streamsModule from "../streams"
 const fakeQuerier = { query: mock(async () => ({ rows: [], rowCount: 0 })) }
 const fakePool = fakeQuerier as never
 
-function makeInvocation(overrides: Partial<BotInvocation> = {}): BotInvocation {
+function makeInvocation(
+  overrides: Partial<Extract<BotInvocation, { sourceMessageId: string }>> = {}
+): Extract<BotInvocation, { sourceMessageId: string }> {
   const now = new Date("2026-05-26T12:00:00Z")
   return {
     id: "inv_1",

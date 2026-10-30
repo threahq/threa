@@ -252,6 +252,8 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
       return
     }
 
+    if (!latestSession.triggerMessageId) return
+
     const editContext = await this.getEditContext(payload.workspaceId, payload.messageId, payload.editedContentMarkdown)
 
     await this.supersedeAndDispatchRerun({

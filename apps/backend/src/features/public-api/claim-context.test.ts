@@ -1,3 +1,5 @@
+import { StreamEventRepository } from "../streams"
+import { BotRuntimeService } from "../bot-runtimes"
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Request, Response } from "express"
 import { createPublicApiHandlers, type PublicApiDeps } from "./handlers"
@@ -94,6 +96,7 @@ function arrangeClaim(params: { stream: Stream | null; surrounding?: Message[]; 
   } as never)
   spyOn(dbModule, "withTransaction").mockImplementation(((_pool: unknown, fn: (c: unknown) => unknown) =>
     fn({})) as never)
+  spyOn(StreamEventRepository, "getLatestSequence").mockResolvedValue(7n)
   spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue(null as never)
 
   const findStream = spyOn(StreamRepository, "findById").mockResolvedValue(params.stream as never)
@@ -111,6 +114,7 @@ function arrangeClaim(params: { stream: Stream | null; surrounding?: Message[]; 
   spyOn(PersonaRepository, "findByIds").mockResolvedValue([] as never)
 
   const botRuntimeService = {
+    startInvocationSessionInTransaction: BotRuntimeService.prototype.startInvocationSessionInTransaction,
     claimNextInvocation: mock(() => Promise.resolve(invocation)),
     findActiveClaimForUpdate: mock(() => Promise.resolve(invocation)),
     upsertPresenceFromBotKey: mock(() => Promise.resolve(null)),

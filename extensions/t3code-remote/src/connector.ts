@@ -57,6 +57,12 @@ export function createFileThreadStore(path: string): ThreadStore {
     load: () => {
       const parsed = readJsonFile(path) ?? {}
       const threads = stringEntries(parsed.threads)
+      const attachments = Object.fromEntries(
+        Object.entries((parsed.attachments ?? {}) as Record<string, unknown>).map(([threadId, entries]) => [
+          threadId,
+          stringEntries(entries),
+        ])
+      )
       const delivered = stringEntries(parsed.delivered)
       const posted = stringLists(parsed.posted)
       const owed = stringLists(parsed.owed)
@@ -69,6 +75,7 @@ export function createFileThreadStore(path: string): ThreadStore {
       const model = modelSelectionOf(parsed.model)
       return {
         threads,
+        ...(Object.keys(attachments).length ? { attachments } : {}),
         ...(model ? { model } : {}),
         ...(Object.keys(spawns).length > 0 ? { spawns } : {}),
         ...(Object.keys(delivered).length > 0 ? { delivered } : {}),
@@ -118,8 +125,12 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
       recordSteps: (id, frames, statusText) => session.recordSteps(id, frames, statusText),
       reply: (id, text) => session.reply(id, text),
       sendInterim: (id, text) => session.sendInterim(id, text),
-      postToStream: (streamId, content, clientMessageId) =>
-        session.postToStream(streamId, { content, clientMessageId }),
+      postToInvocation: (id, body) => session.postToInvocation(id, body),
+      endTurn: (id, text) => session.endTurn(id, text),
+      adoptRuntimeRun: async (input) => {
+        if (!(await dormant.ensureAwake())) throw new Error("The scratchpad is archived or could not be linked.")
+        return session.adoptRuntimeRun(input)
+      },
       isEncrypted: async (streamId) => (await client.getStream(streamId)).e2eEnabled,
       failTurn: (id, message) => session.failTurn(id, message),
       requestDecision: (input, opts) => session.requestDecision(input, opts),
@@ -182,7 +193,7 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
     log,
   })
   const idleTimer = setInterval(() => void dormant.tick(), IDLE_TICK_MS)
-  // Runs T3 starts by itself still post while the session is wound down; an archived scratchpad takes none.
+  // Background discovery wakes idle links before adopting work.
   const watchTimer = setInterval(() => {
     if (!dormant.archived) void runner.watch()
   }, WATCH_TICK_MS)

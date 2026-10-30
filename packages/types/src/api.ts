@@ -2099,7 +2099,7 @@ export interface ActiveAgentSession {
   streamId: string
   rootStreamId: string
   parentAnchorId?: string | null
-  triggerMessageId?: string
+  triggerMessageId?: string | null
   personaName: string
   startedAt: string
   currentStepType?: AgentStepType | null

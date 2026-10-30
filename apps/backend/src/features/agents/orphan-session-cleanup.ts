@@ -77,7 +77,7 @@ export async function failSessionWithLifecycleInTransaction(
 export async function failSessionWithLifecycle(
   pool: Pool,
   io: Server,
-  session: { id: string; workspaceId: string; streamId: string; personaId: string; triggerMessageId: string },
+  session: { id: string; workspaceId: string; streamId: string; personaId: string; triggerMessageId: string | null },
   error: string,
   onFailed?: (tx: Querier) => Promise<void>
 ): Promise<boolean> {

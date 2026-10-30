@@ -392,11 +392,32 @@ export function fakeSession(rootStreamId = "stream_root") {
   const fails: Array<{ invocationId: string; errorMessage: string }> = []
   const decisions: Array<{ input: DecisionRequestInput; signal?: AbortSignal }> = []
   const outcomes: Array<DecisionOutcome | DecisionAbandonedError> = []
+  const adoptions: Array<{ responseStreamId: string; externalRunId: string; attachmentRequestId: string }> = []
+  const observations = new Map<string, AbortController>()
   let answer: (() => void) | undefined
   let settle: () => void = () => {}
   let settled = new Promise<void>((resolve) => (settle = resolve))
   const session: BridgeSession = {
     rootStreamId,
+    adoptRuntimeRun: async (input) => {
+      adoptions.push(input)
+      const abort = new AbortController()
+      observations.set(`adopt-${input.externalRunId}`, abort)
+      return { status: "claimed", invocationId: `adopt-${input.externalRunId}`, signal: abort.signal }
+    },
+    postToInvocation: async (invocationId, body) => {
+      const failure = postFailures.shift()
+      if (failure) throw failure
+      posts.push({
+        streamId: adoptions.find((input) => `adopt-${input.externalRunId}` === invocationId)!.responseStreamId,
+        text: body.content,
+        clientMessageId: body.clientMessageId,
+      })
+    },
+    endTurn: async (id) => {
+      observations.get(id)?.abort()
+      return { ok: true, message: "" }
+    },
     recordSteps: async (invocationId, frames, statusText) => {
       steps.push({ invocationId, frames, ...(statusText === undefined ? {} : { statusText }) })
       return true
@@ -414,13 +435,18 @@ export function fakeSession(rootStreamId = "stream_root") {
       if (result.ok) interims.push({ invocationId, text })
       return result
     },
-    postToStream: async (streamId, text, clientMessageId) => {
-      const failure = postFailures.shift()
-      if (failure) throw failure
-      posts.push({ streamId, text, clientMessageId })
-    },
     isEncrypted: async (streamId) => encrypted.has(streamId),
     failTurn: async (invocationId, errorMessage) => {
+      if (invocationId.startsWith("adopt-")) {
+        const runId = invocationId.slice(6)
+        posts.push({
+          streamId: adoptions.find((input) => input.externalRunId === runId)!.responseStreamId,
+          text: errorMessage,
+          clientMessageId: `t3run-${runId}`,
+        })
+        settle()
+        return true
+      }
       fails.push({ invocationId, errorMessage })
       settle()
       return true
@@ -443,6 +469,8 @@ export function fakeSession(rootStreamId = "stream_root") {
   }
   return {
     session,
+    adoptions,
+    observations,
     steps,
     replies,
     posts,

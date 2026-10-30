@@ -108,7 +108,7 @@ interface BotInvocationTraceSinkDeps {
   /** The invocation id — bot invocations reuse it as the agent session id. */
   sessionId: string
   streamId: string
-  triggerMessageId: string
+  triggerMessageId: string | null
   personaName: string
   /**
    * Set when the session runs in a thread: the inline indicator events also go

@@ -49,6 +49,9 @@ import {
   ThreaApiError,
   ThreaClient,
   type ClaimedInvocation,
+  type RoutedInvocation,
+  type AdoptRuntimeRunInput,
+  type AdoptRuntimeRunResponse,
   type ExternalHistoryMessage,
   type RuntimeSessionLink,
 } from "./client"
@@ -449,10 +452,14 @@ export function runtimeCapabilitiesFor(
   }
 }
 
+export type AdoptRuntimeRunResult =
+  | { status: "claimed"; invocationId: string; signal: AbortSignal }
+  | Exclude<AdoptRuntimeRunResponse, { status: "claimed" }>
+
 type ObservedClaimPhase = "unstarted" | "processing" | "running" | "terminal"
 
 interface ObservedClaim {
-  invocation: ClaimedInvocation
+  invocation: RoutedInvocation
   handle: ObservedClaimHandle
   phase: ObservedClaimPhase
   updateInProgress: boolean
@@ -612,7 +619,7 @@ export class RemoteSession {
   // Weak ownership avoids retaining every unique cancelled invocation id for
   // the lifetime of a long-running connector while still fencing references
   // held by an interceptor/fold/command that outlive map removal.
-  private readonly cancelledInvocations = new WeakSet<ClaimedInvocation>()
+  private readonly cancelledInvocations = new WeakSet<RoutedInvocation>()
   private claimDrainRequested = false
   private claimDrainScheduled = false
   // The invocation whose turn is executing — the stream a relayed permission
@@ -1129,6 +1136,15 @@ export class RemoteSession {
           continue
         }
         if (!steering && this.routeForStream(invocation.responseStreamId)) {
+          // Adoption can occupy the stream while an idle claim is on the wire.
+          if (!exclude.includes(invocation.responseStreamId)) {
+            if (this.held || invocation.requiredCapability === QUEUED_MESSAGE_CAPABILITY) {
+              this.deferToNextTurn(invocation)
+            } else {
+              await this.steerRunningTurn(invocation)
+            }
+            continue
+          }
           this.log(
             `claimed ${invocation.id} for busy stream ${invocation.responseStreamId}: server ignored excludeResponseStreamIds`
           )
@@ -1253,6 +1269,74 @@ export class RemoteSession {
     }, delay)
   }
 
+  private adoptionTail: Promise<unknown> = Promise.resolve()
+
+  /** Observe existing native work without delivering input. The signal ends observation, never the native run. */
+  adoptRuntimeRun(input: AdoptRuntimeRunInput): Promise<AdoptRuntimeRunResult> {
+    const task = this.adoptionTail.then(() => this.adoptRuntimeRunSerial(input))
+    this.adoptionTail = task.catch(() => undefined)
+    return task
+  }
+
+  private async adoptRuntimeRunSerial(input: AdoptRuntimeRunInput): Promise<AdoptRuntimeRunResult> {
+    const lifecycle = this.lifecycle
+    const linkGeneration = this.linkGeneration
+    const available = () =>
+      !this.stopped &&
+      !this.archive.detached &&
+      !!this.link &&
+      lifecycle === this.lifecycle &&
+      linkGeneration === this.linkGeneration
+    if (!available()) throw new Error("Cannot adopt a run without a live session link.")
+    const result = await this.client.adoptRuntimeRun({
+      ...input,
+      instanceId: this.config.instanceId,
+      runtimeSessionId: this.config.runtimeSessionId,
+      claimTtlSeconds: CLAIM_TTL_SECONDS,
+    })
+    if (!available()) {
+      if (result.status === "claimed") {
+        await this.failFencedInvocation(result.invocation, this.runtime.shutdownErrorMessage)
+      }
+      throw new Error("Session changed while adopting the run.")
+    }
+    if (result.status !== "claimed") return result
+    const invocation = result.invocation
+    const existing = this.inflight.get(invocation.id)
+    if (
+      existing &&
+      existing.invocation.claimToken === invocation.claimToken &&
+      !existing.isFenced(this.lifecycle) &&
+      existing.state !== "closed"
+    ) {
+      return { status: "claimed", invocationId: invocation.id, signal: existing.observation.signal }
+    }
+    const route = existing ?? this.registerTurn(invocation)
+    try {
+      if (existing) {
+        await existing.enqueue(async () => {
+          if (existing.isFenced(this.lifecycle) || existing.state === "closed")
+            throw new Error("Run observation ended while refreshing its claim.")
+          this.fenceObservedClaim(existing.invocation)
+          existing.refreshRuntimeClaim(invocation)
+        })
+      }
+      await this.observeInvocation(invocation)
+      if (!available() || route.isFenced(this.lifecycle) || this.isClaimCancelled(invocation)) {
+        throw new Error("Run observation ended while adopting the run.")
+      }
+      const context = this.observedClaims.get(invocation.id)
+      if (context) context.phase = "running"
+      void this.syncPresence()
+      return { status: "claimed", invocationId: invocation.id, signal: route.observation.signal }
+    } catch (error) {
+      this.clearInflight(invocation.id)
+      this.fenceObservedClaim(invocation)
+      await this.failFencedInvocation(invocation, this.runtime.shutdownErrorMessage)
+      throw error
+    }
+  }
+
   private async claimNext(
     mode: ClaimMode,
     responseStreamId?: string,
@@ -1261,7 +1345,13 @@ export class RemoteSession {
     const lifecycle = this.lifecycle
     const invocation = await this.claimAndHydrate(mode, responseStreamId, excludeResponseStreamIds)
     if (!invocation || this.stopped || this.archive.detached || lifecycle !== this.lifecycle) return null
+    await this.observeInvocation(invocation)
+    return this.isClaimCancelled(invocation) ? null : invocation
+  }
+
+  private async observeInvocation(invocation: RoutedInvocation): Promise<void> {
     const identities = invocation.sealing ? this.bik.identities : []
+    const current = () => this.observedClaims.get(invocation.id)?.invocation === invocation
     const handle = this.transport.observeClaim({
       invocationId: invocation.id,
       claimToken: invocation.claimToken,
@@ -1269,11 +1359,16 @@ export class RemoteSession {
       claimTtlSeconds: CLAIM_TTL_SECONDS,
       instanceId: this.config.instanceId,
       callbacks: {
-        onInputUpdated: (update, signal) => this.applyInputUpdate(invocation.id, update, signal),
-        onCancelled: () =>
-          this.terminalizeObservedClaim(invocation.id, "Folded input was cancelled while the turn was running."),
-        onClaimLost: () =>
-          this.terminalizeObservedClaim(invocation.id, "Folded claim ownership was lost while the turn was running."),
+        onInputUpdated: (update, signal) =>
+          current() ? this.applyInputUpdate(invocation.id, update, signal) : Promise.resolve("restart-required"),
+        onCancelled: () => {
+          if (current())
+            this.terminalizeObservedClaim(invocation.id, "Folded input was cancelled while the turn was running.")
+        },
+        onClaimLost: () => {
+          if (current())
+            this.terminalizeObservedClaim(invocation.id, "Folded claim ownership was lost while the turn was running.")
+        },
       },
       ...(invocation.sealing && identities.length > 0
         ? {
@@ -1294,10 +1389,9 @@ export class RemoteSession {
       lifecycle: new AbortController(),
     })
     await handle.sync()
-    return this.isClaimCancelled(invocation) ? null : invocation
   }
 
-  private markClaimProcessing(invocation: ClaimedInvocation): void {
+  private markClaimProcessing(invocation: RoutedInvocation): void {
     const context = this.observedClaims.get(invocation.id)
     if (context && context.invocation === invocation && context.phase === "unstarted") context.phase = "processing"
   }
@@ -1329,14 +1423,15 @@ export class RemoteSession {
 
   private abortRunningTurnForContext(context: ObservedClaim, ownerFailure: string): void {
     const ownerId = context.runningOwnerInvocationId
-    if (context.steered && ownerId) {
+    if (context.steered && ownerId && context.invocation.sourceMessageId !== null) {
       this.unbindRunningOwner(ownerId, [context.invocation])
       return
     }
     const running = this.inflight.get(context.invocation.id) ?? (ownerId ? this.inflight.get(ownerId) : undefined)
     if (!running) return
     try {
-      this.delegate.sessionControl?.interrupt(running.invocation.responseStreamId)
+      if (running.invocation.sourceMessageId !== null)
+        this.delegate.sessionControl?.interrupt(running.invocation.responseStreamId)
     } catch {
       // Backend authority still fences output when native control is gone.
     }
@@ -1359,6 +1454,7 @@ export class RemoteSession {
     signal: AbortSignal
   ): Promise<"applied" | "restart-required"> {
     const context = this.observedClaims.get(invocationId)
+    if (context?.invocation.sourceMessageId === null) return "restart-required"
     if (
       signal.aborted ||
       !context ||
@@ -1457,11 +1553,11 @@ export class RemoteSession {
     }, 0)
   }
 
-  private isClaimCancelled(invocation: ClaimedInvocation): boolean {
+  private isClaimCancelled(invocation: RoutedInvocation): boolean {
     return this.cancelledInvocations.has(invocation)
   }
 
-  private isOutputCurrent(invocation: ClaimedInvocation, sourceRevision = invocation.sourceRevision): boolean {
+  private isOutputCurrent(invocation: RoutedInvocation, sourceRevision = invocation.sourceRevision): boolean {
     const context = this.observedClaims.get(invocation.id)
     return (
       !this.isClaimCancelled(invocation) &&
@@ -1480,7 +1576,7 @@ export class RemoteSession {
     this.observedClaims.delete(invocationId)
   }
 
-  private fenceObservedClaim(invocation: ClaimedInvocation): void {
+  private fenceObservedClaim(invocation: RoutedInvocation): void {
     this.cancelledInvocations.add(invocation)
     const context = this.observedClaims.get(invocation.id)
     if (!context) return
@@ -1489,7 +1585,7 @@ export class RemoteSession {
     this.observedClaims.delete(invocation.id)
   }
 
-  private async failFencedInvocation(invocation: ClaimedInvocation, errorMessage: string): Promise<void> {
+  private async failFencedInvocation(invocation: RoutedInvocation, errorMessage: string): Promise<void> {
     // A sealed turn's error text could echo decrypted content — scrub to a
     // generic reason (the /fail wire itself is shared, model A).
     const scrubbed = invocation.sealing ? "Sealed turn failed" : errorMessage.slice(0, 1000)
@@ -1703,7 +1799,7 @@ export class RemoteSession {
    * retain their exact wire body.
    */
   private async completeTurn(
-    invocation: ClaimedInvocation,
+    invocation: RoutedInvocation,
     body: { markdown?: string; noResponse?: true; metadata?: Record<string, unknown>; signal?: AbortSignal }
   ): Promise<void> {
     const signal = body.signal ?? this.observedClaims.get(invocation.id)?.lifecycle.signal
@@ -2092,11 +2188,7 @@ export class RemoteSession {
     }
   }
 
-  private async failAfterTerminalWrite(
-    invocation: ClaimedInvocation,
-    error: unknown,
-    operation: string
-  ): Promise<void> {
+  private async failAfterTerminalWrite(invocation: RoutedInvocation, error: unknown, operation: string): Promise<void> {
     this.log(`${operation} failed: ${this.summarize(error)}`)
     if (this.isClaimCancelled(invocation)) return
     if (error instanceof ThreaApiError && error.status === 409 && error.code === "INVOCATION_INPUT_STALE") {
@@ -2106,7 +2198,7 @@ export class RemoteSession {
     await this.failInvocation(invocation, `Could not persist ${operation}.`)
   }
 
-  private async failInvocation(invocation: ClaimedInvocation, errorMessage: string): Promise<void> {
+  private async failInvocation(invocation: RoutedInvocation, errorMessage: string): Promise<void> {
     if (this.isClaimCancelled(invocation)) return
     await this.failFencedInvocation(invocation, errorMessage)
     this.releaseObservation(invocation.id)
@@ -2237,7 +2329,9 @@ export class RemoteSession {
     return this.inflight.get(invocationId) ?? this.completed.get(invocationId)
   }
 
-  private registerTurn(invocation: ClaimedInvocation, contributors: ClaimedInvocation[] = []): TurnRoute {
+  private registerTurn(invocation: RoutedInvocation, contributors: ClaimedInvocation[] = []): TurnRoute {
+    const existing = this.inflight.get(invocation.id)
+    if (existing) return existing
     const route = new TurnRoute({
       invocation,
       contributors,
@@ -2293,7 +2387,6 @@ export class RemoteSession {
           ...(intent.retryKey === undefined ? {} : { retryKey: intent.retryKey }),
           body: {
             instanceId: this.config.instanceId,
-            claimToken: route.invocation.claimToken,
             content: markdown,
             clientMessageId: intent.retryKey ?? `remote-send-${route.invocation.id}-${seq}`,
             metadata,
@@ -2315,7 +2408,10 @@ export class RemoteSession {
           ...(prepared.attachmentIds.length > 0 && { attachmentIds: prepared.attachmentIds }),
         })
       } else {
-        await this.client.sendInvocationMessage(route.invocation.id, prepared.body)
+        await this.client.sendInvocationMessage(route.invocation.id, {
+          ...prepared.body,
+          claimToken: route.invocation.claimToken,
+        })
       }
     } catch (error) {
       route.rememberFailedPost(seq, prepared, this.lifecycle)

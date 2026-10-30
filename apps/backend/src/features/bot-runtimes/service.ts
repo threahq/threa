@@ -35,6 +35,7 @@ import { logger } from "../../lib/logger"
 import { HttpError, serializeBigInt } from "@threahq/backend-common"
 import {
   BOT_CLAIM_MAX_ATTEMPTS,
+  RuntimeAttachmentConflict,
   BotInvocationRepository,
   BotRuntimeInstanceRepository,
   BotRuntimeSessionLinkRepository,
@@ -56,7 +57,7 @@ import {
   type Stream,
   type StreamService,
 } from "../streams"
-import { AgentSessionRepository, SessionStatuses } from "../agents"
+import { AgentSessionRepository, SessionStatuses, failSessionWithLifecycleInTransaction } from "../agents"
 import {
   E2E_GRANT_BOOTSTRAP_LIMIT,
   E2eStreamActorsRepository,
@@ -1440,6 +1441,7 @@ export class BotRuntimeService {
       metadata?: Record<string, unknown>
     }
   ): Promise<{ invocation: BotInvocation; wasNewlyInserted: boolean }> {
+    if (params.trigger === "runtime-origin") throw new Error("Runtime-origin invocations require adoption")
     await assertStreamWritable(db, {
       workspaceId: params.workspaceId,
       streamId: params.responseStreamId,
@@ -1570,6 +1572,118 @@ export class BotRuntimeService {
     })
   }
 
+  async startInvocationSessionInTransaction(
+    db: Querier,
+    invocation: BotInvocation,
+    bot: Pick<Bot, "id" | "name">,
+    callbackBinding?: { callbackTokenHash: string; replyKeyGeneration: number }
+  ) {
+    const latestSequence = await StreamEventRepository.getLatestSequence(
+      db,
+      invocation.workspaceId,
+      invocation.responseStreamId
+    )
+    const session = await AgentSessionRepository.insertRunningOrSkip(db, {
+      id: invocation.id,
+      workspaceId: invocation.workspaceId,
+      streamId: invocation.responseStreamId,
+      personaId: bot.id,
+      triggerMessageId: invocation.sourceMessageId,
+      initialSequence: latestSequence ?? 0n,
+      ...callbackBinding,
+    })
+    if (!session) return null
+    const event = await StreamEventRepository.insert(db, {
+      id: eventId(),
+      workspaceId: invocation.workspaceId,
+      streamId: invocation.responseStreamId,
+      eventType: "agent_session:started",
+      payload: {
+        sessionId: session.id,
+        personaId: bot.id,
+        personaName: bot.name,
+        triggerMessageId: invocation.sourceMessageId,
+        rerunContext: null,
+        startedAt: session.createdAt.toISOString(),
+      },
+      actorId: bot.id,
+      actorType: AuthorTypes.BOT,
+    })
+    await OutboxRepository.insert(db, "agent_session:started", {
+      workspaceId: invocation.workspaceId,
+      streamId: invocation.responseStreamId,
+      rootStreamId: invocation.rootStreamId,
+      event,
+    })
+    return session
+  }
+
+  async adoptRuntimeRun(params: {
+    workspaceId: string
+    botId: string
+    instanceId: string
+    runtimeSessionId: string
+    responseStreamId: string
+    externalRunId: string
+    attachmentRequestId: string
+    claimToken: string
+    claimTtlSeconds: number
+  }): Promise<BotInvocation> {
+    return withTransaction(this.pool, async (db) => {
+      await assertStreamWritable(db, {
+        workspaceId: params.workspaceId,
+        streamId: params.responseStreamId,
+        principal: { kind: "bot", botId: params.botId },
+      })
+      const link = await BotRuntimeSessionLinkRepository.findActiveByRuntimeSessionForShare(db, params)
+      const stream = await StreamRepository.findById(db, params.workspaceId, params.responseStreamId)
+      if (
+        !link ||
+        !stream ||
+        (stream.id !== link.activeStreamId &&
+          (link.activeStreamId !== link.rootStreamId || stream.rootStreamId !== link.rootStreamId))
+      )
+        throw new HttpError("No active runtime session link for this stream", { status: 404, code: "NOT_FOUND" })
+      if (await E2eStreamsRepository.getByStreamId(db, params.workspaceId, link.rootStreamId))
+        throw new HttpError("Runtime run adoption is unavailable for encrypted streams", {
+          status: 409,
+          code: "ENCRYPTED_RUNTIME_ADOPTION_UNSUPPORTED",
+        })
+      const bot = await BotRepository.findById(db, params.workspaceId, params.botId)
+      if (!bot || bot.archivedAt || bot.type !== "personal")
+        throw new HttpError("Personal bot required", { status: 403, code: "PERSONAL_BOT_REQUIRED" })
+      const invocation = await BotInvocationRepository.adoptRuntimeRun(db, {
+        ...params,
+        id: botInvocationId(),
+        rootStreamId: link.rootStreamId,
+        authorUserId: bot.ownerUserId,
+      }).catch((error: unknown) => {
+        if (error instanceof RuntimeAttachmentConflict)
+          throw new HttpError(error.message, { status: 409, code: "RUNTIME_ATTACHMENT_CONFLICT" })
+        throw error
+      })
+      if (invocation.status === "claimed") {
+        const started = await this.startInvocationSessionInTransaction(db, invocation, bot)
+        const session = started ?? (await AgentSessionRepository.findById(db, params.workspaceId, invocation.id))
+        if (!session)
+          throw new HttpError("Another session is already running for this bot in the stream", {
+            status: 409,
+            code: "RUNTIME_ATTACHMENT_SESSION_BUSY",
+          })
+      } else if (invocation.status === "parked") {
+        const session = await AgentSessionRepository.findById(db, params.workspaceId, invocation.id)
+        if (session)
+          await failSessionWithLifecycleInTransaction(
+            db,
+            session,
+            stream,
+            invocation.errorMessage ?? "Claim attempts exhausted without completion"
+          )
+      }
+      return invocation
+    })
+  }
+
   async claimNextInvocation(params: {
     workspaceId: string
     botId: string
@@ -1641,7 +1755,10 @@ export class BotRuntimeService {
           })
           if (!claimed) return null
           let pinned = claimed
-          if (claimed.trigger !== BotInvocationTriggers.SESSION_CONTROL) {
+          if (
+            claimed.trigger !== BotInvocationTriggers.SESSION_CONTROL &&
+            claimed.trigger !== BotInvocationTriggers.RUNTIME_ORIGIN
+          ) {
             const source = await MessageRepository.findInvocationSourceStateForShare(db, {
               workspaceId: claimed.workspaceId,
               messageId: claimed.sourceMessageId,
@@ -1750,6 +1867,22 @@ export class BotRuntimeService {
     return BotInvocationRepository.findForCallback(db, params)
   }
 
+  private async runtimeOriginStillLinked(db: Querier, claim: BotInvocation): Promise<boolean> {
+    if (claim.trigger !== "runtime-origin") return true
+    if (!claim.claimedByInstanceId || !claim.claimedRuntimeSessionId) return false
+    const link = await BotRuntimeSessionLinkRepository.findActiveByRuntimeSessionForShare(db, {
+      workspaceId: claim.workspaceId,
+      botId: claim.actorId,
+      instanceId: claim.claimedByInstanceId,
+      runtimeSessionId: claim.claimedRuntimeSessionId,
+    })
+    return (
+      link !== null &&
+      link.rootStreamId === claim.rootStreamId &&
+      (link.activeStreamId === claim.activeStreamId || link.activeStreamId === link.rootStreamId)
+    )
+  }
+
   async findActiveClaimForUpdate(
     db: Querier,
     params: {
@@ -1760,6 +1893,8 @@ export class BotRuntimeService {
       claimToken: string
     }
   ): Promise<BotInvocation | null> {
+    const snapshot = await BotInvocationRepository.findForCallback(db, params)
+    if (!snapshot || !(await this.runtimeOriginStillLinked(db, snapshot))) return null
     return BotInvocationRepository.findActiveClaimForUpdate(db, params)
   }
 
@@ -1767,7 +1902,7 @@ export class BotRuntimeService {
     db: Querier,
     params: { workspaceId: string; botId: string; invocationId: string; claimToken: string }
   ): Promise<BotInvocation | null> {
-    return BotInvocationRepository.findActiveClaimForUpdate(db, params)
+    return this.findActiveClaimForUpdate(db, params)
   }
 
   async findCompletedInvocationForReplay(
@@ -1796,7 +1931,7 @@ export class BotRuntimeService {
     claim: BotInvocation,
     suppliedRevision?: number
   ): Promise<boolean> {
-    if (claim.trigger === "session-control")
+    if (claim.trigger === "session-control" || claim.trigger === "runtime-origin")
       return claim.claimedSourceMessageRevision === 0 && (suppliedRevision == null || suppliedRevision === 0)
     const source = await MessageRepository.findInvocationSourceStateForShare(db, {
       workspaceId: claim.workspaceId,
@@ -1814,7 +1949,7 @@ export class BotRuntimeService {
 
   async reconcileStaleCompletionInTransaction(db: Querier, claim: BotInvocation): Promise<void> {
     const source =
-      claim.trigger === "session-control"
+      claim.trigger === "session-control" || claim.trigger === "runtime-origin"
         ? null
         : await MessageRepository.findInvocationSourceStateForShare(db, {
             workspaceId: claim.workspaceId,
@@ -1835,7 +1970,7 @@ export class BotRuntimeService {
     if (!cancelled) return
     await this.terminalizeCancelledSessions(db, claim.workspaceId, [cancelled], "superseded")
     await this.emitCancellationHints(db, [cancelled])
-    if (claim.trigger === "session-control") return
+    if (claim.trigger === "session-control" || claim.trigger === "runtime-origin") return
     await this.reconcileInvocationSourceInTransaction(
       db,
       { workspaceId: claim.workspaceId, sourceMessageId: claim.sourceMessageId },
@@ -1856,10 +1991,12 @@ export class BotRuntimeService {
       restartRequiredRevision?: number
     }
   ): Promise<BotInvocation | null> {
+    const snapshot = await BotInvocationRepository.findClaimControl(db, params, { mode: "snapshot" })
+    if (!snapshot || !(await this.runtimeOriginStillLinked(db, snapshot))) return null
     let control = await BotInvocationRepository.findClaimControl(db, params)
     if (!control) return null
     if (control.status === "cancelled") return control
-    if (control.trigger !== "session-control") {
+    if (control.trigger !== "session-control" && control.trigger !== "runtime-origin") {
       const source = await MessageRepository.findInvocationSourceStateForShare(db, {
         workspaceId: params.workspaceId,
         messageId: control.sourceMessageId,
@@ -1874,7 +2011,7 @@ export class BotRuntimeService {
         { source }
       )
     }
-    control = await BotInvocationRepository.findClaimControl(db, params, { locksHeld: true })
+    control = await BotInvocationRepository.findClaimControl(db, params, { mode: "row-lock" })
     if (!control || control.status === "cancelled") return control
     if (
       params.knownSourceRevision != null &&
@@ -1902,7 +2039,7 @@ export class BotRuntimeService {
       if (!cancelled) return null
       await this.terminalizeCancelledSessions(db, params.workspaceId, [cancelled], "superseded")
       await this.emitCancellationHints(db, [cancelled])
-      if (cancelled.trigger !== "session-control") {
+      if (cancelled.trigger !== "session-control" && cancelled.trigger !== "runtime-origin") {
         const source = await MessageRepository.findInvocationSourceStateForShare(db, {
           workspaceId: params.workspaceId,
           messageId: cancelled.sourceMessageId,
@@ -1960,7 +2097,7 @@ export class BotRuntimeService {
     claimToken: string
     sourceRevision: number
   }): Promise<BotInvocation | null> {
-    return BotInvocationRepository.completeClaim(this.pool, params)
+    return withTransaction(this.pool, (db) => this.completeInvocationInTransaction(db, params))
   }
 
   // `instanceId` is optional: the sealed bot completion authenticates by the
@@ -1976,6 +2113,8 @@ export class BotRuntimeService {
       sourceRevision: number
     }
   ): Promise<BotInvocation | null> {
+    const claim = await this.findActiveClaimForUpdate(db, params)
+    if (!claim) return null
     return BotInvocationRepository.completeClaim(db, params, { locksHeld: true })
   }
 
@@ -1987,7 +2126,7 @@ export class BotRuntimeService {
     claimToken: string
     errorMessage: string
   }): Promise<BotInvocation | null> {
-    return BotInvocationRepository.failClaim(this.pool, params)
+    return withTransaction(this.pool, (db) => this.failInvocationInTransaction(db, params))
   }
 
   async failInvocationInTransaction(
@@ -2001,6 +2140,8 @@ export class BotRuntimeService {
       errorMessage: string
     }
   ): Promise<BotInvocation | null> {
+    const claim = await this.findActiveClaimForUpdate(db, params)
+    if (!claim) return null
     return BotInvocationRepository.failClaim(db, params)
   }
 

@@ -32,7 +32,7 @@ export function emitAgentActivityStarted(
   params: {
     workspaceId: string
     sessionId: string
-    triggerMessageId: string
+    triggerMessageId: string | null
     personaName: string
     /** The session's own stream — the thread the parent row links to. */
     threadStreamId: string
@@ -65,7 +65,7 @@ export function emitAgentActivityEnded(
     streamId: string
     parentStreamId: string | null | undefined
     sessionId: string
-    triggerMessageId: string
+    triggerMessageId: string | null
   }
 ): void {
   if (!params.parentStreamId || params.parentStreamId === params.streamId) return

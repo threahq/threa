@@ -510,7 +510,7 @@ describe("T3 session control", () => {
       runtimes: [withHarness, without].map((control) => control.spawnRuntimes?.map((runtime) => runtime.value)),
       t3: withHarness.spawnRuntimes?.[0],
     }).toEqual({
-      commands: ["stop", "status", "model", "thinking", "compact", "clear", "spawn", "done"],
+      commands: ["attach", "stop", "status", "model", "thinking", "compact", "clear", "spawn", "done"],
       defaults: "t3code",
       runtimes: [["t3code", "claude"], ["t3code"]],
       t3: {
@@ -674,7 +674,7 @@ describe("T3 session control", () => {
     expect({ whileRelaying, afterwards, threads: saved.at(-1)?.threads }).toEqual({
       whileRelaying: {
         ok: false,
-        message: "T3 Code is running a turn it started itself here; try again once it finishes.",
+        message: "Stop the running turn first (/stop).",
       },
       afterwards: { ok: true, summary: "Archived the T3 Code thread `thread_b`" },
       threads: { stream_root: "thread_a" },
@@ -691,4 +691,26 @@ describe("T3 session control", () => {
     })
     expect(saved.at(-1)?.threads).toEqual({ stream_root: "thread_a" })
   })
+})
+
+test("should route attach through the runner and report unsupported encryption", async () => {
+  const { control, t3, runner, fake } = setup({ threads: { stream_root: "thread_1" } })
+  t3.startInT3("thread_1")
+  expect(await control.runCommand("attach", "", CONTEXT)).toEqual({
+    ok: true,
+    message: "Following the existing T3 Code run.",
+  })
+  expect(await control.runCommand("attach", "", CONTEXT)).toEqual({
+    ok: true,
+    message: "Already following T3 Code here.",
+  })
+  runner.shutdown()
+  t3.script("run_1", [{ status: "completed" }])
+  const encrypted = setup({ threads: { stream_root: "thread_1" } })
+  encrypted.fake.encrypted.add("stream_root")
+  expect(await encrypted.control.runCommand("attach", "", CONTEXT)).toEqual({
+    ok: false,
+    message: "Attaching is unsupported for encrypted scratchpads.",
+  })
+  expect(fake.adoptions).toHaveLength(1)
 })

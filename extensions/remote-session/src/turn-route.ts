@@ -1,5 +1,5 @@
 import type { SealedReplyBody } from "@threahq/bot-runtime-client"
-import type { ClaimedInvocation } from "./client"
+import type { ClaimedInvocation, RoutedInvocation } from "./client"
 
 /** Exact failed POST bytes and id, retained because an ambiguous failure may have committed. */
 export type PreparedPost =
@@ -10,7 +10,6 @@ export type PreparedPost =
       retryKey?: string
       body: {
         instanceId: string
-        claimToken: string
         content: string
         clientMessageId: string
         metadata: Record<string, unknown>
@@ -69,7 +68,7 @@ export class RouteRevokedError extends Error {}
  * session teardown (`isFenced`).
  */
 export class TurnRoute {
-  readonly invocation: ClaimedInvocation
+  invocation: RoutedInvocation
   /** Registration order distinguishes an older route from a newer owner of the same stream. */
   readonly order: number
   /** The session lifecycle this route belongs to; a bump fences it out for good. */
@@ -87,6 +86,7 @@ export class TurnRoute {
   contributors: ClaimedInvocation[]
   /** Aborts the completion on the wire when any folded source changes underneath it. */
   readonly execution = new AbortController()
+  observation = new AbortController()
   /** FIFO tail: every post on this route runs behind it, in call order. */
   private tail: Promise<unknown> = Promise.resolve()
   /** Highest sequence handed out. Reserved before the write, so a failure spends it. */
@@ -100,7 +100,7 @@ export class TurnRoute {
   private readonly onIdleDeadline: (route: TurnRoute, deadlineGeneration: number) => void
 
   constructor(options: {
-    invocation: ClaimedInvocation
+    invocation: RoutedInvocation
     order: number
     generation: number
     idleTimeoutMs: number
@@ -129,6 +129,20 @@ export class TurnRoute {
 
   isFenced(lifecycle: number): boolean {
     return this.revokedFlag || this.generation !== lifecycle
+  }
+
+  refreshRuntimeClaim(invocation: RoutedInvocation): void {
+    if (this.invocation.sourceMessageId !== null || invocation.sourceMessageId !== null)
+      throw new Error("Only runtime-origin claims can refresh their route credentials")
+    this.observation.abort()
+    this.observation = new AbortController()
+    this.invocation = invocation
+    if (this.prepared?.wire.kind === "plaintext") {
+      this.prepared = {
+        ...this.prepared,
+        wire: { kind: "plaintext", body: { ...this.prepared.wire.body, claimToken: invocation.claimToken } },
+      }
+    }
   }
 
   /** FIFO allocation keeps concurrent posts on distinct ids and orders them against completion. */
@@ -179,6 +193,7 @@ export class TurnRoute {
 
   /** This session stopped speaking for the route's stream; pending retries and the deadline die with it. */
   revoke(): void {
+    if (this.invocation.sourceMessageId === null) this.observation.abort()
     this.revokedFlag = true
     this.pending.clear()
     this.prepared = undefined
@@ -187,6 +202,7 @@ export class TurnRoute {
 
   /** The server refused the route for good: drop write credentials and every pending payload. */
   markTerminal(): void {
+    if (this.invocation.sourceMessageId === null) this.observation.abort()
     this.stateValue = "closed"
     this.terminalFlag = true
     this.revokedFlag = true
@@ -207,10 +223,12 @@ export class TurnRoute {
   }
 
   markClosed(): void {
+    if (this.invocation.sourceMessageId === null) this.observation.abort()
     this.stateValue = "closed"
   }
 
   settleClosed(replyText: string | undefined): void {
+    if (this.invocation.sourceMessageId === null) this.observation.abort()
     this.stateValue = "closed"
     this.prepared = undefined
     if (replyText === undefined) delete this.replyText

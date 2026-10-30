@@ -193,7 +193,7 @@ export class DecisionService {
       const payload: DecisionRequestedEventPayload = {
         decisionId: decision.id,
         decision: serializeDecisionRequest(decision),
-        triggerMessageId: invocation?.sourceMessageId,
+        triggerMessageId: invocation?.sourceMessageId ?? undefined,
       }
       const event = await StreamEventRepository.insert(client, {
         id: eventId(),

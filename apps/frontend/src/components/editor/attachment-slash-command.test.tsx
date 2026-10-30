@@ -156,6 +156,34 @@ function paragraphChildTypes(doc: JSONContent): (string | undefined)[] {
   return (paragraph?.content ?? []).map((node) => node.type)
 }
 
+describe("/attach runtime command", () => {
+  it.each(["keyboard", "pointer"])(
+    "should select attach independently from attachment with %s input",
+    async (input) => {
+      spyOnExport(streamCommandsModule, "useStreamCommands").mockReturnValue((() => [
+        {
+          name: "attach",
+          description: "Follow existing work in the linked session",
+          kind: "bot-runtime",
+          scope: "stream",
+        },
+      ]) as never)
+      const { editor, getContent } = mountEditor()
+      typeText(editor, "/attach")
+      const option = await screen.findByRole("option", { name: /Follow existing work in the linked session/ })
+      expect(await screen.findByRole("option", { name: /\/attachment/ })).toBeInTheDocument()
+      if (input === "keyboard") pressKey(editor, "Enter")
+      else fireEvent.click(option)
+      await waitFor(() =>
+        expect(getContent().content?.[0]?.content).toContainEqual(
+          expect.objectContaining({ type: "slashCommand", attrs: expect.objectContaining({ name: "attach" }) })
+        )
+      )
+      expect(screen.queryByRole("listbox", { name: "Attachment suggestions" })).not.toBeInTheDocument()
+    }
+  )
+})
+
 describe("/attachment slash command", () => {
   it("surfaces the command at message start and mid-sentence", async () => {
     const { editor } = mountEditor()

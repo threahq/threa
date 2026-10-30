@@ -24,7 +24,7 @@ export class TraceEmitter {
     sessionId: string
     workspaceId: string
     streamId: string
-    triggerMessageId: string
+    triggerMessageId: string | null
     personaName: string
     /**
      * When the session runs in a thread: the parent stream's id, so inline
@@ -61,7 +61,7 @@ export class SessionTrace {
       sessionId: string
       workspaceId: string
       streamId: string
-      triggerMessageId: string
+      triggerMessageId: string | null
       personaName: string
       parentStreamId?: string
       parentMessageId?: string

@@ -44,7 +44,9 @@ export async function buildSessionDigest(pool: Pool, session: AgentSession): Pro
 
   // A fired follow-up carries a synthetic `followup_<id>` trigger with no real
   // message row, so findById returns null — the session's other signals stand.
-  const trigger = await MessageRepository.findById(pool, session.workspaceId, session.triggerMessageId)
+  const trigger = session.triggerMessageId
+    ? await MessageRepository.findById(pool, session.workspaceId, session.triggerMessageId)
+    : null
   if (trigger) {
     if (trigger.authorType === AuthorTypes.USER) participantUserIds.add(trigger.authorId)
     if (trigger.contentMarkdown.trim()) sections.push(`Trigger message:\n${trigger.contentMarkdown.trim()}`)
