@@ -1,12 +1,15 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router-dom"
 import { SyncEngineContext } from "@/sync/sync-engine"
+import * as relativeTimeModule from "@/components/relative-time"
+import { spyOnExport } from "@/test/spy"
 import { MessageActionDrawer } from "./message-action-drawer"
 import type { MessageActionContext } from "./message-actions"
 
 const BODY = "Hello there, this is the body."
+const SENT_AT = "2026-06-01T12:35:00.000Z"
 
 function mountDrawer(context: Partial<MessageActionContext>) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -19,6 +22,7 @@ function mountDrawer(context: Partial<MessageActionContext>) {
             open
             onOpenChange={() => {}}
             authorName="Alice"
+            sentAt={SENT_AT}
             context={{
               contentMarkdown: BODY,
               messageId: "msg_1",
@@ -54,8 +58,36 @@ function selectInBody(start: number, end: number) {
   })
 }
 
+beforeEach(() => {
+  // The byline renders the send time through RelativeTime, which reads the
+  // user's preference context — not mounted here. Key on the date it is handed
+  // so the case can check the drawer passes the message's own timestamp.
+  spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((({
+    date,
+    className,
+  }: {
+    date: Date | string
+    className?: string
+  }) => <span className={className}>at {String(date)}</span>) as unknown as typeof relativeTimeModule.RelativeTime)
+})
+
 afterEach(() => {
   vi.restoreAllMocks()
+})
+
+describe("MessageActionDrawer — the message preview", () => {
+  it("shows the send time beside the author, muted like the timeline header", () => {
+    mountDrawer({ onQuoteReplyWithSelection: vi.fn() })
+
+    const preview = screen.getByTestId("expanded-quote-open")
+    expect(preview).toHaveTextContent("Alice")
+    const previewTime = screen.getByText(`at ${SENT_AT}`)
+    expect(previewTime).toHaveClass("text-xs", "text-muted-foreground")
+
+    fireEvent.click(preview)
+    expect(screen.getByTestId("expanded-quote-title")).toHaveTextContent("Full message")
+    expect(screen.getByText(`at ${SENT_AT}`)).toHaveClass("text-xs", "text-muted-foreground")
+  })
 })
 
 describe("MessageActionDrawer — sharing a selection", () => {

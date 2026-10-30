@@ -1812,6 +1812,7 @@ function SentMessageEvent({
           onOpenChange={setDrawerOpen}
           context={actionContext}
           authorName={actorName}
+          sentAt={event.createdAt}
         />
       )}
       {mobilePickerOpen && (

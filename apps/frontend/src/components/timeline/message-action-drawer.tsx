@@ -4,6 +4,7 @@ import { ChevronLeft, Quote } from "lucide-react"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { MarkdownContent } from "@/components/ui/markdown-content"
+import { RelativeTime } from "@/components/relative-time"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks/use-message-reactions"
 import { useActors } from "@/hooks"
@@ -40,9 +41,11 @@ interface MessageActionDrawerProps {
   context: MessageActionContext
   /** Author display name for the message preview */
   authorName: string
+  /** Send time for the message preview byline — the timeline header's time beside the author */
+  sentAt: Date | string
 }
 
-export function MessageActionDrawer({ open, onOpenChange, context, authorName }: MessageActionDrawerProps) {
+export function MessageActionDrawer({ open, onOpenChange, context, authorName, sentAt }: MessageActionDrawerProps) {
   const actions = getVisibleActions(context)
   const groupedActions = useMemo(() => groupVisibleActions(actions), [actions])
   const { emojis, emojiWeights } = useWorkspaceEmoji(context.workspaceId ?? "")
@@ -252,6 +255,7 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
           <ExpandedQuoteView
             contentMarkdown={context.contentMarkdown}
             authorName={authorName}
+            sentAt={sentAt}
             actorType={context.actorType}
             statusEmoji={authorStatus?.emoji ?? null}
             statusText={authorStatus?.text ?? null}
@@ -280,6 +284,7 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
               >
                 <div className="mb-0.5 flex items-center gap-1.5 text-[13px] font-medium text-muted-foreground">
                   <span className="truncate">{authorName}</span>
+                  <RelativeTime date={sentAt} className="shrink-0 text-xs font-normal text-muted-foreground" />
                   {authorStatus?.emoji && (
                     <span aria-hidden className="text-sm leading-none">
                       {authorStatus.emoji}
@@ -344,6 +349,7 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
 interface ExpandedQuoteViewProps {
   contentMarkdown: string
   authorName: string
+  sentAt: Date | string
   actorType: string | null
   statusEmoji: string | null
   statusText: string | null
@@ -362,6 +368,7 @@ interface ExpandedQuoteViewProps {
 function ExpandedQuoteView({
   contentMarkdown,
   authorName,
+  sentAt,
   actorType,
   statusEmoji,
   statusText,
@@ -457,6 +464,7 @@ function ExpandedQuoteView({
               >
                 {authorName}
               </p>
+              <RelativeTime date={sentAt} className="shrink-0 text-xs font-normal text-muted-foreground" />
               {statusEmoji && (
                 <span aria-hidden className="text-sm leading-none">
                   {statusEmoji}
