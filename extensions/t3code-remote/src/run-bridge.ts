@@ -718,7 +718,9 @@ export class T3TurnRunner {
       items.flatMap((item) => (item.runId !== null && item.visibility === "local" ? [item.runId] : []))
     )
     if (thread.activeRunId) runIds.add(thread.activeRunId)
-    for (const run of [...recentRuns].sort((a, b) => a.ordinal - b.ordinal)) runIds.add(run.runId)
+    const recent = [...recentRuns].sort((a, b) => a.ordinal - b.ordinal).map((run) => run.runId)
+    for (const runId of recent) runIds.delete(runId)
+    for (const runId of recent) runIds.add(runId)
     if (latest) runIds.add(latest)
     const ordered = [...runIds]
     const runStatuses = new Map(recentRuns.map((run) => [run.runId, run.status]))

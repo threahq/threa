@@ -1410,6 +1410,38 @@ describe("RunTrace", () => {
 describe("runs T3 starts by itself", () => {
   const LINKED: ThreadState = { threads: { stream_root: "thread_1" }, model: MODEL }
 
+  for (const delivered of ["run_1", "run_3"]) {
+    test(`should order a silent failure before a newer reply after restart (delivered: ${delivered})`, async () => {
+      const { t3, session, runner, saved } = setup({
+        state: { ...LINKED, delivered: { thread_1: delivered } },
+      })
+      t3.startInT3("thread_1")
+      t3.addItems("thread_1", [item(1, "assistant_message", { text: "First." })])
+      t3.endInT3("run_1")
+      t3.startInT3("thread_1")
+      t3.script("run_2", [{ status: "failed" }])
+      await t3.client.call("t3_thread_wait", { threadId: "thread_1", runId: "run_2", timeoutMs: 2000 })
+      t3.startInT3("thread_1")
+      t3.addItems("thread_1", [item(2, "assistant_message", { runId: "run_3", text: "Third." })])
+      t3.endInT3("run_3")
+
+      await runner.watch()
+      await until(() => !runner.busy)
+      await runner.watch()
+
+      expect({ posts: session.posts, delivered: saved.at(-1)?.delivered ?? { thread_1: delivered } }).toEqual({
+        posts:
+          delivered === "run_1"
+            ? [
+                { streamId: "stream_root", text: "The T3 Code run failed.", clientMessageId: "t3run-run_2" },
+                { streamId: "stream_root", text: "Third.", clientMessageId: "t3run-run_3" },
+              ]
+            : [],
+        delivered: { thread_1: "run_3" },
+      })
+    })
+  }
+
   test("should leave an empty thread and terminal history alone when no run is active", async () => {
     const { t3, session, runner } = setup({ state: LINKED })
     await runner.watch()
