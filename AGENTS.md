@@ -24,7 +24,7 @@ Default mode: **minimal patch** — the smallest change that still fully solves 
 
 Factual repo questions are yours to answer: Grep/Glob/Agent, starting from `docs/system-overview.md` and `docs/core-concepts.md`, then `apps/*/src/` and the relevant feature folder. Before claiming something absent, sweep `apps/*/src/{components,pages,features,stores,lib}` with contains-match globs (`*settings*`, not `settings*`). Ask only when the search came back empty, it's a preference code can't reveal, or the action is destructive — and name what you searched.
 
-"Always X" / "never Y" rules (INV-*, skill rules) are binding — re-read them before acting in their domain. Read a module and its neighbors before editing; features colocate (INV-51), so the answer is usually one directory away. Apply an invariant's intent, not its surface shape: INV-20 means "write paths tolerate concurrent callers", not "sprinkle ON CONFLICT".
+"Always X" / "never Y" rules (INV-\*, skill rules) are binding — re-read them before acting in their domain. Read a module and its neighbors before editing; features colocate (INV-51), so the answer is usually one directory away. Apply an invariant's intent, not its surface shape: INV-20 means "write paths tolerate concurrent callers", not "sprinkle ON CONFLICT".
 
 **Naming a skill is an instruction to load it.** When this file, the user, or another skill names one, invoke it before the first command in its domain — a summary here is a pointer, never the contract, and a skill routinely ships a script or step its summary omits. A skill's own fallback rules override whatever workaround you devised.
 
@@ -41,7 +41,15 @@ Publish HTML previews on Seer. Use it liberally — plans, diagrams, mockups, da
 
 ## Workflow
 
-Test-first when practical; else run the nearest suite and verify manually. Never ship unexecuted tests — locally that means a targeted run: pass the paths you touched (`bun run test:unit src/features/streams`, `bun run typecheck apps/backend`). CI runs the full suites on push; `--all` runs everything locally, serialized across worktrees by a shared lock. Failing tests get fixed, never dismissed as pre-existing (INV-22).
+Test-first when practical; else run the nearest suite and verify manually. Never ship unexecuted tests: locally that means a targeted run, passing the paths you touched (`bun run test:unit src/features/streams`, `bun run typecheck apps/backend`). `--all` runs everything locally, serialized across worktrees by a shared lock. Failing tests get fixed, never dismissed as pre-existing (INV-22).
+
+PR verification:
+
+- Open ready-for-review PRs when the local work is reviewed so CodeRabbit can review each push. Draft status does not select a CI mode.
+- Ordinary pushes run protected composer/timeline browser cases and affected checks. `scripts/ci-policy.ts` owns selection from the whole PR diff; shared or unclassified changes run the full suite. Read the CI selection summary when checking coverage. A targeted run intentionally leaves `Merge verification` failing even when its tests pass.
+- After review fixes settle, add `ci:full` to each PR (`gh pr edit <number> --add-label 'ci:full'`). Adding it starts full verification. Keep it through subsequent pushes so fixes receive fresh full verification. Remove it only when returning to iteration (`gh pr edit <number> --remove-label 'ci:full'`).
+- Before reporting ready to merge, verify successful `Merge verification` on the current revision of every stack layer and an up-to-date base. Targeted success, skipped jobs and results from older commits do not satisfy this requirement. The label requests verification; it does not authorize merging.
+- Report targeted and full-run timing separately, including queue/setup, Docker, retries and reporting. Preserve the final full pass when reducing per-push work.
 
 **Stacked PRs: always `gh stack`** (GitHub-native Stacks; extension installed — verify `gh extension list | grep stack`, never assume absence). Hand-rolling stacks with plain branches + `gh pr create --base` is the recurring failure — don't.
 

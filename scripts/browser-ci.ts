@@ -89,8 +89,30 @@ function inventoryGroups(report: JSONReport): Map<string, number> {
   return groups
 }
 
-export function planShards(report: JSONReport, history: TimingHistory | undefined, shardCount: number): ShardPlan {
+function browserSpecPath(group: string): string {
+  return `tests/browser/${path.basename(group.replace(/^\[[^\]]+\] > /, ""))}`
+}
+
+export function planShards(
+  report: JSONReport,
+  history: TimingHistory | undefined,
+  shardCount: number,
+  files?: string[]
+): ShardPlan {
   const inventory = inventoryGroups(report)
+  if (files) {
+    if (
+      !files.length ||
+      files.some((file) => typeof file !== "string" || !/^tests\/browser\/[^/]+\.spec\.ts$/.test(file))
+    )
+      throw new Error("invalid selected browser files")
+    const selected = new Set(files)
+    if (selected.size !== files.length) throw new Error("duplicate selected browser files")
+    const available = new Set([...inventory.keys()].map(browserSpecPath))
+    for (const file of files)
+      if (!available.has(file)) throw new Error(`selected browser file missing from inventory: ${file}`)
+    for (const key of inventory.keys()) if (!selected.has(browserSpecPath(key))) inventory.delete(key)
+  }
   if (inventory.size < shardCount) throw new Error(`inventory has ${inventory.size} groups for ${shardCount} shards`)
   const observations = Object.fromEntries(
     Object.entries(history?.groups ?? {}).filter(([, group]) => group.durationMs > 0 && group.testCount > 0)
@@ -175,7 +197,10 @@ export function main(args = process.argv.slice(2)): void {
       })()
     const shardCount = Number(value(args, "--shards")!)
     const outputDir = value(args, "--output-dir")!
-    const plan = planShards(readReport(value(args, "--inventory")!), history, shardCount)
+    const filesPath = value(args, "--files", false)
+    const files = filesPath ? (JSON.parse(readFileSync(filesPath, "utf8")) as string[]) : undefined
+    if (files && !Array.isArray(files)) throw new Error("selected browser files must be an array")
+    const plan = planShards(readReport(value(args, "--inventory")!), history, shardCount, files)
     mkdirSync(outputDir, { recursive: true })
     for (const [index, shard] of plan.shards.entries())
       writeFileSync(path.join(outputDir, `shard-${index + 1}.txt`), `${shard.groups.join("\n")}\n`)
