@@ -58,7 +58,9 @@ test("a tall same-author run stays open until collapsed, then reopens folded as 
     const frames: number[] = []
     ;(window as unknown as { __runFoldFrames: number[] }).__runFoldFrames = frames
     const sample = () => {
-      const rows = document.querySelectorAll('[data-testid="stream-timeline"] [data-message-id]')
+      const rows = [...document.querySelectorAll('[data-testid="stream-timeline"] [data-message-id]')].filter((row) =>
+        row.checkVisibility({ visibilityProperty: true, opacityProperty: true })
+      )
       let bravoOrCharlie = 0
       for (const row of rows) if (/Bravo|Charlie/.test(row.textContent ?? "")) bravoOrCharlie++
       if (rows.length > 0) frames.push(bravoOrCharlie)
@@ -70,6 +72,9 @@ test("a tall same-author run stays open until collapsed, then reopens folded as 
 
   await expect(expand).toBeVisible({ timeout: 15_000 })
   await expect(timeline.getByText("Alpha point 1")).toBeVisible()
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { __runFoldFrames: number[] }).__runFoldFrames.length))
+    .toBeGreaterThan(0)
   const frames = await page.evaluate(() => (window as unknown as { __runFoldFrames: number[] }).__runFoldFrames)
   expect({ sampled: frames.length > 0, maxHiddenRowsPainted: Math.max(0, ...frames) }).toEqual({
     sampled: true,
