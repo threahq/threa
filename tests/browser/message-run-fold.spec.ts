@@ -68,18 +68,45 @@ test("a tall same-author run stays open until collapsed, then reopens folded as 
     }
     requestAnimationFrame(sample)
   })
+  let releaseMembership!: () => void
+  const membershipGate = new Promise<void>((resolve) => {
+    releaseMembership = resolve
+  })
+  let membershipRequested = false
+  const membershipRoute = "**/api/workspaces/*/streams/*/conversations*"
+  await page.route(membershipRoute, async (route) => {
+    membershipRequested = true
+    await membershipGate
+    await route.continue()
+  })
   await page.reload()
+  await expect.poll(() => membershipRequested).toBe(true)
 
   await expect(expand).toBeVisible({ timeout: 15_000 })
   await expect(timeline.getByText("Alpha point 1")).toBeVisible()
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { __runFoldFrames: number[] }).__runFoldFrames.length))
-    .toBeGreaterThan(0)
+    .toBeGreaterThan(3)
   const frames = await page.evaluate(() => (window as unknown as { __runFoldFrames: number[] }).__runFoldFrames)
   expect({ sampled: frames.length > 0, maxHiddenRowsPainted: Math.max(0, ...frames) }).toEqual({
     sampled: true,
     maxHiddenRowsPainted: 0,
   })
+
+  releaseMembership()
+  await page.unrouteAll({ behavior: "wait" })
+  await page.route("**/api/**", (route) => route.abort("internetdisconnected"))
+  await page.reload()
+  await expect(expand).toBeVisible({ timeout: 15_000 })
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { __runFoldFrames: number[] }).__runFoldFrames.length))
+    .toBeGreaterThan(3)
+  const offlineFrames = await page.evaluate(() => (window as unknown as { __runFoldFrames: number[] }).__runFoldFrames)
+  expect({ sampled: offlineFrames.length > 0, maxHiddenRowsPainted: Math.max(0, ...offlineFrames) }).toEqual({
+    sampled: true,
+    maxHiddenRowsPainted: 0,
+  })
+  await page.unroute("**/api/**")
 
   await expand.click()
   await expect(timeline.getByText("Charlie point 5")).toBeVisible()

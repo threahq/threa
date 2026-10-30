@@ -110,6 +110,7 @@ export type TimelineItem =
        * time so the format tracks user preferences (INV-42).
        */
       groupContinuation?: boolean
+      conversationBoundary?: boolean
       /**
        * Conversation membership annotation, stamped by
        * `annotateConversationRows` only while the conversation overlay is
@@ -166,7 +167,7 @@ export type TimelineItem =
 /** Event types that participate in author-grouping (render as message bodies). */
 const MESSAGE_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["message_created", "companion_response"])
 
-function isGroupableMessage(event: StreamEvent): boolean {
+export function isGroupableMessage(event: StreamEvent): boolean {
   if (!MESSAGE_EVENT_TYPES.has(event.eventType)) return false
   // Soft-deleted messages render as a placeholder, not a grouped message body.
   const payload = event.payload as { deletedAt?: string } | undefined
@@ -352,11 +353,11 @@ export function annotateConversationRevivals(
       // conversation between the prior member and now, not merely a gap.
       previousConversationId = conversationId
     }
-    const splits =
-      item.groupContinuation === true &&
-      (revival != null || (conversationId != null && runConversationId != null && conversationId !== runConversationId))
+    const conversationBoundary =
+      conversationId != null && runConversationId != null && conversationId !== runConversationId
+    const splits = item.groupContinuation === true && (revival != null || conversationBoundary)
     runConversationId = !item.groupContinuation || splits ? conversationId : (runConversationId ?? conversationId)
-    if (splits) return { ...item, revival, groupContinuation: false }
+    if (splits) return { ...item, revival, groupContinuation: false, conversationBoundary }
     return revival ? { ...item, revival } : item
   })
 }

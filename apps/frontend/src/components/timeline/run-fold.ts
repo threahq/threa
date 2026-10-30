@@ -1,6 +1,7 @@
-import { setBlockCollapse } from "@/lib/markdown/collapse-cache"
+import { getRunCollapseMembers, setBlockCollapse } from "@/lib/markdown/collapse-cache"
 import { composeBlockCollapseKey } from "@/lib/markdown/markdown-block-context"
-import type { TimelineItem } from "./event-list"
+import { isSameAuthorRun } from "@/lib/message-grouping"
+import { isGroupableMessage, type TimelineItem } from "./event-list"
 
 /**
  * A same-author run folds as one unit: folded, only the head row renders
@@ -83,7 +84,7 @@ export function createRunFoldStore(): RunFoldStore {
       store.revealedBy.delete(fold.key)
       if (collapsed) store.foldedThrough.set(fold.key, fold.lastMessageId)
       store.toggledRun = { headMessageId: fold.headMessageId, collapsed }
-      setBlockCollapse(fold.key, fold.headMessageId, "run", collapsed)
+      setBlockCollapse(fold.key, fold.headMessageId, "run", collapsed, runOf.get(fold.headMessageId)?.messageIds)
     },
     toggledRun: null,
     revealedBy: new Map(),
@@ -116,8 +117,14 @@ interface RunMember {
   own: boolean
 }
 
+function savedPrefixEnd(run: readonly RunMember[], saved: readonly string[]): number {
+  let length = 0
+  while (length < run.length && run[length].messageId === saved[length]) length++
+  return length - 1
+}
+
 function messageIdOf(item: TimelineItem): string | undefined {
-  if (item.type !== "event") return undefined
+  if (item.type !== "event" || !isGroupableMessage(item.event)) return undefined
   return (item.event.payload as { messageId?: string } | undefined)?.messageId
 }
 
@@ -146,7 +153,32 @@ export function foldAuthorRuns(items: TimelineItem[], options: FoldAuthorRunsOpt
       sequence: BigInt(item.event.sequence),
       own: !!options.viewerId && item.event.actorId === options.viewerId,
     }
-    if (item.groupContinuation === true && current) {
+    const previous = current?.[current.length - 1]
+    const previousItem = previous ? items[previous.index] : undefined
+    const saved = current ? getRunCollapseMembers(composeRunFoldKey(current[0].messageId)) : undefined
+    const restoresSaved =
+      !item.conversationBoundary &&
+      current !== null &&
+      saved !== undefined &&
+      saved[0] === current[0].messageId &&
+      previous &&
+      saved[current.length - 1] === previous.messageId &&
+      saved[current.length] === messageId
+    const sameAuthor =
+      previousItem?.type === "event" &&
+      isSameAuthorRun(
+        {
+          authorId: previousItem.event.actorId,
+          authorType: previousItem.event.actorType,
+          createdAtMs: Date.parse(previousItem.event.createdAt),
+        },
+        {
+          authorId: item.event.actorId,
+          authorType: item.event.actorType,
+          createdAtMs: Date.parse(item.event.createdAt),
+        }
+      )
+    if ((item.groupContinuation === true || restoresSaved) && current && sameAuthor) {
       current.push(member)
     } else {
       current = [member]
@@ -179,7 +211,11 @@ export function foldAuthorRuns(items: TimelineItem[], options: FoldAuthorRunsOpt
     let collapsed = persisted === true
     let end = run.length - 1
     if (collapsed) {
-      const through = run.findIndex((member) => member.messageId === store.foldedThrough.get(key))
+      const saved = getRunCollapseMembers(key)
+      const through = saved
+        ? savedPrefixEnd(run, saved)
+        : run.findIndex((member) => member.messageId === store.foldedThrough.get(key))
+      if (saved && through < 1) continue
       if (through > 0) end = through
       else store.foldedThrough.set(key, last.messageId)
       if (!store.revealedBy.has(key)) {

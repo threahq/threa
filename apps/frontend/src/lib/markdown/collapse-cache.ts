@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react"
 import { db } from "@/db"
-import type { MarkdownBlockKind } from "./markdown-block-context"
+import { composeBlockCollapseKey, type MarkdownBlockKind } from "./markdown-block-context"
 
 /**
  * Synchronous in-memory mirror of the markdown-block + link-preview collapse
@@ -38,7 +38,8 @@ import type { MarkdownBlockKind } from "./markdown-block-context"
 const BLOCK_COLLAPSE_LS_KEY = "threa:blockCollapse:v1"
 const LINK_PREVIEW_LS_KEY = "threa:linkPreviewExpand:v1"
 
-const blockCollapse = new Map<string, boolean>()
+type BlockCollapseValue = boolean | { collapsed: boolean; memberIds: string[] }
+const blockCollapse = new Map<string, BlockCollapseValue>()
 const linkPreviewExpand = new Map<string, boolean>()
 
 const blockListeners = new Set<() => void>()
@@ -54,20 +55,20 @@ function notify(set: Set<() => void>) {
   for (const listener of set) listener()
 }
 
-function readPersistedMap(key: string): Record<string, boolean> | null {
+function readPersistedMap(key: string): Record<string, unknown> | null {
   if (typeof localStorage === "undefined") return null
   try {
     const raw = localStorage.getItem(key)
     if (!raw) return null
     const parsed: unknown = JSON.parse(raw)
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null
-    return parsed as Record<string, boolean>
+    return parsed as Record<string, unknown>
   } catch {
     return null
   }
 }
 
-function writePersistedMap(key: string, map: Map<string, boolean>): void {
+function writePersistedMap(key: string, map: Map<string, boolean> | Map<string, BlockCollapseValue>): void {
   if (typeof localStorage === "undefined") return
   try {
     localStorage.setItem(key, JSON.stringify(Object.fromEntries(map)))
@@ -92,12 +93,12 @@ function hydrateFromLocalStorageSync(): void {
   if (blocks !== null) blockHydrated = true
   if (previews !== null) linkPreviewHydrated = true
   if (blocks) {
-    for (const [k, v] of Object.entries(blocks)) {
-      if (typeof v === "boolean") {
-        blockCollapse.set(k, v)
-      }
+    for (const [key, stored] of Object.entries(blocks)) {
+      const value = decodeBlockCollapse(key, stored)
+      if (value !== undefined) blockCollapse.set(key, value)
     }
   }
+
   if (previews) {
     for (const [k, v] of Object.entries(previews)) {
       if (typeof v === "boolean") {
@@ -130,7 +131,9 @@ export function hydrateCollapseCache(): Promise<void> {
       let blockChanged = false
       for (const row of blocks) {
         if (!blockCollapse.has(row.id)) {
-          blockCollapse.set(row.id, row.collapsed)
+          const value = decodeBlockCollapse(row.id, "memberIds" in row ? row : row.collapsed)
+          if (value === undefined) continue
+          blockCollapse.set(row.id, value)
           blockChanged = true
         }
       }
@@ -158,10 +161,43 @@ export function hydrateCollapseCache(): Promise<void> {
   return hydrationPromise
 }
 
-export function setBlockCollapse(key: string, messageId: string, kind: MarkdownBlockKind, collapsed: boolean): void {
-  blockCollapse.set(key, collapsed)
-  notify(blockListeners)
+function validMemberIds(value: unknown): string[] | undefined {
+  return Array.isArray(value) &&
+    value.length > 1 &&
+    value.every((id) => typeof id === "string" && id.length > 0) &&
+    new Set(value).size === value.length
+    ? value
+    : undefined
+}
+
+function decodeBlockCollapse(key: string, value: unknown): BlockCollapseValue | undefined {
+  if (typeof value === "boolean") return value
+  if (typeof value !== "object" || value === null) return undefined
+  if (!("collapsed" in value) || typeof value.collapsed !== "boolean" || !("memberIds" in value)) return undefined
+
+  const memberIds = validMemberIds(value.memberIds)
+  if (!memberIds || composeBlockCollapseKey(memberIds[0], "run", "head") !== key) return undefined
+  return { collapsed: value.collapsed, memberIds }
+}
+
+export function getRunCollapseMembers(key: string): readonly string[] | undefined {
+  const value = blockCollapse.get(key)
+  return typeof value === "object" && composeBlockCollapseKey(value.memberIds[0], "run", "head") === key
+    ? value.memberIds
+    : undefined
+}
+
+export function setBlockCollapse(
+  key: string,
+  messageId: string,
+  kind: MarkdownBlockKind,
+  collapsed: boolean,
+  memberIds?: string[]
+): void {
+  const members = kind === "run" ? validMemberIds(memberIds) : undefined
+  blockCollapse.set(key, members ? { collapsed, memberIds: members } : collapsed)
   writePersistedMap(BLOCK_COLLAPSE_LS_KEY, blockCollapse)
+  notify(blockListeners)
   // Keep IDB writes as a backup persistence layer alongside localStorage —
   // matters for users who clear localStorage but keep IDB intact.
   db.markdownBlockCollapse
@@ -170,6 +206,7 @@ export function setBlockCollapse(key: string, messageId: string, kind: MarkdownB
       messageId,
       kind,
       collapsed,
+      ...(members ? { memberIds: members } : {}),
       updatedAt: Date.now(),
     })
     .catch(() => {})
@@ -212,13 +249,14 @@ function subscribeLinkPreview(callback: () => void): () => void {
 export function useBlockCollapseStore(key: string | null): boolean | undefined {
   return useSyncExternalStore(
     subscribeBlock,
-    () => (key ? blockCollapse.get(key) : undefined),
+    () => (key ? getBlockCollapse(key) : undefined),
     () => undefined
   )
 }
 
 export function getBlockCollapse(key: string): boolean | undefined {
-  return blockCollapse.get(key)
+  const value = blockCollapse.get(key)
+  return typeof value === "object" ? value.collapsed : value
 }
 
 /** Changes whenever any block-collapse key does, for consumers reading many keys via `getBlockCollapse`. */

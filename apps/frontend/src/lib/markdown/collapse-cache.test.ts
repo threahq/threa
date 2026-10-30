@@ -3,6 +3,8 @@ import { renderHook, act } from "@testing-library/react"
 import {
   __resetCollapseCacheForTests,
   hydrateCollapseCache,
+  getBlockCollapse,
+  getRunCollapseMembers,
   setBlockCollapse,
   setLinkPreviewExpand,
   useBlockCollapseStore,
@@ -30,6 +32,122 @@ describe("collapse-cache localStorage mirror", () => {
     expect(raw).not.toBeNull()
     const parsed = JSON.parse(raw!) as Record<string, boolean>
     expect(parsed["msg_1:code:abc"]).toBe(true)
+  })
+
+  it("should restore run identities synchronously on reload alongside legacy booleans", async () => {
+    setBlockCollapse("msg_1:run:head", "msg_1", "run", true, ["msg_1", "msg_2", "msg_3"])
+    setBlockCollapse("msg_4:code:abc", "msg_4", "code", false)
+    vi.resetModules()
+    const fresh = await import("./collapse-cache")
+    expect({
+      collapsed: fresh.getBlockCollapse("msg_1:run:head"),
+      members: fresh.getRunCollapseMembers("msg_1:run:head"),
+      code: fresh.getBlockCollapse("msg_4:code:abc"),
+    }).toEqual({ collapsed: true, members: ["msg_1", "msg_2", "msg_3"], code: false })
+    fresh.__resetCollapseCacheForTests()
+  })
+
+  it("should discard malformed member metadata without hiding arbitrary rows or throwing", async () => {
+    localStorage.setItem(
+      BLOCK_COLLAPSE_LS_KEY,
+      JSON.stringify({
+        "msg_1:run:head": { collapsed: true, memberIds: ["msg_1", 42] },
+        "msg_2:run:head": { collapsed: "true", memberIds: ["msg_2", "msg_3"] },
+        "msg_4:code:abc": false,
+      })
+    )
+    vi.resetModules()
+    const fresh = await import("./collapse-cache")
+    expect({
+      members: fresh.getRunCollapseMembers("msg_1:run:head"),
+      collapsed: fresh.getBlockCollapse("msg_1:run:head"),
+      invalid: fresh.getBlockCollapse("msg_2:run:head"),
+      legacy: fresh.getBlockCollapse("msg_4:code:abc"),
+    }).toEqual({ members: undefined, collapsed: undefined, invalid: undefined, legacy: false })
+    fresh.__resetCollapseCacheForTests()
+  })
+
+  it("should ignore member identities whose head differs from the persistence key", async () => {
+    localStorage.setItem(
+      BLOCK_COLLAPSE_LS_KEY,
+      JSON.stringify({ "msg_1:run:head": { collapsed: true, memberIds: ["msg_other", "msg_2"] } })
+    )
+    vi.resetModules()
+    const fresh = await import("./collapse-cache")
+    expect({
+      members: fresh.getRunCollapseMembers("msg_1:run:head"),
+      collapsed: fresh.getBlockCollapse("msg_1:run:head"),
+    }).toEqual({ members: undefined, collapsed: undefined })
+    fresh.__resetCollapseCacheForTests()
+  })
+
+  it("should migrate run member metadata from IDB into the synchronous mirror", async () => {
+    await db.markdownBlockCollapse.put({
+      id: "msg_1:run:head",
+      messageId: "msg_1",
+      kind: "run",
+      collapsed: true,
+      memberIds: ["msg_1", "msg_2"],
+      updatedAt: Date.now(),
+    })
+    await hydrateCollapseCache()
+    expect({
+      collapsed: getBlockCollapse("msg_1:run:head"),
+      members: getRunCollapseMembers("msg_1:run:head"),
+      stored: JSON.parse(localStorage.getItem(BLOCK_COLLAPSE_LS_KEY)!),
+    }).toEqual({
+      collapsed: true,
+      members: ["msg_1", "msg_2"],
+      stored: { "msg_1:run:head": { collapsed: true, memberIds: ["msg_1", "msg_2"] } },
+    })
+  })
+
+  it("should reject invalid IDB members while preserving actual legacy rows", async () => {
+    await db.markdownBlockCollapse.bulkPut([
+      {
+        id: "msg_1:run:head",
+        messageId: "msg_1",
+        kind: "run",
+        collapsed: true,
+        memberIds: ["msg_other", "msg_2"],
+        updatedAt: 1,
+      },
+      { id: "msg_3:run:head", messageId: "msg_3", kind: "run", collapsed: true, memberIds: [], updatedAt: 1 },
+      { id: "msg_4:run:head", messageId: "msg_4", kind: "run", collapsed: true, updatedAt: 1 },
+    ])
+    await hydrateCollapseCache()
+    expect({
+      mismatched: getBlockCollapse("msg_1:run:head"),
+      malformed: getBlockCollapse("msg_3:run:head"),
+      legacy: getBlockCollapse("msg_4:run:head"),
+    }).toEqual({ mismatched: undefined, malformed: undefined, legacy: true })
+  })
+
+  it("should preserve a newer reopen and its members while stale IDB hydration is pending", async () => {
+    let finishRead!: (rows: Awaited<ReturnType<typeof db.markdownBlockCollapse.toArray>>) => void
+    vi.spyOn(db.markdownBlockCollapse, "toArray").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishRead = resolve
+        }) as ReturnType<typeof db.markdownBlockCollapse.toArray>
+    )
+    const hydration = hydrateCollapseCache()
+    setBlockCollapse("msg_1:run:head", "msg_1", "run", false, ["msg_1", "msg_2", "msg_3"])
+    finishRead([
+      {
+        id: "msg_1:run:head",
+        messageId: "msg_1",
+        kind: "run",
+        collapsed: true,
+        memberIds: ["msg_1", "msg_2"],
+        updatedAt: 1,
+      },
+    ])
+    await hydration
+    expect({
+      collapsed: getBlockCollapse("msg_1:run:head"),
+      members: getRunCollapseMembers("msg_1:run:head"),
+    }).toEqual({ collapsed: false, members: ["msg_1", "msg_2", "msg_3"] })
   })
 
   it("writes link-preview toggles to localStorage synchronously", () => {
