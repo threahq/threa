@@ -62,9 +62,13 @@ beforeEach(() => {
   // The byline renders the send time through RelativeTime, which reads the
   // user's preference context — not mounted here. Key on the date it is handed
   // so the case can check the drawer passes the message's own timestamp.
-  spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((({ date }: { date: Date | string }) => (
-    <span>at {String(date)}</span>
-  )) as unknown as typeof relativeTimeModule.RelativeTime)
+  spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((({
+    date,
+    className,
+  }: {
+    date: Date | string
+    className?: string
+  }) => <span className={className}>at {String(date)}</span>) as unknown as typeof relativeTimeModule.RelativeTime)
 })
 
 afterEach(() => {
@@ -72,16 +76,17 @@ afterEach(() => {
 })
 
 describe("MessageActionDrawer — the message preview", () => {
-  it("shows the send time beside the author, as the timeline header does", () => {
+  it("shows the send time beside the author, muted like the timeline header", () => {
     mountDrawer({ onQuoteReplyWithSelection: vi.fn() })
 
     const preview = screen.getByTestId("expanded-quote-open")
     expect(preview).toHaveTextContent("Alice")
-    expect(screen.getByText(`at ${SENT_AT}`)).toBeInTheDocument()
+    const previewTime = screen.getByText(`at ${SENT_AT}`)
+    expect(previewTime).toHaveClass("text-xs", "text-muted-foreground")
 
     fireEvent.click(preview)
     expect(screen.getByTestId("expanded-quote-title")).toHaveTextContent("Full message")
-    expect(screen.getByText(`at ${SENT_AT}`)).toBeInTheDocument()
+    expect(screen.getByText(`at ${SENT_AT}`)).toHaveClass("text-xs", "text-muted-foreground")
   })
 })
 

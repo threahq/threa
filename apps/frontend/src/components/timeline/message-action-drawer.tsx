@@ -284,7 +284,7 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName, s
               >
                 <div className="mb-0.5 flex items-center gap-1.5 text-[13px] font-medium text-muted-foreground">
                   <span className="truncate">{authorName}</span>
-                  <RelativeTime date={sentAt} className="shrink-0 text-xs font-normal" />
+                  <RelativeTime date={sentAt} className="shrink-0 text-xs font-normal text-muted-foreground" />
                   {authorStatus?.emoji && (
                     <span aria-hidden className="text-sm leading-none">
                       {authorStatus.emoji}
@@ -464,7 +464,7 @@ function ExpandedQuoteView({
               >
                 {authorName}
               </p>
-              <RelativeTime date={sentAt} className="shrink-0 text-xs font-normal" />
+              <RelativeTime date={sentAt} className="shrink-0 text-xs font-normal text-muted-foreground" />
               {statusEmoji && (
                 <span aria-hidden className="text-sm leading-none">
                   {statusEmoji}
