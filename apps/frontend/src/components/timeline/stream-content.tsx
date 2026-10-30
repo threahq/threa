@@ -38,6 +38,7 @@ import { panelIdsOf, primaryPanelOf } from "@/lib/panel-tabs"
 import {
   useSocket,
   useCoordinatedLoading,
+  useCoordinatedPhase,
   useRevealReady,
   usePreferencesOptional,
   usePanel,
@@ -3618,7 +3619,10 @@ const TimelineMessageList = memo(function TimelineMessageList({
   const headerSpacerPx = isNarrowViewport ? STREAM_HEADER_SPACER_PX : STREAM_HEADER_SPACER_SM_PX
   const startMargin = reservedTopSpacer ? BAR_TOP_SPACER_PX : headerSpacerPx
 
-  const skeleton = <TimelineSkeleton />
+  const isReady =
+    !isLoading && !holdForDeepLink && (isConfirmedEmpty || (visibleItems.length > 0 && !isInitialSettling))
+  const loadingPhase = useCoordinatedPhase({ isLoading: !isReady, isReady })
+  const skeleton = phase === "skeleton" || loadingPhase === "skeleton" ? <TimelineSkeleton /> : null
 
   // Latched above the early returns: the scroller unmounts on them, so a latch
   // living inside it would answer "nothing rendered yet" on the next empty
