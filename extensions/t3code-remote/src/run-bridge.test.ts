@@ -1445,7 +1445,7 @@ describe("runs T3 starts by itself", () => {
         posts:
           delivered === "run_1"
             ? [
-                { streamId: "stream_root", text: "The T3 Code run failed.", clientMessageId: "t3run-run_2" },
+                { streamId: "stream_root", text: "The T3 Code run ended failed.", clientMessageId: "t3run-run_2" },
                 { streamId: "stream_root", text: "Third.", clientMessageId: "t3run-run_3" },
               ]
             : [],
