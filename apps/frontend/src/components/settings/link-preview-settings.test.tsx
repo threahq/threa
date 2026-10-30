@@ -47,6 +47,49 @@ describe("LinkPreviewSettings", () => {
     await user.click(screen.getByRole("option", { name: "Expand all" }))
     expect(updatePreferences).toHaveBeenCalledWith({ linkPreviewDefault: "open", linkPreviewOpenCount: "all" })
   })
+
+  it.each(["Default", "Images"])("should start %s at a positive count when selecting Expand", async (label) => {
+    vi.spyOn(contexts, "usePreferences").mockReturnValue({
+      preferences: { linkPreviewDefault: "open", linkPreviewOpenCount: "all", linkPreviewTypeOverrides: {} },
+      updatePreferences,
+      isLoading: false,
+    } as unknown as ReturnType<typeof contexts.usePreferences>)
+    const user = userEvent.setup()
+    render(<LinkPreviewSettings />)
+
+    await user.click(screen.getByRole("combobox", { name: `${label} expansion` }))
+    await user.click(screen.getByRole("option", { name: /^Expand$/ }))
+
+    expect(updatePreferences).toHaveBeenCalledWith(
+      label === "Default"
+        ? { linkPreviewDefault: "open", linkPreviewOpenCount: 3 }
+        : { linkPreviewTypeOverrides: { image: 3 } }
+    )
+  })
+
+  it("should restore the last positive draft when returning from Expand all", async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(<LinkPreviewSettings />)
+    const input = screen.getByLabelText("Default count")
+    await user.clear(input)
+    await user.type(input, "7{Enter}")
+    await user.click(screen.getByRole("combobox", { name: "Default expansion" }))
+    await user.click(screen.getByRole("option", { name: "Expand all" }))
+
+    vi.spyOn(contexts, "usePreferences").mockReturnValue({
+      preferences: { linkPreviewDefault: "open", linkPreviewOpenCount: "all", linkPreviewTypeOverrides: {} },
+      updatePreferences,
+      isLoading: false,
+    } as unknown as ReturnType<typeof contexts.usePreferences>)
+    rerender(<LinkPreviewSettings />)
+    updatePreferences.mockClear()
+
+    await user.click(screen.getByRole("combobox", { name: "Default expansion" }))
+    await user.click(screen.getByRole("option", { name: /^Expand$/ }))
+
+    expect(updatePreferences).toHaveBeenCalledWith({ linkPreviewDefault: "open", linkPreviewOpenCount: 7 })
+  })
+
   it("should remove a type override when use default is selected", async () => {
     vi.spyOn(contexts, "usePreferences").mockReturnValue({
       preferences: {

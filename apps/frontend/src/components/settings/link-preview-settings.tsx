@@ -54,7 +54,11 @@ function LimitControl({
           onValueChange={(next) => {
             setInvalid(false)
             if (next === "default") onSave(undefined)
-            else onSave(next === "all" ? "all" : 0)
+            else if (next === "all") onSave("all")
+            else {
+              const count = Number(draft)
+              onSave(Number.isSafeInteger(count) && count > 0 ? count : DEFAULT_LINK_PREVIEW_OPEN_COUNT)
+            }
           }}
         >
           <SelectTrigger id={id} className="w-36" aria-label={`${label} expansion`}>
