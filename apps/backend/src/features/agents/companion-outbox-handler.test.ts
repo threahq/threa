@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { AuthorTypes, CompanionModes, StreamTypes } from "@threahq/types"
-import type { ProcessResult } from "@threahq/backend-common"
-import * as cursorLockModule from "@threahq/backend-common"
+import { mockCursorLock } from "../../lib/outbox/cursor-lock.test-helper"
 import { OutboxRepository } from "../../lib/outbox"
 import { StreamRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
@@ -11,19 +10,6 @@ import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { AgentSessionRepository } from "./session-repository"
 import { SubagentRunRepository } from "../subagents"
 import { MESSAGE_METADATA_COMMAND_KEY } from "../messaging"
-
-function makeFakeCursorLock(onRun?: (result: ProcessResult) => void) {
-  return () => ({
-    run: mock(async (processor: (cursor: bigint, processedIds: bigint[]) => Promise<ProcessResult>) => {
-      const result = await processor(0n, [])
-      onRun?.(result)
-    }),
-  })
-}
-
-function mockCursorLock(onRun?: (result: ProcessResult) => void) {
-  ;(spyOn(cursorLockModule, "CursorLock") as any).mockImplementation(makeFakeCursorLock(onRun))
-}
 
 function makeStream(overrides: Partial<Record<string, any>>): any {
   return {
@@ -76,18 +62,14 @@ function mockUserMessageEvent(streamId: string, metadata: Record<string, string>
 }
 
 function createHandler() {
-  mockCursorLock()
+  const completed = mockCursorLock()
 
   const jobQueue = {
     send: mock(async () => "queue_1"),
   } as any
 
-  const handler = new CompanionHandler({} as any, jobQueue)
-  return { handler, jobQueue }
-}
-
-async function waitForDebounce(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 300))
+  const handler = new CompanionHandler({} as any, jobQueue, { debounceMs: 0, maxWaitMs: 0 })
+  return { handler, completed, jobQueue }
 }
 
 /** A thread hanging off a channel — a surface with no companion mode of its own. */
@@ -154,9 +136,9 @@ describe("CompanionHandler", () => {
     const personaLookup = spyOn(PersonaRepository, "findById").mockResolvedValue(activePersona)
     const sessionLookup = spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
 
-    const { handler, jobQueue } = createHandler()
+    const { handler, completed, jobQueue } = createHandler()
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     expect(personaLookup).toHaveBeenCalledWith(expect.anything(), "ws_1", "persona_scratchpad")
     expect(sessionLookup).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_thread_nested")
@@ -182,9 +164,9 @@ describe("CompanionHandler", () => {
     spyOn(PersonaRepository, "findById").mockResolvedValue(activePersona)
     spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
 
-    const { handler, jobQueue } = createHandler()
+    const { handler, completed, jobQueue } = createHandler()
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     expect({ streamLookups: findById.mock.calls.length, dispatches: jobQueue.send.mock.calls.length }).toEqual({
       streamLookups: 0,
@@ -220,9 +202,9 @@ describe("CompanionHandler", () => {
     spyOn(PersonaRepository, "findById").mockResolvedValue(activePersona)
     spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
 
-    const { handler, jobQueue } = createHandler()
+    const { handler, completed, jobQueue } = createHandler()
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     expect(jobQueue.send).toHaveBeenCalledWith(
       "persona.agent",
@@ -259,9 +241,9 @@ describe("CompanionHandler", () => {
     const personaSpy = spyOn(PersonaRepository, "findById").mockResolvedValue(activePersona)
     spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
 
-    const { handler, jobQueue } = createHandler()
+    const { handler, completed, jobQueue } = createHandler()
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     expect(jobQueue.send).not.toHaveBeenCalled()
     expect(personaSpy).not.toHaveBeenCalled()
@@ -275,9 +257,9 @@ describe("CompanionHandler", () => {
       makeStream({ id: "stream_e2e", companionMode: CompanionModes.ON, companionPersonaId: "persona_scratchpad" })
     )
 
-    const { handler, jobQueue } = createHandler()
+    const { handler, completed, jobQueue } = createHandler()
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     expect(streamSpy).not.toHaveBeenCalled()
     expect(jobQueue.send).not.toHaveBeenCalled()
@@ -296,9 +278,9 @@ describe("CompanionHandler", () => {
     spyOn(PersonaRepository, "findById").mockResolvedValue({ id: "persona_pinned", status: "active" } as any)
     spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
 
-    const { handler, jobQueue } = createHandler()
+    const { handler, completed, jobQueue } = createHandler()
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     expect(jobQueue.send).not.toHaveBeenCalled()
   })
@@ -321,9 +303,9 @@ describe("CompanionHandler", () => {
       agentId: "persona_system_ariadne",
     })
 
-    const { handler, jobQueue } = createHandler()
+    const { handler, completed, jobQueue } = createHandler()
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     expect(jobQueue.send).toHaveBeenCalledWith(
       "persona.agent",
@@ -353,9 +335,9 @@ describe("CompanionHandler", () => {
       status: "active",
     } as any)
 
-    const { handler, jobQueue } = createHandler()
+    const { handler, completed, jobQueue } = createHandler()
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     // Defaults resolve at CREATE and pin; dispatch never re-resolves them —
     // a legacy NULL pointer degrades to the built-in only.
@@ -401,9 +383,9 @@ describe("CompanionHandler", () => {
       status: "active",
     } as any)
 
-    const { handler, jobQueue } = createHandler()
+    const { handler, completed, jobQueue } = createHandler()
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     expect(systemDefault).toHaveBeenCalledWith({}, "ws_1")
     expect(jobQueue.send).toHaveBeenCalledWith(
@@ -429,9 +411,9 @@ describe("CompanionHandler", () => {
     spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
     const systemDefault = spyOn(PersonaRepository, "getSystemDefault")
 
-    const { handler, jobQueue } = createHandler()
+    const { handler, completed, jobQueue } = createHandler()
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     expect(systemDefault).not.toHaveBeenCalled()
     expect(jobQueue.send).toHaveBeenCalledWith(
@@ -464,9 +446,9 @@ describe("CompanionHandler", () => {
     })
     spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
 
-    const { handler, jobQueue } = createHandler()
+    const { handler, completed, jobQueue } = createHandler()
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     expect(jobQueue.send).not.toHaveBeenCalled()
   })
@@ -484,9 +466,9 @@ describe("CompanionHandler", () => {
     } as any)
     spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
 
-    const { handler, jobQueue } = createHandler()
+    const { handler, completed, jobQueue } = createHandler()
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     expect(jobQueue.send).toHaveBeenCalledWith("persona.agent", {
       workspaceId: "ws_1",
@@ -506,9 +488,9 @@ describe("CompanionHandler", () => {
     spyOn(SubagentRunRepository, "findActiveByThreadStreamId").mockResolvedValue(null)
     spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
 
-    const { handler, jobQueue } = createHandler()
+    const { handler, completed, jobQueue } = createHandler()
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     expect(jobQueue.send).not.toHaveBeenCalled()
   })
@@ -521,9 +503,9 @@ describe("CompanionHandler", () => {
     const lookup = spyOn(SubagentRunRepository, "findActiveByThreadStreamId").mockResolvedValue(null)
     spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
 
-    const { handler } = createHandler()
+    const { handler, completed } = createHandler()
     handler.handle()
-    await waitForDebounce()
+    await completed
 
     expect(lookup).not.toHaveBeenCalled()
   })
