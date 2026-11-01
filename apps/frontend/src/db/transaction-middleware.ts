@@ -3,10 +3,11 @@ import { defaultFeatureFlagValue } from "@threahq/types"
 import { NO_CAPTURE, getPerfCapture, type PerfCaptureLike } from "@/lib/perf/capture"
 
 /**
- * Stores holding what exists nowhere but this device: unsent messages and
- * operations, drafts, queued uploads, and the cache-ownership claim. A write
- * touching any of them keeps strict durability; everything else is a cache the
- * server can refill, so its writes may confirm before the disk flush.
+ * Stores holding what exists nowhere but this device: unsent messages,
+ * operations and doc edits, drafts, queued uploads, device keys, and the
+ * cache-ownership claim. A write touching any of them keeps strict durability.
+ * Everything else is a server-refillable cache or cosmetic UI state (composer
+ * target, collapse toggles), so its writes may confirm before the disk flush.
  */
 const DEVICE_ONLY_STORES: ReadonlySet<string> = new Set([
   "pendingMessages",
@@ -14,6 +15,8 @@ const DEVICE_ONLY_STORES: ReadonlySet<string> = new Set([
   "drafts",
   "draftScratchpads",
   "uploadJobs",
+  "docStates",
+  "e2eDeviceKeys",
   "cacheOwnership",
 ])
 
@@ -60,18 +63,18 @@ function observe(
   capture: PerfCaptureLike,
   observed: WeakMap<DBCoreTransaction, ObservedTransaction>
 ): void {
-  const target = tx as Partial<IDBTransaction>
-  if (typeof target.addEventListener !== "function") return
+  const target = tx as unknown as IDBTransaction
   const state: ObservedTransaction = { createdAt: performance.now(), firstSettledAt: null, lastSettledAt: null }
   observed.set(tx, state)
-  const finish = () => {
+  const finish = (event: Event) => {
     const endedAt = performance.now()
     const lifetime = endedAt - state.createdAt
     if (lifetime < MIN_RECORDED_MS) return
     capture.mark("idb.txStores", storeMask(storeOrder, stores))
     if (mode === "readwrite") {
       capture.mark("idb.writeTx", lifetime)
-      if (state.lastSettledAt !== null) capture.mark("idb.writeTxCommit", endedAt - state.lastSettledAt)
+      if (event.type === "complete" && state.lastSettledAt !== null)
+        capture.mark("idb.writeTxCommit", endedAt - state.lastSettledAt)
     } else {
       capture.mark("idb.readTx", lifetime)
       if (state.firstSettledAt !== null) capture.mark("idb.readTxWait", state.firstSettledAt - state.createdAt)

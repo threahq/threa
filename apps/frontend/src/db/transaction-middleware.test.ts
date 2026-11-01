@@ -52,6 +52,17 @@ describe("transaction durability", () => {
     db.close()
   })
 
+  it("keeps a write strict when any of its stores is device-only", async () => {
+    const { db, writes } = await openRecording()
+
+    await db.transaction("rw", db.syncCursors, db.docStates, async () => {
+      await db.syncCursors.put({ key: "cursor_1", value: "1", updatedAt: 1 } as never)
+    })
+
+    expect(writes).toEqual([{ stores: ["syncCursors", "docStates"], durability: "default" }])
+    db.close()
+  })
+
   it("leaves every write on the browser default when the flag is off", async () => {
     setIdbRelaxedDurability(false)
     const { db, writes } = await openRecording()
