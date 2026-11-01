@@ -28,11 +28,10 @@ export interface ModelSelection {
   options?: ModelOption[]
 }
 
-/** A setting a model offers, like its reasoning effort; `options` lists a select's values. */
+/** A setting a model offers, like its reasoning effort, with the values it takes. */
 export interface ModelOptionDescriptor {
   id: string
-  type: "select" | "boolean"
-  options?: Array<{ id: string }>
+  values?: Array<string | boolean>
 }
 
 export interface ThreadItem {

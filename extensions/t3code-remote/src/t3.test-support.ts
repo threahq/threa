@@ -29,7 +29,7 @@ interface ScriptStep {
 }
 
 function effortOption(id: string, levels: string[]): ModelOptionDescriptor {
-  return { id, type: "select", options: levels.map((level) => ({ id: level })) }
+  return { id, values: levels }
 }
 
 export const DECISION = { id: "dec_1" } as DecisionOutcome["decision"]
@@ -286,7 +286,10 @@ export function fakeT3() {
           models: [
             {
               id: "claude-opus-5-5",
-              options: [effortOption("effort", ["low", "medium", "high", "max"]), { id: "fastMode", type: "boolean" }],
+              options: [
+                effortOption("effort", ["low", "medium", "high", "max"]),
+                { id: "fastMode", values: [false, true] },
+              ],
             },
           ],
         },
