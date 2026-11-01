@@ -78,10 +78,12 @@ async function revealParent(page: Page, streamId: string, parentId: string) {
   await parentRow(page, parentId).evaluate((el) => el.scrollIntoView({ block: "center" }))
 }
 
+// Keyboard activation: lazy rows keep re-measuring around the centered parent, so a pointer click can land on
+// whatever slid under the link's last hit-tested point.
 async function openThread(page: Page, parentId: string, threadId: string) {
   await parentRow(page, parentId)
     .getByRole("link", { name: /1 reply/i })
-    .click()
+    .press("Enter")
   await expect(threadReply(page, threadId)).toBeVisible()
 }
 
