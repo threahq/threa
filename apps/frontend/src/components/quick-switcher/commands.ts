@@ -90,6 +90,8 @@ export interface CommandContext {
   currentStreamArchived?: boolean
   /** Open the stream settings dialog for a stream. */
   openStreamSettings: (streamId: string) => void
+  /** Open the Members overlay for a stream; absent when the stream in view has no member list. */
+  openStreamMembers?: (streamId: string) => void
   /** Open the destructive confirmation for archiving (or deleting a draft) a stream. */
   requestArchiveStream: (streamId: string) => void
   /** Restore an archived stream without a destructive confirmation. */

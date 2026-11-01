@@ -181,6 +181,23 @@ describe("StreamItem", () => {
     expect(openStreamSettings).toHaveBeenCalledWith("stream_general")
   })
 
+  it("opens the Members overlay from the action drawer", async () => {
+    renderWithRouter(
+      <StreamItem workspaceId="workspace_1" stream={createStream()} isActive={false} unreadCount={0} mentionCount={0} />
+    )
+
+    fireEvent.touchStart(screen.getByRole("link", { name: /general/i }), {
+      touches: [{ clientX: 16, clientY: 16 }],
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Members" }))
+
+    expect(screen.getByTestId("location-search")).toHaveTextContent("stream-members=stream_general")
+  })
+
   it("opens the attachment explorer scoped to the stream", async () => {
     const stream = createStream()
 
