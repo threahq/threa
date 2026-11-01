@@ -226,11 +226,12 @@ export function StreamPane({
     isDoc ? (stream?.rootStreamId ?? undefined) : undefined,
     pickArchiveOwner
   )
-  const { ancestorArchived } = useEffectiveArchived({
+  const docArchived = useEffectiveArchived({
     workspaceId,
     stream: isDoc ? stream : undefined,
     fallbackArchived: null,
   })
+  const { ancestorArchived } = docArchived
   const canChangeDocArchive = isDoc && offersArchiveToggle(currentUserId, docRow, docRoot, ancestorArchived)
   const docMove = useMoveDoc(
     workspaceId,
@@ -1074,6 +1075,7 @@ export function StreamPane({
                   docId={streamId}
                   canWrite={canWriteDoc}
                   view={docSync}
+                  archived={docArchived}
                   onUnarchive={canChangeDocArchive && isArchived ? handleUnarchive : undefined}
                 />
               ) : (

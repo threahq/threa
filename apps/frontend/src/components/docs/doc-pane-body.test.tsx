@@ -46,6 +46,7 @@ import * as operationQueueModule from "@/sync/operation-queue"
 import * as syncEngineModule from "@/sync/sync-engine"
 import { SocketEventGate } from "@/sync/socket-event-gate"
 import * as triggersModule from "@/components/editor/triggers"
+import type { EffectiveArchived } from "@/hooks/use-effective-archived"
 import { DocPaneBody } from "./doc-pane-body"
 import { useDocSync } from "./use-doc-sync"
 import { BLOCK_HIGHLIGHT_MS } from "@/components/editor/doc-block-landing-extension"
@@ -104,28 +105,25 @@ const IMAGE_DOC: JSONContent = {
   ],
 }
 
-function DocPane({ canWrite, onUnarchive }: { canWrite: boolean | null; onUnarchive?: () => void }) {
-  const view = useDocSync(WORKSPACE_ID, DOC_ID)
-  return (
-    <DocPaneBody workspaceId={WORKSPACE_ID} docId={DOC_ID} canWrite={canWrite} view={view} onUnarchive={onUnarchive} />
-  )
+const LIVE: EffectiveArchived = { ownArchived: false, ancestorArchived: false, sealedById: null, isArchived: false }
+
+interface ArchiveProps {
+  archived?: EffectiveArchived
+  onUnarchive?: () => void
 }
 
-function streamRow(overrides: Partial<CachedStream> & Pick<CachedStream, "id" | "type">): CachedStream {
-  return {
-    workspaceId: WORKSPACE_ID,
-    displayName: null,
-    slug: null,
-    description: null,
-    visibility: "public",
-    parentStreamId: null,
-    parentAnchorId: null,
-    rootStreamId: null,
-    archivedAt: null,
-    createdAt: "2026-06-22T11:00:00.000Z",
-    updatedAt: "2026-06-22T11:00:00.000Z",
-    ...overrides,
-  } as CachedStream
+function DocPane({ canWrite, archived = LIVE, onUnarchive }: { canWrite: boolean | null } & ArchiveProps) {
+  const view = useDocSync(WORKSPACE_ID, DOC_ID)
+  return (
+    <DocPaneBody
+      workspaceId={WORKSPACE_ID}
+      docId={DOC_ID}
+      canWrite={canWrite}
+      view={view}
+      archived={archived}
+      onUnarchive={onUnarchive}
+    />
+  )
 }
 
 describe("DocPaneBody", () => {
@@ -214,7 +212,7 @@ describe("DocPaneBody", () => {
   function tree(
     canWrite: boolean | null,
     wrap: (body: ReactNode) => ReactNode = (body) => body,
-    onUnarchive?: () => void
+    archive: ArchiveProps = {}
   ) {
     return (
       <QueryClientProvider client={queryClient}>
@@ -222,10 +220,7 @@ describe("DocPaneBody", () => {
           <MemoryRouter initialEntries={[`/w/${WORKSPACE_ID}`]}>
             <MediaGalleryProvider>
               <Routes>
-                <Route
-                  path="/w/:workspaceId"
-                  element={wrap(<DocPane canWrite={canWrite} onUnarchive={onUnarchive} />)}
-                />
+                <Route path="/w/:workspaceId" element={wrap(<DocPane canWrite={canWrite} {...archive} />)} />
               </Routes>
             </MediaGalleryProvider>
           </MemoryRouter>
@@ -239,19 +234,17 @@ describe("DocPaneBody", () => {
     {
       strict = false,
       wrap,
-      onUnarchive,
-    }: { strict?: boolean; wrap?: (body: ReactNode) => ReactNode; onUnarchive?: () => void } = {}
+      archive,
+    }: { strict?: boolean; wrap?: (body: ReactNode) => ReactNode; archive?: ArchiveProps } = {}
   ) {
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const view = render(
-      strict ? <StrictMode>{tree(canWrite, wrap, onUnarchive)}</StrictMode> : tree(canWrite, wrap, onUnarchive)
+      strict ? <StrictMode>{tree(canWrite, wrap, archive)}</StrictMode> : tree(canWrite, wrap, archive)
     )
     return {
       ...view,
       rerender: (next: boolean | null) =>
-        view.rerender(
-          strict ? <StrictMode>{tree(next, wrap, onUnarchive)}</StrictMode> : tree(next, wrap, onUnarchive)
-        ),
+        view.rerender(strict ? <StrictMode>{tree(next, wrap, archive)}</StrictMode> : tree(next, wrap, archive)),
     }
   }
 
@@ -420,11 +413,8 @@ describe("DocPaneBody", () => {
   })
 
   it("marks an archived doc with a pinned bar that unarchives it, and grays out its content", async () => {
-    await db.streams.put(
-      streamRow({ id: DOC_ID, type: StreamTypes.DOC, rootStreamId: DOC_ID, archivedAt: "2026-06-22T12:00:00.000Z" })
-    )
     const onUnarchive = vi.fn()
-    await mountLoaded(false, { onUnarchive })
+    await mountLoaded(false, { archive: { archived: { ...LIVE, ownArchived: true, isArchived: true }, onUnarchive } })
     await userEvent.click(await screen.findByRole("button", { name: "Unarchive" }))
     expect({
       label: screen.queryByText("Archived") !== null,
@@ -434,21 +424,19 @@ describe("DocPaneBody", () => {
   })
 
   it("names the archived stream a doc is archived with", async () => {
-    await db.streams.bulkPut([
-      streamRow({
-        id: "stream_host",
-        type: StreamTypes.CHANNEL,
-        slug: "launch",
-        archivedAt: "2026-06-22T12:00:00.000Z",
-      }),
-      streamRow({ id: DOC_ID, type: StreamTypes.DOC, parentStreamId: "stream_host", rootStreamId: "stream_host" }),
-    ])
-    await mountLoaded(false)
+    await db.streams.put({
+      id: "stream_host",
+      workspaceId: WORKSPACE_ID,
+      type: StreamTypes.CHANNEL,
+      slug: "launch",
+      archivedAt: "2026-06-22T12:00:00.000Z",
+    } as CachedStream)
+    const archived = { ...LIVE, ancestorArchived: true, sealedById: "stream_host", isArchived: true }
+    await mountLoaded(false, { archive: { archived } })
     expect(await screen.findByText("Archived with #launch")).toBeTruthy()
   })
 
   it("shows no archived bar on a live doc", async () => {
-    await db.streams.put(streamRow({ id: DOC_ID, type: StreamTypes.DOC, rootStreamId: DOC_ID }))
     await mountLoaded(true)
     expect({ bar: screen.queryByText(/^Archived/), grayed: proseMirror().closest(".grayscale") }).toEqual({
       bar: null,

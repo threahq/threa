@@ -39,7 +39,7 @@ import { usePreferences } from "@/contexts"
 import { useRevealReady } from "@/contexts/coordinated-loading-context"
 import { useMentionables, useMarkdownTriggerLookups } from "@/hooks/use-mentionables"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
-import { useEffectiveArchived } from "@/hooks/use-effective-archived"
+import type { EffectiveArchived } from "@/hooks/use-effective-archived"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { useAttachments } from "@/hooks/use-attachments"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -66,12 +66,10 @@ const DROPPABLE_TEXT_TYPES = ["text/plain", "text/uri-list", "text/html"]
 const DOC_SEND_MODE = { current: "cmdEnter" as const }
 const NO_SUBMIT = { current: () => {} }
 
-const pickDocRow = (row: CachedStream) => ({
+const pickDocHost = (row: CachedStream) => ({
   id: row.id,
   displayName: row.displayName,
   parentStreamId: row.parentStreamId,
-  rootStreamId: row.rootStreamId,
-  archivedAt: row.archivedAt,
 })
 
 interface DocPaneBodyProps {
@@ -80,12 +78,13 @@ interface DocPaneBodyProps {
   /** Null while the viewer's write access is unresolved. */
   canWrite: boolean | null
   view: DocSyncView
+  archived: EffectiveArchived
   /** Set only when the viewer may unarchive this doc. */
   onUnarchive?: () => void
 }
 
 /** A doc stream's collaborative editor, mounted only once the doc's state and the viewer's write access have loaded. */
-export function DocPaneBody({ workspaceId, docId, canWrite, view, onUnarchive }: DocPaneBodyProps) {
+export function DocPaneBody({ workspaceId, docId, canWrite, view, archived, onUnarchive }: DocPaneBodyProps) {
   useRevealReady(view.phase === "error" || (view.phase === "ready" && canWrite !== null))
 
   if (view.phase === "error") {
@@ -120,6 +119,7 @@ export function DocPaneBody({ workspaceId, docId, canWrite, view, onUnarchive }:
       awareness={view.presence.awareness}
       canWrite={canWrite}
       onBlur={view.flush}
+      archived={archived}
       onUnarchive={onUnarchive}
     />
   )
@@ -133,10 +133,21 @@ interface DocEditorProps {
   awareness: Awareness
   canWrite: boolean
   onBlur: () => void
+  archived: EffectiveArchived
   onUnarchive?: () => void
 }
 
-function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, onBlur, onUnarchive }: DocEditorProps) {
+function DocEditor({
+  workspaceId,
+  docId,
+  joinCount,
+  ydoc,
+  awareness,
+  canWrite,
+  onBlur,
+  archived,
+  onUnarchive,
+}: DocEditorProps) {
   const isMobile = useIsMobile()
   const isTouch = useInputMode() === "touch"
   const { openMedia } = useMediaGallery()
@@ -151,9 +162,7 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
   const { suggestionConfig: channelConfig, renderChannelList } = useChannelSuggestion()
   const { emojis, emojiWeights, toEmoji } = useWorkspaceEmoji(workspaceId)
   const { suggestionConfig: emojiConfig, renderEmojiGrid } = useEmojiSuggestion({ emojis, emojiWeights })
-  const docRow = useWorkspaceStream(workspaceId, docId, pickDocRow)
-  const docHost = docRow?.parentStreamId ?? undefined
-  const archived = useEffectiveArchived({ workspaceId, stream: docRow, fallbackArchived: null })
+  const docHost = useWorkspaceStream(workspaceId, docId, pickDocHost)?.parentStreamId ?? undefined
   const { suggestionConfig: docConfig, renderDocList } = useDocSuggestion(docHost, docId)
   const { docCreateOptions, renderDocCreateList } = useDocCreateSuggestion(docId, docId)
   const { uploadFile, imageCount } = useAttachments(workspaceId, { e2eEnabled: false })
