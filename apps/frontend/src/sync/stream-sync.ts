@@ -34,7 +34,8 @@ import { commandKeys } from "@/hooks/use-stream-commands"
 import { agentOutcomeKeys } from "@/hooks/use-agent-outcomes"
 import { refreshUnsharedReferencesIf } from "@/hooks/use-unshared-references"
 import type { QueryClient } from "@tanstack/react-query"
-import { commitCounterMutation } from "./catch-up-batch"
+import type { Table } from "dexie"
+import { commitCounterMutation, type LiveCommitBatch } from "./catch-up-batch"
 import { effectiveFreshness } from "./bootstrap-diff"
 import { mergeReadStateIntoBootstrapCache, putReadStateIdb, toStreamReadFrontier } from "./read-state"
 import {
@@ -1411,6 +1412,13 @@ export interface StreamSocketHandlerOptions {
    * be empty — the backfill is idempotent and self-quiets.
    */
   onSequenceGap?: (gap: { streamId: string; afterSequence: string }) => void
+  /**
+   * The engine's live write batch. The handlers' stream-scoped transactions run
+   * through it, so a background stream's events commit together once per window
+   * while an on-screen stream's still commit one by one as they arrive. Absent
+   * → every write runs in its own transaction.
+   */
+  liveWrites?: LiveCommitBatch
 }
 
 /**
@@ -1441,13 +1449,19 @@ function bindStreamSocketHandlers(
   workspaceId: string,
   streamId: string,
   queryClient: QueryClient,
-  sequenceGapListeners: ReadonlySet<SequenceGapListener>
+  sequenceGapListeners: ReadonlySet<SequenceGapListener>,
+  getLiveWrites: () => LiveCommitBatch | undefined
 ): () => void {
   // Registrants join and leave a shared binding, so the listener set is read at
   // dispatch time, never captured at bind time.
   const wantsSequenceGap = () => sequenceGapListeners.size > 0
   const notifySequenceGap = (gap: { streamId: string; afterSequence: string }) => {
     for (const listener of [...sequenceGapListeners]) listener(gap)
+  }
+
+  const persist = (tables: Table[], write: () => Promise<void>): Promise<void> => {
+    const liveWrites = getLiveWrites()
+    return liveWrites ? liveWrites.persistStreamWrite(streamId, tables, write) : db.transaction("rw", tables, write)
   }
 
   const handleMessageCreated = async (payload: MessageEventPayload) => {
@@ -1487,7 +1501,10 @@ function bindStreamSocketHandlers(
       let alreadyPersisted = false
       const stopEventTx = getPerfCapture().time("stream.eventTx")
       try {
-        await db.transaction("rw", [db.events, db.pendingMessages, db.slots], async () => {
+        await persist([db.events, db.pendingMessages, db.slots], async () => {
+          // A failed batch re-runs this body alone; start from a clean slate.
+          alreadyPersisted = false
+          gapAfterSequence = null
           // Merge the carrier's slots in the same transaction as the event. A
           // map-less carrier is a no-op; the merge is idempotent so it runs even
           // when the event already exists (heals a pre-slots row on replay).
@@ -1942,43 +1959,43 @@ function bindStreamSocketHandlers(
     const capture = getPerfCapture()
     capture.count("stream.appendStarted")
     const stop = capture.time("stream.appendTx")
-    await db
-      .transaction("rw", [db.events, db.pendingOperations], async () => {
-        const existing = await db.events.get([workspaceId, payload.event.id])
-        if (existing) return
-        // Tail-gap check must read the latest BEFORE this write advances it.
-        if (wantsSequenceGap()) {
-          gapAfterSequence = detectSequenceGap(await getPersistedTail(workspaceId, streamId), payload.event)
-        }
-        const commandClientId =
-          payload.event.eventType === "command_dispatched"
-            ? (payload.event.payload as { clientCommandId?: string }).clientCommandId
-            : undefined
-        const commandCandidate = commandClientId ? await db.events.get([workspaceId, commandClientId]) : undefined
-        const optimisticCommand = commandCandidate?._status != null ? commandCandidate : undefined
-        await db.events.put(cachedEvent)
-        await resolveUnknownOptimisticAnchors(workspaceId, streamId)
-        if (commandClientId && optimisticCommand) {
-          await bumpLaterOptimisticAnchors(
-            workspaceId,
-            streamId,
-            optimisticCommand._sequenceNum,
-            sequenceToNum(payload.event.sequence),
-            optimisticCommand.id
-          )
-          await db.events.bulkDelete([
-            [workspaceId, commandClientId],
-            [workspaceId, `${commandClientId}:failed`],
-          ])
-          const operations = await db.pendingOperations.where("type").equals("dispatch_command").toArray()
-          await db.pendingOperations.bulkDelete(
-            operations
-              .filter((operation) => operation.payload.optimisticEventId === commandClientId)
-              .map((operation) => operation.id)
-          )
-        }
-      })
-      .finally(stop)
+    await persist([db.events, db.pendingOperations], async () => {
+      // A failed batch re-runs this body alone; start from a clean slate.
+      gapAfterSequence = null
+      const existing = await db.events.get([workspaceId, payload.event.id])
+      if (existing) return
+      // Tail-gap check must read the latest BEFORE this write advances it.
+      if (wantsSequenceGap()) {
+        gapAfterSequence = detectSequenceGap(await getPersistedTail(workspaceId, streamId), payload.event)
+      }
+      const commandClientId =
+        payload.event.eventType === "command_dispatched"
+          ? (payload.event.payload as { clientCommandId?: string }).clientCommandId
+          : undefined
+      const commandCandidate = commandClientId ? await db.events.get([workspaceId, commandClientId]) : undefined
+      const optimisticCommand = commandCandidate?._status != null ? commandCandidate : undefined
+      await db.events.put(cachedEvent)
+      await resolveUnknownOptimisticAnchors(workspaceId, streamId)
+      if (commandClientId && optimisticCommand) {
+        await bumpLaterOptimisticAnchors(
+          workspaceId,
+          streamId,
+          optimisticCommand._sequenceNum,
+          sequenceToNum(payload.event.sequence),
+          optimisticCommand.id
+        )
+        await db.events.bulkDelete([
+          [workspaceId, commandClientId],
+          [workspaceId, `${commandClientId}:failed`],
+        ])
+        const operations = await db.pendingOperations.where("type").equals("dispatch_command").toArray()
+        await db.pendingOperations.bulkDelete(
+          operations
+            .filter((operation) => operation.payload.optimisticEventId === commandClientId)
+            .map((operation) => operation.id)
+        )
+      }
+    }).finally(stop)
     if (gapAfterSequence !== null) {
       notifySequenceGap({ streamId, afterSequence: gapAfterSequence })
     }
@@ -2177,16 +2194,25 @@ function bindStreamSocketHandlers(
     socket.on(event, guarded)
     cleanups.push(() => socket.off(event, guarded))
   }
+  // A handler writing this stream's rows outside `persist` first lets its
+  // deferred writes land, or an edit, reaction or move would miss a message
+  // still waiting in the window.
+  const afterDeferredWrites =
+    <P>(handler: (payload: P) => Promise<void>) =>
+    (payload: P): Promise<void> => {
+      const pending = getLiveWrites()?.settle(streamId)
+      return pending ? pending.then(() => handler(payload)) : handler(payload)
+    }
 
   on("message:created", handleMessageCreated)
-  on("message:edited", handleMessageEdited)
-  on("memo:updated", handleMemoUpdated)
-  on("message:deleted", handleMessageDeleted)
-  on("messages:moved", handleMessagesMoved)
-  on("reaction:added", handleReactionAdded)
-  on("reaction:removed", handleReactionRemoved)
-  on("stream:created", handleStreamCreated)
-  on("thread:updated", handleThreadUpdated)
+  on("message:edited", afterDeferredWrites(handleMessageEdited))
+  on("memo:updated", afterDeferredWrites(handleMemoUpdated))
+  on("message:deleted", afterDeferredWrites(handleMessageDeleted))
+  on("messages:moved", afterDeferredWrites(handleMessagesMoved))
+  on("reaction:added", afterDeferredWrites(handleReactionAdded))
+  on("reaction:removed", afterDeferredWrites(handleReactionRemoved))
+  on("stream:created", afterDeferredWrites(handleStreamCreated))
+  on("thread:updated", afterDeferredWrites(handleThreadUpdated))
   on("stream:member_joined", handleAppendEvent)
   on("stream:member_added", handleAppendEvent)
   on("stream:member_removed", handleAppendEvent)
@@ -2225,8 +2251,8 @@ function bindStreamSocketHandlers(
   on("stream:archived", handleAppendEvent)
   on("stream:unarchived", handleAppendEvent)
   on("stream:description_set", handleAppendEvent)
-  on("link_preview:ready", handleLinkPreviewReady)
-  on("pointer:invalidated", handlePointerInvalidated)
+  on("link_preview:ready", afterDeferredWrites(handleLinkPreviewReady))
+  on("pointer:invalidated", afterDeferredWrites(handlePointerInvalidated))
   on("bot_runtime:presence", handleBotRuntimePresence)
 
   return () => {
@@ -2239,6 +2265,10 @@ interface StreamRegistrationEntry {
   cleanup: () => void
   sequenceGapListeners: Set<SequenceGapListener>
   signature: { workspaceId: string; queryClient: QueryClient }
+  /** Outside the signature: a registrant without a batch (a draft panel's
+   *  hook mounted before the engine) shares the binding, and the first batch
+   *  any registrant brings serves it. */
+  liveWrites: LiveCommitBatch | undefined
 }
 
 // INV-9 exception: the whole point is one handler set shared by every
@@ -2299,14 +2329,25 @@ export function registerStreamSocketHandlers(
     }
     entry.refCount += 1
     if (listener) entry.sequenceGapListeners.add(listener)
+    entry.liveWrites ??= options?.liveWrites
   } else {
     const sequenceGapListeners = new Set<SequenceGapListener>(listener ? [listener] : [])
-    entry = {
+    const created: StreamRegistrationEntry = {
       refCount: 1,
-      cleanup: bindStreamSocketHandlers(socket, workspaceId, streamId, queryClient, sequenceGapListeners),
+      cleanup: () => {},
       sequenceGapListeners,
       signature,
+      liveWrites: options?.liveWrites,
     }
+    created.cleanup = bindStreamSocketHandlers(
+      socket,
+      workspaceId,
+      streamId,
+      queryClient,
+      sequenceGapListeners,
+      () => created.liveWrites
+    )
+    entry = created
     byStream.set(streamId, entry)
   }
 

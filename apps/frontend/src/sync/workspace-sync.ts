@@ -788,10 +788,17 @@ export function registerWorkspaceSocketHandlers(
   // immediate paths in the handlers below.
   const liveBatch = (): LiveCommitBatch | null => refs.getLiveCommitBatch?.() ?? null
 
-  const commitCounter = (mutate: CounterMutator): void => {
-    const batch = refs.getCatchUpBatch?.() ?? liveBatch()
-    if (batch) {
-      batch.applyCounter(mutate)
+  // `streamId` names the stream the mutation is about, so a background stream's
+  // counter waits for its live write window instead of committing on its own.
+  const commitCounter = (mutate: CounterMutator, streamId?: string): void => {
+    const catchUp = refs.getCatchUpBatch?.()
+    if (catchUp) {
+      catchUp.applyCounter(mutate)
+      return
+    }
+    const live = liveBatch()
+    if (live) {
+      live.applyCounter(mutate, streamId)
       return
     }
     commitCounterMutation(queryClient, workspaceId, mutate)
@@ -1580,11 +1587,13 @@ export function registerWorkspaceSocketHandlers(
       const currentMember = currentUser && getWorkspaceUsers(old).find((u) => u.workosUserId === currentUser.id)
       const isOwnMessage = Boolean(currentMember && payload.authorId === currentMember.id)
 
-      commitCounter((state) =>
-        applyStreamActivityOrdinal(state, payload.streamId, payload.messageOrdinal, {
-          isOwnMessage,
-          createdAt: payload.lastMessagePreview.createdAt,
-        })
+      commitCounter(
+        (state) =>
+          applyStreamActivityOrdinal(state, payload.streamId, payload.messageOrdinal, {
+            isOwnMessage,
+            createdAt: payload.lastMessagePreview.createdAt,
+          }),
+        payload.streamId
       )
     } finally {
       stopActivityApply()
@@ -1752,10 +1761,13 @@ export function registerWorkspaceSocketHandlers(
 
   const handleStreamMessageCount = async (payload: StreamMessageCountPayload) => {
     if (payload.workspaceId !== workspaceId) return
-    await mergeIntoStreamCaches(queryClient, workspaceId, payload.streamId, {
-      messageCount: payload.messageCount,
-      messageCountRevision: payload.messageCountRevision,
-    })
+    await mergeIntoStreamCaches(
+      queryClient,
+      workspaceId,
+      payload.streamId,
+      { messageCount: payload.messageCount, messageCountRevision: payload.messageCountRevision },
+      liveBatch()
+    )
   }
 
   const handleStreamMemberAdded = async (payload: {
@@ -2203,7 +2215,7 @@ export function registerWorkspaceSocketHandlers(
       isSelf: a.isSelf,
       emoji: a.emoji ?? null,
     }
-    commitCounter((state) => upsertActivity(state, held))
+    commitCounter((state) => upsertActivity(state, held), a.streamId)
 
     // Invalidate activity feed so it refetches when the page is mounted
     // (coalesced to one invalidation at flush during catch-up).
@@ -2883,7 +2895,8 @@ async function mergeIntoStreamCaches(
   queryClient: QueryClient,
   workspaceId: string,
   streamId: string,
-  incoming: Partial<Stream> | ((cached: Partial<Stream>) => Partial<Stream>)
+  incoming: Partial<Stream> | ((cached: Partial<Stream>) => Partial<Stream>),
+  liveWrites?: LiveCommitBatch | null
 ): Promise<void> {
   const merge = <T extends Partial<Stream>>(old: T): T =>
     mergeStreamByRevision(old, typeof incoming === "function" ? incoming(old) : incoming)
@@ -2905,11 +2918,14 @@ async function mergeIntoStreamCaches(
     return { ...old, streams: old.streams.map(mergeRow), archivedStreams: old.archivedStreams?.map(mergeRow) }
   })
 
-  await db.transaction("rw", [db.streams], async () => {
+  const write = async () => {
     const old = await db.streams.get([workspaceId, streamId])
     if (!old) return
     await db.streams.update([workspaceId, streamId], { ...merge(old), _cachedAt: Date.now() })
-  })
+  }
+  await (liveWrites
+    ? liveWrites.persistStreamWrite(streamId, [db.streams], write)
+    : db.transaction("rw", [db.streams], write))
 }
 
 export interface MovedDocSubtree {

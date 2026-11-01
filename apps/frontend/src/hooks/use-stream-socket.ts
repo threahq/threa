@@ -44,6 +44,7 @@ export function useStreamSocket(workspaceId: string, streamId: string, options?:
       onSequenceGap: syncEngine
         ? ({ streamId: gapStreamId, afterSequence }) => void syncEngine.backfillStreamGap(gapStreamId, afterSequence)
         : undefined,
+      liveWrites: syncEngine?.getLiveWrites(),
     })
 
     return () => {

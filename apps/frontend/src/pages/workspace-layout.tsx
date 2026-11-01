@@ -72,6 +72,7 @@ import { useAccountScope, useAuth } from "@/auth"
 import { useWorkspaceStreamsSelect, type CachedStream } from "@/stores/workspace-store"
 import { isLinkableStreamType } from "@/lib/streams"
 import { SyncEngine, SyncEngineContext } from "@/sync/sync-engine"
+import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { ReadCommitQueue, ReadCommitQueueContext } from "@/sync/read-commit-queue"
 import { useUnreadCounts } from "@/hooks/use-unread-counts"
 import { useOpenAside } from "@/hooks/use-open-aside"
@@ -313,6 +314,11 @@ export function WorkspaceSyncHandler({
   useEffect(() => {
     syncEngine.setVisibleStreamIds(visibleStreamIds)
   }, [syncEngine, visibleStreamIds])
+
+  const batchedLiveWrites = useFeatureFlag(workspaceId, "batchedLiveWrites") === "on"
+  useEffect(() => {
+    syncEngine.setBatchedLiveWrites(batchedLiveWrites)
+  }, [syncEngine, batchedLiveWrites])
 
   useEffect(() => {
     syncEngine.setCurrentUser(user)
