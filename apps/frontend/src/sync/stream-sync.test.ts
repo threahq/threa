@@ -2374,6 +2374,46 @@ describe("registerStreamSocketHandlers — bot_runtime:presence cache patching",
     cleanup()
   })
 
+  it("routes each event to its own stream through one listener, removed with the last registration", () => {
+    const queryClient = new QueryClient()
+    seedBootstrap(queryClient, "stream_route_a", { bot_1: makePresence() })
+    seedBootstrap(queryClient, "stream_route_b", { bot_1: makePresence() })
+    const listeners = new Set<(payload: unknown) => void>()
+    const socket = {
+      on(event: string, handler: (payload: unknown) => void) {
+        if (event === "bot_runtime:presence") listeners.add(handler)
+        return this
+      },
+      off(event: string, handler: (payload: unknown) => void) {
+        if (event === "bot_runtime:presence") listeners.delete(handler)
+        return this
+      },
+    } as unknown as Socket
+
+    const cleanupA = registerStreamSocketHandlers(socket, "ws_1", "stream_route_a", queryClient)
+    const cleanupB = registerStreamSocketHandlers(socket, "ws_1", "stream_route_b", queryClient)
+    expect(listeners.size).toBe(1)
+
+    const emit = (streamId: string, statusText: string) =>
+      listeners.forEach((listener) =>
+        listener({ workspaceId: "ws_1", streamId, botId: "bot_1", presence: makePresence({ statusText }) })
+      )
+    emit("stream_route_b", "Only B")
+    const statusOf = (streamId: string) =>
+      queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))?.botRuntimePresence?.bot_1
+        ?.statusText
+    expect({ a: statusOf("stream_route_a"), b: statusOf("stream_route_b") }).toEqual({
+      a: "Searching the workspace…",
+      b: "Only B",
+    })
+
+    cleanupB()
+    emit("stream_route_a", "Only A")
+    expect(statusOf("stream_route_a")).toBe("Only A")
+    cleanupA()
+    expect(listeners.size).toBe(0)
+  })
+
   // The stream's command set is computed server-side at bootstrap time, so a
   // runtime liveness edge (coming online / going away / instance swap) must
   // refetch it — otherwise a scratchpad opened before its agent connected keeps
