@@ -142,7 +142,7 @@ jobs:
         run: |
           db=threa_browser_test
           echo "PLAYWRIGHT_TEST_DB_NAME=$db" >> "$GITHUB_ENV"
-          for name in "$db" "${db}_cp" "${db}_r2"; do
+          for name in "$db" "${db}_cp"; do
             PGPASSWORD=threa psql -h localhost -p 5454 -U threa -d postgres -c "CREATE DATABASE ${name}"
           done
 
@@ -152,17 +152,12 @@ jobs:
           name: browser-test-frontend
           path: apps/frontend/dist/
 
-      # Only stream connections need the second region.
       - name: Run browser tests
         run: |
           selection=()
           [[ "$FILES" == all ]] || read -ra selection <<< "$FILES"
           shard="${{ matrix.shard }}/${{ strategy.job-total }}"
-          single_region=1
-          if bunx playwright test --list --shard="$shard" "${selection[@]}" | grep -q stream-connections; then
-            single_region=0
-          fi
-          PLAYWRIGHT_SINGLE_REGION=$single_region bun run test:browser -- --shard="$shard" "${selection[@]}"
+          bun run test:browser -- --shard="$shard" "${selection[@]}"
         env:
           CI: true
           PLAYWRIGHT_FRONTEND_PREBUILT: "true"

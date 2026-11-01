@@ -39,7 +39,7 @@ describe("CI policy", () => {
   })
 
   test("should run a changed spec without its whole area", () => {
-    expect(pr("tests/browser/doc-title.spec.ts").browser).toEqual(["tests/browser/doc-title.spec.ts", smokeSpec])
+    expect(pr("tests/browser/doc-chips.spec.ts").browser).toEqual(["tests/browser/doc-chips.spec.ts", smokeSpec])
   })
 
   test("should run the specs importing a changed browser test module", () => {
