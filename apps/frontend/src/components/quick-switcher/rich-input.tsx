@@ -21,6 +21,7 @@ import { InChannelFilterExtension } from "@/components/editor/triggers/in-channe
 import { StatusFilterExtension } from "@/components/editor/triggers/status-filter-extension"
 import { SearchMentionExtension } from "@/components/editor/triggers/search-mention-extension"
 import { SearchChannelExtension } from "@/components/editor/triggers/search-channel-extension"
+import { AndroidSpellcheckKeyboard } from "@/components/editor/android-spellcheck-keyboard"
 import { cn, escapeHtml } from "@/lib/utils"
 
 /**
@@ -247,6 +248,7 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
       InUserFilterExtension.configure({ suggestion: inUserFilterConfig }),
       InChannelFilterExtension.configure({ suggestion: inChannelFilterConfig }),
       StatusFilterExtension.configure({ suggestion: statusFilterConfig }),
+      AndroidSpellcheckKeyboard,
     ],
     // Note: We intentionally exclude suggestion configs from deps - they're stable refs
     // and including them causes unnecessary editor recreation
