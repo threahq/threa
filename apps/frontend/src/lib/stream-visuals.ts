@@ -1,4 +1,4 @@
-import { Bell, FileEdit, Hash, MessageSquareText, User, UsersRound, type LucideIcon } from "lucide-react"
+import { Bell, File, FileEdit, Hash, MessageSquareText, User, UsersRound, type LucideIcon } from "lucide-react"
 import { StreamTypes, type Visibility } from "@threahq/types"
 
 export const GuestPublicIcon = UsersRound
@@ -33,6 +33,8 @@ export function streamTypeVisual(type: string | undefined): StreamTypeVisual {
       return { Icon: MessageSquareText, tileClassName: "bg-muted text-muted-foreground" }
     case StreamTypes.DM:
       return { Icon: User, tileClassName: "bg-muted text-muted-foreground" }
+    case StreamTypes.DOC:
+      return { Icon: File, tileClassName: "bg-primary/10 text-primary" }
     default:
       return { Icon: MessageSquareText, tileClassName: "bg-muted text-muted-foreground" }
   }
