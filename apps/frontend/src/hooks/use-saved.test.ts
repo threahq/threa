@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { renderHook, act, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react-query"
 import { createElement, type ReactNode } from "react"
@@ -8,7 +8,15 @@ import { getActiveDb, setActiveDb, ThreaDatabase } from "@/db/database"
 import { bumpAccountGeneration } from "@/db/event-writes"
 import * as contextsModule from "@/contexts"
 import * as syncEngineModule from "@/sync/sync-engine"
-import { persistSavedRows, replaceSavedPage, savedKeys, useSavedList } from "./use-saved"
+import { activeWorkspaceSubscriptionCount, resetWorkspaceTableRegistry } from "@/stores/workspace-table-registry"
+import {
+  persistSavedRows,
+  removeSavedRow,
+  replaceSavedPage,
+  savedKeys,
+  useSavedForMessage,
+  useSavedList,
+} from "./use-saved"
 
 const WORKSPACE_ID = "ws_test"
 
@@ -354,5 +362,64 @@ describe("persistSavedRows -> _reminderFiredAtMs", () => {
       .count()
 
     expect(count).toBe(1)
+  })
+})
+
+describe("useSavedForMessage", () => {
+  beforeEach(async () => {
+    resetWorkspaceTableRegistry()
+    await db.savedMessages.clear()
+  })
+
+  afterEach(() => {
+    resetWorkspaceTableRegistry()
+  })
+
+  function renderRow(workspaceId: string, messageId: string | null) {
+    let renders = 0
+    const hook = renderHook(() => {
+      renders += 1
+      return useSavedForMessage(workspaceId, messageId)
+    })
+    return { hook, renders: () => renders }
+  }
+
+  it("should update only the row whose message is saved, updated or unsaved", async () => {
+    await persistSavedRows(WORKSPACE_ID, [makeView({ id: "saved_b", messageId: "msg_b" })])
+    const rowA = renderRow(WORKSPACE_ID, "msg_a")
+    const rowB = renderRow(WORKSPACE_ID, "msg_b")
+    await waitFor(() => expect(rowB.hook.result.current?.id).toBe("saved_b"))
+    const savedB = rowB.hook.result.current
+    const rowBRenders = rowB.renders()
+
+    await persistSavedRows(WORKSPACE_ID, [makeView({ id: "saved_a", messageId: "msg_a" })])
+    await waitFor(() => expect(rowA.hook.result.current?.id).toBe("saved_a"))
+    expect({ savedB: rowB.hook.result.current, renders: rowB.renders() }).toEqual({ savedB, renders: rowBRenders })
+
+    await persistSavedRows(WORKSPACE_ID, [makeView({ id: "saved_a", messageId: "msg_a", status: "done" })])
+    await waitFor(() => expect(rowA.hook.result.current?.status).toBe("done"))
+
+    await removeSavedRow("saved_a")
+    await waitFor(() => expect(rowA.hook.result.current).toBeNull())
+    expect(rowB.hook.result.current).toBe(savedB)
+  })
+
+  it("should not answer for another workspace's saved copy of the same message", async () => {
+    await persistSavedRows("ws_other", [
+      makeView({ id: "saved_other", messageId: "msg_shared", workspaceId: "ws_other" }),
+    ])
+    const inOther = renderRow("ws_other", "msg_shared")
+    const inThis = renderRow(WORKSPACE_ID, "msg_shared")
+
+    await waitFor(() => expect(inOther.hook.result.current?.id).toBe("saved_other"))
+    expect(inThis.hook.result.current).toBeNull()
+  })
+
+  it("should open no subscription for a row with no message", () => {
+    const { hook } = renderRow(WORKSPACE_ID, null)
+    expect({ value: hook.result.current, subscriptions: activeWorkspaceSubscriptionCount() }).toEqual({
+      value: null,
+      subscriptions: 0,
+    })
   })
 })

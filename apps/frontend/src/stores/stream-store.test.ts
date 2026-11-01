@@ -629,12 +629,7 @@ describe("useStreamFromStore", () => {
     return unsubscribe
   }
 
-  /**
-   * Wait until a render counter stops moving. The fallback live query emits its
-   * "registry owns this" marker asynchronously after mount, so a count sampled
-   * right after the first resolve can still take one more render that has
-   * nothing to do with the write under test.
-   */
+  /** Wait until a render counter stops moving, so a later count measures only the write under test. */
   async function settle(count: () => number): Promise<void> {
     let last = -1
     await waitFor(() => {
@@ -670,18 +665,42 @@ describe("useStreamFromStore", () => {
     expect(get).not.toHaveBeenCalled()
   })
 
-  it("a stream row absent from the registry falls back to the per-key read", async () => {
-    await db.streams.put(makeStream("stream_registry", REGISTRY_WORKSPACE))
+  it("a thread row written after its reader mounted resolves and stays live without a per-key read", async () => {
+    await db.streams.put(makeStream("stream_root", REGISTRY_WORKSPACE))
     releaseRegistry = await primeRegistry(REGISTRY_WORKSPACE)
-    // A socket write that landed before its workspace bootstrapped: in IDB, in no
-    // registry entry.
-    await db.streams.put(makeStream("stream_socket", OTHER_WORKSPACE))
     const get = vi.spyOn(db.streams, "get")
+
+    const { result } = renderHook(() => useStreamFromStore(REGISTRY_WORKSPACE, "stream_thread"))
+    expect(result.current).toBeUndefined()
+
+    // A socket write landing after the workspace bootstrapped, for a stream no
+    // sidebar row holds.
+    await db.streams.put(
+      makeStream("stream_thread", REGISTRY_WORKSPACE, {
+        type: "thread",
+        rootStreamId: "stream_root",
+        displayName: "first",
+      })
+    )
+    await waitFor(() => expect(result.current?.displayName).toBe("first"))
+
+    await db.streams.put(
+      makeStream("stream_thread", REGISTRY_WORKSPACE, {
+        type: "thread",
+        rootStreamId: "stream_root",
+        displayName: "renamed",
+      })
+    )
+    await waitFor(() => expect(result.current?.displayName).toBe("renamed"))
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  it("a reader in a workspace nothing else holds brings up that workspace's rows", async () => {
+    await db.streams.put(makeStream("stream_socket", OTHER_WORKSPACE))
 
     const { result } = renderHook(() => useStreamFromStore(OTHER_WORKSPACE, "stream_socket"))
 
     await waitFor(() => expect(result.current?.id).toBe("stream_socket"))
-    expect(get).toHaveBeenCalledWith([OTHER_WORKSPACE, "stream_socket"])
   })
 
   it("each workspace reads its own row when a copied stream id exists in both", async () => {
@@ -811,9 +830,6 @@ describe("useStreamFromStore", () => {
     })
     await waitFor(() => expect(result.current?.id).toBe("stream_a"))
 
-    // Pin the fallback read open: the removal must resolve to `undefined` off the
-    // registry emission alone, not by waiting for a per-key re-read.
-    vi.spyOn(db.streams, "get").mockReturnValue(new Promise(() => {}) as never)
     await db.streams.delete([REGISTRY_WORKSPACE, "stream_a"])
 
     await waitFor(() => expect(result.current).toBeUndefined())

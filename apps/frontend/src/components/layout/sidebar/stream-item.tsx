@@ -20,8 +20,6 @@ import {
 import { Link } from "react-router-dom"
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { LabelPicker } from "@/components/labels/label-picker"
-import { useExplorerUrlState } from "@/components/attachment-explorer"
-import { useOutcomesUrlState } from "@/components/agent-outcomes"
 import { SectionPicker } from "./section-picker"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { MentionIndicator } from "@/components/mention-indicator"
@@ -30,12 +28,12 @@ import { RelativeTime } from "@/components/relative-time"
 import { isDraftId, useActors } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useInputMode } from "@/hooks/use-input-mode"
-import { useSidebar } from "@/contexts"
+import { useSidebarControls } from "@/contexts"
 import { useAgentActivityForStream } from "@/stores/agent-activity-store"
 import { releaseSidebarThread } from "@/stores/sidebar-held-threads-store"
 import { useActiveCallsForStream } from "@/stores/active-calls-store"
-import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
-import { streamHasMembers, useStreamMembers } from "@/components/stream-settings/use-stream-members"
+import { streamHasMembers } from "@/components/stream-settings/use-stream-members"
+import { useSidebarRowOpeners } from "./sidebar-row-openers"
 import { cn } from "@/lib/utils"
 import { streamLabel } from "@/lib/streams"
 import { GuestPublicIcon, streamTypeVisual, VISIBILITY_LABELS } from "@/lib/stream-visuals"
@@ -471,12 +469,9 @@ export function StreamItem({
 }: StreamItemProps) {
   const { getActorName, getActorAvatar } = useActors(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
-  const { openStreamSettings } = useStreamSettings()
-  const { openStreamMembers } = useStreamMembers()
+  const { openStreamSettings, openStreamMembers, openExplorer, openOutcomes } = useSidebarRowOpeners()
   const hasMembers = streamHasMembers(stream)
-  const { open: openExplorer } = useExplorerUrlState()
-  const { open: openOutcomes } = useOutcomesUrlState()
-  const { collapseOnMobile } = useSidebar()
+  const { collapseOnMobile } = useSidebarControls()
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [sectionPickerOpen, setSectionPickerOpen] = useState(false)
   const itemRef = useRef<HTMLAnchorElement>(null)

@@ -1,6 +1,6 @@
 import { act, useState } from "react"
 import { describe, expect, it, afterEach, beforeEach, vi } from "vitest"
-import { MemoryRouter } from "react-router-dom"
+import { MemoryRouter, RouterProvider, createMemoryRouter, useNavigate } from "react-router-dom"
 import { fireEvent, render, screen } from "@/test"
 import { StreamTypes, Visibilities, MAX_BOARD_SCOPE_STREAMS } from "@threahq/types"
 import { SidebarStreamList } from "./sidebar-stream-list"
@@ -9,6 +9,7 @@ import type { SidebarBoardMode } from "./board-sidebar-mode"
 import type { ResolvedSection } from "./resolve-sections"
 import type { SectionViewChange } from "./section-view-options"
 import * as contextsModule from "@/contexts"
+import * as hooksModule from "@/hooks"
 import * as deviceModule from "@/lib/device"
 import type { CollapseState } from "@/contexts"
 
@@ -61,6 +62,10 @@ function stubSidebarContexts() {
     collapseOnMobile: vi.fn(),
     registerOpenMenu: vi.fn(() => () => {}),
   } as unknown as ReturnType<typeof contextsModule.useSidebar>)
+  vi.spyOn(contextsModule, "useSidebarControls").mockReturnValue({
+    collapseOnMobile: vi.fn(),
+    registerOpenMenu: vi.fn(() => () => {}),
+  })
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
     preferences: { keyboardShortcuts: {} },
   } as unknown as ReturnType<typeof contextsModule.usePreferences>)
@@ -646,5 +651,79 @@ describe("SidebarStreamList — doc creator", () => {
 
   it("should offer no doc creator when the viewer cannot create top-level docs", () => {
     expect(renderDocs()).toEqual([])
+  })
+})
+
+describe("SidebarStreamList — switching the active stream", () => {
+  beforeEach(() => {
+    stubSidebarContexts()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("should move the highlight by re-rendering only the rows whose active state changed", () => {
+    const streams = ["stream_a", "stream_b", "stream_c", "stream_d"].map(makeStream)
+    const section = {
+      section: {
+        id: "custom:sec_1",
+        spec: { kind: "custom", sectionId: "sec_1", name: "Reading list", streamIds: streams.map((s) => s.id) },
+      },
+      items: streams,
+    } as unknown as ResolvedSection
+    // Every StreamItem render reads its actors once, so the calls count row renders.
+    const rowRenders = vi.spyOn(hooksModule, "useActors")
+    let switchTo: (streamId: string) => void = () => {}
+
+    function Harness() {
+      const navigate = useNavigate()
+      const [activeStreamId, setActiveStreamId] = useState("stream_a")
+      switchTo = (streamId) => {
+        navigate(`/w/workspace_1/s/${streamId}`)
+        setActiveStreamId(streamId)
+      }
+      return (
+        <SidebarStreamList
+          workspaceId="workspace_1"
+          activeStreamId={activeStreamId}
+          hasError={false}
+          hasUserStreams
+          processedStreams={streams}
+          resolvedSections={[section]}
+          labelsById={new Map()}
+          getUnreadCount={() => 0}
+          getMentionCount={() => 0}
+          getSectionState={() => "open"}
+          toggleSectionState={vi.fn()}
+          onCreateScratchpad={vi.fn()}
+          onCreateChannel={vi.fn()}
+          onFileStreamToSection={vi.fn()}
+          onAssignStreamLabel={vi.fn()}
+          onStreamMovedFromLabel={vi.fn()}
+          onSectionViewChange={vi.fn()}
+          homeHintFor={() => null}
+          boardMode={null}
+          onClearInbox={vi.fn()}
+        />
+      )
+    }
+
+    const router = createMemoryRouter([{ path: "*", element: <Harness /> }], {
+      initialEntries: ["/w/workspace_1/s/stream_a"],
+    })
+    render(<RouterProvider router={router} />)
+    rowRenders.mockClear()
+
+    act(() => switchTo("stream_c"))
+
+    const current = screen
+      .getAllByRole("link")
+      .filter((link) => link.getAttribute("aria-current") === "page")
+      .map((link) => link.getAttribute("href"))
+    expect({ current, rowRenders: rowRenders.mock.calls.length }).toEqual({
+      current: ["/w/workspace_1/s/stream_c"],
+      rowRenders: 2,
+    })
   })
 })

@@ -11,8 +11,8 @@ export const RENDER_BUDGETS = {
   "message in another stream": { baseline: 234, tolerance: 0.25 },
   "switch stream (warm)": { baseline: 4144, tolerance: 0.1 },
   "drop a pane beside the open stream": { baseline: 5400, tolerance: 0.1 },
-  "drop a pane: renders before the glide's first frame": { baseline: 1713, tolerance: 0.1 },
-  "close the dropped pane": { baseline: 2055, tolerance: 0.15 },
+  "drop a pane: renders before the glide's first frame": { baseline: 1439, tolerance: 0.1 },
+  "close the dropped pane": { baseline: 1742, tolerance: 0.15 },
 } as const
 
 export type RenderBudgetAction = keyof typeof RENDER_BUDGETS

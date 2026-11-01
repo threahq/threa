@@ -1,9 +1,10 @@
-import { useMemo } from "react"
+import { useCallback, useMemo, useSyncExternalStore } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useSavedService } from "@/contexts"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useBatchedValue } from "@/stores/apply-window"
+import { getWorkspaceTableSnapshot, subscribeWorkspaceTable } from "@/stores/workspace-table-registry"
 import { db, getActiveDb, type CachedSavedMessage, type AccountWriteContext } from "@/db"
 import { getAccountGeneration } from "@/db/event-writes"
 import type {
@@ -196,26 +197,52 @@ export function useSavedList(workspaceId: string, status: SavedStatus) {
   }
 }
 
+const savedViews = new WeakMap<CachedSavedMessage, SavedMessageView>()
+const savedByMessageId = new WeakMap<readonly CachedSavedMessage[], Map<string, SavedMessageView>>()
+
 /**
- * Cache-only observer for "is this message saved?" — reads from the IDB
- * messageId index so hover buttons and context menus don't trigger extra
- * fetches.
+ * The workspace's saved rows indexed by message, built once per registry
+ * snapshot. Views are kept per cached row, so an unchanged row hands back the
+ * same object across snapshots and its readers skip the re-render. The first
+ * row per message wins, in primary-key order — what the old per-message index
+ * read's `.first()` returned.
  */
-export function useSavedForMessage(workspaceId: string, messageId: string | null) {
-  return useLiveQuery(
-    async () => {
-      if (!workspaceId || !messageId) return null
-      const row = await db.savedMessages
-        .where("messageId")
-        .equals(messageId)
-        .and((r) => r.workspaceId === workspaceId)
-        .first()
-      return row ? fromCached(row) : null
-    },
-    [workspaceId, messageId],
-    // Seeded with the unsaved answer, so a row's first emission re-renders nothing.
-    null
+function savedForMessageIn(rows: readonly CachedSavedMessage[], messageId: string): SavedMessageView | null {
+  let index = savedByMessageId.get(rows)
+  if (!index) {
+    index = new Map()
+    for (const row of rows) {
+      if (!row.messageId || index.has(row.messageId)) continue
+      let view = savedViews.get(row)
+      if (!view) {
+        view = fromCached(row)
+        savedViews.set(row, view)
+      }
+      index.set(row.messageId, view)
+    }
+    savedByMessageId.set(rows, index)
+  }
+  return index.get(messageId) ?? null
+}
+
+/**
+ * Cache-only observer for "is this message saved?" — hover buttons and context
+ * menus read it without fetching. Every reader shares the workspace's one
+ * saved-rows registry entry: a timeline mounts this per row, and a per-row
+ * Dexie query each woke on every IDB commit in the app.
+ */
+export function useSavedForMessage(workspaceId: string, messageId: string | null): SavedMessageView | null {
+  const enabled = Boolean(workspaceId && messageId)
+  const subscribe = useCallback(
+    (listener: () => void) => (enabled ? subscribeWorkspaceTable(workspaceId, "savedMessages", listener) : () => {}),
+    [workspaceId, enabled]
   )
+  const getSnapshot = useCallback(() => {
+    if (!workspaceId || !messageId) return null
+    const rows = getWorkspaceTableSnapshot(workspaceId, "savedMessages")
+    return rows ? savedForMessageIn(rows, messageId) : null
+  }, [workspaceId, messageId])
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }
 
 export function useSaveMessage(workspaceId: string) {

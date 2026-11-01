@@ -6,7 +6,7 @@ import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
 import { getDraftPromotionEvents, releaseDraftPromotionEvents } from "@/lib/draft-promotions"
 import { getPerfCapture, NO_CAPTURE } from "@/lib/perf/capture"
 import { trackPendingRead } from "./apply-window"
-import { getWorkspaceTableRow, hasResolvedSharedEntry, subscribeWorkspaceTableRow } from "./workspace-table-registry"
+import { getWorkspaceTableRow, subscribeWorkspaceTableRow } from "./workspace-table-registry"
 
 /**
  * Cap the number of events loaded from IDB per stream when no sequence floor
@@ -554,40 +554,21 @@ export function shareEventIdentities(prev: CachedEvent[] | null, next: CachedEve
 }
 
 /**
- * The fallback query's answer when the registry owns the id and no read was made.
- * A module constant, so it never re-renders a consumer by identity; every other
- * answer is exactly what `db.streams.get` returned, `undefined` for absent
- * included — the fallback path's observable behaviour is byte-for-byte today's.
- */
-const REGISTRY_OWNED_ROW = Symbol("registry-owned-stream-row")
-type StreamRowFallback = CachedStream | typeof REGISTRY_OWNED_ROW | undefined
-
-/**
- * Reactively read a single stream of one workspace from IndexedDB.
+ * Reactively read a single stream of one workspace.
  *
- * Fast path: when the shared workspace-streams registry already holds the id,
- * the read is a Map hit woken by a per-key subscription. The fallback
- * `useLiveQuery` below still mounts on this path (conditional hooks are banned),
- * so its observable and global `storagemutated` listener are still per instance;
- * what the fast path removes is the per-key IDB `get` and its re-run on every
- * streams write. This hook is mounted four times per message row, so that read
- * ran ~4× the rendered window on every write before.
- *
- * Fallback (D7, fail-open): an id the workspace's entry does not hold — a socket
- * write that landed before bootstrap — resolves through the per-key
- * `db.streams.get`. Both paths mount the same hooks unconditionally; only the
- * work inside them differs.
+ * The row comes from the shared workspace-streams registry entry: a Map hit,
+ * woken by a per-key listener, so a write to row X wakes only X's readers and
+ * mounting a reader opens no Dexie subscription of its own. The reader holds
+ * the entry itself, so an id the workspace has not written yet (a thread, a
+ * socket write landing before bootstrap) resolves when the entry's whole-table
+ * query picks it up. `undefined` means not in this workspace's rows, or the
+ * entry's first read is still in flight — `resolveDecryptContext` reads it as
+ * "hold, never attempt".
  *
  * `pick` narrows the read to the fields a caller uses: the row is rewritten on
  * every message in its stream, so a per-row reader holding the whole row
  * re-renders the entire timeline window each time. A picked read re-renders
  * only when a picked field changes, compared deeply.
- *
- * `undefined` means "genuinely not resolved anywhere". `resolveDecryptContext`
- * reads that as "hold, never attempt", and a decrypt attempted against an
- * unhydrated row caches its failure forever — so a value already resolved on
- * either path is held across an ownership change rather than flickering to
- * `undefined`.
  */
 export function useStreamFromStore(
   workspaceId: string | undefined,
@@ -603,8 +584,6 @@ export function useStreamFromStore<T extends object>(
   streamId: string | undefined,
   pick?: (row: CachedStream) => T
 ): CachedStream | T | undefined {
-  const registryHolds = Boolean(workspaceId && streamId && getWorkspaceTableRow(workspaceId, "streams", streamId))
-
   const pickedRef = useRef<T | null>(null)
   const view = useCallback(
     (row: CachedStream): CachedStream | T => {
@@ -618,63 +597,14 @@ export function useStreamFromStore<T extends object>(
 
   const subscribe = useCallback(
     (onStoreChange: () => void) => {
-      if (!workspaceId || !streamId || !registryHolds) return () => {}
+      if (!workspaceId || !streamId) return () => {}
       return subscribeWorkspaceTableRow(workspaceId, "streams", streamId, onStoreChange)
     },
-    [workspaceId, streamId, registryHolds]
+    [workspaceId, streamId]
   )
-  const readRegistryRow = useCallback(() => {
-    const row =
-      workspaceId && streamId && registryHolds ? getWorkspaceTableRow(workspaceId, "streams", streamId) : undefined
+  const readRow = useCallback(() => {
+    const row = workspaceId && streamId ? getWorkspaceTableRow(workspaceId, "streams", streamId) : undefined
     return row && view(row)
-  }, [workspaceId, streamId, registryHolds, view])
-  const registryRow = useSyncExternalStore(subscribe, readRegistryRow, readRegistryRow)
-
-  const fallback = useLiveQuery<StreamRowFallback, StreamRowFallback>(
-    async () => {
-      if (!workspaceId || !streamId) return undefined
-      // Re-checked inside the query (not read off the render) so a registry that
-      // resolved between render and run still spares the read.
-      if (getWorkspaceTableRow(workspaceId, "streams", streamId)) return REGISTRY_OWNED_ROW
-      return await db.streams.get([workspaceId, streamId])
-    },
-    [workspaceId, streamId, registryHolds],
-    // Seeded with the marker while the registry owns the id: the query's first
-    // emission is then a no-op instead of a second render of every reader.
-    registryHolds ? REGISTRY_OWNED_ROW : undefined
-  )
-
-  const lastResolvedRef = useRef<{ workspaceId: string; streamId: string; row: CachedStream | T } | null>(null)
-  const lastOwnerRef = useRef<{ workspaceId: string; streamId: string } | null>(null)
-  if (!workspaceId || !streamId) return undefined
-  const held = lastResolvedRef.current
-  if (held && (held.workspaceId !== workspaceId || held.streamId !== streamId)) lastResolvedRef.current = null
-  const owner = lastOwnerRef.current
-  if (owner && (owner.workspaceId !== workspaceId || owner.streamId !== streamId)) lastOwnerRef.current = null
-  if (registryRow) {
-    lastResolvedRef.current = { workspaceId, streamId, row: registryRow }
-    lastOwnerRef.current = { workspaceId, streamId }
-    return registryRow
-  }
-  if (lastOwnerRef.current && !registryHolds && hasResolvedSharedEntry(workspaceId, "streams")) {
-    // That entry is still live and resolved and no longer holds the id: a real
-    // removal, not the ownership drop the hold-over below exists for. Drop the
-    // held row so the sentinel yields `undefined` on this render instead of
-    // serving a deleted stream until the fallback query re-emits.
-    lastResolvedRef.current = null
-    lastOwnerRef.current = null
-  }
-  if (fallback === REGISTRY_OWNED_ROW) {
-    // The registry has dropped the id (teardown, workspace switch) and the query
-    // has not re-emitted yet — `useLiveQuery` keeps the previous result across a
-    // deps change, so this marker is exactly that window. Hold the last resolved
-    // row rather than flicker to `undefined`, which `resolveDecryptContext` would
-    // read as "unhydrated" and whose failed decrypt is cached forever.
-    return lastResolvedRef.current?.row
-  }
-  // The same deps-change window can still carry the previous key's row.
-  if (fallback && (fallback.workspaceId !== workspaceId || fallback.id !== streamId)) return undefined
-  const resolved = fallback && view(fallback)
-  lastResolvedRef.current = resolved ? { workspaceId, streamId, row: resolved } : null
-  return resolved
+  }, [workspaceId, streamId, view])
+  return useSyncExternalStore(subscribe, readRow, readRow)
 }

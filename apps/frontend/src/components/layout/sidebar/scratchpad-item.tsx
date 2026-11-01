@@ -20,17 +20,15 @@ import {
 } from "lucide-react"
 import { Link, useNavigate } from "react-router-dom"
 import { LabelPicker } from "@/components/labels/label-picker"
-import { useExplorerUrlState } from "@/components/attachment-explorer"
-import { useOutcomesUrlState } from "@/components/agent-outcomes"
 import { SectionPicker } from "./section-picker"
 import { MentionIndicator } from "@/components/mention-indicator"
 import { DraftIndicator } from "@/components/draft-indicator"
 import { isDraftId, useActors, useArchiveStream, useDraftScratchpads } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useInputMode } from "@/hooks/use-input-mode"
-import { useSidebar } from "@/contexts"
-import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
-import { streamHasMembers, useStreamMembers } from "@/components/stream-settings/use-stream-members"
+import { useSidebarControls } from "@/contexts"
+import { streamHasMembers } from "@/components/stream-settings/use-stream-members"
+import { useSidebarRowOpeners } from "./sidebar-row-openers"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { streamFallbackLabel } from "@/lib/streams"
@@ -110,11 +108,8 @@ export function ScratchpadItem({
   const { deleteScratchpad } = useDraftScratchpads(workspaceId)
   const { getActorName } = useActors(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
-  const { collapseOnMobile } = useSidebar()
-  const { openStreamSettings } = useStreamSettings()
-  const { openStreamMembers } = useStreamMembers()
-  const { open: openExplorer } = useExplorerUrlState()
-  const { open: openOutcomes } = useOutcomesUrlState()
+  const { openStreamSettings, openStreamMembers, openExplorer, openOutcomes } = useSidebarRowOpeners()
+  const { collapseOnMobile } = useSidebarControls()
   const itemRef = useRef<HTMLAnchorElement>(null)
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [sectionPickerOpen, setSectionPickerOpen] = useState(false)

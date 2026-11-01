@@ -6,6 +6,7 @@ import { renderHook } from "@testing-library/react"
 import { StreamTypes, Visibilities, type ActiveAgentSession } from "@threahq/types"
 import { Hash } from "lucide-react"
 import { StreamItem, StreamItemAvatar } from "./stream-item"
+import { SidebarRowOpenersProvider } from "./sidebar-row-openers"
 import type { StreamItemData } from "./types"
 import type { SidebarBoardMode } from "./board-sidebar-mode"
 import * as contextsModule from "@/contexts"
@@ -47,7 +48,7 @@ function LocationSearchEcho() {
 function renderWithRouter(ui: React.ReactElement) {
   return render(
     <MemoryRouter>
-      {ui}
+      <SidebarRowOpenersProvider>{ui}</SidebarRowOpenersProvider>
       <LocationSearchEcho />
     </MemoryRouter>
   )
@@ -92,10 +93,7 @@ describe("StreamItem", () => {
     touchState.inputMode = "touch"
     touchState.touchCapable = true
 
-    vi.spyOn(contextsModule, "useSidebar").mockReturnValue({
-      collapseOnMobile,
-      registerOpenMenu,
-    } as unknown as ReturnType<typeof contextsModule.useSidebar>)
+    vi.spyOn(contextsModule, "useSidebarControls").mockReturnValue({ collapseOnMobile, registerOpenMenu })
 
     vi.spyOn(hooksModule, "isDraftId").mockImplementation(() => false)
     vi.spyOn(hooksModule, "useActors").mockReturnValue({
@@ -751,10 +749,7 @@ describe("StreamItem — board mode", () => {
     vi.useFakeTimers()
     touchState.inputMode = "touch"
     touchState.touchCapable = true
-    vi.spyOn(contextsModule, "useSidebar").mockReturnValue({
-      collapseOnMobile,
-      registerOpenMenu,
-    } as unknown as ReturnType<typeof contextsModule.useSidebar>)
+    vi.spyOn(contextsModule, "useSidebarControls").mockReturnValue({ collapseOnMobile, registerOpenMenu })
     vi.spyOn(hooksModule, "isDraftId").mockImplementation(() => false)
     vi.spyOn(hooksModule, "useActors").mockReturnValue({
       getActorName: () => "Ariadne",

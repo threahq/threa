@@ -1,6 +1,17 @@
-import { useLiveQuery } from "dexie-react-hooks"
+import Dexie from "dexie"
+import { useObservable, type InteropableObservable } from "dexie-react-hooks"
 import type { StreamEvent } from "@threahq/types"
 import { db, type CachedEvent } from "@/db"
+
+// Every timeline row mounts this hook and almost none was moved: a live query per
+// row, even one that reads nothing, wakes on every IDB commit in the app.
+const NO_TOMBSTONE: InteropableObservable<undefined> = {
+  getValue: () => undefined,
+  subscribe(onNext) {
+    onNext(undefined)
+    return () => {}
+  },
+}
 
 /**
  * Look up a `messages:moved` tombstone event from the local IDB cache by
@@ -15,9 +26,14 @@ import { db, type CachedEvent } from "@/db"
  * tombstone on demand.
  */
 export function useMovedTombstone(workspaceId: string, moveTombstoneId: string | undefined): StreamEvent | undefined {
-  return useLiveQuery<StreamEvent | undefined>(async () => {
-    if (!moveTombstoneId) return undefined
-    const cached: CachedEvent | undefined = await db.events.get([workspaceId, moveTombstoneId])
-    return cached as StreamEvent | undefined
-  }, [workspaceId, moveTombstoneId])
+  return useObservable<StreamEvent | undefined>(
+    () =>
+      moveTombstoneId
+        ? Dexie.liveQuery(async () => {
+            const cached: CachedEvent | undefined = await db.events.get([workspaceId, moveTombstoneId])
+            return cached as StreamEvent | undefined
+          })
+        : NO_TOMBSTONE,
+    [workspaceId, moveTombstoneId]
+  )
 }
