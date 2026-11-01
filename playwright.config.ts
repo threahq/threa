@@ -274,6 +274,9 @@ export default defineConfig({
       url: `http://localhost:${routerPort}/readyz`,
       reuseExistingServer: !process.env.CI,
       timeout: webServerTimeout,
+      // Playwright drops webServer stdout, where wrangler reports reloads and workerd
+      // faults. Its debug log lands in test-results, which CI uploads on failure.
+      env: { WRANGLER_LOG_PATH: path.resolve("test-results/workspace-router") },
     },
     {
       command: frontendCommand,
