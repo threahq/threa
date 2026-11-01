@@ -4,7 +4,7 @@ import type * as Y from "yjs"
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model"
 import type { Awareness } from "y-protocols/awareness"
 import { toast } from "sonner"
-import { Paperclip } from "lucide-react"
+import { Archive, Paperclip } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -39,6 +39,8 @@ import { usePreferences } from "@/contexts"
 import { useRevealReady } from "@/contexts/coordinated-loading-context"
 import { useMentionables, useMarkdownTriggerLookups } from "@/hooks/use-mentionables"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
+import type { EffectiveArchived } from "@/hooks/use-effective-archived"
+import { useStreamName } from "@/hooks/use-stream-name"
 import { useAttachments } from "@/hooks/use-attachments"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useInputMode } from "@/hooks/use-input-mode"
@@ -76,10 +78,13 @@ interface DocPaneBodyProps {
   /** Null while the viewer's write access is unresolved. */
   canWrite: boolean | null
   view: DocSyncView
+  archived: EffectiveArchived
+  /** Set only when the viewer may unarchive this doc. */
+  onUnarchive?: () => void
 }
 
 /** A doc stream's collaborative editor, mounted only once the doc's state and the viewer's write access have loaded. */
-export function DocPaneBody({ workspaceId, docId, canWrite, view }: DocPaneBodyProps) {
+export function DocPaneBody({ workspaceId, docId, canWrite, view, archived, onUnarchive }: DocPaneBodyProps) {
   useRevealReady(view.phase === "error" || (view.phase === "ready" && canWrite !== null))
 
   if (view.phase === "error") {
@@ -114,6 +119,8 @@ export function DocPaneBody({ workspaceId, docId, canWrite, view }: DocPaneBodyP
       awareness={view.presence.awareness}
       canWrite={canWrite}
       onBlur={view.flush}
+      archived={archived}
+      onUnarchive={onUnarchive}
     />
   )
 }
@@ -126,9 +133,21 @@ interface DocEditorProps {
   awareness: Awareness
   canWrite: boolean
   onBlur: () => void
+  archived: EffectiveArchived
+  onUnarchive?: () => void
 }
 
-function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, onBlur }: DocEditorProps) {
+function DocEditor({
+  workspaceId,
+  docId,
+  joinCount,
+  ydoc,
+  awareness,
+  canWrite,
+  onBlur,
+  archived,
+  onUnarchive,
+}: DocEditorProps) {
   const isMobile = useIsMobile()
   const isTouch = useInputMode() === "touch"
   const { openMedia } = useMediaGallery()
@@ -344,8 +363,22 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
               <input ref={fileInputRef} type="file" multiple className="hidden" onChange={onFilesPicked} />
             </div>
           )}
+          {archived.isArchived && (
+            <DocArchivedBar
+              workspaceId={workspaceId}
+              sealedById={archived.ownArchived ? null : archived.sealedById}
+              onUnarchive={onUnarchive}
+            />
+          )}
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain" onDragOver={onDragOver} onDrop={onDrop}>
-            <div ref={setColumn} className={cn(COLUMN_CLASS, "relative flex min-h-full flex-col py-8 pr-10")}>
+            <div
+              ref={setColumn}
+              className={cn(
+                COLUMN_CLASS,
+                "relative flex min-h-full flex-col py-8 pr-10",
+                archived.isArchived && "opacity-60 grayscale"
+              )}
+            >
               <DocTitle
                 workspaceId={workspaceId}
                 docId={docId}
@@ -384,6 +417,30 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
         <DocGallery editor={editor} workspaceId={workspaceId} />
       </ComposerPillDndProvider>
     </MediaViewerContext.Provider>
+  )
+}
+
+interface DocArchivedBarProps {
+  workspaceId: string
+  /** The archived stream above the doc, when the doc is archived through it rather than on its own. */
+  sealedById: string | null
+  onUnarchive?: () => void
+}
+
+function DocArchivedBar({ workspaceId, sealedById, onUnarchive }: DocArchivedBarProps) {
+  const sealedByName = useStreamName(workspaceId, sealedById ?? "", "activity")
+  return (
+    <div className="shrink-0 border-b bg-muted">
+      <div className={cn(COLUMN_CLASS, "flex min-h-11 items-center gap-2 py-1.5 text-sm font-medium")}>
+        <Archive className="h-4 w-4 shrink-0" aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate">{sealedByName ? `Archived with ${sealedByName}` : "Archived"}</span>
+        {onUnarchive && (
+          <Button variant="outline" size="sm" className="shrink-0" onClick={onUnarchive}>
+            Unarchive
+          </Button>
+        )}
+      </div>
+    </div>
   )
 }
 

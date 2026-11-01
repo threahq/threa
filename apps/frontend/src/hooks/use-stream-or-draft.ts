@@ -185,6 +185,8 @@ export interface UseStreamOrDraftReturn {
    *  null until the users liveQuery delivers — `sendMessage` throws before then,
    *  so callers (and tests) that fire sends programmatically gate on this. */
   currentUserId: string | null
+  /** The stream bootstrap's archived-ancestor verdict, for when the ancestor chain is not in the local stream cache. */
+  archivedAncestor: { streamId: string; archivedAt: string } | null
 }
 
 /**
@@ -306,6 +308,7 @@ function useDraftStream(workspaceId: string, streamId: string, enabled: boolean)
     archive,
     sendMessage,
     currentUserId,
+    archivedAncestor: null,
   }
 }
 
@@ -514,12 +517,18 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
     archive,
     sendMessage,
     currentUserId,
+    archivedAncestor: null,
   }
 }
 
 /**
  * Implementation for real streams (stored on server).
  */
+const selectStreamAndArchivedAncestor = (bootstrap: CachedStreamBootstrap) => ({
+  stream: bootstrap.stream,
+  archivedAncestor: bootstrap.archivedAncestor,
+})
+
 function useRealStream(workspaceId: string, streamId: string, enabled: boolean): UseStreamOrDraftReturn {
   const queryClient = useQueryClient()
   const streamService = useStreamService()
@@ -534,13 +543,14 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
   // Only the fallback until the row lands: the bootstrap's stream object is
   // replaced on every message (`messageCount`).
   const {
-    data: bootstrapStream,
+    data,
     isLoading: isBootstrapLoading,
     error,
   } = useStreamBootstrap(workspaceId, idbStream ? "" : streamId, {
     enabled: enabled && !idbStream,
-    select: (bootstrap) => bootstrap.stream,
+    select: selectStreamAndArchivedAncestor,
   })
+  const bootstrapStream = data?.stream
   // A just-promoted stream is in IDB but not yet in the workspace store's
   // resolved live query; the promotion's own copy covers that tick so the
   // header keeps the name the draft was showing.
@@ -792,6 +802,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
     unarchive,
     sendMessage,
     currentUserId,
+    archivedAncestor: data?.archivedAncestor ?? null,
   }
 }
 

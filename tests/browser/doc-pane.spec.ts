@@ -229,6 +229,14 @@ test.describe("Doc pane", () => {
       await pane(reader.page, docId).getByRole("button", { name: "Stream actions" }).first().click()
       await expect(reader.page.getByRole("menuitem", { name: "Copy link" })).toBeVisible()
       await expect(reader.page.getByRole("menuitem", { name: "Archive" })).toHaveCount(0)
+      await reader.page.keyboard.press("Escape")
+
+      await expectApiOk(
+        await owner.request.post(`/api/workspaces/${workspaceId}/streams/${docId}/archive`),
+        "Archive doc"
+      )
+      await expect(pane(reader.page, docId).locator(".grayscale .ProseMirror")).toHaveCount(1, { timeout: 15000 })
+      await expect(pane(reader.page, docId).getByRole("button", { name: "Unarchive", exact: true })).toHaveCount(0)
     } finally {
       await ownerContext.close()
       await reader.context.close()
@@ -251,11 +259,17 @@ test.describe("Doc pane", () => {
     )
 
     await changeArchiveFromMenu(page, docId, "Archive")
-    await expect(docPane.getByText("Archived", { exact: true })).toBeVisible()
     await expect(editor).toHaveAttribute("contenteditable", "false")
-
+    await expect(docPane.locator(".grayscale .ProseMirror")).toHaveCount(1)
     await changeArchiveFromMenu(page, docId, "Unarchive")
     await expect(editor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+
+    await changeArchiveFromMenu(page, docId, "Archive")
+    const unarchived = page.waitForResponse((r) => new URL(r.url()).pathname.endsWith(`/${docId}/unarchive`))
+    await docPane.getByRole("button", { name: "Unarchive", exact: true }).click()
+    await expectApiOk(await unarchived, "Unarchive doc from its archived bar")
+    await expect(editor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+    await expect(docPane.locator(".grayscale")).toHaveCount(0)
   })
 
   test("should copy, download and open a doc full page from its menu, with no timeline actions", async ({
@@ -349,7 +363,7 @@ test.describe("Doc pane", () => {
       const memberPane = pane(member.page, docId)
       await expect(docEditor(member.page, docId)).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
       await changeArchiveFromMenu(member.page, docId, "Archive")
-      await expect(memberPane.getByText("Archived", { exact: true })).toBeVisible()
+      await expect(memberPane.getByRole("button", { name: "Unarchive", exact: true })).toBeVisible()
       await changeArchiveFromMenu(member.page, docId, "Unarchive")
       await expect(docEditor(member.page, docId)).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
 
@@ -358,7 +372,7 @@ test.describe("Doc pane", () => {
       const ownerPane = pane(owner, docId)
       await expect(docEditor(owner, docId)).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
       await changeArchiveFromMenu(owner, docId, "Archive")
-      await expect(ownerPane.getByText("Archived", { exact: true })).toBeVisible()
+      await expect(ownerPane.getByRole("button", { name: "Unarchive", exact: true })).toBeVisible()
       await expectApiOk(
         await owner.request.post(`/api/workspaces/${workspaceId}/streams/${docId}/unarchive`),
         "Unarchive doc"
@@ -371,6 +385,11 @@ test.describe("Doc pane", () => {
       await openChannel(member.page, workspaceId, channelId)
       await anchorRow(member.page, docId).click()
       await expect(docEditor(member.page, docId)).toHaveAttribute("contenteditable", "false", { timeout: 15000 })
+      await expect(memberPane.getByText(`Archived with #host-docs-${testId}`)).toBeVisible()
+      await expect(memberPane.getByRole("button", { name: "Unarchive", exact: true })).toHaveCount(0)
+      await member.page.reload()
+      await expect(docEditor(member.page, docId)).toHaveAttribute("contenteditable", "false", { timeout: 15000 })
+      await expect(memberPane.getByText(`Archived with #host-docs-${testId}`)).toBeVisible()
       await memberPane.getByRole("button", { name: "Stream actions" }).first().click()
       await expect(member.page.getByRole("menuitem", { name: "Copy link" })).toBeVisible()
       await expect(member.page.getByRole("menuitem", { name: "Archive" })).toHaveCount(0)

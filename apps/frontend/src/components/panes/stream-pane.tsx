@@ -130,8 +130,18 @@ export function StreamPane({
   className,
 }: StreamPaneProps) {
   const [searchParams, setSearchParams] = useSearchParams()
-  const { stream, isDraft, error, rename, canRename, renamePending, renameError, archive, unarchive } =
-    useStreamOrDraft(workspaceId, streamId)
+  const {
+    stream,
+    isDraft,
+    error,
+    rename,
+    canRename,
+    renamePending,
+    renameError,
+    archive,
+    unarchive,
+    archivedAncestor,
+  } = useStreamOrDraft(workspaceId, streamId)
   const { isMobile } = useSidebar()
   const [isContextOpen, toggleContext] = useStreamContextToggle(streamId)
   // The route's stream is the page's one main landmark; the conversation overlay belongs to the first column's.
@@ -226,11 +236,12 @@ export function StreamPane({
     isDoc ? (stream?.rootStreamId ?? undefined) : undefined,
     pickArchiveOwner
   )
-  const { ancestorArchived } = useEffectiveArchived({
+  const docArchived = useEffectiveArchived({
     workspaceId,
     stream: isDoc ? stream : undefined,
-    fallbackArchived: null,
+    fallbackArchived: archivedAncestor,
   })
+  const { ancestorArchived } = docArchived
   const canChangeDocArchive = isDoc && offersArchiveToggle(currentUserId, docRow, docRoot, ancestorArchived)
   const docMove = useMoveDoc(
     workspaceId,
@@ -1069,7 +1080,14 @@ export function StreamPane({
           <StreamEncryptionGate workspaceId={workspaceId} encrypted={isEncryptedScratchpad && !isDraft}>
             <PaneLanded fallback={<TimelineSkeleton />}>
               {isDoc && stream ? (
-                <DocPaneBody workspaceId={workspaceId} docId={streamId} canWrite={canWriteDoc} view={docSync} />
+                <DocPaneBody
+                  workspaceId={workspaceId}
+                  docId={streamId}
+                  canWrite={canWriteDoc}
+                  view={docSync}
+                  archived={docArchived}
+                  onUnarchive={canChangeDocArchive && isArchived ? handleUnarchive : undefined}
+                />
               ) : (
                 <StreamContent
                   workspaceId={workspaceId}

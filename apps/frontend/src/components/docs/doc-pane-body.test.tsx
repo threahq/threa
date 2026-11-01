@@ -15,6 +15,7 @@ import {
   type DocAwarenessPayload,
   type DocState,
   type DocUpdatedPayload,
+  StreamTypes,
   type Stream,
 } from "@threahq/types"
 import { toast } from "sonner"
@@ -45,11 +46,12 @@ import * as operationQueueModule from "@/sync/operation-queue"
 import * as syncEngineModule from "@/sync/sync-engine"
 import { SocketEventGate } from "@/sync/socket-event-gate"
 import * as triggersModule from "@/components/editor/triggers"
+import type { EffectiveArchived } from "@/hooks/use-effective-archived"
 import { DocPaneBody } from "./doc-pane-body"
 import { useDocSync } from "./use-doc-sync"
 import { BLOCK_HIGHLIGHT_MS } from "@/components/editor/doc-block-landing-extension"
 // eslint-disable-next-line no-restricted-imports -- test clears the doc local copies the real sync writes
-import { db } from "@/db"
+import { db, type CachedStream } from "@/db"
 
 const WORKSPACE_ID = "ws_1"
 const DOC_ID = "stream_doc"
@@ -103,9 +105,25 @@ const IMAGE_DOC: JSONContent = {
   ],
 }
 
-function DocPane({ canWrite }: { canWrite: boolean | null }) {
+const LIVE: EffectiveArchived = { ownArchived: false, ancestorArchived: false, sealedById: null, isArchived: false }
+
+interface ArchiveProps {
+  archived?: EffectiveArchived
+  onUnarchive?: () => void
+}
+
+function DocPane({ canWrite, archived = LIVE, onUnarchive }: { canWrite: boolean | null } & ArchiveProps) {
   const view = useDocSync(WORKSPACE_ID, DOC_ID)
-  return <DocPaneBody workspaceId={WORKSPACE_ID} docId={DOC_ID} canWrite={canWrite} view={view} />
+  return (
+    <DocPaneBody
+      workspaceId={WORKSPACE_ID}
+      docId={DOC_ID}
+      canWrite={canWrite}
+      view={view}
+      archived={archived}
+      onUnarchive={onUnarchive}
+    />
+  )
 }
 
 describe("DocPaneBody", () => {
@@ -188,16 +206,21 @@ describe("DocPaneBody", () => {
     cleanup()
     vi.restoreAllMocks()
     await db.docStates.clear()
+    await db.streams.clear()
   })
 
-  function tree(canWrite: boolean | null, wrap: (body: ReactNode) => ReactNode = (body) => body) {
+  function tree(
+    canWrite: boolean | null,
+    wrap: (body: ReactNode) => ReactNode = (body) => body,
+    archive: ArchiveProps = {}
+  ) {
     return (
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <MemoryRouter initialEntries={[`/w/${WORKSPACE_ID}`]}>
             <MediaGalleryProvider>
               <Routes>
-                <Route path="/w/:workspaceId" element={wrap(<DocPane canWrite={canWrite} />)} />
+                <Route path="/w/:workspaceId" element={wrap(<DocPane canWrite={canWrite} {...archive} />)} />
               </Routes>
             </MediaGalleryProvider>
           </MemoryRouter>
@@ -208,14 +231,20 @@ describe("DocPaneBody", () => {
 
   function mount(
     canWrite: boolean | null = true,
-    { strict = false, wrap }: { strict?: boolean; wrap?: (body: ReactNode) => ReactNode } = {}
+    {
+      strict = false,
+      wrap,
+      archive,
+    }: { strict?: boolean; wrap?: (body: ReactNode) => ReactNode; archive?: ArchiveProps } = {}
   ) {
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    const view = render(strict ? <StrictMode>{tree(canWrite, wrap)}</StrictMode> : tree(canWrite, wrap))
+    const view = render(
+      strict ? <StrictMode>{tree(canWrite, wrap, archive)}</StrictMode> : tree(canWrite, wrap, archive)
+    )
     return {
       ...view,
       rerender: (next: boolean | null) =>
-        view.rerender(strict ? <StrictMode>{tree(next, wrap)}</StrictMode> : tree(next, wrap)),
+        view.rerender(strict ? <StrictMode>{tree(next, wrap, archive)}</StrictMode> : tree(next, wrap, archive)),
     }
   }
 
@@ -381,6 +410,38 @@ describe("DocPaneBody", () => {
       editable: proseMirror().getAttribute("contenteditable"),
       toolbar: screen.queryByRole("button", { name: "Bold" }) !== null,
     }).toEqual({ editable: "false", toolbar: false })
+  })
+
+  it("marks an archived doc with a pinned bar that unarchives it, and grays out its content", async () => {
+    const onUnarchive = vi.fn()
+    await mountLoaded(false, { archive: { archived: { ...LIVE, ownArchived: true, isArchived: true }, onUnarchive } })
+    await userEvent.click(await screen.findByRole("button", { name: "Unarchive" }))
+    expect({
+      label: screen.queryByText("Archived") !== null,
+      unarchived: onUnarchive.mock.calls.length,
+      grayed: proseMirror().closest(".grayscale") !== null,
+    }).toEqual({ label: true, unarchived: 1, grayed: true })
+  })
+
+  it("names the archived stream a doc is archived with", async () => {
+    await db.streams.put({
+      id: "stream_host",
+      workspaceId: WORKSPACE_ID,
+      type: StreamTypes.CHANNEL,
+      slug: "launch",
+      archivedAt: "2026-06-22T12:00:00.000Z",
+    } as CachedStream)
+    const archived = { ...LIVE, ancestorArchived: true, sealedById: "stream_host", isArchived: true }
+    await mountLoaded(false, { archive: { archived } })
+    expect(await screen.findByText("Archived with #launch")).toBeTruthy()
+  })
+
+  it("shows no archived bar on a live doc", async () => {
+    await mountLoaded(true)
+    expect({ bar: screen.queryByText(/^Archived/), grayed: proseMirror().closest(".grayscale") }).toEqual({
+      bar: null,
+      grayed: null,
+    })
   })
 
   it("reports a refused edit once and remounts on a fresh copy of the saved doc", async () => {
