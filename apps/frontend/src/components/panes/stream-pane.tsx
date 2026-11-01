@@ -1069,7 +1069,13 @@ export function StreamPane({
           <StreamEncryptionGate workspaceId={workspaceId} encrypted={isEncryptedScratchpad && !isDraft}>
             <PaneLanded fallback={<TimelineSkeleton />}>
               {isDoc && stream ? (
-                <DocPaneBody workspaceId={workspaceId} docId={streamId} canWrite={canWriteDoc} view={docSync} />
+                <DocPaneBody
+                  workspaceId={workspaceId}
+                  docId={streamId}
+                  canWrite={canWriteDoc}
+                  view={docSync}
+                  onUnarchive={canChangeDocArchive && isArchived ? handleUnarchive : undefined}
+                />
               ) : (
                 <StreamContent
                   workspaceId={workspaceId}
