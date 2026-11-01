@@ -1,4 +1,5 @@
 import { NO_CAPTURE, type PerfCaptureLike } from "./capture"
+import { startStorageProbe } from "./storage-probe"
 
 // 25ms is ~1.5 missed frames at 60Hz: real misses record, per-frame jitter does
 // not. The distribution is censored below this floor — the reproduction matrix
@@ -61,7 +62,10 @@ export function startObservers(capture: PerfCaptureLike): () => void {
     if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility)
   }
 
+  const stopStorageProbe = startStorageProbe(capture)
+
   return () => {
+    stopStorageProbe()
     for (const observer of observers) observer.disconnect()
     observers.length = 0
     if (frameHandle !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frameHandle)
