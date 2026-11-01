@@ -147,7 +147,7 @@ export default [
   // INV-68: SQL correctness is verified against a real schema, never by
   // asserting on the query text a repository emits. The files below predate the
   // rule; their counts are frozen in `sqlTextAssertionAllowlist` and enforced by
-  // apps/backend/src/db/no-sql-text-assertions.test.ts, which is what stops them
+  // apps/backend/src/db/ratchets/no-sql-text-assertions.test.ts, which is what stops them
   // growing (ESLint can only see a violation, not that one was removed).
   {
     files: ["**/*.{test,spec}.ts"],
@@ -158,7 +158,7 @@ export default [
   },
 
   // INV-8: every statement constrains workspace_id on the workspace-scoped tables it touches.
-  // Files in `unscopedSqlAllowlist` predate the rule; workspace-scoped-sql.test.ts holds each to its frozen count.
+  // Files in `unscopedSqlAllowlist` predate the rule; ratchets/workspace-scoped-sql.test.ts holds each to its frozen count.
   {
     files: ["src/**/*.ts"],
     ignores: ["src/**/*.test.ts", "src/db/migrations/**", ...unscopedSqlExemptions("apps/backend")],

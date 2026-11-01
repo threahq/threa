@@ -13,7 +13,7 @@ import { createMigrator } from "../../src/db/migrations"
 import { botChannelAccessId, linkPreviewId, streamId, userId, workspaceId } from "../../src/lib/id"
 import type { Querier } from "../../src/db"
 import { UserRepository, type InsertUserParams } from "../../src/features/workspaces"
-import { getTestDatabaseTarget, quoteDatabaseIdentifier } from "../test-database"
+import { getTestDatabaseTarget, quoteDatabaseIdentifier, testDatabaseUrl } from "../test-database"
 import { createS3Storage, type StorageProvider } from "../../src/lib/storage/s3-client"
 import { BotRuntimeService } from "../../src/features/bot-runtimes"
 import { StreamService } from "../../src/features/streams"
@@ -106,9 +106,7 @@ export async function setupIsolatedTestDatabase(label: string): Promise<{ pool: 
     await adminPool.query(`CREATE DATABASE ${databaseIdentifier} TEMPLATE ${quoteDatabaseIdentifier(template)}`)
     databaseCreated = true
 
-    const connectionUrl = new URL(target.connectionUrl)
-    connectionUrl.pathname = `/${databaseName}`
-    pool = createDatabasePool(connectionUrl.toString())
+    pool = createDatabasePool(testDatabaseUrl(databaseName))
   } catch (error) {
     if (pool) await pool.end()
     if (databaseCreated) await adminPool.query(`DROP DATABASE ${databaseIdentifier} WITH (FORCE)`)

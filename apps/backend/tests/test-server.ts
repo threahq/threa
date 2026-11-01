@@ -188,6 +188,10 @@ export async function startTestServer(): Promise<TestServer> {
   // first run still fires at boot, before any test has shared a channel.
   process.env.STREAM_CONNECTION_SWEEP_INTERVAL_SECONDS = String(60 * 60)
 
+  // Access-log tests poll for the coalesced subscribe row; the 2s production
+  // window would be most of each test's runtime.
+  process.env.ACCESS_LOG_SUBSCRIBE_COALESCE_MS = "250"
+
   // CORS: allow test origin
   process.env.CORS_ALLOWED_ORIGINS = `http://localhost:${port},http://127.0.0.1:${port}`
 

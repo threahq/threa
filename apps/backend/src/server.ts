@@ -76,7 +76,7 @@ import { InvitationService, InvitationShadowSyncHandler } from "./features/invit
 import { WorkosOrgServiceImpl, StubWorkosOrgService } from "@threahq/backend-common"
 import { PartitionMaintenanceWorker } from "@threahq/backend-common"
 import { loadGuideArticles } from "@threahq/user-guide"
-import { AccessLogService, createAiAccessLogSink } from "./features/access-log"
+import { AccessLogService, createAiAccessLogSink, DEFAULT_SUBSCRIBE_COALESCE_MS } from "./features/access-log"
 import { StreamService, StreamBriefService, registerStreamMessageCountBackfill } from "./features/streams"
 import {
   EventService,
@@ -1076,6 +1076,7 @@ export async function startServer(): Promise<ServerInstance> {
     sessionAbortRegistry,
     jobQueue,
     accessLogService,
+    subscribeCoalesceMs: Number(process.env.ACCESS_LOG_SUBSCRIBE_COALESCE_MS) || DEFAULT_SUBSCRIBE_COALESCE_MS,
   })
 
   // Dedicated voice relay on its own namespace so audio frames don't share the

@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test"
 import { ESLint, type Linter } from "eslint"
 import tsParser from "@typescript-eslint/parser"
-import threaPlugin, { sqlTextAssertionAllowlist } from "../../../../eslint/threa-plugin.js"
+import threaPlugin, { sqlTextAssertionAllowlist } from "../../../../../eslint/threa-plugin.js"
 
 /**
  * The ratchet half of INV-68: SQL correctness is verified against a real schema,
@@ -37,7 +37,7 @@ const SCANNED_GLOBS = [
 const RULE = "threa/no-sql-text-assertion"
 
 function resolveRepoRoot(): string {
-  return new URL("../../../..", import.meta.url).pathname.replace(/\/$/, "")
+  return new URL("../../../../..", import.meta.url).pathname.replace(/\/$/, "")
 }
 
 /** The rule alone, ignoring every project config, so all three trees are held to one standard. */

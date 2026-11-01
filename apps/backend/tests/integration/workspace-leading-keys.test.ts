@@ -216,6 +216,7 @@ const EXEMPT_KEYS: Record<string, string> = {
 
 const MIGRATIONS_DIR = path.resolve(import.meta.dir, "../../src/db/migrations")
 const STREAM_MEMBERS_MIGRATION_SUFFIX = "_workspace_leading_keys_contract_stream_members.sql"
+const LOCK_TIMEOUT_LINE = "SET LOCAL lock_timeout = '5s';"
 
 describe("workspace-leading keys", () => {
   let pool: Pool
@@ -308,15 +309,15 @@ describe("workspace-leading keys", () => {
         .map((file) => [file, readFileSync(path.join(MIGRATIONS_DIR, file), "utf8").split("\n")[0]])
     )
 
-    expect(openingLines).toEqual(
-      Object.fromEntries(Object.keys(openingLines).map((file) => [file, "SET LOCAL lock_timeout = '5s';"]))
-    )
+    expect(openingLines).toEqual(Object.fromEntries(Object.keys(openingLines).map((file) => [file, LOCK_TIMEOUT_LINE])))
   })
 
   test("should abort the migration with a lock timeout when the table is locked and leave the session setting untouched", async () => {
     const migrationFile = readdirSync(MIGRATIONS_DIR).find((file) => file.endsWith(STREAM_MEMBERS_MIGRATION_SUFFIX))
     expect(migrationFile).toBeDefined()
     const migrationSql = readFileSync(path.join(MIGRATIONS_DIR, migrationFile!), "utf8")
+    // The 5s value is pinned by the test above; waiting it out here only proves Postgres keeps time.
+    const shortTimeoutSql = migrationSql.replace(LOCK_TIMEOUT_LINE, "SET LOCAL lock_timeout = '200ms';")
     await pool.query(`
       ALTER TABLE stream_members DROP CONSTRAINT stream_members_pkey;
       ALTER TABLE stream_members ADD CONSTRAINT stream_members_pkey PRIMARY KEY (stream_id, member_id);
@@ -334,16 +335,18 @@ describe("workspace-leading keys", () => {
       await migrator.query("SET statement_timeout = '20s'")
       const before = (await migrator.query<{ lock_timeout: string }>("SHOW lock_timeout")).rows[0].lock_timeout
       const startedAt = Date.now()
-      const failure = await migrator.query(migrationSql).then(
+      const failure = await migrator.query(shortTimeoutSql).then(
         () => null,
         (error: { code?: string }) => error
       )
       const elapsedMs = Date.now() - startedAt
 
       expect({
+        shortened: shortTimeoutSql !== migrationSql,
         sqlstate: failure?.code,
-        waitedAboutTheLockTimeout: elapsedMs >= 4_500 && elapsedMs < 15_000,
+        waitedAboutTheLockTimeout: elapsedMs >= 150 && elapsedMs < 15_000,
       }).toEqual({
+        shortened: true,
         sqlstate: "55P03",
         waitedAboutTheLockTimeout: true,
       })

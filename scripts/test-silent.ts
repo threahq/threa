@@ -13,6 +13,10 @@ interface ModeConfig {
   cwd: string
   baseOptions: string[]
   defaultPatterns: string[]
+  /** Left out of the default run only, so naming one still runs it. */
+  defaultIgnores?: string[]
+  /** Files spread over worker processes, each on its own clone of the migrated test database. */
+  workerDatabases?: true
 }
 
 interface FailureCase {
@@ -44,6 +48,8 @@ const modeConfigs: Record<Mode, ModeConfig> = {
     cwd: path.join(rootDir, "apps/backend"),
     baseOptions: [],
     defaultPatterns: ["src/", "evals/"],
+    // ESLint ratchets: each lints whole trees for ~10s, so `bun run lint` runs them.
+    defaultIgnores: ["src/db/ratchets/"],
   },
   "backend-integration": {
     runner: "bun",
@@ -54,12 +60,14 @@ const modeConfigs: Record<Mode, ModeConfig> = {
     // remembering to pass it.
     baseOptions: ["--preload", "./tests/setup.ts", "--max-concurrency", "1", "--timeout", "30000"],
     defaultPatterns: ["tests/integration/"],
+    workerDatabases: true,
   },
   "backend-e2e": {
     runner: "bun",
     cwd: path.join(rootDir, "apps/backend"),
     baseOptions: ["--preload", "./tests/setup.ts"],
     defaultPatterns: ["tests/e2e/"],
+    workerDatabases: true,
   },
   frontend: {
     runner: "vitest",
@@ -158,12 +166,16 @@ const booleanOptionsByRunner: Record<Runner, Set<string>> = {
   ]),
 }
 
+const DEFAULT_WORKERS = 4
+
 function usage(): number {
   console.error(
     "Usage: bun scripts/test-silent.ts <backend-unit|backend-integration|backend-e2e|frontend|browser> [args...]\n" +
       "  Pass file paths or patterns to target your change; --all runs the whole suite\n" +
       "  under a cross-worktree lock. Add --verbose to bypass silent mode and stream all\n" +
-      "  test logs. CI runs are automatically verbose."
+      "  test logs. CI runs are automatically verbose.\n" +
+      `  backend-integration and backend-e2e spread files and directories over --workers N\n` +
+      `  processes (default ${DEFAULT_WORKERS}), each on its own database.`
   )
   return 1
 }
@@ -655,6 +667,237 @@ async function probePlaywrightTarget(
   }
 }
 
+const rerunBlockedByRunner: Record<Runner, Set<string>> = {
+  bun: new Set(["--reporter", "--reporter-outfile", "--only-failures", "--test-name-pattern", "-t"]),
+  vitest: new Set(["--reporter", "--outputFile", "--silent", "--testNamePattern", "-t"]),
+  playwright: new Set(["--reporter"]),
+}
+
+function defaultRun(config: ModeConfig): string[] {
+  return [
+    ...config.defaultPatterns,
+    ...(config.defaultIgnores ?? []).map((pattern) => `--path-ignore-patterns=${pattern}`),
+  ]
+}
+
+export function takeWorkersOption(args: string[]): { workers: number; args: string[] } {
+  const rest: string[] = []
+  let workers = DEFAULT_WORKERS
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!
+    if (arg !== "--workers" && !arg.startsWith("--workers=")) {
+      rest.push(arg)
+      continue
+    }
+    const value = arg === "--workers" ? args[++i] : arg.slice("--workers=".length)
+    workers = Number(value)
+    if (!Number.isInteger(workers) || workers < 1) throw new Error(`--workers needs a positive integer, got ${value}`)
+  }
+  return { workers, args: rest }
+}
+
+const BUN_TEST_FILE = /[._](test|spec)\.[cm]?[jt]sx?$/
+
+/** Test files under existing file or directory paths; undefined when a pattern is a name filter, which only `bun test` itself can resolve. */
+export function listTestFiles(cwd: string, patterns: string[]): string[] | undefined {
+  const files = new Set<string>()
+  for (const pattern of patterns) {
+    const absolute = path.resolve(cwd, pattern)
+    if (!existsSync(absolute)) return undefined
+    if (statSync(absolute).isFile()) {
+      files.add(path.relative(cwd, absolute))
+      continue
+    }
+    for (const file of new Bun.Glob("**/*").scanSync({ cwd: absolute })) {
+      if (BUN_TEST_FILE.test(file) && !file.split(path.sep).includes("node_modules")) {
+        files.add(path.relative(cwd, path.join(absolute, file)))
+      }
+    }
+  }
+  return [...files].sort()
+}
+
+/** Longest-first onto the lightest worker; file size stands in for duration. */
+export function partitionFiles(files: string[], workers: number, weigh: (file: string) => number): string[][] {
+  const buckets = Array.from({ length: Math.min(workers, files.length) }, () => ({ load: 0, files: [] as string[] }))
+  const weighed = files.map((file) => ({ file, weight: weigh(file) })).sort((a, b) => b.weight - a.weight)
+  for (const { file, weight } of weighed) {
+    const lightest = buckets.reduce((min, bucket) => (bucket.load < min.load ? bucket : min))
+    lightest.files.push(file)
+    lightest.load += weight
+  }
+  return buckets.map((bucket) => bucket.files.sort())
+}
+
+interface WorkerResult {
+  name: string
+  files: number
+  exitCode: number
+  seconds: number
+  parsed?: ParseResult
+  stdoutPath: string
+  stderrPath: string
+}
+
+function printCaptured(result: WorkerResult): void {
+  const grouped = !!process.env.GITHUB_ACTIONS
+  if (grouped) console.log(`::group::${result.name} output`)
+  process.stdout.write(readFileSync(result.stdoutPath))
+  process.stdout.write(readFileSync(result.stderrPath))
+  if (grouped) console.log("::endgroup::")
+}
+
+async function runBunWorkers(
+  mode: Mode,
+  config: ModeConfig,
+  optionArgs: string[],
+  rerunOptions: string[],
+  files: string[],
+  workers: number,
+  verbose: boolean
+): Promise<number> {
+  const workerEnv = { ...process.env }
+  // Quiets the template migration's per-file logs; the workers keep their own level.
+  process.env.LOG_LEVEL ??= "warn"
+  const { createWorkerDatabases } = await import("../apps/backend/tests/test-database")
+  const startedAt = Date.now()
+  const tempDir = mkdtempSync(path.join(tmpdir(), "threa-test-workers-"))
+  const groups = partitionFiles(files, workers, (file) => statSync(path.join(config.cwd, file)).size)
+
+  const children: Bun.Subprocess[] = []
+  let interrupted = false
+  // The databases live on a shared server: an interrupt, even mid-setup, still drops them.
+  const forward = (signal: NodeJS.Signals) => {
+    interrupted = true
+    for (const child of children) child.kill(signal)
+  }
+  process.on("SIGINT", forward)
+  process.on("SIGTERM", forward)
+  const databases = await createWorkerDatabases(groups.length).catch((error) => {
+    process.off("SIGINT", forward)
+    process.off("SIGTERM", forward)
+    throw error
+  })
+  try {
+    if (interrupted) return 130
+    console.log(
+      `${mode}: ${files.length} files on ${groups.length} workers, databases ready in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`
+    )
+    const results: WorkerResult[] = await Promise.all(
+      groups.map(async (group, index) => {
+        const name = `w${index + 1}`
+        const reportPath = path.join(tempDir, `${name}.junit.xml`)
+        const stdoutPath = path.join(tempDir, `${name}.stdout`)
+        const stderrPath = path.join(tempDir, `${name}.stderr`)
+        const env: NodeJS.ProcessEnv = {
+          ...workerEnv,
+          TEST_DATABASE_URL: databases.urls[index],
+          THREA_TEST_TEMPLATE_DATABASE: databases.templateName,
+          ...(verbose ? {} : { THREA_TEST_LOG_FILE: path.join(tempDir, `${name}.backend.ndjson`) }),
+        }
+        const command = [
+          "bun",
+          "test",
+          ...config.baseOptions,
+          ...optionArgs,
+          ...(verbose ? [] : ["--only-failures"]),
+          "--reporter=junit",
+          "--reporter-outfile",
+          reportPath,
+          ...group.map((file) => `./${file}`),
+        ]
+        const workerStartedAt = Date.now()
+        const child = Bun.spawn(command, {
+          cwd: config.cwd,
+          env,
+          stdout: Bun.file(stdoutPath),
+          stderr: Bun.file(stderrPath),
+        })
+        children.push(child)
+        const exitCode = await child.exited
+        const result: WorkerResult = {
+          name,
+          files: group.length,
+          exitCode,
+          seconds: (Date.now() - workerStartedAt) / 1000,
+          parsed: hasFileContent(reportPath) ? parseBunJunit(readFileSync(reportPath, "utf8")) : undefined,
+          stdoutPath,
+          stderrPath,
+        }
+        if (verbose) printCaptured(result)
+        return result
+      })
+    )
+    return await reportWorkers(mode, config, rerunOptions, files, results, tempDir, startedAt, verbose, {
+      ...workerEnv,
+      TEST_DATABASE_URL: databases.urls[0],
+      THREA_TEST_TEMPLATE_DATABASE: databases.templateName,
+    })
+  } finally {
+    process.off("SIGINT", forward)
+    process.off("SIGTERM", forward)
+    await databases.drop()
+  }
+}
+
+async function reportWorkers(
+  mode: Mode,
+  config: ModeConfig,
+  rerunOptions: string[],
+  files: string[],
+  results: WorkerResult[],
+  tempDir: string,
+  startedAt: number,
+  verbose: boolean,
+  rerunEnv: NodeJS.ProcessEnv
+): Promise<number> {
+  for (const result of results) {
+    const tests = result.parsed ? `${result.parsed.total} tests` : "no report"
+    console.log(
+      `${result.name}: ${result.files} files, ${tests}, ${result.seconds.toFixed(1)}s, exit ${result.exitCode}`
+    )
+  }
+  console.log(`${mode}: ${((Date.now() - startedAt) / 1000).toFixed(1)}s`)
+
+  const parsedResults = results.flatMap((result) => (result.parsed ? [result.parsed] : []))
+  const merged: ParseResult = {
+    total: parsedResults.reduce((sum, parsed) => sum + parsed.total, 0),
+    passed: parsedResults.reduce((sum, parsed) => sum + parsed.passed, 0),
+    failed: parsedResults.reduce((sum, parsed) => sum + parsed.failed, 0),
+    skipped: parsedResults.reduce((sum, parsed) => sum + parsed.skipped, 0),
+    failures: parsedResults.flatMap((parsed) => parsed.failures),
+    infraErrors: [],
+  }
+  summarize(merged)
+  for (const failure of merged.failures) console.log(`(fail) ${failure.file} > ${failure.name}`)
+
+  // A worker that exits non-zero with no failing test lost a file to a load or hook error.
+  const crashed = results.filter((result) => (result.exitCode !== 0 || !result.parsed) && !result.parsed?.failed)
+  for (const result of crashed) {
+    console.error(
+      `${result.name} exited ${result.exitCode} without a failing test: a file failed to load or a hook threw.`
+    )
+    if (!verbose) printCaptured(result)
+  }
+
+  if (merged.failed === 0) {
+    if (crashed.length > 0) {
+      console.error(`Worker output kept at: ${tempDir}`)
+      return 1
+    }
+    rmSync(tempDir, { recursive: true, force: true })
+    return 0
+  }
+  if (verbose) return 1
+
+  console.log(`Rechecking ${merged.failures.length} failing tests and replaying only persistent failures verbosely...`)
+  const firstPassStderr = results.map((result) => readFileSync(result.stderrPath, "utf8")).join("\n")
+  const filePaths = files.map((file) => `./${file}`)
+  await rerunBunFailures(config, rerunOptions, filePaths, merged.failures, firstPassStderr, rerunEnv)
+  printFailureArtifacts(tempDir)
+  return 1
+}
+
 export type RunPlan = { action: "refuse"; message: string } | { action: "run"; args: string[]; lock: boolean }
 
 export function resolveRunPlan(mode: Mode, rawArgs: string[], env: NodeJS.ProcessEnv = process.env): RunPlan {
@@ -679,7 +922,7 @@ async function main(): Promise<number> {
   if (!mode || !modeConfigs[mode]) return usage()
 
   const config = modeConfigs[mode]
-  const rawArgs = process.argv.slice(3)
+  const { workers, args: rawArgs } = takeWorkersOption(process.argv.slice(3))
   const plan = resolveRunPlan(mode, rawArgs)
   if (plan.action === "refuse") {
     console.error(plan.message)
@@ -703,9 +946,26 @@ async function main(): Promise<number> {
     await sweepOrphanedWebServers()
   }
 
+  if (config.workerDatabases && workers > 1) {
+    const split = splitArgs(filteredArgs, config.runner)
+    const files = listTestFiles(config.cwd, split.patternArgs.length > 0 ? split.patternArgs : config.defaultPatterns)
+    if (files && files.length > 1) {
+      const reporterOptions = new Set(["--reporter", "--reporter-outfile"])
+      return await runBunWorkers(
+        mode,
+        config,
+        stripOptions(split.optionArgs, config.runner, reporterOptions),
+        stripOptions(split.optionArgs, config.runner, rerunBlockedByRunner.bun),
+        files,
+        workers,
+        forceVerbose
+      )
+    }
+  }
+
   if (forceVerbose) {
     const split = splitArgs(filteredArgs, config.runner)
-    const patterns = split.patternArgs.length > 0 ? split.patternArgs : config.defaultPatterns
+    const patterns = split.patternArgs.length > 0 ? split.patternArgs : defaultRun(config)
 
     let command: string[]
     if (config.runner === "bun") {
@@ -727,15 +987,10 @@ async function main(): Promise<number> {
     vitest: new Set(["--reporter", "--outputFile", "--silent"]),
     playwright: new Set(["--reporter"]),
   }
-  const rerunBlockedByRunner: Record<Runner, Set<string>> = {
-    bun: new Set(["--reporter", "--reporter-outfile", "--only-failures", "--test-name-pattern", "-t"]),
-    vitest: new Set(["--reporter", "--outputFile", "--silent", "--testNamePattern", "-t"]),
-    playwright: new Set(["--reporter"]),
-  }
 
   const firstPassOptions = stripOptions(split.optionArgs, config.runner, firstPassBlockedByRunner[config.runner])
   const rerunOptions = stripOptions(split.optionArgs, config.runner, rerunBlockedByRunner[config.runner])
-  const patterns = split.patternArgs.length > 0 ? split.patternArgs : config.defaultPatterns
+  const patterns = split.patternArgs.length > 0 ? split.patternArgs : defaultRun(config)
 
   const tempDir = mkdtempSync(path.join(tmpdir(), "threa-test-silent-"))
   const stdoutPath = path.join(tempDir, "first-pass.stdout")
