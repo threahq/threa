@@ -1,25 +1,20 @@
 import { Extension, isAndroid } from "@tiptap/core"
 import { Plugin, PluginKey } from "@tiptap/pm/state"
 import type { EditorView } from "@tiptap/pm/view"
+import { KEYBOARD_VIEWPORT_THRESHOLD_PX } from "@/hooks/use-visual-viewport"
 
-/** A visual-viewport growth smaller than this is URL-bar movement, not a keyboard leaving. */
-const KEYBOARD_PX = 100
-/** The suggestion menu is read and answered within seconds; an older drop is a Back gesture or a tap elsewhere. */
+/** The menu opens a double-tap timeout after the tap on the word; a drop later than this was not caused by it. */
+const TAP_TO_DROP_MS = 3_000
+/** The suggestion menu is answered within seconds; an older drop was a Back gesture. */
 const ARMED_MS = 15_000
 
 /**
- * Chrome on Android shows its spelling-suggestion menu as a focusable popup window that declares the keyboard
- * unneeded (`SuggestionsPopupWindow`: `setFocusable(true)` + `INPUT_METHOD_NOT_NEEDED`), so the keyboard drops
- * while the editor keeps DOM focus, and Chrome does not bring it back once a suggestion is applied. The menu's
- * only trace on the page is the `insertReplacementText` input its pick and its Delete both fire, so: a keyboard
- * drop that leaves the editor focused arms a watch, and the next such input with no touch or key press in
- * between blurs and refocuses the editor, which raises the keyboard again. `navigator.virtualKeyboard.show()` does not (tested on
- * Chrome 142), and nothing keeps the keyboard up while the popup is open.
- *
- * A menu swiped away sends the page nothing, and tapping back into the editor puts the caret on the same
- * squiggled word and opens the menu again, dropping the keyboard each time. So a tap on the editor while still
- * armed pauses spellcheck, which clears the squiggles, until the user types a space or a line break or leaves
- * the editor.
+ * Chrome on Android's spelling menu is a focusable popup that drops the keyboard while the editor keeps DOM focus,
+ * and the keyboard stays down after a pick or Delete. The menu's only trace on the page is the
+ * `insertReplacementText` input both fire, so a drop right after a tap on the editor arms a blur+refocus for that
+ * input (`navigator.virtualKeyboard.show()` does not raise the keyboard, Chrome 142). A swiped-away menu sends
+ * nothing and reopens on the next tap of the same word, so that tap pauses spellcheck, which clears spelling
+ * squiggles, until the user moves past the word or leaves the editor.
  */
 export const AndroidSpellcheckKeyboard = Extension.create({
   name: "androidSpellcheckKeyboard",
@@ -32,36 +27,49 @@ export const AndroidSpellcheckKeyboard = Extension.create({
 function watchKeyboardDrop(view: EditorView) {
   const visualViewport = window.visualViewport
   if (!visualViewport) return {}
-  // An editor mounted under an open keyboard must still see the popup's drop as growth.
-  let keyboardOpenHeight = visualViewport.height
+
+  let lowestHeight = visualViewport.height
+  let lastEditorTapAt = 0
   let armedUntil = 0
   let restoreTimer = 0
+
+  const isArmed = () => Date.now() <= armedUntil
   const disarm = () => {
     armedUntil = 0
   }
+
+  const isSpellcheckPaused = () => view.dom.getAttribute("spellcheck") === "false"
+  const pauseSpellcheck = () => view.dom.setAttribute("spellcheck", "false")
   const resumeSpellcheck = () => view.dom.removeAttribute("spellcheck")
+
+  const onResize = () => {
+    const height = visualViewport.height
+    if (height < lowestHeight) {
+      lowestHeight = height
+      return
+    }
+    if (height <= lowestHeight + KEYBOARD_VIEWPORT_THRESHOLD_PX) return
+
+    lowestHeight = height
+    if (view.hasFocus() && Date.now() - lastEditorTapAt <= TAP_TO_DROP_MS) armedUntil = Date.now() + ARMED_MS
+  }
+
   const onPointerDown = (event: PointerEvent) => {
-    if (Date.now() <= armedUntil && view.dom.contains(event.target as Node)) {
-      view.dom.setAttribute("spellcheck", "false")
+    if (view.dom.contains(event.target as Node)) {
+      lastEditorTapAt = Date.now()
+      if (isArmed()) pauseSpellcheck()
     }
     disarm()
   }
-  const onResize = () => {
-    const height = visualViewport.height
-    if (height < keyboardOpenHeight) {
-      keyboardOpenHeight = height
-      return
-    }
-    if (height <= keyboardOpenHeight + KEYBOARD_PX) return
-    keyboardOpenHeight = height
-    if (view.hasFocus()) armedUntil = Date.now() + ARMED_MS
+
+  const onWordFinished = (event: InputEvent) => {
+    if (!isSpellcheckPaused() || !movesPastWord(event)) return
+    // After the input lands, so Chrome checks the word that was just finished along with the rest.
+    setTimeout(resumeSpellcheck, 0)
   }
-  const onBeforeInput = (event: InputEvent) => {
-    if (view.dom.getAttribute("spellcheck") === "false" && movesPastWord(event)) {
-      // After the input lands, so Chrome checks the word that was just finished along with the rest.
-      setTimeout(resumeSpellcheck, 0)
-    }
-    if (event.inputType !== "insertReplacementText" || Date.now() > armedUntil) return
+
+  const onSuggestionApplied = (event: InputEvent) => {
+    if (event.inputType !== "insertReplacementText" || !isArmed()) return
     disarm()
     clearTimeout(restoreTimer)
     // After ProseMirror has read the replacement from the DOM; a blur inside the input event would strand it.
@@ -71,16 +79,20 @@ function watchKeyboardDrop(view: EditorView) {
       view.focus()
     }, 0)
   }
+
   visualViewport.addEventListener("resize", onResize)
-  view.dom.addEventListener("beforeinput", onBeforeInput)
+  view.dom.addEventListener("beforeinput", onWordFinished)
+  view.dom.addEventListener("beforeinput", onSuggestionApplied)
   view.dom.addEventListener("blur", resumeSpellcheck)
   document.addEventListener("pointerdown", onPointerDown, true)
   document.addEventListener("keydown", disarm, true)
+
   return {
     destroy() {
       clearTimeout(restoreTimer)
       visualViewport.removeEventListener("resize", onResize)
-      view.dom.removeEventListener("beforeinput", onBeforeInput)
+      view.dom.removeEventListener("beforeinput", onWordFinished)
+      view.dom.removeEventListener("beforeinput", onSuggestionApplied)
       view.dom.removeEventListener("blur", resumeSpellcheck)
       document.removeEventListener("pointerdown", onPointerDown, true)
       document.removeEventListener("keydown", disarm, true)
