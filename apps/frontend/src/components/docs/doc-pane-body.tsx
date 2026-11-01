@@ -10,6 +10,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Skeleton } from "@/components/ui/skeleton"
 import { createDocumentExtensions } from "@/components/editor/editor-extensions"
 import { EDITOR_CONTENT_CLASS } from "@/components/editor/editor-content-class"
+import { browserSpellcheckAttributes } from "@/components/editor/browser-spellcheck"
 import { EditorBehaviors, handleBeforeInput } from "@/components/editor/editor-behaviors"
 import { isProseMirrorClipboardEvent } from "@/components/editor/editor-markdown"
 import { serializeClipboardSlice } from "@/components/editor/clipboard-copy"
@@ -224,7 +225,7 @@ function DocEditor({ workspaceId, docId, joinCount, ydoc, awareness, canWrite, o
     editable: canWrite,
     onBlur,
     editorProps: {
-      attributes: { class: EDITOR_SURFACE_CLASS, "aria-label": "Doc" },
+      attributes: { class: EDITOR_SURFACE_CLASS, "aria-label": "Doc", ...browserSpellcheckAttributes() },
       clipboardTextSerializer: serializeClipboardSlice,
       handlePaste: (view, event) => {
         const pasteAsPlainText = isPlainTextPaste(view)

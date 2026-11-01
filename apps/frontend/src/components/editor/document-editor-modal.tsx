@@ -30,6 +30,7 @@ import { ComposerPillDndProvider } from "./composer-pill-dnd"
 import { createEditorExtensions } from "./editor-extensions"
 import { EditorBehaviors, handleBeforeInput, handleLinkToolbarAction } from "./editor-behaviors"
 import { EDITOR_CONTENT_CLASS } from "./editor-content-class"
+import { browserSpellcheckAttributes } from "./browser-spellcheck"
 import { serializeToMarkdown, parseMarkdown, isProseMirrorClipboardEvent } from "./editor-markdown"
 import { serializeClipboardSlice } from "./clipboard-copy"
 import { insertPlainText, isPlainTextPaste } from "./plain-text-paste"
@@ -126,6 +127,7 @@ export function DocumentEditorModal({
     content: parseMarkdown(initialContent, getMentionType, toEmoji, markdownParseOptions),
     editorProps: {
       attributes: {
+        ...browserSpellcheckAttributes(),
         class: cn("min-h-[300px] max-h-[60vh] overflow-y-auto w-full px-4 py-3 outline-none", EDITOR_CONTENT_CLASS),
       },
       clipboardTextSerializer: serializeClipboardSlice,

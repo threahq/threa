@@ -12,6 +12,7 @@ import { findUploadJob } from "@/lib/uploads/upload-manager"
 import { createEditorExtensions } from "./editor-extensions"
 import { insertFilesIntoEditor, namePastedImages } from "./insert-files"
 import { EDITOR_CONTENT_CLASS } from "./editor-content-class"
+import { browserSpellcheckAttributes } from "./browser-spellcheck"
 import { applyExternalEditorContent } from "./apply-external-content"
 import { ReferenceAudienceContext, NO_REFERENCE_AUDIENCE } from "./reference-audience-context"
 import { ComposerPillActions } from "./composer-pill-actions"
@@ -776,6 +777,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         "aria-label": ariaLabel,
         "aria-multiline": "true",
         ...(ariaDescribedBy ? { "aria-describedby": ariaDescribedBy } : {}),
+        ...browserSpellcheckAttributes(),
         class: cn("min-h-[40px] max-h-[200px] overflow-y-auto w-full py-2 outline-none text-sm", EDITOR_CONTENT_CLASS),
       },
       clipboardTextSerializer: serializeClipboardSlice,

@@ -21,6 +21,7 @@ import { InChannelFilterExtension } from "@/components/editor/triggers/in-channe
 import { StatusFilterExtension } from "@/components/editor/triggers/status-filter-extension"
 import { SearchMentionExtension } from "@/components/editor/triggers/search-mention-extension"
 import { SearchChannelExtension } from "@/components/editor/triggers/search-channel-extension"
+import { browserSpellcheckAttributes } from "@/components/editor/browser-spellcheck"
 import { cn, escapeHtml } from "@/lib/utils"
 
 /**
@@ -277,6 +278,7 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
           editorClassName
         ),
         "aria-label": ariaLabel,
+        ...browserSpellcheckAttributes(),
       },
       handleKeyDown: (_view, event) => {
         // Enter to submit (unless a suggestion popover is open)
