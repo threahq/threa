@@ -55,9 +55,11 @@ test("should clone pristine migrations and seeds with independent data and schem
     )
     expect(inserted.rows).toEqual([{ value: "only a", live_clock: true }])
 
-    const sessions = await admin.query("SELECT datname FROM pg_stat_activity WHERE datname = $1", [
-      await getIsolatedTestTemplate(),
-    ])
+    // Autovacuum workers visit the freshly migrated template too; only a leaked client connection blocks cloning.
+    const sessions = await admin.query(
+      "SELECT datname FROM pg_stat_activity WHERE datname = $1 AND backend_type = 'client backend'",
+      [await getIsolatedTestTemplate()]
+    )
     expect(sessions.rows).toEqual([])
   } finally {
     try {
