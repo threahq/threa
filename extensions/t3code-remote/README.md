@@ -10,8 +10,14 @@ T3 server works the same as a local one.
 
 ## Running it
 
-Version 0.1.14 requires T3's consolidated question, configuration and transfer APIs, verified against
-`0.1.6-nightly.20261030.3917`.
+Each connector release works only with the T3 Code releases listed in `TESTED_T3_VERSIONS` (`src/t3-client.ts`),
+currently `0.1.6`. Against any other T3 version, every call fails with an error naming the tested versions. Pin T3 to
+one of them with `t3 update --channel stable <version>`. Use `--allow-downgrade` if T3 is already ahead.
+
+To test a new T3 release, run `bun run compat <version>` in `extensions/t3code-remote`. It downloads that release,
+checks it against the release's SHA256SUMS, and starts it with an empty T3 home. Then it runs the connector's calls
+against it, including two short agent turns (`--model instance::model`, default `claudeAgent::claude-haiku-5-5`). If
+every check passes, add the version to `TESTED_T3_VERSIONS` and release the connector.
 
 ```sh
 npm install -g @threahq/t3code-remote

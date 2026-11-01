@@ -4,6 +4,8 @@ import type { T3Access } from "./config"
 const PROTOCOL_VERSION = "2025-06-18"
 // A hung connection fails the call instead of stalling its turn forever; T3's slowest answers (a launch) take seconds.
 const REQUEST_TIMEOUT_MS = 60_000
+/** T3 Code releases `bun run compat` passed against; the client refuses any other server. */
+export const TESTED_T3_VERSIONS: readonly string[] = ["0.1.6"]
 
 export type RunStatus =
   | "preparing"
@@ -190,7 +192,12 @@ export interface T3TokenSource {
 
 interface JsonRpcMessage {
   id?: number
-  result?: { structuredContent?: unknown; isError?: boolean; content?: Array<{ text?: string }> }
+  result?: {
+    structuredContent?: unknown
+    isError?: boolean
+    content?: Array<{ text?: string }>
+    serverInfo?: { version?: unknown }
+  }
   error?: { message?: string }
 }
 
@@ -204,7 +211,8 @@ export class T3Client {
   constructor(
     readonly baseUrl: string,
     private readonly auth: T3TokenSource,
-    fetchImpl?: FetchLike
+    fetchImpl?: FetchLike,
+    private readonly testedVersions: readonly string[] = TESTED_T3_VERSIONS
   ) {
     this.fetchImpl = fetchImpl ?? fetch
   }
@@ -250,11 +258,20 @@ export class T3Client {
   private open(): Promise<void> {
     if (this.sessionId) return Promise.resolve()
     this.opening ??= (async () => {
-      await this.rpc("initialize", {
+      const initialized = await this.rpc("initialize", {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: {},
         clientInfo: { name: "threa-t3code", version: "0.1.0" },
       })
+      const version = initialized?.result?.serverInfo?.version
+      if (typeof version !== "string" || !this.testedVersions.includes(version)) {
+        this.sessionId = undefined
+        throw new Error(
+          `T3 Code ${typeof version === "string" ? version : "(unreported version)"} is untested with this connector, ` +
+            `which runs against ${this.testedVersions.join(", ")}. Switch T3 with \`t3 update <version>\`, or install a ` +
+            "connector release that lists it."
+        )
+      }
       await this.rpc("notifications/initialized", undefined, true)
     })().finally(() => (this.opening = undefined))
     return this.opening

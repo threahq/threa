@@ -91,6 +91,11 @@ function levelsOf(option: ModelOptionDescriptor | undefined): string[] {
   return option?.values?.filter((level): level is string => typeof level === "string") ?? []
 }
 
+/** The thinking levels T3 offers for `selection`'s model; empty when it offers none. */
+export function thinkingLevels(providers: readonly ProviderInfo[], selection: ModelSelection): string[] {
+  return levelsOf(effortOptionOf(providers, selection))
+}
+
 /** The selection thinking at `level`, keeping its other options, or undefined when its model doesn't offer the level. */
 function withEffort(
   providers: readonly ProviderInfo[],
@@ -196,7 +201,7 @@ export function createT3SessionControl(
     model: ModelSelection,
     arg: string
   ): { selection: ModelSelection; level: string } | CommandResult {
-    const levels = levelsOf(effortOptionOf(providers, model))
+    const levels = thinkingLevels(providers, model)
     if (levels.length === 0) return { ok: false, message: `${label(model)} has no thinking levels.` }
     const level = levels.find((candidate) => candidate.toLowerCase() === arg.trim().toLowerCase())
     const selection = level === undefined ? undefined : withEffort(providers, model, level)
