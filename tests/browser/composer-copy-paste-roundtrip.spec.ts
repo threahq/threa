@@ -162,12 +162,17 @@ function sentMessageRows(page: Page): Locator {
 async function copyMessageAsMarkdown(page: Page, row: Locator): Promise<string> {
   // Hover the row body (not the action pill area — resting on the pill's
   // other buttons pops their tooltips over the target), then click the
-  // revealed actions button directly.
-  await row.hover()
+  // revealed actions button directly. The pill takes pointer events only while
+  // its row is hovered, so a timeline scroll under the resting mouse leaves a
+  // plain click retrying forever: re-hover and re-click instead.
   const actionsButton = row.getByRole("button", { name: "Message actions" })
-  await expect(actionsButton).toBeVisible()
-  await actionsButton.click()
-  await page.getByRole("menuitem", { name: "Copy as Markdown" }).click()
+  const copyItem = page.getByRole("menuitem", { name: "Copy as Markdown" })
+  await expect(async () => {
+    await row.hover()
+    await actionsButton.click({ timeout: 2000 })
+    await expect(copyItem).toBeVisible({ timeout: 2000 })
+  }).toPass()
+  await copyItem.click()
   return page.evaluate(() => navigator.clipboard.readText())
 }
 
