@@ -13,11 +13,11 @@ export default defineConfig({
   workers: process.env.CI ? 2 : 1,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
+  retries: 0,
   reporter: process.env.CI ? [["github"], ["line"], ["html", { open: "never" }]] : "list",
   timeout: 60000,
   use: {
-    trace: "on-first-retry",
+    trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
   webServer: {

@@ -45,11 +45,11 @@ Test-first when practical; else run the nearest suite and verify manually. Never
 
 PR verification:
 
-- Open ready-for-review PRs when the local work is reviewed so CodeRabbit can review each push. Draft status does not select a CI mode.
-- Ordinary pushes run protected composer/timeline browser cases and affected checks. `scripts/ci-policy.ts` owns selection from the whole PR diff; shared or unclassified changes run the full suite. Read the CI selection summary when checking coverage. A targeted run intentionally leaves `Merge verification` failing even when its tests pass.
-- After review fixes settle, add `ci:full` to each PR (`gh pr edit <number> --add-label 'ci:full'`). Adding it starts full verification. Keep it through subsequent pushes so fixes receive fresh full verification. Remove it only when returning to iteration (`gh pr edit <number> --remove-label 'ci:full'`).
-- Before reporting ready to merge, verify successful `Merge verification` on the current revision of every stack layer and an up-to-date base. Targeted success, skipped jobs and results from older commits do not satisfy this requirement. The label requests verification; it does not authorize merging.
-- Report targeted and full-run timing separately, including queue/setup, Docker, retries and reporting. Preserve the final full pass when reducing per-push work.
+- Open ready-for-review PRs when the local work is reviewed so CodeRabbit can review each push.
+- Every PR runs the base: lint, typecheck, unit and integration suites, and the browser smoke journeys (`tests/browser/smoke.spec.ts`). `scripts/ci-policy.ts` adds an area's full browser suites when the diff touches that area (timeline, composer, calls, docs, …) and gates app-update, public-site and extension jobs on their paths; every spec belongs to an area or to `mainOnlySpecs`. Production images build on a PR only when packaging inputs change (`production-images.yml` paths). Read the CI plan summary when checking coverage.
+- Main runs everything after merge: every browser spec, every gated job, and the images whose sources changed. A red post-merge run is a regression to fix first.
+- Scary, complicated or large changes run that same full verification before merge: comment `/e2e` on the PR. For a long stack, run it on the top layer, not every layer.
+- Before reporting ready to merge, every stack layer needs green CI on its current revision.
 
 **Stacked PRs: always `gh stack`** (GitHub-native Stacks; extension installed — verify `gh extension list | grep stack`, never assume absence). Hand-rolling stacks with plain branches + `gh pr create --base` is the recurring failure — don't.
 

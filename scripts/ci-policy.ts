@@ -1,317 +1,389 @@
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs"
+import { appendFileSync, readFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
+import path from "node:path"
 
-export interface Change {
-  status: string
-  path: string
-}
-export interface CiInput {
-  eventName: string
-  labels: string[]
-  changes: Change[]
-  browserInventory: string[]
-}
-export interface CiPlan {
-  mode: "full" | "targeted"
-  reason: string
-  frontendSources: string[]
-  frontendTests: string[]
-  browserFiles: string[]
-  frontendShards: number[]
-  browserShards: number[]
+// Every PR runs the cheap base: lint, typecheck, unit and integration suites and
+// the browser smoke journeys. An area's expensive suites join only when the PR
+// touches that area. Main pushes and manual runs take everything.
+
+interface Area {
+  name: string
+  sources: string[]
+  specs: string[]
 }
 
-const protectedBrowser = [
-  "rich-text-editing",
-  "markdown-shortcuts",
-  "emoji-shortcuts",
-  "composer-copy-paste-roundtrip",
-  "inline-code-boundary-caret",
-  "editor-auto-focus",
-  "composer-task-list-inline-image",
-  "composer-math",
-  "doc-chips",
-  "composer-resize-mobile",
-  "composer-attachment-tray-mobile",
-  "composer-attachment-preview-mobile",
-  "composer-foot-mobile",
-  "composer-foot-presence-mobile",
-  "composer-bottom-spacing",
-  "timeline-arrival",
-  "auto-read",
-  "unread-marker-open",
-  "thread-unread-marker-open",
-  "thread-auto-read",
-  "stream-switch-stability",
-  "cold-open-two-states",
-  "timeline-anchor-restore",
-  "infinite-scroll",
-  "timeline-deep-window",
-  "message-run-fold",
-  "send-tail-stability",
-  "panel-composer",
-  "composer-tray-overflow-desktop",
-].map((name) => `tests/browser/${name}.spec.ts`)
+const fe = "apps/frontend/src/"
+const be = "apps/backend/src/features/"
+const specDir = "tests/browser/"
 
-const frontendGuards = [
-  "apps/frontend/src/auth/account-reset-coverage.test.ts",
-  "apps/frontend/src/components/layout/panel-host.test.ts",
-  "apps/frontend/src/lib/no-happy-path-success-toast.test.ts",
-  "apps/frontend/src/lib/no-stream-memo-fetch.test.ts",
-  "apps/frontend/src/lib/perf/no-direct-performance-marks.test.ts",
-]
+export const smokeSpec = `${specDir}smoke.spec.ts`
 
-const owners: { roots: string[]; browser: string[] }[] = [
+export const areas: Area[] = [
   {
-    roots: [
-      "apps/frontend/src/components/settings/notifications-settings.tsx",
-      "apps/frontend/src/components/settings/push-actions-section.tsx",
-      "apps/frontend/src/components/settings/use-push-test.ts",
+    name: "timeline",
+    sources: [
+      `${fe}components/timeline/`,
+      `${fe}components/message/`,
+      `${fe}sync/`,
+      `${fe}lib/timeline`,
+      `${fe}lib/read-frontier`,
+      `${fe}lib/message-grouping`,
+      `${fe}lib/mark-read-events`,
+      `${fe}lib/auto-read-attention`,
+      `${fe}lib/optimistic-sequence`,
+      `${fe}hooks/use-timeline`,
+      `${fe}hooks/use-scroll`,
+      `${fe}hooks/use-unread`,
+      `${fe}hooks/use-last-seen`,
+      `${fe}hooks/use-auto-mark`,
+      `${fe}hooks/use-stream-socket`,
+      `${fe}hooks/use-stream-or-draft`,
+      `${fe}stores/stream-store`,
+      `${fe}stores/apply-window`,
     ],
-    browser: ["push-notification-settings", "push-receipts", "push-receipts-android"],
-  },
-  { roots: ["apps/frontend/src/pages/saved.tsx"], browser: ["saved-reminder"] },
-  { roots: ["apps/frontend/src/pages/scheduled.tsx"], browser: ["saved-reminder", "message-reminder-menu"] },
-  {
-    roots: ["apps/frontend/src/components/docs/", "apps/frontend/src/pages/docs.tsx"],
-    browser: [
-      "doc-activity",
-      "doc-browse-files",
-      "doc-chips",
-      "doc-lists",
-      "doc-move",
-      "doc-nesting",
-      "doc-open-context",
-      "doc-pane",
-      "doc-section-threads",
-      "doc-shares",
-      "doc-title",
-      "doc-top-level",
-      "stream-context-docs",
-      "inline-message-pointer",
-    ],
-  },
-  {
-    roots: ["apps/frontend/src/components/composer/", "apps/frontend/src/components/editor/"],
-    browser: [
-      "message-send-mode",
-      "edit-last-message",
-      "panel-composer",
-      "doc-pane",
-      "doc-chips",
-      "inline-file-upload",
-      "code-block-language",
-      "quote-range",
-      "quote-pill-mobile",
-      "keyboard-correction-suggestion",
-      "command-arg-picker",
-      "drafts-modal",
-      "stashed-drafts-keyboard-delete",
-      "draft-promotion-stability",
-      "draft-sharing-journey",
-    ],
-  },
-  {
-    roots: [
-      "apps/frontend/src/components/timeline/",
-      "apps/frontend/src/components/message/",
-      "apps/frontend/src/components/thread/",
-    ],
-    browser: [
-      "initial-reveal",
+    specs: [
+      "timeline-",
+      "infinite-scroll",
+      "auto-read",
+      "thread-auto-read",
+      "unread-marker-open",
+      "thread-unread-marker-open",
+      "stream-switch-",
+      "cold-open",
+      "message-run-fold",
+      "send-tail",
       "conversation-panel-landing",
-      "nested-thread-navigation",
-      "thread-replies",
+      "empty-window",
+      "stream-search-cycling",
+      "draft-promotion",
+      "lazy-row",
+      "edit-last-message",
+      "initial-reveal",
       "message-reactions",
-      "inline-message-pointer",
-      "message-share-to-parent",
-      "message-share-cross-stream",
-      "message-share-range",
-      "subscribe-then-bootstrap",
-      "preview-history-recovery",
-      "empty-window-catch-up",
-      "reconnect-rehydrate",
-      "stream-context-jump-indexed",
-      "render-budget",
       "hover-toolbar-position",
       "quote-range",
-      "quote-pill-mobile",
-      "code-block-viewer-mobile",
-      "code-block-language",
-      "lazy-row-overlays",
-      "thread-breadcrumbs",
-      "message-reminder-menu",
-      "attachment-stable-urls",
+      "render-budget",
+      "reconnect-rehydrate",
+      "subscribe-then-bootstrap",
     ],
   },
   {
-    roots: ["apps/frontend/src/components/layout/sidebar/"],
-    browser: [
-      "inbox-sidebar",
-      "sidebar-menu-dismissal",
-      "sidebar-pick",
-      "sidebar-preview",
-      "sidebar-section-filter",
-      "sidebar-updates",
-      "sidebar-hover-card",
-      "new-channel-socket-subscription",
-      "inbox-modes",
-      "navigation-history",
+    name: "composer",
+    sources: [
+      `${fe}components/composer/`,
+      `${fe}components/editor/`,
+      `${fe}components/drafts/`,
+      `${fe}lib/drafts`,
+      `${fe}lib/keep-editor-focus`,
+      `${fe}lib/composer-height-storage`,
+      `${fe}lib/draft-promotions`,
+      `${fe}hooks/use-draft`,
+      `${fe}hooks/use-message-queue`,
+      `${fe}stores/draft-store`,
+      `${fe}stores/compose-overlay-store`,
+      `${fe}stores/composer-handoff-store`,
+      "packages/prosemirror/",
     ],
+    specs: [
+      "composer-",
+      "rich-text-editing",
+      "markdown-shortcuts",
+      "emoji-shortcuts",
+      "inline-code-boundary-caret",
+      "editor-auto-focus",
+      "message-send-mode",
+      "keyboard-correction",
+      "command-arg-picker",
+      "stashed-drafts",
+      "drafts-modal",
+      "draft-sharing-journey",
+      "inline-file-upload",
+      "panel-composer",
+    ],
+  },
+  {
+    name: "threads",
+    sources: [`${fe}components/thread/`, `${be}conversations/`],
+    specs: ["thread-replies", "nested-thread", "thread-breadcrumbs", "message-share-to-parent"],
+  },
+  {
+    name: "stream-context",
+    sources: [
+      `${fe}components/stream-context/`,
+      `${fe}lib/stream-context/`,
+      `${fe}stores/stream-context-store`,
+      `${be}stream-context/`,
+    ],
+    specs: ["stream-context-"],
+  },
+  {
+    name: "calls",
+    sources: [
+      `${fe}calls/`,
+      `${fe}components/call/`,
+      `${fe}stores/call-`,
+      `${fe}stores/active-calls-`,
+      `${fe}stores/incoming-call-`,
+      `${be}calls/`,
+      `${specDir}fake-cf-runner.ts`,
+    ],
+    specs: ["calls"],
+  },
+  {
+    name: "docs",
+    sources: [`${fe}components/docs/`, `${fe}pages/docs`, `${fe}lib/docs/`, `${be}docs/`],
+    specs: ["doc-"],
+  },
+  {
+    name: "panes",
+    sources: [
+      `${fe}components/layout/pane-`,
+      `${fe}components/layout/panel-`,
+      `${fe}components/panes/`,
+      `${fe}components/board/`,
+      `${fe}lib/page-panes`,
+      `${fe}lib/pane-`,
+      `${fe}lib/panel-`,
+      `${fe}pages/panes`,
+      `${fe}pages/board`,
+    ],
+    specs: ["pane-", "panel-", "page-panes", "board-"],
+  },
+  {
+    name: "sidebar",
+    sources: [`${fe}components/layout/sidebar/`, `${be}sidebar-config/`],
+    specs: ["sidebar-", "inbox-", "new-channel-socket-subscription", "navigation-history"],
+  },
+  {
+    name: "accounts",
+    sources: [`${fe}auth/`, `${fe}components/account-switcher/`, `${fe}lib/account-storage`, `${fe}pages/add-account`],
+    specs: ["account-"],
+  },
+  {
+    name: "encryption",
+    sources: [
+      `${fe}lib/crypto/`,
+      `${fe}components/encryption/`,
+      `${fe}stores/e2e-`,
+      "packages/crypto/",
+      `${be}e2e-streams/`,
+      `${be}user-e2e-keys/`,
+    ],
+    specs: ["e2e-"],
+  },
+  {
+    name: "agents",
+    sources: [`${fe}components/agent-outcomes/`, `${fe}components/trace/`, `${be}agents/`, `${be}agent-outcomes/`],
+    specs: ["agent-"],
+  },
+  {
+    name: "aside",
+    sources: [`${fe}components/aside/`, `${fe}lib/aside/`, `${fe}stores/aside-store`],
+    specs: ["aside-"],
+  },
+  {
+    name: "push",
+    sources: [
+      `${fe}lib/sw-push`,
+      `${fe}components/settings/notifications`,
+      `${fe}components/settings/push`,
+      `${be}push/`,
+    ],
+    specs: ["push-"],
+  },
+  {
+    name: "links",
+    sources: [`${fe}components/gallery/`, `${be}link-previews/`],
+    specs: ["link-"],
+  },
+  {
+    name: "invitations",
+    sources: ["apps/control-plane/", `${be}invitations/`],
+    specs: ["invitation-flow", "multi-use-invite", "org-workspace-claim", "guest-journey", "invite-command"],
+  },
+  {
+    name: "connections",
+    sources: [`${fe}stores/stream-connections`, `${be}stream-connections/`],
+    specs: ["stream-connections"],
+  },
+  {
+    name: "personas",
+    sources: [`${fe}components/persona-editor/`, `${fe}components/bot-profile/`, `${be}bot-runtimes/`],
+    specs: ["persona-", "bot-"],
   },
 ]
 
-function full(reason: string): CiPlan {
-  return {
-    mode: "full",
-    reason,
-    frontendSources: [],
-    frontendTests: [],
-    browserFiles: [],
-    frontendShards: [1, 2, 3, 4, 5, 6],
-    browserShards: [1, 2, 3, 4, 5, 6, 7, 8],
+// Specs no area claims run only on main and through `/e2e`.
+export const mainOnlySpecs = [
+  "action-drawer-overflow-mobile",
+  "activity-feed",
+  "attachment-stable-urls",
+  "code-block-language",
+  "code-block-viewer-mobile",
+  "conversation-overlay",
+  "conversations-pane",
+  "dm-lazy-creation",
+  "dynamic-naming",
+  "entry-load-failure",
+  "inline-message-pointer",
+  "launch-ancestors",
+  "markdown-table-mobile",
+  "memo-embed-card",
+  "message-reminder-menu",
+  "message-share-cross-stream",
+  "message-share-range",
+  "move-confirm-dialog",
+  "perf-capture",
+  "phone-navigation",
+  "pinch-zoom-mobile",
+  "preview-history-recovery",
+  "quick-switcher-open-to-side",
+  "quote-pill-mobile",
+  "saved-reminder",
+  "search-input-mobile",
+  "stream-description",
+  "stream-not-found",
+  "sw-bootstrap-staleness",
+  "theme-color-scheme",
+  "user-journey",
+]
+
+// Changing the shared browser harness can break any spec.
+const browserHarness = [
+  "playwright.config.ts",
+  `${specDir}helpers.ts`,
+  `${specDir}account-fixtures.ts`,
+  `${specDir}global-setup.ts`,
+  `${specDir}setup-infra.ts`,
+  ".github/workflows/browser-tests.yml",
+]
+
+// Changing how CI installs or selects work can break any gated job.
+const ciInfra = [
+  ".github/workflows/ci.yml",
+  "scripts/ci-policy.ts",
+  ".github/actions/",
+  ".bun-version",
+  "package.json",
+  "bun.lock",
+]
+
+const gates = {
+  app_update: [
+    `${fe}sw.ts`,
+    `${fe}lib/sw-`,
+    `${fe}lib/app-update`,
+    `${fe}hooks/use-app-update`,
+    `${fe}components/app-update-toast`,
+    `${fe}pages/app-status`,
+    "apps/frontend/vite.config.ts",
+    "tests/app-update/",
+  ],
+  public_site: ["apps/public-site/", "packages/user-guide/", "packages/types/"],
+  extensions: ["extensions/", "packages/"],
+}
+
+type Gates = Record<keyof typeof gates, boolean>
+
+export interface CiPlan {
+  browser: "all" | string[]
+  gates: Gates
+  reasons: string[]
+}
+
+const startsWithAny = (prefixes: string[], file: string) => prefixes.some((prefix) => file.startsWith(prefix))
+
+export function areaSpecs(area: Area, inventory: string[]): string[] {
+  return inventory.filter((spec) => startsWithAny(area.specs, spec.slice(specDir.length)))
+}
+
+/** `modules` maps every tracked browser test file to its source text. */
+export function planCi(input: { eventName: string; changed: string[]; modules: Map<string, string> }): CiPlan {
+  const { changed, modules } = input
+  if (input.eventName !== "pull_request") {
+    return { browser: "all", gates: selectGates(() => true), reasons: [`${input.eventName}: everything`] }
   }
-}
+  const inventory = [...modules.keys()].filter((file) => file.endsWith(".spec.ts"))
+  if (!inventory.includes(smokeSpec)) throw new Error(`browser inventory lacks ${smokeSpec}`)
 
-function isFrontendTest(path: string): boolean {
-  return /^apps\/frontend\/src\/.+\.(?:node\.)?test\.tsx?$/.test(path)
-}
-
-function isFrontendSource(path: string): boolean {
-  return /^apps\/frontend\/src\/.+\.(?:ts|tsx)$/.test(path) && !isFrontendTest(path)
-}
-
-function isOwned(path: string, root: string): boolean {
-  return root.endsWith("/") ? path.startsWith(root) : path === root
-}
-
-export function planCi(input: CiInput): CiPlan {
-  if (input.eventName !== "pull_request") return full("non-PR event")
-  if (input.labels.includes("ci:full")) return full("ci:full label")
-  if (!input.changes.length) return full("empty PR diff")
-  if (!input.browserInventory.length || new Set(input.browserInventory).size !== input.browserInventory.length) {
-    throw new Error("browser inventory is empty or contains duplicates")
-  }
-  const inventory = new Set(input.browserInventory)
-  const selected = new Set(protectedBrowser)
-  const sources = new Set<string>()
-  const tests = new Set<string>()
-  for (const change of input.changes) {
-    if (!/^[AM]$/.test(change.status)) return full(`unsupported change ${change.status}: ${change.path}`)
-    if (!change.path || change.path.startsWith("/") || change.path.includes("..")) return full("invalid changed path")
-    if (isFrontendTest(change.path)) {
-      tests.add(change.path)
-    } else if (/^tests\/browser\/[^/]+\.spec\.ts$/.test(change.path)) {
-      selected.add(change.path)
-    } else if (isFrontendSource(change.path)) {
-      const owner = owners.find((entry) => entry.roots.some((root) => isOwned(change.path, root)))
-      if (!owner) return full(`unowned frontend source: ${change.path}`)
-      sources.add(change.path)
-      for (const name of owner.browser) selected.add(`tests/browser/${name}.spec.ts`)
-    } else {
-      return full(`shared, backend, config or unknown path: ${change.path}`)
-    }
-  }
-  for (const file of selected)
-    if (!inventory.has(file)) throw new Error(`selected browser file missing from inventory: ${file}`)
-  if (sources.size) for (const guard of frontendGuards) tests.add(guard)
-  return {
-    mode: "targeted",
-    reason: "reviewed frontend changes",
-    frontendSources: [...sources].sort(),
-    frontendTests: [...tests].sort(),
-    browserFiles: [...selected].sort(),
-    frontendShards: [1],
-    browserShards: [1, 2, 3],
-  }
-}
-
-export function parseNameStatus(raw: string): Change[] {
-  const parts = raw.split("\0")
-  if (parts.pop() !== "") throw new Error("incomplete git name-status output")
-  const changes: Change[] = []
-  for (let i = 0; i < parts.length; ) {
-    const status = parts[i++]!
-    const path = parts[i++]
-    if (!path) throw new Error("incomplete git name-status entry")
-    if (/^[RC]/.test(status)) {
-      if (!parts[i++]) throw new Error("incomplete git rename/copy entry")
-    }
-    changes.push({ status, path })
-  }
-  return changes
-}
-
-function option(args: string[], name: string): string {
-  const i = args.indexOf(name)
-  if (i < 0 || !args[i + 1]) throw new Error(`missing ${name}`)
-  return args[i + 1]!
-}
-
-function optional(args: string[], name: string): string | undefined {
-  const i = args.indexOf(name)
-  return i < 0 ? undefined : option(args, name)
-}
-
-export function main(args = process.argv.slice(2)): void {
-  const event = JSON.parse(readFileSync(option(args, "--event"), "utf8")) as {
-    pull_request?: { labels?: { name: string }[] }
-  }
-  const eventName = option(args, "--event-name")
-  const inventoryFile = optional(args, "--inventory")
-  const inventory = inventoryFile
-    ? (JSON.parse(readFileSync(inventoryFile, "utf8")) as string[])
-    : execFileSync("git", ["ls-files", "-z", "tests/browser/*.spec.ts"], { encoding: "utf8" })
-        .split("\0")
-        .filter(Boolean)
-  const eventPr = event.pull_request as
-    | (typeof event.pull_request & { base?: { sha: string }; head?: { sha: string } })
-    | undefined
-  let changes: Change[] = []
-  if (eventName === "pull_request") {
-    const base = optional(args, "--base-sha") ?? eventPr?.base?.sha
-    const head = optional(args, "--head-sha") ?? eventPr?.head?.sha
-    if (!base || !head) throw new Error("missing PR base/head SHA")
-    const mergeBase = execFileSync("git", ["merge-base", base, head], { encoding: "utf8" }).trim()
-    if (!mergeBase) throw new Error("no merge base")
-    const diff = execFileSync("git", ["diff", "--name-status", "-z", "--find-renames", mergeBase, head], {
-      encoding: "utf8",
-    })
-    changes = parseNameStatus(diff)
-  }
-  const plan = planCi({
-    eventName,
-    labels: event.pull_request?.labels?.map((label) => label.name) ?? [],
-    changes,
-    browserInventory: inventory,
+  const touch = (prefixes: string[]) => changed.find((file) => startsWithAny(prefixes, file))
+  const harness = changed.find((file) => browserHarness.includes(file))
+  const infra = touch(ciInfra)
+  const touchedAreas = areas.flatMap((area) => {
+    const file = touch(area.sources)
+    return file ? [{ area, file }] : []
   })
-  writeFileSync(option(args, "--json"), `${JSON.stringify(plan, null, 2)}\n`)
-  const lines = [
-    `### CI policy: ${plan.mode}`,
-    `Reason: ${plan.reason}`,
-    `Frontend sources: ${plan.frontendSources.join(", ") || "all/none"}`,
-    `Frontend tests: ${plan.frontendTests.join(", ") || "all/none"}`,
-    `Browser files: ${plan.browserFiles.join(", ") || "all"}`,
-  ]
-  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join("\n\n")}\n`)
+  const specs = new Set([
+    smokeSpec,
+    ...changed.filter((file) => modules.has(file)).flatMap((file) => dependentSpecs(file, modules)),
+    ...touchedAreas.flatMap(({ area }) => areaSpecs(area, inventory)),
+  ])
+
+  return {
+    browser: harness ? "all" : [...specs].sort(),
+    gates: selectGates((prefixes) => infra !== undefined || touch(prefixes) !== undefined),
+    reasons: [
+      ...(harness ? [`browser harness: ${harness}`] : []),
+      ...(infra ? [`ci infrastructure: ${infra}`] : []),
+      ...touchedAreas.map(({ area, file }) => `${area.name}: ${file}`),
+    ],
+  }
+}
+
+function selectGates(selected: (prefixes: string[]) => boolean): Gates {
+  return Object.fromEntries(Object.entries(gates).map(([gate, prefixes]) => [gate, selected(prefixes)])) as Gates
+}
+
+// The changed spec itself, or every spec importing the changed module directly or transitively.
+function dependentSpecs(changed: string, modules: Map<string, string>): string[] {
+  const reached = new Set([changed])
+  for (const file of reached) {
+    const specifier = `from "./${path.basename(file, ".ts")}"`
+    for (const [importer, source] of modules) if (source.includes(specifier)) reached.add(importer)
+  }
+  return [...reached].filter((file) => file.endsWith(".spec.ts"))
+}
+
+function git(args: string[]): string {
+  return execFileSync("git", args, { encoding: "utf8" })
+}
+
+export function browserModules(): Map<string, string> {
+  const files = git(["ls-files", "-z", `${specDir}*.ts`])
+    .split("\0")
+    .filter(Boolean)
+  return new Map(files.map((file) => [file, readFileSync(file, "utf8")]))
+}
+
+function pullRequestChanges(): string[] {
+  const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH!, "utf8")) as {
+    pull_request: { base: { sha: string }; head: { sha: string } }
+  }
+  const { base, head } = event.pull_request
+  const mergeBase = git(["merge-base", base.sha, head.sha]).trim()
+  return git(["diff", "--name-only", "-z", "--no-renames", mergeBase, head.sha]).split("\0").filter(Boolean)
+}
+
+function main(): void {
+  const eventName = process.env.GITHUB_EVENT_NAME
+  if (!eventName) throw new Error("GITHUB_EVENT_NAME is not set")
+
+  const changed = eventName === "pull_request" ? pullRequestChanges() : []
+  const plan = planCi({ eventName, changed, modules: browserModules() })
+
+  const browser = plan.browser === "all" ? "all" : plan.browser.join(" ")
+  const summary = [
+    "### CI plan",
+    `Browser specs: ${browser}`,
+    ...Object.entries(plan.gates).map(([gate, selected]) => `${gate}: ${selected}`),
+    ...plan.reasons.map((reason) => `- ${reason}`),
+  ].join("\n")
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${summary}\n`)
+  else console.log(summary)
+
   if (process.env.GITHUB_OUTPUT) {
-    const outputs = {
-      mode: plan.mode,
-      full: String(plan.mode === "full"),
-      run_frontend: String(plan.mode === "full" || plan.frontendSources.length > 0 || plan.frontendTests.length > 0),
-      frontend_sources: JSON.stringify(plan.frontendSources),
-      frontend_tests: JSON.stringify(plan.frontendTests),
-      browser_files: JSON.stringify(plan.browserFiles),
-      frontend_shards: JSON.stringify(plan.frontendShards),
-      browser_shards: JSON.stringify(plan.browserShards),
-      browser_shard_count: String(plan.browserShards.length),
-    }
-    appendFileSync(
-      process.env.GITHUB_OUTPUT,
-      Object.entries(outputs)
-        .map(([key, value]) => `${key}=${value}\n`)
-        .join("")
-    )
+    const outputs = Object.entries({ browser, ...plan.gates }).map(([key, value]) => `${key}=${value}\n`)
+    appendFileSync(process.env.GITHUB_OUTPUT, outputs.join(""))
   }
 }
 

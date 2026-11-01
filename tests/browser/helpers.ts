@@ -147,7 +147,7 @@ export async function loginAndCreateWorkspaceViaApi(
  * defaults + normalizes it to the full set. The backend Zod schema rejects any
  * drift loudly, so a stale literal fails fast rather than silently.
  */
-async function setAllSidebarPreset(page: Page, workspaceId: string): Promise<void> {
+export async function setAllSidebarPreset(page: Page, workspaceId: string): Promise<void> {
   const response = await page.request.patch(`/api/workspaces/${workspaceId}/sidebar-config`, {
     data: {
       basePreset: "all",

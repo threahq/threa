@@ -194,26 +194,19 @@ export default defineConfig({
   globalSetup: "./tests/browser/global-setup.ts",
   fullyParallel: true, // Each test creates unique user + workspace — safe to parallelize
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
-  // CI: 2 workers. The 4-vCPU runner also hosts both regional backends, the
-  // control-plane, wrangler and the Vite preview server, so 3 workers (3 Chromiums + backend ≈
-  // 4 saturated cores) left no headroom — a rotating ~1-test-per-shard tail kept
-  // tripping on contention (slow assertions, clicks that never settle) and only
-  // passing on the in-run retry. 2 workers leaves a spare core and the suite is
-  // sharded ×4, so wall-clock stays well under the 25-min job budget.
-  // Local: 2, this box also hosts other worktrees' agents.
+  // A flaky test is a failing test: no retries anywhere.
+  retries: 0,
+  // The 4-vCPU CI runner also hosts the backends, control-plane, wrangler and the
+  // preview server; 3 Chromiums saturated it and produced contention timeouts.
   workers: 2,
   reporter: process.env.CI ? [["github"], ["line"], ["html", { open: "never" }]] : "list",
-  // 30s locally for fast feedback. CI gets 60s: the shared 4-vCPU runner makes
-  // setup + interaction-heavy flows (send-then-edit, hover-reveal menus) take
-  // markedly longer under contention, and several tests were timing out mid-flow
-  // only to pass on the isolated retry. A higher ceiling absorbs that without
-  // masking a genuinely stuck test — the 25-min job timeout still bounds it.
+  // CI gets 60s: the shared 4-vCPU runner makes setup and interaction-heavy flows
+  // markedly slower under contention.
   timeout: process.env.CI ? 60000 : 30000,
 
   use: {
     baseURL: `http://localhost:${frontendPort}`,
-    trace: "on-first-retry",
+    trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
 
