@@ -12,7 +12,7 @@
     "test:e2e": "bun ../../scripts/test-silent.ts backend-e2e",
     "test:watch": "bun test --watch src/",
     "eval": "bun run evals/run.ts",
-    "lint": "eslint src/ && bun test ./src/db/no-sql-text-assertions.test.ts ./src/db/workspace-scoped-sql.test.ts"
+    "lint": "eslint src/ && bun test ./src/db/ratchets/"
   },
   "dependencies": {
     "@aws-sdk/client-mediaconvert": "^3.1026.0",

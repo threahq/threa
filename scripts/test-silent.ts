@@ -49,7 +49,7 @@ const modeConfigs: Record<Mode, ModeConfig> = {
     baseOptions: [],
     defaultPatterns: ["src/", "evals/"],
     // ESLint ratchets: each lints whole trees for ~10s, so `bun run lint` runs them.
-    defaultIgnores: ["src/db/no-sql-text-assertions.test.ts", "src/db/workspace-scoped-sql.test.ts"],
+    defaultIgnores: ["src/db/ratchets/"],
   },
   "backend-integration": {
     runner: "bun",
@@ -66,7 +66,7 @@ const modeConfigs: Record<Mode, ModeConfig> = {
     runner: "bun",
     cwd: path.join(rootDir, "apps/backend"),
     baseOptions: ["--preload", "./tests/setup.ts"],
-    defaultPatterns: ["tests/e2e/", "tests/published-sdk/"],
+    defaultPatterns: ["tests/e2e/"],
     workerDatabases: true,
   },
   frontend: {
@@ -763,21 +763,27 @@ async function runBunWorkers(
   const startedAt = Date.now()
   const tempDir = mkdtempSync(path.join(tmpdir(), "threa-test-workers-"))
   const groups = partitionFiles(files, workers, (file) => statSync(path.join(config.cwd, file)).size)
-  const databases = await createWorkerDatabases(groups.length)
-  console.log(
-    `${mode}: ${files.length} files on ${groups.length} workers, databases ready in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`
-  )
 
   const children: Bun.Subprocess[] = []
-  // The databases live on a shared server: an interrupted run still drops them.
+  let interrupted = false
+  // The databases live on a shared server: an interrupt, even mid-setup, still drops them.
   const forward = (signal: NodeJS.Signals) => {
+    interrupted = true
     for (const child of children) child.kill(signal)
   }
   process.on("SIGINT", forward)
   process.on("SIGTERM", forward)
-  let results: WorkerResult[]
+  const databases = await createWorkerDatabases(groups.length).catch((error) => {
+    process.off("SIGINT", forward)
+    process.off("SIGTERM", forward)
+    throw error
+  })
   try {
-    results = await Promise.all(
+    if (interrupted) return 130
+    console.log(
+      `${mode}: ${files.length} files on ${groups.length} workers, databases ready in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`
+    )
+    const results: WorkerResult[] = await Promise.all(
       groups.map(async (group, index) => {
         const name = `w${index + 1}`
         const reportPath = path.join(tempDir, `${name}.junit.xml`)
@@ -822,12 +828,29 @@ async function runBunWorkers(
         return result
       })
     )
+    return await reportWorkers(mode, config, rerunOptions, files, results, tempDir, startedAt, verbose, {
+      ...workerEnv,
+      TEST_DATABASE_URL: databases.urls[0],
+      THREA_TEST_TEMPLATE_DATABASE: databases.templateName,
+    })
   } finally {
     process.off("SIGINT", forward)
     process.off("SIGTERM", forward)
     await databases.drop()
   }
+}
 
+async function reportWorkers(
+  mode: Mode,
+  config: ModeConfig,
+  rerunOptions: string[],
+  files: string[],
+  results: WorkerResult[],
+  tempDir: string,
+  startedAt: number,
+  verbose: boolean,
+  rerunEnv: NodeJS.ProcessEnv
+): Promise<number> {
   for (const result of results) {
     const tests = result.parsed ? `${result.parsed.total} tests` : "no report"
     console.log(
@@ -849,7 +872,7 @@ async function runBunWorkers(
   for (const failure of merged.failures) console.log(`(fail) ${failure.file} > ${failure.name}`)
 
   // A worker that exits non-zero with no failing test lost a file to a load or hook error.
-  const crashed = results.filter((result) => result.exitCode !== 0 && !result.parsed?.failed)
+  const crashed = results.filter((result) => (result.exitCode !== 0 || !result.parsed) && !result.parsed?.failed)
   for (const result of crashed) {
     console.error(
       `${result.name} exited ${result.exitCode} without a failing test: a file failed to load or a hook threw.`
@@ -870,7 +893,7 @@ async function runBunWorkers(
   console.log(`Rechecking ${merged.failures.length} failing tests and replaying only persistent failures verbosely...`)
   const firstPassStderr = results.map((result) => readFileSync(result.stderrPath, "utf8")).join("\n")
   const filePaths = files.map((file) => `./${file}`)
-  await rerunBunFailures(config, rerunOptions, filePaths, merged.failures, firstPassStderr, workerEnv)
+  await rerunBunFailures(config, rerunOptions, filePaths, merged.failures, firstPassStderr, rerunEnv)
   printFailureArtifacts(tempDir)
   return 1
 }

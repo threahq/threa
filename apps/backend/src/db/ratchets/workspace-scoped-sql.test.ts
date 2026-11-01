@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test"
 import { ESLint, type Linter } from "eslint"
 import tsParser from "@typescript-eslint/parser"
-import threaPlugin, { unscopedSqlAllowlist } from "../../../../eslint/threa-plugin.js"
+import threaPlugin, { unscopedSqlAllowlist } from "../../../../../eslint/threa-plugin.js"
 
 /**
  * The ratchet half of INV-8: every statement constrains the `workspace_id` of
@@ -21,7 +21,7 @@ import threaPlugin, { unscopedSqlAllowlist } from "../../../../eslint/threa-plug
  * recorded, and adding an unscoped one cannot pass unnoticed.
  */
 
-const REPO_ROOT = new URL("../../../..", import.meta.url).pathname.replace(/\/$/, "")
+const REPO_ROOT = new URL("../../../../..", import.meta.url).pathname.replace(/\/$/, "")
 const RULE = "threa/workspace-scoped-sql"
 
 async function countViolations(): Promise<Record<string, number>> {
