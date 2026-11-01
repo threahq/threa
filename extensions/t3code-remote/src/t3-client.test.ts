@@ -283,7 +283,7 @@ describe("T3Client", () => {
 
     await expect(client.call("t3_thread_wait", WAIT)).rejects.toThrow(
       `T3 Code 9.9.9 is untested with this connector, which runs against ${TESTED_T3_VERSIONS.join(", ")}. ` +
-        "Switch T3 with `t3 update <version>`, or install a connector release that lists it."
+        "Pin T3 with `t3 update --channel stable <version> --allow-downgrade`, or install a connector release that lists it."
     )
     await client.call("t3_thread_wait", WAIT)
 
@@ -293,5 +293,35 @@ describe("T3Client", () => {
       ["notifications/initialized", "sess_2"],
       ["tools/call", "sess_2"],
     ])
+  })
+
+  test("a call arriving while the version is still being read waits for the check", async () => {
+    let releaseBody!: () => void
+    const bodyHeld = new Promise<void>((resolve) => (releaseBody = resolve))
+    const server = fakeServer((method) => {
+      if (method !== "initialize") return undefined
+      const body = JSON.stringify({ jsonrpc: "2.0", id: 1, result: { serverInfo: { version: "9.9.9" } } })
+      const stream = new ReadableStream({
+        start: async (controller) => {
+          await bodyHeld
+          controller.enqueue(new TextEncoder().encode(body))
+          controller.close()
+        },
+      })
+      return new Response(stream, { headers: { "mcp-session-id": "sess_untested" } })
+    })
+    const client = new T3Client("http://t3.test", tokens(), server.fetch)
+
+    const first = client.call("t3_thread_wait", WAIT).then(String, (e: Error) => e.message)
+    while (server.seen.length === 0) await Bun.sleep(1)
+    await Bun.sleep(5)
+    const second = client.call("t3_thread_wait", WAIT).then(String, (e: Error) => e.message)
+    releaseBody()
+
+    expect({
+      first: (await first).startsWith("T3 Code 9.9.9 is untested"),
+      second: (await second).startsWith("T3 Code 9.9.9 is untested"),
+      methods: server.seen.map(({ method }) => method),
+    }).toEqual({ first: true, second: true, methods: ["initialize"] })
   })
 })

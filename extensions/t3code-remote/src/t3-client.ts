@@ -256,8 +256,10 @@ export class T3Client {
   }
 
   private open(): Promise<void> {
+    // rpc() adopts the session id before the version check runs, so an open in flight wins over a set id.
+    if (this.opening) return this.opening
     if (this.sessionId) return Promise.resolve()
-    this.opening ??= (async () => {
+    this.opening = (async () => {
       const initialized = await this.rpc("initialize", {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: {},
@@ -265,11 +267,12 @@ export class T3Client {
       })
       const version = initialized?.result?.serverInfo?.version
       if (typeof version !== "string" || !this.testedVersions.includes(version)) {
+        // Dropping the adopted session makes the next call run the check again.
         this.sessionId = undefined
         throw new Error(
           `T3 Code ${typeof version === "string" ? version : "(unreported version)"} is untested with this connector, ` +
-            `which runs against ${this.testedVersions.join(", ")}. Switch T3 with \`t3 update <version>\`, or install a ` +
-            "connector release that lists it."
+            `which runs against ${this.testedVersions.join(", ")}. Pin T3 with ` +
+            "`t3 update --channel stable <version> --allow-downgrade`, or install a connector release that lists it."
         )
       }
       await this.rpc("notifications/initialized", undefined, true)

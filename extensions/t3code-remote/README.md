@@ -15,9 +15,10 @@ currently `0.1.6`. Against any other T3 version, every call fails with an error 
 one of them with `t3 update --channel stable <version>`. Use `--allow-downgrade` if T3 is already ahead.
 
 To test a new T3 release, run `bun run compat <version>` in `extensions/t3code-remote`. It downloads that release,
-checks it against the release's SHA256SUMS, and starts it with an empty T3 home. Then it runs the connector's calls
-against it, including two short agent turns (`--model instance::model`, default `claudeAgent::claude-haiku-5-5`). If
-every check passes, add the version to `TESTED_T3_VERSIONS` and release the connector.
+checks it against the release's SHA256SUMS, and starts it with an empty T3 home. Then it runs every T3 call the
+connector makes against it, except answering a pending question. That includes a few short agent turns
+(`--model instance::model`, default `claudeAgent::claude-haiku-5-5`). If every check passes, add the version to
+`TESTED_T3_VERSIONS` and release the connector.
 
 ```sh
 npm install -g @threahq/t3code-remote
