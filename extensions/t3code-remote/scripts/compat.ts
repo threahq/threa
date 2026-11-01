@@ -5,7 +5,7 @@
 // Usage (from extensions/t3code-remote): bun run compat <version> [--model instance::model]
 import { spawn, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
@@ -61,10 +61,14 @@ async function installRelease(): Promise<string> {
   const archive = await download(`${RELEASES}/v${version}/${asset}`)
   const actual = createHash("sha256").update(archive).digest("hex")
   if (actual !== expected) fail(`${asset} checksum mismatch: expected ${expected}, got ${actual}`)
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, asset), archive)
-  await run("tar", ["-xzf", join(dir, asset), "-C", dir])
-  rmSync(join(dir, asset))
+  // Extract beside the cache and rename into place, so an interrupted run never leaves a partial binary to reuse.
+  const parent = join(dir, "..")
+  mkdirSync(parent, { recursive: true })
+  const staging = mkdtempSync(join(parent, `.${version}-`))
+  writeFileSync(join(staging, asset), archive)
+  await run("tar", ["-xzf", join(staging, asset), "-C", staging])
+  rmSync(join(staging, asset))
+  renameSync(staging, dir)
   return bin
 }
 
@@ -220,7 +224,8 @@ try {
     await client.call("t3_thread_organize", { threadId, action: "archive" })
   })
 } finally {
-  if (server.pid) process.kill(-server.pid, "SIGTERM")
+  // The group is already gone when T3 exited on its own.
+  if (server.pid && server.exitCode === null) process.kill(-server.pid, "SIGTERM")
   rmSync(home, { recursive: true, force: true })
 }
 
