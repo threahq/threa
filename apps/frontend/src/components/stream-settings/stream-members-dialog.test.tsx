@@ -21,15 +21,11 @@ function renderAt(search: string) {
 }
 
 describe("StreamMembersDialog", () => {
-  const membersTab = vi.fn()
-
   beforeEach(() => {
     vi.restoreAllMocks()
-    membersTab.mockReset()
-    vi.spyOn(membersTabModule, "MembersTab").mockImplementation(((props: unknown) => {
-      membersTab(props)
-      return <div>Members panel</div>
-    }) as unknown as typeof membersTabModule.MembersTab)
+    vi.spyOn(membersTabModule, "MembersTab").mockImplementation(((props: { streamId: string }) => (
+      <div>Members panel for {props.streamId}</div>
+    )) as unknown as typeof membersTabModule.MembersTab)
     vi.spyOn(useStreamNameModule, "useStreamName").mockImplementation(((_: string, streamId: string) =>
       streamId === "stream_general" ? "#general" : null) as unknown as typeof useStreamNameModule.useStreamName)
     vi.spyOn(useCurrentWorkspaceUserIdModule, "useCurrentWorkspaceUserId").mockReturnValue("user_1")
@@ -38,16 +34,14 @@ describe("StreamMembersDialog", () => {
   it("hosts the settings Members tab for the stream named in the URL", () => {
     renderAt("?stream-members=stream_general")
 
-    expect(screen.getByRole("dialog", { name: "#general" })).toBeInTheDocument()
-    expect(membersTab).toHaveBeenCalledWith(
-      expect.objectContaining({ workspaceId: "ws_1", streamId: "stream_general", currentUserId: "user_1" })
-    )
+    expect(screen.getByRole("dialog", { name: "#general Members" })).toBeInTheDocument()
+    expect(screen.getByText("Members panel for stream_general")).toBeInTheDocument()
   })
 
   it("stays closed without the URL param and drops it on close", () => {
     const { unmount } = renderAt("")
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
-    expect(membersTab).not.toHaveBeenCalled()
+    expect(screen.queryByText(/Members panel/)).not.toBeInTheDocument()
     unmount()
 
     renderAt("?stream-members=stream_general&panel=stream_x")

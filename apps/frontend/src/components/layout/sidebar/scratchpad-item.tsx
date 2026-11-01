@@ -30,7 +30,7 @@ import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useSidebar } from "@/contexts"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
-import { useStreamMembers } from "@/components/stream-settings/use-stream-members"
+import { streamHasMembers, useStreamMembers } from "@/components/stream-settings/use-stream-members"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { streamFallbackLabel } from "@/lib/streams"
@@ -215,12 +215,16 @@ export function ScratchpadItem({
               onSelect: () => openStreamSettings(streamWithPreview.id),
               separatorBefore: boardActions.length > 0 || clearInbox.length > 0,
             } satisfies SidebarActionItem,
-            {
-              id: "members",
-              label: "Members",
-              icon: Users,
-              onSelect: () => openStreamMembers(streamWithPreview.id),
-            } satisfies SidebarActionItem,
+            ...(streamHasMembers(streamWithPreview)
+              ? [
+                  {
+                    id: "members",
+                    label: "Members",
+                    icon: Users,
+                    onSelect: () => openStreamMembers(streamWithPreview.id),
+                  } satisfies SidebarActionItem,
+                ]
+              : []),
             {
               id: "labels",
               label: "Labels…",

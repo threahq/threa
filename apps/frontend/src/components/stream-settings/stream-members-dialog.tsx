@@ -26,7 +26,7 @@ export function StreamMembersDialog({ workspaceId }: StreamMembersDialogProps) {
         drawerClassName="max-h-[85dvh] flex flex-col"
       >
         <ResponsiveDialogHeader className="pt-4 sm:pt-0">
-          <ResponsiveDialogTitle>{streamName}</ResponsiveDialogTitle>
+          <ResponsiveDialogTitle>{streamName} Members</ResponsiveDialogTitle>
           <ResponsiveDialogDescription className="sr-only">
             People and bots in {streamName}.
           </ResponsiveDialogDescription>

@@ -48,10 +48,10 @@ Everything that can send messages is a stream. Streams are the fundamental commu
 
 A stream's **members** are the people who take part in it: one `stream_members` row per (stream, member), keyed by `memberId` (INV-50), carrying `joinedAt` and the member's own notification level for that stream. Membership is participation. It is not the same as the two things it is most often confused with:
 
-- **Access** decides who may read. It is resolved from the root stream's visibility and membership (INV-62): a public channel is readable by every workspace user, members or not, and a thread has no members of its own and inherits its root's. Filtering on `stream_members` to answer "can this user see this" is the recurring footgun.
+- **Access** decides who may read. It is resolved from the root stream's visibility and membership (INV-62): a public channel is readable by every workspace user, members or not, and a thread has no access of its own, only its root's. Filtering on `stream_members` to answer "can this user see this" is the recurring footgun.
 - **Read state** is the per-user unread watermark and lives only in `stream_read_state`. A viewer with access but no membership still gets one.
 
-Bots are not members. A bot's standing on a stream is a separate grant (`bot_channel_access`), surfaced on the same Members list so one screen shows everyone who takes part. Scratchpads and DMs have fixed membership (the owner; exactly two people); channels and top-level docs are joinable and the place where membership is managed. Hosted docs and threads show their host's or root's members.
+Bots are not members. A bot's standing on a stream is a separate grant (`bot_channel_access`), surfaced on the same Members list so one screen shows everyone who takes part. Scratchpads and DMs have fixed membership (the owner; exactly two people); channels and top-level docs are joinable and the place where membership is managed. A thread keeps its own participant list (whoever opened it, was mentioned into it, or had a message moved into it); access still comes from the root. A hosted doc has no list of its own: its host governs who reads it.
 
 In the app the member list is one tap away in every stream menu (sidebar row "…" or long-press, pane header "…", ⌘K "Members of this stream") and also lives as the Members tab in stream settings; both hosts mount the same component.
 

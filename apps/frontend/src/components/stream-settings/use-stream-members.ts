@@ -4,10 +4,7 @@ import { StreamTypes, isTopLevelDoc } from "@threahq/types"
 
 const PARAM_STREAM_MEMBERS = "stream-members"
 
-/**
- * Streams whose member list is a managed surface: a thread shows its root's
- * people, a hosted doc takes its host's, and system/aside streams have none.
- */
+/** Threads carry their own participant rows; hosted docs, system and aside streams have no member list. */
 export function streamHasMembers(stream: { type: string; parentStreamId: string | null } | null | undefined) {
   if (!stream) return false
   switch (stream.type) {

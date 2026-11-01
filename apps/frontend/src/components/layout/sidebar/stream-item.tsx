@@ -473,6 +473,7 @@ export function StreamItem({
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
   const { openStreamSettings } = useStreamSettings()
   const { openStreamMembers } = useStreamMembers()
+  const hasMembers = streamHasMembers(stream)
   const { open: openExplorer } = useExplorerUrlState()
   const { open: openOutcomes } = useOutcomesUrlState()
   const { collapseOnMobile } = useSidebar()
@@ -576,7 +577,7 @@ export function StreamItem({
             icon: Settings,
             onSelect: () => openStreamSettings(stream.id),
           },
-          ...(streamHasMembers(stream)
+          ...(hasMembers
             ? [{ id: "members", label: "Members", icon: Users, onSelect: () => openStreamMembers(stream.id) }]
             : []),
           {
@@ -629,9 +630,11 @@ export function StreamItem({
     isVirtualDraft,
     openStreamSettings,
     openStreamMembers,
+    hasMembers,
     openExplorer,
     openOutcomes,
-    stream,
+    stream.id,
+    stream.type,
     workspaceId,
     boardActions,
     onClearRow,
