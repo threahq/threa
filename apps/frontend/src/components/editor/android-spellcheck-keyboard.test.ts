@@ -43,6 +43,13 @@ function mount({ userAgent = ANDROID_UA, viewportHeight = VIEWPORT_WITHOUT_KEYBO
 
 function tap(target: EventTarget) {
   target.dispatchEvent(new Event("pointerdown", { bubbles: true }))
+  target.dispatchEvent(new Event("pointerup", { bubbles: true }))
+}
+
+/** Chrome hands a touch that pans over to scrolling and ends it with pointercancel, never pointerup. */
+function scroll(target: EventTarget) {
+  target.dispatchEvent(new Event("pointerdown", { bubbles: true }))
+  target.dispatchEvent(new Event("pointercancel", { bubbles: true }))
 }
 
 function spellcheck() {
@@ -138,6 +145,23 @@ describe("AndroidSpellcheckKeyboard keyboard restore", () => {
       },
     ],
     [
+      "a keyboard hidden after a scroll on the editor",
+      () => {
+        resizeViewport(VIEWPORT_WITH_KEYBOARD)
+        scroll(editor.view.dom)
+        resizeViewport(VIEWPORT_WITHOUT_KEYBOARD)
+      },
+    ],
+    [
+      "a keyboard hidden after a touch elsewhere followed the tap",
+      () => {
+        resizeViewport(VIEWPORT_WITH_KEYBOARD)
+        tap(editor.view.dom)
+        tap(document.body)
+        resizeViewport(VIEWPORT_WITHOUT_KEYBOARD)
+      },
+    ],
+    [
       "a keyboard hidden long after the last tap",
       () => {
         resizeViewport(VIEWPORT_WITH_KEYBOARD)
@@ -216,6 +240,17 @@ describe("AndroidSpellcheckKeyboard spellcheck pause", () => {
     tap(editor.view.dom)
 
     expect(spellcheck()).toBeNull()
+  })
+
+  it("pauses on the tap, not on a scroll over the text", () => {
+    mount()
+    menuOpensOnTappedWord()
+
+    scroll(editor.view.dom)
+    expect(spellcheck()).toBeNull()
+
+    tap(editor.view.dom)
+    expect(spellcheck()).toBe("false")
   })
 
   it.each([

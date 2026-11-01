@@ -54,11 +54,17 @@ function watchKeyboardDrop(view: EditorView) {
     if (view.hasFocus() && Date.now() - lastEditorTapAt <= TAP_TO_DROP_MS) armedUntil = Date.now() + ARMED_MS
   }
 
+  const isInEditor = (event: Event) => view.dom.contains(event.target as Node)
   const onPointerDown = (event: PointerEvent) => {
-    if (view.dom.contains(event.target as Node)) {
-      lastEditorTapAt = Date.now()
-      if (isArmed()) pauseSpellcheck()
-    }
+    if (isInEditor(event)) return
+    lastEditorTapAt = 0
+    disarm()
+  }
+  // A scroll ends in pointercancel instead, so only a tap on the editor gets here.
+  const onPointerUp = (event: PointerEvent) => {
+    if (!isInEditor(event)) return
+    lastEditorTapAt = Date.now()
+    if (isArmed()) pauseSpellcheck()
     disarm()
   }
 
@@ -85,6 +91,7 @@ function watchKeyboardDrop(view: EditorView) {
   view.dom.addEventListener("beforeinput", onSuggestionApplied)
   view.dom.addEventListener("blur", resumeSpellcheck)
   document.addEventListener("pointerdown", onPointerDown, true)
+  document.addEventListener("pointerup", onPointerUp, true)
   document.addEventListener("keydown", disarm, true)
 
   return {
@@ -95,6 +102,7 @@ function watchKeyboardDrop(view: EditorView) {
       view.dom.removeEventListener("beforeinput", onSuggestionApplied)
       view.dom.removeEventListener("blur", resumeSpellcheck)
       document.removeEventListener("pointerdown", onPointerDown, true)
+      document.removeEventListener("pointerup", onPointerUp, true)
       document.removeEventListener("keydown", disarm, true)
     },
   }
