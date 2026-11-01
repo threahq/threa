@@ -85,11 +85,12 @@ describe("transaction capture", () => {
 
     await db.syncCursors.put({ key: "cursor_1", value: "1", updatedAt: 1 } as never)
     await db.syncCursors.get("cursor_1")
-    await new Promise((resolve) => setTimeout(resolve, 0))
 
     const storeOrder = db.tables.map((table) => table.name).sort()
-    const samples = capture.snapshot().map(({ name, value }) => ({ name, value }))
-    expect(samples).toEqual([
+    const samples = () => capture.snapshot().map(({ name, value }) => ({ name, value }))
+    // A read's `complete` fires after its result resolves, on no fixed tick.
+    await vi.waitFor(() => expect(samples()).toHaveLength(6))
+    expect(samples()).toEqual([
       { name: "idb.txStores", value: 2 ** storeOrder.indexOf("syncCursors") },
       { name: "idb.writeTx", value: expect.any(Number) },
       { name: "idb.writeTxCommit", value: expect.any(Number) },
