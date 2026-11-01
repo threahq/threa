@@ -40,6 +40,7 @@ import { conversationKeys } from "@/hooks/use-conversations"
 import { isServerStreamId } from "@/lib/stream-ids"
 import {
   STREAM_PREVIEW_HISTORY_MAX_STREAMS,
+  defaultFeatureFlagValue,
   type WorkspaceBootstrap,
   type StreamPreviewHistoryBatchResponse,
 } from "@threahq/types"
@@ -264,6 +265,8 @@ export class SyncEngine {
    *  fold, and destroyed with the engine so a scheduled flush can't write
    *  against a torn-down workspace. */
   private readonly liveCommitBatch: LiveCommitBatch
+  /** The `batchedLiveWrites` flag, pushed from React (see setBatchedLiveWrites). */
+  private batchedLiveWrites = defaultFeatureFlagValue("batchedLiveWrites") === "on"
 
   // Heartbeat (active mode): the highest workspace head observed in catch-up
   // responses. The cursor is per-user filtered and can sit permanently below
@@ -319,12 +322,17 @@ export class SyncEngine {
 
   constructor(private deps: SyncEngineDeps) {
     this.workspaceId = deps.workspaceId
-    this.liveCommitBatch = new LiveCommitBatch(deps.queryClient, deps.workspaceId, () => {
-      // Same recovery the catch-up flush failure takes: a dropped fold can hold
-      // an `activity:created` held-set insert, which no later message re-adds,
-      // and a slim reconnect does NOT re-fetch the workspace counters.
-      if (!this.isDestroyed) void this.runBootstrap(true, { forceFull: true })
-    })
+    this.liveCommitBatch = new LiveCommitBatch(
+      deps.queryClient,
+      deps.workspaceId,
+      () => {
+        // Same recovery the catch-up flush failure takes: a dropped fold can hold
+        // an `activity:created` held-set insert, which no later message re-adds,
+        // and a slim reconnect does NOT re-fetch the workspace counters.
+        if (!this.isDestroyed) void this.runBootstrap(true, { forceFull: true })
+      },
+      (streamId) => this.defersLiveWrite(streamId)
+    )
     this.eventGate = deps.syncService
       ? new SocketEventGate(this.workspaceId, {
           onApplied: (syncId) => this.syncLogCursor?.advance(syncId),
@@ -346,8 +354,40 @@ export class SyncEngine {
     this.currentStreamId = id
     this.retireFullSweepRoots()
     if (id) {
+      void this.liveCommitBatch.settle(id)
       void this.refreshStreamAfterNavigation(id)
     }
+  }
+
+  /** Apply the `batchedLiveWrites` flag (called from React as it resolves and on
+   *  every flip). Turning it off commits anything still waiting, so the
+   *  immediate path takes over from an empty buffer. */
+  setBatchedLiveWrites(enabled: boolean): void {
+    if (this.batchedLiveWrites === enabled) return
+    this.batchedLiveWrites = enabled
+    if (!enabled) void this.liveCommitBatch.flush().catch(() => {})
+  }
+
+  /** The stream-scoped durable writes for this engine's handlers: deferred into
+   *  one transaction per window for background streams, immediate otherwise. */
+  getLiveWrites(): LiveCommitBatch {
+    return this.liveCommitBatch
+  }
+
+  /**
+   * Whether a live write for `streamId` may wait for the batch window. Never
+   * for a stream on screen (route, panels, board and conversation-panel
+   * streams), and never while the gate is paused: catch-up and the resume
+   * splice await each apply in turn, so a deferred write would stall the
+   * replay by a window per entry.
+   */
+  private defersLiveWrite(streamId: string): boolean {
+    return (
+      this.batchedLiveWrites &&
+      !this.isDestroyed &&
+      !this.eventGate?.isPaused() &&
+      !this.getVisibleServerStreamIds().includes(streamId)
+    )
   }
 
   /**
@@ -362,6 +402,7 @@ export class SyncEngine {
 
     for (const streamId of ids) {
       if (previous.has(streamId) || !isServerStreamId(streamId)) continue
+      void this.liveCommitBatch.settle(streamId)
       void this.refreshStreamAfterNavigation(streamId)
     }
   }
@@ -394,6 +435,7 @@ export class SyncEngine {
     const toSync: string[] = []
     for (const streamId of next) {
       if (this.boardStreamIds.has(streamId) || !isServerStreamId(streamId)) continue
+      void this.liveCommitBatch.settle(streamId)
       toSync.push(streamId)
     }
     this.boardStreamIds = next
@@ -416,6 +458,7 @@ export class SyncEngine {
     const toSync: string[] = []
     for (const streamId of next) {
       if (this.panelStreamIds.has(streamId) || !isServerStreamId(streamId)) continue
+      void this.liveCommitBatch.settle(streamId)
       toSync.push(streamId)
     }
     this.panelStreamIds = next
@@ -1605,6 +1648,9 @@ export class SyncEngine {
    * display-only fetch outside the subscribe→fetch window this rule guards.
    */
   private async joinStreamForCatchUp(streamId: string): Promise<string | null> {
+    // Deferred live writes are rows this client already received: the cursor
+    // must count them.
+    await this.liveCommitBatch.settle(streamId)
     const after = await getLatestPersistedSequence(this.workspaceId, streamId)
     await this.ensureStreamSubscription(streamId, { awaitJoin: true })
     return after
@@ -1623,6 +1669,7 @@ export class SyncEngine {
         {
           onSequenceGap: ({ streamId: gapStreamId, afterSequence }) =>
             void this.backfillStreamGap(gapStreamId, afterSequence),
+          liveWrites: this.liveCommitBatch,
         }
       )
       this.streamHandlerCleanups.set(streamId, cleanup)

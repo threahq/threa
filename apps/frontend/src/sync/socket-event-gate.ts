@@ -129,6 +129,12 @@ export class SocketEventGate implements SyncEventSource {
     return this.buffer.length > 0
   }
 
+  /** While paused, every apply is awaited one at a time (catch-up replay, the
+   *  resume splice); live delivery is fire-and-forget only when open. */
+  isPaused(): boolean {
+    return this.paused
+  }
+
   /** Start buffering this workspace's syncId-bearing live events. */
   pause(): void {
     if (this.disposed) return

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
 import { getDraftPromotionEvents, releaseDraftPromotionEvents } from "@/lib/draft-promotions"
 import { getPerfCapture, NO_CAPTURE } from "@/lib/perf/capture"
+import { useLiveWrites } from "@/sync/live-writes-context"
 import { trackPendingRead } from "./apply-window"
 import { getWorkspaceTableRow, subscribeWorkspaceTableRow } from "./workspace-table-registry"
 
@@ -406,9 +407,12 @@ export function useStreamEvents(
   // page must not re-run it.
   const tailScanFloor = tailFloor === null ? floor : null
 
+  const writesLanded = useDeferredWritesLanded(streamId)
+
   // Both reads register with the apply window while in flight so a bootstrap
   // sweep holds its window until the timeline has re-read what it wrote.
   const tail = useLiveQuery(async () => {
+    if (!writesLanded) return undefined
     if (!streamId || !bounded) return stampStreamEvents([], workspaceId, streamId)
     const release = trackPendingRead()
     try {
@@ -419,9 +423,10 @@ export function useStreamEvents(
     } finally {
       release()
     }
-  }, [workspaceId, streamId, tailFloor, tailScanFloor, bounded])
+  }, [workspaceId, streamId, tailFloor, tailScanFloor, bounded, writesLanded])
 
   const result = useLiveQuery(async () => {
+    if (!writesLanded) return undefined
     if (!streamId) return stampStreamEvents([], workspaceId, streamId)
     const release = trackPendingRead()
     try {
@@ -439,7 +444,7 @@ export function useStreamEvents(
     } finally {
       release()
     }
-  }, [workspaceId, streamId, floor, tailFloor, bounded])
+  }, [workspaceId, streamId, floor, tailFloor, bounded, writesLanded])
 
   // Until `useLiveQuery` re-runs after a key change, `result` is still the
   // previous key's array. Our stamp lets us detect that regardless of whether
@@ -511,6 +516,33 @@ export function useStreamEvents(
     prevRef.current = { workspaceId, streamId, array: shared }
   }
   return shared
+}
+
+/**
+ * False while the engine's live write batch holds rows deferred for `streamId`
+ * at the moment this view first reads it, until their commit lands: the first
+ * read would otherwise paint without the newest messages and then pop them in.
+ * Only the first read waits — a stream read off screen (a hover card, a
+ * thread's parent) keeps deferring, and re-gating it every window would blank
+ * a painted view. The commit cannot start inside a live query's querier (no
+ * readwrite transaction there), hence a gate instead.
+ */
+function useDeferredWritesLanded(streamId: string | undefined): boolean {
+  const liveWrites = useLiveWrites()
+  const [passedFor, setPassedFor] = useState<string | null>(null)
+  const waiting = !!streamId && !!liveWrites && passedFor !== streamId && liveWrites.hasDeferred(streamId)
+  if (!waiting && passedFor !== (streamId ?? null)) setPassedFor(streamId ?? null)
+  useEffect(() => {
+    if (!waiting || !liveWrites || !streamId) return
+    let current = true
+    void (liveWrites.settle(streamId) ?? Promise.resolve()).then(() => {
+      if (current) setPassedFor(streamId)
+    })
+    return () => {
+      current = false
+    }
+  }, [waiting, liveWrites, streamId])
+  return !waiting
 }
 
 /**

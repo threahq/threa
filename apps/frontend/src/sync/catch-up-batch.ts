@@ -1,4 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query"
+import type { Table } from "dexie"
 import type { LastMessagePreview, StreamReadFrontierSnapshot, WorkspaceBootstrap } from "@threahq/types"
 import { db } from "@/db"
 import { getAccountGeneration } from "@/db/event-writes"
@@ -13,11 +14,36 @@ import {
   type ResolvedReadAllFrontier,
 } from "./read-state"
 
+/**
+ * How long a background stream's durable live writes wait for company. Long
+ * enough that a burst across several agent scratchpads (message, append,
+ * message count, preview, counter) shares one transaction instead of each
+ * opening its own and queueing the open stream's reads behind it; short enough
+ * that a sidebar badge or preview lagging by it reads as instant.
+ */
+export const LIVE_WRITE_WINDOW_MS = 200
+
+/** A handler's transaction body, deferred into the next window's transaction. */
+interface DeferredStreamWrite {
+  tables: Table[]
+  write: () => Promise<void>
+  resolve: () => void
+  reject: (error: unknown) => void
+}
+
 /** One drain's worth of buffered work, detached from the batch. */
 type PendingFold = {
   mutators: CounterMutator[]
   previews: Map<string, LastMessagePreview | null>
   snapshots: StreamReadFrontierSnapshot[]
+  writes: DeferredStreamWrite[]
+}
+
+const EMPTY_FOLD: Omit<PendingFold, "writes"> = { mutators: [], previews: new Map(), snapshots: [] }
+
+/** A transaction scope may name a table once; deferred bodies often share them. */
+function uniqueTables(tables: Table[]): Table[] {
+  return [...new Map(tables.map((table) => [table.name, table])).values()]
 }
 
 /** One absolute (or relative) counter mutation, expressed as pure state math. */
@@ -128,14 +154,27 @@ export function commitStreamPreview(
 }
 
 /**
- * Coalesces the counter and preview writes of ONE task's live events into a
- * single IDB transaction and a single bootstrap-cache replacement, through the
- * same helpers `CatchUpBatch` folds with. One `stream:activity` otherwise costs
- * two transactions and two whole-`streams`-array rebuilds; a burst costs two per
- * message.
+ * Coalesces live durable writes into as few IndexedDB transactions as it can,
+ * and publishes the counter and preview half to the bootstrap cache once per
+ * commit through the same helpers `CatchUpBatch` folds with. One
+ * `stream:activity` otherwise costs two transactions and two whole-`streams`-
+ * array rebuilds; a burst costs two per message.
  *
- * The flush is a `queueMicrotask`, never a timer or a frame, so the badge and
- * the sidebar still settle inside the task that delivered the events.
+ * Two schedules feed one commit:
+ *
+ * - Counters, previews and read-all frontiers flush on a `queueMicrotask`, never
+ *   a timer or a frame, so the badge and the sidebar settle inside the task that
+ *   delivered the events.
+ * - Work for a stream the `defersStreamWrite` policy puts in the background (a
+ *   handler's transaction body, or a counter/preview naming that stream) waits
+ *   up to {@link LIVE_WRITE_WINDOW_MS}. A microtask flush landing meanwhile takes
+ *   it along: committing early is always safe, committing late never happens.
+ *
+ * A commit is ONE transaction over the union of the tables its work touches.
+ * Deferred bodies run inside it in arrival order, so each sees what the ones
+ * before it wrote — the per-event dedupe and tail-gap reads behave exactly as
+ * they do with a transaction each. A failed commit retries every body in its
+ * own transaction, so one bad write never takes another down with it.
  *
  * Order is persist-then-publish, matching {@link CatchUpBatch.flush}: the caches
  * never publish state the IDB lacks, so a failed flush publishes nothing at all
@@ -145,7 +184,15 @@ export class LiveCommitBatch {
   private counterMutators: CounterMutator[] = []
   private streamPreviews = new Map<string, LastMessagePreview | null>()
   private readAllSnapshots: StreamReadFrontierSnapshot[] = []
+  private streamWrites: DeferredStreamWrite[] = []
+  /** Streams with deferred work in the buffer: a reader of theirs flushes first. */
+  private deferredStreamIds = new Set<string>()
+  /** Streams whose deferred work the running commit holds. They stay gated until
+   *  it lands, retries included, so a read or foreground write never overtakes. */
+  private committingStreamIds = new Set<string>()
+  private listeningForHide = false
   private scheduled = false
+  private windowTimer: ReturnType<typeof setTimeout> | null = null
   private destroyed = false
   /** The account this batch belongs to. `db` is a proxy repointed on an account
    *  switch, so a flush resolving after one would write these rows into the
@@ -164,19 +211,21 @@ export class LiveCommitBatch {
      *  engine owns the recovery (a forced full snapshot reseed): a dropped
      *  `upsertActivity` is a held-set insert, so it cannot self-heal from the
      *  next message the way an absolute ordinal mutator does. */
-    private readonly onFlushFailed?: () => void
+    private readonly onFlushFailed?: () => void,
+    /** Whether `streamId`'s writes may wait for the window. Absent → never. */
+    private readonly defersStreamWrite?: (streamId: string) => boolean
   ) {}
 
-  applyCounter(mutate: CounterMutator): void {
+  applyCounter(mutate: CounterMutator, streamId?: string): void {
     if (this.destroyed) return
     this.counterMutators.push(mutate)
-    this.schedule()
+    this.schedule(streamId)
   }
 
   setStreamPreview(streamId: string, preview: LastMessagePreview | null): void {
     if (this.destroyed) return
     this.streamPreviews.set(streamId, preview)
-    this.schedule()
+    this.schedule(streamId)
   }
 
   /** Buffer one read-all payload's additive frontier snapshots, resolved and
@@ -193,10 +242,45 @@ export class LiveCommitBatch {
     this.schedule()
   }
 
+  /**
+   * Run one handler's transaction body for `streamId`. A stream the policy keeps
+   * in the foreground runs it in its own transaction now — after the stream's
+   * deferred writes, so its rows still land in arrival order. A background
+   * stream's body joins the window's transaction. Resolves once the body has
+   * committed, so the caller's follow-up work and the gate's cursor advance
+   * never run ahead of the row.
+   */
+  persistStreamWrite(streamId: string, tables: Table[], write: () => Promise<void>): Promise<void> {
+    if (this.destroyed || !this.defersStreamWrite?.(streamId)) {
+      const run = () => db.transaction("rw", tables, write)
+      const queued = this.settle(streamId)
+      return queued ? queued.then(run) : run()
+    }
+    return new Promise<void>((resolve, reject) => {
+      this.streamWrites.push({ tables, write, resolve, reject })
+      this.defer(streamId)
+    })
+  }
+
+  /** Commit now when the buffer holds deferred work for `streamId`, so a read or
+   *  write of that stream observes it; null when it holds none, so the caller
+   *  keeps its synchronous path. Never rejects: the chain has logged a failed
+   *  flush, and the caller proceeds on whatever landed. */
+  settle(streamId: string): Promise<void> | null {
+    if (!this.hasDeferred(streamId)) return null
+    return this.flush().catch(() => {})
+  }
+
+  /** Whether `streamId` has deferred work that has not landed yet. Pure, for render. */
+  hasDeferred(streamId: string): boolean {
+    return this.deferredStreamIds.has(streamId) || this.committingStreamIds.has(streamId)
+  }
+
   /** Commit everything buffered so far. Awaited by the engine when a catch-up
    *  window opens, so a live fold can never interleave into a replay fold. */
   flush(): Promise<void> {
     this.scheduled = false
+    this.clearWindow()
     const attempt = this.chain.then(() => this.commit())
     // The chain carries the swallowed copy: `.then(onFulfilled)` on a rejected
     // promise skips its callback and propagates, so one rejection (a mutator
@@ -209,16 +293,33 @@ export class LiveCommitBatch {
     console.error("Live commit batch flush failed", { workspaceId: this.workspaceId, error })
   }
 
-  /** Stop writing on behalf of a torn-down workspace: a flush already scheduled
-   *  runs as a no-op rather than persisting against a repointed database. */
+  private readonly flushOnHide = (event: Event): void => {
+    if (event.type === "visibilitychange" && document.visibilityState !== "hidden") return
+    if (this.windowTimer) void this.flush().catch(() => {})
+  }
+
+  /** Stop folding on behalf of a torn-down workspace: a flush already scheduled
+   *  drops its fold rather than persisting against a repointed database. Writes
+   *  already accepted still land while the account is unchanged, as a handler
+   *  mid-transaction at teardown would. */
   destroy(): void {
     this.destroyed = true
     this.counterMutators = []
     this.streamPreviews.clear()
     this.readAllSnapshots = []
+    if (typeof window !== "undefined") {
+      window.removeEventListener("pagehide", this.flushOnHide)
+      document.removeEventListener("visibilitychange", this.flushOnHide)
+    }
+    this.clearWindow()
+    if (this.streamWrites.length > 0) void this.flush().catch(() => {})
   }
 
-  private schedule(): void {
+  private schedule(streamId?: string): void {
+    if (streamId !== undefined && this.defersStreamWrite?.(streamId)) {
+      this.defer(streamId)
+      return
+    }
     if (this.scheduled) return
     this.scheduled = true
     queueMicrotask(() => {
@@ -228,40 +329,80 @@ export class LiveCommitBatch {
     })
   }
 
+  private defer(streamId: string): void {
+    this.deferredStreamIds.add(streamId)
+    // Attached on first use, not in the constructor: an engine built by a
+    // discarded render is never destroyed, and must leave no global listener.
+    if (!this.listeningForHide && typeof window !== "undefined") {
+      this.listeningForHide = true
+      // A backgrounded tab may be frozen or killed before the window ends.
+      window.addEventListener("pagehide", this.flushOnHide)
+      document.addEventListener("visibilitychange", this.flushOnHide)
+    }
+    this.windowTimer ??= setTimeout(() => {
+      this.windowTimer = null
+      void this.flush().catch(() => {})
+    }, LIVE_WRITE_WINDOW_MS)
+  }
+
+  private clearWindow(): void {
+    if (!this.windowTimer) return
+    clearTimeout(this.windowTimer)
+    this.windowTimer = null
+  }
+
   private takePending(): PendingFold {
     const pending = {
       mutators: this.counterMutators,
       previews: this.streamPreviews,
       snapshots: this.readAllSnapshots,
+      writes: this.streamWrites,
     }
     this.counterMutators = []
     this.streamPreviews = new Map()
     this.readAllSnapshots = []
+    this.streamWrites = []
+    this.committingStreamIds = this.deferredStreamIds
+    this.deferredStreamIds = new Set()
     return pending
   }
 
   private async commit(): Promise<void> {
-    await this.runCommit(this.takePending())
+    try {
+      await this.runCommit(this.takePending())
+    } finally {
+      this.committingStreamIds = new Set()
+    }
   }
 
-  private async runCommit({ mutators, previews, snapshots }: PendingFold): Promise<void> {
-    if (this.destroyed) return
-    if (getAccountGeneration() !== this.accountGeneration) return
-    if (mutators.length === 0 && previews.size === 0 && snapshots.length === 0) return
+  private async runCommit(pending: PendingFold): Promise<void> {
+    const { writes } = pending
+    if (getAccountGeneration() !== this.accountGeneration) {
+      const error = new Error("Live write dropped: the account changed before it committed")
+      for (const write of writes) write.reject(error)
+      return
+    }
+    const { mutators, previews, snapshots } = this.destroyed ? EMPTY_FOLD : pending
+    const haveFold = mutators.length > 0 || previews.size > 0 || snapshots.length > 0
+    if (!haveFold && writes.length === 0) return
 
     // Its OWN mark, never the handler's: the handler-body `stream.activityApply`
     // fires per event in both arms, so folding this sample into that name would
     // mix an N-sample buffer-push population with one persist-and-publish sample
     // and make the arms unreadable.
-    const stopFold = getPerfCapture().time("stream.liveCommitFold")
+    const stopFold = haveFold ? getPerfCapture().time("stream.liveCommitFold") : () => {}
     const haveFrontiers = snapshots.length > 0
+    const foldTables = haveFrontiers ? [db.streams, db.unreadState, db.streamReadState] : [db.streams, db.unreadState]
     let resolved: ResolvedReadAllFrontier[] = []
     try {
       getPerfCapture().count("stream.idbTransaction")
+      if (writes.length > 0) getPerfCapture().mark("stream.liveWriteBatch", writes.length)
       await db.transaction(
         "rw",
-        haveFrontiers ? [db.streams, db.unreadState, db.streamReadState] : [db.streams, db.unreadState],
+        uniqueTables([...writes.flatMap((write) => write.tables), ...(haveFold ? foldTables : [])]),
         async () => {
+          for (const write of writes) await write.write()
+          if (!haveFold) return
           await putCountersIdb(this.workspaceId, mutators)
           await putPreviewsIdb(this.workspaceId, previews)
           if (haveFrontiers) {
@@ -272,9 +413,19 @@ export class LiveCommitBatch {
       )
     } catch (error) {
       stopFold()
-      this.reportFailure(error, mutators.length > 0)
+      if (writes.length === 0) {
+        this.reportFailure(error, mutators.length > 0)
+        return
+      }
+      console.error("Live write batch failed; retrying each write alone", { workspaceId: this.workspaceId, error })
+      for (const write of writes) {
+        await db.transaction("rw", write.tables, write.write).then(write.resolve, write.reject)
+      }
+      if (haveFold) await this.runCommit({ mutators, previews, snapshots, writes: [] })
       return
     }
+    for (const write of writes) write.resolve()
+    if (!haveFold) return
 
     try {
       if (this.destroyed) return

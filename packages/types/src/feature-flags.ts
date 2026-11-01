@@ -54,6 +54,10 @@ export function defineFlag<
  * the moment the rollout is done. A flag that survives long here is a smell.
  */
 export const FEATURE_FLAGS = {
+  // "on" commits a background stream's live socket writes together, once per
+  // short window, so they stop queueing the open stream's reads. "off" writes
+  // every event in its own transaction as it arrives.
+  batchedLiveWrites: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "on" }),
   calls: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }),
   callsP2p: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "off" }),
   composeTraces: defineFlag({ values: ["off", "capture"], scopes: ["workspace"], default: "off" }),
