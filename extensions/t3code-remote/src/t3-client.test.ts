@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { T3AuthError } from "./auth"
-import { T3Client, T3ToolError, type T3TokenSource } from "./t3-client"
+import { TESTED_T3_VERSIONS, T3Client, T3ToolError, type T3TokenSource } from "./t3-client"
 
 interface Seen {
   method: string
@@ -22,7 +22,10 @@ function fakeServer(answer: (method: string, seen: Seen, count: number) => Respo
     const custom = answer(method, entry, seen.filter((candidate) => candidate.method === method).length)
     if (custom) return custom
     if (method === "initialize")
-      return Response.json({ jsonrpc: "2.0", id, result: {} }, { headers: { "mcp-session-id": `sess_${seen.length}` } })
+      return Response.json(
+        { jsonrpc: "2.0", id, result: INITIALIZED },
+        { headers: { "mcp-session-id": `sess_${seen.length}` } }
+      )
     if (method === "notifications/initialized") return new Response(null, { status: 202 })
     return sse({
       jsonrpc: "2.0",
@@ -53,6 +56,8 @@ function tokens(renewed = "tok_new"): T3TokenSource & { renewals: number } {
   return source
 }
 
+const INITIALIZED = { serverInfo: { name: "T3 Code", version: TESTED_T3_VERSIONS[0] } }
+
 const WAIT = { threadId: "thread_1", runId: "run_1", timeoutMs: 10 }
 
 describe("T3Client", () => {
@@ -78,7 +83,7 @@ describe("T3Client", () => {
     const fetch = async (_url: string, init: RequestInit) => {
       const { method, id, params } = JSON.parse(String(init.body))
       if (method === "initialize")
-        return Response.json({ jsonrpc: "2.0", id, result: {} }, { headers: { "mcp-session-id": "current" } })
+        return Response.json({ jsonrpc: "2.0", id, result: INITIALIZED }, { headers: { "mcp-session-id": "current" } })
       if (method === "notifications/initialized") return new Response(null, { status: 202 })
       calls.push(params)
       const args = params.arguments
@@ -263,5 +268,79 @@ describe("T3Client", () => {
     const client = new T3Client("http://t3.test", tokens(), server.fetch)
 
     await expect(client.call("t3_thread_wait", WAIT)).rejects.toThrow("dropped the MCP session again")
+  })
+
+  test("refuses a T3 Code release it was not tested against, and checks again on the next call", async () => {
+    const server = fakeServer((method, _seen, count) =>
+      method === "initialize" && count === 1
+        ? Response.json(
+            { jsonrpc: "2.0", id: 1, result: { serverInfo: { name: "T3 Code", version: "9.9.9" } } },
+            { headers: { "mcp-session-id": "sess_untested" } }
+          )
+        : undefined
+    )
+    const client = new T3Client("http://t3.test", tokens(), server.fetch)
+
+    await expect(client.call("t3_thread_wait", WAIT)).rejects.toThrow(
+      `T3 Code 9.9.9 is untested with this connector, which runs against ${TESTED_T3_VERSIONS.join(", ")}. ` +
+        "Pin T3 with `t3 update --channel stable <version> --allow-downgrade`, or install a connector release that lists it."
+    )
+    await client.call("t3_thread_wait", WAIT)
+
+    expect(server.seen.map(({ method, session }) => [method, session])).toEqual([
+      ["initialize", null],
+      ["initialize", null],
+      ["notifications/initialized", "sess_2"],
+      ["tools/call", "sess_2"],
+    ])
+  })
+
+  test("a call arriving while the version is still being read waits for the check", async () => {
+    let releaseBody!: () => void
+    const bodyHeld = new Promise<void>((resolve) => (releaseBody = resolve))
+    const server = fakeServer((method) => {
+      if (method !== "initialize") return undefined
+      const body = JSON.stringify({ jsonrpc: "2.0", id: 1, result: { serverInfo: { version: "9.9.9" } } })
+      const stream = new ReadableStream({
+        start: async (controller) => {
+          await bodyHeld
+          controller.enqueue(new TextEncoder().encode(body))
+          controller.close()
+        },
+      })
+      return new Response(stream, { headers: { "mcp-session-id": "sess_untested" } })
+    })
+    const client = new T3Client("http://t3.test", tokens(), server.fetch)
+
+    const first = client.call("t3_thread_wait", WAIT).then(String, (e: Error) => e.message)
+    while (server.seen.length === 0) await Bun.sleep(1)
+    await Bun.sleep(5)
+    const second = client.call("t3_thread_wait", WAIT).then(String, (e: Error) => e.message)
+    releaseBody()
+
+    expect({
+      first: (await first).startsWith("T3 Code 9.9.9 is untested"),
+      second: (await second).startsWith("T3 Code 9.9.9 is untested"),
+      methods: server.seen.map(({ method }) => method),
+    }).toEqual({ first: true, second: true, methods: ["initialize"] })
+  })
+
+  test("an initialize that fails after naming a session leaves no session to call on", async () => {
+    const server = fakeServer((method, _seen, count) =>
+      method === "initialize" && count === 1
+        ? new Response("boom", { status: 500, headers: { "mcp-session-id": "sess_failed" } })
+        : undefined
+    )
+    const client = new T3Client("http://t3.test", tokens(), server.fetch)
+
+    await expect(client.call("t3_thread_wait", WAIT)).rejects.toThrow("T3 Code MCP initialize answered 500: boom")
+    await client.call("t3_thread_wait", WAIT)
+
+    expect(server.seen.map(({ method, session }) => [method, session])).toEqual([
+      ["initialize", null],
+      ["initialize", null],
+      ["notifications/initialized", "sess_2"],
+      ["tools/call", "sess_2"],
+    ])
   })
 })
