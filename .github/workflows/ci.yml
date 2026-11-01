@@ -83,10 +83,15 @@ jobs:
         run: bun run typecheck
 
   backend:
-    name: Backend
+    name: Backend (${{ matrix.part }})
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Integration alone fills a runner for as long as everything else together.
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [integration, rest]
     env:
       TEST_DATABASE_URL: postgresql://threa:threa@localhost:5454/threa_test
       S3_ENDPOINT: http://localhost:9000
@@ -122,10 +127,11 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run scripts tests
+        if: matrix.part == 'rest'
         run: bun run test:scripts
 
       - name: Run backend unit tests
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.part == 'rest' }}
         run: bun run --cwd apps/backend test:unit
 
       - name: Wait for Postgres and MinIO
@@ -145,11 +151,11 @@ jobs:
           PGPASSWORD=threa psql -h localhost -p 5454 -U threa -d postgres -c "CREATE DATABASE threa_control_plane_test;"
 
       - name: Run backend integration tests
-        if: ${{ !cancelled() && steps.services.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.services.outcome == 'success' && matrix.part == 'integration' }}
         run: bun run --cwd apps/backend test:integration
 
       - name: Run backend e2e tests
-        if: ${{ !cancelled() && steps.services.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.services.outcome == 'success' && matrix.part == 'rest' }}
         # Two workers: each boots a polling test server, and at four the slowest
         # e2e cases cross their 5s timeout on a 4-vCPU runner.
         run: bun run --cwd apps/backend test:e2e tests/e2e/ --workers 2
@@ -157,19 +163,19 @@ jobs:
       # Packs the published bot-runtime packages, whose declaration build needs
       # bot-runtime-client's own deps (mdast) that the root install does not hoist.
       - name: Run published SDK consumer test
-        if: ${{ !cancelled() && steps.services.outcome == 'success' && needs.plan.outputs.extensions == 'true' }}
+        if: ${{ !cancelled() && steps.services.outcome == 'success' && needs.plan.outputs.extensions == 'true' && matrix.part == 'rest' }}
         run: |
           bun install --frozen-lockfile --cwd extensions/bot-runtime-client
           bun run --cwd apps/backend test:e2e tests/published-sdk/
 
       - name: Run control-plane tests
-        if: ${{ !cancelled() && steps.services.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.services.outcome == 'success' && matrix.part == 'rest' }}
         run: bun run --cwd apps/control-plane test
         env:
           TEST_DATABASE_URL: postgresql://threa:threa@localhost:5454/threa_control_plane_test
 
       - name: Run package tests
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.part == 'rest' }}
         run: |
           bun run --cwd apps/workspace-router test
           bun run --cwd apps/enclave test
