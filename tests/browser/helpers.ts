@@ -19,21 +19,9 @@ export async function expectApiOk(response: APIResponse, action: string): Promis
   throw new Error(`${action} failed: ${response.status()} ${response.statusText()} - ${body}`)
 }
 
-const REGION_BACKEND_PORT_ENV = {
-  local: "PLAYWRIGHT_BACKEND_PORT",
-  "local-2": "PLAYWRIGHT_BACKEND2_PORT",
-}
-export type TestRegion = keyof typeof REGION_BACKEND_PORT_ENV
-const DEFAULT_REGION: TestRegion = "local"
-
-/** Turns a feature flag on for one workspace through its region's backend internal API, replacing its other flag overrides. */
-export async function enrollWorkspaceFlag(
-  page: Page,
-  workspaceId: string,
-  flag: string,
-  region: TestRegion = DEFAULT_REGION
-): Promise<void> {
-  const backendPort = process.env[REGION_BACKEND_PORT_ENV[region]]
+/** Turns a feature flag on for one workspace through the backend internal API, replacing its other flag overrides. */
+export async function enrollWorkspaceFlag(page: Page, workspaceId: string, flag: string): Promise<void> {
+  const backendPort = process.env.PLAYWRIGHT_BACKEND_PORT
   const internalApiKey = process.env.PLAYWRIGHT_INTERNAL_API_KEY
   if (!backendPort || !internalApiKey) throw new Error("Browser test feature-flag fixture is unavailable")
   await expectApiOk(
@@ -90,10 +78,9 @@ export function generateTestId(): string {
  */
 export async function loginAndCreateWorkspace(
   page: Page,
-  prefix: string,
-  options?: { region?: TestRegion }
+  prefix: string
 ): Promise<{ testId: string; email: string; name: string; workspaceName: string }> {
-  const { workspaceId, ...metadata } = await loginAndCreateWorkspaceViaApi(page, prefix, options)
+  const { workspaceId, ...metadata } = await loginAndCreateWorkspaceViaApi(page, prefix)
   await page.goto(`/w/${workspaceId}`)
   await expect(page.getByRole("button", { name: "+ New Scratchpad" })).toBeVisible({ timeout: 10000 })
   return metadata
@@ -101,8 +88,7 @@ export async function loginAndCreateWorkspace(
 
 export async function loginAndCreateWorkspaceViaApi(
   page: Page,
-  prefix: string,
-  options?: { region?: TestRegion }
+  prefix: string
 ): Promise<{ testId: string; email: string; name: string; workspaceName: string; workspaceId: string }> {
   const testId = generateTestId()
   const email = `${prefix}-${testId}@example.com`
@@ -111,20 +97,16 @@ export async function loginAndCreateWorkspaceViaApi(
 
   await devLogin(page, email, name)
 
-  const region = options?.region ?? DEFAULT_REGION
   const createWorkspaceResponse = await page.request.post("/api/workspaces", {
-    data: { name: workspaceName, region },
+    data: { name: workspaceName },
   })
   await expectApiOk(createWorkspaceResponse, "Workspace creation")
   const createWorkspaceBody = (await createWorkspaceResponse.json()) as {
-    workspace?: { id?: string; region?: string }
+    workspace?: { id?: string }
   }
   const workspaceId = createWorkspaceBody.workspace?.id
   if (!workspaceId) {
     throw new Error("Workspace creation response is missing workspace.id")
-  }
-  if (createWorkspaceBody.workspace?.region !== region) {
-    throw new Error(`Workspace was created in ${createWorkspaceBody.workspace?.region}, not ${region}`)
   }
 
   await waitForWorkspaceProvisioned(page, workspaceId)

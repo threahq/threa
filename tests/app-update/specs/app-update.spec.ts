@@ -241,18 +241,23 @@ test("legacy SKIP_WAITING activates the actual B worker without an unsolicited r
 
   // Re-posted every tick: the message is fire-and-forget, and one dropped while
   // the browser is busy would otherwise leave the poll waiting on nothing.
-  // Repeating is a no-op once B activates, since `waiting` is then null.
+  // The poll reads registration state only: messaging the outgoing controller
+  // gives it in-flight work, and Chromium defers activation until it has none.
   await expect
     .poll(
-      async () => {
-        await page.evaluate(() =>
-          navigator.serviceWorker.getRegistration().then((r) => r?.waiting?.postMessage({ type: "SKIP_WAITING" }))
-        )
-        return workerStatus(page, "controller")
-      },
+      () =>
+        page.evaluate(async () => {
+          const registration = await navigator.serviceWorker.getRegistration()
+          registration?.waiting?.postMessage({ type: "SKIP_WAITING" })
+          const active = registration?.active
+          return (
+            !registration?.waiting && active?.state === "activated" && navigator.serviceWorker.controller === active
+          )
+        }),
       { timeout: SW_SETTLE_TIMEOUT }
     )
-    .toEqual({ buildId: buildB, ready: true })
+    .toBe(true)
+  expect(await workerStatus(page, "controller")).toEqual({ buildId: buildB, ready: true })
   expect(reloads).toEqual([])
   expect(await fixtureVersion(page)).toBe("A")
 

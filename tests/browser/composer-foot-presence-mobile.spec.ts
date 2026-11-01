@@ -48,11 +48,15 @@ test.describe("Composer foot presence — phone", () => {
     const editor = page.locator("[data-editor-zone='main'] [contenteditable='true']").first()
     // A real tap on the card: the composer's expanded chrome (the one holding
     // the "+") is a focus state, and the card's own padding intercepts clicks
-    // aimed at the editor box.
+    // aimed at the editor box. The foot animates between its collapsed and
+    // expanded heights, so a box measured mid-transition can miss: re-measure
+    // and tap again until the editor holds focus.
     const focusComposer = async () => {
-      const box = await card.boundingBox()
-      await page.touchscreen.tap(box!.x + box!.width / 2, box!.y + 18)
-      await expect(editor).toBeFocused()
+      await expect(async () => {
+        const box = await card.boundingBox()
+        await page.touchscreen.tap(box!.x + box!.width / 2, box!.y + 18)
+        await expect(editor).toBeFocused({ timeout: 1000 })
+      }).toPass()
     }
     await focusComposer()
 

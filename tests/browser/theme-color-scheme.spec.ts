@@ -6,21 +6,18 @@ import { test, expect } from "@playwright/test"
  * scrollbar (white track) on desktops that show classic scrollbars.
  */
 
-async function readTheme(page: import("@playwright/test").Page) {
-  await page.goto("/")
-  await expect(page.locator("html")).toBeAttached()
-  return page.evaluate(() => ({
-    darkClass: document.documentElement.classList.contains("dark"),
-    colorScheme: getComputedStyle(document.documentElement).colorScheme,
-  }))
-}
+// A public page that stays put: "/" chains through /login to the test auth stub, which carries no theme.
+const PUBLIC_PAGE = "/join/inv_theme_probe"
 
 test.describe("theme color-scheme", () => {
   test.describe("dark system preference", () => {
     test.use({ colorScheme: "dark" })
 
     test("native chrome renders in the dark scheme", async ({ page }) => {
-      expect(await readTheme(page)).toEqual({ darkClass: true, colorScheme: "dark" })
+      await page.goto(PUBLIC_PAGE)
+      const html = page.locator("html")
+      await expect(html).toHaveCSS("color-scheme", "dark")
+      await expect(html).toHaveClass(/\bdark\b/)
     })
   })
 
@@ -28,7 +25,10 @@ test.describe("theme color-scheme", () => {
     test.use({ colorScheme: "light" })
 
     test("native chrome renders in the light scheme", async ({ page }) => {
-      expect(await readTheme(page)).toEqual({ darkClass: false, colorScheme: "light" })
+      await page.goto(PUBLIC_PAGE)
+      const html = page.locator("html")
+      await expect(html).toHaveCSS("color-scheme", "light")
+      await expect(html).not.toHaveClass(/\bdark\b/)
     })
   })
 })

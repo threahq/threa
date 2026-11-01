@@ -8,7 +8,6 @@ import * as net from "net"
  * - Local: Uses docker-compose.test.yml with separate ports to avoid dev conflicts
  */
 const isCI = !!process.env.CI
-const singleRegion = process.env.PLAYWRIGHT_SINGLE_REGION === "1"
 const DB_PORT = isCI ? 5454 : 5455
 const MINIO_PORT = isCI ? 9000 : 9002
 
@@ -69,7 +68,6 @@ function getOrAllocatePort(envVar: string): number {
 // Find free ports for this test run (allows parallel execution across worktrees)
 // Ports are cached in env vars so worker processes use the same ports
 const backendPort = getOrAllocatePort("PLAYWRIGHT_BACKEND_PORT")
-const backend2Port = getOrAllocatePort("PLAYWRIGHT_BACKEND2_PORT")
 const controlPlanePort = getOrAllocatePort("PLAYWRIGHT_CONTROL_PLANE_PORT")
 const routerPort = getOrAllocatePort("PLAYWRIGHT_ROUTER_PORT")
 const routerInspectorPort = getOrAllocatePort("PLAYWRIGHT_ROUTER_INSPECTOR_PORT")
@@ -80,7 +78,6 @@ const internalApiKey = "test-internal-key"
 process.env.PLAYWRIGHT_INTERNAL_API_KEY = internalApiKey
 const dbName = deriveTestDatabaseName()
 const cpDbName = `${dbName}_cp`
-const r2DbName = `${dbName}_r2`
 const setupBrowserInfraCommand = "bun tests/browser/setup-infra.ts"
 // In CI the backend, control-plane and router boot concurrently with the
 // CPU-heavy frontend prod build (`vite build`) on a 4-vCPU runner, so their
@@ -113,7 +110,7 @@ const frontendServerTimeout = useProdFrontend ? 180000 : webServerTimeout
 // Only log once (when ports are first allocated)
 if (!process.env.PLAYWRIGHT_PORTS_LOGGED) {
   console.log(
-    `Playwright config: backend=${backendPort}, backend2=${backend2Port}, control-plane=${controlPlanePort}, router=${routerPort}, frontend=${frontendPort}, db=${dbName}, cp_db=${cpDbName}, r2_db=${r2DbName}, postgres=${DB_PORT}, minio=${MINIO_PORT}`
+    `Playwright config: backend=${backendPort}, control-plane=${controlPlanePort}, router=${routerPort}, frontend=${frontendPort}, db=${dbName}, cp_db=${cpDbName}, postgres=${DB_PORT}, minio=${MINIO_PORT}`
   )
   process.env.PLAYWRIGHT_PORTS_LOGGED = "true"
 }
@@ -159,9 +156,6 @@ const sharedBackendEnv = {
 
 const routerRegions = {
   local: { apiUrl: `http://localhost:${backendPort}`, wsUrl: `ws://localhost:${backendPort}` },
-  ...(!singleRegion && {
-    "local-2": { apiUrl: `http://localhost:${backend2Port}`, wsUrl: `ws://localhost:${backend2Port}` },
-  }),
 }
 
 function regionalBackendServer(region: string, port: number, databaseName: string) {
@@ -252,7 +246,6 @@ export default defineConfig({
       env: { FAKE_CF_PORT: String(fakeCfPort) },
     },
     regionalBackendServer("local", backendPort, dbName),
-    ...(!singleRegion ? [regionalBackendServer("local-2", backend2Port, r2DbName)] : []),
     {
       command: `${setupBrowserInfraCommand} && bun run test:browser:control-plane`,
       url: `http://localhost:${controlPlanePort}/readyz`,
@@ -266,7 +259,6 @@ export default defineConfig({
         INTERNAL_API_KEY: internalApiKey,
         REGIONS: JSON.stringify({
           local: { internalUrl: `http://localhost:${backendPort}` },
-          ...(!singleRegion && { "local-2": { internalUrl: `http://localhost:${backend2Port}` } }),
         }),
         CORS_ALLOWED_ORIGINS: `http://localhost:${controlPlanePort},http://localhost:${frontendPort}`,
         GLOBAL_RATE_LIMIT_MAX: "10000",
