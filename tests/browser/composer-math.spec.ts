@@ -137,6 +137,9 @@ test.describe("Composer math", () => {
     await page.keyboard.press("ArrowLeft")
     await expect(texField(page)).toBeFocused()
     await expect(texField(page)).toHaveValue("x^2")
+    // The field claims the focus again on the next frame, after the editor writes
+    // its node selection; a key sent before then lands in the editor.
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))
 
     // Off the far end the caret leaves the equation intact rather than being
     // stuck in it — and the equation is still one node, not `$` characters.
