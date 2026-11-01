@@ -9,6 +9,7 @@ import { LIVE_WRITE_WINDOW_MS } from "./catch-up-batch"
 import { computeTimelineHoles } from "./contiguity"
 import { SocketEventGate } from "./socket-event-gate"
 import { registerStreamSocketHandlers } from "./stream-sync"
+import { registerWorkspaceSocketHandlers } from "./workspace-sync"
 import { LiveWritesContext } from "./live-writes-context"
 import { SyncEngine } from "./sync-engine"
 
@@ -257,6 +258,75 @@ describe("batched live writes", () => {
 
     expect(performance.now() - started).toBeLessThan(LIVE_WRITE_WINDOW_MS / 2)
     expect(await rowIds(BACKGROUND)).toEqual([`evt_${BACKGROUND}_1`])
+  })
+
+  it("should keep a stream gated while its waiting writes commit", async () => {
+    const liveWrites = engine.getLiveWrites()
+    const gatedDuringCommit: boolean[] = []
+    const landed = liveWrites.persistStreamWrite(BACKGROUND, [db.events], async () => {
+      gatedDuringCommit.push(liveWrites.hasDeferred(BACKGROUND))
+    })
+
+    await liveWrites.flush()
+    await landed
+    expect({ gatedDuringCommit, gatedAfter: liveWrites.hasDeferred(BACKGROUND) }).toEqual({
+      gatedDuringCommit: [true],
+      gatedAfter: false,
+    })
+  })
+
+  it("should attach the hide listeners only once a write waits", async () => {
+    const addListener = vi.spyOn(window, "addEventListener")
+    const pagehideListeners = () => addListener.mock.calls.filter(([type]) => type === "pagehide").length
+    const unused = new SyncEngine(makeDeps())
+    unused.setCurrentStreamId(OPEN)
+    expect(pagehideListeners()).toBe(0)
+
+    const { emit } = wire(BACKGROUND)
+    const waiting = emit("message:created", created(BACKGROUND, 1))
+    expect(pagehideListeners()).toBe(1)
+    await waiting
+    unused.destroy()
+  })
+
+  it("should patch an attachment on a message still waiting in the window", async () => {
+    const { emit } = wire(BACKGROUND)
+    const workspace = createSource()
+    cleanups.push(
+      registerWorkspaceSocketHandlers(workspace.source, WS, deps.queryClient, {
+        getCurrentStreamId: () => OPEN,
+        getCurrentUser: () => null,
+        subscribeStream: vi.fn(),
+        refreshWorkspace: vi.fn(),
+        getLiveCommitBatch: () => engine.getLiveWrites(),
+      })
+    )
+    const event = wireEvent("evt_upload", BACKGROUND, 1)
+    void emit("message:created", {
+      workspaceId: WS,
+      streamId: BACKGROUND,
+      event: {
+        ...event,
+        payload: {
+          ...(event.payload as Record<string, unknown>),
+          attachments: [{ id: "attach_1", uploadStatus: "uploading" }],
+        },
+      },
+    })
+
+    await workspace.emit("attachment:upload_status_changed", {
+      workspaceId: WS,
+      attachmentId: "attach_1",
+      uploadStatus: "failed",
+      safetyStatus: "failed",
+      streamId: BACKGROUND,
+      messageId: "msg_evt_upload",
+    })
+
+    const row = await db.events.get([WS, "evt_upload"])
+    expect((row?.payload as { attachments?: unknown }).attachments).toEqual([
+      { id: "attach_1", uploadStatus: "failed", safetyStatus: "failed" },
+    ])
   })
 
   it("should advance the sync cursor only once the waiting write commits", async () => {

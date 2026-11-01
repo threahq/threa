@@ -2283,6 +2283,9 @@ export function registerWorkspaceSocketHandlers(
       return { ...p, attachments: updatedAttachments }
     }
 
+    // The message row may still be waiting in a background stream's write window.
+    const pending = liveBatch()?.settle(streamId)
+    if (pending) await pending
     const events = await db.events
       .where("[workspaceId+streamId+eventType]")
       .equals([workspaceId, streamId, "message_created"])

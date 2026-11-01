@@ -187,6 +187,10 @@ export class LiveCommitBatch {
   private streamWrites: DeferredStreamWrite[] = []
   /** Streams with deferred work in the buffer: a reader of theirs flushes first. */
   private deferredStreamIds = new Set<string>()
+  /** Streams whose deferred work the running commit holds. They stay gated until
+   *  it lands, retries included, so a read or foreground write never overtakes. */
+  private committingStreamIds = new Set<string>()
+  private listeningForHide = false
   private scheduled = false
   private windowTimer: ReturnType<typeof setTimeout> | null = null
   private destroyed = false
@@ -210,13 +214,7 @@ export class LiveCommitBatch {
     private readonly onFlushFailed?: () => void,
     /** Whether `streamId`'s writes may wait for the window. Absent → never. */
     private readonly defersStreamWrite?: (streamId: string) => boolean
-  ) {
-    if (defersStreamWrite && typeof window !== "undefined") {
-      // A backgrounded tab may be frozen or killed before the window ends.
-      window.addEventListener("pagehide", this.flushOnHide)
-      document.addEventListener("visibilitychange", this.flushOnHide)
-    }
-  }
+  ) {}
 
   applyCounter(mutate: CounterMutator, streamId?: string): void {
     if (this.destroyed) return
@@ -273,9 +271,9 @@ export class LiveCommitBatch {
     return this.flush().catch(() => {})
   }
 
-  /** Whether the buffer holds deferred work for `streamId`. Pure, for render. */
+  /** Whether `streamId` has deferred work that has not landed yet. Pure, for render. */
   hasDeferred(streamId: string): boolean {
-    return this.deferredStreamIds.has(streamId)
+    return this.deferredStreamIds.has(streamId) || this.committingStreamIds.has(streamId)
   }
 
   /** Commit everything buffered so far. Awaited by the engine when a catch-up
@@ -333,6 +331,14 @@ export class LiveCommitBatch {
 
   private defer(streamId: string): void {
     this.deferredStreamIds.add(streamId)
+    // Attached on first use, not in the constructor: an engine built by a
+    // discarded render is never destroyed, and must leave no global listener.
+    if (!this.listeningForHide && typeof window !== "undefined") {
+      this.listeningForHide = true
+      // A backgrounded tab may be frozen or killed before the window ends.
+      window.addEventListener("pagehide", this.flushOnHide)
+      document.addEventListener("visibilitychange", this.flushOnHide)
+    }
     this.windowTimer ??= setTimeout(() => {
       this.windowTimer = null
       void this.flush().catch(() => {})
@@ -356,12 +362,17 @@ export class LiveCommitBatch {
     this.streamPreviews = new Map()
     this.readAllSnapshots = []
     this.streamWrites = []
+    this.committingStreamIds = this.deferredStreamIds
     this.deferredStreamIds = new Set()
     return pending
   }
 
   private async commit(): Promise<void> {
-    await this.runCommit(this.takePending())
+    try {
+      await this.runCommit(this.takePending())
+    } finally {
+      this.committingStreamIds = new Set()
+    }
   }
 
   private async runCommit(pending: PendingFold): Promise<void> {

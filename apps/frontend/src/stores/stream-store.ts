@@ -529,20 +529,14 @@ export function useStreamEvents(
  */
 function useDeferredWritesLanded(streamId: string | undefined): boolean {
   const liveWrites = useLiveWrites()
-  const [landedFor, setLandedFor] = useState<string | null>(null)
-  const passedFor = useRef<string | null>(null)
-  const waiting =
-    !!streamId &&
-    !!liveWrites &&
-    passedFor.current !== streamId &&
-    landedFor !== streamId &&
-    liveWrites.hasDeferred(streamId)
-  if (!waiting) passedFor.current = streamId ?? null
+  const [passedFor, setPassedFor] = useState<string | null>(null)
+  const waiting = !!streamId && !!liveWrites && passedFor !== streamId && liveWrites.hasDeferred(streamId)
+  if (!waiting && passedFor !== (streamId ?? null)) setPassedFor(streamId ?? null)
   useEffect(() => {
     if (!waiting || !liveWrites || !streamId) return
     let current = true
     void (liveWrites.settle(streamId) ?? Promise.resolve()).then(() => {
-      if (current) setLandedFor(streamId)
+      if (current) setPassedFor(streamId)
     })
     return () => {
       current = false
