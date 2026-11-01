@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor, within } from "@/test"
 import { LabelableResourceTypes, StreamTypes, Visibilities } from "@threahq/types"
 import { ScratchpadItem } from "./scratchpad-item"
 import { SidebarLabelsProvider } from "./sidebar-labels"
+import { SidebarRowOpenersProvider } from "./sidebar-row-openers"
 import type { StreamItemData } from "./types"
 import type { SidebarBoardMode } from "./board-sidebar-mode"
 import * as contextsModule from "@/contexts"
@@ -37,7 +38,7 @@ function renderWithRouter(ui: React.ReactElement, initialPath = "/w/workspace_1/
           path="*"
           element={
             <>
-              {ui}
+              <SidebarRowOpenersProvider>{ui}</SidebarRowOpenersProvider>
               <LocationEcho />
             </>
           }
@@ -79,10 +80,10 @@ describe("ScratchpadItem", () => {
     deleteScratchpad.mockReset()
     openStreamSettings.mockReset()
 
-    vi.spyOn(contextsModule, "useSidebar").mockReturnValue({
+    vi.spyOn(contextsModule, "useSidebarControls").mockReturnValue({
       collapseOnMobile,
       registerOpenMenu: vi.fn(() => () => {}),
-    } as unknown as ReturnType<typeof contextsModule.useSidebar>)
+    })
 
     vi.spyOn(hooksModule, "isDraftId").mockImplementation((id: string) => id.startsWith("draft_"))
     vi.spyOn(hooksModule, "useActors").mockReturnValue({

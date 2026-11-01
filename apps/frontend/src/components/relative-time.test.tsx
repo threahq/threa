@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { RelativeTime } from "./relative-time"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import { formatDisplayDate, formatTime, formatRelativeTime, formatFullDateTime } from "@/lib/dates"
 import * as hooksModule from "@/hooks"
 
@@ -86,5 +88,39 @@ describe("RelativeTime", () => {
     render(<RelativeTime date={isoString} />)
     // Yesterday
     expect(screen.getByText(/yesterday/i)).toBeInTheDocument()
+  })
+})
+
+describe("RelativeTime tooltip", () => {
+  const nativeMatches = Element.prototype.matches
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("should format the full date only once the tooltip opens", async () => {
+    const formatFull = vi.fn((date: Date) => formatFullDateTime(date))
+    vi.spyOn(hooksModule, "useFormattedDate").mockReturnValue({
+      formatDate: (date: Date) => formatDisplayDate(date),
+      formatTime: (date: Date) => formatTime(date),
+      formatRelative: (date: Date, now?: Date) => formatRelativeTime(date, now),
+      formatFull,
+    } as unknown as ReturnType<typeof hooksModule.useFormattedDate>)
+    // jsdom never matches `:hover`; stand in for the browser hit-testing the pointer.
+    vi.spyOn(Element.prototype, "matches").mockImplementation(function (this: Element, selector: string) {
+      return selector === ":hover" || nativeMatches.call(this, selector)
+    })
+    const date = new Date(2024, 2, 15, 9, 45)
+    const user = userEvent.setup()
+    render(
+      <TooltipProvider delayDuration={0}>
+        <RelativeTime date={date} />
+      </TooltipProvider>
+    )
+    expect(formatFull).not.toHaveBeenCalled()
+
+    await user.hover(screen.getByText(/March 15, 2024/))
+
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(formatFullDateTime(date))
   })
 })

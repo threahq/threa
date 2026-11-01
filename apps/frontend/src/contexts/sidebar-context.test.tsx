@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
-import { renderHook, act } from "@testing-library/react"
+import { render, renderHook, act } from "@testing-library/react"
 import type { ReactNode } from "react"
-import { SidebarProvider, useSidebar } from "./sidebar-context"
+import { SidebarProvider, useSidebar, useSidebarControls } from "./sidebar-context"
 
 const SIDEBAR_STATE_KEY = "threa-sidebar-state"
 
@@ -45,6 +45,34 @@ describe("SidebarContext.togglePinned (desktop)", () => {
 
     act(() => result.current.togglePinned())
     expect(result.current.state).toBe("pinned")
+  })
+})
+
+describe("useSidebarControls", () => {
+  it("should not re-render its consumers when the sidebar collapses or opens", () => {
+    let sidebar: ReturnType<typeof useSidebar> | null = null
+    let controlsRenders = 0
+    function SidebarDriver() {
+      sidebar = useSidebar()
+      return null
+    }
+    function ControlsConsumer() {
+      useSidebarControls()
+      controlsRenders++
+      return null
+    }
+    render(
+      <SidebarProvider>
+        <SidebarDriver />
+        <ControlsConsumer />
+      </SidebarProvider>
+    )
+    controlsRenders = 0
+
+    act(() => sidebar!.collapse())
+    act(() => sidebar!.togglePinned())
+
+    expect({ state: sidebar!.state, controlsRenders }).toEqual({ state: "pinned", controlsRenders: 0 })
   })
 })
 

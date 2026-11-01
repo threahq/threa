@@ -2,7 +2,7 @@ import { Fragment, memo, useMemo, type ReactNode } from "react"
 import { useLocation } from "react-router-dom"
 import { CheckCheck, Inbox, ListX } from "lucide-react"
 import { BOARD_SCOPE_STREAM_TYPES, MAX_BOARD_SCOPE_STREAMS } from "@threahq/types"
-import { useSidebar, type CollapseState } from "@/contexts"
+import { useSidebarControls, type CollapseState } from "@/contexts"
 import { useBoardSelection } from "@/hooks/use-board-selection"
 import {
   BOARD_LABEL_PARAM,
@@ -24,6 +24,7 @@ import { sectionPresentation, type SidebarSectionSpec } from "./sidebar-config"
 import type { SectionViewChange, SectionViewOptions } from "./section-view-options"
 import { findSourceLabelId, type ResolvedSection } from "./resolve-sections"
 import { SidebarLabelsProvider } from "./sidebar-labels"
+import { SidebarRowOpenersProvider } from "./sidebar-row-openers"
 import { SidebarQuickJumpProvider, createQuickJumpCollector } from "./quick-jump"
 import { SidebarStreamStepShortcuts } from "./stream-step"
 import { browseStreamsAction, type SidebarActionItem } from "./sidebar-actions"
@@ -255,7 +256,7 @@ export const SidebarStreamList = memo(function SidebarStreamList({
   const streamDragEnabled = useInputMode() !== "touch"
   // Opening a label from its section header should close the sidebar on mobile,
   // matching stream rows and quick links (no-op on desktop).
-  const { collapseOnMobile } = useSidebar()
+  const { collapseOnMobile } = useSidebarControls()
   // The live board selection, so a section header can tell whether the board is
   // already filtered to its own axis (INV-35: the same derivation the board block
   // and the filter chips read).
@@ -609,18 +610,24 @@ export const SidebarStreamList = memo(function SidebarStreamList({
 
   return (
     <SidebarLabelsProvider workspaceId={workspaceId}>
-      <SidebarQuickJumpProvider workspaceId={workspaceId} order={quickJump.ids}>
-        <SidebarStreamStepShortcuts workspaceId={workspaceId} order={quickJump.order} activeStreamId={activeStreamId} />
-        {/* A provided slot renders at its section's position below; when the user's
+      <SidebarRowOpenersProvider>
+        <SidebarQuickJumpProvider workspaceId={workspaceId} order={quickJump.ids}>
+          <SidebarStreamStepShortcuts
+            workspaceId={workspaceId}
+            order={quickJump.order}
+            activeStreamId={activeStreamId}
+          />
+          {/* A provided slot renders at its section's position below; when the user's
             layout has NO quicklinks section it renders first instead of vanishing.
             Chats mode never hits this (its slot is built only when the section
             exists) — it exists for board mode, whose slot carries the board's
             filters/views/lenses and must survive the section's removal. */}
-        {quickLinksSlot && !resolvedSections.some(({ section }) => section.spec.kind === "quicklinks")
-          ? quickLinksSlot
-          : null}
-        {sectionElements}
-      </SidebarQuickJumpProvider>
+          {quickLinksSlot && !resolvedSections.some(({ section }) => section.spec.kind === "quicklinks")
+            ? quickLinksSlot
+            : null}
+          {sectionElements}
+        </SidebarQuickJumpProvider>
+      </SidebarRowOpenersProvider>
     </SidebarLabelsProvider>
   )
 })

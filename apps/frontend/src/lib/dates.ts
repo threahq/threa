@@ -34,6 +34,33 @@ export interface TimePrefs {
   timezone?: string
 }
 
+const formatters = new Map<string, Intl.DateTimeFormat>()
+
+/** Intl formatters are costly to build, and a timeline row builds several per render. */
+function cachedFormatter(locale: string | undefined, options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const key = `${locale ?? ""}|${JSON.stringify(options)}`
+  let formatter = formatters.get(key)
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, options)
+    formatters.set(key, formatter)
+  }
+  return formatter
+}
+
+/**
+ * `date.toLocaleDateString(undefined, options)` for the device-local calendar
+ * day (INV-42). A formatter fixes its zone when built, so the cached one is
+ * pinned to UTC and fed the local y/m/d: a device that changes zone mid-session
+ * still gets its current local day, never the zone the formatter was built in.
+ */
+function formatLocalDate(date: Date, options: Intl.DateTimeFormatOptions): string {
+  // A formatter throws on an invalid date where toLocaleDateString returns "Invalid Date".
+  if (Number.isNaN(date.getTime())) return date.toLocaleDateString(undefined, options)
+  const localDay = new Date(0)
+  localDay.setUTCFullYear(date.getFullYear(), date.getMonth(), date.getDate())
+  return cachedFormatter(undefined, { ...options, timeZone: "UTC" }).format(localDay)
+}
+
 /**
  * Format a date as ISO date string (YYYY-MM-DD), for filter values and API calls.
  */
@@ -121,16 +148,16 @@ function formatRelativeTimeVerbose(date: Date, now: Date, prefs?: TimePrefs): st
   }
 
   if (daysAgo < 7 && daysAgo > 0) {
-    const dayName = date.toLocaleDateString(undefined, { weekday: "long" })
+    const dayName = formatLocalDate(date, { weekday: "long" })
     return `${dayName} ${time}`
   }
 
   if (date.getFullYear() === now.getFullYear()) {
-    const monthDay = date.toLocaleDateString(undefined, { month: "long", day: "numeric" })
+    const monthDay = formatLocalDate(date, { month: "long", day: "numeric" })
     return `${monthDay} ${time}`
   }
 
-  const fullDate = date.toLocaleDateString(undefined, {
+  const fullDate = formatLocalDate(date, {
     month: "long",
     day: "numeric",
     year: "numeric",
@@ -165,14 +192,14 @@ function formatRelativeTimeTerse(date: Date, now: Date): string {
   }
 
   if (daysAgo < 7 && daysAgo > 0) {
-    return date.toLocaleDateString(undefined, { weekday: "short" })
+    return formatLocalDate(date, { weekday: "short" })
   }
 
   if (date.getFullYear() === now.getFullYear()) {
-    return date.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+    return formatLocalDate(date, { month: "short", day: "numeric" })
   }
 
-  return date.toLocaleDateString(undefined, {
+  return formatLocalDate(date, {
     month: "short",
     day: "numeric",
     year: "2-digit",
@@ -185,7 +212,7 @@ function formatRelativeTimeTerse(date: Date, now: Date): string {
  * Example: "Wednesday, January 15, 2025, 14:30" or "Wednesday, January 15, 2025, 2:30 PM"
  */
 export function formatFullDateTime(date: Date, prefs?: TimePrefs): string {
-  const datePart = date.toLocaleDateString(undefined, {
+  const datePart = formatLocalDate(date, {
     weekday: "long",
     year: "numeric",
     month: "long",
@@ -213,9 +240,9 @@ export function formatDayDivider(date: Date, now: Date = new Date()): string {
   if (daysAgo === 1) return "Yesterday"
 
   if (date.getFullYear() === now.getFullYear()) {
-    return date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })
+    return formatLocalDate(date, { weekday: "long", month: "long", day: "numeric" })
   }
-  return date.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })
+  return formatLocalDate(date, { weekday: "long", year: "numeric", month: "long", day: "numeric" })
 }
 
 /**
@@ -227,7 +254,7 @@ function calendarDayInZone(date: Date, timezone: string | undefined): { y: numbe
   if (!timezone) {
     return { y: date.getFullYear(), m: date.getMonth(), d: date.getDate() }
   }
-  const parts = new Intl.DateTimeFormat("en-US", {
+  const parts = cachedFormatter("en-US", {
     timeZone: timezone,
     year: "numeric",
     month: "2-digit",
@@ -306,7 +333,7 @@ function formatTimeInZone(date: Date, prefs?: TimePrefs): string {
     minute: "2-digit",
     hour12: prefs.timeFormat === "12h",
   }
-  return new Intl.DateTimeFormat(prefs.timeFormat === "12h" ? "en-US" : "en-GB", opts).format(date)
+  return cachedFormatter(prefs.timeFormat === "12h" ? "en-US" : "en-GB", opts).format(date)
 }
 
 function formatPartInZone(date: Date, timezone: string | undefined, opts: Intl.DateTimeFormatOptions): string {
@@ -317,7 +344,7 @@ function formatPartInZone(date: Date, timezone: string | undefined, opts: Intl.D
     if (opts.year === "2-digit") return format(date, "MMM d, yy")
     return format(date, "MMM d")
   }
-  return new Intl.DateTimeFormat("en-US", { timeZone: timezone, ...opts }).format(date)
+  return cachedFormatter("en-US", { timeZone: timezone, ...opts }).format(date)
 }
 
 export interface DatePreset {
@@ -361,7 +388,7 @@ export function getFutureDatePresets(now: Date = new Date()): DatePreset[] {
 
 /** Compact fire time in the viewer's local zone (INV-42): "Wed, Jul 8 at 2:30 PM". */
 export function formatFireTime(date: Date): string {
-  const day = date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })
+  const day = formatLocalDate(date, { weekday: "short", month: "short", day: "numeric" })
   return `${day} at ${formatTime(date)}`
 }
 

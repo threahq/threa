@@ -43,9 +43,9 @@ describe("sidebar-actions", () => {
     registerOpenMenu.mockClear()
     openMenuClosers.length = 0
 
-    vi.spyOn(contextsModule, "useOptionalSidebar").mockReturnValue({
+    vi.spyOn(contextsModule, "useOptionalSidebarControls").mockReturnValue({
       registerOpenMenu,
-    } as unknown as ReturnType<typeof contextsModule.useOptionalSidebar>)
+    } as unknown as ReturnType<typeof contextsModule.useOptionalSidebarControls>)
 
     spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((({
       date,
@@ -130,7 +130,7 @@ describe("sidebar-actions", () => {
     })
 
     it("opens outside the sidebar shell, where there is no menu registry", async () => {
-      vi.spyOn(contextsModule, "useOptionalSidebar").mockReturnValue(null)
+      vi.spyOn(contextsModule, "useOptionalSidebarControls").mockReturnValue(null)
       const user = userEvent.setup()
       const onSelect = vi.fn()
       const actions: SidebarActionItem[] = [{ id: "settings", label: "Settings", icon: Settings, onSelect }]

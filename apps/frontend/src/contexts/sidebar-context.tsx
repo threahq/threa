@@ -114,6 +114,12 @@ interface SidebarContextValue {
 
 const SidebarContext = createContext<SidebarContextValue | null>(null)
 
+type SidebarControls = Pick<SidebarContextValue, "collapseOnMobile" | "registerOpenMenu">
+
+// The full value changes with every open/close transition; per-row consumers
+// read only these handlers, which hold their identity across transitions.
+const SidebarControlsContext = createContext<SidebarControls | null>(null)
+
 const HIDE_DELAY_MS = 150
 
 interface SidebarProviderProps {
@@ -469,15 +475,29 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
     ]
   )
 
-  return <SidebarContext.Provider value={value}>{children}</SidebarContext.Provider>
+  const controls = useMemo(() => ({ collapseOnMobile, registerOpenMenu }), [collapseOnMobile, registerOpenMenu])
+
+  return (
+    <SidebarContext.Provider value={value}>
+      <SidebarControlsContext.Provider value={controls}>{children}</SidebarControlsContext.Provider>
+    </SidebarContext.Provider>
+  )
 }
 
 export function useSidebar() {
-  const context = useOptionalSidebar()
+  const context = useContext(SidebarContext)
   if (!context) {
     throw new Error("useSidebar must be used within a SidebarProvider")
   }
   return context
+}
+
+export function useSidebarControls(): SidebarControls {
+  const controls = useOptionalSidebarControls()
+  if (!controls) {
+    throw new Error("useSidebarControls must be used within a SidebarProvider")
+  }
+  return controls
 }
 
 /**
@@ -486,8 +506,8 @@ export function useSidebar() {
  * close, so nothing to register. Only specs mounting a card bare hit this —
  * the app mounts SidebarProvider once, above every surface.
  */
-export function useOptionalSidebar() {
-  return useContext(SidebarContext)
+export function useOptionalSidebarControls(): SidebarControls | null {
+  return useContext(SidebarControlsContext)
 }
 
 export type { CollapseState }

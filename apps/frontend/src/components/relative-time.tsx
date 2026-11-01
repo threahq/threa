@@ -16,7 +16,7 @@ interface RelativeTimeProps {
 
 export const RelativeTime = memo(function RelativeTime({ date, className, terse }: RelativeTimeProps) {
   const [, setTick] = useState(0)
-  const { formatRelative, formatFull } = useFormattedDate()
+  const { formatRelative } = useFormattedDate()
 
   // Update every minute to keep relative times fresh
   useEffect(() => {
@@ -36,13 +36,18 @@ export const RelativeTime = memo(function RelativeTime({ date, className, terse 
   }
 
   const relative = formatRelative(dateObj, undefined, terse ? { terse: true } : undefined)
-  const full = formatFull(dateObj)
 
   return (
     <LazyTooltip delayDuration={300} trigger={<span className={className}>{relative}</span>}>
       <TooltipContent>
-        <p>{full}</p>
+        <FullDateTime date={dateObj} />
       </TooltipContent>
     </LazyTooltip>
   )
 })
+
+/** Rendered only while the tooltip is open, so a list of times formats none of them up front. */
+function FullDateTime({ date }: { date: Date }) {
+  const { formatFull } = useFormattedDate()
+  return <p>{formatFull(date)}</p>
+}

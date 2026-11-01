@@ -10,6 +10,7 @@ import {
   type CachedLabel,
   type CachedLabelAssignment,
   type CachedPersona,
+  type CachedSavedMessage,
   type CachedSidebarConfig,
   type CachedStream,
   type CachedStreamMembership,
@@ -39,6 +40,7 @@ export interface WorkspaceTableRowTypes {
   userPreferences: CachedUserPreferences
   sidebarConfig: CachedSidebarConfig
   metadata: CachedWorkspaceMetadata
+  savedMessages: CachedSavedMessage
 }
 
 export type WorkspaceTableKey = keyof WorkspaceTableRowTypes
@@ -74,6 +76,7 @@ const WORKSPACE_TABLE_QUERIES: Record<WorkspaceTableKey, TableQuery> = {
   userPreferences: async (database, workspaceId) => oneRow(await database.userPreferences.get(workspaceId)),
   sidebarConfig: async (database, workspaceId) => oneRow(await database.sidebarConfigs.get(workspaceId)),
   metadata: async (database, workspaceId) => oneRow(await database.workspaceMetadata.get(workspaceId)),
+  savedMessages: (database, workspaceId) => database.savedMessages.where("workspaceId").equals(workspaceId).toArray(),
 }
 
 interface WorkspaceTableEntry {
@@ -297,18 +300,6 @@ export function getWorkspaceTableRow<K extends WorkspaceTableKey>(
 ): WorkspaceTableRowTypes[K] | undefined {
   const entry = registry.peek(entryKeyFor(workspaceId, tableKey))
   return entry?.byId.get(rowId) as WorkspaceTableRowTypes[K] | undefined
-}
-
-/**
- * True when the (workspace, table) entry is live and has resolved.
- *
- * Lets a reader tell a row's genuine removal — that entry still answering, just
- * without the id — from a teardown, where the row is unchanged and only the
- * reader's route to it went away.
- */
-export function hasResolvedSharedEntry(workspaceId: string, tableKey: WorkspaceTableKey): boolean {
-  const entry = registry.peek(entryKeyFor(workspaceId, tableKey))
-  return Boolean(entry?.resolved && !entry.teardown)
 }
 
 /** Live Dexie subscriptions on workspace tables, teardown-grace ones included. */
