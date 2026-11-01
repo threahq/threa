@@ -11,9 +11,9 @@ const ARMED_MS = 15_000
  * Chrome on Android shows its spelling-suggestion menu as a focusable popup window that declares the keyboard
  * unneeded (`SuggestionsPopupWindow`: `setFocusable(true)` + `INPUT_METHOD_NOT_NEEDED`), so the keyboard drops
  * while the editor keeps DOM focus, and Chrome does not bring it back once a suggestion is applied. The menu's
- * only trace on the page is the `beforeinput` of its replacement or deletion, so: a keyboard drop that leaves
- * the editor focused arms a watch, and the next `beforeinput` with no touch or key press in between blurs and
- * refocuses the editor, which raises the keyboard again. `navigator.virtualKeyboard.show()` does not (tested on
+ * only trace on the page is the `insertReplacementText` input its pick and its Delete both fire, so: a keyboard
+ * drop that leaves the editor focused arms a watch, and the next such input with no touch or key press in
+ * between blurs and refocuses the editor, which raises the keyboard again. `navigator.virtualKeyboard.show()` does not (tested on
  * Chrome 142), and nothing keeps the keyboard up while the popup is open.
  */
 export const AndroidSpellcheckKeyboard = Extension.create({
@@ -27,7 +27,8 @@ export const AndroidSpellcheckKeyboard = Extension.create({
 function watchKeyboardDrop(view: EditorView) {
   const visualViewport = window.visualViewport
   if (!visualViewport) return {}
-  let keyboardOpenHeight = Number.POSITIVE_INFINITY
+  // An editor mounted under an open keyboard must still see the popup's drop as growth.
+  let keyboardOpenHeight = visualViewport.height
   let armedUntil = 0
   let restoreTimer = 0
   const disarm = () => {
@@ -40,11 +41,11 @@ function watchKeyboardDrop(view: EditorView) {
       return
     }
     if (height <= keyboardOpenHeight + KEYBOARD_PX) return
-    keyboardOpenHeight = Number.POSITIVE_INFINITY
+    keyboardOpenHeight = height
     if (view.hasFocus()) armedUntil = Date.now() + ARMED_MS
   }
-  const onBeforeInput = () => {
-    if (Date.now() > armedUntil) return
+  const onBeforeInput = (event: InputEvent) => {
+    if (event.inputType !== "insertReplacementText" || Date.now() > armedUntil) return
     disarm()
     clearTimeout(restoreTimer)
     // After ProseMirror has read the replacement from the DOM; a blur inside the input event would strand it.

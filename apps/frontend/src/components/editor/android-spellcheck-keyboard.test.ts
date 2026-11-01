@@ -22,8 +22,9 @@ function resizeViewport(height: number) {
   viewport.dispatchEvent(new Event("resize"))
 }
 
-function mount(userAgent = ANDROID_UA) {
+function mount(userAgent = ANDROID_UA, viewportHeight = 800) {
   setUserAgent(userAgent)
+  viewport.height = viewportHeight
   const element = document.createElement("div")
   document.body.appendChild(element)
   editor = new Editor({
@@ -44,10 +45,13 @@ function keyboardDropsUnderPopup() {
   resizeViewport(800)
 }
 
-function applySuggestion() {
-  editor.view.dom.dispatchEvent(new InputEvent("beforeinput", { inputType: "insertReplacementText", bubbles: true }))
+function input(inputType: string) {
+  editor.view.dom.dispatchEvent(new InputEvent("beforeinput", { inputType, bubbles: true }))
   vi.runAllTimers()
 }
+
+/** Chrome's menu fires this for a picked suggestion and for its Delete (a replacement with ""). */
+const applySuggestion = () => input("insertReplacementText")
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -70,6 +74,23 @@ describe("AndroidSpellcheckKeyboard", () => {
     applySuggestion()
     expect(blur).toHaveBeenCalledTimes(1)
     expect(focus).toHaveBeenCalledTimes(1)
+  })
+
+  it("restores for an editor that mounted under an open keyboard", () => {
+    const { blur, focus } = mount(ANDROID_UA, 450)
+    resizeViewport(800)
+    applySuggestion()
+    expect(blur).toHaveBeenCalledTimes(1)
+    expect(focus).toHaveBeenCalledTimes(1)
+  })
+
+  it("stays armed through input the menu does not produce", () => {
+    const { blur } = mount()
+    keyboardDropsUnderPopup()
+    input("insertFromPaste")
+    expect(blur).not.toHaveBeenCalled()
+    applySuggestion()
+    expect(blur).toHaveBeenCalledTimes(1)
   })
 
   it("leaves typing alone while the keyboard is up", () => {
