@@ -2239,7 +2239,7 @@ describe("runs T3 starts by itself", () => {
     expect({ busy: runner.busy, posts: session.posts }).toEqual({ busy: false, posts: [] })
   })
 
-  test("stays busy while the run goes, and posts nothing for a silent reply", async () => {
+  test("stays busy while the run goes, and posts nothing for a reply that ends silent", async () => {
     const { t3, session, runner } = setup()
     await settledTurn(t3, session, runner)
     t3.startInT3("thread_1")
@@ -2248,7 +2248,15 @@ describe("runs T3 starts by itself", () => {
     const busyWhileRunning = runner.busy
 
     t3.script("run_2", [
-      { status: "completed", items: [item(2, "assistant_message", { runId: "run_2", text: "THREA_NO_RESPONSE" })] },
+      {
+        status: "completed",
+        items: [
+          item(2, "assistant_message", {
+            runId: "run_2",
+            text: "Still rate-limited; nothing to act on.\n\nTHREA_NO_RESPONSE",
+          }),
+        ],
+      },
     ])
     await until(() => !runner.busy)
 
