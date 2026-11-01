@@ -106,6 +106,16 @@ describe("useCommandItems — doc in view", () => {
     expect(streamIds(inDoc)).toEqual(["stream-files"])
   })
 
+  it("should offer Members only when the stream in view has a member list", () => {
+    const inChannel = {
+      workspaceId: "ws_1",
+      currentStreamId: "stream_1",
+      currentStreamType: "channel",
+      openStreamMembers: () => {},
+    } as unknown as CommandContext
+    expect(streamIds(inChannel)).toContain("stream-members")
+  })
+
   it("should keep the timeline commands for a channel", () => {
     const inChannel = {
       workspaceId: "ws_1",

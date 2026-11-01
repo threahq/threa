@@ -9,6 +9,7 @@ import {
   Settings,
   Tag,
   Trash2,
+  Users,
 } from "lucide-react"
 import { queueSnippetRequest } from "@/stores/snippet-request-store"
 import type { Command } from "./commands"
@@ -88,6 +89,16 @@ export const streamCommands: Command[] = [
     action: ({ currentStreamId, openStreamSettings }) => {
       if (!currentStreamId) return
       openStreamSettings(currentStreamId)
+    },
+  },
+  {
+    id: "stream-members",
+    label: "Members of this stream",
+    icon: Users,
+    keywords: ["people", "users", "bots", "add", "invite", "remove", "current stream"],
+    action: ({ currentStreamId, openStreamMembers }) => {
+      if (!currentStreamId || !openStreamMembers) return
+      openStreamMembers(currentStreamId)
     },
   },
   {

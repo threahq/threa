@@ -15,6 +15,7 @@ import {
   Plus,
   Settings,
   Tag,
+  Users,
 } from "lucide-react"
 import { Link } from "react-router-dom"
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
@@ -34,6 +35,7 @@ import { useAgentActivityForStream } from "@/stores/agent-activity-store"
 import { releaseSidebarThread } from "@/stores/sidebar-held-threads-store"
 import { useActiveCallsForStream } from "@/stores/active-calls-store"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
+import { streamHasMembers, useStreamMembers } from "@/components/stream-settings/use-stream-members"
 import { cn } from "@/lib/utils"
 import { streamLabel } from "@/lib/streams"
 import { GuestPublicIcon, streamTypeVisual, VISIBILITY_LABELS } from "@/lib/stream-visuals"
@@ -470,6 +472,7 @@ export function StreamItem({
   const { getActorName, getActorAvatar } = useActors(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
   const { openStreamSettings } = useStreamSettings()
+  const { openStreamMembers } = useStreamMembers()
   const { open: openExplorer } = useExplorerUrlState()
   const { open: openOutcomes } = useOutcomesUrlState()
   const { collapseOnMobile } = useSidebar()
@@ -573,6 +576,9 @@ export function StreamItem({
             icon: Settings,
             onSelect: () => openStreamSettings(stream.id),
           },
+          ...(streamHasMembers(stream)
+            ? [{ id: "members", label: "Members", icon: Users, onSelect: () => openStreamMembers(stream.id) }]
+            : []),
           {
             id: "labels",
             label: "Labels…",
@@ -622,10 +628,10 @@ export function StreamItem({
   }, [
     isVirtualDraft,
     openStreamSettings,
+    openStreamMembers,
     openExplorer,
     openOutcomes,
-    stream.id,
-    stream.type,
+    stream,
     workspaceId,
     boardActions,
     onClearRow,

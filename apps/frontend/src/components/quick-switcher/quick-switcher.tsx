@@ -57,6 +57,7 @@ import { useCreateChannel } from "@/components/create-channel"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
 import { useOutcomesUrlState } from "@/components/agent-outcomes"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
+import { streamHasMembers, useStreamMembers } from "@/components/stream-settings/use-stream-members"
 import { WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { useSearchPanel } from "@/components/search/search-panel-context"
@@ -318,6 +319,7 @@ function QuickSwitcherBody({
   const { open: openExplorer } = useExplorerUrlState()
   const { open: openOutcomes } = useOutcomesUrlState()
   const { openStreamSettings } = useStreamSettings()
+  const { openStreamMembers } = useStreamMembers()
   const unarchiveStream = useUnarchiveStream(workspaceId)
   const currentStreamName = useStreamName(workspaceId, currentStreamId ?? "")
   const { isInInbox, clearInbox } = useUnreadCounts(workspaceId)
@@ -351,6 +353,7 @@ function QuickSwitcherBody({
     fallbackArchived: streamBootstrap?.archivedAncestor,
   })
   const { enabled: canCreateDoc, run: runCreateDoc } = useCreateDoc(workspaceId, currentStream)
+  const currentStreamHasMembers = streamHasMembers(currentStream)
   const { enabled: canCreateTopLevelDocEnabled, run: runCreateTopLevelDoc } = useCreateTopLevelDoc(workspaceId)
   const canCreateTopLevelDoc =
     canCreateTopLevelDocEnabled && !(currentStream && streamTypeCapabilities(currentStream.type).hostsDocs)
@@ -513,6 +516,14 @@ function QuickSwitcherBody({
     [handleClose, openStreamSettings]
   )
 
+  const handleOpenStreamMembers = useCallback(
+    (streamId: string) => {
+      handleClose()
+      openStreamMembers(streamId)
+    },
+    [handleClose, openStreamMembers]
+  )
+
   const requestArchiveStream = useCallback(
     (streamId: string) => {
       // Contextual archive only ever targets the current stream, so its
@@ -598,6 +609,7 @@ function QuickSwitcherBody({
       currentStreamArchived:
         currentStream && canChangeCurrentStreamArchive ? currentStream.archivedAt != null : undefined,
       openStreamSettings: handleOpenStreamSettings,
+      openStreamMembers: currentStreamHasMembers ? handleOpenStreamMembers : undefined,
       requestArchiveStream,
       unarchiveStream: handleUnarchiveStream,
       openLabelPicker: onOpenLabelPicker,
@@ -640,8 +652,10 @@ function QuickSwitcherBody({
       currentStreamName,
       currentStream?.type,
       currentStream?.archivedAt,
+      currentStreamHasMembers,
       canChangeCurrentStreamArchive,
       handleOpenStreamSettings,
+      handleOpenStreamMembers,
       requestArchiveStream,
       handleUnarchiveStream,
       onOpenLabelPicker,

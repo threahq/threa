@@ -82,6 +82,7 @@ import { SettingsDialog } from "@/components/settings"
 import { WorkspaceSettingsDialog } from "@/components/workspace-settings/workspace-settings-dialog"
 import { AccountSwitcherDialog, LogoutScopeDialog } from "@/components/account-switcher"
 import { StreamSettingsDialog } from "@/components/stream-settings/stream-settings-dialog"
+import { StreamMembersDialog } from "@/components/stream-settings/stream-members-dialog"
 import { CreateChannelDialog } from "@/components/create-channel"
 import { AttachmentExplorer, useExplorerUrlState } from "@/components/attachment-explorer"
 import { AgentOutcomesExplorer, useOutcomesUrlState } from "@/components/agent-outcomes"
@@ -681,6 +682,7 @@ function WorkspaceLayoutContent() {
                                               <AccountSwitcherDialog />
                                               <LogoutScopeDialog />
                                               <StreamSettingsDialog workspaceId={workspaceId} />
+                                              <StreamMembersDialog workspaceId={workspaceId} />
                                               <CreateChannelDialog workspaceId={workspaceId} />
                                               <AttachmentExplorer workspaceId={workspaceId} />
                                               <AgentOutcomesExplorer workspaceId={workspaceId} />

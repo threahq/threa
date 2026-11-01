@@ -10,6 +10,7 @@ import {
 import { ResponsiveSettingsNav, SETTINGS_DIALOG_LAYOUT_CLASSNAMES } from "@/components/ui/responsive-settings-nav"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { useStreamSettings, STREAM_SETTINGS_TABS, type StreamSettingsTab } from "./use-stream-settings"
+import { streamHasMembers } from "./use-stream-members"
 import { GeneralTab } from "./general-tab"
 import { CompanionTab } from "./companion-tab"
 import { MembersTab } from "./members-tab"
@@ -25,7 +26,6 @@ import {
 } from "@/stores/workspace-store"
 import {
   StreamTypes,
-  isTopLevelDoc,
   WORKSPACE_PERMISSION_SCOPES,
   type Stream,
   type StreamBootstrap,
@@ -33,6 +33,13 @@ import {
 } from "@threahq/types"
 import { resolveDmDisplayName, streamLabel } from "@/lib/streams"
 import { useCurrentWorkspaceUserId } from "@/hooks/use-current-workspace-user-id"
+
+const COMPANION_TAB_TYPES: readonly string[] = [
+  StreamTypes.CHANNEL,
+  StreamTypes.SCRATCHPAD,
+  StreamTypes.DM,
+  StreamTypes.THREAD,
+]
 
 const TAB_CONFIG: Record<StreamSettingsTab, { label: string; description: string }> = {
   general: { label: "General", description: "Notifications and stream details" },
@@ -109,20 +116,11 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
 
   const availableTabs: readonly StreamSettingsTab[] = useMemo(() => {
     if (!resolvedStream) return STREAM_SETTINGS_TABS
-    switch (resolvedStream.type) {
-      case StreamTypes.CHANNEL:
-        return canConnect ? ["general", "companion", "members", "connect"] : ["general", "companion", "members"]
-      case StreamTypes.SCRATCHPAD:
-      case StreamTypes.DM:
-      case StreamTypes.THREAD:
-        return ["general", "companion", "members"]
-      // A hosted doc takes its host's settings; a top-level doc is its own root.
-      case StreamTypes.DOC:
-        return isTopLevelDoc(resolvedStream) ? ["general", "members"] : ["general"]
-      case StreamTypes.SYSTEM:
-      default:
-        return ["general"]
-    }
+    const tabs: StreamSettingsTab[] = ["general"]
+    if (COMPANION_TAB_TYPES.includes(resolvedStream.type)) tabs.push("companion")
+    if (streamHasMembers(resolvedStream)) tabs.push("members")
+    if (resolvedStream.type === StreamTypes.CHANNEL && canConnect) tabs.push("connect")
+    return tabs
   }, [resolvedStream, canConnect])
 
   const effectiveTab = (availableTabs as readonly string[]).includes(activeTab) ? activeTab : availableTabs[0]

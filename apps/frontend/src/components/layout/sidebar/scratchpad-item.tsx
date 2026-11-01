@@ -16,6 +16,7 @@ import {
   Settings,
   Sparkles,
   Tag,
+  Users,
 } from "lucide-react"
 import { Link, useNavigate } from "react-router-dom"
 import { LabelPicker } from "@/components/labels/label-picker"
@@ -29,6 +30,7 @@ import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useSidebar } from "@/contexts"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
+import { useStreamMembers } from "@/components/stream-settings/use-stream-members"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { streamFallbackLabel } from "@/lib/streams"
@@ -110,6 +112,7 @@ export function ScratchpadItem({
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
   const { collapseOnMobile } = useSidebar()
   const { openStreamSettings } = useStreamSettings()
+  const { openStreamMembers } = useStreamMembers()
   const { open: openExplorer } = useExplorerUrlState()
   const { open: openOutcomes } = useOutcomesUrlState()
   const itemRef = useRef<HTMLAnchorElement>(null)
@@ -213,6 +216,12 @@ export function ScratchpadItem({
               separatorBefore: boardActions.length > 0 || clearInbox.length > 0,
             } satisfies SidebarActionItem,
             {
+              id: "members",
+              label: "Members",
+              icon: Users,
+              onSelect: () => openStreamMembers(streamWithPreview.id),
+            } satisfies SidebarActionItem,
+            {
               id: "labels",
               label: "Labels…",
               icon: Tag,
@@ -261,6 +270,7 @@ export function ScratchpadItem({
     handleArchive,
     isDraft,
     openStreamSettings,
+    openStreamMembers,
     openExplorer,
     openOutcomes,
     streamWithPreview.id,

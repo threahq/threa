@@ -20,6 +20,7 @@ import {
   Moon,
   Lock,
   Tag,
+  Users,
   Link2,
   Layers,
   PanelRight,
@@ -52,6 +53,7 @@ import { createConversationsPanelId, useCoordinatedLoading, useCurrentPane, useP
 import { StreamLoadingIndicator } from "@/components/loading"
 import { useUserProfile } from "@/components/user-profile"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
+import { streamHasMembers, useStreamMembers } from "@/components/stream-settings/use-stream-members"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
 import { useOutcomesUrlState } from "@/components/agent-outcomes"
 import { StreamContent, TimelineSkeleton, AgentActivityHeaderChip } from "@/components/timeline"
@@ -178,6 +180,7 @@ export function StreamPane({
 
   const { openUserProfile } = useUserProfile()
   const { openStreamSettings } = useStreamSettings()
+  const { openStreamMembers } = useStreamMembers()
   const { open: openExplorer } = useExplorerUrlState()
   const { open: openOutcomes } = useOutcomesUrlState()
   const dmPeers = useWorkspaceDmPeers(workspaceId)
@@ -339,6 +342,9 @@ export function StreamPane({
     icon: Link2,
     onSelect: () => void copyStreamLink(workspaceId, streamId),
   }
+  const membersActions: SidebarActionItem[] = streamHasMembers(stream)
+    ? [{ id: "members", label: "Members", icon: Users, onSelect: () => openStreamMembers(streamId) }]
+    : []
   const streamMenuActions: SidebarActionItem[] = []
   if (isDoc) {
     streamMenuActions.push(copyLinkAction)
@@ -364,10 +370,11 @@ export function StreamPane({
         onSelect: () => openStreamSettings(streamId),
       })
     }
-    streamMenuActions.push(labelsAction)
+    streamMenuActions.push(...membersActions, labelsAction)
   } else {
     streamMenuActions.push(
       { id: "stream-settings", label: "Settings", icon: Settings, onSelect: () => openStreamSettings(streamId) },
+      ...membersActions,
       labelsAction,
       copyLinkAction
     )

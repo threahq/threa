@@ -168,6 +168,22 @@ describe("ScratchpadItem", () => {
     expect(screen.getByTestId("location").textContent).toBe(initialPath)
   })
 
+  it("opens the Members overlay for real scratchpads", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad()}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+      />
+    )
+
+    fireEvent.click(screen.getByText("Members"))
+
+    expect(screen.getByTestId("location-search")).toHaveTextContent("stream-members=stream_scratchpad_1")
+  })
+
   it("offers the Labels… action on real scratchpads", () => {
     renderWithRouter(
       <ScratchpadItem
