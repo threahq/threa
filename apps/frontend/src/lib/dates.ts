@@ -54,6 +54,8 @@ function cachedFormatter(locale: string | undefined, options: Intl.DateTimeForma
  * still gets its current local day, never the zone the formatter was built in.
  */
 function formatLocalDate(date: Date, options: Intl.DateTimeFormatOptions): string {
+  // A formatter throws on an invalid date where toLocaleDateString returns "Invalid Date".
+  if (Number.isNaN(date.getTime())) return date.toLocaleDateString(undefined, options)
   const localDay = new Date(0)
   localDay.setUTCFullYear(date.getFullYear(), date.getMonth(), date.getDate())
   return cachedFormatter(undefined, { ...options, timeZone: "UTC" }).format(localDay)
