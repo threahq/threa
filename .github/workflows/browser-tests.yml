@@ -49,7 +49,7 @@ jobs:
         run: |
           selection=()
           [[ "$FILES" == all ]] || read -ra selection <<< "$FILES"
-          count=$(bunx playwright test --list --reporter=json "${selection[@]}" | jq '[.. | .tests? // empty | .[]] | length')
+          count=$(bunx playwright test --list "${selection[@]}" | awk '/^Total: /{print $2}')
           (( count > 0 )) || { echo "No browser cases selected" >&2; exit 1; }
           shards=$(( (count + 39) / 40 ))
           (( shards > 8 )) && shards=8
