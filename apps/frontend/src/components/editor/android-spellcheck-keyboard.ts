@@ -26,20 +26,19 @@ export const AndroidSpellcheckKeyboard = Extension.create({
   },
 })
 
+type Phase = { kind: "idle" } | { kind: "tapped"; at: number } | { kind: "armed"; until: number }
+
+const IDLE: Phase = { kind: "idle" }
+
 function watchKeyboardDrop(view: EditorView) {
   const visualViewport = window.visualViewport
   if (!visualViewport) return {}
 
   let lowestHeight = visualViewport.height
-  let editorTouchStart: { x: number; y: number } | null = null
-  let lastEditorTapAt = 0
-  let armedUntil = 0
+  let phase: Phase = IDLE
   let restoreTimer = 0
 
-  const isArmed = () => Date.now() <= armedUntil
-  const disarm = () => {
-    armedUntil = 0
-  }
+  const isArmed = () => phase.kind === "armed" && Date.now() <= phase.until
 
   const isSpellcheckPaused = () => view.dom.getAttribute("spellcheck") === "false"
   const pauseSpellcheck = () => view.dom.setAttribute("spellcheck", "false")
@@ -54,27 +53,21 @@ function watchKeyboardDrop(view: EditorView) {
     if (height <= lowestHeight + KEYBOARD_VIEWPORT_THRESHOLD_PX) return
 
     lowestHeight = height
-    if (view.hasFocus() && Date.now() - lastEditorTapAt <= TAP_TO_DROP_MS) armedUntil = Date.now() + ARMED_MS
+    const tapCausedDrop = phase.kind === "tapped" && Date.now() - phase.at <= TAP_TO_DROP_MS
+    if (view.hasFocus() && tapCausedDrop) phase = { kind: "armed", until: Date.now() + ARMED_MS }
   }
 
-  const isInEditor = (event: Event) => view.dom.contains(event.target as Node)
-  const onPointerDown = (event: PointerEvent) => {
-    if (isInEditor(event)) {
-      editorTouchStart = { x: event.clientX, y: event.clientY }
-      return
-    }
-    editorTouchStart = null
-    lastEditorTapAt = 0
-    disarm()
-  }
-  const onPointerUp = (event: PointerEvent) => {
-    if (!isInEditor(event) || !editorTouchStart) return
-    const travel = Math.hypot(event.clientX - editorTouchStart.x, event.clientY - editorTouchStart.y)
-    editorTouchStart = null
-    if (travel > TAP_SLOP_PX) return
-    lastEditorTapAt = Date.now()
-    if (isArmed()) pauseSpellcheck()
-    disarm()
+  const stopWatchingTaps = watchTaps(view.dom, {
+    tap: () => {
+      if (isArmed()) pauseSpellcheck()
+      phase = { kind: "tapped", at: Date.now() }
+    },
+    touchElsewhere: () => {
+      phase = IDLE
+    },
+  })
+  const onKeyDown = () => {
+    if (phase.kind === "armed") phase = IDLE
   }
 
   const onWordFinished = (event: InputEvent) => {
@@ -85,7 +78,7 @@ function watchKeyboardDrop(view: EditorView) {
 
   const onSuggestionApplied = (event: InputEvent) => {
     if (event.inputType !== "insertReplacementText" || !isArmed()) return
-    disarm()
+    phase = IDLE
     clearTimeout(restoreTimer)
     // After ProseMirror has read the replacement from the DOM; a blur inside the input event would strand it.
     restoreTimer = window.setTimeout(() => {
@@ -99,21 +92,51 @@ function watchKeyboardDrop(view: EditorView) {
   view.dom.addEventListener("beforeinput", onWordFinished)
   view.dom.addEventListener("beforeinput", onSuggestionApplied)
   view.dom.addEventListener("blur", resumeSpellcheck)
-  document.addEventListener("pointerdown", onPointerDown, true)
-  document.addEventListener("pointerup", onPointerUp, true)
-  document.addEventListener("keydown", disarm, true)
+  document.addEventListener("keydown", onKeyDown, true)
 
   return {
     destroy() {
       clearTimeout(restoreTimer)
+      stopWatchingTaps()
       visualViewport.removeEventListener("resize", onResize)
       view.dom.removeEventListener("beforeinput", onWordFinished)
       view.dom.removeEventListener("beforeinput", onSuggestionApplied)
       view.dom.removeEventListener("blur", resumeSpellcheck)
-      document.removeEventListener("pointerdown", onPointerDown, true)
-      document.removeEventListener("pointerup", onPointerUp, true)
-      document.removeEventListener("keydown", disarm, true)
+      document.removeEventListener("keydown", onKeyDown, true)
     },
+  }
+}
+
+/** Reports a touch that starts and ends in `target` without travelling; a pan ends in pointercancel instead. */
+function watchTaps(target: HTMLElement, on: { tap: () => void; touchElsewhere: () => void }) {
+  let start: { x: number; y: number } | null = null
+
+  const onPointerDown = (event: PointerEvent) => {
+    if (target.contains(event.target as Node)) {
+      start = { x: event.clientX, y: event.clientY }
+      return
+    }
+    start = null
+    on.touchElsewhere()
+  }
+  const onPointerUp = (event: PointerEvent) => {
+    if (!start || !target.contains(event.target as Node)) return
+    const travel = Math.hypot(event.clientX - start.x, event.clientY - start.y)
+    start = null
+    if (travel <= TAP_SLOP_PX) on.tap()
+  }
+  const onPointerCancel = () => {
+    start = null
+  }
+
+  document.addEventListener("pointerdown", onPointerDown, true)
+  document.addEventListener("pointerup", onPointerUp, true)
+  document.addEventListener("pointercancel", onPointerCancel, true)
+
+  return () => {
+    document.removeEventListener("pointerdown", onPointerDown, true)
+    document.removeEventListener("pointerup", onPointerUp, true)
+    document.removeEventListener("pointercancel", onPointerCancel, true)
   }
 }
 
