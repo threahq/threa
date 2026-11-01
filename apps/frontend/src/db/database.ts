@@ -28,6 +28,7 @@ import type {
 } from "@threahq/types"
 import type { KdfParams } from "@/lib/crypto/passphrase"
 import type { DraftContextRef } from "@/lib/context-bag/types"
+import { transactionMiddleware } from "./transaction-middleware"
 
 const WORKSPACE_USERS_STORE = "workspaceUsersByWorkspace"
 const PERSONAS_STORE = "personasByWorkspace"
@@ -1868,6 +1869,8 @@ export class ThreaDatabase extends Dexie {
     this.conversationMessages = this.table(CONVERSATION_MESSAGES_STORE)
     this.boardHiddenConversations = this.table(BOARD_HIDDEN_CONVERSATIONS_STORE)
     this.streamContextItems = this.table(STREAM_CONTEXT_ITEMS_STORE)
+
+    this.use(transactionMiddleware)
 
     // Dexie holds every other transaction until this resolves, so nothing reads
     // or writes a database before its contents are known to belong to the
