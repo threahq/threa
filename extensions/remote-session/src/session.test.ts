@@ -804,6 +804,17 @@ describe("RemoteSession empty output", () => {
     })
   })
 
+  test("posts a reply's words without the sentinel that trails them", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport)
+    seedInflight(session, makeInvocation({ id: "binv_trailing" }))
+
+    await session.reply("binv_trailing", "Here is the answer.\n\nTHREA_NO_RESPONSE")
+
+    expect(calls.complete[0]?.body).toMatchObject({ finalMessageMarkdown: "Here is the answer." })
+  })
+
   test("refuses an empty interim message instead of posting one in its place", async () => {
     const { client, calls } = makeFakeClient()
     const { transport } = makeFakeTransport()

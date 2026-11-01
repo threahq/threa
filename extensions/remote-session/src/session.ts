@@ -55,7 +55,7 @@ import {
   type ExternalHistoryMessage,
   type RuntimeSessionLink,
 } from "./client"
-import { isNoResponse } from "./no-response"
+import { isNoResponse, withoutNoResponse } from "./no-response"
 import { RouteRevokedError, TurnRoute, type CloseRequest, type PostIntent, type PreparedClose } from "./turn-route"
 
 /** Plain messages: what a running turn may take in, and the base of every idle claim. */
@@ -2435,14 +2435,15 @@ export class RemoteSession {
 
   /**
    * A reply that carries no words and no attachments, or only the
-   * no-response sentinel, closes as `noResponse` — the wire's own word for a
+   * no-response sentinel, closes as `noResponse`; a sentinel trailing real
+   * content is dropped and the content posts — the wire's own word for a
    * turn that said nothing — instead of standing in a message the session never
    * wrote.
    */
   private async prepareReply(route: TurnRoute, text: string): Promise<PreparedClose> {
     const sealing = route.invocation.sealing
     const sourceRevision = route.invocation.sourceRevision
-    const body = isNoResponse(text) ? "" : text
+    const body = withoutNoResponse(text)
     if (sealing) {
       const { markdown, refs, attachmentIds } = await uploadSealedReplyAttachments(this.client, body, process.cwd())
       const spoken = markdown.trim()

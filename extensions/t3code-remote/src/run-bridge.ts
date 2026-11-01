@@ -14,7 +14,7 @@ import {
   type TraceMode,
   DecisionAbandonedError,
   NO_RESPONSE_SENTINEL,
-  isNoResponse,
+  endsWithNoResponse,
   isTerminalPostError,
   StepBatcher,
   redactAttachDirectives,
@@ -1607,7 +1607,8 @@ export class T3TurnRunner {
         }
         text ??= trace.held ? await this.replyText(run.threadId, trace.held) : ""
         if (run.abort.signal.aborted) return false
-        if (run.runtimeOrigin && text.trim() && !isNoResponse(text)) {
+        // Nobody is waiting on a runtime-started run, so narration before a closing sentinel is noise.
+        if (run.runtimeOrigin && text.trim() && !endsWithNoResponse(text)) {
           await this.session.postToInvocation(invocationId, { content: text, clientMessageId: `t3run-${run.runId}` })
           if (run.abort.signal.aborted) return false
         }
