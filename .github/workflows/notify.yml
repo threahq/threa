@@ -2,7 +2,7 @@ name: Notify Threa
 
 on:
   workflow_run:
-    workflows: [CI, Deploy Cloudflare]
+    workflows: [CI, Deploy Cloudflare, Browser E2E Tests, Production Images]
     types: [completed]
     branches: [main]
 
@@ -37,17 +37,17 @@ jobs:
             const actor = run.triggering_actor?.login ?? run.actor?.login ?? "unknown"
             const repo = { owner: context.repo.owner, repo: context.repo.repo }
 
-            // Deploy: every conclusion worth surfacing. CI: only failures (success is
-            // implied by the deploy that follows it).
+            // Deploy: every conclusion worth surfacing. Verification workflows: only failures.
+            const isDeploy = workflow === "Deploy Cloudflare"
             const announce =
-              (workflow === "Deploy Cloudflare" && ["success", "failure", "timed_out"].includes(conclusion)) ||
-              (workflow === "CI" && ["failure", "timed_out"].includes(conclusion))
+              (isDeploy && ["success", "failure", "timed_out"].includes(conclusion)) ||
+              (!isDeploy && ["failure", "timed_out"].includes(conclusion))
             if (!announce) {
               core.info(`No notification needed (${workflow} / ${conclusion})`)
               return
             }
 
-            if (workflow === "CI" && conclusion === "failure") {
+            if (!isDeploy && conclusion === "failure") {
               try {
                 const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {
                   ...repo,
@@ -96,7 +96,7 @@ jobs:
             let commits = [{ sha: headSha, message: run.head_commit?.message }]
             let omitted = 0
             let ledgerSha = null
-            if (workflow === "Deploy Cloudflare") {
+            if (isDeploy) {
               if (conclusion === "success") {
                 // check-tip skips every deploy job for a sha main has moved past, and the
                 // run still concludes success. Nothing was released.

@@ -5,6 +5,52 @@ on:
     types: [created]
 
 jobs:
+  e2e:
+    name: Run full verification
+    # `/e2e` on a PR runs what main runs after merge.
+    if: |
+      github.event.issue.pull_request != null &&
+      startsWith(github.event.comment.body, '/e2e')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      pull-requests: write
+      issues: write
+      contents: read
+    steps:
+      - name: Dispatch full verification
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const repo = { owner: context.repo.owner, repo: context.repo.repo }
+            const reply = (body) =>
+              github.rest.issues.createComment({ ...repo, issue_number: context.payload.issue.number, body })
+            const { data: access } = await github.rest.repos.getCollaboratorPermissionLevel({
+              ...repo,
+              username: context.payload.comment.user.login,
+            })
+            if (!['write', 'admin'].includes(access.permission)) {
+              await reply(`⛔ @${context.payload.comment.user.login} — you need write access to run \`/e2e\`.`)
+              core.setFailed('Insufficient permissions')
+              return
+            }
+            const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: context.payload.issue.number })
+            if (pr.head.repo.full_name !== `${repo.owner}/${repo.repo}`) {
+              await reply('⛔ `/e2e` runs workflows on the PR branch, so it is limited to branches in this repository.')
+              core.setFailed('Refusing to dispatch for a fork PR')
+              return
+            }
+            for (const workflow_id of ['ci.yml', 'browser-tests.yml', 'production-images.yml']) {
+              await github.rest.actions.createWorkflowDispatch({ ...repo, workflow_id, ref: pr.head.ref })
+            }
+            await github.rest.reactions.createForIssueComment({
+              ...repo,
+              comment_id: context.payload.comment.id,
+              content: 'rocket',
+            })
+            const runs = `https://github.com/${repo.owner}/${repo.repo}/actions?query=${encodeURIComponent(`branch:${pr.head.ref} event:workflow_dispatch`)}`
+            await reply(`Full verification dispatched on the current head of \`${pr.head.ref}\`: [runs](${runs})`)
+
   eval:
     name: Run AI evals
     # PR comments starting with `/eval` only. startsWith tolerates the trailing
