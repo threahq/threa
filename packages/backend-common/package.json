@@ -9,7 +9,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "../../node_modules/typescript7/bin/tsc --noEmit",
     "test": "bun test src/"
   },
   "dependencies": {

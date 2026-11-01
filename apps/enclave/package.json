@@ -7,7 +7,7 @@
     "dev": "bun build src/index.ts --target=node --format=esm --outfile dist/index.mjs --watch & node --watch dist/index.mjs",
     "start": "node dist/index.mjs",
     "lint": "eslint src/",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "../../node_modules/typescript7/bin/tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {

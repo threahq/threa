@@ -13,7 +13,7 @@ class FakeWebSocket {
   static readonly CLOSED = 3
 
   readyState = FakeWebSocket.CONNECTING
-  readonly sent: Array<string | Buffer> = []
+  readonly sent: Array<string | Uint8Array> = []
   readonly url: string
   readonly options: unknown
   private readonly listeners = new Map<string, Listener[]>()
@@ -30,7 +30,7 @@ class FakeWebSocket {
     this.listeners.set(type, list)
   }
 
-  send(data: string | Buffer): void {
+  send(data: string | Uint8Array): void {
     this.sent.push(data)
   }
 
@@ -123,9 +123,9 @@ describe("RealtimeDeepgramStrategy audio + transcripts", () => {
   test("pushAudio sends raw binary PCM and accumulates audio ms", async () => {
     const { session, socket } = await openSession()
     // 32000 bytes of PCM16 mono @ 16kHz == 1000ms of audio.
-    const frame = Buffer.alloc(32_000)
+    const frame = Buffer.alloc(32_000, 7)
     session.pushAudio(frame)
-    expect(socket.sent[0]).toBe(frame)
+    expect(socket.sent[0]).toEqual(new Uint8Array(frame))
 
     const result = await session.close()
     expect(result.totalAudioMs).toBe(1000)

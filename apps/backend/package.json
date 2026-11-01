@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "bun --hot src/index.ts",
     "start": "bun src/index.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.tests.json",
+    "typecheck": "../../node_modules/typescript7/bin/tsc --noEmit && ../../node_modules/typescript7/bin/tsc --noEmit -p tsconfig.tests.json",
     "test": "bun run test:unit && bun run test:e2e",
     "test:unit": "bun ../../scripts/test-silent.ts backend-unit",
     "test:integration": "bun ../../scripts/test-silent.ts backend-integration",

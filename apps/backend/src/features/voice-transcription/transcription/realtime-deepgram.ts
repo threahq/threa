@@ -200,7 +200,7 @@ class DeepgramSession implements TranscriptionSession {
     this.totalAudioMs += frame.length / BYTES_PER_MS
     this.chunksSent++
     // Deepgram takes raw PCM bytes, not a JSON envelope.
-    this.ws.send(frame)
+    this.ws.send(new Uint8Array(frame))
   }
 
   async flush(): Promise<void> {

@@ -6,7 +6,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "../../node_modules/typescript7/bin/tsc --noEmit",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "test": "vitest run",
