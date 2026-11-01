@@ -324,4 +324,23 @@ describe("T3Client", () => {
       methods: server.seen.map(({ method }) => method),
     }).toEqual({ first: true, second: true, methods: ["initialize"] })
   })
+
+  test("an initialize that fails after naming a session leaves no session to call on", async () => {
+    const server = fakeServer((method, _seen, count) =>
+      method === "initialize" && count === 1
+        ? new Response("boom", { status: 500, headers: { "mcp-session-id": "sess_failed" } })
+        : undefined
+    )
+    const client = new T3Client("http://t3.test", tokens(), server.fetch)
+
+    await expect(client.call("t3_thread_wait", WAIT)).rejects.toThrow("T3 Code MCP initialize answered 500: boom")
+    await client.call("t3_thread_wait", WAIT)
+
+    expect(server.seen.map(({ method, session }) => [method, session])).toEqual([
+      ["initialize", null],
+      ["initialize", null],
+      ["notifications/initialized", "sess_2"],
+      ["tools/call", "sess_2"],
+    ])
+  })
 })

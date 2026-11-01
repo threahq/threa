@@ -292,8 +292,10 @@ try {
     await client.call("t3_thread_organize", { threadId, action: "archive" })
   })
 } finally {
-  // The group is already gone when T3 exited on its own.
-  if (server.pid && running(server)) process.kill(-server.pid, "SIGTERM")
+  // Signal the group even when T3 itself exited: its provider subprocesses may outlive it.
+  try {
+    if (server.pid) process.kill(-server.pid, "SIGTERM")
+  } catch {}
   rmSync(home, { recursive: true, force: true })
 }
 

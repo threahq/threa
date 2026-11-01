@@ -231,13 +231,13 @@ export class T3Client {
     await this.open()
     let message: JsonRpcMessage | undefined
     try {
-      message = await this.rpc("tools/call", { name, arguments: args })
+      message = (await this.rpc("tools/call", { name, arguments: args }, this.sessionId)).message
     } catch (error) {
       if (!(error instanceof SessionLostError)) throw error
       // A concurrent call may have re-opened the session already.
       if (this.sessionId === error.sessionId) this.sessionId = undefined
       await this.open()
-      message = await this.rpc("tools/call", { name, arguments: args })
+      message = (await this.rpc("tools/call", { name, arguments: args }, this.sessionId)).message
     }
     const result = message?.result
     if (!result) throw new Error(`T3 Code ${name} returned no result`)
@@ -255,43 +255,46 @@ export class T3Client {
       throw new Error(`T3 Code upload answered ${res.status}: ${(await res.text()).slice(0, 300)}`)
   }
 
+  /** Calls only ever see a session that passed the version check and finished initializing. */
   private open(): Promise<void> {
-    // rpc() adopts the session id before the version check runs, so an open in flight wins over a set id.
-    if (this.opening) return this.opening
     if (this.sessionId) return Promise.resolve()
-    this.opening = (async () => {
-      const initialized = await this.rpc("initialize", {
-        protocolVersion: PROTOCOL_VERSION,
-        capabilities: {},
-        clientInfo: { name: "threa-t3code", version: "0.1.0" },
-      })
-      const version = initialized?.result?.serverInfo?.version
+    this.opening ??= (async () => {
+      const { message, sessionId } = await this.rpc(
+        "initialize",
+        { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "threa-t3code", version: "0.1.0" } },
+        undefined
+      )
+      const version = message?.result?.serverInfo?.version
       if (typeof version !== "string" || !this.testedVersions.includes(version)) {
-        // Dropping the adopted session makes the next call run the check again.
-        this.sessionId = undefined
         throw new Error(
           `T3 Code ${typeof version === "string" ? version : "(unreported version)"} is untested with this connector, ` +
             `which runs against ${this.testedVersions.join(", ")}. Pin T3 with ` +
             "`t3 update --channel stable <version> --allow-downgrade`, or install a connector release that lists it."
         )
       }
-      await this.rpc("notifications/initialized", undefined, true)
+      await this.rpc("notifications/initialized", undefined, sessionId, true)
+      this.sessionId = sessionId
     })().finally(() => (this.opening = undefined))
     return this.opening
   }
 
-  private async rpc(method: string, params: unknown, notify = false): Promise<JsonRpcMessage | undefined> {
+  /** `sessionId` in the answer is the one the server assigned, or the one sent. */
+  private async rpc(
+    method: string,
+    params: unknown,
+    sessionId: string | undefined,
+    notify = false
+  ): Promise<{ message?: JsonRpcMessage; sessionId: string | undefined }> {
     const body = JSON.stringify({ jsonrpc: "2.0", method, params, ...(notify ? {} : { id: this.nextId++ }) })
     const token = await this.auth.token()
-    const sessionId = method === "initialize" ? undefined : this.sessionId
     let res = await this.post(body, token, sessionId)
     if (res.status === 401) res = await this.post(body, await this.auth.renew(token), sessionId)
     if (res.status === 401) throw new T3AuthError("T3 Code rejected a freshly minted token.")
     if (res.status === 404 && sessionId !== undefined) throw new SessionLostError(sessionId)
-    this.sessionId = res.headers.get("mcp-session-id") ?? this.sessionId
+    const assigned = res.headers.get("mcp-session-id") ?? sessionId
     const text = await res.text()
     if (!res.ok) throw new Error(`T3 Code MCP ${method} answered ${res.status}: ${text.slice(0, 300)}`)
-    if (notify || !text) return undefined
+    if (notify || !text) return { sessionId: assigned }
     const message = res.headers.get("content-type")?.includes("text/event-stream")
       ? text
           .split("\n")
@@ -300,7 +303,7 @@ export class T3Client {
           .find((candidate) => candidate.id !== undefined)
       : (JSON.parse(text) as JsonRpcMessage)
     if (message?.error) throw new Error(`T3 Code MCP ${method} failed: ${message.error.message ?? "unknown error"}`)
-    return message
+    return { message, sessionId: assigned }
   }
 
   private post(body: string, token: string, sessionId: string | undefined): Promise<Response> {
