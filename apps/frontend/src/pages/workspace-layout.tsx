@@ -72,6 +72,7 @@ import { useAccountScope, useAuth } from "@/auth"
 import { useWorkspaceStreamsSelect, type CachedStream } from "@/stores/workspace-store"
 import { isLinkableStreamType } from "@/lib/streams"
 import { SyncEngine, SyncEngineContext } from "@/sync/sync-engine"
+import { LiveWritesContext } from "@/sync/live-writes-context"
 import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { ReadCommitQueue, ReadCommitQueueContext } from "@/sync/read-commit-queue"
 import { useUnreadCounts } from "@/hooks/use-unread-counts"
@@ -411,7 +412,9 @@ export function WorkspaceSyncHandler({
 
   return (
     <SyncEngineContext.Provider value={syncEngine}>
-      <ReadCommitQueueContext.Provider value={readCommitQueue}>{children}</ReadCommitQueueContext.Provider>
+      <LiveWritesContext.Provider value={syncEngine.getLiveWrites()}>
+        <ReadCommitQueueContext.Provider value={readCommitQueue}>{children}</ReadCommitQueueContext.Provider>
+      </LiveWritesContext.Provider>
     </SyncEngineContext.Provider>
   )
 }

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
 import { getDraftPromotionEvents, releaseDraftPromotionEvents } from "@/lib/draft-promotions"
 import { getPerfCapture, NO_CAPTURE } from "@/lib/perf/capture"
-import { useOptionalSyncEngine } from "@/sync/sync-engine"
+import { useLiveWrites } from "@/sync/live-writes-context"
 import { trackPendingRead } from "./apply-window"
 import { getWorkspaceTableRow, subscribeWorkspaceTableRow } from "./workspace-table-registry"
 
@@ -528,7 +528,7 @@ export function useStreamEvents(
  * readwrite transaction there), hence a gate instead.
  */
 function useDeferredWritesLanded(streamId: string | undefined): boolean {
-  const liveWrites = useOptionalSyncEngine()?.getLiveWrites() ?? null
+  const liveWrites = useLiveWrites()
   const [landedFor, setLandedFor] = useState<string | null>(null)
   const passedFor = useRef<string | null>(null)
   const waiting =

@@ -9,7 +9,8 @@ import { LIVE_WRITE_WINDOW_MS } from "./catch-up-batch"
 import { computeTimelineHoles } from "./contiguity"
 import { SocketEventGate } from "./socket-event-gate"
 import { registerStreamSocketHandlers } from "./stream-sync"
-import { SyncEngine, SyncEngineContext } from "./sync-engine"
+import { LiveWritesContext } from "./live-writes-context"
+import { SyncEngine } from "./sync-engine"
 
 const WS = "ws_1"
 const OPEN = "stream_open"
@@ -163,7 +164,7 @@ describe("batched live writes", () => {
     void emit("message:created", created(BACKGROUND, 2))
     void emit("message:created", created(BACKGROUND, 3))
     const wrapper = ({ children }: { children: ReactNode }) =>
-      createElement(SyncEngineContext.Provider, { value: engine }, children)
+      createElement(LiveWritesContext.Provider, { value: engine.getLiveWrites() }, children)
 
     const reads: Array<CachedEvent[] | undefined> = []
     const started = performance.now()
