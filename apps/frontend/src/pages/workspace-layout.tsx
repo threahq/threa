@@ -74,6 +74,7 @@ import { isLinkableStreamType } from "@/lib/streams"
 import { SyncEngine, SyncEngineContext } from "@/sync/sync-engine"
 import { LiveWritesContext } from "@/sync/live-writes-context"
 import { useFeatureFlag } from "@/hooks/use-feature-flags"
+import { useIdbDurabilityFlag } from "@/hooks/use-idb-durability-flag"
 import { ReadCommitQueue, ReadCommitQueueContext } from "@/sync/read-commit-queue"
 import { useUnreadCounts } from "@/hooks/use-unread-counts"
 import { useOpenAside } from "@/hooks/use-open-aside"
@@ -320,6 +321,8 @@ export function WorkspaceSyncHandler({
   useEffect(() => {
     syncEngine.setBatchedLiveWrites(batchedLiveWrites)
   }, [syncEngine, batchedLiveWrites])
+
+  useIdbDurabilityFlag(workspaceId)
 
   useEffect(() => {
     syncEngine.setCurrentUser(user)

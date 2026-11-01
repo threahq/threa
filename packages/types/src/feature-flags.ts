@@ -58,6 +58,9 @@ export const FEATURE_FLAGS = {
   // short window, so they stop queueing the open stream's reads. "off" writes
   // every event in its own transaction as it arrives.
   batchedLiveWrites: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "on" }),
+  // "on" lets cache-only IndexedDB writes confirm before the disk flush; writes
+  // touching device-only data (unsent messages, drafts, uploads) stay strict.
+  idbRelaxedDurability: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "on" }),
   calls: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }),
   callsP2p: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "off" }),
   composeTraces: defineFlag({ values: ["off", "capture"], scopes: ["workspace"], default: "off" }),
