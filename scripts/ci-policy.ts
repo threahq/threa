@@ -95,7 +95,6 @@ export const areas: Area[] = [
       "keyboard-correction",
       "command-arg-picker",
       "stashed-drafts",
-      "drafts-modal",
       "draft-sharing-journey",
       "inline-file-upload",
       "panel-composer",
