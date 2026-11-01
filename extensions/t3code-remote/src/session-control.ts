@@ -63,7 +63,7 @@ function choicesOf(providers: readonly ProviderInfo[]): ModelSelection[] {
 }
 
 function effortOption(model: ProviderInfo["models"][number] | undefined): ModelOptionDescriptor | undefined {
-  return model?.options?.find((option) => option.type === "select" && EFFORT_OPTION_IDS.has(option.id))
+  return model?.options?.find((option) => EFFORT_OPTION_IDS.has(option.id))
 }
 
 function effortOptionOf(
@@ -88,7 +88,7 @@ function described(selection: ModelSelection): string {
 }
 
 function levelsOf(option: ModelOptionDescriptor | undefined): string[] {
-  return option?.options?.map((level) => level.id) ?? []
+  return option?.values?.filter((level): level is string => typeof level === "string") ?? []
 }
 
 /** The selection thinking at `level`, keeping its other options, or undefined when its model doesn't offer the level. */
