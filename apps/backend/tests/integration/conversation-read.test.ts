@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test"
 import { Pool } from "pg"
-import { deleteAllStreams, withTransaction, setupTestDatabase, testMessageContent } from "./setup"
+import { deleteAllStreams, withTransaction, setupIsolatedTestDatabase, testMessageContent } from "./setup"
 import {
   StreamService,
   StreamEventRepository,
@@ -18,16 +18,19 @@ describe("ConversationService read/unread", () => {
   let streamService: StreamService
   let eventService: EventService
   let conversationService: ConversationService
+  let cleanup: () => Promise<void>
 
+  // Isolated: the preloaded test server's workers react to these messages on the shared database
+  // and can rewrite a seeded conversation's members between markRead and markUnread.
   beforeAll(async () => {
-    pool = await setupTestDatabase()
+    ;({ pool, cleanup } = await setupIsolatedTestDatabase("conversation-read"))
     streamService = new StreamService(pool)
     eventService = new EventService(pool)
     conversationService = new ConversationService(pool)
   })
 
   afterAll(async () => {
-    await pool.end()
+    await cleanup()
   })
 
   beforeEach(async () => {
