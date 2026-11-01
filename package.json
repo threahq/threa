@@ -41,7 +41,7 @@
     "test": "bun run --cwd apps/backend test",
     "test:scripts": "bun test ./scripts/ ./tests/app-update/server.test.ts",
     "monitor": "bun scripts/monitor/cli.ts",
-    "typecheck:monitor": "tsc --noEmit -p scripts/monitor/tsconfig.json",
+    "typecheck:monitor": "node_modules/typescript7/bin/tsc --noEmit -p scripts/monitor/tsconfig.json",
     "test:unit": "bun run --cwd apps/backend test:unit",
     "test:e2e": "bun run --cwd apps/backend test:e2e",
     "test:browser": "bun scripts/test-silent.ts browser",
@@ -77,6 +77,7 @@
     "railway": "^3.11.0",
     "shadcn": "^3.6.3",
     "socket.io-client": "^4.8.1",
+    "typescript7": "npm:typescript@7.0.2",
     "ulid": "^2.3.0"
   },
   "lint-staged": {

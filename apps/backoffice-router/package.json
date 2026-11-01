@@ -6,7 +6,7 @@
     "dev": "wrangler dev --inspector-port 9230",
     "deploy": "wrangler deploy",
     "test": "bun test src/",
-    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.test.json"
+    "typecheck": "../../node_modules/typescript7/bin/tsc --noEmit -p tsconfig.app.json && ../../node_modules/typescript7/bin/tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {
     "@threahq/types": "workspace:*"

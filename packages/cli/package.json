@@ -27,7 +27,7 @@
   },
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "../../node_modules/typescript7/bin/tsc --noEmit",
     "build": "bun ../../extensions/scripts/build-package.ts && mkdir -p dist/skills && cp -R ../../.agents/skills/threa-cli dist/skills/",
     "pack": "bun run build && cd dist && npm pack --pack-destination .."
   },

@@ -9,7 +9,8 @@
     "noEmit": true,
     "declaration": true,
     "rootDir": "./src",
-    "outDir": "./dist"
+    "outDir": "./dist",
+    "types": ["bun"]
   },
   "include": ["src/**/*"]
 }

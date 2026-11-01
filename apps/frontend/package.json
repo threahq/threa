@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test": "bun ../../scripts/test-silent.ts frontend",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "../../node_modules/typescript7/bin/tsc --noEmit",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix"
   },
