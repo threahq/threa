@@ -45,6 +45,7 @@ import { DictationPreview } from "./dictation-preview-extension"
 import { MathExtension } from "./math-extension"
 import { DictationChunkExtension } from "./dictation-chunk-extension"
 import { ComposerPillDragExtension } from "./composer-pill-drag-extension"
+import { AndroidSpellcheckKeyboard } from "./android-spellcheck-keyboard"
 import { YjsCollaboration } from "./yjs-extension"
 import type * as Y from "yjs"
 import type { Awareness } from "y-protocols/awareness"
@@ -207,6 +208,8 @@ function buildExtensions(config: Partial<CreateEditorExtensionsOptions>, surface
 
     BlockIdAttribute,
     ...documentOnly(BlockIdClipboard, DocBlockLanding, MediaRows),
+
+    AndroidSpellcheckKeyboard,
   ]
 
   return extensions
