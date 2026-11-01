@@ -229,6 +229,14 @@ test.describe("Doc pane", () => {
       await pane(reader.page, docId).getByRole("button", { name: "Stream actions" }).first().click()
       await expect(reader.page.getByRole("menuitem", { name: "Copy link" })).toBeVisible()
       await expect(reader.page.getByRole("menuitem", { name: "Archive" })).toHaveCount(0)
+      await reader.page.keyboard.press("Escape")
+
+      await expectApiOk(
+        await owner.request.post(`/api/workspaces/${workspaceId}/streams/${docId}/archive`),
+        "Archive doc"
+      )
+      await expect(pane(reader.page, docId).locator(".grayscale .ProseMirror")).toHaveCount(1, { timeout: 15000 })
+      await expect(pane(reader.page, docId).getByRole("button", { name: "Unarchive", exact: true })).toHaveCount(0)
     } finally {
       await ownerContext.close()
       await reader.context.close()
