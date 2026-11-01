@@ -1465,8 +1465,6 @@ function bindStreamSocketHandlers(
   }
 
   const handleMessageCreated = async (payload: MessageEventPayload) => {
-    if (payload.streamId !== streamId) return
-
     const stopApply = getPerfCapture().time("stream.eventApply")
     try {
       // E2E payloads stay as ciphertext + envelope at rest; decryption runs on
@@ -1629,7 +1627,6 @@ function bindStreamSocketHandlers(
     memoId: string
     summary: MemoEmbedSummary
   }) => {
-    if (payload.streamId !== streamId) return
     await updateMemoEmbedSummary(workspaceId, streamId, payload.summary)
     await queryClient.invalidateQueries({ queryKey: streamKeys.events(workspaceId, streamId) })
     // Label pages render from their own query, not db.events, and the backend
@@ -1640,7 +1637,6 @@ function bindStreamSocketHandlers(
   }
 
   const handleMessageEdited = async (payload: MessageEventPayload) => {
-    if (payload.streamId !== streamId) return
     const editEvent = payload.event
     const editPayload = editEvent.payload as {
       messageId: string
@@ -1708,7 +1704,6 @@ function bindStreamSocketHandlers(
   }
 
   const handleMessageDeleted = async (payload: MessageDeletedPayload) => {
-    if (payload.streamId !== streamId) return
     await updateMessageEvent(workspaceId, streamId, payload.messageId, (p) => ({
       ...p,
       deletedAt: payload.deletedAt,
@@ -1828,7 +1823,6 @@ function bindStreamSocketHandlers(
   }
 
   const handleReactionAdded = async (payload: ReactionPayload) => {
-    if (payload.streamId !== streamId) return
     await updateMessageEvent(workspaceId, streamId, payload.messageId, (p) => {
       const reactions = { ...((p.reactions as Record<string, string[]>) ?? {}) }
       const existing = reactions[payload.emoji] || []
@@ -1847,7 +1841,6 @@ function bindStreamSocketHandlers(
   }
 
   const handleReactionRemoved = async (payload: ReactionPayload) => {
-    if (payload.streamId !== streamId) return
     await updateMessageEvent(workspaceId, streamId, payload.messageId, (p) => {
       const reactions = { ...((p.reactions as Record<string, string[]>) ?? {}) }
       if (reactions[payload.emoji]) {
@@ -1913,7 +1906,6 @@ function bindStreamSocketHandlers(
   // (message or card) by canonical id. Payloads carry ABSOLUTE counts, so this
   // is idempotent last-write-wins (no double-increment, no flicker).
   const handleThreadUpdated = async (payload: ThreadUpdatedPayload) => {
-    if (payload.streamId !== streamId) return
     // Heal only the fields the patch carries: the edit path omits replyCount
     // (summary-only refresh) so it can't overwrite a concurrent create/delete's
     // authoritative count.
@@ -1943,7 +1935,6 @@ function bindStreamSocketHandlers(
       | StreamLifecycleEventPayload
       | DescriptionSetPayload
   ) => {
-    if (payload.streamId !== streamId) return
     const cachedEvent: CachedEvent = {
       ...payload.event,
       workspaceId,
@@ -2036,7 +2027,6 @@ function bindStreamSocketHandlers(
     participantCount: number
     participantUserIds: string[]
   }) => {
-    if (payload.streamId !== streamId) return
     updateCallParticipants(workspaceId, {
       callId: payload.callId,
       streamId: payload.streamId,
@@ -2052,7 +2042,6 @@ function bindStreamSocketHandlers(
   // refetches only while the panel has the query mounted; otherwise it just
   // marks stale.
   const handleDelegationEvent = async (payload: Parameters<typeof handleAppendEvent>[0]) => {
-    if (payload.streamId !== streamId) return
     await handleAppendEvent(payload)
     await queryClient.invalidateQueries({ queryKey: delegationKeys.stream(workspaceId, streamId) })
     await queryClient.invalidateQueries({ queryKey: agentOutcomeKeys.all })
@@ -2063,7 +2052,6 @@ function bindStreamSocketHandlers(
   // that can't see this window — the outcomes board, and the run a deep-linked
   // thread falls back to — are invalidated alongside it (INV-53).
   const handleSubagentEvent = async (payload: Parameters<typeof handleAppendEvent>[0]) => {
-    if (payload.streamId !== streamId) return
     await handleAppendEvent(payload)
     await queryClient.invalidateQueries({ queryKey: subagentKeys.all })
     await queryClient.invalidateQueries({ queryKey: agentOutcomeKeys.all })
@@ -2072,13 +2060,11 @@ function bindStreamSocketHandlers(
   // Follow-ups have no `fired`/`failed` event, so these two are the only live
   // signals the outcomes read gets — schedule and cancel.
   const handleFollowUpEvent = async (payload: Parameters<typeof handleAppendEvent>[0]) => {
-    if (payload.streamId !== streamId) return
     await handleAppendEvent(payload)
     await queryClient.invalidateQueries({ queryKey: agentOutcomeKeys.all })
   }
 
   const handleLinkPreviewReady = async (payload: LinkPreviewReadyPayload) => {
-    if (payload.streamId !== streamId) return
     await updateMessageEvent(workspaceId, streamId, payload.messageId, (p) => ({
       ...p,
       linkPreviews: preserveBakedInAppData(payload.previews, p.linkPreviews as LinkPreviewSummary[] | undefined),
@@ -2137,7 +2123,6 @@ function bindStreamSocketHandlers(
     botId: string
     presence: BotRuntimePresenceSummary | null
   }) => {
-    if (payload.streamId !== streamId) return
     // The stream's effective command set follows runtime liveness: a runtime
     // coming online adds its session-control commands (/stop, /model…),
     // one going away removes them. `commands` was computed server-side at
@@ -2194,6 +2179,16 @@ function bindStreamSocketHandlers(
     socket.on(event, guarded)
     cleanups.push(() => socket.off(event, guarded))
   }
+  const onStream = <P extends { workspaceId: string; streamId: string }>(
+    event: string,
+    handler: (payload: P) => unknown
+  ) => {
+    cleanups.push(
+      routeStreamEvent(socket, event, streamId, (payload) =>
+        payload.workspaceId === workspaceId ? handler(payload as P) : undefined
+      )
+    )
+  }
   // A handler writing this stream's rows outside `persist` first lets its
   // deferred writes land, or an edit, reaction or move would miss a message
   // still waiting in the window.
@@ -2204,56 +2199,56 @@ function bindStreamSocketHandlers(
       return pending ? pending.then(() => handler(payload)) : handler(payload)
     }
 
-  on("message:created", handleMessageCreated)
-  on("message:edited", afterDeferredWrites(handleMessageEdited))
-  on("memo:updated", afterDeferredWrites(handleMemoUpdated))
-  on("message:deleted", afterDeferredWrites(handleMessageDeleted))
+  onStream("message:created", handleMessageCreated)
+  onStream("message:edited", afterDeferredWrites(handleMessageEdited))
+  onStream("memo:updated", afterDeferredWrites(handleMemoUpdated))
+  onStream("message:deleted", afterDeferredWrites(handleMessageDeleted))
   on("messages:moved", afterDeferredWrites(handleMessagesMoved))
-  on("reaction:added", afterDeferredWrites(handleReactionAdded))
-  on("reaction:removed", afterDeferredWrites(handleReactionRemoved))
+  onStream("reaction:added", afterDeferredWrites(handleReactionAdded))
+  onStream("reaction:removed", afterDeferredWrites(handleReactionRemoved))
   on("stream:created", afterDeferredWrites(handleStreamCreated))
-  on("thread:updated", afterDeferredWrites(handleThreadUpdated))
-  on("stream:member_joined", handleAppendEvent)
-  on("stream:member_added", handleAppendEvent)
-  on("stream:member_removed", handleAppendEvent)
-  on("command:dispatched", handleAppendEvent)
-  on("command:completed", handleAppendEvent)
-  on("command:failed", handleAppendEvent)
-  on("command:progress", handleAppendEvent)
-  on("stream:aside_anchored", handleAppendEvent)
-  on("stream:doc_created", handleAppendEvent)
-  on("stream:doc_moved", handleAppendEvent)
-  on("stream:doc_activity", handleAppendEvent)
-  on("agent_session:started", handleAppendEvent)
-  on("agent_session:completed", handleAppendEvent)
-  on("agent_session:failed", handleAppendEvent)
-  on("agent_session:interrupted", handleAppendEvent)
-  on("agent_session:deleted", handleAppendEvent)
-  on("stream:memos_captured", handleAppendEvent)
-  on("stream:agent_follow_up_scheduled", handleFollowUpEvent)
-  on("stream:agent_follow_up_cancelled", handleFollowUpEvent)
-  on("stream:delegation_created", handleDelegationEvent)
-  on("stream:delegation_status_changed", handleDelegationEvent)
-  on("stream:subagent_created", handleSubagentEvent)
-  on("stream:subagent_status_changed", handleSubagentEvent)
+  onStream("thread:updated", afterDeferredWrites(handleThreadUpdated))
+  onStream("stream:member_joined", handleAppendEvent)
+  onStream("stream:member_added", handleAppendEvent)
+  onStream("stream:member_removed", handleAppendEvent)
+  onStream("command:dispatched", handleAppendEvent)
+  onStream("command:completed", handleAppendEvent)
+  onStream("command:failed", handleAppendEvent)
+  onStream("command:progress", handleAppendEvent)
+  onStream("stream:aside_anchored", handleAppendEvent)
+  onStream("stream:doc_created", handleAppendEvent)
+  onStream("stream:doc_moved", handleAppendEvent)
+  onStream("stream:doc_activity", handleAppendEvent)
+  onStream("agent_session:started", handleAppendEvent)
+  onStream("agent_session:completed", handleAppendEvent)
+  onStream("agent_session:failed", handleAppendEvent)
+  onStream("agent_session:interrupted", handleAppendEvent)
+  onStream("agent_session:deleted", handleAppendEvent)
+  onStream("stream:memos_captured", handleAppendEvent)
+  onStream("stream:agent_follow_up_scheduled", handleFollowUpEvent)
+  onStream("stream:agent_follow_up_cancelled", handleFollowUpEvent)
+  onStream("stream:delegation_created", handleDelegationEvent)
+  onStream("stream:delegation_status_changed", handleDelegationEvent)
+  onStream("stream:subagent_created", handleSubagentEvent)
+  onStream("stream:subagent_status_changed", handleSubagentEvent)
   // Bot-access request/resolution rows append to the timeline like any other
   // broadcast/patch event; there is no list hook behind them (the card renders
   // from the payload snapshot + the in-window status patch), so a plain append
   // is all that's needed.
-  on("stream:bot_access_requested", handleAppendEvent)
-  on("stream:bot_access_status_changed", handleAppendEvent)
-  on("stream:decision_requested", handleAppendEvent)
-  on("stream:decision_resolved", handleAppendEvent)
-  on("stream:brief_updated", handleAppendEvent)
-  on("stream:call_started", handleAppendEvent)
-  on("stream:call_ended", handleAppendEvent)
-  on("call:participants_changed", handleCallParticipantsChanged)
-  on("stream:archived", handleAppendEvent)
-  on("stream:unarchived", handleAppendEvent)
-  on("stream:description_set", handleAppendEvent)
-  on("link_preview:ready", afterDeferredWrites(handleLinkPreviewReady))
+  onStream("stream:bot_access_requested", handleAppendEvent)
+  onStream("stream:bot_access_status_changed", handleAppendEvent)
+  onStream("stream:decision_requested", handleAppendEvent)
+  onStream("stream:decision_resolved", handleAppendEvent)
+  onStream("stream:brief_updated", handleAppendEvent)
+  onStream("stream:call_started", handleAppendEvent)
+  onStream("stream:call_ended", handleAppendEvent)
+  onStream("call:participants_changed", handleCallParticipantsChanged)
+  onStream("stream:archived", handleAppendEvent)
+  onStream("stream:unarchived", handleAppendEvent)
+  onStream("stream:description_set", handleAppendEvent)
+  onStream("link_preview:ready", afterDeferredWrites(handleLinkPreviewReady))
   on("pointer:invalidated", afterDeferredWrites(handlePointerInvalidated))
-  on("bot_runtime:presence", handleBotRuntimePresence)
+  onStream("bot_runtime:presence", handleBotRuntimePresence)
 
   return () => {
     for (const cleanup of cleanups) cleanup()
@@ -2276,6 +2271,54 @@ interface StreamRegistrationEntry {
 // engine instance — either would be per-registrant. Keyed by event source in a
 // WeakMap so a dead gate or socket takes its entries with it.
 const streamRegistrations = new WeakMap<SyncEventSource, Map<string, StreamRegistrationEntry>>()
+
+type StreamEventRoute = (payload: { workspaceId: string; streamId: string }) => unknown
+
+interface StreamEventRouter {
+  listener: (payload: { workspaceId: string; streamId?: string } | undefined) => unknown
+  routes: Map<string, StreamEventRoute>
+}
+
+// Same INV-9 exception as `streamRegistrations`: one listener per (source, event) routes by `streamId`, so an event
+// costs one handler call however many streams are registered. Per-stream listeners each ran and returned early,
+// which under agent load meant ~13 calls per `bot_runtime:presence` frame.
+const streamEventRouters = new WeakMap<SyncEventSource, Map<string, StreamEventRouter>>()
+
+function routeStreamEvent(
+  source: SyncEventSource,
+  event: string,
+  streamId: string,
+  route: StreamEventRoute
+): () => void {
+  let byEvent = streamEventRouters.get(source)
+  if (!byEvent) {
+    byEvent = new Map()
+    streamEventRouters.set(source, byEvent)
+  }
+  let router = byEvent.get(event)
+  if (!router) {
+    const routes = new Map<string, StreamEventRoute>()
+    const created: StreamEventRouter = {
+      routes,
+      listener: (payload) => {
+        const target = payload?.streamId === undefined ? undefined : routes.get(payload.streamId)
+        return target?.(payload as { workspaceId: string; streamId: string })
+      },
+    }
+    router = created
+    byEvent.set(event, created)
+    source.on(event, created.listener)
+  }
+  const owner = router
+  owner.routes.set(streamId, route)
+  return () => {
+    if (owner.routes.get(streamId) !== route) return
+    owner.routes.delete(streamId)
+    if (owner.routes.size > 0) return
+    source.off(event, owner.listener)
+    if (byEvent.get(event) === owner) byEvent.delete(event)
+  }
+}
 
 function describeSignatureConflicts(
   existing: StreamRegistrationEntry["signature"],
