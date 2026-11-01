@@ -45,9 +45,18 @@ function keyboardDropsUnderPopup() {
   resizeViewport(800)
 }
 
-function input(inputType: string) {
-  editor.view.dom.dispatchEvent(new InputEvent("beforeinput", { inputType, bubbles: true }))
+function input(inputType: string, data: string | null = null) {
+  editor.view.dom.dispatchEvent(new InputEvent("beforeinput", { inputType, data, bubbles: true }))
   vi.runAllTimers()
+}
+
+const tap = (target: EventTarget) => target.dispatchEvent(new Event("pointerdown", { bubbles: true }))
+const spellcheck = () => editor.view.dom.getAttribute("spellcheck")
+
+/** The menu was swiped away (no input reaches the page), then the user taps the same word again. */
+function tapAfterDismissedMenu() {
+  keyboardDropsUnderPopup()
+  tap(editor.view.dom)
 }
 
 /** Chrome's menu fires this for a picked suggestion and for its Delete (a replacement with ""). */
@@ -127,10 +136,49 @@ describe("AndroidSpellcheckKeyboard", () => {
     expect(blur).not.toHaveBeenCalled()
   })
 
+  it("pauses spellcheck when the editor is tapped after a dismissed menu", () => {
+    mount()
+    tapAfterDismissedMenu()
+    expect(spellcheck()).toBe("false")
+  })
+
+  it("keeps spellcheck for taps that do not follow a dismissed menu", () => {
+    mount()
+    tap(editor.view.dom)
+    keyboardDropsUnderPopup()
+    tap(document.body)
+    tap(editor.view.dom)
+    keyboardDropsUnderPopup()
+    applySuggestion()
+    tap(editor.view.dom)
+    expect(spellcheck()).toBeNull()
+  })
+
+  it.each([
+    ["a space", "insertText", " "],
+    ["a line break", "insertParagraph", null],
+  ])("resumes spellcheck once the user types %s", (_, inputType, data) => {
+    mount()
+    tapAfterDismissedMenu()
+    input("insertText", "s")
+    expect(spellcheck()).toBe("false")
+    input(inputType, data)
+    expect(spellcheck()).toBeNull()
+  })
+
+  it("resumes spellcheck when the editor loses focus", () => {
+    mount()
+    tapAfterDismissedMenu()
+    editor.view.dom.blur()
+    expect(spellcheck()).toBeNull()
+  })
+
   it("does nothing off Android", () => {
     const { blur } = mount("Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148")
     keyboardDropsUnderPopup()
     applySuggestion()
+    tap(editor.view.dom)
     expect(blur).not.toHaveBeenCalled()
+    expect(spellcheck()).toBeNull()
   })
 })
