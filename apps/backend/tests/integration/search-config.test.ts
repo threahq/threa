@@ -18,16 +18,16 @@ import { DEFAULT_SEARCH_CONFIG, SEARCH_TEXT_CONFIGS } from "../../src/lib/text-s
 import { userId, workspaceId, streamId } from "../../src/lib/id"
 import { StubRelevanceScorer } from "../../src/features/memos"
 
-const EMBEDDING_DIMS = 1536
-const ZERO_VECTOR = new Array(EMBEDDING_DIMS).fill(0)
-
 const RANKINGS = [
   { name: "legacy", searchFlag: "off" },
   { name: "improved", searchFlag: "on" },
 ] as const
 
+// No query embedding keeps search keyword-only: the test server's embedding
+// worker embeds these messages at its own pace, and with improved ranking any
+// embedded message is a semantic hit.
 function fakeEmbeddingService(): EmbeddingServiceLike {
-  return { embed: async () => ZERO_VECTOR, embedBatch: async () => [] }
+  return { embed: async () => [], embedBatch: async () => [] }
 }
 
 describe("Per-message text-search config", () => {

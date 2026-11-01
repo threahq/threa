@@ -117,6 +117,7 @@ interface Dependencies {
   /** For fanning viewport-nudge frames into visible-refresh jobs. */
   jobQueue: Pick<QueueManager, "send">
   accessLogService: AccessLogService
+  subscribeCoalesceMs: number
 }
 
 /**
@@ -141,6 +142,7 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
     sessionAbortRegistry,
     jobQueue,
     accessLogService,
+    subscribeCoalesceMs,
   } = deps
 
   // Auth middleware is shared with the voice namespace — see lib/socket-auth
@@ -205,6 +207,7 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
     // connect, which is one access fact with many subjects, not ~30 facts.
     // Denied joins and agent-session rooms bypass this (immediate rows).
     const subscribeCoalescer = new SubscribeCoalescer({
+      flushMs: subscribeCoalesceMs,
       emit: (batch) => {
         accessLogService.record({
           workspaceId: batch.workspaceId,

@@ -82,111 +82,98 @@ jobs:
       - name: Typecheck all workspaces
         run: bun run typecheck
 
-  test:
-    name: Tests (${{ matrix.partition }})
+  backend:
+    name: Backend
     needs: plan
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        partition: [backend, backend-integration, packages]
-
-    services:
-      postgres:
-        image: pgvector/pgvector:pg17
-        env:
-          POSTGRES_USER: threa
-          POSTGRES_PASSWORD: threa
-          POSTGRES_DB: threa
-        ports:
-          - 5454:5432
-        options: >-
-          --health-cmd "pg_isready -U threa -d threa"
-          --health-interval 2s
-          --health-timeout 5s
-          --health-retries 10
+    timeout-minutes: 15
+    env:
+      TEST_DATABASE_URL: postgresql://threa:threa@localhost:5454/threa_test
+      S3_ENDPOINT: http://localhost:9000
+      S3_BUCKET: threa-test-uploads
+      S3_ACCESS_KEY_ID: minioadmin
+      S3_SECRET_ACCESS_KEY: minioadmin
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Started in the background so the pulls and boot overlap install and the
+      # unit tests. Throwaway data: no fsync, tmpfs. Four test workers each run
+      # a server and their own pools, past the default 100 connections.
+      - name: Start Postgres and MinIO
+        run: |
+          docker run -d --name postgres -p 5454:5432 \
+            -e POSTGRES_USER=threa -e POSTGRES_PASSWORD=threa -e POSTGRES_DB=threa \
+            --tmpfs /var/lib/postgresql/data \
+            pgvector/pgvector:pg17 \
+            postgres -c max_connections=400 -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
+            > /tmp/postgres.log 2>&1 &
+          docker run -d --name minio -p 9000:9000 \
+            -e AWS_ACCESS_KEY_ID=minioadmin -e AWS_SECRET_ACCESS_KEY=minioadmin \
+            chrislusf/seaweedfs:4.47 mini -dir=/data -s3.port=9000 -bucket=threa-test-uploads \
+            > /tmp/minio.log 2>&1 &
+
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
 
-      # published-sdk-consumer.test.ts packs bot-runtime-client, whose
-      # declaration build needs its own deps (mdast) that the root install
-      # does not hoist.
       - name: Install dependencies
-        run: |
-          bun install --frozen-lockfile
-          bun install --frozen-lockfile --cwd extensions/bot-runtime-client
+        id: install
+        run: bun install --frozen-lockfile
 
       - name: Run scripts tests
-        if: matrix.partition == 'packages'
         run: bun run test:scripts
 
-      - name: Create test databases
+      - name: Run backend unit tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: bun run --cwd apps/backend test:unit
+
+      - name: Wait for Postgres and MinIO
+        id: services
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
-          PGPASSWORD=threa psql -h localhost -p 5454 -U threa -d postgres -c "CREATE DATABASE threa_test;"
+          ready() {
+            timeout 90 bash -c "until $1; do sleep 0.5; done" && return
+            cat /tmp/postgres.log /tmp/minio.log
+            docker ps -a
+            docker logs postgres || true
+            docker logs minio || true
+            return 1
+          }
+          ready "pg_isready -q -h localhost -p 5454 -U threa"
+          ready "curl -sf http://localhost:9000/healthz"
           PGPASSWORD=threa psql -h localhost -p 5454 -U threa -d postgres -c "CREATE DATABASE threa_control_plane_test;"
 
-      - name: Start MinIO
-        run: |
-          docker run -d -p 9000:9000 --name minio \
-            -e AWS_ACCESS_KEY_ID=minioadmin \
-            -e AWS_SECRET_ACCESS_KEY=minioadmin \
-            chrislusf/seaweedfs:4.47 mini -dir=/data -s3.port=9000 -bucket=threa-test-uploads
-          # Wait for MinIO to be ready
-          for i in {1..30}; do
-            if curl -sf http://localhost:9000/healthz; then
-              echo "MinIO is ready"
-              break
-            fi
-            echo "Waiting for MinIO... ($i)"
-            sleep 1
-          done
-
-      - name: Run backend tests
-        if: matrix.partition == 'backend'
-        run: bun run test
-        env:
-          TEST_DATABASE_URL: postgresql://threa:threa@localhost:5454/threa_test
-          S3_ENDPOINT: http://localhost:9000
-          S3_BUCKET: threa-test-uploads
-          S3_ACCESS_KEY_ID: minioadmin
-          S3_SECRET_ACCESS_KEY: minioadmin
-
       - name: Run backend integration tests
-        if: matrix.partition == 'backend-integration'
-        run: bun run --cwd apps/backend test:integration tests/integration/
-        env:
-          TEST_DATABASE_URL: postgresql://threa:threa@localhost:5454/threa_test
-          S3_ENDPOINT: http://localhost:9000
-          S3_BUCKET: threa-test-uploads
-          S3_ACCESS_KEY_ID: minioadmin
-          S3_SECRET_ACCESS_KEY: minioadmin
+        if: ${{ !cancelled() && steps.services.outcome == 'success' }}
+        run: bun run --cwd apps/backend test:integration
+
+      - name: Run backend e2e tests
+        if: ${{ !cancelled() && steps.services.outcome == 'success' }}
+        # Two workers: each boots a polling test server, and at four the slowest
+        # e2e cases cross their 5s timeout on a 4-vCPU runner.
+        run: bun run --cwd apps/backend test:e2e tests/e2e/ --workers 2
+
+      # Packs the published bot-runtime packages, whose declaration build needs
+      # bot-runtime-client's own deps (mdast) that the root install does not hoist.
+      - name: Run published SDK consumer test
+        if: ${{ !cancelled() && steps.services.outcome == 'success' && needs.plan.outputs.extensions == 'true' }}
+        run: |
+          bun install --frozen-lockfile --cwd extensions/bot-runtime-client
+          bun run --cwd apps/backend test:e2e tests/published-sdk/
 
       - name: Run control-plane tests
-        if: matrix.partition == 'packages'
+        if: ${{ !cancelled() && steps.services.outcome == 'success' }}
         run: bun run --cwd apps/control-plane test
         env:
           TEST_DATABASE_URL: postgresql://threa:threa@localhost:5454/threa_control_plane_test
 
-      - name: Run workspace-router tests
-        if: matrix.partition == 'packages'
-        run: bun run --cwd apps/workspace-router test
-
-      - name: Run enclave tests
-        if: matrix.partition == 'packages'
-        run: bun run --cwd apps/enclave test
-
-      - name: Run cli tests
-        if: matrix.partition == 'packages'
-        run: bun run --cwd packages/cli test
-
-      - name: Run shared package tests
-        if: matrix.partition == 'packages'
+      - name: Run package tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
+          bun run --cwd apps/workspace-router test
+          bun run --cwd apps/enclave test
+          bun run --cwd packages/cli test
           bun run --cwd packages/types test
           bun run --cwd packages/backend-common test
           bun run --cwd packages/prosemirror test

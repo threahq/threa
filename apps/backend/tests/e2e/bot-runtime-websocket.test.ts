@@ -81,6 +81,8 @@ function openBotSocket(apiKey: string): Socket {
     transports: ["websocket"],
     autoConnect: false,
     reconnection: false,
+    // A cached multiplexed manager would hand later "/" sockets in this process its cookie-less headers.
+    forceNew: true,
   })
 }
 

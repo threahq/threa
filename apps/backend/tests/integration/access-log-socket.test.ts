@@ -97,8 +97,8 @@ describe("access-log socket capture", () => {
     params: unknown[],
     predicate: (rows: AccessLogDbRow[]) => boolean = (rows) => rows.length > 0
   ): Promise<AccessLogDbRow[]> {
-    // Generous window: successful joins coalesce for DEFAULT_SUBSCRIBE_COALESCE_MS
-    // (2s) before their batch row lands, on top of fire-and-forget insert lag.
+    // Generous window: successful joins coalesce for ACCESS_LOG_SUBSCRIBE_COALESCE_MS
+    // (test-server.ts) before their batch row lands, on top of fire-and-forget insert lag.
     for (let attempt = 0; attempt < 120; attempt++) {
       const { rows } = await pool.query<AccessLogDbRow>(
         `SELECT workspace_id, actor_type, actor_id, auth_ref, operation, access_kind, outcome, subjects

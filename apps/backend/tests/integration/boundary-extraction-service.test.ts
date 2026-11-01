@@ -349,7 +349,8 @@ describe("BoundaryExtractionService", () => {
       // Check outbox for the event
       const outboxEvents = await withTransaction(pool, async (client) => {
         const res = await client.query(
-          `SELECT * FROM outbox WHERE event_type = 'conversation:created' ORDER BY created_at DESC LIMIT 1`
+          `SELECT * FROM outbox WHERE event_type = 'conversation:created' AND payload->>'workspaceId' = $1 ORDER BY created_at DESC LIMIT 1`,
+          [testWorkspaceId]
         )
         return res.rows
       })
@@ -418,7 +419,8 @@ describe("BoundaryExtractionService", () => {
       // Check outbox for the event
       const outboxEvents = await withTransaction(pool, async (client) => {
         const res = await client.query(
-          `SELECT * FROM outbox WHERE event_type = 'conversation:updated' ORDER BY created_at DESC LIMIT 1`
+          `SELECT * FROM outbox WHERE event_type = 'conversation:updated' AND payload->>'workspaceId' = $1 ORDER BY created_at DESC LIMIT 1`,
+          [testWorkspaceId]
         )
         return res.rows
       })
@@ -669,7 +671,7 @@ describe("BoundaryExtractionService", () => {
 
       const settling = await pool.query(sql`SELECT 1 FROM message_conversation_state WHERE message_id = ${replyId}`)
       const assigned = await pool.query<{ payload: { messageId: string; parentStreamId?: string; reason: string } }>(
-        sql`SELECT payload FROM outbox WHERE event_type = 'conversation:message_assigned'`
+        sql`SELECT payload FROM outbox WHERE event_type = 'conversation:message_assigned' AND payload->>'workspaceId' = ${testWorkspaceId}`
       )
       expect({
         conversationId: result?.id,
@@ -782,7 +784,7 @@ describe("BoundaryExtractionService", () => {
       const reply = await ConversationRepository.findPrimaryByMessageId(pool, testWorkspaceId, replyId)
       const folded = await ConversationRepository.findById(pool, testWorkspaceId, threadConv!.id)
       const reassigned = await pool.query<{ payload: Record<string, unknown> }>(
-        sql`SELECT payload FROM outbox WHERE event_type = 'conversation:message_reassigned'`
+        sql`SELECT payload FROM outbox WHERE event_type = 'conversation:message_reassigned' AND payload->>'workspaceId' = ${testWorkspaceId}`
       )
       expect({
         replyConversationId: reply?.id,
@@ -1842,7 +1844,10 @@ describe("BoundaryExtractionService", () => {
       const reassignedEvents = await withTransaction(pool, async (client) => {
         const res = await client.query<{
           payload: { messageId: string; fromConversationId: string; toConversationId: string }
-        }>(`SELECT payload FROM outbox WHERE event_type = 'conversation:message_reassigned'`)
+        }>(
+          `SELECT payload FROM outbox WHERE event_type = 'conversation:message_reassigned' AND payload->>'workspaceId' = $1`,
+          [testWorkspaceId]
+        )
         return res.rows
       })
 
