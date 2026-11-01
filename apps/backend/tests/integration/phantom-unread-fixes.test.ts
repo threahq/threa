@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test"
 import { Pool } from "pg"
-import { deleteAllStreams, setupTestDatabase, testMessageContent, addTestMember } from "./setup"
+import { deleteAllStreams, setupIsolatedTestDatabase, testMessageContent, addTestMember } from "./setup"
 import {
   StreamEventRepository,
   StreamMemberRepository,
@@ -15,15 +15,18 @@ describe("Phantom-unread drift fixes", () => {
   let pool: Pool
   let eventService: EventService
   let streamService: StreamService
+  let cleanup: () => Promise<void>
 
+  // Isolated: the preloaded test server's workers react to these messages on the shared database,
+  // and their writes deadlock against the moves and deletes under test.
   beforeAll(async () => {
-    pool = await setupTestDatabase()
+    ;({ pool, cleanup } = await setupIsolatedTestDatabase("phantom-unread"))
     eventService = new EventService(pool)
     streamService = new StreamService(pool)
-  })
+  }, 30_000)
 
   afterAll(async () => {
-    await pool.end()
+    await cleanup()
   })
 
   beforeEach(async () => {

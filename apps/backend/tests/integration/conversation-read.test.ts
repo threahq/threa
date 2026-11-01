@@ -27,7 +27,7 @@ describe("ConversationService read/unread", () => {
     streamService = new StreamService(pool)
     eventService = new EventService(pool)
     conversationService = new ConversationService(pool)
-  })
+  }, 30_000)
 
   afterAll(async () => {
     await cleanup()
