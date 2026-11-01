@@ -41,15 +41,25 @@ function mount({ userAgent = ANDROID_UA, viewportHeight = VIEWPORT_WITHOUT_KEYBO
   return { blur, focus }
 }
 
+function pointer(target: EventTarget, type: string, clientY = 0) {
+  target.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: 0, clientY }))
+}
+
 function tap(target: EventTarget) {
-  target.dispatchEvent(new Event("pointerdown", { bubbles: true }))
-  target.dispatchEvent(new Event("pointerup", { bubbles: true }))
+  pointer(target, "pointerdown")
+  pointer(target, "pointerup")
 }
 
 /** Chrome hands a touch that pans over to scrolling and ends it with pointercancel, never pointerup. */
 function scroll(target: EventTarget) {
-  target.dispatchEvent(new Event("pointerdown", { bubbles: true }))
-  target.dispatchEvent(new Event("pointercancel", { bubbles: true }))
+  pointer(target, "pointerdown")
+  pointer(target, "pointercancel", 40)
+}
+
+/** A drag whose touchmove a page handler cancelled (pull-to-refresh, pill drag) still ends in pointerup. */
+function drag(target: EventTarget) {
+  pointer(target, "pointerdown")
+  pointer(target, "pointerup", 40)
 }
 
 function spellcheck() {
@@ -242,11 +252,12 @@ describe("AndroidSpellcheckKeyboard spellcheck pause", () => {
     expect(spellcheck()).toBeNull()
   })
 
-  it("pauses on the tap, not on a scroll over the text", () => {
+  it("pauses on the tap, not on a scroll or drag over the text", () => {
     mount()
     menuOpensOnTappedWord()
 
     scroll(editor.view.dom)
+    drag(editor.view.dom)
     expect(spellcheck()).toBeNull()
 
     tap(editor.view.dom)

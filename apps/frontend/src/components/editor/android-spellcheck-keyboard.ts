@@ -7,6 +7,8 @@ import { KEYBOARD_VIEWPORT_THRESHOLD_PX } from "@/hooks/use-visual-viewport"
 const TAP_TO_DROP_MS = 3_000
 /** The suggestion menu is answered within seconds; an older drop was a Back gesture. */
 const ARMED_MS = 15_000
+/** A touch that travels further than this was a scroll or a drag, not a tap on a word. */
+const TAP_SLOP_PX = 10
 
 /**
  * Chrome on Android's spelling menu is a focusable popup that drops the keyboard while the editor keeps DOM focus,
@@ -29,6 +31,7 @@ function watchKeyboardDrop(view: EditorView) {
   if (!visualViewport) return {}
 
   let lowestHeight = visualViewport.height
+  let editorTouchStart: { x: number; y: number } | null = null
   let lastEditorTapAt = 0
   let armedUntil = 0
   let restoreTimer = 0
@@ -56,13 +59,19 @@ function watchKeyboardDrop(view: EditorView) {
 
   const isInEditor = (event: Event) => view.dom.contains(event.target as Node)
   const onPointerDown = (event: PointerEvent) => {
-    if (isInEditor(event)) return
+    if (isInEditor(event)) {
+      editorTouchStart = { x: event.clientX, y: event.clientY }
+      return
+    }
+    editorTouchStart = null
     lastEditorTapAt = 0
     disarm()
   }
-  // A scroll ends in pointercancel instead, so only a tap on the editor gets here.
   const onPointerUp = (event: PointerEvent) => {
-    if (!isInEditor(event)) return
+    if (!isInEditor(event) || !editorTouchStart) return
+    const travel = Math.hypot(event.clientX - editorTouchStart.x, event.clientY - editorTouchStart.y)
+    editorTouchStart = null
+    if (travel > TAP_SLOP_PX) return
     lastEditorTapAt = Date.now()
     if (isArmed()) pauseSpellcheck()
     disarm()
