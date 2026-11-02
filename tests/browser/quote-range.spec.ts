@@ -203,10 +203,14 @@ test.describe("Quote by range", () => {
     await expect(quoteButton).toBeVisible({ timeout: 10000 })
     await quoteButton.click()
 
-    const chip = page.locator("[contenteditable='true']").first().locator("[data-type='quote-reply']")
+    const composer = page.locator("[contenteditable='true']").first()
+    const chip = composer.locator("[data-type='quote-reply']")
     await expect(chip).toHaveCount(1, { timeout: 10000 })
     await expect(chip).toContainText(closing)
     await expect(chip).not.toContainText(opening)
+    // Quoting focuses the composer a frame after inserting the chip; that focus
+    // moves the document selection, so a selection made before it is wiped.
+    await expect(composer).toBeFocused()
 
     // Visible first, so hiding is the selection reaching past the body.
     await selectAcross(page, { messageId: sourceId, text: "opening" }, { messageId: sourceId, text: "scene" })
