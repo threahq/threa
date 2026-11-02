@@ -139,6 +139,20 @@ async function openAccountDb(workosUserId: string): Promise<ThreaDatabase> {
   return inst
 }
 
+/**
+ * While SQLite is the account database's primary copy, a native write would
+ * land only in its IndexedDB backup; the warm-up is skipped instead. Unreadable
+ * reads as primary.
+ */
+async function nativeWritesAllowed(workosUserId: string): Promise<boolean> {
+  const { accountDbName } = await import("../db/database")
+  const { readRecordedMode } = await import("../db/sqlite-mirror/storage-mode")
+  return readRecordedMode(accountDbName(workosUserId)).then(
+    (mode) => mode !== "read-write",
+    () => false
+  )
+}
+
 /** Find the most recent message_created event. Bootstrap events are ordered oldest → newest. */
 function findLatestMessageEvent(events: StreamEvent[]): StreamEvent | null {
   for (let i = events.length - 1; i >= 0; i--) {
@@ -343,7 +357,7 @@ export async function runBootstrapSync(target: BootstrapSyncTarget): Promise<voi
   if (!target.workosUserId) return
   if ((await resolveCredentialOwner()) !== target.workosUserId) return
 
-  if (target.streamId) {
+  if (target.streamId && (await nativeWritesAllowed(target.workosUserId))) {
     await prefetchStreamBootstrap(target.workosUserId, target.workspaceId, target.streamId)
     if (target.messageId) {
       await prefetchEventsAround(target.workosUserId, target.workspaceId, target.streamId, target.messageId)
