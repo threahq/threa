@@ -40,7 +40,8 @@ describe("startStorageProbe", () => {
     stop()
 
     const byName = new Map(capture.snapshot().map((sample) => [sample.name, sample.value]))
-    expect(byName.get("probe.idbRead")).toBeGreaterThanOrEqual(1300)
+    // A 1300ms timer can fire a fraction of a millisecond early by performance.now().
+    expect(byName.get("probe.idbRead")).toBeGreaterThan(1290)
     expect(byName.get("probe.fileReadsDuringIdbStall")).toBeGreaterThanOrEqual(1)
     expect(byName.get("probe.slowestFileReadDuringIdbStall")).toBeLessThan(30)
     expect(byName.has("probe.fileRead")).toBe(false)
