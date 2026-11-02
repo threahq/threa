@@ -108,16 +108,12 @@ beforeEach(async () => {
 describe("processOperationQueue edit replay", () => {
   it("should forward the share-privacy consent a queued edit was saved with", async () => {
     const contentJson = { type: "doc", content: [] }
-    // Replay orders by enqueue millisecond; two enqueues in one millisecond tie.
-    let clock = Date.now()
-    const now = vi.spyOn(Date, "now").mockImplementation(() => clock++)
     await enqueueOperation(workspaceId, "edit_message", {
       messageId: "msg_1",
       contentJson,
       confirmedPrivacyWarning: true,
     })
     await enqueueOperation(workspaceId, "edit_message", { messageId: "msg_2", contentJson })
-    now.mockRestore()
 
     await process(scheduledServiceRejectingWith(new Error("unused")))
 
@@ -125,6 +121,20 @@ describe("processOperationQueue edit replay", () => {
       [workspaceId, "msg_1", { contentJson, confirmedPrivacyWarning: true }],
       [workspaceId, "msg_2", { contentJson }],
     ])
+  })
+
+  it("should replay operations enqueued in the same millisecond in enqueue order", async () => {
+    const replayed: string[] = []
+    messageService.update.mockImplementation(async () => void replayed.push("edit"))
+    messageService.delete.mockImplementation(async () => void replayed.push("delete"))
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000)
+    await enqueueOperation(workspaceId, "edit_message", { messageId: "msg_1", contentJson: { type: "doc" } })
+    await enqueueOperation(workspaceId, "delete_message", { messageId: "msg_1" })
+    now.mockRestore()
+
+    await process(scheduledServiceRejectingWith(new Error("unused")))
+
+    expect(replayed).toEqual(["edit", "delete"])
   })
 })
 
