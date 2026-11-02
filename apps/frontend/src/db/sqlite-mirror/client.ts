@@ -233,6 +233,9 @@ interface RoutedTx {
   route: string | null
   asked: Asked[]
   failed: DOMException | null
+  /** Answers given on a lost route, asked again and not yet matched: its commit waits for every one. */
+  unmatched: number
+  heldCommit: Asked | null
 }
 
 function answerOf(reply: OkReply): string {
@@ -1348,7 +1351,14 @@ export class SqliteMirror {
     if (request.type === "begin") {
       const route = this.route()
       const failed = this.closing || (!route && this.routable.settled)
-      this.transactions.set(tx, { readonly: request.readonly, route, asked: [], failed: failed ? unavailable() : null })
+      this.transactions.set(tx, {
+        readonly: request.readonly,
+        route,
+        asked: [],
+        failed: failed ? unavailable() : null,
+        unmatched: 0,
+        heldCommit: null,
+      })
     }
     const routed = this.transactions.get(tx)
     if (!routed) return Promise.reject(inactive(tx))
@@ -1366,11 +1376,20 @@ export class SqliteMirror {
   }
 
   private sendInTx(tx: number, routed: RoutedTx, asked: Asked): void {
+    if (asked.request.type === "commit" && routed.unmatched > 0) {
+      routed.heldCommit = asked
+      return
+    }
     const route = routed.route!
+    if (asked.answer !== undefined) routed.unmatched++
     const answered = (answer: string, settle: () => void) => {
       if (this.transactions.get(tx) !== routed || routed.route !== route || routed.failed) return
       if (asked.answer !== undefined) {
-        if (asked.answer !== answer) this.failTx(tx, routed, ownerLost())
+        if (asked.answer !== answer) return this.failTx(tx, routed, ownerLost())
+        const commit = routed.heldCommit
+        if (--routed.unmatched > 0 || !commit) return
+        routed.heldCommit = null
+        this.sendInTx(tx, routed, commit)
         return
       }
       asked.answer = answer
@@ -1405,13 +1424,15 @@ export class SqliteMirror {
     for (const [tx, routed] of this.transactions) {
       if (routed.route !== route || routed.failed) continue
       const last = routed.asked.at(-1)
-      const ending = last?.answer === undefined ? last?.request.type : undefined
+      const ending = last?.answer === undefined && last !== routed.heldCommit ? last?.request.type : undefined
       if (ending === "rollback" || (ending === "commit" && routed.readonly)) {
         this.transactions.delete(tx)
         last!.answer = ""
         last!.resolve({ ok: true, ms: 0 })
       } else if (ending !== "commit") {
         routed.route = null
+        routed.unmatched = 0
+        routed.heldCommit = null
       }
     }
   }
@@ -1506,8 +1527,7 @@ export class SqliteMirror {
       const transactions = this.servedBy(message.from)
       if (request.type === "begin") transactions.set(tx, ++this.nextTx)
       const own = transactions.get(tx)
-      if (own === undefined)
-        return fail(new DOMException(`Transaction ${tx} is not active`, "TransactionInactiveError"))
+      if (own === undefined) return fail(inactive(tx))
       if (request.type === "commit" || request.type === "rollback") transactions.delete(tx)
       request = { ...request, tx: own }
     }

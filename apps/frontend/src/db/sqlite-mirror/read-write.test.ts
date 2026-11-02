@@ -4,6 +4,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 import { NO_CAPTURE, PerfCapture, armPerfCapture } from "@/lib/perf/capture"
 import type { SyncCursor, ThreaDatabase } from "../database"
 import { SqliteMirror } from "./client"
+import { encodeKey } from "./key-codec"
+import { encodeValue } from "./value-codec"
 import { adoptDeliveredMode, resumeSqliteMirror } from "./lifecycle"
 import { WS, gate, mirroredDatabases, mirroredStores, until, type MirroredOptions } from "./mirrored-databases"
 import { txOf, type MirrorReply, type MirrorRequest } from "./protocol"
@@ -1024,6 +1026,51 @@ describe("read-write SQLite storage", () => {
         k: cursor("k", "heir"),
       })
     })
+
+    for (const heirWrites of ["k", "other"] as const) {
+      const replay = heirWrites === "k" ? "fails, never committing," : "commits"
+      it(`should wait for every replayed answer before the commit asked between owners, so it ${replay} when another tab wrote ${heirWrites}`, async () => {
+        let holdWrites = false
+        let held = false
+        const owner = await readWriteSession({
+          intercept: (request, next) => {
+            if (request.type !== "write" || !holdWrites) return next()
+            held = true
+            return never
+          },
+        })
+        await owner.database.syncCursors.put(cursor("k", "0"))
+        const heir = await follower(owner)
+        const reader = await follower(owner)
+        const tx = reader.mirror.beginTransaction("readwrite")
+        await reader.mirror.read({ type: "get", tx, store: "syncCursors", key: encodeKey("k") })
+        await reader.mirror.write(tx, {
+          store: "syncCursors",
+          op: "put",
+          entries: [{ key: encodeKey("reader"), value: encodeValue(cursor("reader", "1")) }],
+        })
+        holdWrites = true
+        const heirWrite = heir.database.syncCursors.put(cursor(heirWrites, "heir"))
+        await until(() => held, "the heir's write to reach the owner")
+        owner.coordination.die()
+        owner.database.close()
+        owner.sqlite.exec("ROLLBACK")
+        await Promise.resolve()
+        const commit = await reader.mirror.commitTransaction(tx, true).then(
+          () => "committed",
+          (error: Error) => error.name
+        )
+        await heirWrite
+        expect({
+          commit,
+          cursors: await cursorsIn(heir.database),
+        }).toEqual(
+          heirWrites === "k"
+            ? { commit: "OwnerLostError", cursors: [cursor("k", "heir")] }
+            : { commit: "committed", cursors: [cursor("k", "0"), cursor("other", "heir"), cursor("reader", "1")] }
+        )
+      })
+    }
 
     it("serves nothing from the tab taking over until it decided SQLite still holds every store", async () => {
       const owner = await readWriteSession()
