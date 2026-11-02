@@ -86,6 +86,7 @@ export interface DiagnosticFields {
   elapsedMs?: number
   count?: number
   failed?: number
+  interrupted?: number
   p50Ms?: number
   p95Ms?: number
   maxMs?: number
@@ -739,7 +740,7 @@ function projectFields(fields: DiagnosticFields): DiagnosticFields {
   for (const key of ["elapsedMs", "p50Ms", "p95Ms", "maxMs"] as const) {
     if (boundedInteger(fields[key], 86_400_000)) result[key] = fields[key]
   }
-  for (const key of ["count", "failed"] as const) {
+  for (const key of ["count", "failed", "interrupted"] as const) {
     if (boundedInteger(fields[key], 100_000)) result[key] = fields[key]
   }
   return result

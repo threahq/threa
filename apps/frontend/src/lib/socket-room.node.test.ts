@@ -191,17 +191,24 @@ describe("joinRoomWithAck", () => {
 describe("join wave summary", () => {
   afterEach(() => vi.useRealTimers())
 
+  function captureObservations() {
+    const rows: Array<{ event: diagnosticsModule.ConnectivityEvent; fields: diagnosticsModule.DiagnosticFields }> = []
+    vi.spyOn(diagnosticsModule, "beginConnectivityObservation").mockImplementation((base = {}) => ({
+      id: "obs",
+      record: (event, fields = {}) => rows.push({ event, fields: { ...base, ...fields } }),
+      stall: () => () => {},
+    }))
+    return rows
+  }
+
+  const waveOf = (fields: diagnosticsModule.DiagnosticFields) => ({ event: "room_join_wave", fields })
+
   it("should summarize a rejoin burst as one wave event and keep fast acks out of per-join rows", async () => {
     vi.useFakeTimers()
     const socket = new MockSocket()
     socket.ackDelayMs = 10
-    diagnosticsModule.setSocketDiagnosticContext(socket, { connectionId: "conn_wave", generation: 3 })
-    const perJoin = captureJoinEvents()
-    const recorded: Array<{ event: diagnosticsModule.ConnectivityEvent; fields?: diagnosticsModule.DiagnosticFields }> =
-      []
-    vi.spyOn(diagnosticsModule, "recordConnectivityEvent").mockImplementation((event, fields) => {
-      if (fields?.connectionId === "conn_wave") recorded.push({ event, fields })
-    })
+    diagnosticsModule.setSocketDiagnosticContext(socket, { connectionId: "conn_1", generation: 3 })
+    const rows = captureObservations()
 
     const burst = [
       joinRoomWithAck(asSocket(socket), "ws:w:stream:a"),
@@ -214,16 +221,39 @@ describe("join wave summary", () => {
     const late = joinRoomWithAck(asSocket(socket), "ws:w:stream:c").catch((error: unknown) => error)
     await vi.advanceTimersByTimeAsync(30)
     await late
-    expect(recorded).toEqual([])
-
     await vi.advanceTimersByTimeAsync(1000)
-    expect(recorded).toEqual([
-      {
-        event: "room_join_wave",
-        fields: { connectionId: "conn_wave", generation: 3, count: 3, failed: 1, p50Ms: 10, p95Ms: 10, maxMs: 10 },
-      },
+
+    const context = { connectionId: "conn_1", generation: 3 }
+    expect(rows).toEqual([
+      { event: "room_join_failure", fields: { ...context, room: "stream", reason: "unknown" } },
+      waveOf({ ...context, count: 3, failed: 1, interrupted: 0, p50Ms: 10, p95Ms: 10, maxMs: 10 }),
     ])
-    expect(perJoin).toEqual([{ event: "room_join_failure", fields: { reason: "unknown" } }])
+  })
+
+  it("should count disconnect interruptions in the wave without a row per join, and leave aborts out", async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+    socket.ackDelayMs = 50
+    diagnosticsModule.setSocketDiagnosticContext(socket, { connectionId: "conn_flap", generation: 1 })
+    const rows = captureObservations()
+    const controller = new AbortController()
+
+    const joins = [
+      joinRoomWithAck(asSocket(socket), "ws:w:stream:a"),
+      joinRoomWithAck(asSocket(socket), "ws:w:stream:b"),
+      joinRoomWithAck(asSocket(socket), "ws:w:stream:c", { signal: controller.signal }),
+    ].map((join) => join.catch((error: unknown) => error))
+    controller.abort()
+    await vi.advanceTimersByTimeAsync(0)
+    socket.trigger("disconnect", "transport close")
+    await Promise.all(joins)
+    await vi.advanceTimersByTimeAsync(1000)
+
+    const context = { connectionId: "conn_flap", generation: 1 }
+    expect(rows).toEqual([
+      { event: "room_join_abort", fields: { ...context, room: "stream", reason: "abort" } },
+      waveOf({ ...context, count: 2, failed: 0, interrupted: 2, p50Ms: undefined, p95Ms: undefined, maxMs: undefined }),
+    ])
   })
 
   it("should start a new wave when the socket reconnects mid-wave", async () => {
@@ -231,12 +261,7 @@ describe("join wave summary", () => {
     const socket = new MockSocket()
     socket.ackDelayMs = 10
     diagnosticsModule.setSocketDiagnosticContext(socket, { connectionId: "conn_split", generation: 1 })
-    captureJoinEvents()
-    const recorded: Array<{ event: diagnosticsModule.ConnectivityEvent; fields?: diagnosticsModule.DiagnosticFields }> =
-      []
-    vi.spyOn(diagnosticsModule, "recordConnectivityEvent").mockImplementation((event, fields) => {
-      if (fields?.connectionId === "conn_split") recorded.push({ event, fields })
-    })
+    const rows = captureObservations()
 
     const before = joinRoomWithAck(asSocket(socket), "ws:w:stream:a")
     diagnosticsModule.setSocketDiagnosticContext(socket, { connectionId: "conn_split", generation: 2 })
@@ -245,11 +270,8 @@ describe("join wave summary", () => {
     await Promise.all([before, after])
     await vi.advanceTimersByTimeAsync(1000)
 
-    const wave = { connectionId: "conn_split", count: 1, failed: 0, p50Ms: 10, p95Ms: 10, maxMs: 10 }
-    expect(recorded).toEqual([
-      { event: "room_join_wave", fields: { ...wave, generation: 1 } },
-      { event: "room_join_wave", fields: { ...wave, generation: 2 } },
-    ])
+    const wave = { connectionId: "conn_split", count: 1, failed: 0, interrupted: 0, p50Ms: 10, p95Ms: 10, maxMs: 10 }
+    expect(rows).toEqual([waveOf({ ...wave, generation: 1 }), waveOf({ ...wave, generation: 2 })])
   })
 
   it("should measure ack latency from the emit, not from the connection wait", async () => {
@@ -258,11 +280,7 @@ describe("join wave summary", () => {
     socket.connected = false
     socket.ackDelayMs = 10
     diagnosticsModule.setSocketDiagnosticContext(socket, { connectionId: "conn_wait", generation: 1 })
-    const perJoin = captureJoinEvents()
-    const recorded: Array<diagnosticsModule.DiagnosticFields | undefined> = []
-    vi.spyOn(diagnosticsModule, "recordConnectivityEvent").mockImplementation((_event, fields) => {
-      if (fields?.connectionId === "conn_wait") recorded.push(fields)
-    })
+    const rows = captureObservations()
 
     const join = joinRoomWithAck(asSocket(socket), "ws:w:stream:a", { timeoutMs: 10_000 })
     await vi.advanceTimersByTimeAsync(2 * SLOW_JOIN_ACK_MS)
@@ -272,9 +290,10 @@ describe("join wave summary", () => {
     await join
     await vi.advanceTimersByTimeAsync(1000)
 
-    expect(perJoin).toEqual([{ event: "room_join_connection_wait", fields: {} }])
-    expect(recorded).toEqual([
-      { connectionId: "conn_wait", generation: 1, count: 1, failed: 0, p50Ms: 10, p95Ms: 10, maxMs: 10 },
+    const context = { connectionId: "conn_wait", generation: 1 }
+    expect(rows).toEqual([
+      { event: "room_join_connection_wait", fields: { ...context, room: "stream" } },
+      waveOf({ ...context, count: 1, failed: 0, interrupted: 0, p50Ms: 10, p95Ms: 10, maxMs: 10 }),
     ])
   })
 
