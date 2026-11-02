@@ -108,12 +108,16 @@ beforeEach(async () => {
 describe("processOperationQueue edit replay", () => {
   it("should forward the share-privacy consent a queued edit was saved with", async () => {
     const contentJson = { type: "doc", content: [] }
+    // Replay orders by enqueue millisecond; two enqueues in one millisecond tie.
+    let clock = Date.now()
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock++)
     await enqueueOperation(workspaceId, "edit_message", {
       messageId: "msg_1",
       contentJson,
       confirmedPrivacyWarning: true,
     })
     await enqueueOperation(workspaceId, "edit_message", { messageId: "msg_2", contentJson })
+    now.mockRestore()
 
     await process(scheduledServiceRejectingWith(new Error("unused")))
 

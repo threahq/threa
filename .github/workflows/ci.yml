@@ -187,14 +187,10 @@ jobs:
           bun run --cwd packages/user-guide test
 
   frontend-tests:
-    name: Frontend Tests (${{ matrix.shard_index }}/${{ strategy.job-total }})
+    name: Frontend Tests
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        shard_index: [1, 2, 3, 4, 5, 6]
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -207,7 +203,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run frontend tests
-        run: bun run --cwd apps/frontend test -- --shard=${{ matrix.shard_index }}/6
+        run: bun run --cwd apps/frontend test
 
   extension-tests:
     name: Extension Tests

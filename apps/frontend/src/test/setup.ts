@@ -1,6 +1,12 @@
 import "fake-indexeddb/auto"
 import "@testing-library/jest-dom/vitest"
-import { beforeEach } from "vitest"
+import { IDBFactory } from "fake-indexeddb"
+import Dexie from "dexie"
+import { cleanup } from "@testing-library/react"
+import { onlineManager } from "@tanstack/react-query"
+import { afterEach, beforeEach, vi } from "vitest"
+import { setAssertedAccount } from "@/api/account-assertion"
+import { setActiveDb, ThreaDatabase } from "@/db/database"
 import { setStorageAccount } from "@/lib/account-storage"
 import { __resetCollapseCacheForTests } from "@/lib/markdown/collapse-cache"
 
@@ -160,4 +166,111 @@ if (!Element.prototype.getClientRects) {
 // elementFromPoint is needed by ProseMirror for click handling
 if (!document.elementFromPoint) {
   document.elementFromPoint = () => null
+}
+
+// Files share a worker's module cache and globals (`isolate: false`), and this
+// file runs again before every test file, so it puts back the state a fresh
+// worker would have: no spies, stubs, fake timers, mounted trees, redefined
+// DOM properties, storage, offline flag, module store caches or IndexedDB rows.
+// Testing Library registers its auto-cleanup only on first import, once per
+// worker, hence the explicit afterEach.
+vi.restoreAllMocks()
+vi.unstubAllGlobals()
+vi.unstubAllEnvs()
+vi.useRealTimers()
+cleanup()
+restoreGlobalProperties()
+for (const name of document.documentElement.getAttributeNames()) document.documentElement.removeAttribute(name)
+document.body.removeAttribute("style")
+document.title = ""
+localStorage.clear()
+sessionStorage.clear()
+onlineManager.setOnline(true)
+setAssertedAccount(null)
+const { flushModuleStoreCaches } = await import("@/auth/account-scope")
+flushModuleStoreCaches()
+// On a persisted `pageshow` (bfcache tests) Dexie opens another storage-mutation
+// BroadcastChannel without closing the last. In a shared worker every later
+// write then echoes back to live queries once per leaked channel.
+Dexie.disableBfCache = true
+globalThis.indexedDB = new IDBFactory()
+Dexie.dependencies.indexedDB = globalThis.indexedDB
+setActiveDb(new ThreaDatabase("threa"))
+afterEach(() => cleanup())
+
+/**
+ * Tests redefine browser properties (`defineProperty(window, "innerHeight")`,
+ * `HTMLElement.prototype.getBoundingClientRect = …`, user-event's clipboard on
+ * `navigator`, a timer spy taken under a faked clock that restores the fake)
+ * and not all of them put the original back. The first run in a worker records
+ * each target's own properties; later runs restore that record.
+ */
+function restoreGlobalProperties(): void {
+  const windowKeys = [
+    "AudioContext",
+    "AudioWorkletNode",
+    "Date",
+    "Notification",
+    "PublicKeyCredential",
+    "cancelAnimationFrame",
+    "cancelIdleCallback",
+    "clearImmediate",
+    "clearInterval",
+    "clearTimeout",
+    "fetch",
+    "innerHeight",
+    "innerWidth",
+    "location",
+    "orientation",
+    "performance",
+    "queueMicrotask",
+    "requestAnimationFrame",
+    "requestIdleCallback",
+    "sessionStorage",
+    "setImmediate",
+    "setInterval",
+    "setTimeout",
+    "visualViewport",
+  ]
+  const targets: Array<[object, () => PropertyKey[]]> = [
+    [window, () => windowKeys],
+    [navigator, () => Reflect.ownKeys(navigator)],
+    [document, () => Reflect.ownKeys(document)],
+    [screen, () => Reflect.ownKeys(screen)],
+    [Element.prototype, () => Reflect.ownKeys(Element.prototype)],
+    [HTMLElement.prototype, () => Reflect.ownKeys(HTMLElement.prototype)],
+  ]
+  const store = globalThis as {
+    __testPropertyBaseline?: Map<PropertyKey, PropertyDescriptor | undefined>[]
+    __testWindowValues?: Map<string, unknown>
+  }
+  if (!store.__testPropertyBaseline) {
+    store.__testPropertyBaseline = targets.map(
+      ([target, keys]) => new Map(keys().map((key) => [key, Object.getOwnPropertyDescriptor(target, key)]))
+    )
+    store.__testWindowValues = new Map(windowKeys.map((key) => [key, Reflect.get(window, key)]))
+    return
+  }
+  targets.forEach(([target, keys], index) => {
+    const baseline = store.__testPropertyBaseline![index]!
+    for (const key of keys()) {
+      if (!baseline.get(key)) Reflect.deleteProperty(target, key)
+    }
+    for (const [key, original] of baseline) {
+      if (original && !sameDescriptor(Object.getOwnPropertyDescriptor(target, key), original)) {
+        Object.defineProperty(target, key, original)
+      }
+    }
+  })
+  // Most window globals are accessors onto jsdom's own window. A fake clock
+  // installed before a `vi.stubGlobal` of the same key writes its fake through
+  // the accessor and, once both are undone, leaves it there under an unchanged
+  // descriptor (stream-read-tracker's requestAnimationFrame).
+  for (const [key, value] of store.__testWindowValues!) {
+    if (Reflect.get(window, key) !== value) Reflect.set(window, key, value)
+  }
+}
+
+function sameDescriptor(a: PropertyDescriptor | undefined, b: PropertyDescriptor): boolean {
+  return a !== undefined && a.value === b.value && a.get === b.get && a.set === b.set
 }

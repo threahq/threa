@@ -149,6 +149,8 @@ describe("actor lookup", () => {
 
     const { findByText } = render(<ManyActorConsumers count={20} />)
     await findByText("Ada")
+    // The metadata row can resolve after the users row.
+    await waitFor(() => expect(build).toHaveBeenCalled())
 
     expect(build).toHaveBeenCalledTimes(1)
   })
@@ -293,9 +295,12 @@ describe("actor lookup", () => {
     await db.workspaceUsers.put(makeUser("usr_1", "Ada"))
     await db.workspaceMetadata.put(makeMetadata())
     const seen: Array<[unknown, unknown]> = []
+    const build = vi.spyOn(emojiPicker, "buildShortcodeIndex")
 
     const { findByText, rerender } = render(<TwoConsumers tick={0} seen={seen} />)
     await findByText("Ada-Ada-0")
+    // The metadata row can resolve after the users row.
+    await waitFor(() => expect(build).toHaveBeenCalled())
     rerender(<TwoConsumers tick={1} seen={seen} />)
     await findByText("Ada-Ada-1")
     const [firstBefore, secondBefore] = seen[seen.length - 1]
@@ -324,6 +329,8 @@ describe("actor lookup", () => {
     const seen: Array<[unknown, unknown]> = []
     const { findByText, rerender } = render(<TwoConsumers tick={0} seen={seen} />)
     await findByText("Ada-Ada-0")
+    // The metadata row can resolve after the users row.
+    await waitFor(() => expect(builds()).toBeGreaterThan(0))
     rerender(<TwoConsumers tick={1} seen={seen} />)
     await findByText("Ada-Ada-1")
     const settled = builds()

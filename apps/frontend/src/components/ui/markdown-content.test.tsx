@@ -277,12 +277,10 @@ describe("MarkdownContent", () => {
       expect(pre).toHaveTextContent("const x: number = 1")
     })
 
-    it("should render code blocks without language as inline code", () => {
-      // Code blocks without language tag are treated as inline code
+    it("should render code blocks without language as a block", () => {
       const content = "```\nplain code\n```"
       render(<MarkdownContent content={content} />)
-      const code = screen.getByText(/plain code/)
-      expect(code.tagName).toBe("CODE")
+      expect(screen.getByText(/plain code/).closest("pre")).toBeInTheDocument()
     })
   })
 

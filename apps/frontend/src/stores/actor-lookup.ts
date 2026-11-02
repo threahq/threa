@@ -75,7 +75,7 @@ export function actorTypeFromId(id: string): AuthorType {
 // ~1,914-entry set, and `useWorkspaceEmoji` is reached three times per rendered
 // message row. Keyed by the array the shared workspace-table registry hands out,
 // so a new identity means the rows genuinely changed.
-const emojiIndexes = new WeakMap<EmojiEntry[], WorkspaceEmojiIndexes>()
+let emojiIndexes = new WeakMap<EmojiEntry[], WorkspaceEmojiIndexes>()
 
 const EMPTY_EMOJI_INDEXES: WorkspaceEmojiIndexes = {
   // Safe to share across workspaces: every accessor returns undefined/null.
@@ -345,4 +345,5 @@ function initialsFrom(name: string | null | undefined): string | undefined {
 /** Drop every memoised lookup — tests and account switches only. */
 export function resetActorLookups(): void {
   actorLookups = new WeakMap()
+  emojiIndexes = new WeakMap()
 }

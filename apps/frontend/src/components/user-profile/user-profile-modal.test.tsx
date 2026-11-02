@@ -8,6 +8,7 @@ import * as workspacesModule from "@/hooks/use-workspaces"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { seedWorkspaceCache, resetWorkspaceStoreCache } from "@/stores/workspace-store"
 import { clearCallState, setCallPhase } from "@/stores/call-store"
+import { resetWorkspaceTableRegistry } from "@/stores/workspace-table-registry"
 
 type SeedData = Parameters<typeof seedWorkspaceCache>[1]
 type CachedWorkspaceUser = SeedData["users"][number]
@@ -123,6 +124,8 @@ const withDm: CachedDmPeer[] = [
 ]
 
 beforeEach(() => {
+  // A Dexie live snapshot left by the previous case outranks the seeded cache.
+  resetWorkspaceTableRegistry()
   resetWorkspaceStoreCache()
   clearCallState()
   vi.spyOn(authModule, "useAuth").mockReturnValue({ user: { id: "workos_self" } } as ReturnType<

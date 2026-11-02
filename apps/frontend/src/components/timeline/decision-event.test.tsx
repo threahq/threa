@@ -315,7 +315,7 @@ describe("DecisionEvent", () => {
  * A sealed card on an encrypted stream: the wire carries placeholders where the
  * question is, and the words live in `ciphertext`. These cases drive the card
  * through the decrypt layer's states with the cache and session stubbed — the
- * crypto itself is covered in `lib/crypto/decision-card.test.ts`.
+ * crypto itself is covered in `lib/crypto/decision-card.node.test.ts`.
  */
 describe("DecisionEvent (sealed card)", () => {
   const PLACEHOLDER = "\u200b"

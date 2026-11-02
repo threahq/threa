@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { renderHook, act } from "@testing-library/react"
 
 function stubMatchMedia(coarsePrimary: boolean) {
@@ -22,9 +22,12 @@ function emitPointer(type: "pointerdown" | "pointermove", pointerType: string) {
   })
 }
 
+beforeEach(() => {
+  vi.resetModules()
+})
+
 afterEach(() => {
   vi.unstubAllGlobals()
-  vi.resetModules()
   document.documentElement.removeAttribute("data-input")
 })
 
