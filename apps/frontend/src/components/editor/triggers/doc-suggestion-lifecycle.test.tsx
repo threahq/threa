@@ -17,6 +17,9 @@ const workspaceId = "ws_doc_suggestion_lifecycle"
 let editor: Editor | null = null
 let suggestionConfig: ReturnType<typeof useDocSuggestion>["suggestionConfig"] | null = null
 
+// focus() scrolls the selection into view on the next frame, which replaces editor.state.
+const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve))
+
 function Harness() {
   const suggestion = useDocSuggestion("stream_host")
   suggestionConfig = suggestion.suggestionConfig
@@ -82,6 +85,7 @@ it("should show a matching doc arriving while its suggestion query remains uncha
   await act(async () => {
     editor!.commands.focus()
     editor!.commands.insertContent("/docs Runbook")
+    await nextFrame()
   })
   const picker = await screen.findByRole("listbox", { name: "Doc suggestions" })
   expect(within(picker).getByText("No docs found")).toBeVisible()
@@ -153,6 +157,7 @@ it("should keep the selected doc when an unrelated parent render leaves its quer
   await act(async () => {
     editor!.commands.focus()
     editor!.commands.insertContent("/docs Runbook")
+    await nextFrame()
   })
   const picker = await screen.findByRole("listbox", { name: "Doc suggestions" })
   await waitFor(() =>
