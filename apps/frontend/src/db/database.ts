@@ -29,7 +29,6 @@ import type {
 import type { KdfParams } from "@/lib/crypto/passphrase"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { createTransactionMiddleware } from "./transaction-middleware"
-import { resumeSqliteShadow } from "./sqlite-mirror/lifecycle"
 import { markSqliteMirrorStale } from "./sqlite-mirror/dirty-journal"
 import type { SqliteMirror } from "./sqlite-mirror/client"
 
@@ -1892,8 +1891,6 @@ export class ThreaDatabase extends Dexie {
       if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload()
       return false
     })
-
-    if (owner) resumeSqliteShadow(this)
   }
 
   // Auto-open routes through here too (Dexie calls `db.open()` on first use),
