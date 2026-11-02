@@ -7,7 +7,7 @@ const MODE_DATABASE = "threa-sqlite-mode"
 const MODE_STORE = "mode"
 const RELOAD_CHANNEL = "threa-sqlite-storage-reload"
 const SWITCH_RELOAD_KEY = "threa:sqliteSwitchReload"
-const ENTER_RELOAD_PREFIX = "threa:sqliteEnterReload:"
+const MODE_RELOAD_PREFIX = "threa:sqliteModeReload:"
 export const REQUESTED_PREFIX = "threa:sqliteStorage:"
 
 export function parseMode(stored: string | null): SqliteStorageMode {
@@ -111,16 +111,24 @@ export function takeSwitchReload(): boolean {
   return took
 }
 
-/** True once per tab session until read-write is entered, so an entry that keeps failing cannot reload in a loop. */
-export function takeEnterReload(idbName: string): boolean {
-  const key = `${ENTER_RELOAD_PREFIX}${idbName}`
+/**
+ * Why a tab reloads every tab for a mode it does not run: a switch a plain boot
+ * could not take, or read-write once SQLite holds every store. Each fires once
+ * per tab session until the requested mode runs, so a failing switch cannot loop.
+ */
+export type ModeReload = "switch" | "enter"
+
+export function takeModeReload(idbName: string, reason: ModeReload): boolean {
+  const key = `${MODE_RELOAD_PREFIX}${reason}:${idbName}`
   if (sessionStorage.getItem(key) !== null) return false
   sessionStorage.setItem(key, "1")
   return true
 }
 
-export function enteredReadWrite(idbName: string): void {
-  sessionStorage.removeItem(`${ENTER_RELOAD_PREFIX}${idbName}`)
+export function ranRequestedMode(idbName: string): void {
+  for (const reason of ["switch", "enter"] satisfies ModeReload[]) {
+    sessionStorage.removeItem(`${MODE_RELOAD_PREFIX}${reason}:${idbName}`)
+  }
 }
 
 let listening = false

@@ -48,7 +48,8 @@ function bootTab(
   name: string,
   sqlite: Database,
   bus: ReturnType<typeof createBus>,
-  intercept?: (request: MirrorRequest, next: () => Promise<MirrorReply>) => Promise<MirrorReply>
+  intercept?: (request: MirrorRequest, next: () => Promise<MirrorReply>) => Promise<MirrorReply>,
+  reloadEveryTab: () => void = () => {}
 ) {
   const database = plainDatabase(name)
   const lock = bus.modeLock()
@@ -63,8 +64,9 @@ function bootTab(
   resumeSqliteMirror(database, {
     lock,
     createTransport,
+    reloadEveryTab,
     createMirror: (target, mode, entering) =>
-      new SqliteMirror({ database: target, mode, entering, coordination, createTransport }),
+      new SqliteMirror({ database: target, mode, entering, coordination, createTransport, reloadEveryTab }),
   })
   return { database, coordination, log }
 }
@@ -680,6 +682,42 @@ describe("read-write SQLite storage", () => {
         reloadedMode: reloaded.database.sqliteMirror?.mode,
         recorded: await readRecordedMode(name),
       }).toEqual({ waited: false, laterMirror: null, reloadedMode: "read-only", recorded: "read-only" })
+    })
+
+    it("reloads every tab once when a plain boot cannot switch past a running tab, switching on the boot after", async () => {
+      const { name, sqlite } = await copiedSession({ mode: "read-only" })
+      const bus = createBus()
+      const running = bootTab(name, sqlite, bus)
+      await running.database.open()
+      adoptDeliveredMode(name, WS, "read-only")
+      const reloadEveryTab = vi.fn()
+      const blocked = bootTab(name, sqlite, bus, undefined, reloadEveryTab)
+      await blocked.database.open()
+      const blockedAgain = bootTab(name, sqlite, bus, undefined, reloadEveryTab)
+      await blockedAgain.database.open()
+      const beforeReload = {
+        reloads: reloadEveryTab.mock.calls.length,
+        mirrors: [blocked.database.sqliteMirror, blockedAgain.database.sqliteMirror],
+        recorded: await readRecordedMode(name),
+      }
+      for (const tab of [running, blocked, blockedAgain]) {
+        tab.database.close()
+        tab.coordination.die()
+      }
+      sessionStorage.setItem("threa:sqliteSwitchReload", "1")
+      const reloaded = bootTab(name, sqlite, bus, undefined, reloadEveryTab)
+      await reloaded.database.open()
+      expect({
+        beforeReload,
+        reloads: reloadEveryTab.mock.calls.length,
+        reloadedMode: reloaded.database.sqliteMirror?.mode,
+        recorded: await readRecordedMode(name),
+      }).toEqual({
+        beforeReload: { reloads: 1, mirrors: [null, null], recorded: "off" },
+        reloads: 1,
+        reloadedMode: "read-only",
+        recorded: "read-only",
+      })
     })
 
     it("retries an unreadable recorded mode, then boots off only a database no mirror ever ran for", async () => {

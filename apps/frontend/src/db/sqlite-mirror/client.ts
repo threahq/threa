@@ -19,7 +19,7 @@ import type { IdbWrite } from "./middleware"
 import type { MirrorEntry, MirrorMutation, MirrorStatus, MirrorStoreSchema, MirrorWrite } from "./mirror-store"
 import type { MirrorReadRequest, MirrorReadResults, MirrorReply, MirrorRequest, MirrorTransport } from "./protocol"
 import { txOf } from "./protocol"
-import { enteredReadWrite, readSqliteStorageMode, recordMode, reloadEveryTab, takeEnterReload } from "./storage-mode"
+import { ranRequestedMode, readSqliteStorageMode, recordMode, reloadEveryTab, takeModeReload } from "./storage-mode"
 import { isMirroredStore } from "./stores"
 import { encodeValue } from "./value-codec"
 import { createWorkerTransport } from "./worker-transport"
@@ -1095,7 +1095,7 @@ export class SqliteMirror {
     if (full) {
       if (entering) {
         await recordMode(database.name, "read-write")
-        enteredReadWrite(database.name)
+        ranRequestedMode(database.name)
       }
       this.primary = true
       if (this.role !== "owner") return
@@ -1120,7 +1120,7 @@ export class SqliteMirror {
     const { database } = this.options
     if (this.primary || readSqliteStorageMode(database.name) !== "read-write") return
     if (readWriteBlocker(database) || !stores.every((store) => this.trusted.has(store))) return
-    if (takeEnterReload(database.name)) (this.options.reloadEveryTab ?? reloadEveryTab)()
+    if (takeModeReload(database.name, "enter")) (this.options.reloadEveryTab ?? reloadEveryTab)()
   }
 
   /**

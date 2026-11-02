@@ -16,7 +16,10 @@ import {
   browserModeLock,
   parseMode,
   readRecordedMode,
+  ranRequestedMode,
   readSqliteStorageMode,
+  reloadEveryTab,
+  takeModeReload,
   recordMode,
   reloadWhenAsked,
   takeSwitchReload,
@@ -59,6 +62,7 @@ interface StorageBoot {
   createTransport: () => MirrorTransport
   /** How long a boot changing the mode waits for the other tabs to close; by default, only right after a reload for it. */
   switchWaitMs?: number
+  reloadEveryTab?: () => void
 }
 
 export function startSqliteMirror(
@@ -106,6 +110,8 @@ async function bootStorage(database: ThreaDatabase, boot: StorageBoot): Promise<
   const waitMs = boot.switchWaitMs ?? (takeSwitchReload() ? SWITCH_WAIT_MS : 0)
   const switching = requested !== (await recordedModeAtBoot(name))
   const release = switching ? await boot.lock.exclusive(waitMs) : null
+  // Another tab runs the recorded mode and nothing else would ever reload it: every tab reloads, the next boot waiting for the others.
+  if (switching && !release && takeModeReload(name, "switch")) (boot.reloadEveryTab ?? reloadEveryTab)()
   if (!release) await boot.lock.shared()
   let mode = await recordedModeAtBoot(name).catch((error: unknown) => {
     release?.()
@@ -113,6 +119,7 @@ async function bootStorage(database: ThreaDatabase, boot: StorageBoot): Promise<
   })
   const entering = release !== null && requested === "read-write" && mode !== "read-write"
   if (release && !entering && mode !== requested) mode = await switchMode(database, mode, requested, boot)
+  if (mode === requested) ranRequestedMode(name)
   const running = entering ? "read-write" : mode
   if (running !== "off") startSqliteMirror(database, running, boot.createMirror, entering)
   const mirror = database.sqliteMirror
