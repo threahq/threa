@@ -1,5 +1,5 @@
 import { test, expect, request, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
+import { loginAndCreateWorkspace, createChannel, expectApiOk, sendApiOk } from "./helpers"
 
 /**
  * Cycling through in-stream search results across jump windows — the part no
@@ -58,18 +58,10 @@ async function seedMessages(page: Page, workspaceId: string, streamId: string): 
           : `Filler ${i}: routine update about nothing in particular.`
       // Alternating authors keeps each below the 120/min message-create limit.
       const author = i % 2 === 0 ? page.request : otherAuthor
-      for (let attempt = 0; ; attempt++) {
-        const response = await author.post(`/api/workspaces/${workspaceId}/messages`, {
-          data: { streamId, content },
-        })
-        if (response.ok()) return
-        // The workspace-router worker occasionally restarts mid-request (503).
-        if (response.status() === 503 && attempt < 30) {
-          await new Promise((resolve) => setTimeout(resolve, 5000))
-          continue
-        }
-        await expectApiOk(response, `Send message ${i}`)
-      }
+      await sendApiOk(
+        () => author.post(`/api/workspaces/${workspaceId}/messages`, { data: { streamId, content } }),
+        `Send message ${i}`
+      )
     }
     for (let start = 1; start <= TOTAL; start += BATCH_SIZE) {
       const batch: Promise<void>[] = []

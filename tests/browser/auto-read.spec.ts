@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Browser } from "@playwright/test"
-import { loginAndCreateWorkspace, loginInNewContext, createChannel, expectApiOk } from "./helpers"
+import { loginAndCreateWorkspace, loginInNewContext, createChannel, expectApiOk, sendApiOk } from "./helpers"
 
 /**
  * Auto-mark-as-read fires for real: opening an unread stream and reading it
@@ -30,11 +30,13 @@ async function seedFrom(page: Page, workspaceId: string, streamId: string, count
     const end = Math.min(i + 4, startAt + count - 1)
     await Promise.all(
       Array.from({ length: end - i + 1 }, (_, k) =>
-        page.request
-          .post(`/api/workspaces/${workspaceId}/messages`, {
-            data: { streamId, content: `${prefix} msg-${String(i + k).padStart(3, "0")}` },
-          })
-          .then((r) => expectApiOk(r, `Send message ${i + k}`))
+        sendApiOk(
+          () =>
+            page.request.post(`/api/workspaces/${workspaceId}/messages`, {
+              data: { streamId, content: `${prefix} msg-${String(i + k).padStart(3, "0")}` },
+            }),
+          `Send message ${i + k}`
+        )
       )
     )
   }
