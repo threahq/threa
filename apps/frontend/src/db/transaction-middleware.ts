@@ -2,10 +2,15 @@ import type { DBCore, DBCoreKeyRange, DBCoreTable, DBCoreTransaction, Middleware
 import { defaultFeatureFlagValue } from "@threahq/types"
 import { NO_CAPTURE, getPerfCapture, type PerfCaptureLike } from "@/lib/perf/capture"
 import { SQLITE_UNMIRRORED_STORES } from "./sqlite-mirror/stores"
+import { encodeValue } from "./sqlite-mirror/value-codec"
 
-/** One successful mutation of a store, as it reached IndexedDB. */
+/**
+ * One successful mutation of a store, as it reached IndexedDB. Put values are
+ * encoded when the mutation is issued, as IndexedDB clones them then; `null`
+ * marks a value the mirror cannot represent.
+ */
 export type IdbWrite =
-  | { store: string; op: "put"; keys: IDBValidKey[]; values: unknown[] }
+  | { store: string; op: "put"; keys: IDBValidKey[]; values: Array<string | null> }
   | { store: string; op: "delete"; keys: IDBValidKey[] }
   | { store: string; op: "deleteRange"; range: DBCoreKeyRange }
 
@@ -120,16 +125,25 @@ function bufferWrites(
   )
 }
 
+function tryEncode(value: unknown): string | null {
+  try {
+    return encodeValue(value)
+  } catch {
+    return null
+  }
+}
+
 function recordWrite(
   store: string,
   req: Parameters<DBCoreTable["mutate"]>[0],
+  encoded: Array<string | null>,
   res: Awaited<ReturnType<DBCoreTable["mutate"]>>,
   writes: IdbWrite[]
 ): void {
   if (req.type === "add" || req.type === "put") {
     const keys: IDBValidKey[] = []
-    const values: unknown[] = []
-    req.values.forEach((value, index) => {
+    const values: Array<string | null> = []
+    encoded.forEach((value, index) => {
       if (res.failures[index]) return
       keys.push(res.results?.[index])
       values.push(value)
@@ -158,14 +172,13 @@ function trackRequests(
   return {
     ...table,
     mutate: (req) => {
-      const result = mutate(req)
       const writes = mirrored ? buffers.get(req.trans) : undefined
-      return writes
-        ? result.then((res) => {
-            recordWrite(table.name, req, res, writes)
-            return res
-          })
-        : result
+      if (!writes) return mutate(req)
+      const encoded = req.type === "add" || req.type === "put" ? req.values.map(tryEncode) : []
+      return mutate(req).then((res) => {
+        recordWrite(table.name, req, encoded, res, writes)
+        return res
+      })
     },
     get: track((req) => table.get(req)),
     getMany: track((req) => table.getMany(req)),

@@ -108,20 +108,8 @@ export class MirrorStore {
     this.backfilled.add(store)
   }
 
-  isBackfilled(store: string): boolean {
-    return this.backfilled.has(store)
-  }
-
   backfilledStores(): string[] {
     return [...this.backfilled]
-  }
-
-  wipe(): void {
-    this.dropMirrorTables()
-    this.db.exec(`DROP TABLE IF EXISTS ${META_TABLE}`)
-    this.stores.clear()
-    this.backfilled.clear()
-    this.backfilling.clear()
   }
 
   private assertStore(store: string): void {

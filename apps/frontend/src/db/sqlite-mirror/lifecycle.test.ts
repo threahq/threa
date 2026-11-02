@@ -32,7 +32,8 @@ describe("sqlite shadow lifecycle", () => {
           database,
           coordination: {
             claim: (cb) => cb(true),
-            release: () => {},
+            resign: () => {},
+            close: () => {},
             broadcast: () => {},
             onBroadcast: () => () => {},
           },

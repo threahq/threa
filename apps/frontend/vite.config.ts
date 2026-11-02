@@ -55,6 +55,10 @@ const PRECACHE_EXTENSIONS = ["js", "mjs", "css", "html", "ico", "png", "svg", "w
 // It must stay network-served even when the app shell is broken; precaching
 // it would route recovery through the SW it is trying to unregister.
 const PRECACHE_IGNORED_FILE = "recover.html"
+// Only sessions with the sqliteStorage flag load the SQLite mirror worker and
+// its wasm; sw.ts caches them on first use. sqlite-wasm's own worker1 and OPFS
+// proxy scripts are emitted but never loaded (the mirror uses opfs-sahpool).
+const PRECACHE_IGNORED_ASSETS = ["assets/mirror-worker-*", "assets/sqlite3-*"]
 // The deploy build's PostHog plugins add a chunk-id snippet to every chunk
 // (360 bytes measured), which a build without the PostHog secrets never sees.
 const POSTHOG_CHUNK_ID_RESERVE_BYTES = 1024
@@ -229,7 +233,7 @@ export default defineConfig({
         // The SW still registers (push tests need it) and its navigation handler
         // falls through to the network when nothing is precached.
         globPatterns: isE2ETest ? [] : [`**/*.{${PRECACHE_EXTENSIONS.join(",")}}`],
-        globIgnores: [`**/${PRECACHE_IGNORED_FILE}`],
+        globIgnores: [`**/${PRECACHE_IGNORED_FILE}`, ...PRECACHE_IGNORED_ASSETS],
         maximumFileSizeToCacheInBytes: PRECACHE_FILE_LIMIT_BYTES,
         // Add Subresource Integrity to each precache entry. A failed integrity
         // match aborts the install, so a stale HTTP response or mis-served HTML

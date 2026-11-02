@@ -124,6 +124,32 @@ registerRoute(
   )
 )
 
+const SQLITE_CACHE = "threa-sqlite-v1"
+const SQLITE_ASSET_RE = /^\/assets\/(?:sqlite3-[\w-]+\.wasm|mirror-worker-[\w-]+\.js)$/
+
+/**
+ * The SQLite mirror's worker and wasm stay out of the precache (most sessions
+ * never load them) but must work offline once used: cache-first, keeping one
+ * build's copy of each.
+ */
+registerRoute(
+  ({ request, url }) =>
+    request.method === "GET" && url.origin === self.location.origin && SQLITE_ASSET_RE.test(url.pathname),
+  async ({ request, url }) => {
+    const cache = await caches.open(SQLITE_CACHE)
+    const cached = await cache.match(request)
+    if (cached) return cached
+    const response = await fetch(request)
+    if (!response.ok) return response
+    const extension = url.pathname.slice(url.pathname.lastIndexOf("."))
+    for (const key of await cache.keys()) {
+      if (new URL(key.url).pathname.endsWith(extension)) await cache.delete(key)
+    }
+    await cache.put(request, response.clone())
+    return response
+  }
+)
+
 const ASSET_PATH_RE = /^\/assets\/[^/]+-[\w-]+\.(?:m?js|css|woff2?|png|svg|ico)$/
 
 /**

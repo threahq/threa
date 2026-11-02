@@ -5,8 +5,8 @@ import type { MirrorReply, MirrorRequest } from "./protocol"
 export interface MirrorDatabase {
   db: Database
   close(): void
-  /** Closes the database and deletes its file. */
-  destroy(): void
+  /** Closes the database and deletes its storage. */
+  destroy(): Promise<void>
 }
 
 interface Session {
@@ -34,7 +34,13 @@ export function createMirrorHandler(openDatabase: (idbName: string) => Promise<M
       session = { database, store }
       return {}
     }
-    const { database, store } = requireSession()
+    if (request.type === "destroy") {
+      const database = session?.database ?? (await openDatabase(request.idbName))
+      session = null
+      await database.destroy()
+      return {}
+    }
+    const { store } = requireSession()
     switch (request.type) {
       case "apply":
         store.apply(request.batch)
@@ -50,14 +56,6 @@ export function createMirrorHandler(openDatabase: (idbName: string) => Promise<M
         return {}
       case "status":
         return { backfilled: store.backfilledStores() }
-      case "close":
-        database.close()
-        session = null
-        return {}
-      case "destroy":
-        database.destroy()
-        session = null
-        return {}
     }
   }
 

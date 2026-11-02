@@ -30,6 +30,7 @@ import type { KdfParams } from "@/lib/crypto/passphrase"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { createTransactionMiddleware } from "./transaction-middleware"
 import { resumeSqliteShadow } from "./sqlite-mirror/lifecycle"
+import { markSqliteMirrorStale } from "./sqlite-mirror/dirty-journal"
 import type { SqliteMirror } from "./sqlite-mirror/client"
 
 const WORKSPACE_USERS_STORE = "workspaceUsersByWorkspace"
@@ -1903,6 +1904,7 @@ export class ThreaDatabase extends Dexie {
       this.upgradeRecoveryAvailable = false
       console.error(`[db] upgrade failed for ${this.name}; deleting the cache and reopening cold`, error)
       this.close()
+      markSqliteMirrorStale(this.name)
       return Dexie.delete(this.name).then(() => this.open()) as PromiseExtended<Dexie>
     })
   }

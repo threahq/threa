@@ -1,7 +1,7 @@
 import type { MirrorReply, MirrorRequest, MirrorTransport, WorkerEnvelope, WorkerResponse } from "./protocol"
 
 export function createWorkerTransport(): MirrorTransport {
-  const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" })
+  const worker = new Worker(new URL("./mirror-worker.ts", import.meta.url), { type: "module" })
   const pending = new Map<number, { resolve: (reply: MirrorReply) => void; reject: (error: Error) => void }>()
   let nextId = 0
 

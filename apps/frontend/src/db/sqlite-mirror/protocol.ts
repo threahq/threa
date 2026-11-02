@@ -7,8 +7,7 @@ export type MirrorRequest =
   | { type: "backfillChunk"; store: string; entries: MirrorEntry[] }
   | { type: "backfillFinish"; store: string }
   | { type: "status" }
-  | { type: "close" }
-  | { type: "destroy" }
+  | { type: "destroy"; idbName: string }
 
 export type MirrorReply =
   | { ok: true; ms: number; backfilled?: string[] }

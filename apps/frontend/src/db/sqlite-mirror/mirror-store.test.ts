@@ -72,7 +72,10 @@ describe("MirrorStore", () => {
       store.apply([put("a", entry(1, "live"))])
       store.backfillChunk("a", [entry(1, "stale"), entry(2, "old")])
       store.finishBackfill("a")
-      expect({ rows: rows("a"), done: store.isBackfilled("a") }).toEqual({ rows: ["live", "old"], done: true })
+      expect({ rows: rows("a"), done: store.backfilledStores().includes("a") }).toEqual({
+        rows: ["live", "old"],
+        done: true,
+      })
     })
 
     it("keeps a live-deleted key absent", () => {
@@ -98,7 +101,11 @@ describe("MirrorStore", () => {
       store.backfillChunk("a", [entry(1, "x")])
       store.finishBackfill("a")
       store.beginBackfill("a")
-      expect({ a: rows("a"), done: store.isBackfilled("a"), b: rows("b") }).toEqual({ a: [], done: false, b: ["b1"] })
+      expect({ a: rows("a"), done: store.backfilledStores().includes("a"), b: rows("b") }).toEqual({
+        a: [],
+        done: false,
+        b: ["b1"],
+      })
     })
 
     it("persists backfill completion across a reopen with the same version", () => {
@@ -106,7 +113,7 @@ describe("MirrorStore", () => {
       store.finishBackfill("a")
       const reopened = new MirrorStore(db)
       reopened.ensureSchema(["a", "b"], 1)
-      expect({ a: reopened.isBackfilled("a"), b: reopened.isBackfilled("b") }).toEqual({ a: true, b: false })
+      expect(reopened.backfilledStores()).toEqual(["a"])
     })
   })
 
@@ -118,16 +125,10 @@ describe("MirrorStore", () => {
     const upgraded = new MirrorStore(db)
     upgraded.ensureSchema(["a", "c"], 2)
     const tables = db.selectValues(`SELECT name FROM sqlite_master WHERE name LIKE 's\\_%' ESCAPE '\\' ORDER BY name`)
-    expect({ tables, a: rows("a"), done: upgraded.isBackfilled("a") }).toEqual({
+    expect({ tables, a: rows("a"), done: upgraded.backfilledStores().includes("a") }).toEqual({
       tables: ["s_a", "s_c"],
       a: [],
       done: false,
     })
-  })
-
-  it("wipe drops every table", () => {
-    store.apply([put("a", entry(1, "x"))])
-    store.wipe()
-    expect(db.selectValues(`SELECT name FROM sqlite_master WHERE type = 'table'`)).toEqual([])
   })
 })
