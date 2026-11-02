@@ -148,7 +148,9 @@ test.describe("Bounded timeline read", () => {
     expect(before).not.toBeNull()
     const scrollTopBefore = await page.locator(SCROLLER).evaluate((el) => el.scrollTop)
     const renderedBefore = await page.getByRole("main").locator(".message-item").count()
-    const scrollHeightBefore = await page.locator(SCROLLER).evaluate((el) => el.scrollHeight)
+    const timelineItems = async () =>
+      (await readCapture(page)).samples.filter((s) => s.name === "timeline.windowItems").at(-1)?.value ?? 0
+    const timelineItemsBefore = await timelineItems()
 
     // A second client posts into the stream the reader is scrolled back in.
     await page.request
@@ -160,13 +162,15 @@ test.describe("Bounded timeline read", () => {
     // The arrival must land in the TIMELINE, or the assertions below pass
     // vacuously. Its tail row is not mounted while the reader is scrolled back,
     // so page text naming it comes from elsewhere (sidebar preview, conversations
-    // drawer); the scroller growing by its row is the timeline's own signal.
+    // drawer); the timeline's own item count is the signal. Not scrollHeight:
+    // virtua sizes unmounted rows by estimate, so measuring a few more rows can
+    // shrink it by more than the arrival's row adds.
     await expect
-      .poll(async () => await page.locator(SCROLLER).evaluate((el) => el.scrollHeight), {
+      .poll(timelineItems, {
         timeout: 30_000,
         message: "the arriving message should reach this client's timeline",
       })
-      .toBeGreaterThan(scrollHeightBefore)
+      .toBeGreaterThan(timelineItemsBefore)
     await page.waitForTimeout(500)
 
     // The flag actually armed: only the bounded tail read emits this mark.
