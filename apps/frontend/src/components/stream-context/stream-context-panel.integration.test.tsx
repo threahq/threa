@@ -43,9 +43,14 @@ const EMPTY_COUNTS = {
   doc: 0,
 }
 
-/** jsdom has no IntersectionObserver; capture the callbacks so a test can fire them. */
+/**
+ * jsdom has no IntersectionObserver; capture the callbacks so a test can fire them.
+ * The panel observes only once a first page with a cursor has landed, which is
+ * later than the list call itself, so wait for the observer before firing.
+ */
 let observerCallbacks: IntersectionObserverCallback[] = []
-function triggerSentinel() {
+async function triggerSentinel() {
+  await waitFor(() => expect(observerCallbacks).not.toHaveLength(0))
   for (const cb of observerCallbacks) {
     cb([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
   }
@@ -250,7 +255,7 @@ describe("StreamContextPanel", () => {
     expect(await screen.findByText("Alpha")).toBeInTheDocument()
     await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
 
-    triggerSentinel()
+    await triggerSentinel()
     expect(await screen.findByText("Bravo")).toBeInTheDocument()
     expect(list).toHaveBeenCalledTimes(2)
     expect(list.mock.calls[1]?.[2]).toMatchObject({ cursor: "c1" })
@@ -518,7 +523,7 @@ describe("StreamContextPanel", () => {
 
     expect(await screen.findByText("Roadmap")).toBeInTheDocument()
     await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
-    triggerSentinel()
+    await triggerSentinel()
     expect(await screen.findByText("Bravo")).toBeInTheDocument()
     expect(await db.streamContextItems.get([WS, hosted.key])).toBeDefined()
   })

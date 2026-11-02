@@ -14,7 +14,25 @@ import { loginAndCreateWorkspace, openComposerFixture, pressEditorShortcut, sele
  * - Send modes still work with rich text
  */
 
+/**
+ * ProseMirror ignores selection changes while the editor is unfocused, and 20ms
+ * after it gains focus it writes its own stored selection back to the DOM. A range
+ * set before that write is lost, so focus first and let the write pass.
+ */
+async function focusEditorForSelection(page: import("@playwright/test").Page) {
+  await page.evaluate(async () => {
+    const editor = document.querySelector<HTMLElement>("[contenteditable='true']")
+    if (!editor) {
+      throw new Error("Editor not found")
+    }
+    if (document.activeElement === editor) return
+    editor.focus()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  })
+}
+
 async function placeCursorInText(page: import("@playwright/test").Page, text: string, offset = 0) {
+  await focusEditorForSelection(page)
   await page.evaluate(
     ({ offset, text }) => {
       const editor = document.querySelector<HTMLElement>("[contenteditable='true']")
@@ -39,7 +57,6 @@ async function placeCursorInText(page: import("@playwright/test").Page, text: st
         const selection = window.getSelection()
         selection?.removeAllRanges()
         selection?.addRange(range)
-        editor.focus()
         return
       }
 
@@ -55,6 +72,7 @@ async function selectTextRange(
   endText: string,
   endOffset = endText.length
 ) {
+  await focusEditorForSelection(page)
   await page.evaluate(
     ({ endOffset, endText, startText }) => {
       const editor = document.querySelector<HTMLElement>("[contenteditable='true']")
@@ -106,7 +124,6 @@ async function selectTextRange(
       const selection = window.getSelection()
       selection?.removeAllRanges()
       selection?.addRange(range)
-      editor.focus()
     },
     { endOffset, endText, startText }
   )
