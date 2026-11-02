@@ -31,7 +31,7 @@ import { MemoRepository } from "../../src/features/memos"
 import { attachmentId, extractionId, memoId } from "../../src/lib/id"
 import { readFileSync } from "fs"
 import { resolve } from "path"
-import { createTestPool } from "../integration/setup"
+import { createTestServerPool } from "../integration/setup"
 
 const testRunId = Math.random().toString(36).substring(7)
 const testEmail = (name: string) => `${name}-openapi-${testRunId}@test.com`
@@ -155,7 +155,7 @@ describe("Public API — OpenAPI Spec Validation", () => {
   let pool: Pool
 
   beforeAll(async () => {
-    pool = createTestPool()
+    pool = createTestServerPool()
     ctx = await setupTestWorkspace(pool)
   })
 

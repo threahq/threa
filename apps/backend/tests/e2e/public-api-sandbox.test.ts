@@ -19,7 +19,7 @@ import {
   sendMessageWithAttachments,
   uploadAttachment,
 } from "../client"
-import { createTestPool } from "../integration/setup"
+import { createTestServerPool } from "../integration/setup"
 
 const testRunId = Math.random().toString(36).slice(2)
 
@@ -77,7 +77,7 @@ describe("Public API v1 — sandbox tokens", () => {
   }
 
   beforeAll(async () => {
-    pool = createTestPool()
+    pool = createTestServerPool()
     tokens = new SandboxSessionTokenService({ pool })
 
     const client = new TestClient()

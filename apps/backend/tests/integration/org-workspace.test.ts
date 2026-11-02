@@ -11,7 +11,7 @@ import {
 import type { QueueManager } from "../../src/lib/queue"
 import { userId, workspaceId } from "../../src/lib/id"
 import { TestClient } from "../client"
-import { setupTestDatabase } from "./setup"
+import { createTestServerPool } from "./setup"
 
 describe("org workspace ensure endpoint", () => {
   let pool: Pool
@@ -77,7 +77,7 @@ describe("org workspace ensure endpoint", () => {
   }
 
   beforeAll(async () => {
-    pool = await setupTestDatabase()
+    pool = createTestServerPool()
   })
 
   afterAll(async () => {

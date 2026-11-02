@@ -11,7 +11,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } fr
 import { io, Socket } from "socket.io-client"
 import type { Pool } from "pg"
 import { WORKSPACE_ROLE_SLUGS } from "@threahq/types"
-import { createTestPool } from "../integration/setup"
+import { createTestServerPool } from "../integration/setup"
 import { WorkspaceService } from "../../src/features/workspaces"
 import {
   TestClient,
@@ -549,7 +549,7 @@ describe("Guest delivery", () => {
   }
 
   beforeAll(async () => {
-    pool = createTestPool()
+    pool = createTestServerPool()
     owner = new TestClient()
     guestClient = new TestClient()
     await loginAs(owner, `guest-delivery-owner-${runId}@example.com`, "Guest Delivery Owner")
@@ -676,7 +676,7 @@ describe("Guest roster", () => {
   }
 
   beforeAll(async () => {
-    pool = createTestPool()
+    pool = createTestServerPool()
     owner = new TestClient()
     guestClient = new TestClient()
     coMemberClient = new TestClient()

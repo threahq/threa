@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { AIUsageRepository } from "../../src/features/ai-usage"
 import { aiUsageId } from "../../src/lib/id"
-import { createTestPool } from "../integration/setup"
+import { createTestServerPool } from "../integration/setup"
 
 const workspaceId = `ws_cachedtok_${Math.random().toString(36).slice(2)}`
 const periodStart = new Date("2026-01-01T00:00:00Z")
@@ -35,7 +35,7 @@ describe("ai_usage_records.cached_prompt_tokens", () => {
   let pool: Pool
 
   beforeAll(async () => {
-    pool = createTestPool()
+    pool = createTestServerPool()
     await AIUsageRepository.insert(
       pool,
       record({

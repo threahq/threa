@@ -17,7 +17,7 @@ import {
   sendMessage,
   type WorkspaceUser,
 } from "../client"
-import { createTestPool } from "../integration/setup"
+import { createTestServerPool } from "../integration/setup"
 
 const testRunId = Math.random()
   .toString(36)
@@ -119,7 +119,7 @@ describe("memo audience over HTTP", () => {
   }
 
   beforeAll(async () => {
-    pool = createTestPool()
+    pool = createTestServerPool()
 
     const login = async (label: string) => {
       const client = new TestClient()

@@ -17,7 +17,7 @@ import { AttachmentExtractionRepository, AttachmentRepository } from "../../src/
 import { MemoRepository } from "../../src/features/memos"
 import { attachmentId, extractionId, memoId } from "../../src/lib/id"
 import { TestClient, createChannel, createWorkspace, loginAs, sendMessage } from "../client"
-import { createTestPool } from "../integration/setup"
+import { createTestServerPool } from "../integration/setup"
 
 const testRunId = Math.random().toString(36).slice(2)
 const testEmail = (name: string) => `${name}-knowledge-${testRunId}@test.com`
@@ -70,7 +70,7 @@ describe("Public API v1 — Knowledge Retrieval", () => {
   let ctx: TestContext
 
   beforeAll(async () => {
-    pool = createTestPool()
+    pool = createTestServerPool()
 
     const client = new TestClient()
     await loginAs(client, testEmail("setup"), `Knowledge User ${testRunId}`)

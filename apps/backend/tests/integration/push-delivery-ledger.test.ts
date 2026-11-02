@@ -8,7 +8,7 @@ import {
   type PlanPushDeliveryParams,
 } from "../../src/features/push/delivery-repository"
 import { QueueRepository } from "../../src/lib/queue"
-import { createTestPool, setupTestDatabase, withTransaction } from "./setup"
+import { setupTestDatabase, withTransaction } from "./setup"
 import { userId, workspaceId } from "../../src/lib/id"
 
 const HOUR_MS = 60 * 60 * 1000

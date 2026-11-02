@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { StreamErrorCodes, WORKSPACE_ROLE_SLUGS, permissionsForRole } from "@threahq/types"
-import { createTestPool } from "../integration/setup"
+import { createTestServerPool } from "../integration/setup"
 import {
   TestClient,
   addStreamMember,
@@ -24,7 +24,7 @@ const testRunId = Math.random().toString(36).substring(7)
 let pool: Pool
 
 beforeAll(() => {
-  pool = createTestPool()
+  pool = createTestServerPool()
 })
 
 afterAll(async () => {

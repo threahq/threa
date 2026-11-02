@@ -11,7 +11,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
 import { TestClient, createChannel, createWorkspace, loginAs } from "../client"
-import { createTestPool } from "../integration/setup"
+import { createTestServerPool } from "../integration/setup"
 import { API_VERSIONS, CURRENT_API_VERSION } from "../../src/features/public-api/versions"
 
 const testRunId = Math.random().toString(36).substring(7)
@@ -102,7 +102,7 @@ describe("Public API header versioning", () => {
   let ctx: Ctx
 
   beforeAll(async () => {
-    pool = createTestPool()
+    pool = createTestServerPool()
     ctx = await setup()
   })
 

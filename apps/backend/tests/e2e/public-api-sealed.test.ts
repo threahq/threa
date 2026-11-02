@@ -43,7 +43,7 @@ import {
   type StreamEnvelope,
 } from "../../../../extensions/bot-runtime-client/src/crypto"
 import { mintStreamKeyWraps, type BotIdentityKey } from "../../../../extensions/bot-runtime-client/src/sealed"
-import { createTestPool } from "../integration/setup"
+import { createTestServerPool } from "../integration/setup"
 import { SealedStreamClient } from "../../../../extensions/bot-runtime-client/src/sealed-stream-client"
 
 setDefaultTimeout(120_000)
@@ -563,7 +563,7 @@ describe("public API my encryption key", () => {
     // User-key auth clamps scopes against the owner's live workspace
     // permissions, and the e2e harness runs without a control-plane to mirror
     // them — without this row every user-key request 401s OWNER_INACTIVE.
-    const pool = createTestPool()
+    const pool = createTestServerPool()
     try {
       await pool.query(
         `INSERT INTO workspace_user_permissions (workspace_id, workos_user_id, role_slugs, status, last_event_at)
