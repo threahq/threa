@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { renderHook } from "@testing-library/react"
 
 function stubMatchMedia(opts: { coarsePrimary?: boolean; narrowViewport?: boolean }) {
@@ -19,9 +19,12 @@ function stubMatchMedia(opts: { coarsePrimary?: boolean; narrowViewport?: boolea
   }))
 }
 
+beforeEach(() => {
+  vi.resetModules()
+})
+
 afterEach(() => {
   vi.unstubAllGlobals()
-  vi.resetModules()
 })
 
 describe("useCoarsePointer", () => {

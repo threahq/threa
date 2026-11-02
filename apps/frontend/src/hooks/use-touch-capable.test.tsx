@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { renderHook } from "@testing-library/react"
 
 function stub(anyCoarse: boolean, maxTouchPoints: number) {
@@ -15,9 +15,12 @@ function stub(anyCoarse: boolean, maxTouchPoints: number) {
   Object.defineProperty(navigator, "maxTouchPoints", { value: maxTouchPoints, configurable: true })
 }
 
+beforeEach(() => {
+  vi.resetModules()
+})
+
 afterEach(() => {
   vi.unstubAllGlobals()
-  vi.resetModules()
 })
 
 describe("useTouchCapable", () => {

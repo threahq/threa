@@ -18,7 +18,7 @@ import * as e2eSessionStore from "@/stores/e2e-session-store"
 // use-draft-composer.test.ts: it pins the no-limbo DATA invariant of restore
 // against the real data layer (fake-indexeddb). It deliberately does not mount a
 // component — RichEditor is mocked suite-wide, so a mounted flow wouldn't exercise
-// the real editor sync anyway; that hop is unit-tested in apply-external-content.test.ts.
+// the real editor sync anyway; that hop is unit-tested in apply-external-content.node.test.ts.
 // The only seams are the viewer id + E2E session, defaulted to "no viewer / locked"
 // so the plaintext path runs without an AuthProvider.
 const LOCKED_SESSION = {

@@ -122,7 +122,7 @@ export async function loginAndCreateWorkspaceViaApi(
  * in the collapsed "Everything Else" bucket and isn't visible in the sidebar.
  * The E2E suite navigates via the always-open Channels / Scratchpads / DMs
  * sections, so it pins the deterministic All preset at setup. Smart-bucket
- * resolution has its own unit coverage (`resolve-sections.test.ts`).
+ * resolution has its own unit coverage (`resolve-sections.node.test.ts`).
  *
  * Body mirrors `ALL_SIDEBAR_CONFIG` in `@threahq/types` (not importable from the
  * repo-root test runtime); `quickLinks` is omitted because the PATCH schema

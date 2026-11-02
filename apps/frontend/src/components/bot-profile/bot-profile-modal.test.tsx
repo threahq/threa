@@ -6,6 +6,7 @@ import { render, screen, userEvent, within } from "@/test"
 import { botsApi } from "@/api/bots"
 import * as useFormattedDateModule from "@/hooks/use-formatted-date"
 import { resetWorkspaceStoreCache, seedWorkspaceCache } from "@/stores/workspace-store"
+import { resetWorkspaceTableRegistry } from "@/stores/workspace-table-registry"
 import { BotProfileModal } from "./bot-profile-modal"
 
 type SeedData = Parameters<typeof seedWorkspaceCache>[1]
@@ -113,6 +114,8 @@ function renderModal(onOpenUserProfile = vi.fn()) {
 }
 
 beforeEach(() => {
+  // A Dexie live snapshot left by the previous case outranks the seeded cache.
+  resetWorkspaceTableRegistry()
   resetWorkspaceStoreCache()
   vi.spyOn(useFormattedDateModule, "useFormattedDate").mockReturnValue({
     formatDate: () => "date",

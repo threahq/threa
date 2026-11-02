@@ -121,6 +121,9 @@ describe("MessageReactions motion", () => {
   })
 
   afterEach(() => {
+    // A spy taken while the clock is faked holds the fake as its original;
+    // restoring it after the clock is gone would put the fake back.
+    vi.restoreAllMocks()
     vi.useRealTimers()
   })
 

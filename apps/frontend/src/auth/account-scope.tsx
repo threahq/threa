@@ -112,7 +112,7 @@ export function useAccountScopeOptional(): AccountScopeValue | null {
 
 // Module-level store caches survive a React remount, so a switch must flush
 // them or account A's cached workspaces/drafts/shares bleed into account B.
-function flushModuleStoreCaches(): void {
+export function flushModuleStoreCaches(): void {
   resetWorkspaceStoreCache()
   resetWorkspaceTableRegistry()
   resetActorLookups()

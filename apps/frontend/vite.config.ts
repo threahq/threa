@@ -282,6 +282,10 @@ export default defineConfig({
   },
   test: {
     maxWorkers: process.env.CI ? undefined : 2,
+    // A file pays ~3s to import its module graph and ~1s for jsdom when every
+    // file gets a fresh worker; sharing workers drops the suite to a quarter.
+    // The setup files put back what a fresh worker would have.
+    isolate: false,
     projects: [
       {
         extends: true,
@@ -300,6 +304,7 @@ export default defineConfig({
           name: "frontend-node",
           globals: true,
           environment: "node",
+          setupFiles: ["./src/test/setup-node.ts"],
           include: ["src/**/*.node.test.ts"],
         },
       },
@@ -309,6 +314,7 @@ export default defineConfig({
           name: "scripts",
           globals: true,
           environment: "node",
+          setupFiles: ["./src/test/setup-node.ts"],
           include: ["scripts/**/*.test.ts"],
         },
       },
