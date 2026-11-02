@@ -32,21 +32,27 @@ function deriveTestDatabaseName(): string {
   return `${sanitized || "threa"}_browser_test`
 }
 
+// The probe releases each port before the next draw, so the same one can come up twice.
+const allocatedPorts = new Set<number>()
+
 /**
- * Find a free port synchronously using a temporary server.
- * This is a bit hacky but necessary since playwright config is synchronous.
+ * Find a free port synchronously: Playwright evaluates its config synchronously.
+ * Draws below Linux's ephemeral range (32768–60999), where `listen(0)` would
+ * pick: outbound sockets (the backends' database pools) take ports from that
+ * range and can claim one before the server it was reserved for starts.
  */
 function findFreePortSync(): number {
-  const server = net.createServer()
-  server.listen(0)
-  const address = server.address()
-  const port = typeof address === "object" && address ? address.port : 0
-  server.close()
-  return port
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const port = 20000 + Math.floor(Math.random() * 12000)
+    if (allocatedPorts.has(port)) continue
+    const server = net.createServer().on("error", () => {})
+    server.listen(port)
+    const bound = server.address() !== null
+    server.close()
+    if (bound) return port
+  }
+  throw new Error("No free port found between 20000 and 32000")
 }
-
-// The probe releases each port before the next draw, so the OS can hand the same one out twice.
-const allocatedPorts = new Set<number>()
 
 /**
  * Get or allocate a port, caching in environment variables.
@@ -56,10 +62,7 @@ function getOrAllocatePort(envVar: string): number {
   if (process.env[envVar]) {
     return parseInt(process.env[envVar]!, 10)
   }
-  let port = findFreePortSync()
-  while (allocatedPorts.has(port)) {
-    port = findFreePortSync()
-  }
+  const port = findFreePortSync()
   allocatedPorts.add(port)
   process.env[envVar] = String(port)
   return port
