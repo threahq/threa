@@ -427,5 +427,13 @@ test.describe("Stream switch stability", () => {
 
     const samples = (await readSamples(page)).filter((s) => Object.keys(s.onScreen).length > 0)
     expect(rowsSlidDown(samples).slice(0, 6), `rows moved under the reader after regrouping ${cutRowId}`).toEqual([])
+    // The row below the cut row is the one the hold anchors: it must not move up either.
+    const anchorId = await page
+      .locator(`[data-author-id][data-message-id="${messageIds[messageIds.indexOf(cutRowId) + 1]}"]`)
+      .evaluate((row) => row.closest("[data-event-id]")?.getAttribute("data-event-id") ?? null)
+    const anchorTops = samples.map((s) => (anchorId ? s.onScreen[anchorId] : undefined))
+    expect(anchorTops, `anchor row ${anchorId} should be on screen in every frame`).not.toContain(undefined)
+    const tops = anchorTops as number[]
+    expect(Math.max(...tops) - Math.min(...tops), `anchor row ${anchorId} moved`).toBeLessThanOrEqual(2)
   })
 })
