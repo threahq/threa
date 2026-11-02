@@ -189,6 +189,10 @@ onlineManager.setOnline(true)
 setAssertedAccount(null)
 const { flushModuleStoreCaches } = await import("@/auth/account-scope")
 flushModuleStoreCaches()
+// On a persisted `pageshow` (bfcache tests) Dexie opens another storage-mutation
+// BroadcastChannel without closing the last. In a shared worker every later
+// write then echoes back to live queries once per leaked channel.
+Dexie.disableBfCache = true
 globalThis.indexedDB = new IDBFactory()
 Dexie.dependencies.indexedDB = globalThis.indexedDB
 setActiveDb(new ThreaDatabase("threa"))
@@ -236,11 +240,15 @@ function restoreGlobalProperties(): void {
     [Element.prototype, () => Reflect.ownKeys(Element.prototype)],
     [HTMLElement.prototype, () => Reflect.ownKeys(HTMLElement.prototype)],
   ]
-  const store = globalThis as { __testPropertyBaseline?: Map<PropertyKey, PropertyDescriptor | undefined>[] }
+  const store = globalThis as {
+    __testPropertyBaseline?: Map<PropertyKey, PropertyDescriptor | undefined>[]
+    __testWindowValues?: Map<string, unknown>
+  }
   if (!store.__testPropertyBaseline) {
     store.__testPropertyBaseline = targets.map(
       ([target, keys]) => new Map(keys().map((key) => [key, Object.getOwnPropertyDescriptor(target, key)]))
     )
+    store.__testWindowValues = new Map(windowKeys.map((key) => [key, Reflect.get(window, key)]))
     return
   }
   targets.forEach(([target, keys], index) => {
@@ -254,6 +262,13 @@ function restoreGlobalProperties(): void {
       }
     }
   })
+  // Most window globals are accessors onto jsdom's own window. A fake clock
+  // installed before a `vi.stubGlobal` of the same key writes its fake through
+  // the accessor and, once both are undone, leaves it there under an unchanged
+  // descriptor (stream-read-tracker's requestAnimationFrame).
+  for (const [key, value] of store.__testWindowValues!) {
+    if (Reflect.get(window, key) !== value) Reflect.set(window, key, value)
+  }
 }
 
 function sameDescriptor(a: PropertyDescriptor | undefined, b: PropertyDescriptor): boolean {

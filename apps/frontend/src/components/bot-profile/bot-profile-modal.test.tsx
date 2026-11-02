@@ -3,6 +3,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { Bot, BotProfile } from "@threahq/types"
 import { render, screen, userEvent, within } from "@/test"
+import { seedWorkspaceUser } from "@/test/workspace-rows"
 import { botsApi } from "@/api/bots"
 import * as useFormattedDateModule from "@/hooks/use-formatted-date"
 import { resetWorkspaceStoreCache, seedWorkspaceCache } from "@/stores/workspace-store"
@@ -41,7 +42,9 @@ function profile(overrides: Partial<BotProfile> = {}): BotProfile {
   return { bot: sharedBot(), streams: [], runtime: null, canManage: false, ...overrides }
 }
 
-function seedOwner() {
+async function seedOwner() {
+  // The users table's live snapshot replaces the seeded cache once it loads.
+  await seedWorkspaceUser(WORKSPACE_ID, "usr_owner", "Ada")
   seedWorkspaceCache(WORKSPACE_ID, {
     workspace: {
       id: WORKSPACE_ID,
@@ -174,7 +177,7 @@ describe("BotProfileModal", () => {
   })
 
   it("hides read-as-owner from anyone but the owner, and opens the owner's profile", async () => {
-    seedOwner()
+    await seedOwner()
     vi.spyOn(botsApi, "getProfile").mockResolvedValue(profile({ bot: personalBot({ readsAsOwner: true }) }))
 
     const { onOpenUserProfile } = renderModal()
