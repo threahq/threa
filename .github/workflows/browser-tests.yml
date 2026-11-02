@@ -43,18 +43,26 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # About 40 cases per shard keeps each shard near three minutes.
+      # About 40 cases per shard keeps each shard near three minutes. The calls
+      # project runs one mesh at a time for about four minutes, so it gets its own
+      # job instead of stretching whichever shard it lands in.
       - name: Plan shards
         id: shards
         run: |
           selection=()
           [[ "$FILES" == all ]] || read -ra selection <<< "$FILES"
-          count=$(bunx playwright test --list "${selection[@]}" | awk '/^Total: /{print $2}')
-          (( count > 0 )) || { echo "No browser cases selected" >&2; exit 1; }
-          shards=$(( (count + 39) / 40 ))
-          (( shards > 8 )) && shards=8
-          echo "shards=$(jq -cn --argjson n "$shards" '[range(1; $n + 1)]')" >> "$GITHUB_OUTPUT"
-          echo "### Browser: $count cases in $shards shards" >> "$GITHUB_STEP_SUMMARY"
+          cases() { bunx playwright test --list --pass-with-no-tests --project="$1" "${selection[@]}" | awk '/^Total: /{print $2}'; }
+          chromium=$(cases chromium)
+          calls=$(cases calls)
+          (( chromium + calls > 0 )) || { echo "No browser cases selected" >&2; exit 1; }
+          max=8
+          (( calls > 0 )) && max=7
+          shards=$(( (chromium + 39) / 40 ))
+          (( shards > max )) && shards=$max
+          echo "shards=$(jq -cn --argjson n "$shards" --argjson calls "$calls" '
+            [range(1; $n + 1) | {label: "\(.)/\($n)", project: "chromium", shard: "\(.)/\($n)"}]
+            + (if $calls > 0 then [{label: "calls", project: "calls", shard: ""}] else [] end)')" >> "$GITHUB_OUTPUT"
+          echo "### Browser: $chromium cases in $shards shards, $calls calls cases" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build frontend once
         run: bun run --cwd apps/frontend build:e2e
@@ -70,14 +78,14 @@ jobs:
           retention-days: 1
 
   test:
-    name: Browser (${{ matrix.shard }}/${{ strategy.job-total }})
+    name: Browser (${{ matrix.label }})
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(needs.build.outputs.shards) }}
+        include: ${{ fromJSON(needs.build.outputs.shards) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -156,17 +164,20 @@ jobs:
         run: |
           selection=()
           [[ "$FILES" == all ]] || read -ra selection <<< "$FILES"
-          shard="${{ matrix.shard }}/${{ strategy.job-total }}"
-          bun run test:browser -- --shard="$shard" "${selection[@]}"
+          args=(--project="$PROJECT")
+          [[ -z "$SHARD" ]] || args+=(--shard="$SHARD")
+          bun run test:browser -- "${args[@]}" "${selection[@]}"
         env:
           CI: true
           PLAYWRIGHT_FRONTEND_PREBUILT: "true"
+          PROJECT: ${{ matrix.project }}
+          SHARD: ${{ matrix.shard }}
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report-${{ matrix.shard }}
+          name: playwright-report-${{ matrix.project }}-${{ strategy.job-index }}
           path: |
             playwright-report/
             test-results/
