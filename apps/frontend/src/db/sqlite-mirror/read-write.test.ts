@@ -599,7 +599,7 @@ describe("read-write SQLite storage", () => {
   })
 
   for (const lost of ["get", "commit"] as const) {
-    it(`never deletes IndexedDB when an open fails on SQLite storage, as when the owner closes during a ready handler's ${lost}`, async () => {
+    it(`never deletes IndexedDB when the owner closes during a ready handler's ${lost}, which runs again or fails the open`, async () => {
       silenceErrors()
       let holding = false
       let held = false
@@ -631,13 +631,13 @@ describe("read-write SQLite storage", () => {
       owner.coordination.die()
       owner.database.close()
       expect({ opened: await opened, uploads: await plainDatabase(owner.name).uploadJobs.toArray() }).toEqual({
-        opened: "failed",
+        opened: lost === "get" ? "opened" : "failed",
         uploads: [{ attachmentId: "upload_1" }],
       })
     })
   }
 
-  it("claims ownership again on a fresh worker after its worker fails, so a single tab keeps serving", async () => {
+  it("claims ownership again on a fresh worker after its worker fails, running what it had in flight there", async () => {
     silenceErrors()
     let kill = false
     const { database, mirror, log } = await readWriteSession({
@@ -649,13 +649,13 @@ describe("read-write SQLite storage", () => {
       deadlines: { recoverMs: 1 },
     })
     kill = true
-    await expect(database.syncCursors.put(cursor("lost", "1"))).rejects.toThrow()
+    await database.syncCursors.put(cursor("in flight", "1"))
     await database.syncCursors.put(cursor("after", "1"))
     expect({
       readWrite: mirror.readWrite,
       cursors: await cursorsIn(database),
       opens: log.filter((type) => type === "open").length,
-    }).toEqual({ readWrite: true, cursors: [cursor("after", "1")], opens: 2 })
+    }).toEqual({ readWrite: true, cursors: [cursor("after", "1"), cursor("in flight", "1")], opens: 2 })
   })
 
   it("fails requests and tells the user once workers keep failing", async () => {
@@ -966,7 +966,7 @@ describe("read-write SQLite storage", () => {
       expect(await cursorsIn(owner.database)).toEqual([cursor("owner", "1")])
     })
 
-    it("fails what was in flight when the owner closes, then serves from the tab that takes over", async () => {
+    it("runs what was in flight when the owner closes again on the tab that takes over", async () => {
       let holdWrites = true
       const owner = await readWriteSession({
         intercept: (request, next) => (request.type === "write" && holdWrites ? never : next()),
@@ -975,18 +975,53 @@ describe("read-write SQLite storage", () => {
       await owner.database.syncCursors.put(cursor("before", "1"))
       holdWrites = true
       const second = await follower(owner)
-      const inFlight = second.database.syncCursors.put(cursor("lost", "1"))
+      const inFlight = second.database.syncCursors.put(cursor("in flight", "1"))
       await until(() => owner.log.includes("begin") && owner.log.lastIndexOf("begin") > 0, "the transaction to begin")
       await new Promise((resolve) => setTimeout(resolve, 20))
       owner.coordination.die()
       owner.database.close()
       // The owner's worker dies with its tab, and SQLite rolls back what it left open.
       owner.sqlite.exec("ROLLBACK")
-      await expect(inFlight).rejects.toThrow(/closed during this transaction/)
+      await inFlight
       await second.database.syncCursors.put(cursor("after", "1"))
       expect({ readWrite: second.mirror.readWrite, cursors: await cursorsIn(second.database) }).toEqual({
         readWrite: true,
-        cursors: [cursor("after", "1"), cursor("before", "1")],
+        cursors: [cursor("after", "1"), cursor("before", "1"), cursor("in flight", "1")],
+      })
+    })
+
+    it("fails a transaction the owner closed during once running it again reads what another tab wrote meanwhile", async () => {
+      let holdWrites = false
+      let held = false
+      const owner = await readWriteSession({
+        intercept: (request, next) => {
+          if (request.type !== "write" || !holdWrites) return next()
+          held = true
+          return never
+        },
+      })
+      await owner.database.syncCursors.put(cursor("k", "0"))
+      const heir = await follower(owner)
+      const reader = await follower(owner)
+      holdWrites = true
+      const readThenWrite = reader.database.transaction("rw", reader.database.syncCursors, async () => {
+        const read = await reader.database.syncCursors.get("k")
+        await reader.database.syncCursors.put(cursor("k", `${read?.cursor}+reader`))
+      })
+      await until(() => held, "the reader's write to reach the owner")
+      const heirWrite = heir.database.syncCursors.put(cursor("k", "heir"))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      owner.coordination.die()
+      owner.database.close()
+      owner.sqlite.exec("ROLLBACK")
+      const failure = await readThenWrite.then(
+        () => null,
+        (error: Error) => error.name
+      )
+      await heirWrite
+      expect({ failure, k: await heir.database.syncCursors.get("k") }).toEqual({
+        failure: "OwnerLostError",
+        k: cursor("k", "heir"),
       })
     })
 

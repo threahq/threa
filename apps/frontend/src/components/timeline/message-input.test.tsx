@@ -34,6 +34,8 @@ import * as streamStoreModule from "@/stores/stream-store"
 import { toast } from "sonner"
 import { ApiError } from "@/api"
 import { GUEST_DM_CLOSED_REASON } from "@/lib/guest-dm-policy"
+import { DraftPromotionAbortedError } from "@/lib/draft-promotions"
+import Dexie from "dexie"
 import { MessageInput, materializePendingAttachmentReferences } from "./message-input"
 // eslint-disable-next-line no-restricted-imports -- clears the durable composer-target rows the composer reads
 import { db } from "@/db"
@@ -1473,12 +1475,29 @@ describe("MessageInput", () => {
       await waitFor(() => expect(dismiss.mock.calls).toEqual([[`share-privacy-draft-${streamId}`]]))
     })
 
+    it("restores a message storage could not keep, though storage reports it as an aborted transaction", async () => {
+      vi.spyOn(hooksModule, "useStreamOrDraft").mockReturnValue({
+        stream: { id: streamId, isDraft: false },
+        sendMessage: mockSendMessage,
+      } as unknown as ReturnType<typeof hooksModule.useStreamOrDraft>)
+      mockComposerState.canSend = true
+      mockComposerState.content = makeDoc("Keep this")
+      const lost = new DOMException("SQLite storage stopped answering while committing", "OutcomeUnknownError")
+      mockSendMessage.mockRejectedValue(new Dexie.AbortError("Transaction aborted", lost))
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
+
+      expect({
+        content: mockSetContent.mock.calls,
+        error: screen.queryByText("Failed to send message. Please try again.") !== null,
+      }).toEqual({ content: [[EMPTY_DOC], [makeDoc("Keep this")]], error: true })
+    })
+
     it("does not restore an aborted stale send into the next stream", async () => {
       mockComposerState.canSend = true
       mockComposerState.content = makeDoc("Keep this in the old stream")
-      const aborted = new Error("Draft promotion wait aborted")
-      aborted.name = "AbortError"
-      mockSendMessage.mockRejectedValue(aborted)
+      mockSendMessage.mockRejectedValue(new DraftPromotionAbortedError("Draft promotion wait aborted"))
 
       render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
       await userEvent.click(screen.getByRole("button", { name: /send/i }))

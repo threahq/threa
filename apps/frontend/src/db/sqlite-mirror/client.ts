@@ -214,6 +214,37 @@ interface HeldApply {
   send: () => void
 }
 
+/** A request of a read-write transaction, and what it was answered: `!` and the error's name for a failure. */
+interface Asked {
+  request: MirrorRequest
+  answer?: string
+  resolve(reply: OkReply): void
+  reject(error: unknown): void
+}
+
+/**
+ * A read-write transaction, kept until it ends: a worker that dies takes the
+ * transaction with it, uncommitted, so the next route runs it again. It goes
+ * on only where every request answers as it did, so it saw what it would have.
+ */
+interface RoutedTx {
+  readonly: boolean
+  /** This tab (its own worker) or the owner's tab; `null` while it waits for the next owner. */
+  route: string | null
+  asked: Asked[]
+  failed: DOMException | null
+}
+
+function answerOf(reply: OkReply): string {
+  return JSON.stringify([reply.result, reply.failures], (_, value: unknown) =>
+    value instanceof Uint8Array ? Array.from(value) : value
+  )
+}
+
+function errorAnswer(error: unknown): string {
+  return `!${(error as { name?: unknown } | null)?.name}`
+}
+
 /** A request not yet sent to the worker. */
 interface Outgoing {
   read: boolean
@@ -232,6 +263,10 @@ function ownerLost(): DOMException {
   return new DOMException("The tab running SQLite storage closed during this transaction", "OwnerLostError")
 }
 
+function inactive(tx: number): DOMException {
+  return new DOMException(`Transaction ${tx} is not active`, "TransactionInactiveError")
+}
+
 function outcomeUnknown(): DOMException {
   return new DOMException(
     "SQLite storage stopped answering while committing; the transaction may have committed",
@@ -239,10 +274,20 @@ function outcomeUnknown(): DOMException {
   )
 }
 
-/** A commit SQLite storage may have applied though no answer came; Dexie reports it as the abort's cause. */
-export function isOutcomeUnknown(error: unknown): boolean {
+/** Dexie reports what aborted a transaction as the abort's cause. */
+function failedWith(error: unknown, name: string): boolean {
   const cause = (error as { inner?: unknown } | null)?.inner
-  return [error, cause].some((e) => e instanceof DOMException && e.name === "OutcomeUnknownError")
+  return [error, cause].some((e) => e instanceof DOMException && e.name === name)
+}
+
+/** A commit SQLite storage may have applied though no answer came. */
+export function isOutcomeUnknown(error: unknown): boolean {
+  return failedWith(error, "OutcomeUnknownError")
+}
+
+/** A transaction that never committed: its owner was lost, and running it again read what another tab wrote meanwhile. */
+export function isOwnerLost(error: unknown): boolean {
+  return failedWith(error, "OwnerLostError")
 }
 
 function deferred(): { promise: Promise<void>; resolve: () => void; settled: boolean } {
@@ -450,8 +495,8 @@ export class SqliteMirror {
   >()
   /** When the owner last replied to any tab: a call waits on it only while it keeps answering someone. */
   private ownerHeardAt = 0
-  /** The owner each of this follower's transactions began on. */
-  private readonly txOwners = new Map<number, string>()
+  /** This tab's read-write transactions, in creation order. */
+  private readonly transactions = new Map<number, RoutedTx>()
   /** Followers' transactions this owner runs, by tab, as transactions of its own. */
   private readonly served = new Map<string, Map<number, number>>()
 
@@ -521,6 +566,7 @@ export class SqliteMirror {
   /** Requests now have somewhere to go: SQLite when serving, else IndexedDB. */
   private settleServing(serving: boolean): void {
     this.serving = serving
+    this.resumeTransactions()
     this.routable.resolve()
     this.idbGate.resolve()
   }
@@ -1009,6 +1055,7 @@ export class SqliteMirror {
     const served = [...this.trusted].filter((store) => this.trusts(store))
     this.role = "failed"
     this.decided = false
+    this.orphan(this.tabId)
     this.settle()
     if (this.primary) this.recover()
     else if (!this.routable.settled) this.settleServing(false)
@@ -1260,7 +1307,8 @@ export class SqliteMirror {
    * an owner serves, they wait.
    */
   private ask(request: MirrorRequest): Promise<OkReply> {
-    if (this.closing && request.type === "begin") return Promise.reject(unavailable())
+    const tx = txOf(request)
+    if (tx !== undefined) return this.askInTx(tx, request)
     if (this.role === "owner" && this.decided && this.transport) return this.askWorker(this.transport, request)
     if (this.role === "follower" && this.owner) return this.call(this.owner.tab, request)
     if (this.mode !== "read-write" || this.routable.settled) return Promise.reject(unavailable())
@@ -1284,13 +1332,105 @@ export class SqliteMirror {
     return reply
   }
 
-  private call(owner: string, request: MirrorRequest): Promise<OkReply> {
-    const tx = txOf(request)
-    if (tx !== undefined) {
-      if (request.type === "begin") this.txOwners.set(tx, owner)
-      if (this.txOwners.get(tx) !== owner) return Promise.reject(ownerLost())
-      if (request.type === "commit" || request.type === "rollback") this.txOwners.delete(tx)
+  /** Where requests go now: this tab's worker, named by this tab, or the owner's tab. */
+  private route(): string | null {
+    if (this.role === "owner" && this.decided && this.transport) return this.tabId
+    if (this.role === "follower" && this.owner) return this.owner.tab
+    return null
+  }
+
+  private dispatch(route: string, request: MirrorRequest): Promise<OkReply> {
+    if (route !== this.tabId) return this.call(route, request)
+    return this.transport ? this.askWorker(this.transport, request) : Promise.reject(unavailable())
+  }
+
+  private askInTx(tx: number, request: MirrorRequest): Promise<OkReply> {
+    if (request.type === "begin") {
+      const route = this.route()
+      const failed = this.closing || (!route && this.routable.settled)
+      this.transactions.set(tx, { readonly: request.readonly, route, asked: [], failed: failed ? unavailable() : null })
     }
+    const routed = this.transactions.get(tx)
+    if (!routed) return Promise.reject(inactive(tx))
+    const ends = request.type === "commit" || request.type === "rollback"
+    if (routed.failed) {
+      if (ends) this.transactions.delete(tx)
+      // A failed transaction holds nothing to roll back.
+      return request.type === "rollback" ? Promise.resolve({ ok: true, ms: 0 }) : Promise.reject(routed.failed)
+    }
+    return new Promise((resolve, reject) => {
+      const asked: Asked = { request, resolve, reject }
+      routed.asked.push(asked)
+      if (routed.route !== null) this.sendInTx(tx, routed, asked)
+    })
+  }
+
+  private sendInTx(tx: number, routed: RoutedTx, asked: Asked): void {
+    const route = routed.route!
+    const answered = (answer: string, settle: () => void) => {
+      if (this.transactions.get(tx) !== routed || routed.route !== route || routed.failed) return
+      if (asked.answer !== undefined) {
+        if (asked.answer !== answer) this.failTx(tx, routed, ownerLost())
+        return
+      }
+      asked.answer = answer
+      const { type } = asked.request
+      if (type === "commit" || type === "rollback") this.transactions.delete(tx)
+      settle()
+    }
+    this.dispatch(route, asked.request).then(
+      (reply) => answered(answerOf(reply), () => asked.resolve(reply)),
+      (error: unknown) => answered(errorAnswer(error), () => asked.reject(error))
+    )
+  }
+
+  /** It ends as a transaction whose owner was lost would: rolled back where it runs, its open requests failed. */
+  private failTx(tx: number, routed: RoutedTx, error: DOMException): void {
+    const route = routed.route
+    routed.failed = error
+    if (route !== null) this.dispatch(route, { type: "rollback", tx }).catch(() => {})
+    for (const asked of routed.asked) {
+      if (asked.answer !== undefined) continue
+      asked.answer = errorAnswer(error)
+      asked.reject(error)
+    }
+  }
+
+  /**
+   * The worker behind `route` is gone with every transaction it held open,
+   * uncommitted; each waits for the next route. A commit it was given may
+   * have landed, so that one fails as of unknown outcome, unless it only read.
+   */
+  private orphan(route: string): void {
+    for (const [tx, routed] of this.transactions) {
+      if (routed.route !== route || routed.failed) continue
+      const last = routed.asked.at(-1)
+      const ending = last?.answer === undefined ? last?.request.type : undefined
+      if (ending === "rollback" || (ending === "commit" && routed.readonly)) {
+        this.transactions.delete(tx)
+        last!.answer = ""
+        last!.resolve({ ok: true, ms: 0 })
+      } else if (ending !== "commit") {
+        routed.route = null
+      }
+    }
+  }
+
+  /** Runs every transaction a lost route held again, in creation order, ahead of anything that waited for a route. */
+  private resumeTransactions(): void {
+    const route = this.route()
+    for (const [tx, routed] of this.transactions) {
+      if (routed.route !== null || routed.failed) continue
+      if (!route) {
+        this.failTx(tx, routed, unavailable())
+        continue
+      }
+      routed.route = route
+      for (const asked of routed.asked) this.sendInTx(tx, routed, asked)
+    }
+  }
+
+  private call(owner: string, request: MirrorRequest): Promise<OkReply> {
     const id = ++this.nextCall
     const commit = request.type === "commit"
     const sentAt = performance.now()
@@ -1335,14 +1475,14 @@ export class SqliteMirror {
     this.settleServing(true)
   }
 
-  /** What this follower had in flight on the owner fails, a commit as of unknown outcome; what it sends next waits for the next owner. */
+  /** What this follower had in flight on the owner runs again on the next owner, but a commit, which fails as of unknown outcome. */
   private loseOwner(): void {
     const owner = this.owner
     if (!owner) return
     this.owner = null
     owner.unwatch()
     this.unroute()
-    for (const [tx, began] of this.txOwners) if (began === owner.tab) this.txOwners.delete(tx)
+    this.orphan(owner.tab)
     for (const [id, call] of this.calls) {
       if (call.owner === owner.tab) this.dropCall(id, call.commit ? outcomeUnknown() : ownerLost())
     }
@@ -1372,10 +1512,17 @@ export class SqliteMirror {
       request = { ...request, tx: own }
     }
     const committed = request.type === "commit"
-    this.ask(request).then((reply) => {
+    this.serve(request).then((reply) => {
       respond(reply)
       if (committed) this.scheduleDrain()
     }, fail)
+  }
+
+  /** A follower's request, run on this owner's worker; its own transaction log is the follower's. */
+  private serve(request: MirrorRequest): Promise<OkReply> {
+    if (this.closing && request.type === "begin") return Promise.reject(unavailable())
+    if (this.role === "owner" && this.decided && this.transport) return this.askWorker(this.transport, request)
+    return Promise.reject(unavailable())
   }
 
   /** A follower that closes mid-transaction would hold the worker forever; its transactions roll back instead. */
@@ -1387,7 +1534,7 @@ export class SqliteMirror {
     this.options.coordination.watchTab(tab, () => {
       const abandoned = this.served.get(tab) ?? new Map<number, number>()
       this.served.delete(tab)
-      for (const own of abandoned.values()) void this.rollbackTransaction(own)
+      for (const own of abandoned.values()) this.serve({ type: "rollback", tx: own }).catch(() => {})
     })
     return transactions
   }

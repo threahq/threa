@@ -445,6 +445,28 @@ describe("SqliteMirror", () => {
     owner.dispose()
   })
 
+  it("applies a follower's commit whose every write failed, which touched nothing", async () => {
+    const owner = setup()
+    await owner.database.open()
+    owner.start()
+    await settle()
+    await owner.database.syncCursors.put({ key: "k", value: "owner", updatedAt: 1 } as never)
+    const followerDb = openDatabase(owner.database.name)
+    const follower = mirrorTab(followerDb, owner.bus)
+
+    await followerDb.transaction("rw", followerDb.syncCursors, () =>
+      followerDb.syncCursors.bulkAdd([{ key: "k", value: "follower", updatedAt: 2 }] as never).catch(() => {})
+    )
+    await settle()
+
+    expect({ rows: mirrored(owner.sqlite, "syncCursors"), behind: await behind(followerDb, owner.sqlite) }).toEqual({
+      rows: [{ key: "k", value: "owner", updatedAt: 1 }],
+      behind: [],
+    })
+    follower.coordination.dispose()
+    owner.dispose()
+  })
+
   it("broadcasts writes buffered before the claim resolved to follower", async () => {
     const owner = setup()
     await owner.database.open()

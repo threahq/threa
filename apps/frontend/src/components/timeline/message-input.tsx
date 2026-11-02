@@ -21,7 +21,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { relocateLoadedDraft, stashLoadedDraft } from "@/hooks/use-draft-message"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useComposeTrace } from "@/lib/compose-trace"
-import { getDraftPromotionSource } from "@/lib/draft-promotions"
+import { DraftPromotionAbortedError, getDraftPromotionSource } from "@/lib/draft-promotions"
 import { GUEST_DM_CLOSED_REASON, isGuestDmPolicyError } from "@/lib/guest-dm-policy"
 import { isPrivacyConfirmationError } from "@/lib/share-privacy-toast"
 import { useSharePrivacyConfirm } from "@/hooks/use-share-privacy-confirm"
@@ -748,15 +748,17 @@ function MessageInputComponent({
         navigate(result.navigateTo, { replace: result.replace ?? false })
       }
     } catch (error) {
+      const sendFailure =
+        stream?.isDraft === false
+          ? "Failed to send message. Please try again."
+          : "Failed to create stream. Please try again."
       // Route changes abort a stale promotion wait. The old scope still owns
       // its durable draft; restoring here would inject it into the next stream.
-      // Real stream message failures are handled in the timeline with retry,
-      // so this is a failed draft promotion.
-      if (!(error instanceof Error && error.name === "AbortError")) {
+      // Any other failure, a send storage could not keep among them, comes back.
+      if (!(error instanceof DraftPromotionAbortedError)) {
         composer.setContent(liveContent)
         if (isPrivacyConfirmationError(error)) blockOnPrivacy(liveContent)
-        else
-          setError(isGuestDmPolicyError(error) ? GUEST_DM_CLOSED_REASON : "Failed to create stream. Please try again.")
+        else setError(isGuestDmPolicyError(error) ? GUEST_DM_CLOSED_REASON : sendFailure)
       }
     } finally {
       composer.setIsSending(false)

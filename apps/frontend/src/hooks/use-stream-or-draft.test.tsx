@@ -91,6 +91,8 @@ async function seedWorkspaceCacheAndIdb(
 describe("useStreamOrDraft real stream send", () => {
   beforeEach(async () => {
     await clearAllCachedData()
+    // Queued sends are the user's, not cache: logout keeps them, so the cache clear does too.
+    await db.pendingMessages.clear()
   })
 
   afterEach(() => {
@@ -330,6 +332,32 @@ describe("useStreamOrDraft real stream send", () => {
       }).toEqual(
         landed ? { outcome: "sent", published: 1, queued: 1 } : { outcome: "AbortError", published: 0, queued: 0 }
       )
+    })
+  }
+
+  for (const lost of ["OutcomeUnknownError", "OwnerLostError"]) {
+    it(`writes a send again that storage never committed, failing with ${lost}`, async () => {
+      const { result } = await mountRealStreamSend()
+      const database = getActiveDb()
+      const transaction = database.transaction.bind(database) as (...args: unknown[]) => Promise<unknown>
+      let failures = 1
+      vi.spyOn(database, "transaction").mockImplementation((async (...args: unknown[]) => {
+        if (failures-- > 0) throw new Dexie.AbortError("Transaction aborted", new DOMException("Lost", lost))
+        return transaction(...args)
+      }) as never)
+
+      let sending: Promise<unknown> = Promise.resolve()
+      act(() => {
+        sending = result.current.sendMessage({
+          contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: lost }] }] },
+        })
+      })
+      await act(() => sending)
+
+      expect({
+        published: result.current.published.length,
+        queued: (await db.pendingMessages.toArray()).filter((message) => message.content === lost).length,
+      }).toEqual({ published: 1, queued: 1 })
     })
   }
 
