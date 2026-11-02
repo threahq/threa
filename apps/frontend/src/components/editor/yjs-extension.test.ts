@@ -95,6 +95,23 @@ describe("YjsCollaboration", () => {
     expect({ local: texts(editor), peer: texts(peer) }).toEqual({ local: ["theirs"], peer: ["theirs"] })
   })
 
+  it("should keep a pending bold across a collaborator's edit elsewhere in the doc", () => {
+    const ydoc = prosemirrorJSONToYDoc(getThreaSchema(), paragraphs("theirs", "mine"), DOC_FRAGMENT)
+    const peerDoc = new Y.Doc()
+    const editor = createEditor(ydoc)
+    const peer = createEditor(peerDoc)
+    connect(ydoc, peerDoc)
+
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+    editor.commands.toggleBold()
+    peer.commands.insertContentAt(1, "still ")
+
+    expect({ texts: texts(editor), storedMarks: editor.state.storedMarks?.map((mark) => mark.type.name) }).toEqual({
+      texts: ["still theirs", "mine"],
+      storedMarks: ["bold"],
+    })
+  })
+
   it("routes the platform's historyUndo and historyRedo input to the shared undo", () => {
     const editor = createEditor(new Y.Doc())
     editor.commands.insertContent("hello")
