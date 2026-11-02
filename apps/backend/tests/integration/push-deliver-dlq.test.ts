@@ -77,6 +77,8 @@ describe("dead-lettered push delivery jobs", () => {
 
   const spies: Array<{ mockRestore: () => void }> = []
   const realFailDeadLettered = PushDeliveryRepository.failDeadLettered.bind(PushDeliveryRepository)
+  const realBatchRenewClaims = QueueRepository.batchRenewClaims.bind(QueueRepository)
+  const realRenewLease = TokenPoolRepository.renewLease.bind(TokenPoolRepository)
 
   function createService() {
     return new PushService({
@@ -200,10 +202,14 @@ describe("dead-lettered push delivery jobs", () => {
         if (params.deliveryId === d.hookFails.id) throw new Error(`dlq settle failed for ${params.deliveryId}`)
         return realFailDeadLettered(db, params)
       }),
-      spyOn(QueueRepository, "batchRenewClaims").mockImplementation(async (_db, params) => {
+      // The preloaded test server's queue manager shares these repositories and
+      // logs without privateLogs, so only this test's pool may fail.
+      spyOn(QueueRepository, "batchRenewClaims").mockImplementation(async (db, params) => {
+        if (db !== pool) return realBatchRenewClaims(db, params)
         throw new Error(`renew failed for ${params.messageIds.join(",")} in ${ws}`)
       }),
-      spyOn(TokenPoolRepository, "renewLease").mockImplementation(async () => {
+      spyOn(TokenPoolRepository, "renewLease").mockImplementation(async (db, params) => {
+        if (db !== pool) return realRenewLease(db, params)
         throw new Error(`token renew failed in ${ws}`)
       })
     )
