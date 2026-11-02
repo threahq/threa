@@ -4,7 +4,7 @@ import { persistSqliteStorageMode, stopAndDestroySqliteShadow } from "@/db/sqlit
 import { useFeatureFlagWhenKnown } from "./use-feature-flags"
 
 /**
- * Persists the workspace's `sqliteStorage` flag for the next boot, which is
+ * Persists the user's `sqliteStorage` flag for the next boot, which is
  * when the mode takes effect. Turning it off also stops and deletes a running
  * mirror, the one change that is safe mid-session. Waits for the delivered
  * value: acting on the pre-bootstrap default would delete the mirror on every boot.

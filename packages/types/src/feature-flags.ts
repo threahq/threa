@@ -62,7 +62,7 @@ export const FEATURE_FLAGS = {
   // touching device-only data (unsent messages, drafts, uploads) stay strict.
   idbRelaxedDurability: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "on" }),
   // "shadow" copies every committed IndexedDB write into a SQLite database on OPFS; IndexedDB stays the source of truth and nothing reads the copy. Read at boot, so a change applies on the next load.
-  sqliteStorage: defineFlag({ values: ["off", "shadow"], scopes: ["workspace", "user"], default: "off" }),
+  sqliteStorage: defineFlag({ values: ["off", "shadow"], scopes: ["user"], default: "off" }),
   calls: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }),
   callsP2p: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "off" }),
   composeTraces: defineFlag({ values: ["off", "capture"], scopes: ["workspace"], default: "off" }),
