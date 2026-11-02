@@ -267,6 +267,9 @@ export default defineConfig({
     // pointer events for the rest of a test. The SW itself still registers.
     __E2E_BUILD__: JSON.stringify(isE2ETest),
   },
+  optimizeDeps: {
+    exclude: ["@sqlite.org/sqlite-wasm"],
+  },
   resolve: {
     dedupe: ["react", "react-dom", "katex"],
     alias: {

@@ -1,6 +1,18 @@
-import type { DBCore, DBCoreTable, DBCoreTransaction, Middleware } from "dexie"
+import type { DBCore, DBCoreKeyRange, DBCoreTable, DBCoreTransaction, Middleware } from "dexie"
 import { defaultFeatureFlagValue } from "@threahq/types"
 import { NO_CAPTURE, getPerfCapture, type PerfCaptureLike } from "@/lib/perf/capture"
+import { SQLITE_UNMIRRORED_STORES } from "./sqlite-mirror/stores"
+
+/** One successful mutation of a store, as it reached IndexedDB. */
+export type IdbWrite =
+  | { store: string; op: "put"; keys: IDBValidKey[]; values: unknown[] }
+  | { store: string; op: "delete"; keys: IDBValidKey[] }
+  | { store: string; op: "deleteRange"; range: DBCoreKeyRange }
+
+/** Receives each committed readwrite transaction's writes, in commit order. */
+export interface IdbWriteSink {
+  commit(writes: IdbWrite[]): void
+}
 
 /**
  * Stores holding what exists nowhere but this device: unsent messages,
@@ -92,16 +104,69 @@ function settle(observed: WeakMap<DBCoreTransaction, ObservedTransaction>, tx: D
   state.lastSettledAt = at
 }
 
-function trackRequests(table: DBCoreTable, observed: WeakMap<DBCoreTransaction, ObservedTransaction>): DBCoreTable {
+function bufferWrites(
+  tx: DBCoreTransaction,
+  sink: IdbWriteSink,
+  buffers: WeakMap<DBCoreTransaction, IdbWrite[]>
+): void {
+  const writes: IdbWrite[] = []
+  buffers.set(tx, writes)
+  ;(tx as unknown as IDBTransaction).addEventListener(
+    "complete",
+    () => {
+      if (writes.length > 0) sink.commit(writes)
+    },
+    { once: true }
+  )
+}
+
+function recordWrite(
+  store: string,
+  req: Parameters<DBCoreTable["mutate"]>[0],
+  res: Awaited<ReturnType<DBCoreTable["mutate"]>>,
+  writes: IdbWrite[]
+): void {
+  if (req.type === "add" || req.type === "put") {
+    const keys: IDBValidKey[] = []
+    const values: unknown[] = []
+    req.values.forEach((value, index) => {
+      if (res.failures[index]) return
+      keys.push(res.results?.[index])
+      values.push(value)
+    })
+    if (keys.length > 0) writes.push({ store, op: "put", keys, values })
+  } else if (req.type === "delete") {
+    writes.push({ store, op: "delete", keys: req.keys })
+  } else {
+    writes.push({ store, op: "deleteRange", range: req.range })
+  }
+}
+
+function trackRequests(
+  table: DBCoreTable,
+  observed: WeakMap<DBCoreTransaction, ObservedTransaction>,
+  buffers: WeakMap<DBCoreTransaction, IdbWrite[]>
+): DBCoreTable {
   const track =
     <R extends { trans: DBCoreTransaction }, T>(call: (req: R) => Promise<T>) =>
     (req: R): Promise<T> => {
       const result = call(req)
       return observed.has(req.trans) ? result.finally(() => settle(observed, req.trans)) : result
     }
+  const mutate = track((req: Parameters<DBCoreTable["mutate"]>[0]) => table.mutate(req))
+  const mirrored = !SQLITE_UNMIRRORED_STORES.has(table.name)
   return {
     ...table,
-    mutate: track((req) => table.mutate(req)),
+    mutate: (req) => {
+      const result = mutate(req)
+      const writes = mirrored ? buffers.get(req.trans) : undefined
+      return writes
+        ? result.then((res) => {
+            recordWrite(table.name, req, res, writes)
+            return res
+          })
+        : result
+    },
     get: track((req) => table.get(req)),
     getMany: track((req) => table.getMany(req)),
     query: track((req) => table.query(req)),
@@ -114,25 +179,33 @@ function trackRequests(table: DBCoreTable, observed: WeakMap<DBCoreTransaction, 
  * Sets per-transaction durability and, while a perf capture is armed, records
  * slow transactions: lifetime, a write's commit after its last request (the
  * disk flush), a read's wait for its first result, and a bitmask of its stores
- * (bit = index in the schema's store names, sorted).
+ * (bit = index in the schema's store names, sorted). While `currentSink`
+ * answers a sink, each readwrite transaction's successful mutations are handed
+ * to it once the transaction commits; an aborted transaction hands over nothing.
+ * The sink is read per transaction because the table core is cached at open.
  */
-export const transactionMiddleware: Middleware<DBCore> = {
-  stack: "dbcore",
-  name: "threaTransactions",
-  create(down) {
-    const storeOrder = down.schema.tables.map((table) => table.name).sort()
-    const observed = new WeakMap<DBCoreTransaction, ObservedTransaction>()
-    return {
-      transaction(stores, mode, options) {
-        const durability = transactionDurability(stores, mode, relaxedDurability)
-        const tx = down.transaction(stores, mode, durability ? { ...options, durability } : options)
-        const capture = getPerfCapture()
-        if (capture !== NO_CAPTURE) observe(tx, stores, mode, storeOrder, capture, observed)
-        return tx
-      },
-      table(name) {
-        return trackRequests(down.table(name), observed)
-      },
-    }
-  },
+export function createTransactionMiddleware(currentSink: () => IdbWriteSink | null): Middleware<DBCore> {
+  return {
+    stack: "dbcore",
+    name: "threaTransactions",
+    create(down) {
+      const storeOrder = down.schema.tables.map((table) => table.name).sort()
+      const observed = new WeakMap<DBCoreTransaction, ObservedTransaction>()
+      const buffers = new WeakMap<DBCoreTransaction, IdbWrite[]>()
+      return {
+        transaction(stores, mode, options) {
+          const durability = transactionDurability(stores, mode, relaxedDurability)
+          const tx = down.transaction(stores, mode, durability ? { ...options, durability } : options)
+          const capture = getPerfCapture()
+          if (capture !== NO_CAPTURE) observe(tx, stores, mode, storeOrder, capture, observed)
+          const sink = mode === "readwrite" ? currentSink() : null
+          if (sink) bufferWrites(tx, sink, buffers)
+          return tx
+        },
+        table(name) {
+          return trackRequests(down.table(name), observed, buffers)
+        },
+      }
+    },
+  }
 }
