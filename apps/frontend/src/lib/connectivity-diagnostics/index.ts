@@ -23,7 +23,6 @@ export {
 } from "./facade"
 
 export type ConnectivityEvent =
-  | "http_start"
   | "http_upload_complete"
   | "http_headers"
   | "http_body_complete"
@@ -37,11 +36,11 @@ export type ConnectivityEvent =
   | "socket_reconnect_start"
   | "socket_reconnect_error"
   | "socket_reconnect_exhausted"
-  | "room_join_start"
   | "room_join_ack"
   | "room_join_failure"
   | "room_join_abort"
   | "room_join_connection_wait"
+  | "room_join_wave"
   | "message_queue_blocked"
   | "message_queue_unblocked"
   | "diagnostics_dropped"
@@ -84,6 +83,13 @@ export interface DiagnosticFields {
   blockedBy?: "socket" | "in_flight" | "lock"
   dropReason?: DropReason
   dropped?: number
+  elapsedMs?: number
+  count?: number
+  failed?: number
+  interrupted?: number
+  p50Ms?: number
+  p95Ms?: number
+  maxMs?: number
 }
 
 interface DiagnosticRow extends DiagnosticFields {
@@ -729,6 +735,14 @@ function projectFields(fields: DiagnosticFields): DiagnosticFields {
     result.dropped = fields.dropped
   }
   if (oneOf(fields.blockedBy, ["socket", "in_flight", "lock"])) result.blockedBy = fields.blockedBy
+  const boundedInteger = (value: number | undefined, max: number) =>
+    Number.isSafeInteger(value) && value! >= 0 && value! <= max
+  for (const key of ["elapsedMs", "p50Ms", "p95Ms", "maxMs"] as const) {
+    if (boundedInteger(fields[key], 86_400_000)) result[key] = fields[key]
+  }
+  for (const key of ["count", "failed", "interrupted"] as const) {
+    if (boundedInteger(fields[key], 100_000)) result[key] = fields[key]
+  }
   return result
 }
 
@@ -745,9 +759,11 @@ export function beginConnectivityObservation(fields: DiagnosticFields = {}): Con
   if (!captured) return NOOP_OBSERVATION
   const id = createDiagnosticId()
   const base = projectFields({ ...fields, operationId: fields.operationId ?? id })
+  const startedAt = performance.now()
   const record = (event: ConnectivityEvent, extra: DiagnosticFields = {}) => {
     if (runtime?.generation !== captured.generation || runtime.scope !== captured.scope) return
-    recordForRuntime(captured, event, { ...base, ...projectFields(extra) })
+    const elapsedMs = Math.round(performance.now() - startedAt)
+    recordForRuntime(captured, event, { ...base, ...projectFields(extra), elapsedMs })
   }
   return {
     id,

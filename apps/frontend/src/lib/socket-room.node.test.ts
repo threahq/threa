@@ -1,7 +1,7 @@
 import { afterEach, describe, it, expect, vi } from "vitest"
 import type { Socket } from "socket.io-client"
 import * as diagnosticsModule from "./connectivity-diagnostics/facade"
-import { joinRoomBestEffort, joinRoomFireAndForget, joinRoomWithAck } from "./socket-room"
+import { joinRoomBestEffort, joinRoomFireAndForget, joinRoomWithAck, SLOW_JOIN_ACK_MS } from "./socket-room"
 
 type EventHandler = (...args: unknown[]) => void
 
@@ -108,10 +108,7 @@ describe("joinRoomWithAck", () => {
     await expect(joinRoomWithAck(asSocket(socket), "ws:workspace_1", { timeoutMs: 20 })).rejects.toThrow(
       'Timed out waiting for join ack for room "ws:workspace_1"'
     )
-    expect(events).toEqual([
-      { event: "room_join_start", fields: {} },
-      { event: "room_join_failure", fields: { reason: "timeout" } },
-    ])
+    expect(events).toEqual([{ event: "room_join_failure", fields: { reason: "timeout" } }])
   })
 
   it("should not infer a timeout reason from a server error message", async () => {
@@ -122,10 +119,7 @@ describe("joinRoomWithAck", () => {
     await expect(joinRoomWithAck(asSocket(socket), "ws:workspace_1")).rejects.toThrow(
       "Timed out according to the server"
     )
-    expect(events).toEqual([
-      { event: "room_join_start", fields: {} },
-      { event: "room_join_failure", fields: { reason: "unknown" } },
-    ])
+    expect(events).toEqual([{ event: "room_join_failure", fields: { reason: "unknown" } }])
   })
 
   it("should dedupe concurrent joins for the same room", async () => {
@@ -188,10 +182,132 @@ describe("joinRoomWithAck", () => {
     await expect(joinPromise).rejects.toThrow('Join aborted for room "ws:workspace_1"')
     expect(socket.emitCalls).toBe(0)
     expect(events).toEqual([
-      { event: "room_join_start", fields: {} },
       { event: "room_join_connection_wait", fields: {} },
       { event: "room_join_abort", fields: { reason: "abort" } },
     ])
+  })
+})
+
+describe("join wave summary", () => {
+  afterEach(() => vi.useRealTimers())
+
+  function captureObservations() {
+    const rows: Array<{ event: diagnosticsModule.ConnectivityEvent; fields: diagnosticsModule.DiagnosticFields }> = []
+    vi.spyOn(diagnosticsModule, "beginConnectivityObservation").mockImplementation((base = {}) => ({
+      id: "obs",
+      record: (event, fields = {}) => rows.push({ event, fields: { ...base, ...fields } }),
+      stall: () => () => {},
+    }))
+    return rows
+  }
+
+  const waveOf = (fields: diagnosticsModule.DiagnosticFields) => ({ event: "room_join_wave", fields })
+
+  it("should summarize a rejoin burst as one wave event and keep fast acks out of per-join rows", async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+    socket.ackDelayMs = 10
+    diagnosticsModule.setSocketDiagnosticContext(socket, { connectionId: "conn_1", generation: 3 })
+    const rows = captureObservations()
+
+    const burst = [
+      joinRoomWithAck(asSocket(socket), "ws:w:stream:a"),
+      joinRoomWithAck(asSocket(socket), "ws:w:stream:b"),
+    ]
+    await vi.advanceTimersByTimeAsync(10)
+    await Promise.all(burst)
+    socket.ackResult = { ok: false, error: "denied" }
+    socket.ackDelayMs = 30
+    const late = joinRoomWithAck(asSocket(socket), "ws:w:stream:c").catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(30)
+    await late
+    await vi.advanceTimersByTimeAsync(1000)
+
+    const context = { connectionId: "conn_1", generation: 3 }
+    expect(rows).toEqual([
+      { event: "room_join_failure", fields: { ...context, room: "stream", reason: "unknown" } },
+      waveOf({ ...context, count: 3, failed: 1, interrupted: 0, p50Ms: 10, p95Ms: 10, maxMs: 10 }),
+    ])
+  })
+
+  it("should count disconnect interruptions in the wave without a row per join, and leave aborts out", async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+    socket.ackDelayMs = 50
+    diagnosticsModule.setSocketDiagnosticContext(socket, { connectionId: "conn_flap", generation: 1 })
+    const rows = captureObservations()
+    const controller = new AbortController()
+
+    const joins = [
+      joinRoomWithAck(asSocket(socket), "ws:w:stream:a"),
+      joinRoomWithAck(asSocket(socket), "ws:w:stream:b"),
+      joinRoomWithAck(asSocket(socket), "ws:w:stream:c", { signal: controller.signal }),
+    ].map((join) => join.catch((error: unknown) => error))
+    controller.abort()
+    await vi.advanceTimersByTimeAsync(0)
+    socket.trigger("disconnect", "transport close")
+    await Promise.all(joins)
+    await vi.advanceTimersByTimeAsync(1000)
+
+    const context = { connectionId: "conn_flap", generation: 1 }
+    expect(rows).toEqual([
+      { event: "room_join_abort", fields: { ...context, room: "stream", reason: "abort" } },
+      waveOf({ ...context, count: 2, failed: 0, interrupted: 2, p50Ms: undefined, p95Ms: undefined, maxMs: undefined }),
+    ])
+  })
+
+  it("should start a new wave when the socket reconnects mid-wave", async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+    socket.ackDelayMs = 10
+    diagnosticsModule.setSocketDiagnosticContext(socket, { connectionId: "conn_split", generation: 1 })
+    const rows = captureObservations()
+
+    const before = joinRoomWithAck(asSocket(socket), "ws:w:stream:a")
+    diagnosticsModule.setSocketDiagnosticContext(socket, { connectionId: "conn_split", generation: 2 })
+    const after = joinRoomWithAck(asSocket(socket), "ws:w:stream:b")
+    await vi.advanceTimersByTimeAsync(10)
+    await Promise.all([before, after])
+    await vi.advanceTimersByTimeAsync(1000)
+
+    const wave = { connectionId: "conn_split", count: 1, failed: 0, interrupted: 0, p50Ms: 10, p95Ms: 10, maxMs: 10 }
+    expect(rows).toEqual([waveOf({ ...wave, generation: 1 }), waveOf({ ...wave, generation: 2 })])
+  })
+
+  it("should measure ack latency from the emit, not from the connection wait", async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+    socket.connected = false
+    socket.ackDelayMs = 10
+    diagnosticsModule.setSocketDiagnosticContext(socket, { connectionId: "conn_wait", generation: 1 })
+    const rows = captureObservations()
+
+    const join = joinRoomWithAck(asSocket(socket), "ws:w:stream:a", { timeoutMs: 10_000 })
+    await vi.advanceTimersByTimeAsync(2 * SLOW_JOIN_ACK_MS)
+    socket.connected = true
+    socket.trigger("connect")
+    await vi.advanceTimersByTimeAsync(10)
+    await join
+    await vi.advanceTimersByTimeAsync(1000)
+
+    const context = { connectionId: "conn_wait", generation: 1 }
+    expect(rows).toEqual([
+      { event: "room_join_connection_wait", fields: { ...context, room: "stream" } },
+      waveOf({ ...context, count: 1, failed: 0, interrupted: 0, p50Ms: 10, p95Ms: 10, maxMs: 10 }),
+    ])
+  })
+
+  it("should still record a slow ack individually", async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+    socket.ackDelayMs = SLOW_JOIN_ACK_MS
+    const perJoin = captureJoinEvents()
+
+    const join = joinRoomWithAck(asSocket(socket), "ws:w:stream:slow")
+    await vi.advanceTimersByTimeAsync(SLOW_JOIN_ACK_MS)
+    await join
+
+    expect(perJoin).toEqual([{ event: "room_join_ack", fields: {} }])
   })
 })
 
