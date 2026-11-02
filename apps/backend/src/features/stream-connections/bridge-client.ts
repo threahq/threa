@@ -34,6 +34,8 @@ const RETRYABLE_STATUSES = new Set([401, 408, 429])
 
 const REQUEST_TIMEOUT_MS = 5_000
 
+const isRetryable = (status: number): boolean => RETRYABLE_STATUSES.has(status) || status >= 500
+
 type BridgeMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
 
 export interface ConnectionAddress {
@@ -177,15 +179,23 @@ export class BridgeClient {
     await this.write(address, `${reactionPath(params.streamId, params.messageId, params.emoji)}?${query}`, "DELETE")
   }
 
+  /** A read the host never answered, answered with a 5xx, or asked to slow down may be retried. */
   private async request(
     address: ConnectionAddress,
     path: string,
     method: "GET" | "POST",
     body?: unknown
   ): Promise<Response> {
-    const res = await this.send(address, path, method, body)
-    if (!res.ok) throw new Error(`Bridge ${method} ${path.split("?")[0]} answered ${res.status}`)
-    return res
+    const where = `${method} ${path.split("?")[0]}`
+    let res: Response
+    try {
+      res = await this.send(address, path, method, body)
+    } catch (error) {
+      throw hostUnreachable(`Bridge ${where} failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    if (res.ok) return res
+    const answer = `Bridge ${where} answered ${res.status}`
+    throw isRetryable(res.status) ? hostUnreachable(answer) : new Error(answer)
   }
 
   /**
@@ -213,7 +223,7 @@ export class BridgeClient {
       .catch(() => "")
     const answer = `Bridge ${where} answered ${res.status}${reason}`
     logger.warn({ ...address, where, status: res.status }, answer)
-    throw RETRYABLE_STATUSES.has(res.status) || res.status >= 500 ? hostUnreachable(answer) : writeRefused(answer)
+    throw isRetryable(res.status) ? hostUnreachable(answer) : writeRefused(answer)
   }
 
   private send(address: ConnectionAddress, path: string, method: BridgeMethod, body?: unknown): Promise<Response> {

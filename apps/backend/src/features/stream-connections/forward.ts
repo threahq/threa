@@ -12,8 +12,9 @@ import { MessageRepository, type Message } from "../messaging"
 import type { FeatureFlagService } from "../feature-flags"
 import type { Stream } from "../streams"
 import { UserRepository } from "../workspaces"
+import { logger } from "../../lib/logger"
 import type { BridgeClient } from "./bridge-client"
-import { copyWriteUnsupported, hostUnreachable, writeRefused } from "./errors"
+import { copyWriteUnsupported, hostUnreachable, isHostUnreachable, writeRefused } from "./errors"
 import { bridgeAddress, toActivePartner, type StreamConnectionPullService } from "./pull"
 import { StreamConnectionRepository, type ConnectionRef } from "./repository"
 
@@ -179,10 +180,7 @@ export class StreamConnectionForwardService {
     const rows = await AttachmentRepository.findByIds(this.pool, workspaceId, ids)
     const sendable = rows.filter(
       (row) =>
-        row.uploadedBy === userId &&
-        row.messageId === null &&
-        !row.e2eOnly &&
-        BINDABLE_STATUSES.has(row.safetyStatus)
+        row.uploadedBy === userId && row.messageId === null && !row.e2eOnly && BINDABLE_STATUSES.has(row.safetyStatus)
     )
     if (sendable.length !== ids.length) {
       throw copyWriteUnsupported("Only files you just uploaded can be sent to a shared channel")
@@ -207,7 +205,12 @@ export class StreamConnectionForwardService {
 
   private async catchUp(ref: ConnectionRef, streamId: string): Promise<void> {
     for (let attempt = 0; attempt < PULL_ATTEMPTS; attempt++) {
-      if (await this.pullService.pull(ref, { streamId })) return
+      try {
+        if (await this.pullService.pull(ref, { streamId })) return
+      } catch (error) {
+        if (!isHostUnreachable(error)) throw error
+        logger.warn({ ...ref, streamId, attempt, err: error }, "Catch-up pull could not reach the host")
+      }
     }
     throw hostUnreachable(`Stream ${streamId} did not catch up with its host`)
   }

@@ -20,3 +20,7 @@ export function copyWriteUnsupported(reason: string): HttpError {
 export function hostUnreachable(reason: string): HttpError {
   return new HttpError(reason, { status: 503, code: StreamConnectionErrorCodes.HOST_UNREACHABLE })
 }
+
+export function isHostUnreachable(error: unknown): boolean {
+  return error instanceof HttpError && error.code === StreamConnectionErrorCodes.HOST_UNREACHABLE
+}
