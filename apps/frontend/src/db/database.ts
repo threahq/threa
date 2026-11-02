@@ -1226,6 +1226,8 @@ export class ThreaDatabase extends Dexie {
   readonly sqliteWriter: IdbWriter
   private idbOpened = false
   private idbOpenWaiters: Array<() => void> = []
+  private storageFailed = false
+  private readonly storageFailureListeners = new Set<() => void>()
 
   private upgradeRecoveryAvailable = true
 
@@ -1946,6 +1948,22 @@ export class ThreaDatabase extends Dexie {
     this.sqliteWriter.close()
   }
 
+  /** SQLite storage cannot serve this database, and the user has to be told; what it holds is kept. */
+  get storageFailure(): boolean {
+    return this.storageFailed
+  }
+
+  reportStorageFailure(failed: boolean): void {
+    if (this.storageFailed === failed) return
+    this.storageFailed = failed
+    for (const listener of this.storageFailureListeners) listener()
+  }
+
+  onStorageFailure(listener: () => void): () => void {
+    this.storageFailureListeners.add(listener)
+    return () => this.storageFailureListeners.delete(listener)
+  }
+
   /** Resolves once IndexedDB is open and upgraded, before the rest of `open()`'s ready handlers have run. */
   whenIdbOpen(): Promise<void> {
     if (this.idbOpened) return Promise.resolve()
@@ -1963,6 +1981,8 @@ export class ThreaDatabase extends Dexie {
   private openNow(): PromiseExtended<Dexie> {
     return super.open().catch((error: unknown) => {
       if (!this.upgradeRecoveryAvailable || !isRecoverableOpenFailure(error)) throw error
+      // Under read-write storage the failure may be SQLite's, and IndexedDB holds the stores SQLite never copies.
+      if (this.sqliteMirror?.mode === "read-write") throw error
       this.upgradeRecoveryAvailable = false
       console.error(`[db] upgrade failed for ${this.name}; deleting the cache and reopening cold`, error)
       this.close()

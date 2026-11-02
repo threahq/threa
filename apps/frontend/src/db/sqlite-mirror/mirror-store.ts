@@ -65,6 +65,8 @@ const WRITERS_TABLE = "_mirror_writers"
 const VERSION_KEY = "idbVersion"
 const SCHEMA_KEY = "schema"
 const INCARNATION_KEY = "incarnation"
+/** Rows per progress report of a long request, and per backlog batch of a reseed. */
+const ROWS_PER_STEP = 500
 /** Per writer and store: commits applied before the one they follow, which may never arrive. */
 const MAX_UNCHAINED_COMMITS = 1024
 const STORE_NAME_PATTERN = /^[A-Za-z0-9_]+$/
@@ -161,7 +163,7 @@ export class MirrorStore {
    * upgrade functions rewrite rows inside the versionchange transaction,
    * which the mirror never sees.
    */
-  ensureSchema(schema: MirrorStoreSchema[], idbVersion: number): void {
+  ensureSchema(schema: MirrorStoreSchema[], idbVersion: number, progress: () => void = () => {}): void {
     for (const { name } of schema) {
       if (!STORE_NAME_PATTERN.test(name)) throw new Error(`Invalid store name for mirroring: ${name}`)
     }
@@ -184,7 +186,7 @@ export class MirrorStore {
       for (const old of previous.values()) {
         if (!next.has(old.name)) this.dropStore(old)
       }
-      for (const store of schema) this.reconcileStore(store, previous.get(store.name))
+      for (const store of schema) this.reconcileStore(store, previous.get(store.name), progress)
       if (storedVersion !== undefined && storedVersion !== String(idbVersion)) {
         this.db.exec(`DELETE FROM ${META_TABLE} WHERE key LIKE 'backfilled:%'`)
         this.db.exec(`DELETE FROM ${WRITERS_TABLE}`)
@@ -211,6 +213,35 @@ export class MirrorStore {
       this.run(`INSERT OR REPLACE INTO ${META_TABLE} (key, value) VALUES (?, ?)`, [INCARNATION_KEY, incarnation])
     })
     this.loadState()
+  }
+
+  /**
+   * Under read-write storage SQLite is the primary copy, so a recreated
+   * IndexedDB, its backup, gets every row again through the backlog, after
+   * what the backlog already holds; nothing SQLite holds is dropped.
+   */
+  reseed(incarnation: string, progress: () => void): void {
+    this.db.transaction(() => {
+      for (const { name } of this.schema.values()) {
+        let entries: MirrorEntry[] = []
+        const flush = () => {
+          if (entries.length > 0) this.appendBacklog([{ store: name, op: "put", entries }])
+          entries = []
+          progress()
+        }
+        this.db.exec({
+          sql: `SELECT k, v FROM ${storeTable(name)} ORDER BY k`,
+          rowMode: "array",
+          callback: (row) => {
+            const [key, value] = row as [Uint8Array, string]
+            entries.push({ key, value })
+            if (entries.length === ROWS_PER_STEP) flush()
+          },
+        })
+        flush()
+      }
+      this.run(`INSERT OR REPLACE INTO ${META_TABLE} (key, value) VALUES (?, ?)`, [INCARNATION_KEY, incarnation])
+    })
   }
 
   status(): MirrorStatus {
@@ -454,7 +485,11 @@ export class MirrorStore {
     this.db.exec({ sql: `DELETE FROM ${META_TABLE} WHERE key = ?`, bind: [`backfilled:${store.name}`] })
   }
 
-  private reconcileStore(store: MirrorStoreSchema, previous: MirrorStoreSchema | undefined): void {
+  private reconcileStore(
+    store: MirrorStoreSchema,
+    previous: MirrorStoreSchema | undefined,
+    progress: () => void
+  ): void {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS ${storeTable(store.name)} (k BLOB PRIMARY KEY, v TEXT NOT NULL) WITHOUT ROWID`
     )
@@ -467,6 +502,7 @@ export class MirrorStore {
       const old = previous?.indexes.find((candidate) => candidate.name === index.name)
       if (old && sameIndex(old, index)) continue
       const table = indexTable(store.name, index.name)
+      let rows = 0
       this.db.exec(`DROP TABLE IF EXISTS ${table}`)
       this.db.exec(`CREATE TABLE ${table} (ik BLOB NOT NULL, k BLOB NOT NULL, PRIMARY KEY (ik, k)) WITHOUT ROWID`)
       this.db.exec(`CREATE INDEX ${indexTable(store.name, `${index.name}__k`)} ON ${table} (k)`)
@@ -478,6 +514,7 @@ export class MirrorStore {
           for (const ik of indexKeys(decodeValue(v), index.keyPath, index.multiEntry)) {
             this.run(`INSERT OR IGNORE INTO ${table} (ik, k) VALUES (?, ?)`, [ik, k])
           }
+          if (++rows % ROWS_PER_STEP === 0) progress()
         },
       })
     }

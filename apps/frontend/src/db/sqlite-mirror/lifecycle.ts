@@ -4,7 +4,6 @@ import { discardPrefetches } from "../prefetch-inbox"
 import {
   DEFAULT_DEADLINES,
   createBrowserMirror,
-  mirrorEverRan,
   mirroredSchema,
   withProgressDeadline,
   type SqliteMirror,
@@ -15,6 +14,7 @@ import type { MirrorReply, MirrorRequest, MirrorTransport } from "./protocol"
 import {
   REQUESTED_PREFIX,
   browserModeLock,
+  mayBeReadWrite,
   parseMode,
   readRecordedMode,
   ranRequestedMode,
@@ -89,12 +89,25 @@ export function startSqliteMirror(
  * Only a boot holding every other tab out changes it to the flag's, landing
  * SQLite's backlog first when leaving read-write; entering read-write is
  * decided by the mirror, once it knows SQLite holds every store in full.
+ * `null` without Web Locks: no mirror can run, so a database recorded
+ * read-write fails to open rather than open its backup.
  */
 export function resumeSqliteMirror(database: ThreaDatabase, boot: StorageBoot | null = browserBoot(database)): void {
-  if (boot) database.sqliteBoot = bootStorage(database, boot)
+  const booted = boot ? bootStorage(database, boot) : refuseReadWrite(database.name)
+  database.sqliteBoot = booted.catch((error: unknown) => {
+    database.reportStorageFailure(true)
+    throw error
+  })
 }
 
-/** Without Web Locks no tab can run a mirror, so none can have made SQLite the primary copy. */
+async function refuseReadWrite(name: string): Promise<void> {
+  if ((await recordedModeAtBoot(name)) === "read-write") throw cannotRunReadWrite(name)
+}
+
+function cannotRunReadWrite(name: string): Error {
+  return new Error(`SQLite holds the primary copy of ${name}, but SQLite storage cannot run in this tab`)
+}
+
 function browserBoot(database: ThreaDatabase): StorageBoot | null {
   if (typeof navigator === "undefined" || !navigator.locks) return null
   reloadWhenAsked()
@@ -124,6 +137,10 @@ async function bootStorage(database: ThreaDatabase, boot: StorageBoot): Promise<
   const running = entering ? "read-write" : mode
   if (running !== "off") startSqliteMirror(database, running, boot.createMirror, entering)
   const mirror = database.sqliteMirror
+  if (!mirror && mode === "read-write") {
+    release?.()
+    throw cannotRunReadWrite(name)
+  }
   if (release) {
     // Entering read-write holds the others out until the mirror decided, recording the mode before any of them boots.
     // A boot taking the exclusive side before this tab's shared one is granted re-reads that mode, so it switches
@@ -137,9 +154,10 @@ async function bootStorage(database: ThreaDatabase, boot: StorageBoot): Promise<
 }
 
 /**
- * The recorded mode, retried. Unreadable, it is unknown: a database no mirror
- * ever ran for cannot have made SQLite its primary copy, so it runs off; any
- * other boot fails rather than open IndexedDB, possibly a stale backup.
+ * The recorded mode, retried. Unreadable, it is unknown: a database never
+ * recorded read-write since it last recorded another mode cannot have SQLite
+ * as its primary copy, so it runs off; any other boot fails rather than open
+ * IndexedDB, possibly a stale backup.
  */
 async function recordedModeAtBoot(name: string): Promise<SqliteStorageMode> {
   for (let attempt = 1; ; attempt++) {
@@ -151,10 +169,10 @@ async function recordedModeAtBoot(name: string): Promise<SqliteStorageMode> {
         continue
       }
       getPerfCapture().count("sqlite.mirrorFailure")
-      if (mirrorEverRan(name)) {
+      if (mayBeReadWrite(name)) {
         throw new Error(`Cannot tell whether SQLite holds the primary copy of ${name}`, { cause: error })
       }
-      console.error(`SQLite storage mode of ${name} is unreadable; no mirror ever ran for it, so it runs off`, error)
+      console.error(`SQLite storage mode of ${name} is unreadable; it was never read-write, so it runs off`, error)
       return "off"
     }
   }

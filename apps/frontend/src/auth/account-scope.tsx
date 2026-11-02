@@ -1,9 +1,19 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react"
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react"
 import type { QueryClient } from "@tanstack/react-query"
 import { API_BASE } from "@/api/client"
 import { FallbackLoader } from "@/components/fallback-loader"
 import { ErrorView } from "@/components/error-view"
 import { Button } from "@/components/ui/button"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { accountHomePath } from "@/lib/last-workspace"
 import { ThreaDatabase, accountDbName } from "@/db"
 // Imported from the module directly, not the @/db barrel: AccountScope is the
@@ -184,6 +194,25 @@ function LandingFailed({ onRetry }: { onRetry: () => void }) {
         <Button onClick={onRetry}>Try again</Button>
       </ErrorView>
     </div>
+  )
+}
+
+// Over the app rather than in place of it: what the user has typed but not yet
+// sent lives only in the mounted tree.
+function StorageFailure({ db }: { db: ThreaDatabase }) {
+  const subscribe = useCallback((listener: () => void) => db.onStorageFailure(listener), [db])
+  const failed = useSyncExternalStore(subscribe, () => db.storageFailure)
+  if (!failed) return null
+  return (
+    <Alert variant="destructive" className="fixed inset-x-4 top-4 z-50 mx-auto max-w-md bg-background shadow-lg">
+      <AlertTitle>Storage on this device stopped responding</AlertTitle>
+      <AlertDescription className="flex items-center justify-between gap-4">
+        <p>Reload to try again. If it keeps happening, free up disk space.</p>
+        <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
+          Reload
+        </Button>
+      </AlertDescription>
+    </Alert>
   )
 }
 
@@ -399,7 +428,12 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
   else if (handingOver || pendingLanding) body = <FallbackLoader />
   else body = <ScopedRoot key={`${effectiveId ?? NO_ACCOUNT_KEY}#${resumeNonce}`}>{children}</ScopedRoot>
 
-  return <AccountScopeContext.Provider value={value}>{body}</AccountScopeContext.Provider>
+  return (
+    <AccountScopeContext.Provider value={value}>
+      {body}
+      {adoptedId && <StorageFailure db={resolveDb(adoptedId)} />}
+    </AccountScopeContext.Provider>
+  )
 }
 
 function ScopedRoot({ children }: { children: ReactNode }) {

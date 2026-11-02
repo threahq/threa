@@ -333,6 +333,43 @@ describe("useStreamOrDraft real stream send", () => {
     })
   }
 
+  it("keeps a send whose commit lost its answer while storage cannot yet say whether it landed", async () => {
+    const { result } = await mountRealStreamSend()
+    const database = getActiveDb()
+    const transaction = database.transaction.bind(database) as (...args: unknown[]) => Promise<unknown>
+    vi.spyOn(database, "transaction").mockImplementation((async (...args: unknown[]) => {
+      await transaction(...args)
+      const lost = new DOMException("SQLite storage stopped answering while committing", "OutcomeUnknownError")
+      throw new Dexie.AbortError("Transaction aborted", lost)
+    }) as never)
+    const get = db.pendingMessages.get.bind(db.pendingMessages)
+    let unanswered = 1
+    vi.spyOn(db.pendingMessages, "get").mockImplementation(((key: string) =>
+      unanswered-- > 0
+        ? Promise.reject(new DOMException("SQLite storage is unavailable in this tab", "UnknownError"))
+        : get(key)) as never)
+    vi.spyOn(console, "error").mockImplementation(() => {})
+
+    let sending: Promise<unknown> = Promise.resolve()
+    act(() => {
+      sending = result.current.sendMessage({
+        contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "unknown" }] }] },
+      })
+    })
+    const outcome = await act(() =>
+      sending.then(
+        () => "sent",
+        (error: Error) => error.name
+      )
+    )
+
+    expect({
+      outcome,
+      published: result.current.published.length,
+      queued: (await db.pendingMessages.toArray()).filter((message) => message.content === "unknown").length,
+    }).toEqual({ outcome: "sent", published: 1, queued: 1 })
+  })
+
   it("shows the sent row before its compose trace resolves and stores the trace once it does", async () => {
     const { result } = await mountRealStreamSend()
     let finishTrace: (trace: ComposeTrace) => void = () => {}

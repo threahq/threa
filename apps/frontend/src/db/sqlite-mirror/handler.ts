@@ -42,8 +42,10 @@ const WRITES_OUTSIDE: ReadonlySet<MirrorRequest["type"]> = new Set([
   "backfillChunk",
   "backfillFinish",
   "reset",
+  "reseed",
   "forgetWriters",
   "backlog",
+  "backlogDone",
 ])
 
 /** Under the owner's 30 s worker deadline, so a frozen tab's transaction ends before the owner presumes its worker dead. */
@@ -130,7 +132,7 @@ export function createMirrorHandler(
     end(transaction)
   }
 
-  async function run(request: MirrorRequest): Promise<ReplyData> {
+  async function run(request: MirrorRequest, progress: () => void): Promise<ReplyData> {
     if (request.type === "open") {
       session?.database.close()
       session = null
@@ -138,7 +140,7 @@ export function createMirrorHandler(
       // The pool VFS has no shared memory, so SQLite keeps its rollback journal; NORMAL there can corrupt the file on power loss.
       database.db.exec("PRAGMA synchronous=FULL")
       const store = new MirrorStore(database.db)
-      store.ensureSchema(request.schema, request.idbVersion)
+      store.ensureSchema(request.schema, request.idbVersion, progress)
       session = { database, store }
       return { backlog: backlogSize(database.db) }
     }
@@ -226,6 +228,9 @@ export function createMirrorHandler(
         store.reset(request.incarnation)
         return {}
       }
+      case "reseed":
+        store.reseed(request.incarnation, progress)
+        return {}
       case "forgetWriters":
         store.forgetWriters(request.writers)
         return {}
@@ -240,11 +245,11 @@ export function createMirrorHandler(
     }
   }
 
-  async function timed(request: MirrorRequest, onStart: () => void): Promise<MirrorReply> {
-    onStart()
+  async function timed(request: MirrorRequest, progress: () => void): Promise<MirrorReply> {
+    progress()
     const startedAt = performance.now()
     try {
-      const data = await run(request)
+      const data = await run(request, progress)
       return { ok: true, ms: performance.now() - startedAt, ...data }
     } catch (error) {
       // A transaction whose begin or commit failed must not hold the others back.
@@ -256,36 +261,36 @@ export function createMirrorHandler(
     }
   }
 
-  /** `onStart` runs as the request begins, so the caller can tell a busy worker from a dead one. */
-  function handle(request: MirrorRequest, onStart: () => void = () => {}): Promise<MirrorReply> {
+  /** `progress` runs as the request begins and while a long one runs, so the caller can tell a busy worker from a dead one. */
+  function handle(request: MirrorRequest, progress: () => void = () => {}): Promise<MirrorReply> {
     const wait = (readonly: boolean, begin?: Begin) =>
       new Promise<MirrorReply>((resolve) =>
-        queued.push({ begin, readonly, release: () => resolve(dispatch(request, onStart)) })
+        queued.push({ begin, readonly, release: () => resolve(dispatch(request, progress)) })
       )
     if (request.type === "begin") {
       if (queued.length > 0 || !admissible(request.readonly)) return wait(request.readonly, request)
       admit(request)
-      return dispatch(request, onStart)
+      return dispatch(request, progress)
     }
     const tx = txOf(request)
     if (tx !== undefined) {
       if (queued.some(({ begin }) => begin?.tx === tx)) {
-        return new Promise((resolve) => held.push(() => resolve(handle(request, onStart))))
+        return new Promise((resolve) => held.push(() => resolve(handle(request, progress))))
       }
       clearTimeout(admitted.get(tx)?.idle)
-      return dispatch(request, onStart)
+      return dispatch(request, progress)
     }
     if (WRITES_OUTSIDE.has(request.type)) {
-      return queued.length > 0 || !admissible(false) ? wait(false) : dispatch(request, onStart)
+      return queued.length > 0 || !admissible(false) ? wait(false) : dispatch(request, progress)
     }
     // Behind a write outside any transaction that arrived first, so what was asked first is answered first.
     if (queued.some(({ begin }) => !begin)) return wait(true)
-    if (writer !== null) return new Promise((resolve) => held.push(() => resolve(handle(request, onStart))))
-    return dispatch(request, onStart)
+    if (writer !== null) return new Promise((resolve) => held.push(() => resolve(handle(request, progress))))
+    return dispatch(request, progress)
   }
 
-  function dispatch(request: MirrorRequest, onStart: () => void): Promise<MirrorReply> {
-    const reply = tail.then(() => timed(request, onStart))
+  function dispatch(request: MirrorRequest, progress: () => void): Promise<MirrorReply> {
+    const reply = tail.then(() => timed(request, progress))
     tail = reply
     const tx = txOf(request)
     if (tx !== undefined) {

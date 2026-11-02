@@ -38,6 +38,17 @@ const get = (key: string, tx?: number): MirrorRequest => ({ type: "get", store: 
 const failure = (reply: MirrorReply) => (reply.ok ? null : reply.error)
 
 describe("mirror handler", () => {
+  it("reports progress through an index rebuild, so a long open is not taken for a dead worker", async () => {
+    const send = await openHandler()
+    const entries = Array.from({ length: 2000 }, (_, n) => ({ key: encodeKey(n), value: encodeValue({ n }) }))
+    await send({ type: "apply", batch: [{ store: "a", op: "put", entries }] })
+    const reopened = createMirrorHandler(async () => ({ db, close: () => {}, destroy: async () => {} }))
+    let reports = 0
+    const schema = [{ name: "a", indexes: [{ name: "n", keyPath: "n", multiEntry: false }] }]
+    await reopened.handle({ type: "open", idbName: "test", schema, idbVersion: 1 }, () => reports++)
+    expect(reports).toBe(5)
+  })
+
   it("syncs every commit to disk, whatever the connection was set to before it opened", async () => {
     db.exec("PRAGMA synchronous=OFF")
     const send = await openHandler()

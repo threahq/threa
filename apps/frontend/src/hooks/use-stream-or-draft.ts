@@ -522,6 +522,25 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
   }
 }
 
+const FIRST_LANDED_CHECK_RETRY_MS = 250
+const MAX_LANDED_CHECK_RETRY_MS = 30_000
+
+/**
+ * Whether a send whose commit lost its answer landed, asked until storage
+ * answers: a failed check says nothing, and only a send known unsent is taken
+ * back. A landed one the queue sends; the server dedupes by client id.
+ */
+async function sendLanded(clientId: string): Promise<boolean> {
+  for (let waitMs = FIRST_LANDED_CHECK_RETRY_MS; ; waitMs = Math.min(waitMs * 2, MAX_LANDED_CHECK_RETRY_MS)) {
+    try {
+      return (await db.pendingMessages.get(clientId)) !== undefined
+    } catch (error) {
+      console.error("Could not tell whether a send reached storage; asking again", error)
+      await new Promise((resolve) => setTimeout(resolve, waitMs))
+    }
+  }
+}
+
 /**
  * Implementation for real streams (stored on server).
  */
@@ -769,9 +788,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
           })
         })
       } catch (err) {
-        // SQLite storage lost the commit's answer; once it routes again, the queued row says whether it landed.
-        const landed = isOutcomeUnknown(err) && (await db.pendingMessages.get(clientId).catch(() => undefined))
-        if (!landed) {
+        if (!isOutcomeUnknown(err) || !(await sendLanded(clientId))) {
           revokeOptimisticEvent(clientId)
           throw err
         }

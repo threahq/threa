@@ -8,6 +8,7 @@ const MODE_STORE = "mode"
 const RELOAD_CHANNEL = "threa-sqlite-storage-reload"
 const SWITCH_RELOAD_KEY = "threa:sqliteSwitchReload"
 const MODE_RELOAD_PREFIX = "threa:sqliteModeReload:"
+const MAY_BE_READ_WRITE_PREFIX = "threa:sqliteMayBeReadWrite:"
 export const REQUESTED_PREFIX = "threa:sqliteStorage:"
 
 export function parseMode(stored: string | null): SqliteStorageMode {
@@ -47,7 +48,14 @@ export async function readRecordedMode(idbName: string): Promise<SqliteStorageMo
   }
 }
 
+/** Set before read-write is recorded and cleared only once another mode is, so a boot that cannot read the mode knows whether it may be read-write. */
+export function mayBeReadWrite(idbName: string): boolean {
+  return localStorage.getItem(`${MAY_BE_READ_WRITE_PREFIX}${idbName}`) !== null
+}
+
 export async function recordMode(idbName: string, mode: SqliteStorageMode): Promise<void> {
+  const marker = `${MAY_BE_READ_WRITE_PREFIX}${idbName}`
+  if (mode === "read-write") localStorage.setItem(marker, "1")
   const modes = await openModes()
   try {
     const tx = modes.transaction(MODE_STORE, "readwrite", { durability: "strict" })
@@ -57,6 +65,7 @@ export async function recordMode(idbName: string, mode: SqliteStorageMode): Prom
   } finally {
     modes.close()
   }
+  if (mode !== "read-write") localStorage.removeItem(marker)
 }
 
 /** Every tab of a database holds the shared side for its life; a boot changing the mode holds the exclusive side, so no other tab runs meanwhile. */

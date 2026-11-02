@@ -40,6 +40,8 @@ export type MirrorRequest =
   | { type: "backfillFinish"; store: string; covered: Record<string, number> }
   | { type: "status" }
   | { type: "reset"; incarnation: string }
+  /** Keeps every row and queues all of them for the IndexedDB incarnation named, which lacks them. */
+  | { type: "reseed"; incarnation: string }
   | { type: "forgetWriters"; writers: string[] }
   | { type: "destroy"; idbName: string }
   /** Holds every request of other transactions, and outside any, until this one commits or rolls back. */
@@ -78,8 +80,8 @@ export interface WorkerEnvelope {
   request: MirrorRequest
 }
 
-/** `started` as the worker begins a request; `reply` once it is done. */
-export type WorkerResponse = { id: number; started: true } | { id: number; reply: MirrorReply }
+/** `progress` as the worker begins a request and while a long one runs; `reply` once it is done. */
+export type WorkerResponse = { id: number; progress: true } | { id: number; reply: MirrorReply }
 
 /** The transaction a request belongs to, if any. */
 export function txOf(request: MirrorRequest): number | undefined {
