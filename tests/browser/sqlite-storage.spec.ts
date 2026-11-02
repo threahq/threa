@@ -36,30 +36,68 @@ function mirrorPools(page: Page): Promise<string[]> {
   })
 }
 
-/** Whether a read-write session made SQLite the primary copy of any database, durably. */
-function sqlitePrimary(page: Page): Promise<boolean> {
+/** The storage mode recorded for each database; a database without a record runs off. */
+function recordedModes(page: Page): Promise<string[]> {
   return page.evaluate(
     () =>
-      new Promise<boolean>((resolve) => {
-        const request = indexedDB.open("threa-sqlite-primary")
+      new Promise<string[]>((resolve) => {
+        const request = indexedDB.open("threa-sqlite-mode")
         request.onupgradeneeded = () => request.transaction?.abort()
-        request.onerror = () => resolve(false)
+        request.onerror = () => resolve([])
         request.onsuccess = () => {
-          const markers = request.result
-          const count = markers.transaction("primary").objectStore("primary").count()
-          count.onsuccess = () => {
-            markers.close()
-            resolve(count.result > 0)
+          const modes = request.result
+          const all = modes.transaction("mode").objectStore("mode").getAll()
+          all.onsuccess = () => {
+            modes.close()
+            resolve(all.result as string[])
           }
         }
       })
   )
 }
 
+/** The mode the delivered flag asked for; null while the page is between documents too. */
+function requestedMode(page: Page): Promise<string | null> {
+  return page.evaluate(() => localStorage.getItem("threa:sqliteStorage")).catch(() => null)
+}
+
+/** Counts the page's loads, so a test can wait out the reload a flag change triggers by itself. */
+function countLoads(page: Page): () => number {
+  let loads = 0
+  page.on("load", () => loads++)
+  return () => loads
+}
+
+/** Opens the channel and waits out the reload the delivered flag triggers, then the boot under its mode. */
+async function openUnderFlag(page: Page, path: string, slug: string, mode: string) {
+  const loads = countLoads(page)
+  await page.goto(path)
+  await expect.poll(() => requestedMode(page), { timeout: 30_000 }).toBe(mode)
+  await expect.poll(loads, { timeout: 30_000 }).toBe(2)
+  await opened(page, slug)
+}
+
+/** Read-write starts on the boot after one that copied every store into SQLite. */
+async function enterReadWrite(page: Page, slug: string) {
+  await expect.poll(() => mirrorHoldsEveryStore(page), { timeout: 90_000 }).toBe(true)
+  await page.reload()
+  await opened(page, slug)
+  await expect.poll(() => recordedModes(page)).toEqual(["read-write"])
+}
+
+function sqliteErrors(page: Page): string[] {
+  const errors: string[] = []
+  page.on("console", (entry) => {
+    if (entry.type() === "error" && entry.text().includes("SQLite")) errors.push(entry.text())
+  })
+  return errors
+}
+
 /** Whether the mirror's owner recorded SQLite as holding every mirrored store in full, which read-write needs. */
 function mirrorHoldsEveryStore(page: Page): Promise<boolean> {
   return page.evaluate(async () => {
-    const unmirrored = new Set(["e2eDeviceKeys", "uploadJobs", "sqliteMarks"])
+    const unmirrored = (store: string) =>
+      ["e2eDeviceKeys", "uploadJobs", "sqliteIncarnation"].includes(store) || store.startsWith("sqliteMarks:")
     for (const { name } of await indexedDB.databases()) {
       const hint = name ? localStorage.getItem(`threa:sqliteTrusted:${name}`) : null
       if (!name || !hint) continue
@@ -71,7 +109,7 @@ function mirrorHoldsEveryStore(page: Page): Promise<boolean> {
       })
       const stores = [...database.objectStoreNames]
       database.close()
-      return stores.every((store) => unmirrored.has(store) || trusted.has(store))
+      return stores.every((store) => unmirrored(store) || trusted.has(store))
     }
     return false
   })
@@ -82,10 +120,7 @@ test.describe.configure({ timeout: 180_000 })
 
 for (const mode of ["shadow", "read-only", "read-write"] as const) {
   test(`keeps messages across stream switches and reloads with sqliteStorage=${mode}`, async ({ page }) => {
-    const mirrorErrors: string[] = []
-    page.on("console", (entry) => {
-      if (entry.type() === "error" && entry.text().includes("SQLite")) mirrorErrors.push(entry.text())
-    })
+    const mirrorErrors = sqliteErrors(page)
     const { workspaceId, testId } = await loginAndCreateWorkspaceViaApi(page, `sqlite-${mode}`)
     await enrollUserFlag(page, workspaceId, "sqliteStorage", mode)
     const first = { slug: `first-${testId}` }
@@ -93,12 +128,7 @@ for (const mode of ["shadow", "read-only", "read-write"] as const) {
     const firstId = await createChannelViaApi(page, workspaceId, first.slug)
     await createChannelViaApi(page, workspaceId, second.slug)
 
-    await page.goto(`/w/${workspaceId}/s/${firstId}`)
-    await opened(page, first.slug)
-    // The mode takes effect on the boot after the flag arrives.
-    await expect.poll(() => page.evaluate(() => localStorage.getItem("threa:sqliteStorage"))).toBe(mode)
-    await page.reload()
-    await opened(page, first.slug)
+    await openUnderFlag(page, `/w/${workspaceId}/s/${firstId}`, first.slug, mode)
     await expect.poll(() => mirrorPools(page)).toHaveLength(1)
 
     await send(page, `hello first ${mode}`)
@@ -107,8 +137,7 @@ for (const mode of ["shadow", "read-only", "read-write"] as const) {
     await switchTo(page, first.slug)
     await expect(message(page, `hello first ${mode}`)).toBeVisible()
 
-    // Read-write starts on the boot after one that copied every store into SQLite.
-    if (mode === "read-write") await expect.poll(() => mirrorHoldsEveryStore(page), { timeout: 90_000 }).toBe(true)
+    if (mode === "read-write") await enterReadWrite(page, first.slug)
 
     // A boot that reads what the previous one mirrored.
     await page.reload()
@@ -119,8 +148,50 @@ for (const mode of ["shadow", "read-only", "read-write"] as const) {
     await switchTo(page, first.slug)
     await switchTo(page, second.slug)
     await expect(message(page, `after reload ${mode}`)).toBeVisible()
-    expect(await sqlitePrimary(page)).toBe(mode === "read-write")
+    expect(await recordedModes(page)).toEqual([mode])
 
     expect(mirrorErrors).toEqual([])
   })
 }
+
+test("turning read-write off with a second tab open reloads both and keeps every message", async ({ page }) => {
+  const mirrorErrors = sqliteErrors(page)
+  const { workspaceId, testId } = await loginAndCreateWorkspaceViaApi(page, "sqlite-flip")
+  await enrollUserFlag(page, workspaceId, "sqliteStorage", "read-write")
+  const first = { slug: `first-${testId}` }
+  const second = { slug: `second-${testId}` }
+  const firstId = await createChannelViaApi(page, workspaceId, first.slug)
+  const secondId = await createChannelViaApi(page, workspaceId, second.slug)
+  await openUnderFlag(page, `/w/${workspaceId}/s/${firstId}`, first.slug, "read-write")
+  await enterReadWrite(page, first.slug)
+
+  const other = await page.context().newPage()
+  const otherErrors = sqliteErrors(other)
+  await other.goto(`/w/${workspaceId}/s/${secondId}`)
+  await opened(other, second.slug)
+  await send(page, "from the first tab")
+  await send(other, "from the second tab")
+  // Seen from the other tab, each send committed: a reload aborts a transaction still in flight, as IndexedDB's does.
+  await switchTo(page, second.slug)
+  await expect(message(page, "from the second tab")).toBeVisible()
+  await switchTo(other, first.slug)
+  await expect(message(other, "from the first tab")).toBeVisible()
+
+  const loads = [countLoads(page), countLoads(other)]
+  await enrollUserFlag(page, workspaceId, "sqliteStorage", "off")
+  for (const loaded of loads) await expect.poll(loaded, { timeout: 20_000 }).toBeGreaterThan(0)
+  await expect.poll(() => requestedMode(page)).toBeNull()
+  // The first boot holding the other tab out lands SQLite's backlog, then drops it.
+  await expect.poll(() => recordedModes(page).catch(() => null), { timeout: 60_000 }).toEqual([])
+  await expect.poll(() => mirrorPools(page).catch(() => null)).toEqual([])
+
+  await opened(page, second.slug)
+  await expect(message(page, "from the second tab")).toBeVisible()
+  await switchTo(page, first.slug)
+  await expect(message(page, "from the first tab")).toBeVisible()
+  await opened(other, first.slug)
+  await expect(message(other, "from the first tab")).toBeVisible()
+  await switchTo(other, second.slug)
+  await expect(message(other, "from the second tab")).toBeVisible()
+  expect([...mirrorErrors, ...otherErrors]).toEqual([])
+})

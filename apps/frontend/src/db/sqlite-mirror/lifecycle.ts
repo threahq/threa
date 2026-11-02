@@ -1,36 +1,60 @@
 import type { ThreaDatabase } from "../database"
 import { getPerfCapture } from "@/lib/perf/capture"
-import { createBrowserMirror, type SqliteMirror, type SqliteMirrorMode } from "./client"
-import { createBrowserGuard, type IdbGuard } from "./idb-guard"
+import {
+  DEFAULT_DEADLINES,
+  createBrowserMirror,
+  mirroredSchema,
+  withProgressDeadline,
+  type SqliteMirror,
+  type SqliteMirrorMode,
+} from "./client"
+import { drainBacklog } from "./idb-backlog"
+import type { MirrorRequest, MirrorTransport } from "./protocol"
+import {
+  browserModeLock,
+  readRecordedMode,
+  recordMode,
+  reloadWhenAsked,
+  type ModeLock,
+  type SqliteStorageMode,
+} from "./storage-mode"
+import { createWorkerTransport } from "./worker-transport"
 
-export const SQLITE_STORAGE_KEY = "threa:sqliteStorage"
+const SQLITE_STORAGE_KEY = "threa:sqliteStorage"
 
-export type SqliteStorageMode = "off" | SqliteMirrorMode
+/** How long a boot changing the mode waits for the other tabs to close; past it, it boots under the recorded mode. */
+const SWITCH_WAIT_MS = 5_000
 
-/** The mode persisted for this boot; anything unrecognised reads as off. */
+/** The mode the flag asked for; anything unrecognised reads as off. */
 export function readSqliteStorageMode(): SqliteStorageMode {
   if (typeof localStorage === "undefined") return "off"
   const stored = localStorage.getItem(SQLITE_STORAGE_KEY)
   return stored === "shadow" || stored === "read-only" || stored === "read-write" ? stored : "off"
 }
 
-/** Persist the flag's value for the next boot; the running mirror is untouched unless the mode is off. */
 export function persistSqliteStorageMode(mode: SqliteStorageMode): void {
   if (mode === "off") localStorage.removeItem(SQLITE_STORAGE_KEY)
   else localStorage.setItem(SQLITE_STORAGE_KEY, mode)
 }
 
-type CreateMirror = (database: ThreaDatabase, mode: SqliteMirrorMode, guard?: IdbGuard) => SqliteMirror
+type CreateMirror = (database: ThreaDatabase, mode: SqliteMirrorMode, entering: boolean) => SqliteMirror
+
+interface StorageBoot {
+  lock: ModeLock
+  createMirror: CreateMirror
+  createTransport: () => MirrorTransport
+  switchWaitMs?: number
+}
 
 export function startSqliteMirror(
   database: ThreaDatabase,
   mode: SqliteMirrorMode,
   createMirror: CreateMirror = createBrowserMirror,
-  guard?: IdbGuard
+  entering = false
 ): void {
   if (database.sqliteMirror) return
   try {
-    const mirror = createMirror(database, mode, guard)
+    const mirror = createMirror(database, mode, entering)
     database.sqliteMirror = mirror
     mirror.start()
   } catch (error) {
@@ -41,45 +65,92 @@ export function startSqliteMirror(
 }
 
 /**
- * Boot: a database opened under a persisted mode captures writes from its
- * first transaction. Off, a tab writes IndexedDB itself once it holds the
- * shared lock and no session left SQLite holding writes IndexedDB lacks;
- * otherwise a mirror follows the tab serving read-write, or lands the backlog
- * and is destroyed, before IndexedDB opens.
+ * Boot, before IndexedDB opens: the tab runs the database's recorded mode.
+ * Only a boot holding every other tab out changes it to the flag's, landing
+ * SQLite's backlog first when leaving read-write; entering read-write is
+ * decided by the mirror, once it knows SQLite holds every store in full.
  */
-export function resumeSqliteMirror(
-  database: ThreaDatabase,
-  createMirror: CreateMirror = createBrowserMirror,
-  guard: IdbGuard | null = browserGuard(database.name)
-): void {
-  const mode = readSqliteStorageMode()
-  if (mode !== "off") return startSqliteMirror(database, mode, createMirror)
-  if (!guard) return
-  database.sqliteBoot = landPrimaryWrites(database, createMirror, guard)
+export function resumeSqliteMirror(database: ThreaDatabase, boot: StorageBoot | null = browserBoot(database)): void {
+  if (boot) database.sqliteBoot = bootStorage(database, boot)
 }
 
 /** Without Web Locks no tab can run a mirror, so none can have made SQLite the primary copy. */
-function browserGuard(idbName: string): IdbGuard | null {
-  return typeof navigator !== "undefined" && navigator.locks ? createBrowserGuard(idbName) : null
+function browserBoot(database: ThreaDatabase): StorageBoot | null {
+  if (typeof navigator === "undefined" || !navigator.locks) return null
+  reloadWhenAsked()
+  return {
+    lock: browserModeLock(database.name),
+    createMirror: createBrowserMirror,
+    createTransport: createWorkerTransport,
+  }
 }
 
-async function landPrimaryWrites(database: ThreaDatabase, createMirror: CreateMirror, guard: IdbGuard): Promise<void> {
-  if ((await guard.holdNative(false)) && !(await guard.primaryMarked())) return
-  startSqliteMirror(database, "shadow", createMirror, guard)
+async function bootStorage(database: ThreaDatabase, boot: StorageBoot): Promise<void> {
+  const { name } = database
+  const requested = readSqliteStorageMode()
+  const switching = requested !== (await readRecordedMode(name))
+  const release = switching ? await boot.lock.exclusive(boot.switchWaitMs ?? SWITCH_WAIT_MS) : null
+  if (!release) await boot.lock.shared()
+  let mode = await readRecordedMode(name)
+  const entering = release !== null && requested === "read-write" && mode !== "read-write"
+  if (release && !entering && mode !== requested) mode = await switchMode(database, mode, requested, boot)
+  const running = entering ? "read-write" : mode
+  if (running !== "off") startSqliteMirror(database, running, boot.createMirror, entering)
   const mirror = database.sqliteMirror
-  if (!mirror) throw new Error("SQLite may hold writes IndexedDB lacks, and no mirror could start to land them")
-  void mirror.whenWritingIdb().then(() => stopAndDestroySqliteMirror(database))
-  await mirror.beforeIdbOpen()
+  if (release) {
+    // Entering read-write holds the others out until the mirror decided, recording the mode before any of them boots.
+    void (entering && mirror ? mirror.whenRoutable() : Promise.resolve()).then(() => {
+      release()
+      return boot.lock.shared()
+    })
+  }
+  await mirror?.beforeIdbOpen()
 }
 
-/**
- * Only a tab writing IndexedDB itself drops its mirror. A read-write tab keeps
- * it, SQLite being the primary copy, and so does one still waiting for a
- * backlog to land; the mode changes on the next boot.
- */
-export async function stopAndDestroySqliteMirror(database: ThreaDatabase): Promise<void> {
-  const mirror = database.sqliteMirror
-  if (!mirror?.writesIdb) return
-  database.sqliteMirror = null
-  await mirror.stop()
+/** The mode this boot runs: `to` once recorded, or `from` when its backlog could not land. */
+async function switchMode(
+  database: ThreaDatabase,
+  from: SqliteStorageMode,
+  to: SqliteStorageMode,
+  boot: StorageBoot
+): Promise<SqliteStorageMode> {
+  try {
+    if (from === "read-write" || to === "off") await settleSqlite(database, from === "read-write", to === "off", boot)
+    await recordMode(database.name, to)
+    return to
+  } catch (error) {
+    getPerfCapture().count("sqlite.drainFailure")
+    console.error(`SQLite storage stays ${from}: switching to ${to} failed`, error)
+    return from
+  }
+}
+
+/** Lands the backlog under the schema it was written in, strictly durable, until the worker answers it is empty; then drops the file. */
+async function settleSqlite(
+  database: ThreaDatabase,
+  drain: boolean,
+  destroy: boolean,
+  boot: StorageBoot
+): Promise<void> {
+  const transport = boot.createTransport()
+  const ask = async (request: MirrorRequest) => {
+    const reply = await withProgressDeadline(
+      transport,
+      transport.request(request),
+      DEFAULT_DEADLINES.workerMs,
+      `SQLite ${request.type}`
+    )
+    if (!reply.ok) throw new DOMException(reply.message, reply.error)
+    return reply
+  }
+  try {
+    if (drain) {
+      const { name, verno } = database
+      await ask({ type: "open", idbName: name, schema: mirroredSchema(database), idbVersion: verno })
+      await drainBacklog(ask, name)
+    }
+    if (destroy) await ask({ type: "destroy", idbName: database.name })
+  } finally {
+    transport.close()
+  }
 }

@@ -67,9 +67,10 @@ export const FEATURE_FLAGS = {
   // owning the copy, for stores it holds in full; writes still go to
   // IndexedDB first. "read-write" serves every read and write of the copied
   // stores from SQLite once a boot finds all of them copied in full, and
-  // replays each committed write into IndexedDB in the background, so leaving
-  // it loses nothing. Read at boot, so a change applies on the next load; out
-  // of read-write, only after that load has replayed SQLite's backlog.
+  // replays each committed write into IndexedDB in the background. A change
+  // reloads every tab; the mode switches at the first boot with no other tab
+  // of the database open, after replaying SQLite's backlog when leaving
+  // read-write. Until then every tab keeps the database's recorded mode.
   sqliteStorage: defineFlag({
     values: ["off", "shadow", "read-only", "read-write"],
     scopes: ["user"],

@@ -1,9 +1,9 @@
 import type { Database } from "@sqlite.org/sqlite-wasm"
 import type { CoordinationMessage, MirrorCoordination } from "./client"
 import { createMirrorHandler } from "./handler"
-import { markPrimary, primaryMarked, type IdbGuard } from "./idb-guard"
 import { mirrorChannelName } from "./marks"
 import type { MirrorReply, MirrorRequest, MirrorTransport } from "./protocol"
+import type { ModeLock } from "./storage-mode"
 
 let tabs = 0
 
@@ -15,9 +15,12 @@ export function createBus() {
   const queue: Array<(owner: boolean) => void> = []
   let holder: ((owner: boolean) => void) | null = null
   let held: Array<() => void> | null = null
-  const writingIdb = new Set<object>()
-  let primary: object | null = null
-  const waitingToWrite: Array<() => void> = []
+  const sharing = new Set<object>()
+  let exclusive: object | null = null
+  const waitingForLock: Array<() => void> = []
+  const wakeLockWaiters = () => {
+    for (const wake of waitingForLock.splice(0)) wake()
+  }
   const handOver = () => {
     holder = queue.shift() ?? null
     holder?.(true)
@@ -48,41 +51,42 @@ export function createBus() {
     liveTab(tabId: string) {
       live.add(tabId)
     },
-    /** One tab's side of the IndexedDB lock, as Web Locks grant it; `close` stands for the tab's end. */
-    guard(idbName: string): IdbGuard & { close(): void } {
+    /** One tab's side of the mode lock, as Web Locks grant it; `close` stands for the tab's end. */
+    modeLock(): ModeLock & { close(): void } {
       const tab = {}
-      const releasePrimary = () => {
-        if (primary !== tab) return
-        primary = null
-        for (const wake of waitingToWrite.splice(0)) wake()
-      }
       return {
-        async holdNative(wait) {
-          while (!writingIdb.has(tab) && primary) {
-            if (!wait) return false
-            await new Promise<void>((wake) => waitingToWrite.push(wake))
+        async exclusive(waitMs) {
+          const deadline = performance.now() + waitMs
+          while (exclusive || sharing.size > 0) {
+            const left = deadline - performance.now()
+            if (left <= 0) return null
+            await new Promise<void>((wake) => {
+              waitingForLock.push(wake)
+              setTimeout(wake, left)
+            })
           }
-          writingIdb.add(tab)
-          return true
+          exclusive = tab
+          return () => {
+            if (exclusive !== tab) return
+            exclusive = null
+            wakeLockWaiters()
+          }
         },
-        async claimPrimary() {
-          if (primary || writingIdb.size > 0) return false
-          primary = tab
-          return true
+        async shared() {
+          while (exclusive) await new Promise<void>((wake) => waitingForLock.push(wake))
+          sharing.add(tab)
         },
-        releasePrimary,
-        primaryMarked: () => primaryMarked(idbName),
-        markPrimary: (marked) => markPrimary(idbName, marked),
         close() {
-          writingIdb.delete(tab)
-          releasePrimary()
+          sharing.delete(tab)
+          if (exclusive === tab) exclusive = null
+          wakeLockWaiters()
         },
       }
     },
-    /** `tabId` is the database handle's writer id, as in the browser; the tab's death also releases `guard`. */
+    /** `tabId` is the database handle's writer id, as in the browser; the tab's death also releases `lock`. */
     coordination(
       tabId = `tab-${++tabs}`,
-      guard?: { close(): void }
+      lock?: { close(): void }
     ): MirrorCoordination & { resigned: () => boolean; die: () => void } {
       let mine: ((owner: boolean) => void) | null = null
       let resigned = false
@@ -106,7 +110,7 @@ export function createBus() {
         /** The tab is killed: it hears nothing more and its locks are released. */
         die() {
           live.delete(tabId)
-          guard?.close()
+          lock?.close()
           for (const listener of own) listeners.delete(listener)
           resign()
           const watching = watchers.get(tabId)

@@ -47,9 +47,8 @@ function mirrorTab(
     throw new Error("a follower never opens the file")
   }
 ) {
-  const guard = bus.guard(database.name)
-  const coordination = bus.coordination(database.sqliteWriter.id, guard)
-  const mirror = new SqliteMirror({ database, mode: "shadow", coordination, guard, createTransport: transport })
+  const coordination = bus.coordination(database.sqliteWriter.id)
+  const mirror = new SqliteMirror({ database, mode: "shadow", coordination, createTransport: transport })
   database.sqliteMirror = mirror
   mirror.start()
   return { mirror, coordination }
@@ -450,7 +449,6 @@ describe("SqliteMirror", () => {
       database: followerDb,
       mode: "shadow",
       coordination: { ...base, claim: (onChange) => (answerClaim = onChange) },
-      guard: owner.bus.guard(followerDb.name),
       createTransport: () => {
         throw new Error("a follower never opens the file")
       },
@@ -477,7 +475,6 @@ describe("SqliteMirror", () => {
       database,
       mode: "shadow",
       coordination,
-      guard: bus.guard(database.name),
       createTransport: () => ({
         request: async (request) => {
           requests.push(request.type)

@@ -1221,7 +1221,7 @@ export class ThreaDatabase extends Dexie {
 
   /** The SQLite copy of this database's writes, while one is running. */
   sqliteMirror: SqliteMirror | null = null
-  /** A flag-off boot landing what a read-write session left in SQLite; IndexedDB opens after it. */
+  /** The boot settling which storage mode this tab runs; IndexedDB opens after it. */
   sqliteBoot: Promise<void> | null = null
   readonly sqliteWriter: IdbWriter
   private idbOpened = false
@@ -1877,6 +1877,10 @@ export class ThreaDatabase extends Dexie {
       ...sqliteMarksSchema(this.tables.map((table) => table.name).filter(isMirroredStore)),
     })
 
+    // v59: closes connections from builds that predate read-write storage's
+    // recorded mode, so no tab writes IndexedDB while SQLite is the primary copy.
+    this.version(59).stores({})
+
     this.composerLoaded = this.table(COMPOSER_LOADED_STORE)
     this.composerTarget = this.table(COMPOSER_TARGET_STORE)
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE)
@@ -1922,10 +1926,17 @@ export class ThreaDatabase extends Dexie {
     // Another tab upgraded the shared per-account database. Dexie closes this
     // connection but leaves auto-open on, so the next operation would reopen
     // with the older schema against the newer physical DB and throw
-    // VersionError for the rest of the tab's life.
+    // VersionError for the rest of the tab's life. Read-write storage first
+    // lands SQLite's backlog under the schema it was written in; the upgrade
+    // waits on this connection meanwhile.
     this.on("versionchange", () => {
-      this.close()
-      if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload()
+      const closeAndReload = () => {
+        this.close()
+        if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload()
+      }
+      const drained = this.sqliteMirror?.drainBeforeClose()
+      if (drained) void drained.then((closable) => closable && closeAndReload())
+      else closeAndReload()
       return false
     })
   }

@@ -1,9 +1,7 @@
 import { RangeSet } from "dexie"
 import type { ThreaDatabase } from "../database"
 import { getPerfCapture } from "@/lib/perf/capture"
-import { touchesDeviceOnlyData } from "../transaction-middleware"
-import { openInstalledIdb, replayBacklog } from "./idb-backlog"
-import { createBrowserGuard, type IdbGuard } from "./idb-guard"
+import { drainBacklog } from "./idb-backlog"
 import { readChunk, readTouched, touchedOf, type Touched, type TouchedRows } from "./idb-reads"
 import { encodeKey, encodeRange } from "./key-codec"
 import {
@@ -21,12 +19,12 @@ import type { IdbWrite } from "./middleware"
 import type { MirrorEntry, MirrorMutation, MirrorStatus, MirrorStoreSchema, MirrorWrite } from "./mirror-store"
 import type { MirrorReadRequest, MirrorReadResults, MirrorReply, MirrorRequest, MirrorTransport } from "./protocol"
 import { txOf } from "./protocol"
+import { recordMode, reloadEveryTab } from "./storage-mode"
 import { isMirroredStore } from "./stores"
 import { encodeValue } from "./value-codec"
 import { createWorkerTransport } from "./worker-transport"
 
 const BACKFILL_CHUNK_ROWS = 500
-const BACKLOG_CHUNK_BATCHES = 100
 const MIN_RECORDED_APPLY_MS = 30
 /** Past it the oldest is dropped: its marks still send the next owner to re-backfill what it wrote. */
 const MAX_UNACKED_BATCHES = 1000
@@ -45,9 +43,23 @@ export interface MirrorDeadlines {
   readMs: number
   /** Any other request the worker is silent on; past it the worker is presumed dead and this tab hands ownership on. */
   workerMs: number
+  /** A read-write tab waiting for an owner to answer; past it its requests fail until one does. */
+  decidedMs: number
+  /** The first retry of a backlog replay IndexedDB refused; each next one waits twice as long. */
+  drainRetryMs: number
 }
 
-const DEFAULT_DEADLINES: MirrorDeadlines = { claimMs: 5_000, readMs: 5_000, workerMs: 30_000 }
+export const DEFAULT_DEADLINES: MirrorDeadlines = {
+  claimMs: 5_000,
+  readMs: 5_000,
+  workerMs: 30_000,
+  decidedMs: 15_000,
+  drainRetryMs: 1_000,
+}
+
+const MAX_DRAIN_RETRY_MS = 60_000
+/** Tabs of builds speaking another protocol never follow each other. */
+const READ_WRITE_PROTOCOL = 1
 
 class DeadlineError extends Error {
   override readonly name = "DeadlineError"
@@ -61,7 +73,7 @@ function withDeadline<T>(promise: Promise<T>, ms: number, what: string): Promise
 }
 
 /** Rejects once the worker has reported nothing for `ms` since the request was sent. */
-function withProgressDeadline<T>(
+export function withProgressDeadline<T>(
   transport: MirrorTransport,
   promise: Promise<T>,
   ms: number,
@@ -81,13 +93,13 @@ function withProgressDeadline<T>(
 }
 
 /**
- * Under read-write storage: a tab asks for the owner's decision, the owner
- * announces whether it serves read-write, and followers send it their worker
- * requests to run on their behalf.
+ * Under read-write storage: a tab asks for the owner, the owner announces
+ * itself once it serves, and followers send it their worker requests to run
+ * on their behalf.
  */
 export type ReadWriteMessage =
-  | { type: "hello"; from: string }
-  | { type: "decided"; tab: string; serving: boolean }
+  | { type: "hello"; from: string; protocol: number }
+  | { type: "decided"; tab: string; protocol: number }
   | { type: "call"; from: string; to: string; id: number; request: MirrorRequest }
   | { type: "reply"; to: string; id: number; reply: MirrorReply }
 
@@ -183,9 +195,11 @@ export interface SqliteMirrorOptions {
   database: ThreaDatabase
   mode: SqliteMirrorMode
   coordination: MirrorCoordination
-  guard: IdbGuard
   createTransport: () => MirrorTransport
   deadlines?: Partial<MirrorDeadlines>
+  /** Read-write only: this boot holds every other tab out, so it may make SQLite the primary copy; otherwise SQLite already is. */
+  entering?: boolean
+  reloadEveryTab?: () => void
 }
 
 type Role = "idle" | "pending" | "follower" | "starting" | "owner" | "failed" | "stopped"
@@ -222,10 +236,25 @@ function ownerLost(): DOMException {
   return new DOMException("The tab running SQLite storage closed during this transaction", "AbortError")
 }
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve = () => {}
-  const promise = new Promise<void>((done) => (resolve = done))
-  return { promise, resolve }
+function outcomeUnknown(): DOMException {
+  return new DOMException(
+    "SQLite storage stopped answering while committing; the transaction may have committed",
+    "OutcomeUnknownError"
+  )
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void; settled: boolean } {
+  let settle = () => {}
+  const promise = new Promise<void>((done) => (settle = done))
+  const gate = {
+    promise,
+    settled: false,
+    resolve: () => {
+      gate.settled = true
+      settle()
+    },
+  }
+  return gate
 }
 
 /** Why read-write cannot serve a store: writes key rows by their inbound key path and know no unique indexes. */
@@ -248,7 +277,7 @@ function markFailure(error: unknown): void {
   console.error("SQLite mirror failure", error)
 }
 
-function mirroredSchema(database: ThreaDatabase): MirrorStoreSchema[] {
+export function mirroredSchema(database: ThreaDatabase): MirrorStoreSchema[] {
   return database.tables
     .filter((table) => isMirroredStore(table.name))
     .map((table) => ({
@@ -321,11 +350,11 @@ function encodeRows(store: string, keys: readonly IDBValidKey[], values: readonl
  * Which writes SQLite holds is decided against the marks IndexedDB commits
  * with every write, never against what this tab believes it sent.
  *
- * Under read-write storage SQLite is the primary copy instead: its
- * transactions write no marks, and each commit lands in a backlog the owner
- * replays into IndexedDB, bypassing marks, as SQLite already holds those rows.
- * A durable marker and an exclusive lock keep tabs that write IndexedDB
- * themselves out until the backlog has drained.
+ * Under read-write storage SQLite is the primary copy instead, for every tab
+ * of the database: its transactions write no marks, and each commit lands in
+ * a backlog the owner replays into IndexedDB, bypassing marks, as SQLite
+ * already holds those rows. The recorded mode keeps it so until a boot drains
+ * the backlog.
  */
 export class SqliteMirror {
   readonly mode: SqliteMirrorMode
@@ -370,29 +399,29 @@ export class SqliteMirror {
   private sending = false
   /**
    * SQLite serves every request on mirrored stores and IndexedDB only receives
-   * its backlog. Also set when SQLite may hold writes IndexedDB lacks but this
-   * tab lost its worker: requests then fail rather than read a stale backup.
+   * its backlog. Stays set when this tab loses its owner or worker: requests
+   * then wait for the next owner, or fail, rather than read a stale backup.
    */
   private serving = false
-  /** This tab holds the shared lock, so it may write IndexedDB itself and no tab serves read-write meanwhile. */
-  private nativeHeld = false
-  private readonly writingIdb = deferred()
-  /** No tab may open IndexedDB before a backlog has drained, nor without the lock to write it. */
+  /** The owner opens IndexedDB once the backlog landed under the schema it was written in. */
   private readonly idbGate = deferred()
-  private booted: Promise<void> = Promise.resolve()
   private nextTx = 0
-  private drainRequested = false
-  private draining: Promise<void> | null = null
+  /** Every drain, one at a time: a later one must not replay a batch before an earlier one's. */
+  private drains: Promise<void> = Promise.resolve()
+  private drainQueued = false
+  private drainRetryMs = 0
+  /** IndexedDB is being upgraded: no transaction begins on this owner any more. */
+  private closing = false
   /** Settles once requests have somewhere to go: SQLite, here or through the owner, or IndexedDB. */
   private routable = deferred()
   /** The owner this follower sends its requests to, watched so its end fails what it had in flight. */
   private owner: { tab: string; unwatch: () => void } | null = null
   private nextCall = 0
-  /** This owner decided whether it serves read-write, so it can answer followers. */
+  /** This owner serves read-write: it runs transactions and answers followers. */
   private decided = false
   private readonly calls = new Map<
     number,
-    { owner: string; resolve: (reply: OkReply) => void; reject: (error: unknown) => void }
+    { owner: string; commit: boolean; resolve: (reply: OkReply) => void; reject: (error: unknown) => void }
   >()
   /** The owner each of this follower's transactions began on. */
   private readonly txOwners = new Map<number, string>()
@@ -413,16 +442,6 @@ export class SqliteMirror {
     return this.serving
   }
 
-  /** This tab writes IndexedDB itself, holding the lock that keeps any tab from serving read-write. */
-  get writesIdb(): boolean {
-    return this.nativeHeld && !this.serving
-  }
-
-  /** Settles once this tab writes IndexedDB itself: at boot, or when the owner it followed stops serving read-write. */
-  whenWritingIdb(): Promise<void> {
-    return this.writingIdb.promise
-  }
-
   /** What IndexedDB's open must wait for. */
   beforeIdbOpen(): Promise<void> {
     return this.idbGate.promise
@@ -434,10 +453,9 @@ export class SqliteMirror {
   }
 
   /** Queues a transaction in creation order, as IndexedDB orders them; one that fails to begin fails its requests and commit. */
-  beginTransaction(stores: readonly string[], mode: "readonly" | "readwrite"): number {
+  beginTransaction(mode: "readonly" | "readwrite"): number {
     const tx = ++this.nextTx
-    const readonly = mode === "readonly"
-    this.ask({ type: "begin", tx, readonly, strict: !readonly && touchesDeviceOnlyData(stores) }).catch(() => {})
+    this.ask({ type: "begin", tx, readonly: mode === "readonly" }).catch(() => {})
     return tx
   }
 
@@ -460,7 +478,7 @@ export class SqliteMirror {
     this.role = "pending"
     const { coordination } = this.options
     this.stopListening = coordination.onBroadcast((message) => this.receive(message))
-    this.booted = this.boot()
+    if (this.mode !== "read-write") this.settleServing(false)
     coordination.claim((owner) => {
       if (this.role !== "pending" && this.role !== "follower") return
       if (owner) this.starting = this.becomeOwner()
@@ -468,35 +486,16 @@ export class SqliteMirror {
     })
   }
 
-  /**
-   * A tab outside read-write writes IndexedDB itself once it holds the shared
-   * lock. Without a backlog to land first, it opens IndexedDB at once;
-   * otherwise it waits for an owner, which drains the backlog or serves read-write.
-   */
-  private async boot(): Promise<void> {
-    if (this.mode === "read-write") return
-    if ((await this.holdNative(false)) && !(await this.primaryMarked())) this.settleServing(false)
-  }
-
-  private async holdNative(wait: boolean): Promise<boolean> {
-    this.nativeHeld ||= await this.options.guard.holdNative(wait)
-    return this.nativeHeld
-  }
-
-  /** Unreadable reads as marked: IndexedDB then waits for an owner to drain, rather than risk opening without its writes. */
-  private primaryMarked(): Promise<boolean> {
-    return this.options.guard.primaryMarked().catch((error: unknown) => {
-      markFailure(error)
-      return true
-    })
-  }
-
-  /** Requests now have somewhere to go: SQLite when serving, else IndexedDB, under the lock to write it. */
+  /** Requests now have somewhere to go: SQLite when serving, else IndexedDB. */
   private settleServing(serving: boolean): void {
     this.serving = serving
     this.routable.resolve()
     this.idbGate.resolve()
-    if (this.writesIdb) this.writingIdb.resolve()
+  }
+
+  /** Requests wait for the next owner, which serves only once it holds what its predecessor committed. */
+  private unroute(): void {
+    if (this.routable.settled) this.routable = deferred()
   }
 
   commit(commit: WriterCommit, writes: IdbWrite[]): void {
@@ -734,10 +733,26 @@ export class SqliteMirror {
     this.role = "follower"
     this.trusted.clear()
     this.settle()
-    this.options.coordination.broadcast({ type: "hello", from: this.tabId })
+    if (this.mode === "read-write") this.awaitOwner()
     for (const local of this.localPending) this.broadcastLocal(local)
     this.localPending = []
     this.clearRemote()
+  }
+
+  /** An owner of another build, or none at all, never answers; requests then fail rather than wait forever. */
+  private awaitOwner(): void {
+    const hello = () =>
+      this.options.coordination.broadcast({ type: "hello", from: this.tabId, protocol: READ_WRITE_PROTOCOL })
+    this.idbGate.resolve()
+    hello()
+    const { decidedMs } = this.deadlines
+    setTimeout(() => {
+      if (this.role !== "follower" || this.owner) return
+      getPerfCapture().count("sqlite.decisionOverdue")
+      console.error(`No tab answered as SQLite storage's owner within ${decidedMs} ms; requests fail until one does`)
+      this.settleServing(true)
+      hello()
+    }, decidedMs)
   }
 
   private routeLocal(local: LocalCommit): void {
@@ -774,9 +789,9 @@ export class SqliteMirror {
 
   private receive(message: CoordinationMessage): void {
     if (message.type === "hello") {
-      if (this.role === "owner" && this.decided) this.announce()
+      if (this.role === "owner" && this.decided && message.protocol === READ_WRITE_PROTOCOL) this.announce()
     } else if (message.type === "decided") {
-      if (this.role === "follower") this.followOwner(message)
+      if (this.role === "follower" && message.protocol === READ_WRITE_PROTOCOL) this.followOwner(message.tab)
     } else if (message.type === "call") {
       if (message.to === this.tabId) this.serveCall(message)
     } else if (message.type === "reply") {
@@ -805,6 +820,13 @@ export class SqliteMirror {
    */
   private applyRemote(message: MirrorBatch): void {
     const stores = message.touched.map((touched) => touched.store)
+    if (this.serving) {
+      // Re-reading IndexedDB, a backup that lags SQLite, would revert SQLite's newer rows.
+      this.countRemote(stores, -1)
+      getPerfCapture().count("sqlite.foreignWrite")
+      console.error(`${message.from} wrote ${stores.join(", ")} to IndexedDB while SQLite is the primary copy`)
+      return
+    }
     readTouched(this.options.database.backendDB(), message.touched, (rows) => {
       const { batch, whole } = this.mutationsFor(rows)
       const commit = whole ? { writer: message.from, seq: message.id, prev: message.prev } : undefined
@@ -984,10 +1006,8 @@ export class SqliteMirror {
     markFailure(error)
     const served = [...this.trusted].filter((store) => this.trusts(store))
     this.role = "failed"
-    this.options.guard.releasePrimary()
     this.settle()
-    if (this.serving) this.settleServing(true)
-    else void this.fallBackToIdb()
+    if (!this.routable.settled) this.settleServing(true)
     this.rereadLiveQueries(served)
     const transport = this.transport
     this.transport = null
@@ -1002,7 +1022,9 @@ export class SqliteMirror {
   private async becomeOwner(): Promise<void> {
     const { database, createTransport } = this.options
     this.role = "starting"
+    this.decided = false
     this.loseOwner()
+    if (this.serving) this.unroute()
     const capture = getPerfCapture()
     const openedAt = performance.now()
     try {
@@ -1017,13 +1039,12 @@ export class SqliteMirror {
       this.options.coordination.broadcast({ type: "owner" })
       for (const local of this.localPending) this.applyOwn(local)
       this.localPending = []
-      if (opened.backlog) await this.drainBeforeIdbOpens()
-      await this.booted
-      const primary = await this.primaryMarked()
-      if (this.role !== "owner") return
-      // Read-write is decided on the marks, which only an open IndexedDB can show; Dexie's ready handlers wait for it.
-      if (this.mode === "read-write") this.idbGate.resolve()
-      else await this.decide(false, primary)
+      if (this.mode === "read-write") {
+        if (opened.backlog) await this.drain().catch((error: unknown) => this.drainFailed(error))
+        this.idbGate.resolve()
+      } else if (opened.backlog) {
+        markFailure(new Error(`SQLite holds ${opened.backlog} transactions IndexedDB lacks outside read-write storage`))
+      }
       // Not `open()` alone: Dexie's open waits for its ready handlers, whose reads may wait for this claim.
       await Promise.race([database.whenIdbOpen(), database.open()])
       if (this.role !== "owner") return
@@ -1043,8 +1064,7 @@ export class SqliteMirror {
       for (const store of reconciled.trusted) this.trust(store)
       this.persistTrusted()
       if (this.mode === "read-write") {
-        const serving = this.entersReadWrite(stores, reconciled.trusted) && (await this.goPrimary(primary))
-        await this.decide(serving, primary)
+        await this.decide(this.holdsEverything(stores, reconciled.trusted))
         if (this.role !== "owner") return
       }
       this.settle()
@@ -1061,14 +1081,8 @@ export class SqliteMirror {
     }
   }
 
-  /** Requests fail instead while SQLite may hold writes IndexedDB lacks, or while another tab serves read-write. */
-  private async fallBackToIdb(): Promise<void> {
-    const native = !(await this.primaryMarked()) && (await this.holdNative(false))
-    this.settleServing(!native)
-  }
-
   /** Read-write needs every mirrored store held in full, so no request ever needs IndexedDB's copy. */
-  private entersReadWrite(stores: readonly string[], trusted: ReadonlySet<string>): boolean {
+  private holdsEverything(stores: readonly string[], trusted: ReadonlySet<string>): boolean {
     const blocker = readWriteBlocker(this.options.database)
     if (blocker) {
       console.error(`SQLite storage cannot run read-write: ${blocker}`)
@@ -1082,85 +1096,100 @@ export class SqliteMirror {
   }
 
   /**
-   * The exclusive lock first, so no tab writes IndexedDB itself from here on;
-   * then the durable marker, before the first write only SQLite holds.
+   * Holding every store, SQLite serves, recorded as the primary copy before
+   * its first write. Short of that, an entering boot stays on IndexedDB this
+   * session; a database already read-write, as after an IndexedDB upgrade,
+   * lands its backlog and hands back to IndexedDB for every tab's next boot.
    */
-  private async goPrimary(marked: boolean): Promise<boolean> {
-    if (this.nativeHeld || !(await this.options.guard.claimPrimary())) {
-      console.warn("SQLite storage stays read-only: another tab writes IndexedDB directly")
-      getPerfCapture().count("sqlite.readWriteDeferred")
-      return false
-    }
-    if (marked) return true
-    try {
-      await this.options.guard.markPrimary(true)
-      return true
-    } catch (error) {
-      this.options.guard.releasePrimary()
-      markFailure(error)
-      return false
-    }
-  }
-
-  /** Not serving, this tab writes IndexedDB itself; the backlog drained when it took ownership, so the marker goes. */
-  private async decide(serving: boolean, primary: boolean): Promise<void> {
-    if (!serving) {
-      await this.holdNative(true)
-      if (primary) await this.options.guard.markPrimary(false)
-    }
-    if (this.role !== "owner") return
-    this.decided = true
-    this.settleServing(serving)
-    this.announce()
-  }
-
-  private async drainBeforeIdbOpens(): Promise<void> {
-    const idb = await openInstalledIdb(this.options.database.name)
-    try {
-      await this.drainInto(idb)
-    } finally {
-      idb.close()
-    }
-  }
-
-  /** Background, in commit order; a row leaves the backlog only once IndexedDB committed it. */
-  private scheduleDrain(): void {
-    this.drainRequested = true
-    if (this.draining) return
-    this.draining = (async () => {
-      while (this.drainRequested && this.role === "owner") {
-        this.drainRequested = false
-        await this.drainInto(this.options.database.backendDB())
-      }
-    })()
-      .catch((error: unknown) => markFailure(new Error("IndexedDB backup fell behind", { cause: error })))
-      .finally(() => (this.draining = null))
-  }
-
-  /** Raw IndexedDB writes without marks: these rows came from SQLite, so a mark would only send it to re-backfill them. */
-  private async drainInto(idb: IDBDatabase): Promise<void> {
-    for (;;) {
-      const { batches = [] } = await this.ask({ type: "backlog", limit: BACKLOG_CHUNK_BATCHES })
-      if (batches.length === 0) return
-      await replayBacklog(idb, batches)
-      await this.ask({ type: "backlogDone", through: batches[batches.length - 1].seq })
+  private async decide(full: boolean): Promise<void> {
+    const { entering, database } = this.options
+    if (full) {
+      if (entering) await recordMode(database.name, "read-write")
+      if (this.role !== "owner") return
+      this.decided = true
+      this.settleServing(true)
+      this.announce()
+    } else if (entering) {
+      this.settleServing(false)
+    } else {
+      await this.drain()
+      await recordMode(database.name, "read-only")
+      ;(this.options.reloadEveryTab ?? reloadEveryTab)()
     }
   }
 
   /**
+   * Another tab upgrades IndexedDB: nothing begins here any more, and the
+   * backlog lands under the schema it was written in. False when it could not,
+   * so the connection stays open, holding the upgrade back, and SQLite serves on.
+   */
+  async drainBeforeClose(): Promise<boolean> {
+    if (this.role !== "owner" || !this.decided) return true
+    this.closing = true
+    try {
+      await this.drain()
+      return true
+    } catch (error) {
+      this.closing = false
+      getPerfCapture().count("sqlite.drainFailure")
+      console.error(
+        "SQLite storage could not land its backlog before an IndexedDB upgrade; keeping IndexedDB open",
+        error
+      )
+      return false
+    }
+  }
+
+  /**
+   * Every drain runs here, one after another, until the worker answers the
+   * backlog is empty; its `backlog` request waits for every transaction the
+   * worker admitted, so a drain that finds nothing left is final.
+   */
+  private drain(): Promise<void> {
+    const drained = this.drains.then(async () => {
+      this.drainQueued = false
+      const transport = this.transport
+      if (this.role !== "owner" || !transport) throw unavailable()
+      const { database } = this.options
+      await drainBacklog(
+        (request) => this.askWorker(transport, request),
+        this.idbOpen ? database.backendDB() : database.name
+      )
+    })
+    this.drains = drained.catch(() => {})
+    return drained
+  }
+
+  private scheduleDrain(): void {
+    if (this.drainQueued || this.role !== "owner") return
+    this.drainQueued = true
+    this.drain().then(
+      () => (this.drainRetryMs = 0),
+      (error: unknown) => this.drainFailed(error)
+    )
+  }
+
+  /** The backlog stays in SQLite, which keeps serving; IndexedDB catches up once it accepts the replay. */
+  private drainFailed(error: unknown): void {
+    getPerfCapture().count("sqlite.drainFailure")
+    console.error("SQLite storage could not replay its backlog into IndexedDB; retrying", error)
+    if (this.role !== "owner") return
+    this.drainRetryMs = Math.min(this.drainRetryMs * 2 || this.deadlines.drainRetryMs, MAX_DRAIN_RETRY_MS)
+    setTimeout(() => this.scheduleDrain(), this.drainRetryMs)
+  }
+
+  /**
    * The owner dispatches to its worker before yielding, so requests reach it in
-   * call order; a follower serving read-write sends them to the owner. Between
-   * owners they wait for the next.
+   * call order; a follower sends them to the owner. Between owners, and until
+   * an owner serves, they wait.
    */
   private ask(request: MirrorRequest): Promise<OkReply> {
-    if (this.role === "owner" && this.transport) return this.askWorker(this.transport, request)
-    if (this.role === "follower" && this.serving && this.owner) return this.call(this.owner.tab, request)
-    if (!this.serving || (this.role !== "follower" && this.role !== "starting")) return Promise.reject(unavailable())
-    return this.routable.promise.then(() =>
-      this.role === "owner" || (this.role === "follower" && this.serving && this.owner)
-        ? this.ask(request)
-        : Promise.reject(unavailable())
-    )
+    if (this.closing && request.type === "begin") return Promise.reject(unavailable())
+    if (this.role === "owner" && this.decided && this.transport) return this.askWorker(this.transport, request)
+    if (this.role === "follower" && this.owner) return this.call(this.owner.tab, request)
+    const waits = this.mode === "read-write" && !this.routable.settled && this.role !== "failed" && !this.isStopped()
+    if (!waits) return Promise.reject(unavailable())
+    return this.routable.promise.then(() => this.ask(request))
   }
 
   private async askWorker(transport: MirrorTransport, request: MirrorRequest): Promise<OkReply> {
@@ -1174,7 +1203,7 @@ export class SqliteMirror {
       )
     } catch (error) {
       if (this.transport === transport) this.fail(error)
-      throw unavailable()
+      throw request.type === "commit" ? outcomeUnknown() : unavailable()
     }
     if (!reply.ok) throw new DOMException(reply.message, reply.error)
     return reply
@@ -1188,7 +1217,8 @@ export class SqliteMirror {
       if (request.type === "commit" || request.type === "rollback") this.txOwners.delete(tx)
     }
     const id = ++this.nextCall
-    const reply = new Promise<OkReply>((resolve, reject) => this.calls.set(id, { owner, resolve, reject }))
+    const commit = request.type === "commit"
+    const reply = new Promise<OkReply>((resolve, reject) => this.calls.set(id, { owner, commit, resolve, reject }))
     this.options.coordination.broadcast({ type: "call", from: this.tabId, to: owner, id, request })
     return reply
   }
@@ -1201,36 +1231,30 @@ export class SqliteMirror {
     else call.reject(new DOMException(message.reply.message, message.reply.error))
   }
 
-  private followOwner(message: Extract<ReadWriteMessage, { type: "decided" }>): void {
-    if (this.owner?.tab !== message.tab) {
+  private followOwner(tab: string): void {
+    if (this.owner?.tab !== tab) {
       this.loseOwner()
-      this.owner = {
-        tab: message.tab,
-        unwatch: this.options.coordination.watchTab(message.tab, () => this.loseOwner()),
-      }
+      this.owner = { tab, unwatch: this.options.coordination.watchTab(tab, () => this.loseOwner()) }
     }
-    if (message.serving) return this.settleServing(true)
-    void this.holdNative(true).then(() => {
-      if (this.role === "follower" && this.owner?.tab === message.tab) this.settleServing(false)
-    })
+    this.settleServing(true)
   }
 
-  /** What this follower had in flight on the owner fails; what it sends next waits for the next owner. */
+  /** What this follower had in flight on the owner fails, a commit as of unknown outcome; what it sends next waits for the next owner. */
   private loseOwner(): void {
     const owner = this.owner
     if (!owner) return
     this.owner = null
     owner.unwatch()
-    this.routable = deferred()
+    this.unroute()
     for (const [id, call] of this.calls) {
       if (call.owner !== owner.tab) continue
       this.calls.delete(id)
-      call.reject(ownerLost())
+      call.reject(call.commit ? outcomeUnknown() : ownerLost())
     }
   }
 
   private announce(): void {
-    this.options.coordination.broadcast({ type: "decided", tab: this.tabId, serving: this.serving })
+    this.options.coordination.broadcast({ type: "decided", tab: this.tabId, protocol: READ_WRITE_PROTOCOL })
   }
 
   /** Runs a follower's request as this tab's own, under a transaction id of this tab's. */
@@ -1241,8 +1265,6 @@ export class SqliteMirror {
       const failure = error instanceof Error ? error : new Error(String(error))
       respond({ ok: false, error: failure.name, message: failure.message })
     }
-    // A tab that followed this one's predecessor may call before it learns this one writes IndexedDB.
-    if (!this.serving) return fail(unavailable())
     let request = message.request
     if ("tx" in request && request.tx !== undefined) {
       const tx = request.tx
@@ -1362,16 +1384,12 @@ export class SqliteMirror {
   }
 }
 
-export function createBrowserMirror(
-  database: ThreaDatabase,
-  mode: SqliteMirrorMode,
-  guard: IdbGuard = createBrowserGuard(database.name)
-): SqliteMirror {
+export function createBrowserMirror(database: ThreaDatabase, mode: SqliteMirrorMode, entering = false): SqliteMirror {
   return new SqliteMirror({
     database,
     mode,
     coordination: createBrowserCoordination(database.name, database.sqliteWriter.id),
-    guard,
     createTransport: createWorkerTransport,
+    entering,
   })
 }

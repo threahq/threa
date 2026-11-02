@@ -43,7 +43,7 @@ export type MirrorRequest =
   | { type: "forgetWriters"; writers: string[] }
   | { type: "destroy"; idbName: string }
   /** Holds every request of other transactions, and outside any, until this one commits or rolls back. */
-  | { type: "begin"; tx: number; readonly: boolean; strict: boolean }
+  | { type: "begin"; tx: number; readonly: boolean }
   | { type: "write"; tx: number; write: MirrorWrite }
   | { type: "commit"; tx: number }
   | { type: "rollback"; tx: number }

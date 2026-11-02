@@ -13,6 +13,9 @@ export const READS: ReadonlySet<string> = new Set(["get", "getMany", "query", "c
 
 export interface MirroredOptions {
   mode?: SqliteMirrorMode
+  /** This boot holds every other tab out, so read-write may make SQLite the primary copy. */
+  entering?: boolean
+  reloadEveryTab?: () => void
   bus?: ReturnType<typeof createBus>
   name?: string
   sqlite?: Database
@@ -102,20 +105,20 @@ export function mirroredDatabases(sqlite3: Sqlite3, owned: Array<() => void>) {
         close: inner.close,
       }
     }
-    const guard = bus.guard(name)
-    const coordination = bus.coordination(undefined, guard)
+    const coordination = bus.coordination()
     const mirror = new SqliteMirror({
       database,
       mode: options.mode ?? "read-only",
       coordination: options.claimAnswered ? withDelayedClaim(coordination, options.claimAnswered) : coordination,
-      guard,
       createTransport: transport,
       deadlines: options.deadlines,
+      entering: options.entering,
+      reloadEveryTab: options.reloadEveryTab,
     })
     database.sqliteMirror = mirror
     mirror.start()
     const sqliteReads = () => log.filter((type) => READS.has(type)).length
-    return { database, sqlite, mirror, bus, coordination, guard, name, log, sqliteReads }
+    return { database, sqlite, mirror, bus, coordination, name, log, sqliteReads }
   }
 
   function plainDatabase(name: string): ThreaDatabase {

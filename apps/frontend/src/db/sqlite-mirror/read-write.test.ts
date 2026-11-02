@@ -4,10 +4,10 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 import { NO_CAPTURE, PerfCapture, armPerfCapture } from "@/lib/perf/capture"
 import type { SyncCursor, ThreaDatabase } from "../database"
 import { SqliteMirror } from "./client"
-import { primaryMarked } from "./idb-guard"
-import { resumeSqliteMirror } from "./lifecycle"
+import { persistSqliteStorageMode, resumeSqliteMirror } from "./lifecycle"
 import { gate, mirroredDatabases, mirroredStores, until, type MirroredOptions } from "./mirrored-databases"
-import type { MirrorRequest } from "./protocol"
+import type { MirrorReply, MirrorRequest } from "./protocol"
+import { readRecordedMode, recordMode } from "./storage-mode"
 import { createBus, inProcessTransport } from "./test-harness"
 
 let openMirrored: ReturnType<typeof mirroredDatabases>["openMirrored"]
@@ -32,30 +32,39 @@ function backlogRows(sqlite: Database): number {
   return Number(sqlite.selectValue("SELECT COUNT(*) FROM _idb_backlog"))
 }
 
-/** A second boot of a database whose first, read-write boot copied every store into SQLite. */
+/** A second boot of a database whose first, read-write boot copied every store into SQLite; it records read-write. */
 async function readWriteSession(options: MirroredOptions = {}) {
-  const { name, sqlite } = await copiedSession({ mode: "read-write" })
-  const second = openMirrored({ ...options, name, sqlite, mode: "read-write" })
+  const { name, sqlite } = await copiedSession({ mode: "read-write", entering: true })
+  const second = openMirrored({ ...options, name, sqlite, mode: "read-write", entering: true })
   await second.database.open()
   return second
 }
 
-/** A tab booted with the flag off, on the same browser as `bus`'s tabs. */
-function offTab(name: string, sqlite: Database, bus: ReturnType<typeof createBus>, log: MirrorRequest["type"][] = []) {
-  const off = plainDatabase(name)
-  resumeSqliteMirror(
-    off,
-    (target, mode, guard) =>
-      new SqliteMirror({
-        database: target,
-        mode,
-        coordination: bus.coordination(),
-        guard: guard!,
-        createTransport: () => inProcessTransport(sqlite, log),
-      }),
-    bus.guard(name)
-  )
-  return off
+/** A tab booting as the app does, under the mode recorded for its database and the flag's in localStorage. */
+function bootTab(
+  name: string,
+  sqlite: Database,
+  bus: ReturnType<typeof createBus>,
+  intercept?: (request: MirrorRequest, next: () => Promise<MirrorReply>) => Promise<MirrorReply>
+) {
+  const database = plainDatabase(name)
+  const lock = bus.modeLock()
+  const coordination = bus.coordination(database.sqliteWriter.id, lock)
+  const log: MirrorRequest["type"][] = []
+  const createTransport = () => {
+    const inner = inProcessTransport(sqlite, log)
+    return intercept
+      ? { ...inner, request: (request: MirrorRequest) => intercept(request, () => inner.request(request)) }
+      : inner
+  }
+  resumeSqliteMirror(database, {
+    lock,
+    switchWaitMs: 20,
+    createTransport,
+    createMirror: (target, mode, entering) =>
+      new SqliteMirror({ database: target, mode, entering, coordination, createTransport }),
+  })
+  return { database, coordination, log }
 }
 
 async function cursorsIn(database: ThreaDatabase) {
@@ -190,19 +199,6 @@ describe("read-write SQLite storage", () => {
     })
   })
 
-  it("syncs device-only stores to disk before acknowledging their commit", async () => {
-    const begun: Array<Extract<MirrorRequest, { type: "begin" }>> = []
-    const { database } = await readWriteSession({
-      intercept: (request, next) => {
-        if (request.type === "begin") begun.push(request)
-        return next()
-      },
-    })
-    await database.syncCursors.put(cursor("a", "1"))
-    await database.pendingOperations.clear()
-    expect(begun.map((request) => request.strict)).toEqual([false, true])
-  })
-
   it("notifies live queries of read-write commits", async () => {
     const { database } = await readWriteSession()
     const seen: Array<string | undefined> = []
@@ -227,17 +223,17 @@ describe("read-write SQLite storage", () => {
     armPerfCapture(capture)
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
     owned.push(() => warn.mockRestore())
-    const { database, mirror, name } = openMirrored({ mode: "read-write" })
+    const { database, mirror, name } = openMirrored({ mode: "read-write", entering: true })
     await database.open()
     await until(() => mirroredStores(database).every((store) => mirror.trusts(store)), "a full backfill")
     expect({
       readWrite: mirror.readWrite,
-      primary: await primaryMarked(name),
+      recorded: await readRecordedMode(name),
       deferred: capture.snapshot().filter((sample) => sample.name === "sqlite.readWriteDeferred").length,
       warned: warn.mock.calls.map(([message]) => message),
     }).toEqual({
       readWrite: false,
-      primary: false,
+      recorded: "off",
       deferred: 1,
       warned: [
         `SQLite storage stays read-only until it holds every store in full; missing: ${mirroredStores(database).join(", ")}`,
@@ -278,94 +274,182 @@ describe("read-write SQLite storage", () => {
     })
   }
 
-  it("marks SQLite primary, durably, before the first write only SQLite holds", async () => {
-    const markedAtWrite: boolean[] = []
+  it("records read-write, durably, before the first write only SQLite holds", async () => {
+    const recordedAtWrite: string[] = []
     let name = ""
     const session = await readWriteSession({
       intercept: async (request, next) => {
-        if (request.type === "write") markedAtWrite.push(await primaryMarked(name))
+        if (request.type === "write") recordedAtWrite.push(await readRecordedMode(name))
         return next()
       },
     })
     name = session.name
     await session.database.syncCursors.put(cursor("a", "1"))
-    expect(markedAtWrite).toEqual([true])
+    expect(recordedAtWrite).toEqual(["read-write"])
   })
 
-  it("lands SQLite's writes before a flag-off boot opens IndexedDB, when the browser died before the backlog drained", async () => {
-    const { database, coordination, name, sqlite } = await readWriteSession({
-      intercept: (request, next) => (request.type === "backlog" ? never : next()),
-    })
-    await database.syncCursors.bulkPut([cursor("a", "1"), cursor("b", "1")])
-    await database.drafts.clear()
-    database.close()
-    coordination.die()
-    // localStorage is flushed lazily, so a browser kill may lose all of it.
-    localStorage.clear()
-    expect({ backlog: backlogRows(sqlite), primary: await primaryMarked(name) }).toEqual({ backlog: 2, primary: true })
-
-    const log: MirrorRequest["type"][] = []
-    const off = offTab(name, sqlite, createBus(), log)
-    expect(await cursorsIn(off)).toEqual([cursor("a", "1"), cursor("b", "1")])
-    await until(() => off.sqliteMirror === null && log.includes("destroy"), "the mirror to be destroyed")
-    expect({ backlog: backlogRows(sqlite), primary: await primaryMarked(name) }).toEqual({ backlog: 0, primary: false })
-  })
-
-  it("stays read-only while a tab writes IndexedDB itself, and that tab's writes stay in IndexedDB", async () => {
-    const { name, sqlite } = await copiedSession({ mode: "read-write" })
-    const capture = new PerfCapture()
-    armPerfCapture(capture)
+  it("hands a read-write database back to every tab's IndexedDB when SQLite no longer holds every store, as after an upgrade", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
     owned.push(() => warn.mockRestore())
-    const bus = createBus()
-    const native = offTab(name, sqlite, bus)
-    await native.open()
-    const owner = openMirrored({ name, sqlite, bus, mode: "read-write" })
-    await owner.database.open()
-    await until(() => mirroredStores(owner.database).every((store) => owner.mirror.trusts(store)), "trust")
-    await native.syncCursors.put(cursor("native", "1"))
-    await owner.database.syncCursors.put(cursor("owner", "1"))
+    const name = `demoted_${Date.now()}`
+    await recordMode(name, "read-write")
+    const reloadEveryTab = vi.fn()
+    const { database } = openMirrored({ name, mode: "read-write", reloadEveryTab })
+    void database.open()
+    await until(() => reloadEveryTab.mock.calls.length === 1, "every tab to reload")
+    expect(await readRecordedMode(name)).toBe("read-only")
+  })
+
+  it("closes the connections of builds that predate the recorded mode", async () => {
+    const name = `evicted_${Date.now()}`
+    const request = indexedDB.open(name, 580)
+    const old = await new Promise<IDBDatabase>((resolve) => (request.onsuccess = () => resolve(request.result)))
+    let upgradedTo: number | null = null
+    old.onversionchange = (event) => {
+      upgradedTo = event.newVersion
+      old.close()
+    }
+    await plainDatabase(name).open()
+    expect(upgradedTo).toBe(590)
+  })
+
+  it("keeps SQLite's rows when a tab writes IndexedDB directly meanwhile, failing loudly", async () => {
+    const capture = new PerfCapture()
+    armPerfCapture(capture)
+    const error = vi.spyOn(console, "error").mockImplementation(() => {})
+    owned.push(() => error.mockRestore())
+    const owner = await readWriteSession()
+    owner.bus.hearAnnouncements(owner.name)
+    await owner.database.syncCursors.put(cursor("a", "sqlite"))
+    await plainDatabase(owner.name).syncCursors.put(cursor("a", "native"))
+    await until(() => capture.snapshot().some((sample) => sample.name === "sqlite.foreignWrite"), "the foreign write")
+    expect(await owner.database.syncCursors.get("a")).toEqual(cursor("a", "sqlite"))
+  })
+
+  it("keeps serving and retries the replay into IndexedDB until it lands, strictly durable, counting each failure", async () => {
+    const capture = new PerfCapture()
+    armPerfCapture(capture)
+    vi.spyOn(console, "error").mockImplementation(() => {})
+    const { database, sqlite, mirror, name } = await readWriteSession({ deadlines: { drainRetryMs: 5 } })
+    const replays: Array<IDBTransactionOptions | undefined> = []
+    let refusals = 2
+    const transaction = IDBDatabase.prototype.transaction
+    const spy = vi.spyOn(IDBDatabase.prototype, "transaction").mockImplementation(function (
+      this: IDBDatabase,
+      ...args: Parameters<IDBDatabase["transaction"]>
+    ) {
+      if (this.name === name && args[1] === "readwrite") {
+        replays.push(args[2])
+        if (refusals-- > 0) throw new DOMException("The quota was exceeded", "QuotaExceededError")
+      }
+      return transaction.apply(this, args)
+    })
+    owned.push(() => spy.mockRestore())
+    await database.syncCursors.put(cursor("a", "1"))
+    await until(() => backlogRows(sqlite) === 0, "the replay to land")
     expect({
-      readWrite: owner.mirror.readWrite,
-      primary: await primaryMarked(name),
-      deferred: capture.snapshot().filter((sample) => sample.name === "sqlite.readWriteDeferred").length,
-      nativeSees: await cursorsIn(native),
-      warned: warn.mock.calls.map(([message]) => message),
-    }).toEqual({
-      readWrite: false,
-      primary: false,
-      deferred: 1,
-      warned: ["SQLite storage stays read-only: another tab writes IndexedDB directly"],
-      nativeSees: [cursor("native", "1"), cursor("owner", "1")],
+      failures: capture.snapshot().filter((sample) => sample.name === "sqlite.drainFailure").length,
+      durability: [...new Set(replays.map((options) => options?.durability))],
+      readWrite: mirror.readWrite,
+      inIdb: await cursorsIn(plainDatabase(name)),
+    }).toEqual({ failures: 2, durability: ["strict"], readWrite: true, inIdb: [cursor("a", "1")] })
+  })
+
+  it("lands every committed row in IndexedDB before an upgrade from another tab proceeds", async () => {
+    const drains = gate()
+    const { database, name } = await readWriteSession({
+      intercept: async (request, next) => {
+        if (request.type === "backlog") await drains.opened
+        return next()
+      },
+    })
+    const reload = vi.fn()
+    vi.spyOn(window, "location", "get").mockReturnValue({ reload } as unknown as Location)
+    await database.syncCursors.bulkPut([cursor("a", "1"), cursor("b", "1")])
+    const upgrade = indexedDB.open(name, database.verno * 10 + 10)
+    const upgraded = new Promise<IDBDatabase>((resolve) => (upgrade.onsuccess = () => resolve(upgrade.result)))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    drains.open()
+    const idb = await upgraded
+    const rows = idb.transaction("syncCursors").objectStore("syncCursors").getAll()
+    await new Promise((resolve) => (rows.onsuccess = resolve))
+    idb.close()
+    expect({ rows: rows.result, reloaded: reload.mock.calls.length }).toEqual({
+      rows: [cursor("a", "1"), cursor("b", "1")],
+      reloaded: 1,
     })
   })
 
-  it("routes a flag-off tab through the tab serving read-write, then lands the backlog and drops SQLite when it takes over", async () => {
-    const owner = await readWriteSession({
-      intercept: (request, next) => (request.type === "backlog" ? never : next()),
-    })
-    const log: MirrorRequest["type"][] = []
-    const off = offTab(owner.name, owner.sqlite, owner.bus, log)
-    await off.syncCursors.put(cursor("from off", "1"))
-    expect({ readWrite: off.sqliteMirror?.readWrite, ownerSees: await cursorsIn(owner.database) }).toEqual({
-      readWrite: true,
-      ownerSees: [cursor("from off", "1")],
+  describe("switching modes at boot", () => {
+    it("enters read-write only at a boot holding every other tab of the database out", async () => {
+      const { name, sqlite } = await copiedSession({ mode: "read-write", entering: true })
+      const bus = createBus()
+      const native = bootTab(name, sqlite, bus)
+      await native.database.open()
+      persistSqliteStorageMode("read-write")
+      const blocked = bootTab(name, sqlite, bus)
+      await blocked.database.open()
+      const whileBlocked = { mirror: blocked.database.sqliteMirror, recorded: await readRecordedMode(name) }
+      for (const tab of [native, blocked]) {
+        tab.database.close()
+        tab.coordination.die()
+      }
+      const entering = bootTab(name, sqlite, bus)
+      await entering.database.open()
+      expect({
+        whileBlocked,
+        readWrite: entering.database.sqliteMirror?.readWrite,
+        recorded: await readRecordedMode(name),
+      }).toEqual({ whileBlocked: { mirror: null, recorded: "off" }, readWrite: true, recorded: "read-write" })
     })
 
-    owner.coordination.die()
-    owner.database.close()
-    await until(() => off.sqliteMirror === null && log.includes("destroy"), "the flag-off tab to drop SQLite")
-    await off.syncCursors.put(cursor("native", "1"))
-    expect({
-      backlog: backlogRows(owner.sqlite),
-      primary: await primaryMarked(owner.name),
-      inIdb: await cursorsIn(plainDatabase(owner.name)),
-    }).toEqual({ backlog: 0, primary: false, inIdb: [cursor("from off", "1"), cursor("native", "1")] })
+    it("leaves read-write only once every tab closed, landing every tab's rows in IndexedDB and dropping SQLite", async () => {
+      const established = await readWriteSession()
+      established.database.close()
+      established.coordination.die()
+      const { name, sqlite } = established
+      persistSqliteStorageMode("read-write")
+      const bus = createBus()
+      const first = bootTab(name, sqlite, bus, (request, next) => (request.type === "backlog" ? never : next()))
+      await first.database.syncCursors.put(cursor("first", "1"))
+      persistSqliteStorageMode("off")
+      const second = bootTab(name, sqlite, bus)
+      await second.database.syncCursors.put(cursor("second", "1"))
+      const whileOpen = { readWrite: second.database.sqliteMirror?.readWrite, recorded: await readRecordedMode(name) }
+      for (const tab of [first, second]) {
+        tab.database.close()
+        tab.coordination.die()
+      }
+      expect(backlogRows(sqlite)).toBe(2)
+
+      const next = bootTab(name, sqlite, bus)
+      expect({
+        whileOpen,
+        cursors: await cursorsIn(next.database),
+        mirror: next.database.sqliteMirror,
+        recorded: await readRecordedMode(name),
+        backlog: backlogRows(sqlite),
+        destroyed: next.log.includes("destroy"),
+      }).toEqual({
+        whileOpen: { readWrite: true, recorded: "read-write" },
+        cursors: [cursor("first", "1"), cursor("second", "1")],
+        mirror: null,
+        recorded: "off",
+        backlog: 0,
+        destroyed: true,
+      })
+    })
   })
 
   describe("in a second tab", () => {
-    async function follower(owner: Awaited<ReturnType<typeof readWriteSession>>) {
-      const tab = openMirrored({ name: owner.name, sqlite: owner.sqlite, bus: owner.bus, mode: "read-write" })
+    async function follower(owner: Awaited<ReturnType<typeof readWriteSession>>, options: MirroredOptions = {}) {
+      const tab = openMirrored({
+        ...options,
+        name: owner.name,
+        sqlite: owner.sqlite,
+        bus: owner.bus,
+        mode: "read-write",
+      })
       await tab.database.open()
       return tab
     }
@@ -435,6 +519,83 @@ describe("read-write SQLite storage", () => {
         readWrite: true,
         cursors: [cursor("after", "1"), cursor("before", "1")],
       })
+    })
+
+    it("serves nothing from the tab taking over until it decided SQLite still holds every store", async () => {
+      const owner = await readWriteSession()
+      const reconciling = gate()
+      const requests: MirrorRequest["type"][] = []
+      const second = await follower(owner, {
+        intercept: async (request, next) => {
+          requests.push(request.type)
+          if (request.type === "status") await reconciling.opened
+          return next()
+        },
+      })
+      owner.coordination.die()
+      owner.database.close()
+      await until(() => requests.includes("status"), "the new owner to reconcile")
+      const put = second.database.syncCursors.put(cursor("after", "1"))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      const begunBeforeDecided = requests.includes("begin")
+      reconciling.open()
+      await put
+      expect({
+        begunBeforeDecided,
+        readWrite: second.mirror.readWrite,
+        cursors: await cursorsIn(second.database),
+      }).toEqual({
+        begunBeforeDecided: false,
+        readWrite: true,
+        cursors: [cursor("after", "1")],
+      })
+    })
+
+    it("fails a commit the owner's worker may have applied as outcome-unknown when the owner closes before answering", async () => {
+      let loseReply = false
+      const owner = await readWriteSession({
+        intercept: async (request, next) => {
+          if (request.type !== "commit" || !loseReply) return next()
+          await next()
+          return never
+        },
+      })
+      const second = await follower(owner)
+      loseReply = true
+      const commits = owner.log.filter((type) => type === "commit").length
+      const put = second.database.syncCursors.put(cursor("maybe", "1"))
+      await until(
+        () => owner.log.filter((type) => type === "commit").length > commits,
+        "the commit to reach the worker"
+      )
+      owner.coordination.die()
+      owner.database.close()
+      // Dexie reports a transaction's abort as AbortError, carrying what aborted it.
+      const failure = await put.then(
+        () => null,
+        (error: Error & { inner?: Error }) => error.inner?.name
+      )
+      expect({ failure, afterTakeover: await second.database.syncCursors.get("maybe") }).toEqual({
+        failure: "OutcomeUnknownError",
+        afterTakeover: cursor("maybe", "1"),
+      })
+    })
+
+    it("fails a request rather than following an owner of another build, once none answered in time", async () => {
+      const capture = new PerfCapture()
+      armPerfCapture(capture)
+      const error = vi.spyOn(console, "error").mockImplementation(() => {})
+      owned.push(() => error.mockRestore())
+      const bus = createBus()
+      const otherBuild = bus.coordination()
+      otherBuild.claim(() => {})
+      otherBuild.onBroadcast((message) => {
+        if (message.type === "hello") otherBuild.broadcast({ type: "decided", tab: otherBuild.tabId, protocol: 0 })
+      })
+      const tab = openMirrored({ bus, mode: "read-write", deadlines: { decidedMs: 30 } })
+      await tab.database.open()
+      await expect(tab.database.syncCursors.get("a")).rejects.toThrow(/SQLite storage is unavailable/)
+      expect(capture.snapshot().filter((sample) => sample.name === "sqlite.decisionOverdue").length).toBe(1)
     })
   })
 })

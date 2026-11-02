@@ -8,8 +8,8 @@ import { mirroredDatabases } from "./mirrored-databases"
 // instead of failing them on a closed database.
 beforeAll(async () => {
   const { copiedSession, openMirrored } = mirroredDatabases(await sqlite3InitModule(), [])
-  const { name, sqlite } = await copiedSession({ mode: "read-write" })
-  const { database, mirror } = openMirrored({ name, sqlite, mode: "read-write" })
+  const { name, sqlite } = await copiedSession({ mode: "read-write", entering: true })
+  const { database, mirror } = openMirrored({ name, sqlite, mode: "read-write", entering: true })
   await database.open()
   if (!mirror.readWrite) throw new Error("The read-write suite's database did not enter read-write")
   setActiveDb(database)

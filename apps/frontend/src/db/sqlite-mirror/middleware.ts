@@ -498,7 +498,7 @@ export function createSqliteMirrorMiddleware(
         transaction(stores, mode, options) {
           const mirror = currentMirror()
           if (mirror?.readWrite) {
-            const mirrored = stores.filter(isMirrored)
+            const mirrored = stores.filter(isMirroredStore)
             if (mirrored.length === stores.length) {
               return new EmulatedTransaction(mirror, stores, mode) as unknown as DBCoreTransaction
             }
