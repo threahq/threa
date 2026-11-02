@@ -73,19 +73,19 @@ function countLoads(page: Page): () => number {
   return () => loads
 }
 
-/** Opens the channel and waits out the reload the delivered flag triggers, then the boot under its mode. */
-async function openUnderFlag(page: Page, path: string, slug: string, mode: string) {
+/** Opens the channel and waits out the reload the delivered flag triggers, then the boot under its mode; returns the page's load count. */
+async function openUnderFlag(page: Page, path: string, slug: string, mode: string): Promise<() => number> {
   const loads = countLoads(page)
   await page.goto(path)
   await expect.poll(() => requestedMode(page), { timeout: 30_000 }).toBe(mode)
-  await expect.poll(loads, { timeout: 30_000 }).toBe(2)
+  await expect.poll(loads, { timeout: 30_000 }).toBeGreaterThanOrEqual(2)
   await opened(page, slug)
+  return loads
 }
 
-/** Read-write starts on the boot after one that copied every store into SQLite. */
-async function enterReadWrite(page: Page, slug: string) {
-  await expect.poll(() => mirrorHoldsEveryStore(page), { timeout: 90_000 }).toBe(true)
-  await page.reload()
+/** The boot that copied every store into SQLite reloads every tab by itself; the boot after enters read-write. */
+async function enterReadWrite(page: Page, slug: string, loads: () => number) {
+  await expect.poll(loads, { timeout: 90_000 }).toBe(3)
   await opened(page, slug)
   await expect.poll(() => recordedModes(page)).toEqual(["read-write"])
 }
@@ -96,28 +96,6 @@ function sqliteErrors(page: Page): string[] {
     if (entry.type() === "error" && entry.text().includes("SQLite")) errors.push(entry.text())
   })
   return errors
-}
-
-/** Whether the mirror's owner recorded SQLite as holding every mirrored store in full, which read-write needs. */
-function mirrorHoldsEveryStore(page: Page): Promise<boolean> {
-  return page.evaluate(async () => {
-    const unmirrored = (store: string) =>
-      ["e2eDeviceKeys", "uploadJobs", "sqliteIncarnation"].includes(store) || store.startsWith("sqliteMarks:")
-    for (const { name } of await indexedDB.databases()) {
-      const hint = name ? localStorage.getItem(`threa:sqliteTrusted:${name}`) : null
-      if (!name || !hint) continue
-      const trusted = new Set((JSON.parse(hint) as { stores: string[] }).stores)
-      const database = await new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open(name)
-        request.onsuccess = () => resolve(request.result)
-        request.onerror = () => reject(request.error)
-      })
-      const stores = [...database.objectStoreNames]
-      database.close()
-      return stores.every((store) => unmirrored(store) || trusted.has(store))
-    }
-    return false
-  })
 }
 
 // Two reloads and four stream switches against a dev server; read-write also waits out a full copy.
@@ -133,7 +111,8 @@ for (const mode of ["shadow", "read-only", "read-write"] as const) {
     const firstId = await createChannelViaApi(page, workspaceId, first.slug)
     await createChannelViaApi(page, workspaceId, second.slug)
 
-    await openUnderFlag(page, `/w/${workspaceId}/s/${firstId}`, first.slug, mode)
+    const loads = await openUnderFlag(page, `/w/${workspaceId}/s/${firstId}`, first.slug, mode)
+    if (mode === "read-write") await enterReadWrite(page, first.slug, loads)
     await expect.poll(() => mirrorPools(page)).toHaveLength(1)
 
     await send(page, `hello first ${mode}`)
@@ -141,8 +120,6 @@ for (const mode of ["shadow", "read-only", "read-write"] as const) {
     await send(page, `hello second ${mode}`)
     await switchTo(page, first.slug)
     await expect(message(page, `hello first ${mode}`)).toBeVisible()
-
-    if (mode === "read-write") await enterReadWrite(page, first.slug)
 
     // A boot that reads what the previous one mirrored.
     await page.reload()
@@ -167,8 +144,8 @@ test("turning read-write off with a second tab open reloads both and keeps every
   const second = { slug: `second-${testId}` }
   const firstId = await createChannelViaApi(page, workspaceId, first.slug)
   const secondId = await createChannelViaApi(page, workspaceId, second.slug)
-  await openUnderFlag(page, `/w/${workspaceId}/s/${firstId}`, first.slug, "read-write")
-  await enterReadWrite(page, first.slug)
+  const pageLoads = await openUnderFlag(page, `/w/${workspaceId}/s/${firstId}`, first.slug, "read-write")
+  await enterReadWrite(page, first.slug, pageLoads)
 
   const other = await page.context().newPage()
   const otherErrors = sqliteErrors(other)

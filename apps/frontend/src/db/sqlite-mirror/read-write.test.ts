@@ -326,6 +326,29 @@ describe("read-write SQLite storage", () => {
     expect(recordedAtWrite).toEqual(["read-write"])
   })
 
+  it("reloads every tab once the backfill an entering boot deferred on completes, once per tab session", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    owned.push(() => warn.mockRestore())
+    const name = `deferred_${Date.now()}`
+    adoptDeliveredMode(name, WS, "read-write")
+    const reloadEveryTab = vi.fn()
+    const entering = openMirrored({ name, mode: "read-write", entering: true, reloadEveryTab })
+    await entering.database.open()
+    await until(() => reloadEveryTab.mock.calls.length === 1, "every tab to reload")
+    const afterBackfill = { readWrite: entering.mirror.readWrite, recorded: await readRecordedMode(name) }
+    entering.database.close()
+    entering.coordination.die()
+
+    const reloaded = openMirrored({ name, sqlite: entering.sqlite, mode: "read-only", reloadEveryTab })
+    await reloaded.database.open()
+    await until(() => mirroredStores(reloaded.database).every((store) => reloaded.mirror.trusts(store)), "trust")
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect({ afterBackfill, reloads: reloadEveryTab.mock.calls.length }).toEqual({
+      afterBackfill: { readWrite: false, recorded: "off" },
+      reloads: 1,
+    })
+  })
+
   it("hands a read-write database back to every tab's IndexedDB when SQLite no longer holds every store, as after an upgrade", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
     owned.push(() => warn.mockRestore())

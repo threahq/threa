@@ -4,7 +4,7 @@ import { createElement, type ReactNode } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { WorkspaceBootstrap } from "@threahq/types"
 import { getActiveDb } from "@/db"
-import { readSqliteStorageMode } from "@/db/sqlite-mirror/lifecycle"
+import { readSqliteStorageMode } from "@/db/sqlite-mirror/storage-mode"
 import { workspaceKeys } from "./use-workspaces"
 import { useSqliteStorageFlag } from "./use-sqlite-storage-flag"
 

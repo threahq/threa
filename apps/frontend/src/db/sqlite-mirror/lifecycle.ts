@@ -12,8 +12,11 @@ import {
 import { drainBacklog } from "./idb-backlog"
 import type { MirrorReply, MirrorRequest, MirrorTransport } from "./protocol"
 import {
+  REQUESTED_PREFIX,
   browserModeLock,
+  parseMode,
   readRecordedMode,
+  readSqliteStorageMode,
   recordMode,
   reloadWhenAsked,
   takeSwitchReload,
@@ -22,26 +25,15 @@ import {
 } from "./storage-mode"
 import { createWorkerTransport } from "./worker-transport"
 
-const REQUESTED_PREFIX = "threa:sqliteStorage:"
 const DELIVERED_PREFIX = "threa:sqliteStorageDelivered:"
 
 /** How long a boot changing the mode right after a reload for it waits for the other tabs to close. */
 const SWITCH_WAIT_MS = 5_000
 const MODE_READ_ATTEMPTS = 3
 
-function parseMode(stored: string | null): SqliteStorageMode {
-  return stored === "shadow" || stored === "read-only" || stored === "read-write" ? stored : "off"
-}
-
 function storeMode(key: string, mode: SqliteStorageMode): void {
   if (mode === "off") localStorage.removeItem(key)
   else localStorage.setItem(key, mode)
-}
-
-/** The mode the flag asked for this database; anything unrecognised reads as off. */
-export function readSqliteStorageMode(idbName: string): SqliteStorageMode {
-  if (typeof localStorage === "undefined") return "off"
-  return parseMode(localStorage.getItem(`${REQUESTED_PREFIX}${idbName}`))
 }
 
 /**

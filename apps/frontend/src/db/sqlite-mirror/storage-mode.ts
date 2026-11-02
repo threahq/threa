@@ -7,6 +7,18 @@ const MODE_DATABASE = "threa-sqlite-mode"
 const MODE_STORE = "mode"
 const RELOAD_CHANNEL = "threa-sqlite-storage-reload"
 const SWITCH_RELOAD_KEY = "threa:sqliteSwitchReload"
+const ENTER_RELOAD_PREFIX = "threa:sqliteEnterReload:"
+export const REQUESTED_PREFIX = "threa:sqliteStorage:"
+
+export function parseMode(stored: string | null): SqliteStorageMode {
+  return stored === "shadow" || stored === "read-only" || stored === "read-write" ? stored : "off"
+}
+
+/** The mode the flag asked for this database; anything unrecognised reads as off. */
+export function readSqliteStorageMode(idbName: string): SqliteStorageMode {
+  if (typeof localStorage === "undefined") return "off"
+  return parseMode(localStorage.getItem(`${REQUESTED_PREFIX}${idbName}`))
+}
 
 function openModes(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -97,6 +109,18 @@ export function takeSwitchReload(): boolean {
   const took = sessionStorage.getItem(SWITCH_RELOAD_KEY) !== null
   sessionStorage.removeItem(SWITCH_RELOAD_KEY)
   return took
+}
+
+/** True once per tab session until read-write is entered, so an entry that keeps failing cannot reload in a loop. */
+export function takeEnterReload(idbName: string): boolean {
+  const key = `${ENTER_RELOAD_PREFIX}${idbName}`
+  if (sessionStorage.getItem(key) !== null) return false
+  sessionStorage.setItem(key, "1")
+  return true
+}
+
+export function enteredReadWrite(idbName: string): void {
+  sessionStorage.removeItem(`${ENTER_RELOAD_PREFIX}${idbName}`)
 }
 
 let listening = false

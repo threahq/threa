@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest"
 import { ThreaDatabase } from "../database"
-import { adoptDeliveredMode, readSqliteStorageMode, startSqliteMirror } from "./lifecycle"
+import { adoptDeliveredMode, startSqliteMirror } from "./lifecycle"
+import { readSqliteStorageMode } from "./storage-mode"
 
 afterEach(() => {
   for (const key of Object.keys(localStorage)) if (key.startsWith("threa:sqlite")) localStorage.removeItem(key)

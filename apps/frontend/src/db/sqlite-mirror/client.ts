@@ -19,7 +19,7 @@ import type { IdbWrite } from "./middleware"
 import type { MirrorEntry, MirrorMutation, MirrorStatus, MirrorStoreSchema, MirrorWrite } from "./mirror-store"
 import type { MirrorReadRequest, MirrorReadResults, MirrorReply, MirrorRequest, MirrorTransport } from "./protocol"
 import { txOf } from "./protocol"
-import { recordMode, reloadEveryTab } from "./storage-mode"
+import { enteredReadWrite, readSqliteStorageMode, recordMode, reloadEveryTab, takeEnterReload } from "./storage-mode"
 import { isMirroredStore } from "./stores"
 import { encodeValue } from "./value-codec"
 import { createWorkerTransport } from "./worker-transport"
@@ -1062,7 +1062,9 @@ export class SqliteMirror {
         stores.filter((store) => !reconciled.trusted.has(store)),
         reconciled.marks
       )
-      if (backfilled) await this.forget(reconciled, backfilled, live)
+      if (!backfilled) return
+      await this.forget(reconciled, backfilled, live)
+      if (this.role === "owner") this.reloadToEnterReadWrite(stores)
     } catch (error) {
       this.fail(error)
     }
@@ -1091,7 +1093,10 @@ export class SqliteMirror {
   private async decide(full: boolean): Promise<void> {
     const { entering, database } = this.options
     if (full) {
-      if (entering) await recordMode(database.name, "read-write")
+      if (entering) {
+        await recordMode(database.name, "read-write")
+        enteredReadWrite(database.name)
+      }
       this.primary = true
       if (this.role !== "owner") return
       this.decided = true
@@ -1104,6 +1109,18 @@ export class SqliteMirror {
       await recordMode(database.name, "read-only")
       ;(this.options.reloadEveryTab ?? reloadEveryTab)()
     }
+  }
+
+  /**
+   * The flag asks for read-write and SQLite now holds every store, yet this
+   * session runs on IndexedDB: every tab reloads, so the next boot may wait
+   * for the others to close and enter. A plain reload never waits for them.
+   */
+  private reloadToEnterReadWrite(stores: readonly string[]): void {
+    const { database } = this.options
+    if (this.primary || readSqliteStorageMode(database.name) !== "read-write") return
+    if (readWriteBlocker(database) || !stores.every((store) => this.trusted.has(store))) return
+    if (takeEnterReload(database.name)) (this.options.reloadEveryTab ?? reloadEveryTab)()
   }
 
   /**
