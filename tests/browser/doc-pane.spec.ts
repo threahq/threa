@@ -250,10 +250,12 @@ test.describe("Doc pane", () => {
     const workspaceId = workspaceIdFromUrl(page)
     const channelId = await createChannelViaApi(page, workspaceId, `bold-docs-${testId}`, "private")
     const docId = await createDocViaApi(page, workspaceId, channelId)
+    let heldSave: Promise<void> | null = null
+    let releaseSave = () => {}
     await page.route(
       (url) => url.pathname.endsWith(`/docs/${docId}/updates`),
       async (route) => {
-        if (route.request().method() === "POST") await new Promise((resolve) => setTimeout(resolve, 300))
+        if (route.request().method() === "POST" && heldSave) await heldSave
         await route.continue()
       }
     )
@@ -267,9 +269,11 @@ test.describe("Doc pane", () => {
     const commentOnBlock = pane(page, docId).getByRole("link", { name: "Comment on this block" })
     await expect(commentOnBlock).toBeVisible({ timeout: 15000 })
 
+    heldSave = new Promise((resolve) => (releaseSave = resolve))
     await page.keyboard.press("Enter")
     await expect(commentOnBlock).toHaveCount(0)
     await page.keyboard.press("ControlOrMeta+b")
+    releaseSave()
     await expect(commentOnBlock).toBeVisible({ timeout: 15000 })
     await page.keyboard.type("Keys")
 
