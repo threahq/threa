@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { userId } from "../../src/lib/id"
-import { createTestPool } from "../integration/setup"
+import { createTestServerPool } from "../integration/setup"
 import { TestClient, createWorkspace, getWorkspaceBootstrap, loginAs } from "../client"
 
 const testRunId = Math.random().toString(36).substring(7)
@@ -10,7 +10,7 @@ describe("workspace bootstrap users", () => {
   let pool: Pool
 
   beforeAll(() => {
-    pool = createTestPool()
+    pool = createTestServerPool()
   })
 
   afterAll(async () => {

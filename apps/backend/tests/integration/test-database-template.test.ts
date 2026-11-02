@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { Pool } from "pg"
-import { setupIsolatedTestDatabase } from "./setup"
+import { setupIsolatedTestDatabase, setupTestDatabase } from "./setup"
 import { getIsolatedTestTemplate } from "../setup"
 import { getTestDatabaseTarget } from "../test-database"
 
@@ -79,3 +79,29 @@ test("should clone pristine migrations and seeds with independent data and schem
     }
   }
 }, 120_000)
+
+test("setupTestDatabase gives each caller its own clone off the server's database, dropped when the pool ends", async () => {
+  const admin = new Pool({ connectionString: getTestDatabaseTarget().adminUrl })
+  try {
+    const pools = await Promise.all([setupTestDatabase(), setupTestDatabase()])
+    const names: string[] = await Promise.all(
+      pools.map(async (pool) => (await pool.query("SELECT current_database() AS name")).rows[0].name)
+    )
+    const existing = async () =>
+      (await admin.query("SELECT datname FROM pg_database WHERE datname = ANY($1::text[])", [names])).rows.length
+    const opened = {
+      distinct: new Set(names).size,
+      onServerDatabase: names.includes(getTestDatabaseTarget().databaseName),
+      live: await existing(),
+    }
+    await Promise.all(pools.map((pool) => pool.end()))
+    expect({ ...opened, afterEnd: await existing() }).toEqual({
+      distinct: 2,
+      onServerDatabase: false,
+      live: 2,
+      afterEnd: 0,
+    })
+  } finally {
+    await admin.end()
+  }
+}, 60_000)

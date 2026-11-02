@@ -8,7 +8,7 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import type { Pool } from "pg"
 import { TestClient, loginAs, createWorkspace, createChannel, createThread, createBot, createBotKey } from "../client"
-import { createTestPool } from "../integration/setup"
+import { createTestServerPool } from "../integration/setup"
 
 const testRunId = Math.random().toString(36).substring(7)
 const testEmail = (name: string) => `${name}-conv-${testRunId}@test.com`
@@ -185,7 +185,7 @@ describe("Public API v1 — Conversations", () => {
   let ctx: TestContext
 
   beforeAll(async () => {
-    pool = createTestPool()
+    pool = createTestServerPool()
     ctx = await setupTestWorkspace()
   })
 

@@ -13,7 +13,7 @@ import {
   loginAs,
   sendMessage,
 } from "../client"
-import { createTestPool } from "../integration/setup"
+import { createTestServerPool } from "../integration/setup"
 
 const testRunId = Math.random().toString(36).slice(2)
 const testEmail = (name: string) => `${name}-memos-${testRunId}@test.com`
@@ -76,7 +76,7 @@ describe("Memo Explorer E2E Tests", () => {
   let pool: Pool
 
   beforeAll(() => {
-    pool = createTestPool()
+    pool = createTestServerPool()
   })
 
   afterAll(async () => {

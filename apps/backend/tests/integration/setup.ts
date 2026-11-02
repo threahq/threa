@@ -4,12 +4,11 @@
  */
 
 import { expect } from "bun:test"
-import { getIsolatedTestTemplate } from "../setup"
+import { getIsolatedTestTemplate, trackIsolatedTestDatabase } from "../setup"
 import { Pool, type PoolClient } from "pg"
 import { BLOCK_ID_PATTERN, type JSONContent } from "@threahq/types"
 import { BLOCK_ID_NODE_TYPES } from "@threahq/prosemirror/schema"
 import { createDatabasePool } from "../../src/db"
-import { createMigrator } from "../../src/db/migrations"
 import { botChannelAccessId, linkPreviewId, streamId, userId, workspaceId } from "../../src/lib/id"
 import type { Querier } from "../../src/db"
 import { UserRepository, type InsertUserParams } from "../../src/features/workspaces"
@@ -53,40 +52,21 @@ export function createTestStorage(): StorageProvider {
 }
 
 /**
- * Creates the test database if it doesn't exist.
+ * A pool on the database the preloaded test server runs against. Its outbox
+ * handlers and workers react to every row written here, so only tests that
+ * drive that server belong on it.
  */
-export async function ensureTestDatabaseExists(): Promise<void> {
-  const { adminUrl, databaseName } = getTestDatabaseTarget()
-  const adminPool = new Pool({ connectionString: adminUrl })
-
-  try {
-    const result = await adminPool.query("SELECT 1 FROM pg_database WHERE datname = $1", [databaseName])
-
-    if (result.rows.length === 0) {
-      await adminPool.query(`CREATE DATABASE ${quoteDatabaseIdentifier(databaseName)}`)
-    }
-  } finally {
-    await adminPool.end()
-  }
-}
-
-/**
- * Creates a pool connected to the test database.
- */
-export function createTestPool(): Pool {
+export function createTestServerPool(): Pool {
   return createDatabasePool(getTestDatabaseTarget().connectionUrl)
 }
 
 /**
- * Full setup: ensure database exists, connect, run migrations.
- * Returns the pool for use in tests.
+ * A pool on a fresh clone of the migrated template that no server or worker
+ * watches. Ending the pool drops the clone; the preload's teardown drops any
+ * left open.
  */
 export async function setupTestDatabase(): Promise<Pool> {
-  await ensureTestDatabaseExists()
-  const pool = createTestPool()
-  const migrator = createMigrator(pool)
-  await migrator.up()
-  return pool
+  return (await setupIsolatedTestDatabase("file")).pool
 }
 
 export async function setupIsolatedTestDatabase(label: string): Promise<{ pool: Pool; cleanup: () => Promise<void> }> {
@@ -114,17 +94,19 @@ export async function setupIsolatedTestDatabase(label: string): Promise<{ pool: 
     throw error
   }
 
+  const untrack = trackIsolatedTestDatabase(databaseName)
+  const endPool = pool.end.bind(pool)
   let cleanedUp = false
-  return {
-    pool,
-    cleanup: async () => {
-      if (cleanedUp) return
-      cleanedUp = true
-      await pool.end()
-      await adminPool.query(`DROP DATABASE ${databaseIdentifier} WITH (FORCE)`)
-      await adminPool.end()
-    },
+  const cleanup = async () => {
+    if (cleanedUp) return
+    cleanedUp = true
+    await endPool()
+    await adminPool.query(`DROP DATABASE ${databaseIdentifier} WITH (FORCE)`)
+    untrack()
+    await adminPool.end()
   }
+  pool.end = cleanup as Pool["end"]
+  return { pool, cleanup }
 }
 
 export interface BotRuntimeFixture {

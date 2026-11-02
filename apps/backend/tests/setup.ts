@@ -14,6 +14,7 @@ import { startTestServer, TestServer } from "./test-server"
 let testServer: TestServer | null = null
 let templatePromise: Promise<string> | undefined
 let ownedTemplateName: string | undefined
+const liveClones = new Set<string>()
 let tearingDown = false
 
 /** A migrated template to clone isolated databases from: the parallel runner's shared one, else one per process. */
@@ -27,6 +28,12 @@ export function getIsolatedTestTemplate(): Promise<string> {
     ownedTemplateName = databaseName
     return databaseName
   })())
+}
+
+/** Registers a clone for the teardown sweep; the returned function deregisters it once its owner dropped it. */
+export function trackIsolatedTestDatabase(databaseName: string): () => void {
+  liveClones.add(databaseName)
+  return () => liveClones.delete(databaseName)
 }
 
 async function cleanupIsolatedTestTemplate(): Promise<void> {
@@ -76,6 +83,7 @@ afterAll(async () => {
       }
     })(),
     cleanupIsolatedTestTemplate(),
+    ...[...liveClones].map((name) => dropTestDatabase(name)),
   ])
   const errors = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
   if (errors.length) throw new AggregateError(errors, "Test resource teardown failed")

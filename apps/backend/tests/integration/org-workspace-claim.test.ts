@@ -13,7 +13,7 @@ import {
 import type { QueueManager } from "../../src/lib/queue"
 import { workspaceId } from "../../src/lib/id"
 import { TestClient } from "../client"
-import { setupTestDatabase } from "./setup"
+import { createTestServerPool } from "./setup"
 
 describe("org workspace claim", () => {
   let pool: Pool
@@ -74,7 +74,7 @@ describe("org workspace claim", () => {
   }
 
   beforeAll(async () => {
-    pool = await setupTestDatabase()
+    pool = createTestServerPool()
     workspaceService = new WorkspaceService(pool, {} as AvatarService, {} as QueueManager)
     invitations = new InvitationService(pool, workspaceService)
   })
