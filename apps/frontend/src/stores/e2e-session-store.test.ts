@@ -328,6 +328,7 @@ describe("e2e session store — keep me unlocked on this device", () => {
       expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
     })
 
+    // The PIN path ignores FAST_PARAMS: one production Argon2id derivation per attempt runs near 5 s on a loaded runner.
     it("forgets the PIN after MAX_PIN_ATTEMPTS so only the passphrase recovers", async () => {
       await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS, pin: PIN })
       await reload()
@@ -341,7 +342,7 @@ describe("e2e session store — keep me unlocked on this device", () => {
       const s = getE2eSessionState(WORKSPACE_ID, USER_ID)
       expect(s.status).toBe("locked")
       expect(s.pinProtected).toBe(false)
-    })
+    }, 20_000)
   })
 
   describe("device biometric (WebAuthn PRF) quick-unlock", () => {
