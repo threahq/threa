@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { IDBKeyRange, indexedDB } from "fake-indexeddb"
 import { compareBytes, encodeKey, encodeRange, isKeyInRange } from "./key-codec"
 
 function createRng(seed: number): () => number {

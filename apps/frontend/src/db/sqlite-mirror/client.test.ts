@@ -1,114 +1,25 @@
 import sqlite3InitModule, { type Database } from "@sqlite.org/sqlite-wasm"
+import Dexie from "dexie"
 import { afterEach, beforeAll, describe, expect, it } from "vitest"
 import { ThreaDatabase } from "../database"
-import { SqliteMirror, type MirrorBroadcast, type MirrorCoordination } from "./client"
-import { createMirrorHandler } from "./handler"
-import { decodeValue } from "./value-codec"
+import { SqliteMirror } from "./client"
+import { SQLITE_MARKS_STORE, type MirrorBroadcast, type SqliteMark } from "./marks"
 import type { MirrorReply, MirrorRequest, MirrorTransport } from "./protocol"
 import { SQLITE_UNMIRRORED_STORES } from "./stores"
+import { createBus, inProcessTransport, settle } from "./test-harness"
+import { decodeValue } from "./value-codec"
 
 let sqlite3: Awaited<ReturnType<typeof sqlite3InitModule>>
 beforeAll(async () => {
   sqlite3 = await sqlite3InitModule()
 })
 
-const owned: Array<() => void> = []
-afterEach(() => {
-  for (const cleanup of owned.splice(0)) cleanup()
-  for (const key of Object.keys(localStorage)) if (key.startsWith("threa:sqliteDirty:")) localStorage.removeItem(key)
+const owned: Array<() => unknown> = []
+afterEach(async () => {
+  for (const cleanup of owned.splice(0).reverse()) await cleanup()
 })
 
 let counter = 0
-
-/** Tabs on one in-memory channel; the first to claim owns until it resigns. */
-function createBus() {
-  const listeners = new Set<(message: MirrorBroadcast) => void>()
-  const live = new Set<string>()
-  const queue: Array<(owner: boolean) => void> = []
-  let holder: ((owner: boolean) => void) | null = null
-  let held: Array<() => void> | null = null
-  const handOver = () => {
-    holder = queue.shift() ?? null
-    holder?.(true)
-  }
-  return {
-    /** Delays every broadcast until `release`, as a busy channel would. */
-    hold() {
-      held = []
-    },
-    release() {
-      const deliveries = held ?? []
-      held = null
-      for (const deliver of deliveries) deliver()
-    },
-    /** A tab that runs no mirror but is alive, as one still booting would be. */
-    liveTab(tabId: string) {
-      live.add(tabId)
-    },
-    coordination(): MirrorCoordination & { resigned: () => boolean; die: () => void } {
-      let mine: ((owner: boolean) => void) | null = null
-      let resigned = false
-      const own = new Set<(message: MirrorBroadcast) => void>()
-      const tabId = `tab-${++counter}`
-      live.add(tabId)
-      const resign = () => {
-        resigned = true
-        if (holder === mine) handOver()
-        else if (mine && queue.includes(mine)) queue.splice(queue.indexOf(mine), 1)
-      }
-      return {
-        tabId,
-        liveTabs: async () => new Set(live),
-        resigned: () => resigned,
-        /** The tab is killed: it hears nothing more and its lock is released. */
-        die() {
-          live.delete(tabId)
-          for (const listener of own) listeners.delete(listener)
-          resign()
-        },
-        claim(onChange) {
-          mine = onChange
-          if (!holder) {
-            holder = onChange
-            onChange(true)
-          } else {
-            onChange(false)
-            queue.push(onChange)
-          }
-        },
-        resign,
-        close() {
-          resign()
-          for (const listener of own) listeners.delete(listener)
-        },
-        broadcast(message) {
-          for (const listener of listeners) {
-            if (own.has(listener)) continue
-            const deliver = () => listener(message)
-            if (held) held.push(deliver)
-            else queueMicrotask(deliver)
-          }
-        },
-        onBroadcast(listener) {
-          own.add(listener)
-          listeners.add(listener)
-          return () => listeners.delete(listener)
-        },
-      }
-    },
-  }
-}
-
-function inProcessTransport(sqlite: Database, log: MirrorRequest["type"][] = []): MirrorTransport {
-  const handler = createMirrorHandler(async () => ({ db: sqlite, close: () => {}, destroy: async () => {} }))
-  return {
-    request: (request) => {
-      log.push(request.type)
-      return handler.handle(request)
-    },
-    close: () => {},
-  }
-}
 
 function openDatabase(name: string): ThreaDatabase {
   const database = new ThreaDatabase(name)
@@ -116,34 +27,81 @@ function openDatabase(name: string): ThreaDatabase {
   return database
 }
 
+function memorySqlite(): Database {
+  const sqlite: Database = new sqlite3.oo1.DB(":memory:")
+  owned.push(() => sqlite.close())
+  return sqlite
+}
+
+function newBus() {
+  const bus = createBus()
+  owned.push(() => bus.close())
+  return bus
+}
+
+/** A tab running a mirror on `database`; it owns SQLite when its claim is first. */
+function mirrorTab(
+  database: ThreaDatabase,
+  bus: ReturnType<typeof createBus>,
+  transport: () => MirrorTransport = () => {
+    throw new Error("a follower never opens the file")
+  }
+) {
+  const coordination = bus.coordination(database.sqliteWriter.id)
+  const mirror = new SqliteMirror({ database, coordination, createTransport: transport })
+  database.sqliteMirror = mirror
+  mirror.start()
+  return { mirror, coordination }
+}
+
 function setup() {
   counter += 1
   const database = openDatabase(`sqlite_mirror_${counter}_${Date.now()}`)
-  const sqlite: Database = new sqlite3.oo1.DB(":memory:")
-  owned.push(() => sqlite.close())
-  const bus = createBus()
-  const mirror = new SqliteMirror({
-    database,
-    coordination: bus.coordination(),
-    createTransport: () => inProcessTransport(sqlite),
-  })
+  const sqlite = memorySqlite()
+  const bus = newBus()
+  bus.hearAnnouncements(database.name)
+  const requests: MirrorRequest["type"][] = []
+  let tab: ReturnType<typeof mirrorTab> | null = null
   const start = () => {
-    database.sqliteMirror = mirror
-    mirror.start()
+    tab = mirrorTab(database, bus, () => inProcessTransport(sqlite, requests))
+    return tab
   }
-  return { database, sqlite, mirror, bus, start }
-}
-
-async function settle(): Promise<void> {
-  for (let i = 0; i < 20; i++) await new Promise((resolve) => setTimeout(resolve, 5))
+  return { database, sqlite, bus, requests, start, mirror: () => tab!.mirror }
 }
 
 function mirrored(sqlite: Database, store: string): unknown[] {
   return sqlite.selectValues(`SELECT v FROM "s_${store}" ORDER BY k`).map((v) => decodeValue(String(v)))
 }
 
-function dirtyKeys(): string[] {
-  return Object.keys(localStorage).filter((key) => key.startsWith("threa:sqliteDirty:"))
+/** Stores with a mark past what SQLite holds of its writer: the next owner must not trust them. */
+async function behind(database: ThreaDatabase, sqlite: Database): Promise<string[]> {
+  const held = new Map(
+    sqlite.selectArrays(`SELECT writer, store, seq FROM _mirror_writers`).map(([w, st, s]) => [`${w}/${st}`, Number(s)])
+  )
+  const marks = (await database.table(SQLITE_MARKS_STORE).toArray()) as Array<SqliteMark & { id?: string }>
+  const stores = marks
+    .filter((m) => m.store !== "" && m.seq > (held.get(`${m.writer}/${m.store}`) ?? 0))
+    .map((m) => m.store)
+  return [...new Set(stores)].sort()
+}
+
+function begun(requests: MirrorRequest["type"][]): number {
+  return requests.filter((type) => type === "backfillBegin").length
+}
+
+function mirroredStores(database: ThreaDatabase): string[] {
+  return database.tables.map((t) => t.name).filter((name) => !SQLITE_UNMIRRORED_STORES.has(name))
+}
+
+/** The previous owner is gone without stopping, as a killed tab is; the next one opens the same file. */
+async function nextOwner(database: ThreaDatabase, sqlite: Database) {
+  const requests: MirrorRequest["type"][] = []
+  const bus = newBus()
+  const heir = openDatabase(database.name)
+  const tab = mirrorTab(heir, bus, () => inProcessTransport(sqlite, requests))
+  owned.push(() => tab.mirror.stop())
+  await settle()
+  return { requests, heir, backfilled: () => begun(requests) }
 }
 
 describe("SqliteMirror", () => {
@@ -168,58 +126,48 @@ describe("SqliteMirror", () => {
     })
     await settle()
 
-    const stores = database.tables.map((t) => t.name).filter((name) => !SQLITE_UNMIRRORED_STORES.has(name))
     const actual: Record<string, unknown[]> = {}
     const expected: Record<string, unknown[]> = {}
-    for (const store of stores) {
+    for (const store of mirroredStores(database)) {
       actual[store] = mirrored(sqlite, store)
       expected[store] = await database.table(store).toCollection().toArray()
     }
     expect(actual).toEqual(expected)
     expect(expected.syncCursors).toHaveLength(3)
     expect(
-      sqlite.selectValues(`SELECT name FROM sqlite_master WHERE name IN ('s_e2eDeviceKeys','s_uploadJobs')`)
+      sqlite.selectValues(
+        `SELECT name FROM sqlite_master WHERE name IN ('s_e2eDeviceKeys','s_uploadJobs','s_${SQLITE_MARKS_STORE}')`
+      )
     ).toEqual([])
-    expect(dirtyKeys()).toEqual([])
+    expect(await behind(database, sqlite)).toEqual([])
   })
 
-  it("mirrors nothing from an aborted transaction", async () => {
+  it("commits a mark with each write to a mirrored store, and none with a rolled back one", async () => {
     const { database, sqlite, start } = setup()
     await database.open()
     start()
     await settle()
 
     await expect(
-      database.transaction("rw", database.syncCursors, async () => {
-        await database.syncCursors.put({ key: "doomed", value: "x", updatedAt: 1 } as never)
+      database.transaction("rw", database.syncCursors, database.streams, async () => {
+        await database.streams.put({ id: "doomed", workspaceId: "ws" } as never)
         throw new Error("abort")
       })
     ).rejects.toThrow("abort")
+    const afterAbort = await database.table(SQLITE_MARKS_STORE).toArray()
     await database.syncCursors.put({ key: "kept", value: "y", updatedAt: 2 } as never)
     await settle()
 
-    expect({ rows: mirrored(sqlite, "syncCursors"), dirty: dirtyKeys() }).toEqual({
+    expect({
+      afterAbort,
+      marks: (await database.table(SQLITE_MARKS_STORE).toArray()).filter((mark) => mark.store !== ""),
+      rows: mirrored(sqlite, "syncCursors"),
+      behind: await behind(database, sqlite),
+    }).toEqual({
+      afterAbort: [expect.objectContaining({ store: "" })],
+      marks: [{ store: "syncCursors", writer: database.sqliteWriter.id, seq: expect.any(Number) }],
       rows: [{ key: "kept", value: "y", updatedAt: 2 }],
-      dirty: [],
-    })
-  })
-
-  it("journals a write before IndexedDB can commit it", async () => {
-    const { database, start } = setup()
-    await database.open()
-    start()
-    await settle()
-
-    let duringTransaction: string[] = []
-    await database.transaction("rw", database.syncCursors, async () => {
-      await database.syncCursors.put({ key: "k", value: "v", updatedAt: 1 } as never)
-      duringTransaction = dirtyKeys()
-    })
-    await settle()
-
-    expect({ duringTransaction: duringTransaction.length, after: dirtyKeys() }).toEqual({
-      duringTransaction: 1,
-      after: [],
+      behind: [],
     })
   })
 
@@ -240,7 +188,7 @@ describe("SqliteMirror", () => {
     expect(mirrored(sqlite, "syncCursors")).toEqual([{ key: "k", value: "at put", updatedAt: 1 }])
   })
 
-  it("keeps an unmirrorable entry out and journals the loss", async () => {
+  it("keeps an unmirrorable entry out and leaves its store behind for the next owner", async () => {
     const { database, sqlite, start } = setup()
     await database.open()
     start()
@@ -252,104 +200,206 @@ describe("SqliteMirror", () => {
     ] as never)
     await settle()
 
-    expect({ rows: mirrored(sqlite, "syncCursors"), dirty: dirtyKeys().length }).toEqual({
+    expect({ rows: mirrored(sqlite, "syncCursors"), behind: await behind(database, sqlite) }).toEqual({
       rows: [{ key: "good", value: "ok", updatedAt: 2 }],
-      dirty: 1,
+      behind: ["syncCursors"],
     })
   })
 
-  it("re-backfills every store when a dirty key was left behind", async () => {
-    const { database, sqlite, mirror, start } = setup()
+  it("trusts a copy whose marks it holds: the next owner backfills nothing and drops the marks", async () => {
+    const { database, sqlite, start } = setup()
     await database.open()
     start()
     await settle()
-    await mirror.stop()
-
-    const requests: MirrorRequest["type"][] = []
-    localStorage.setItem(`threa:sqliteDirty:${database.name}:dead-tab`, "1")
-    const second = new SqliteMirror({
-      database,
-      coordination: createBus().coordination(),
-      createTransport: () => inProcessTransport(sqlite, requests),
-    })
-    second.start()
+    await database.syncCursors.put({ key: "k", value: "v", updatedAt: 1 } as never)
     await settle()
 
-    const stores = database.tables.map((t) => t.name).filter((name) => !SQLITE_UNMIRRORED_STORES.has(name))
+    const next = await nextOwner(database, sqlite)
+
     expect({
-      begun: requests.filter((type) => type === "backfillBegin").length,
-      dirty: dirtyKeys(),
-    }).toEqual({ begun: stores.length, dirty: [] })
-    await second.stop()
+      backfilled: next.backfilled(),
+      marks: (await database.table(SQLITE_MARKS_STORE).toArray()).filter((mark) => mark.store !== ""),
+    }).toEqual({ backfilled: 0, marks: [] })
   })
 
-  it("reclaims only the dirty keys of tabs that are no longer alive", async () => {
-    const { database, mirror, bus, start } = setup()
-    await database.open()
-    bus.liveTab("booting")
-    localStorage.setItem(`threa:sqliteDirty:${database.name}:booting`, "1")
-    localStorage.setItem(`threa:sqliteDirty:${database.name}:dead-tab`, "1")
-    start()
-    await settle()
+  describe("writes SQLite never received", () => {
+    it("re-backfills the stores an owner killed between the IndexedDB commit and the SQLite apply wrote", async () => {
+      counter += 1
+      const database = openDatabase(`sqlite_mirror_killed_${counter}`)
+      const sqlite = memorySqlite()
+      await database.open()
+      let applies = true
+      mirrorTab(database, newBus(), () => {
+        const inner = inProcessTransport(sqlite)
+        return {
+          request: (request) =>
+            request.type === "apply" && !applies ? new Promise<MirrorReply>(() => {}) : inner.request(request),
+          close: () => {},
+        }
+      })
+      await settle()
+      applies = false
+      await database.streams.put({ id: "s1", workspaceId: "ws" } as never)
+      await settle()
 
-    expect(dirtyKeys()).toEqual([`threa:sqliteDirty:${database.name}:booting`])
-    await mirror.stop()
+      const next = await nextOwner(database, sqlite)
+
+      expect({ backfilled: next.backfilled(), streams: mirrored(sqlite, database.streams.name) }).toEqual({
+        backfilled: 1,
+        streams: [{ id: "s1", workspaceId: "ws" }],
+      })
+    })
+
+    it("applies a write from a handle with no mirror (service worker, mode off) while an owner listens", async () => {
+      const { database, sqlite, start } = setup()
+      await database.open()
+      start()
+      await settle()
+
+      await openDatabase(database.name).streams.put({ id: "s1", workspaceId: "ws" } as never)
+      await settle()
+
+      expect({ streams: mirrored(sqlite, database.streams.name), behind: await behind(database, sqlite) }).toEqual({
+        streams: [{ id: "s1", workspaceId: "ws" }],
+        behind: [],
+      })
+    })
+
+    it("re-backfills only the stores a handle with no mirror wrote while no owner listened", async () => {
+      const { database, sqlite, start } = setup()
+      await database.open()
+      start()
+      await settle()
+      await database.syncCursors.put({ key: "k", value: "v", updatedAt: 1 } as never)
+      await settle()
+
+      const unmirrored = openDatabase(database.name)
+      await unmirrored.transaction("rw", unmirrored.streams, unmirrored.events, async () => {
+        await unmirrored.streams.put({ id: "s1", workspaceId: "ws" } as never)
+        await unmirrored.events.put({ id: "e1", workspaceId: "ws", streamId: "s1" } as never)
+      })
+      const next = await nextOwner(database, sqlite)
+
+      expect({
+        backfilled: next.backfilled(),
+        streams: mirrored(sqlite, database.streams.name),
+        events: mirrored(sqlite, database.events.name).length,
+        behind: await behind(database, sqlite),
+      }).toEqual({ backfilled: 2, streams: [{ id: "s1", workspaceId: "ws" }], events: 1, behind: [] })
+    })
+
+    it("covers a stopped follower's later writes, through the owner or the next one", async () => {
+      const { database, sqlite, bus, start } = setup()
+      await database.open()
+      start()
+      await settle()
+      const followerDb = openDatabase(database.name)
+      const follower = mirrorTab(followerDb, bus)
+      await settle()
+      await follower.mirror.stop()
+      followerDb.sqliteMirror = null
+
+      await followerDb.streams.put({ id: "heard", workspaceId: "ws" } as never)
+      await settle()
+      const heardByOwner = mirrored(sqlite, database.streams.name)
+      bus.close()
+      await followerDb.streams.put({ id: "unheard", workspaceId: "ws" } as never)
+      const next = await nextOwner(database, sqlite)
+
+      expect({ heardByOwner, backfilled: next.backfilled(), streams: mirrored(sqlite, database.streams.name) }).toEqual(
+        {
+          heardByOwner: [{ id: "heard", workspaceId: "ws" }],
+          backfilled: 1,
+          streams: [
+            { id: "heard", workspaceId: "ws" },
+            { id: "unheard", workspaceId: "ws" },
+          ],
+        }
+      )
+    })
+
+    it("re-backfills everything once the IndexedDB it copied was deleted and recreated", async () => {
+      const { database, sqlite, start } = setup()
+      await database.open()
+      start()
+      await settle()
+      await database.syncCursors.put({ key: "gone", value: "v", updatedAt: 1 } as never)
+      await settle()
+      database.close()
+      await Dexie.delete(database.name)
+
+      const next = await nextOwner(database, sqlite)
+
+      expect({
+        backfilled: next.backfilled(),
+        syncCursors: mirrored(sqlite, "syncCursors"),
+      }).toEqual({ backfilled: mirroredStores(database).length, syncCursors: [] })
+    })
   })
 
   it("re-sends a batch its owner died holding to the next owner", async () => {
     counter += 1
     const name = `sqlite_mirror_heir_${counter}_${Date.now()}`
-    const bus = createBus()
-    const tab = (transport: () => MirrorTransport) => {
-      const database = openDatabase(name)
-      const coordination = bus.coordination()
-      const mirror = new SqliteMirror({ database, coordination, createTransport: transport })
-      database.sqliteMirror = mirror
-      return { database, coordination, mirror }
-    }
-    const deadSqlite: Database = new sqlite3.oo1.DB(":memory:")
-    const heirSqlite: Database = new sqlite3.oo1.DB(":memory:")
-    owned.push(
-      () => deadSqlite.close(),
-      () => heirSqlite.close()
-    )
-    const dying = tab(() => {
+    const bus = newBus()
+    const deadSqlite = memorySqlite()
+    const heirSqlite = memorySqlite()
+    const dyingDb = openDatabase(name)
+    const dying = mirrorTab(dyingDb, bus, () => {
       const inner = inProcessTransport(deadSqlite)
       return {
         request: (request) => (request.type === "apply" ? new Promise<MirrorReply>(() => {}) : inner.request(request)),
         close: () => {},
       }
     })
-    const heir = tab(() => inProcessTransport(heirSqlite))
-    const writer = tab(() => {
-      throw new Error("a follower never opens the file")
-    })
-    await dying.database.open()
-    dying.mirror.start()
+    await dyingDb.open()
     await settle()
-    heir.mirror.start()
-    writer.mirror.start()
+    const heirDb = openDatabase(name)
+    const heir = mirrorTab(heirDb, bus, () => inProcessTransport(heirSqlite))
+    const writerDb = openDatabase(name)
+    const writer = mirrorTab(writerDb, bus)
 
-    await writer.database.syncCursors.put({ key: "held", value: "by the dead owner", updatedAt: 1 } as never)
+    await writerDb.syncCursors.put({ key: "held", value: "by the dead owner", updatedAt: 1 } as never)
     await settle()
     dying.coordination.die()
     await settle()
     bus.hold()
-    await writer.database.syncCursors.put({ key: "later", value: "x", updatedAt: 2 } as never)
-    const journaledWhileUnacked = dirtyKeys().length
+    await writerDb.syncCursors.put({ key: "later", value: "x", updatedAt: 2 } as never)
     bus.release()
     await settle()
 
-    expect({ journaledWhileUnacked, rows: mirrored(heirSqlite, "syncCursors"), dirty: dirtyKeys() }).toEqual({
-      journaledWhileUnacked: 1,
+    expect({ rows: mirrored(heirSqlite, "syncCursors"), behind: await behind(writerDb, heirSqlite) }).toEqual({
       rows: [
         { key: "held", value: "by the dead owner", updatedAt: 1 },
         { key: "later", value: "x", updatedAt: 2 },
       ],
-      dirty: [],
+      behind: [],
     })
     await writer.mirror.stop()
     await heir.mirror.stop()
+  })
+
+  it("keeps at most 1000 unacknowledged batches while no owner can open", { timeout: 30_000 }, async () => {
+    counter += 1
+    const database = openDatabase(`sqlite_mirror_unowned_${counter}`)
+    const bus = newBus()
+    await database.open()
+    const failing = mirrorTab(database, bus, () => ({
+      request: async () => {
+        throw new Error("no OPFS")
+      },
+      close: () => {},
+    }))
+    await settle()
+    for (let i = 0; i < 1001; i++) await database.syncCursors.put({ key: `k${i}`, value: "v", updatedAt: i } as never)
+
+    const resent: MirrorBroadcast[] = []
+    const listener = bus.coordination()
+    listener.onBroadcast((message) => resent.push(message))
+    listener.broadcast({ type: "owner" })
+    await settle()
+
+    expect(resent.filter((message) => message.type === "batch")).toHaveLength(1000)
+    await failing.mirror.stop()
   })
 
   it("applies a follower's batch as IndexedDB holds it now, whichever commit arrives first", async () => {
@@ -358,15 +408,7 @@ describe("SqliteMirror", () => {
     owner.start()
     await settle()
     const followerDb = openDatabase(owner.database.name)
-    const follower = new SqliteMirror({
-      database: followerDb,
-      coordination: owner.bus.coordination(),
-      createTransport: () => {
-        throw new Error("a follower never opens the file")
-      },
-    })
-    followerDb.sqliteMirror = follower
-    follower.start()
+    const follower = mirrorTab(followerDb, owner.bus)
 
     owner.bus.hold()
     await followerDb.syncCursors.put({ key: "k", value: "follower", updatedAt: 1 } as never)
@@ -380,12 +422,12 @@ describe("SqliteMirror", () => {
     await followerDb.syncCursors.where("key").between("a", "b", true, true).delete()
     await settle()
 
-    expect({ rows: mirrored(owner.sqlite, "syncCursors"), dirty: dirtyKeys() }).toEqual({
+    expect({ rows: mirrored(owner.sqlite, "syncCursors"), behind: await behind(followerDb, owner.sqlite) }).toEqual({
       rows: [{ key: "k", value: "owner", updatedAt: 2 }],
-      dirty: [],
+      behind: [],
     })
-    await follower.stop()
-    await owner.mirror.stop()
+    await follower.mirror.stop()
+    await owner.mirror().stop()
   })
 
   it("broadcasts writes buffered before the claim resolved to follower", async () => {
@@ -395,7 +437,7 @@ describe("SqliteMirror", () => {
     await settle()
     const followerDb = openDatabase(owner.database.name)
     let answerClaim: (owner: boolean) => void = () => {}
-    const base = owner.bus.coordination()
+    const base = owner.bus.coordination(followerDb.sqliteWriter.id)
     const follower = new SqliteMirror({
       database: followerDb,
       coordination: { ...base, claim: (onChange) => (answerClaim = onChange) },
@@ -411,7 +453,7 @@ describe("SqliteMirror", () => {
     await settle()
 
     expect(mirrored(owner.sqlite, "syncCursors")).toEqual([{ key: "early", value: "x", updatedAt: 1 }])
-    await owner.mirror.stop()
+    await owner.mirror().stop()
   })
 
   it("stopped while opening, deletes the file and leaves no worker behind", async () => {
@@ -419,7 +461,7 @@ describe("SqliteMirror", () => {
     const database = openDatabase(`sqlite_mirror_stop_${counter}`)
     const requests: MirrorRequest["type"][] = []
     let closed = 0
-    const coordination = createBus().coordination()
+    const coordination = newBus().coordination()
     const mirror = new SqliteMirror({
       database,
       coordination,
@@ -445,41 +487,28 @@ describe("SqliteMirror", () => {
     counter += 1
     const database = openDatabase(`sqlite_mirror_crash_${counter}`)
     await database.open()
-    const bus = createBus()
+    const bus = newBus()
     let crash: (error: Error) => void = () => {}
-    const coordination = bus.coordination()
-    const crashing = new SqliteMirror({
-      database,
-      coordination,
-      createTransport: () => ({
-        request: (request): Promise<MirrorReply> =>
-          request.type === "open" ? Promise.resolve({ ok: true, ms: 0 }) : new Promise((_, reject) => (crash = reject)),
-        close: () => crash(new Error("closed")),
-      }),
-    })
-    database.sqliteMirror = crashing
-    crashing.start()
+    const crashing = mirrorTab(database, bus, () => ({
+      request: (request): Promise<MirrorReply> =>
+        request.type === "open" ? Promise.resolve({ ok: true, ms: 0 }) : new Promise((_, reject) => (crash = reject)),
+      close: () => crash(new Error("closed")),
+    }))
     await settle()
 
-    const sqlite: Database = new sqlite3.oo1.DB(":memory:")
-    owned.push(() => sqlite.close())
+    const sqlite = memorySqlite()
     const heirDb = openDatabase(database.name)
-    const heir = new SqliteMirror({
-      database: heirDb,
-      coordination: bus.coordination(),
-      createTransport: () => inProcessTransport(sqlite),
-    })
-    heir.start()
+    const heir = mirrorTab(heirDb, bus, () => inProcessTransport(sqlite))
     crash(new Error("worker crashed"))
     await settle()
     await database.syncCursors.put({ key: "after", value: "crash", updatedAt: 1 } as never)
     await settle()
 
-    expect({ released: coordination.resigned(), rows: mirrored(sqlite, "syncCursors") }).toEqual({
+    expect({ released: crashing.coordination.resigned(), rows: mirrored(sqlite, "syncCursors") }).toEqual({
       released: true,
       rows: [{ key: "after", value: "crash", updatedAt: 1 }],
     })
-    await heir.stop()
-    await crashing.stop()
+    await heir.mirror.stop()
+    await crashing.mirror.stop()
   })
 })

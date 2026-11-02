@@ -1,5 +1,5 @@
 import type { Database } from "@sqlite.org/sqlite-wasm"
-import { MirrorStore } from "./mirror-store"
+import { MirrorStore, type MirrorStatus } from "./mirror-store"
 import type { MirrorReply, MirrorRequest } from "./protocol"
 
 export interface MirrorDatabase {
@@ -24,7 +24,7 @@ export function createMirrorHandler(openDatabase: (idbName: string) => Promise<M
     return session
   }
 
-  async function run(request: MirrorRequest): Promise<{ backfilled?: string[] }> {
+  async function run(request: MirrorRequest): Promise<{ status?: MirrorStatus }> {
     if (request.type === "open") {
       session?.database.close()
       session = null
@@ -43,7 +43,7 @@ export function createMirrorHandler(openDatabase: (idbName: string) => Promise<M
     const { store } = requireSession()
     switch (request.type) {
       case "apply":
-        store.apply(request.batch)
+        store.apply(request.batch, request.commit)
         return {}
       case "backfillBegin":
         store.beginBackfill(request.store)
@@ -52,10 +52,16 @@ export function createMirrorHandler(openDatabase: (idbName: string) => Promise<M
         store.backfillChunk(request.store, request.entries)
         return {}
       case "backfillFinish":
-        store.finishBackfill(request.store)
+        store.finishBackfill(request.store, request.covered)
         return {}
       case "status":
-        return { backfilled: store.backfilledStores() }
+        return { status: store.status() }
+      case "reset":
+        store.reset(request.incarnation)
+        return {}
+      case "forgetWriters":
+        store.forgetWriters(request.writers)
+        return {}
     }
   }
 

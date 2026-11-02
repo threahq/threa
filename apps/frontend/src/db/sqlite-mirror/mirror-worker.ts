@@ -38,8 +38,9 @@ async function installPool(idbName: string) {
 const handler = createMirrorHandler(async (idbName) => {
   const pool = await installPool(idbName)
   const db = new pool.OpfsSAHPoolDb(DATABASE_FILE)
-  db.exec("PRAGMA journal_mode=WAL")
-  db.exec("PRAGMA synchronous=NORMAL")
+  // The pool VFS has no shared memory, so SQLite keeps its rollback journal;
+  // NORMAL there can corrupt the file on power loss.
+  db.exec("PRAGMA synchronous=FULL")
   return {
     db,
     close: () => db.close(),

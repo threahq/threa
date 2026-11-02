@@ -1,7 +1,6 @@
 import type { ThreaDatabase } from "../database"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { createBrowserMirror, type SqliteMirror } from "./client"
-import { markSqliteMirrorStale } from "./dirty-journal"
 
 export const SQLITE_STORAGE_KEY = "threa:sqliteStorage"
 
@@ -30,8 +29,6 @@ export function startSqliteShadow(
     mirror.start()
   } catch (error) {
     database.sqliteMirror = null
-    // This session's writes will never reach the copy.
-    markSqliteMirrorStale(database.name)
     getPerfCapture().count("sqlite.mirrorFailure")
     console.error("SQLite mirror could not start", error)
   }

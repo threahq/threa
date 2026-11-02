@@ -42,7 +42,8 @@ describe("sqlite shadow lifecycle", () => {
           createTransport: () => ({
             request: async (request) => {
               requests.push(request.type)
-              return { ok: true, ms: 0, backfilled: [] }
+              const status = { backfilled: [], writers: {}, incarnation: null }
+              return request.type === "status" ? { ok: true, ms: 0, status } : { ok: true, ms: 0 }
             },
             close: () => {},
           }),

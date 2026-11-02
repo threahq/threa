@@ -1,7 +1,14 @@
 import type { DBCoreKeyRange } from "dexie"
+import type { IdbWrite } from "../transaction-middleware"
 
 /** What a committed write touched: the keys or key range IndexedDB must be asked about again. */
 export type Touched = { store: string; keys: IDBValidKey[] } | { store: string; range: DBCoreKeyRange }
+
+export function touchedOf(write: IdbWrite): Touched {
+  return write.op === "deleteRange"
+    ? { store: write.store, range: write.range }
+    : { store: write.store, keys: write.keys }
+}
 
 export type TouchedRows = Touched & { found: { keys: IDBValidKey[]; values: unknown[] } }
 
@@ -17,7 +24,7 @@ function toIdbRange(range: DBCoreKeyRange): IDBKeyRange | null | typeof NEVER {
   return IDBKeyRange.bound(lower, upper, lowerOpen, upperOpen)
 }
 
-function transactionDone(tx: IDBTransaction): Promise<void> {
+export function transactionDone(tx: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)

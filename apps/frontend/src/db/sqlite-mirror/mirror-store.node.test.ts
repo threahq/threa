@@ -72,7 +72,7 @@ describe("MirrorStore", () => {
       store.apply([put("a", entry(1, "live"))])
       store.backfillChunk("a", [entry(1, "stale"), entry(2, "old")])
       store.finishBackfill("a")
-      expect({ rows: rows("a"), done: store.backfilledStores().includes("a") }).toEqual({
+      expect({ rows: rows("a"), done: store.status().backfilled.includes("a") }).toEqual({
         rows: ["live", "old"],
         done: true,
       })
@@ -101,7 +101,7 @@ describe("MirrorStore", () => {
       store.backfillChunk("a", [entry(1, "x")])
       store.finishBackfill("a")
       store.beginBackfill("a")
-      expect({ a: rows("a"), done: store.backfilledStores().includes("a"), b: rows("b") }).toEqual({
+      expect({ a: rows("a"), done: store.status().backfilled.includes("a"), b: rows("b") }).toEqual({
         a: [],
         done: false,
         b: ["b1"],
@@ -113,7 +113,7 @@ describe("MirrorStore", () => {
       store.finishBackfill("a")
       const reopened = new MirrorStore(db)
       reopened.ensureSchema(["a", "b"], 1)
-      expect(reopened.backfilledStores()).toEqual(["a"])
+      expect(reopened.status().backfilled).toEqual(["a"])
     })
   })
 
@@ -125,10 +125,81 @@ describe("MirrorStore", () => {
     const upgraded = new MirrorStore(db)
     upgraded.ensureSchema(["a", "c"], 2)
     const tables = db.selectValues(`SELECT name FROM sqlite_master WHERE name LIKE 's\\_%' ESCAPE '\\' ORDER BY name`)
-    expect({ tables, a: rows("a"), done: upgraded.backfilledStores().includes("a") }).toEqual({
+    expect({ tables, a: rows("a"), done: upgraded.status().backfilled.includes("a") }).toEqual({
       tables: ["s_a", "s_c"],
       a: [],
       done: false,
+    })
+  })
+
+  describe("writers", () => {
+    const commit = (seq: number, prev: Record<string, number>) => ({ writer: "w", seq, prev })
+
+    it("holds a writer's commits only through the first one it has not received", () => {
+      store.apply([put("a", entry(1, "x"))], commit(1, { a: 0 }))
+      store.apply([put("a", entry(3, "z"))], commit(3, { a: 2 }))
+      const beforeGap = store.status().writers
+      store.apply([put("a", entry(2, "y"))], commit(2, { a: 1 }))
+      expect({ beforeGap, after: store.status().writers }).toEqual({
+        beforeGap: { w: { a: 1 } },
+        after: { w: { a: 3 } },
+      })
+    })
+
+    it("follows a commit past seqs the writer never committed", () => {
+      store.apply([put("a", entry(1, "x"))], commit(2, { a: 0 }))
+      store.apply([put("a", entry(1, "y"))], commit(5, { a: 2 }))
+      expect(store.status().writers).toEqual({ w: { a: 5 } })
+    })
+
+    it("does not count a commit whose batch rolled back", () => {
+      const bad = { store: "a", op: "put", entries: [{ key: encodeKey(2), value: null }] } as unknown as MirrorMutation
+      expect(() => store.apply([bad], commit(1, { a: 0 }))).toThrow()
+      store.apply([put("a", entry(1, "x"))], commit(2, { a: 1 }))
+      expect(store.status().writers).toEqual({})
+    })
+
+    it("keeps what it holds across a reopen", () => {
+      store.apply([put("a", entry(1, "x"))], commit(1, { a: 0 }))
+      const reopened = new MirrorStore(db)
+      reopened.ensureSchema(["a", "b"], 1)
+      expect(reopened.status().writers).toEqual({ w: { a: 1 } })
+    })
+
+    it("forgets the writers named", () => {
+      store.apply([put("a", entry(1, "x"))], commit(1, { a: 0 }))
+      store.apply([put("a", entry(1, "x"))], { writer: "v", seq: 1, prev: { a: 0 } })
+      store.forgetWriters(["w"])
+      expect(store.status().writers).toEqual({ v: { a: 1 } })
+    })
+
+    it("chains each store on its own, so a gap in one leaves the other held", () => {
+      store.apply([put("a", entry(1, "x")), put("b", entry(1, "x"))], commit(1, { a: 0, b: 0 }))
+      store.apply([put("b", entry(2, "y"))], commit(3, { b: 1 }))
+      store.apply([put("a", entry(3, "z"))], commit(4, { a: 2 }))
+      expect(store.status().writers).toEqual({ w: { a: 1, b: 3 } })
+    })
+
+    it("holds a backfilled store through the marks it covered, joining commits applied during the backfill", () => {
+      store.beginBackfill("a")
+      store.apply([put("a", entry(1, "x"))], commit(7, { a: 4 }))
+      store.finishBackfill("a", { w: 4, v: 2 })
+      expect(store.status().writers).toEqual({ w: { a: 7 }, v: { a: 2 } })
+    })
+  })
+
+  it("reset empties every table and forgets backfills and writers for the new incarnation", () => {
+    store.beginBackfill("a")
+    store.backfillChunk("a", [entry(1, "x")])
+    store.finishBackfill("a")
+    store.apply([put("b", entry(1, "y"))], { writer: "w", seq: 1, prev: { b: 0 } })
+    const before = store.status().incarnation
+    store.reset("idb-2")
+    expect({ before, status: store.status(), a: rows("a"), b: rows("b") }).toEqual({
+      before: null,
+      status: { backfilled: [], writers: {}, incarnation: "idb-2" },
+      a: [],
+      b: [],
     })
   })
 })

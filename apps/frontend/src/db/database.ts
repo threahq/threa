@@ -29,8 +29,8 @@ import type {
 import type { KdfParams } from "@/lib/crypto/passphrase"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { createTransactionMiddleware } from "./transaction-middleware"
-import { markSqliteMirrorStale } from "./sqlite-mirror/dirty-journal"
 import type { SqliteMirror } from "./sqlite-mirror/client"
+import { IdbWriter, SQLITE_MARKS_STORE } from "./sqlite-mirror/marks"
 
 const WORKSPACE_USERS_STORE = "workspaceUsersByWorkspace"
 const PERSONAS_STORE = "personasByWorkspace"
@@ -1219,6 +1219,7 @@ export class ThreaDatabase extends Dexie {
 
   /** The SQLite shadow copy of this database's writes, while one is running. */
   sqliteMirror: SqliteMirror | null = null
+  readonly sqliteWriter: IdbWriter
 
   private upgradeRecoveryAvailable = true
 
@@ -1862,6 +1863,12 @@ export class ThreaDatabase extends Dexie {
       docStates: "[workspaceId+docId], workspaceId",
     })
 
+    // v58: the SQLite mirror's marks, committed with every write to a mirrored
+    // store. Also closes connections from builds that write without them.
+    this.version(58).stores({
+      [SQLITE_MARKS_STORE]: "[store+writer]",
+    })
+
     this.composerLoaded = this.table(COMPOSER_LOADED_STORE)
     this.composerTarget = this.table(COMPOSER_TARGET_STORE)
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE)
@@ -1875,7 +1882,8 @@ export class ThreaDatabase extends Dexie {
     this.boardHiddenConversations = this.table(BOARD_HIDDEN_CONVERSATIONS_STORE)
     this.streamContextItems = this.table(STREAM_CONTEXT_ITEMS_STORE)
 
-    this.use(createTransactionMiddleware(() => this.sqliteMirror))
+    this.sqliteWriter = new IdbWriter(name)
+    this.use(createTransactionMiddleware(() => this.sqliteMirror, this.sqliteWriter))
 
     // Dexie holds every other transaction until this resolves, so nothing reads
     // or writes a database before its contents are known to belong to the
@@ -1901,7 +1909,6 @@ export class ThreaDatabase extends Dexie {
       this.upgradeRecoveryAvailable = false
       console.error(`[db] upgrade failed for ${this.name}; deleting the cache and reopening cold`, error)
       this.close()
-      markSqliteMirrorStale(this.name)
       return Dexie.delete(this.name).then(() => this.open()) as PromiseExtended<Dexie>
     })
   }

@@ -1,10 +1,20 @@
 import type { ThreaDatabase } from "../database"
 import type { IdbWrite, IdbWriteSink } from "../transaction-middleware"
 import { getPerfCapture } from "@/lib/perf/capture"
-import { DirtyJournal } from "./dirty-journal"
-import { readChunk, readTouched, type Touched, type TouchedRows } from "./idb-reads"
+import { readChunk, readTouched, touchedOf, type Touched, type TouchedRows } from "./idb-reads"
 import { encodeKey, encodeRange } from "./key-codec"
-import type { MirrorEntry, MirrorMutation } from "./mirror-store"
+import {
+  deleteMarks,
+  holds,
+  mirrorChannelName,
+  readMarks,
+  writerBatch,
+  type MirrorBatch,
+  type MirrorBroadcast,
+  type SqliteMark,
+  type WriterCommit,
+} from "./marks"
+import type { MirrorEntry, MirrorMutation, MirrorStatus } from "./mirror-store"
 import type { MirrorReply, MirrorRequest, MirrorTransport } from "./protocol"
 import { SQLITE_UNMIRRORED_STORES } from "./stores"
 import { encodeValue } from "./value-codec"
@@ -12,18 +22,8 @@ import { createWorkerTransport } from "./worker-transport"
 
 const BACKFILL_CHUNK_ROWS = 500
 const MIN_RECORDED_APPLY_MS = 30
-
-/**
- * A follower's committed writes, the owner's acknowledgement once SQLite holds
- * them, and a new owner's announcement, on which followers re-send every batch
- * still unacknowledged: the previous owner may have died holding it.
- */
-export type MirrorBroadcast =
-  | { type: "batch"; from: string; id: number; touched: Touched[] }
-  | { type: "ack"; to: string; id: number }
-  | { type: "owner" }
-
-type RemoteBatch = Extract<MirrorBroadcast, { type: "batch" }>
+/** Past it the oldest is dropped: its marks still send the next owner to re-backfill what it wrote. */
+const MAX_UNACKED_BATCHES = 1000
 
 /** Decides which tab owns the SQLite file, and carries other tabs' batches to it. */
 export interface MirrorCoordination {
@@ -40,12 +40,12 @@ export interface MirrorCoordination {
   onBroadcast(listener: (message: MirrorBroadcast) => void): () => void
 }
 
-export function createBrowserCoordination(idbName: string): MirrorCoordination {
+/** `tabId` is the database handle's writer id, so the owner can tell which writers are alive. */
+export function createBrowserCoordination(idbName: string, tabId: string): MirrorCoordination {
   if (typeof navigator === "undefined" || !navigator.locks) throw new Error("Web Locks API is unavailable")
   if (typeof BroadcastChannel === "undefined") throw new Error("BroadcastChannel is unavailable")
-  const name = `threa-sqlite-mirror:${idbName}`
+  const name = mirrorChannelName(idbName)
   const tabPrefix = `threa-sqlite-mirror-tab:${idbName}:`
-  const tabId = crypto.randomUUID()
   // Never released: the page may write IndexedDB unmirrored after the mirror stops, so it stays live until it unloads.
   void navigator.locks.request(`${tabPrefix}${tabId}`, () => new Promise<void>(() => {}))
   const channel = new BroadcastChannel(name)
@@ -69,7 +69,7 @@ export function createBrowserCoordination(idbName: string): MirrorCoordination {
     async liveTabs() {
       const { held = [], pending = [] } = await navigator.locks.query()
       const tabs = new Set<string>()
-      // Pending too: a tab that just started may journal before its lock is granted.
+      // Pending too: a tab that just started may write before its lock is granted.
       for (const lock of [...held, ...pending]) {
         if (lock.name?.startsWith(tabPrefix)) tabs.add(lock.name.slice(tabPrefix.length))
       }
@@ -107,7 +107,9 @@ type Role = "idle" | "pending" | "follower" | "starting" | "owner" | "failed" | 
 interface LocalCommit {
   batch: MirrorMutation[]
   touched: Touched[]
-  journalId: number
+  commit: WriterCommit
+  /** Every write of the commit is in `batch`; only then may SQLite count the commit as held. */
+  whole: boolean
 }
 
 function yieldToEventLoop(): Promise<void> {
@@ -133,31 +135,28 @@ function encodeRows(store: string, keys: readonly IDBValidKey[], values: readonl
   }
 }
 
-function touchedOf(write: IdbWrite): Touched {
-  return write.op === "deleteRange"
-    ? { store: write.store, range: write.range }
-    : { store: write.store, keys: write.keys }
-}
-
 /**
  * Copies committed IndexedDB writes of one database into SQLite. One tab per
  * database owns the worker; the others broadcast what their writes touched,
  * and the owner copies those rows from IndexedDB as they stand when it reads.
+ * Which writes SQLite holds is decided against the marks IndexedDB commits
+ * with every write, never against what this tab believes it sent.
  */
 export class SqliteMirror implements IdbWriteSink {
   private role: Role = "idle"
   private transport: MirrorTransport | null = null
   private localPending: LocalCommit[] = []
-  private remotePending: RemoteBatch[] = []
+  private remotePending: MirrorBatch[] = []
   private stopListening: (() => void) | null = null
   private starting: Promise<void> | null = null
-  private wasFollower = false
-  /** Batches this tab broadcast that no owner has acknowledged yet. */
-  private readonly unacked = new Map<number, Touched[]>()
-  private readonly journal: DirtyJournal
+  /** Batches this tab broadcast that no owner has acknowledged yet, by seq. */
+  private readonly unacked = new Map<number, MirrorBatch>()
+  private droppedUnacked = false
 
-  constructor(private readonly options: SqliteMirrorOptions) {
-    this.journal = new DirtyJournal(options.database.name, options.coordination.tabId)
+  constructor(private readonly options: SqliteMirrorOptions) {}
+
+  private get tabId(): string {
+    return this.options.coordination.tabId
   }
 
   start(): void {
@@ -172,16 +171,7 @@ export class SqliteMirror implements IdbWriteSink {
     })
   }
 
-  begin(): number {
-    return this.journal.begin()
-  }
-
-  abort(id: number): void {
-    this.journal.end(id)
-  }
-
-  commit(id: number, writes: IdbWrite[]): void {
-    if (writes.length === 0) return this.journal.end(id)
+  commit(commit: WriterCommit, writes: IdbWrite[]): void {
     const batch: MirrorMutation[] = []
     const lossy = new Set<string>()
     for (const write of writes) {
@@ -200,7 +190,7 @@ export class SqliteMirror implements IdbWriteSink {
       }
     }
     if (lossy.size > 0) this.lose([...lossy], new Error("Unmirrorable value"))
-    this.routeLocal({ batch, touched: writes.map(touchedOf), journalId: id })
+    this.routeLocal({ batch, touched: writes.map(touchedOf), commit, whole: lossy.size === 0 })
   }
 
   /** Stops mirroring; the owner deletes the SQLite file, which only the owner can reach. */
@@ -219,8 +209,6 @@ export class SqliteMirror implements IdbWriteSink {
         .request({ type: "destroy", idbName: this.options.database.name })
         .catch((error: unknown) => ({ ok: false as const, error: "TransportError", message: String(error) }))
       if (!reply.ok) markFailure(`${reply.error}: ${reply.message}`)
-    } else {
-      this.journal.markLost()
     }
     transport?.close()
     this.options.coordination.close()
@@ -231,7 +219,6 @@ export class SqliteMirror implements IdbWriteSink {
   }
 
   private becomeFollower(): void {
-    this.wasFollower = true
     this.role = "follower"
     for (const local of this.localPending) this.broadcastLocal(local)
     this.localPending = []
@@ -251,41 +238,39 @@ export class SqliteMirror implements IdbWriteSink {
         return this.broadcastLocal(local)
       case "idle":
       case "stopped":
-        this.journal.markLost()
+        this.options.database.sqliteWriter.announce(writerBatch(local.commit, local.touched))
     }
   }
 
   private applyOwn(local: LocalCommit): void {
-    void this.send({ type: "apply", batch: local.batch }).then((reply) => {
-      if (reply) this.journal.end(local.journalId)
-      else
-        this.lose(
-          local.batch.map((mutation) => mutation.store),
-          new Error("SQLite mirror apply failed")
-        )
-    })
+    void this.send({ type: "apply", batch: local.batch, commit: local.whole ? local.commit : undefined }).then(
+      (reply) => {
+        if (!reply)
+          this.lose(
+            local.batch.map((mutation) => mutation.store),
+            new Error("SQLite mirror apply failed")
+          )
+      }
+    )
   }
 
   private broadcastLocal(local: LocalCommit): void {
-    this.unacked.set(local.journalId, local.touched)
-    this.broadcastBatch(local.journalId, local.touched)
-  }
-
-  private broadcastBatch(id: number, touched: Touched[]): void {
-    this.options.coordination.broadcast({ type: "batch", from: this.journal.tabId, id, touched })
-  }
-
-  private acknowledged(id: number): void {
-    this.unacked.delete(id)
-    this.journal.end(id)
+    const batch = writerBatch(local.commit, local.touched)
+    this.unacked.set(batch.id, batch)
+    if (this.unacked.size > MAX_UNACKED_BATCHES) {
+      this.unacked.delete(this.unacked.keys().next().value!)
+      if (!this.droppedUnacked) markFailure(new Error("No SQLite mirror owner acknowledged this tab's writes"))
+      this.droppedUnacked = true
+    }
+    this.options.coordination.broadcast(batch)
   }
 
   private receive(message: MirrorBroadcast): void {
     if (message.type === "ack") {
-      if (message.to === this.journal.tabId) this.acknowledged(message.id)
+      if (message.to === this.tabId) this.unacked.delete(message.id)
     } else if (message.type === "owner") {
       if (this.role === "follower" || this.role === "failed") {
-        for (const [id, touched] of this.unacked) this.broadcastBatch(id, touched)
+        for (const batch of this.unacked.values()) this.options.coordination.broadcast(batch)
       }
     } else if (this.role === "owner") {
       this.applyRemote(message)
@@ -295,23 +280,26 @@ export class SqliteMirror implements IdbWriteSink {
   }
 
   /**
-   * A follower's batch can arrive before or after this tab's own commit to the
-   * same keys, so the follower's values are never applied: the touched rows are
-   * re-read from IndexedDB and their current state is what SQLite receives.
+   * Another writer's batch can arrive before or after this tab's own commit to
+   * the same keys, so its values are never applied: the touched rows are re-read
+   * from IndexedDB and their current state is what SQLite receives.
    */
-  private applyRemote(message: RemoteBatch): void {
+  private applyRemote(message: MirrorBatch): void {
     const stores = message.touched.map((touched) => touched.store)
     readTouched(this.options.database.backendDB(), message.touched, (rows) => {
-      void this.send({ type: "apply", batch: this.mutationsFor(rows) }).then((reply) => {
+      const { batch, whole } = this.mutationsFor(rows)
+      const commit = whole ? { writer: message.from, seq: message.id, prev: message.prev } : undefined
+      void this.send({ type: "apply", batch, commit }).then((reply) => {
         if (!reply) return this.lose(stores, new Error("SQLite mirror apply failed"))
-        if (message.from === this.journal.tabId) this.acknowledged(message.id)
+        if (message.from === this.tabId) this.unacked.delete(message.id)
         else this.options.coordination.broadcast({ type: "ack", to: message.from, id: message.id })
       })
     }).catch((error: unknown) => this.lose(stores, error))
   }
 
-  private mutationsFor(rows: readonly TouchedRows[]): MirrorMutation[] {
+  private mutationsFor(rows: readonly TouchedRows[]): { batch: MirrorMutation[]; whole: boolean } {
     const batch: MirrorMutation[] = []
+    let whole = true
     for (const row of rows) {
       const present = row.found.keys.flatMap((key, index) =>
         row.found.values[index] === undefined ? [] : [{ key, value: row.found.values[index] }]
@@ -322,6 +310,7 @@ export class SqliteMirror implements IdbWriteSink {
         present.map((p) => p.value)
       )
       if (!entries) {
+        whole = false
         this.lose([row.store], new Error("Unmirrorable value"))
         continue
       }
@@ -333,16 +322,15 @@ export class SqliteMirror implements IdbWriteSink {
       }
       if (entries.length > 0) batch.push({ store: row.store, op: "put", entries })
     }
-    return batch
+    return { batch, whole }
   }
 
-  /** SQLite may be missing writes to these stores; the next owner re-backfills every store. */
+  /** SQLite missed writes to these stores; their marks stay ahead of it, so the next owner re-backfills them. */
   private lose(stores: readonly string[], error: unknown): void {
     markFailure(new Error(`Lost writes to ${[...new Set(stores)].join(", ")}`, { cause: error }))
-    this.journal.markLost()
   }
 
-  private async send(request: MirrorRequest): Promise<MirrorReply | null> {
+  private async send(request: MirrorRequest): Promise<Extract<MirrorReply, { ok: true }> | null> {
     const transport = this.transport
     if (!transport) return null
     let reply: MirrorReply
@@ -363,8 +351,7 @@ export class SqliteMirror implements IdbWriteSink {
 
   /**
    * The worker died or never started: hand ownership to another tab and keep
-   * broadcasting this tab's writes to it. Applies that were in flight never
-   * get acknowledged, so the journal keeps them marked as possibly lost.
+   * broadcasting this tab's writes to it.
    */
   private fail(error: unknown): void {
     if (this.role === "stopped" || this.role === "failed") return
@@ -381,7 +368,6 @@ export class SqliteMirror implements IdbWriteSink {
 
   private async becomeOwner(): Promise<void> {
     const { database, createTransport } = this.options
-    const handedOver = this.wasFollower
     this.role = "starting"
     const capture = getPerfCapture()
     const openedAt = performance.now()
@@ -396,42 +382,94 @@ export class SqliteMirror implements IdbWriteSink {
       capture.mark("sqlite.open", performance.now() - openedAt)
       this.role = "owner"
       this.options.coordination.broadcast({ type: "owner" })
-      const tabId = this.journal.tabId
-      for (const [id, touched] of this.unacked) this.remotePending.push({ type: "batch", from: tabId, id, touched })
+      for (const batch of this.unacked.values()) this.remotePending.push(batch)
       for (const local of this.localPending) this.applyOwn(local)
       for (const remote of this.remotePending) this.applyRemote(remote)
       this.localPending = []
       this.remotePending = []
-      const status = await this.send({ type: "status" })
+      const reconciled = await this.reconcile(stores)
+      if (!reconciled || this.role !== "owner") return
+      // Taken before the backfill reads: a writer dead by now committed everything it ever will.
+      const live = await this.options.coordination.liveTabs()
       if (this.role !== "owner") return
-      if (!status) throw new Error("SQLite mirror could not report its status")
-      // An inherited or journaled-dirty file may lack writes nobody can name, so nothing in it is trusted.
-      const stale = this.journal.staleKeys()
-      // Taken before the backfill reads: a tab dead by now committed everything it ever will.
-      const dead = this.journal.deadKeys(stale, await this.options.coordination.liveTabs())
-      if (this.role !== "owner") return
-      const trusted = handedOver || stale.length > 0 ? [] : (status.ok && status.backfilled) || []
-      if (await this.backfill(stores.filter((store) => !trusted.includes(store)))) this.journal.clear(dead)
+      const backfilled = await this.backfill(
+        stores.filter((store) => !reconciled.trusted.has(store)),
+        reconciled.marks
+      )
+      if (backfilled) await this.forget(reconciled, backfilled, live)
     } catch (error) {
       if (!this.isStopped()) this.fail(error)
     }
   }
 
-  /** False when interrupted: a store left unbegun may still carry a stale backfilled flag. */
-  private async backfill(stores: string[]): Promise<boolean> {
-    const capture = getPerfCapture()
-    const startedAt = performance.now()
-    for (const store of stores) {
-      const storeStartedAt = performance.now()
-      const outcome = await this.backfillStore(store)
-      if (outcome === "interrupted") return false
-      if (outcome === "done") capture.mark("sqlite.backfillStore", performance.now() - storeStartedAt)
+  /**
+   * What SQLite holds in full: backfilled stores of this IndexedDB incarnation
+   * with no mark past what SQLite holds of its writer. Anything else may lack
+   * writes from a writer that died, never ran a mirror, or ran one no owner heard.
+   */
+  private async reconcile(
+    stores: string[]
+  ): Promise<{ status: MirrorStatus; marks: SqliteMark[]; trusted: Set<string> } | null> {
+    const { incarnation, marks } = await readMarks(this.options.database.backendDB())
+    if (this.role !== "owner") return null
+    const reply = await this.send({ type: "status" })
+    if (this.role !== "owner") return null
+    if (!reply?.status) throw new Error("SQLite mirror could not report its status")
+    let status = reply.status
+    if (status.incarnation !== incarnation) {
+      if (!(await this.send({ type: "reset", incarnation }))) throw new Error("SQLite mirror could not reset")
+      if (this.role !== "owner") return null
+      status = { backfilled: [], writers: {}, incarnation }
     }
-    capture.mark("sqlite.backfillDone", performance.now() - startedAt)
-    return true
+    const behind = new Set(marks.filter((mark) => !holds(status.writers, mark)).map((mark) => mark.store))
+    const trusted = new Set(status.backfilled.filter((store) => stores.includes(store) && !behind.has(store)))
+    return { status, marks, trusted }
   }
 
-  private async backfillStore(store: string): Promise<"done" | "unmirrorable" | "interrupted"> {
+  /**
+   * Drops marks SQLite now covers, read before the backfill so a backfilled
+   * store holds their writes, and the records of writers with no mark left
+   * that are no longer alive.
+   */
+  private async forget(
+    { status, marks }: { status: MirrorStatus; marks: SqliteMark[] },
+    backfilled: ReadonlySet<string>,
+    live: ReadonlySet<string>
+  ): Promise<void> {
+    const stores = new Set(mirroredStores(this.options.database))
+    const covered = marks.filter(
+      (mark) => !stores.has(mark.store) || backfilled.has(mark.store) || holds(status.writers, mark)
+    )
+    await deleteMarks(this.options.database.backendDB(), covered)
+    const marked = new Set(marks.filter((mark) => !covered.includes(mark)).map((mark) => mark.writer))
+    const writers = Object.keys(status.writers).filter((writer) => !marked.has(writer) && !live.has(writer))
+    if (writers.length > 0 && this.role === "owner") await this.send({ type: "forgetWriters", writers })
+  }
+
+  /** The stores backfilled, or `null` when interrupted: a store left unbegun may still carry a stale backfilled flag. */
+  private async backfill(stores: string[], marks: readonly SqliteMark[]): Promise<Set<string> | null> {
+    const capture = getPerfCapture()
+    const startedAt = performance.now()
+    const done = new Set<string>()
+    for (const store of stores) {
+      const storeStartedAt = performance.now()
+      const covered = Object.fromEntries(marks.filter((mark) => mark.store === store).map((m) => [m.writer, m.seq]))
+      const outcome = await this.backfillStore(store, covered)
+      if (outcome === "interrupted") return null
+      if (outcome === "done") {
+        done.add(store)
+        capture.mark("sqlite.backfillStore", performance.now() - storeStartedAt)
+      }
+    }
+    capture.mark("sqlite.backfillDone", performance.now() - startedAt)
+    return done
+  }
+
+  /** `covered`: the store's marks read before the backfill began, so it holds their writes. */
+  private async backfillStore(
+    store: string,
+    covered: Record<string, number>
+  ): Promise<"done" | "unmirrorable" | "interrupted"> {
     const idb = this.options.database.backendDB()
     if (!(await this.send({ type: "backfillBegin", store }))) return "interrupted"
     let last: IDBValidKey | undefined
@@ -446,14 +484,14 @@ export class SqliteMirror implements IdbWriteSink {
       await yieldToEventLoop()
       if (this.role !== "owner") return "interrupted"
     }
-    return (await this.send({ type: "backfillFinish", store })) ? "done" : "interrupted"
+    return (await this.send({ type: "backfillFinish", store, covered })) ? "done" : "interrupted"
   }
 }
 
 export function createBrowserMirror(database: ThreaDatabase): SqliteMirror {
   return new SqliteMirror({
     database,
-    coordination: createBrowserCoordination(database.name),
+    coordination: createBrowserCoordination(database.name, database.sqliteWriter.id),
     createTransport: createWorkerTransport,
   })
 }
