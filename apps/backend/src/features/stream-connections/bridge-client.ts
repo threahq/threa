@@ -34,6 +34,8 @@ const RETRYABLE_STATUSES = new Set([401, 408, 429])
 
 const REQUEST_TIMEOUT_MS = 5_000
 
+const isRetryable = (status: number): boolean => RETRYABLE_STATUSES.has(status) || status >= 500
+
 type BridgeMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
 
 export interface ConnectionAddress {
@@ -69,8 +71,7 @@ export class BridgeClient {
 
   /** The host's shared tree: every stream a partner copies, with its current name and head. */
   async getManifest(address: ConnectionAddress): Promise<BridgeManifest> {
-    const res = await this.request(address, "/manifest", "GET")
-    return bridgeManifestSchema.parse(await res.json())
+    return bridgeManifestSchema.parse(await this.request(address, "/manifest", "GET"))
   }
 
   /** A page of one host stream's changes after a cursor. */
@@ -79,46 +80,49 @@ export class BridgeClient {
     params: { streamId: string; after: bigint; limit: number }
   ): Promise<BridgeEvents> {
     const query = new URLSearchParams({ after: params.after.toString(), limit: String(params.limit) })
-    const res = await this.request(address, `/streams/${encodeURIComponent(params.streamId)}/events?${query}`, "GET")
-    return bridgeEventsSchema.parse(await res.json())
+    return bridgeEventsSchema.parse(
+      await this.request(address, `/streams/${encodeURIComponent(params.streamId)}/events?${query}`, "GET")
+    )
   }
 
   /** Whether a host attachment's bytes can be fetched yet, and from where. */
   async getAttachment(address: ConnectionAddress, attachmentId: string): Promise<BridgeAttachmentResponse> {
-    const res = await this.request(address, `/attachments/${encodeURIComponent(attachmentId)}`, "GET")
-    return bridgeAttachmentResponseSchema.parse(await res.json())
+    return bridgeAttachmentResponseSchema.parse(
+      await this.request(address, `/attachments/${encodeURIComponent(attachmentId)}`, "GET")
+    )
   }
 
   /** The id and card version of every memo the host shares from the channel. */
   async getMemoIndex(address: ConnectionAddress): Promise<BridgeMemoIndex> {
-    const res = await this.request(address, "/memos", "GET")
-    return bridgeMemoIndexSchema.parse(await res.json())
+    return bridgeMemoIndexSchema.parse(await this.request(address, "/memos", "GET"))
   }
 
   /** The given memos, for those the host still shares. */
   async getMemos(address: ConnectionAddress, memoIds: string[]): Promise<BridgeMemos> {
-    const res = await this.request(address, "/memos", "POST", { memoIds } satisfies BridgeMemosRequest)
-    return bridgeMemosSchema.parse(await res.json())
+    return bridgeMemosSchema.parse(
+      await this.request(address, "/memos", "POST", { memoIds } satisfies BridgeMemosRequest)
+    )
   }
 
   /** The conversations in the shared tree, each with its version. */
   async getConversationIndex(address: ConnectionAddress): Promise<BridgeConversationIndex> {
-    const res = await this.request(address, "/conversations", "GET")
-    return bridgeConversationIndexSchema.parse(await res.json())
+    return bridgeConversationIndexSchema.parse(await this.request(address, "/conversations", "GET"))
   }
 
   /** The given conversations, for those still in the shared tree. */
   async getConversations(address: ConnectionAddress, conversationIds: string[]): Promise<BridgeConversations> {
-    const res = await this.request(address, "/conversations", "POST", {
-      conversationIds,
-    } satisfies BridgeConversationsRequest)
-    return bridgeConversationsSchema.parse(await res.json())
+    return bridgeConversationsSchema.parse(
+      await this.request(address, "/conversations", "POST", {
+        conversationIds,
+      } satisfies BridgeConversationsRequest)
+    )
   }
 
   /** The other end's current name and avatar of the given users, for those it shares. */
   async getProfiles(address: ConnectionAddress, userIds: string[]): Promise<BridgeProfiles> {
-    const res = await this.request(address, "/profiles", "POST", { userIds } satisfies BridgeProfilesRequest)
-    return bridgeProfilesSchema.parse(await res.json())
+    return bridgeProfilesSchema.parse(
+      await this.request(address, "/profiles", "POST", { userIds } satisfies BridgeProfilesRequest)
+    )
   }
 
   /** Tells the other end some of this end's users changed, so it refreshes its copies of them. */
@@ -141,8 +145,7 @@ export class BridgeClient {
     params: BridgeSendMessage & { streamId: string }
   ): Promise<BridgeSendMessageResponse> {
     const { streamId, ...body } = params
-    const res = await this.write(address, messagesPath(streamId), "POST", body)
-    return bridgeSendMessageResponseSchema.parse(await res.json())
+    return bridgeSendMessageResponseSchema.parse(await this.write(address, messagesPath(streamId), "POST", body))
   }
 
   async editMessage(
@@ -177,43 +180,64 @@ export class BridgeClient {
     await this.write(address, `${reactionPath(params.streamId, params.messageId, params.emoji)}?${query}`, "DELETE")
   }
 
+  /**
+   * The host's JSON answer, or null for an empty one. A read the host never answered, broke off mid-body, answered
+   * with a 5xx, or asked to slow down may be retried.
+   */
   private async request(
     address: ConnectionAddress,
     path: string,
     method: "GET" | "POST",
     body?: unknown
-  ): Promise<Response> {
-    const res = await this.send(address, path, method, body)
-    if (!res.ok) throw new Error(`Bridge ${method} ${path.split("?")[0]} answered ${res.status}`)
-    return res
+  ): Promise<unknown> {
+    const { where, res, text } = await this.exchange(address, path, method, body)
+    if (!res.ok) {
+      const answer = `Bridge ${where} answered ${res.status}`
+      throw isRetryable(res.status) ? hostUnreachable(answer) : new Error(answer)
+    }
+    return parseBody(text)
   }
 
   /**
-   * A write the host answered with a 4xx is refused for good; one it never
-   * answered, answered with a 5xx, or asked to slow down (408, 429) may be retried.
+   * The host's JSON answer to a write, or null for an empty one. A write the host answered with a 4xx is refused for
+   * good; one it never answered, broke off mid-body, answered with a 5xx, or asked to slow down (408, 429) may be
+   * retried.
    */
   private async write(
     address: ConnectionAddress,
     path: string,
     method: BridgeMethod,
     body?: unknown
-  ): Promise<Response> {
-    const where = `${method} ${path.split("?")[0]}`
-    let res: Response
+  ): Promise<unknown> {
+    const { where, res, text } = await this.exchange(address, path, method, body)
+    if (res.ok) return parseBody(text)
+    let reason = ""
     try {
-      res = await this.send(address, path, method, body)
-    } catch (error) {
-      logger.warn({ ...address, where, err: error }, "Bridge write failed")
-      throw hostUnreachable(`Bridge ${where} failed: ${error instanceof Error ? error.message : String(error)}`)
+      const error = (parseBody(text) as { error?: unknown } | null)?.error
+      if (typeof error === "string") reason = `: ${error}`
+    } catch {
+      // A refusal whose body isn't JSON is reported by its status alone.
     }
-    if (res.ok) return res
-    const reason = await res
-      .json()
-      .then((body: { error?: unknown } | null) => (typeof body?.error === "string" ? `: ${body.error}` : ""))
-      .catch(() => "")
     const answer = `Bridge ${where} answered ${res.status}${reason}`
     logger.warn({ ...address, where, status: res.status }, answer)
-    throw RETRYABLE_STATUSES.has(res.status) || res.status >= 500 ? hostUnreachable(answer) : writeRefused(answer)
+    throw isRetryable(res.status) ? hostUnreachable(answer) : writeRefused(answer)
+  }
+
+  /** Sends a bridge call and reads its whole body; failing either means the host didn't answer. */
+  private async exchange(
+    address: ConnectionAddress,
+    path: string,
+    method: BridgeMethod,
+    body?: unknown
+  ): Promise<{ where: string; res: Response; text: string }> {
+    const where = `${method} ${path.split("?")[0]}`
+    try {
+      const res = await this.send(address, path, method, body)
+      return { where, res, text: await res.text() }
+    } catch (error) {
+      logger.warn({ ...address, where, err: error }, "Bridge call failed")
+      throw hostUnreachable(`Bridge ${where} failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   private send(address: ConnectionAddress, path: string, method: BridgeMethod, body?: unknown): Promise<Response> {
@@ -241,4 +265,8 @@ function messagePath(streamId: string, messageId: string): string {
 
 function reactionPath(streamId: string, messageId: string, emoji: string): string {
   return `${messagePath(streamId, messageId)}/reactions/${encodeURIComponent(emoji)}`
+}
+
+function parseBody(text: string): unknown {
+  return text ? JSON.parse(text) : null
 }

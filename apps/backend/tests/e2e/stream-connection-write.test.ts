@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test"
 import { Pool } from "pg"
 import { streamConnectionId } from "@threahq/backend-common"
 import {
@@ -286,6 +286,39 @@ describe("Stream connection partner writes", () => {
       afterUnreact: states(live({})),
       afterDelete: states(live({ deleted: true })),
     })
+  }, 30_000)
+
+  test("should answer a partner's delete once the host took it, even when the first catch-up read answers 401", async () => {
+    const { partnerClient, host, partner, channel } = await setup()
+    const { data } = await send(partnerClient, partner.id, channel.id, {
+      content: "to be deleted",
+      clientMessageId: `cm_${testRunId}_delete_401`,
+    })
+    const id = data.message.id
+    const realFetch = globalThis.fetch
+    let refusedManifestReads = 0
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input)
+      // Only the delete's own catch-up gets the 401; a background pull of the same connection must not consume it.
+      const fromCatchUp = new Error().stack?.includes("catchUp") ?? false
+      if (url.endsWith("/bridge/manifest") && fromCatchUp && refusedManifestReads === 0) {
+        refusedManifestReads++
+        return new Response(null, { status: 401 })
+      }
+      return realFetch(input, init)
+    }) as typeof fetch)
+
+    try {
+      const { status } = await partnerClient.delete(`/api/workspaces/${partner.id}/messages/${id}`)
+      expect({
+        status,
+        refusedManifestReads,
+        host: (await view(host.id, id))?.deleted,
+        copy: (await view(partner.id, id))?.deleted,
+      }).toEqual({ status: 204, refusedManifestReads: 1, host: true, copy: true })
+    } finally {
+      fetchSpy.mockRestore()
+    }
   }, 30_000)
 
   test("should show a partner member's reaction on both sides when the member reacts to a host message", async () => {
