@@ -48,6 +48,14 @@ const WRITES_OUTSIDE: ReadonlySet<MirrorRequest["type"]> = new Set([
 
 /** Under the owner's 30 s worker deadline, so a frozen tab's transaction ends before the owner presumes its worker dead. */
 const DEFAULT_TX_IDLE_MS = 10_000
+/** Expired transactions remembered; one older than these is reported as merely inactive. */
+const MAX_EXPIRED = 64
+
+/** Nothing drops what IndexedDB lacks of SQLite's committed transactions. */
+function unlandedBacklog(db: Database): Error | null {
+  const pending = backlogSize(db)
+  return pending > 0 ? new Error(`${pending} committed transactions have not reached IndexedDB yet`) : null
+}
 
 function rollBack(db: Database): void {
   try {
@@ -118,6 +126,7 @@ export function createMirrorHandler(
     const message = `Transaction ${transaction.id} was rolled back after ${txIdleMs} ms without a request`
     console.error(`SQLite storage: ${message}`)
     expired.set(transaction.id, new DOMException(message, "AbortError"))
+    if (expired.size > MAX_EXPIRED) expired.delete(expired.keys().next().value!)
     end(transaction)
   }
 
@@ -136,10 +145,10 @@ export function createMirrorHandler(
     if (request.type === "destroy") {
       const database = session?.database ?? (await openDatabase(request.idbName))
       session = null
-      const pending = backlogSize(database.db)
-      if (pending > 0) {
+      const unlanded = unlandedBacklog(database.db)
+      if (unlanded) {
         database.close()
-        throw new Error(`${pending} committed transactions have not reached IndexedDB yet`)
+        throw unlanded
       }
       await database.destroy()
       return {}
@@ -211,9 +220,12 @@ export function createMirrorHandler(
         return {}
       case "status":
         return { status: store.status() }
-      case "reset":
+      case "reset": {
+        const unlanded = unlandedBacklog(database.db)
+        if (unlanded) throw unlanded
         store.reset(request.incarnation)
         return {}
+      }
       case "forgetWriters":
         store.forgetWriters(request.writers)
         return {}

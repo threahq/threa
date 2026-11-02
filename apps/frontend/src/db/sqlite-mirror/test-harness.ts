@@ -87,7 +87,7 @@ export function createBus() {
     coordination(
       tabId = `tab-${++tabs}`,
       lock?: { close(): void }
-    ): MirrorCoordination & { resigned: () => boolean; die: () => void } {
+    ): MirrorCoordination & { resigned: () => boolean; die: () => void; dispose: () => void } {
       let mine: ((owner: boolean) => void) | null = null
       let resigned = false
       const own = new Set<(message: CoordinationMessage) => void>()
@@ -128,7 +128,8 @@ export function createBus() {
           }
         },
         resign,
-        close() {
+        /** The tab's mirror is gone, the page not: it resigns and hears nothing more. */
+        dispose() {
           resign()
           for (const listener of own) listeners.delete(listener)
         },

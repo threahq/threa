@@ -5,7 +5,8 @@ import { MemoryRouter } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ServicesProvider, type MessageService, type StreamService } from "@/contexts"
 import { PendingMessagesProvider, useOptimisticEvents } from "@/contexts/pending-messages-context"
-import { clearAllCachedData, db, type CachedDraft } from "@/db"
+import Dexie from "dexie"
+import { clearAllCachedData, db, getActiveDb, type CachedDraft } from "@/db"
 import { AuthContext } from "@/auth/context"
 import { streamKeys } from "./use-streams"
 import * as sealSendModule from "@/lib/crypto/seal-send"
@@ -294,6 +295,43 @@ describe("useStreamOrDraft real stream send", () => {
     })
     expect(result.current.published).toEqual([])
   })
+
+  for (const landed of [true, false]) {
+    it(`${landed ? "keeps" : "takes back"} a send whose commit lost its answer when it ${landed ? "did" : "did not"} land`, async () => {
+      const { result } = await mountRealStreamSend()
+      const database = getActiveDb()
+      const transaction = database.transaction.bind(database) as (...args: unknown[]) => Promise<unknown>
+      vi.spyOn(database, "transaction").mockImplementation((async (...args: unknown[]) => {
+        if (landed) await transaction(...args)
+        const lost = new DOMException("SQLite storage stopped answering while committing", "OutcomeUnknownError")
+        throw new Dexie.AbortError("Transaction aborted", lost)
+      }) as never)
+
+      let sending: Promise<unknown> = Promise.resolve()
+      act(() => {
+        sending = result.current.sendMessage({
+          contentJson: {
+            type: "doc",
+            content: [{ type: "paragraph", content: [{ type: "text", text: `maybe ${landed}` }] }],
+          },
+        })
+      })
+      const outcome = await act(() =>
+        sending.then(
+          () => "sent",
+          (error: Error) => error.name
+        )
+      )
+
+      expect({
+        outcome,
+        published: result.current.published.length,
+        queued: (await db.pendingMessages.toArray()).filter((message) => message.content === `maybe ${landed}`).length,
+      }).toEqual(
+        landed ? { outcome: "sent", published: 1, queued: 1 } : { outcome: "AbortError", published: 0, queued: 0 }
+      )
+    })
+  }
 
   it("shows the sent row before its compose trace resolves and stores the trace once it does", async () => {
     const { result } = await mountRealStreamSend()

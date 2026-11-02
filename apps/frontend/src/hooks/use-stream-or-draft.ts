@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react"
 import { replaceEqualDeep, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { db, sequenceToNum, type CachedEvent, type CachedStream, type DraftScratchpad } from "@/db"
+import { isOutcomeUnknown } from "@/db/sqlite-mirror/client"
 import { useStreamService, useMessageService, usePendingMessages } from "@/contexts"
 import { useUser } from "@/auth"
 import { type SealStreamMessageResult } from "@/lib/crypto/message-envelope"
@@ -768,8 +769,12 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
           })
         })
       } catch (err) {
-        revokeOptimisticEvent(clientId)
-        throw err
+        // SQLite storage lost the commit's answer; once it routes again, the queued row says whether it landed.
+        const landed = isOutcomeUnknown(err) && (await db.pendingMessages.get(clientId).catch(() => undefined))
+        if (!landed) {
+          revokeOptimisticEvent(clientId)
+          throw err
+        }
       }
 
       notifyQueue()

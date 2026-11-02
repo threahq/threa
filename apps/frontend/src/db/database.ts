@@ -1955,7 +1955,7 @@ export class ThreaDatabase extends Dexie {
   // Auto-open routes through here too (Dexie calls `db.open()` on first use),
   // so this is the one seam every open failure crosses.
   override open(): PromiseExtended<Dexie> {
-    const gate = this.sqliteBoot ?? this.sqliteMirror?.beforeIdbOpen()
+    const gate = this.sqliteBoot
     if (gate) return Dexie.Promise.resolve(gate).then(() => this.openNow()) as PromiseExtended<Dexie>
     return this.openNow()
   }

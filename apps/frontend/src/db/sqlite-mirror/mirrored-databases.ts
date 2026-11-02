@@ -116,6 +116,7 @@ export function mirroredDatabases(sqlite3: Sqlite3, owned: Array<() => void>) {
       reloadEveryTab: options.reloadEveryTab,
     })
     database.sqliteMirror = mirror
+    database.sqliteBoot = mirror.beforeIdbOpen()
     mirror.start()
     const sqliteReads = () => log.filter((type) => READS.has(type)).length
     return { database, sqlite, mirror, bus, coordination, name, log, sqliteReads }

@@ -66,7 +66,15 @@ function setup() {
     tab = mirrorTab(database, bus, () => inProcessTransport(sqlite, requests))
     return tab
   }
-  return { database, sqlite, bus, requests, start, mirror: () => tab!.mirror }
+  return {
+    database,
+    sqlite,
+    bus,
+    requests,
+    start,
+    mirror: () => tab!.mirror,
+    dispose: () => tab?.coordination.dispose(),
+  }
 }
 
 function mirrored(sqlite: Database, store: string): unknown[] {
@@ -103,7 +111,7 @@ async function nextOwner(database: ThreaDatabase, sqlite: Database) {
   const bus = newBus()
   const heir = openDatabase(database.name)
   const tab = mirrorTab(heir, bus, () => inProcessTransport(sqlite, requests))
-  owned.push(() => tab.mirror.stop())
+  owned.push(() => tab.coordination.dispose())
   await settle()
   return { requests, heir, backfilled: () => begun(requests) }
 }
@@ -293,7 +301,7 @@ describe("SqliteMirror", () => {
       }).toEqual({ backfilled: 2, streams: [{ id: "s1", workspaceId: "ws" }], events: 1, behind: [] })
     })
 
-    it("covers a stopped follower's later writes, through the owner or the next one", async () => {
+    it("covers the later writes of a follower whose mirror is gone, through the owner or the next one", async () => {
       const { database, sqlite, bus, start } = setup()
       await database.open()
       start()
@@ -301,7 +309,7 @@ describe("SqliteMirror", () => {
       const followerDb = openDatabase(database.name)
       const follower = mirrorTab(followerDb, bus)
       await settle()
-      await follower.mirror.stop()
+      follower.coordination.dispose()
       followerDb.sqliteMirror = null
 
       await followerDb.streams.put({ id: "heard", workspaceId: "ws" } as never)
@@ -380,8 +388,8 @@ describe("SqliteMirror", () => {
       ],
       behind: [],
     })
-    await writer.mirror.stop()
-    await heir.mirror.stop()
+    writer.coordination.dispose()
+    heir.coordination.dispose()
   })
 
   it("keeps at most 1000 unacknowledged batches while no owner can open", { timeout: 30_000 }, async () => {
@@ -406,7 +414,7 @@ describe("SqliteMirror", () => {
     await settle()
 
     expect(resent.filter((message) => message.type === "batch")).toHaveLength(1000)
-    await failing.mirror.stop()
+    failing.coordination.dispose()
   })
 
   it("applies a follower's batch as IndexedDB holds it now, whichever commit arrives first", async () => {
@@ -433,8 +441,8 @@ describe("SqliteMirror", () => {
       rows: [{ key: "k", value: "owner", updatedAt: 2 }],
       behind: [],
     })
-    await follower.mirror.stop()
-    await owner.mirror().stop()
+    follower.coordination.dispose()
+    owner.dispose()
   })
 
   it("broadcasts writes buffered before the claim resolved to follower", async () => {
@@ -461,37 +469,7 @@ describe("SqliteMirror", () => {
     await settle()
 
     expect(mirrored(owner.sqlite, "syncCursors")).toEqual([{ key: "early", value: "x", updatedAt: 1 }])
-    await owner.mirror().stop()
-  })
-
-  it("stopped while opening, deletes the file and leaves no worker behind", async () => {
-    counter += 1
-    const database = openDatabase(`sqlite_mirror_stop_${counter}`)
-    const requests: MirrorRequest["type"][] = []
-    let closed = 0
-    const bus = newBus()
-    const coordination = bus.coordination()
-    const mirror = new SqliteMirror({
-      database,
-      mode: "shadow",
-      coordination,
-      createTransport: () => ({
-        request: async (request) => {
-          requests.push(request.type)
-          return { ok: true, ms: 0 }
-        },
-        heardAt: () => 0,
-        close: () => closed++,
-      }),
-    })
-    mirror.start()
-    await mirror.stop()
-
-    expect({ requests, closed, released: coordination.resigned() }).toEqual({
-      requests: ["open", "destroy"],
-      closed: 1,
-      released: true,
-    })
+    owner.dispose()
   })
 
   it("hands ownership on and keeps broadcasting when its worker dies", async () => {
@@ -520,7 +498,7 @@ describe("SqliteMirror", () => {
       released: true,
       rows: [{ key: "after", value: "crash", updatedAt: 1 }],
     })
-    await heir.mirror.stop()
-    await crashing.mirror.stop()
+    heir.coordination.dispose()
+    crashing.coordination.dispose()
   })
 })

@@ -1,6 +1,7 @@
 import sqlite3InitModule, { type Database } from "@sqlite.org/sqlite-wasm"
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { createMirrorHandler } from "./handler"
+import { backlogSize } from "./mirror-store"
 import { encodeKey } from "./key-codec"
 import type { MirrorReply, MirrorRequest } from "./protocol"
 import { encodeValue } from "./value-codec"
@@ -88,6 +89,22 @@ describe("mirror handler", () => {
       warned: error.mock.calls.length,
     }).toMatchObject({ next: true, frozenCommit: "AbortError", frozen: { result: undefined }, warned: 1 })
     error.mockRestore()
+  })
+
+  it("refuses to reset or destroy while IndexedDB lacks committed transactions", async () => {
+    const send = await openHandler()
+    await send({ type: "begin", tx: 1, readonly: false })
+    await send(put(1, "k", "v"))
+    await send({ type: "commit", tx: 1 })
+    const reset = await send({ type: "reset", incarnation: "next" })
+    const kept = await send(get("k"))
+    const destroy = await send({ type: "destroy", idbName: "test" })
+    expect({ reset: reset.ok, kept, destroy: destroy.ok, backlog: backlogSize(db) }).toMatchObject({
+      reset: false,
+      kept: { result: encodeValue("v") },
+      destroy: false,
+      backlog: 1,
+    })
   })
 
   it("holds a write outside any transaction until the readonly transactions reading meanwhile finish", async () => {

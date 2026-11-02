@@ -56,9 +56,14 @@ function recordedModes(page: Page): Promise<string[]> {
   )
 }
 
-/** The mode the delivered flag asked for; null while the page is between documents too. */
+/** The mode the delivered flag asked for the account's database; null while the page is between documents too. */
 function requestedMode(page: Page): Promise<string | null> {
-  return page.evaluate(() => localStorage.getItem("threa:sqliteStorage")).catch(() => null)
+  return page
+    .evaluate(() => {
+      const key = Object.keys(localStorage).find((name) => name.startsWith("threa:sqliteStorage:"))
+      return key ? localStorage.getItem(key) : null
+    })
+    .catch(() => null)
 }
 
 /** Counts the page's loads, so a test can wait out the reload a flag change triggers by itself. */

@@ -698,33 +698,27 @@ describe("read-only SQLite mirror", () => {
       }).toEqual({ holding: [1, 1], abortedBeforeRelease: "AbortError", after: 2, serves: true })
     })
 
-    for (const ending of ["fails", "stops"] as const) {
-      it(`drops the held apply when the mirror ${ending}, leaving its store behind for the next owner`, async () => {
-        silenceErrors()
-        let breakWorker = false
-        const { database, mirror, sqlite, log, holding, release } = await heldRead({
-          beforeRequest: (request) => {
-            if (breakWorker && request.type === "get") throw new Error("The worker is gone")
-            return undefined
-          },
-        })
-        await database.events.put(event("e2", "s1", 2))
-        const sentBefore = log.length
-        if (ending === "fails") {
-          breakWorker = true
-          await database.syncCursors.get("missing")
-        } else {
-          await mirror.stop()
-        }
-        release()
-        expect({
-          holding: await holding,
-          appliedAfter: log.slice(sentBefore).filter((type) => type === "apply"),
-          behind: await behind(database, sqlite),
-          serves: mirror.servesReads([EVENTS]),
-        }).toEqual({ holding: [2, 2], appliedAfter: [], behind: [EVENTS], serves: false })
+    it("drops the held apply when the mirror fails, leaving its store behind for the next owner", async () => {
+      silenceErrors()
+      let breakWorker = false
+      const { database, mirror, sqlite, log, holding, release } = await heldRead({
+        beforeRequest: (request) => {
+          if (breakWorker && request.type === "get") throw new Error("The worker is gone")
+          return undefined
+        },
       })
-    }
+      await database.events.put(event("e2", "s1", 2))
+      const sentBefore = log.length
+      breakWorker = true
+      await database.syncCursors.get("missing")
+      release()
+      expect({
+        holding: await holding,
+        appliedAfter: log.slice(sentBefore).filter((type) => type === "apply"),
+        behind: await behind(database, sqlite),
+        serves: mirror.servesReads([EVENTS]),
+      }).toEqual({ holding: [2, 2], appliedAfter: [], behind: [EVENTS], serves: false })
+    })
   })
 
   it("sends a read ahead of queued writes to other stores and right behind the last one to its own", async () => {
