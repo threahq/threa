@@ -243,6 +243,39 @@ test.describe("Doc pane", () => {
     }
   })
 
+  test("should keep bold toggled on an empty new line when the server's block id lands before typing", async ({
+    page,
+  }) => {
+    const { testId } = await loginAndCreateWorkspace(page, "doc-bold")
+    const workspaceId = workspaceIdFromUrl(page)
+    const channelId = await createChannelViaApi(page, workspaceId, `bold-docs-${testId}`, "private")
+    const docId = await createDocViaApi(page, workspaceId, channelId)
+    await page.route(
+      (url) => url.pathname.endsWith(`/docs/${docId}/updates`),
+      async (route) => {
+        if (route.request().method() === "POST") await new Promise((resolve) => setTimeout(resolve, 300))
+        await route.continue()
+      }
+    )
+
+    await openChannel(page, workspaceId, channelId)
+    await anchorRow(page, docId).click()
+    const editor = docEditor(page, docId)
+    await expect(editor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+    await typeAtEnd(page, editor, "Rotation tracker")
+    await page.mouse.move(0, 0)
+    const commentOnBlock = pane(page, docId).getByRole("link", { name: "Comment on this block" })
+    await expect(commentOnBlock).toBeVisible({ timeout: 15000 })
+
+    await page.keyboard.press("Enter")
+    await expect(commentOnBlock).toHaveCount(0)
+    await page.keyboard.press("ControlOrMeta+b")
+    await expect(commentOnBlock).toBeVisible({ timeout: 15000 })
+    await page.keyboard.type("Keys")
+
+    await expect(editor.locator("strong")).toHaveText("Keys")
+  })
+
   test("should show the doc's channel in its header, and archive and unarchive it from its menu", async ({ page }) => {
     const { testId } = await loginAndCreateWorkspace(page, "doc-archive")
     const workspaceId = workspaceIdFromUrl(page)

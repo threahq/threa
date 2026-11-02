@@ -1,12 +1,20 @@
 import { Extension } from "@tiptap/core"
 import { DOC_FRAGMENT } from "@threahq/types"
-import { Plugin } from "@tiptap/pm/state"
+import { Plugin, type EditorState } from "@tiptap/pm/state"
 import type * as Y from "yjs"
 import type { Awareness } from "y-protocols/awareness"
 // The server applies and reads this fragment with the same pinned y-prosemirror
 // (`apps/backend/src/features/docs/yjs.ts`); keep both on one exact version so
 // the client writes the structure the server parses.
-import { defaultCursorBuilder, redo, undo, yCursorPlugin, ySyncPlugin, yUndoPlugin } from "y-prosemirror"
+import {
+  defaultCursorBuilder,
+  redo,
+  undo,
+  yCursorPlugin,
+  ySyncPlugin,
+  ySyncPluginKey,
+  yUndoPlugin,
+} from "y-prosemirror"
 
 const localUserIdOf = (awareness: Awareness): string | undefined =>
   (awareness.getLocalState()?.user as { userId?: string } | undefined)?.userId
@@ -23,6 +31,26 @@ function caretPlugin(awareness: Awareness) {
       const caret = defaultCursorBuilder(user)
       caret.setAttribute("aria-hidden", "true")
       return caret
+    },
+  })
+}
+
+const sameCaret = (a: EditorState, b: EditorState): boolean =>
+  a.selection.empty &&
+  b.selection.empty &&
+  a.selection.$head.parentOffset === b.selection.$head.parentOffset &&
+  a.selection.$head.parent.textContent === b.selection.$head.parent.textContent
+
+/**
+ * y-prosemirror applies a remote update by replacing the whole document, which drops stored marks: bold toggled
+ * before typing would turn off when the server's block-id update lands.
+ */
+function keepStoredMarksPlugin() {
+  return new Plugin({
+    appendTransaction: (transactions, oldState, newState) => {
+      if (!oldState.storedMarks || newState.storedMarks || !sameCaret(oldState, newState)) return null
+      if (!transactions.some((tr) => tr.getMeta(ySyncPluginKey)?.isChangeOrigin)) return null
+      return newState.tr.setStoredMarks(oldState.storedMarks).setMeta("addToHistory", false)
     },
   })
 }
@@ -47,6 +75,7 @@ export const YjsCollaboration = Extension.create<YjsCollaborationOptions>({
     return [
       ySyncPlugin(ydoc.getXmlFragment(DOC_FRAGMENT)),
       yUndoPlugin(),
+      keepStoredMarksPlugin(),
       ...(awareness ? [caretPlugin(awareness)] : []),
       // Edit-menu, shake and keyboard undo arrive as beforeinput; the browser's own contenteditable undo would bypass Yjs.
       new Plugin({
