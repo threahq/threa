@@ -769,7 +769,7 @@ export function useTimelineScroll({
   //    composer expands/collapses. While following → pin.
   //  - viewport (scrollerRef): shrinks/grows as the mobile keyboard opens/closes
   //    (AppShell is sized to --viewport-height; see useVisualViewport). While
-  //    following → pin; while reading → hands-off. The scroller resizes at its
+  //    following → pin; while reading → the caller's detached hold. The scroller resizes at its
   //    BOTTOM edge, so an untouched scrollTop keeps whatever the user
   //    positioned at the top of the viewport exactly where it is; shifting by
   //    the height delta instead anchored the bottom edge, which pushed the
@@ -827,7 +827,7 @@ export function useTimelineScroll({
         pinToBottom()
         return
       }
-      // Detached (reading): this hook is hands-off, for BOTH entry kinds.
+      // Detached (reading): this hook never moves scrollTop itself, for BOTH entry kinds.
       // Content resizes leave clientHeight unchanged; a viewport resize (keyboard or
       // composer chrome opening/closing) shrinks or grows the scroller at its
       // BOTTOM edge, so an untouched scrollTop keeps whatever the user
@@ -836,7 +836,8 @@ export function useTimelineScroll({
       // message a replier had parked at the top was pushed out of the viewport
       // on every composer open. When the viewport grows past the content end
       // the browser clamps scrollTop on its own; handleScroll never reads that
-      // clamp as a user scroll (it lands exactly at the new bottom).
+      // clamp as a user scroll (it lands exactly at the new bottom). The
+      // caller's hold runs here, in the frame virtua commits new row heights.
       onDetachedResizeRef?.current?.()
     }
     const observer = new ResizeObserver(onResize)
