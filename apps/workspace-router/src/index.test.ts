@@ -1,4 +1,4 @@
-import { beforeEach, describe, test, expect, mock } from "bun:test"
+import { beforeEach, describe, test, expect, mock, spyOn } from "bun:test"
 import { ORIGINAL_HOST_HEADER } from "@threahq/types"
 import worker, { clearRegionCache } from "./index"
 
@@ -169,6 +169,23 @@ describe("workspace-router", () => {
   })
 
   describe("workspace-scoped routing", () => {
+    test("answers 502 when the region's backend cannot be reached", async () => {
+      const originalFetch = globalThis.fetch
+      const error = spyOn(console, "error").mockImplementation(() => {})
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      globalThis.fetch = mock(() => Promise.reject(new TypeError("Network connection lost."))) as any
+      try {
+        const res = await worker.fetch(makeRequest("/api/workspaces/ws_123/messages", "POST"), makeEnvWithKv())
+        expect({ status: res.status, body: await getJson<{ error: string }>(res) }).toEqual({
+          status: 502,
+          body: { error: "Region unavailable" },
+        })
+      } finally {
+        globalThis.fetch = originalFetch
+        error.mockRestore()
+      }
+    })
+
     test("proxies workspace API requests to correct region", async () => {
       const originalFetch = globalThis.fetch
       const fn = mockFetchFn(new Response('{"ok":true}', { status: 200 }))

@@ -251,7 +251,12 @@ async function routeWorkspaceRequest(
     return errorResponse(502, "Region not configured")
   }
 
-  return proxyRequest(request, config.apiUrl)
+  try {
+    return await proxyRequest(request, config.apiUrl)
+  } catch (error) {
+    console.error(`Region ${region} unreachable for ${request.method} ${new URL(request.url).pathname}`, error)
+    return errorResponse(502, "Region unavailable")
+  }
 }
 
 function isLocalProxyTarget(targetBaseUrl: string): boolean {
