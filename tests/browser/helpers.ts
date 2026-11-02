@@ -19,6 +19,21 @@ export async function expectApiOk(response: APIResponse, action: string): Promis
   throw new Error(`${action} failed: ${response.status()} ${response.statusText()} - ${body}`)
 }
 
+/**
+ * Sends a write and asserts it succeeded, resending when `wrangler dev` dropped it.
+ * Wrangler's dev proxy answers any network error on its hop to the router worker
+ * with this 503 and retries only GET/HEAD itself; the request never reached the
+ * router, so resending a POST cannot duplicate it.
+ */
+export async function sendApiOk(send: () => Promise<APIResponse>, action: string): Promise<APIResponse> {
+  for (let attempt = 1; ; attempt++) {
+    const response = await send()
+    if (attempt < 5 && response.status() === 503 && (await response.text()).includes("restarted mid-request")) continue
+    await expectApiOk(response, action)
+    return response
+  }
+}
+
 /** Turns a feature flag on for one workspace through the backend internal API, replacing its other flag overrides. */
 export async function enrollWorkspaceFlag(page: Page, workspaceId: string, flag: string): Promise<void> {
   const backendPort = process.env.PLAYWRIGHT_BACKEND_PORT

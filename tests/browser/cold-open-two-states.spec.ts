@@ -11,6 +11,7 @@ import {
   expectApiOk,
   hasCachedBootstrapForAccount,
   loginAndCreateWorkspace,
+  sendApiOk,
   sendPanelReply,
   waitForRealThreadPanel,
 } from "./helpers"
@@ -208,8 +209,8 @@ async function createChannel(api: APIRequestContext, workspaceId: string, slug: 
 }
 
 async function postMessage(api: APIRequestContext, workspaceId: string, streamId: string, content: string) {
-  await expectApiOk(
-    await api.post(`/api/workspaces/${workspaceId}/messages`, { data: { streamId, content } }),
+  await sendApiOk(
+    () => api.post(`/api/workspaces/${workspaceId}/messages`, { data: { streamId, content } }),
     `post "${content}"`
   )
 }
