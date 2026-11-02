@@ -1624,6 +1624,8 @@ export function StreamContent({
   // The row a positional landing placed at the top, handed to useLastSeenEvent
   // so its first scan after the reveal sweeps from there (see sweepOriginRef).
   const sweepOriginRef = useRef<string | null>(null)
+  // The detached viewport guard's re-pin, declared further down.
+  const detachedResizeRef = useRef<(() => void) | null>(null)
 
   const {
     listRef,
@@ -1653,6 +1655,7 @@ export function StreamContent({
     userInteractedAtRef,
     landingPendingRef,
     programmaticScrollAtRef,
+    onDetachedResizeRef: detachedResizeRef,
   })
 
   // Scroll container element, owned by useTimelineScroll. Attached to the
@@ -2649,8 +2652,10 @@ export function StreamContent({
   // viewport through the content — the "screen creeps after landing" bounce.
   // The guard re-pins the snapshot row to its exact offset:
   //  - pre-paint in the older-prepend landing commit (the known big jump);
-  //  - on every content resize (ResizeObserver), catching estimate
-  //    corrections and anything else that reshapes the window.
+  //  - on every row, content or viewport resize (useTimelineScroll's
+  //    observer), in the frame virtua commits the new heights — estimate
+  //    corrections, a run regrouping under the viewport top, anything else
+  //    that reshapes the window.
   // It yields to the user (any gesture newer than the snapshot) and to an
   // active scrollToMessage refine loop (which re-anchors its own target and
   // refreshes this snapshot when it settles). While following the tail the
@@ -2671,16 +2676,7 @@ export function StreamContent({
     if (olderPrependLanded) applyDetachedHold()
   }, [olderPrependLanded, applyDetachedHold])
 
-  useEffect(() => {
-    if (!useVirtualized) return
-    const content = virtualContentRef.current
-    if (!content) return
-    const ro = new ResizeObserver(() => applyDetachedHold())
-    ro.observe(content)
-    return () => ro.disconnect()
-    // virtualScrollerEl: the content node remounts with the keyed scroller —
-    // re-observe the fresh element after a stream switch.
-  }, [useVirtualized, virtualContentRef, virtualScrollerEl, applyDetachedHold])
+  detachedResizeRef.current = applyDetachedHold
 
   // Every message row consumes this context; `scrollToMessage` changes identity
   // with the window, so the context carries a stable wrapper.
