@@ -148,13 +148,7 @@ export function createMirrorHandler(
     switch (request.type) {
       case "begin": {
         const tx = requireActive(request.tx)
-        if (tx.readonly) return {}
-        try {
-          database.db.exec("BEGIN IMMEDIATE")
-        } catch (error) {
-          end(tx)
-          throw error
-        }
+        if (!tx.readonly) database.db.exec("BEGIN IMMEDIATE")
         return {}
       }
       case "write": {
@@ -177,31 +171,25 @@ export function createMirrorHandler(
       case "commit": {
         const tx = requireActive(request.tx)
         expired.delete(tx.id)
-        if (tx.readonly || tx.failed) {
-          end(tx)
-          if (tx.failed) throw tx.failed
-          return {}
+        if (tx.failed) throw tx.failed
+        if (!tx.readonly) {
+          try {
+            if (tx.writes.length > 0) store.appendBacklog(tx.writes)
+            database.db.exec("COMMIT")
+          } catch (error) {
+            rollBack(database.db)
+            throw error
+          }
         }
-        try {
-          if (tx.writes.length > 0) store.appendBacklog(tx.writes)
-          database.db.exec("COMMIT")
-        } catch (error) {
-          rollBack(database.db)
-          throw error
-        } finally {
-          end(tx)
-        }
+        end(tx)
         return {}
       }
       case "rollback": {
         expired.delete(request.tx)
         const tx = admitted.get(request.tx)
         if (!tx) return {}
-        try {
-          if (!tx.readonly && !tx.failed) database.db.exec("ROLLBACK")
-        } finally {
-          end(tx)
-        }
+        if (!tx.readonly && !tx.failed) rollBack(database.db)
+        end(tx)
         return {}
       }
       case "backlog":
@@ -247,7 +235,7 @@ export function createMirrorHandler(
       const data = await run(request)
       return { ok: true, ms: performance.now() - startedAt, ...data }
     } catch (error) {
-      // A transaction whose begin or end failed before reaching SQLite must not hold the others back.
+      // A transaction whose begin or commit failed must not hold the others back.
       const ends = request.type === "begin" || request.type === "commit"
       const stuck = ends ? admitted.get(request.tx) : undefined
       if (stuck) end(stuck)

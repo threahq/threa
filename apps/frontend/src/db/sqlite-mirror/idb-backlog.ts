@@ -1,3 +1,4 @@
+import { transactionDone } from "./idb-reads"
 import { decodeKey, type EncodedRange } from "./key-codec"
 import type { MirrorMutation } from "./mirror-store"
 import type { BacklogBatch, MirrorRequest } from "./protocol"
@@ -32,20 +33,17 @@ function replay(tx: IDBTransaction, mutation: MirrorMutation): void {
 const BACKLOG_CHUNK_BATCHES = 100
 
 /** Replays committed read-write transactions into IndexedDB, in order, in one transaction that resolves once on disk. */
-function replayBacklog(idb: IDBDatabase, batches: readonly BacklogBatch[]): Promise<void> {
+async function replayBacklog(idb: IDBDatabase, batches: readonly BacklogBatch[]): Promise<void> {
   const stores = [...new Set(batches.flatMap(({ batch }) => batch.map((mutation) => mutation.store)))]
-  if (stores.length === 0) return Promise.resolve()
-  return new Promise((resolve, reject) => {
-    const tx = idb.transaction(stores, "readwrite", { durability: "strict" })
-    tx.oncomplete = () => resolve()
-    tx.onabort = () => reject(tx.error ?? new DOMException("Backlog replay aborted", "AbortError"))
-    try {
-      for (const { batch } of batches) for (const mutation of batch) replay(tx, mutation)
-    } catch (error) {
-      tx.abort()
-      reject(error)
-    }
-  })
+  if (stores.length === 0) return
+  const tx = idb.transaction(stores, "readwrite", { durability: "strict" })
+  try {
+    for (const { batch } of batches) for (const mutation of batch) replay(tx, mutation)
+  } catch (error) {
+    tx.abort()
+    throw error
+  }
+  await transactionDone(tx)
 }
 
 /**

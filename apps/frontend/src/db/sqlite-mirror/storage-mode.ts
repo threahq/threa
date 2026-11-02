@@ -1,22 +1,11 @@
 import type { SqliteMirrorMode } from "./client"
+import { transactionDone } from "./idb-reads"
 
 export type SqliteStorageMode = "off" | SqliteMirrorMode
 
 const MODE_DATABASE = "threa-sqlite-mode"
 const MODE_STORE = "mode"
 const RELOAD_CHANNEL = "threa-sqlite-storage-reload"
-
-function done(request: IDBRequest | IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (request instanceof IDBTransaction) {
-      request.oncomplete = () => resolve()
-      request.onabort = () => reject(request.error ?? new DOMException("Mode write aborted", "AbortError"))
-    } else {
-      request.onsuccess = () => resolve()
-      request.onerror = () => reject(request.error)
-    }
-  })
-}
 
 function openModes(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -35,8 +24,9 @@ function openModes(): Promise<IDBDatabase> {
 export async function readRecordedMode(idbName: string): Promise<SqliteStorageMode> {
   const modes = await openModes()
   try {
-    const read = modes.transaction(MODE_STORE).objectStore(MODE_STORE).get(idbName)
-    await done(read)
+    const tx = modes.transaction(MODE_STORE)
+    const read = tx.objectStore(MODE_STORE).get(idbName)
+    await transactionDone(tx)
     const mode: unknown = read.result
     return mode === "shadow" || mode === "read-only" || mode === "read-write" ? mode : "off"
   } finally {
@@ -50,7 +40,7 @@ export async function recordMode(idbName: string, mode: SqliteStorageMode): Prom
     const tx = modes.transaction(MODE_STORE, "readwrite", { durability: "strict" })
     if (mode === "off") tx.objectStore(MODE_STORE).delete(idbName)
     else tx.objectStore(MODE_STORE).put(mode, idbName)
-    await done(tx)
+    await transactionDone(tx)
   } finally {
     modes.close()
   }
