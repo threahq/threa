@@ -186,6 +186,7 @@ export function createMirrorHandler(
         if (!tx.readonly) {
           try {
             if (tx.writes.length > 0) store.appendBacklog(tx.writes)
+            store.recordCommit(request.ledger)
             database.db.exec("COMMIT")
           } catch (error) {
             rollBack(database.db)
@@ -203,6 +204,8 @@ export function createMirrorHandler(
         end(tx)
         return {}
       }
+      case "committed":
+        return { committed: store.committed(request.ledger) }
       case "backlog":
         return { batches: store.readBacklog(request.limit) }
       case "backlogDone":

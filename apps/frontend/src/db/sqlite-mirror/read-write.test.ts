@@ -1072,6 +1072,32 @@ describe("read-write SQLite storage", () => {
       })
     }
 
+    it("runs a commit the closed owner never applied again ahead of the transactions created after it", async () => {
+      let loseCommits = false
+      let reached = false
+      const owner = await readWriteSession({
+        intercept: async (request, next) => {
+          if (request.type !== "commit" || !loseCommits) return next()
+          reached = true
+          return never
+        },
+      })
+      const second = await follower(owner)
+      loseCommits = true
+      const first = second.database.syncCursors.put(cursor("k", "first"))
+      await until(() => reached, "the first commit to reach the worker")
+      const later = second.database.transaction("rw", second.database.syncCursors, async () => {
+        const read = await second.database.syncCursors.get("k")
+        await second.database.syncCursors.put(cursor("later", read?.cursor ?? "none"))
+      })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      owner.coordination.die()
+      owner.database.close()
+      owner.sqlite.exec("ROLLBACK")
+      await Promise.all([first, later])
+      expect(await cursorsIn(second.database)).toEqual([cursor("k", "first"), cursor("later", "first")])
+    })
+
     it("serves nothing from the tab taking over until it decided SQLite still holds every store", async () => {
       const owner = await readWriteSession()
       const reconciling = gate()
@@ -1102,35 +1128,36 @@ describe("read-write SQLite storage", () => {
       })
     })
 
-    it("fails a commit the owner's worker may have applied as outcome-unknown when the owner closes before answering", async () => {
-      let loseReply = false
-      const owner = await readWriteSession({
-        intercept: async (request, next) => {
-          if (request.type !== "commit" || !loseReply) return next()
-          await next()
-          return never
-        },
+    for (const applied of [true, false]) {
+      const landed = applied ? "landed" : "never ran"
+      it(`completes a commit that ${landed} on the owner, closed before answering, exactly once on the tab taking over`, async () => {
+        let loseReply = false
+        let reached = false
+        const owner = await readWriteSession({
+          intercept: async (request, next) => {
+            if (request.type !== "commit" || !loseReply) return next()
+            reached = true
+            if (applied) await next()
+            return never
+          },
+        })
+        const second = await follower(owner)
+        loseReply = true
+        const put = second.database.syncCursors.add(cursor("once", "1"))
+        await until(() => reached, "the commit to reach the worker")
+        owner.coordination.die()
+        owner.database.close()
+        if (!applied) owner.sqlite.exec("ROLLBACK")
+        const failure = await put.then(
+          () => null,
+          (error: Error & { inner?: Error }) => error.inner?.name ?? error.name
+        )
+        expect({ failure, cursors: await cursorsIn(second.database) }).toEqual({
+          failure: null,
+          cursors: [cursor("once", "1")],
+        })
       })
-      const second = await follower(owner)
-      loseReply = true
-      const commits = owner.log.filter((type) => type === "commit").length
-      const put = second.database.syncCursors.put(cursor("maybe", "1"))
-      await until(
-        () => owner.log.filter((type) => type === "commit").length > commits,
-        "the commit to reach the worker"
-      )
-      owner.coordination.die()
-      owner.database.close()
-      // Dexie reports a transaction's abort as AbortError, carrying what aborted it.
-      const failure = await put.then(
-        () => null,
-        (error: Error & { inner?: Error }) => error.inner?.name
-      )
-      expect({ failure, afterTakeover: await second.database.syncCursors.get("maybe") }).toEqual({
-        failure: "OutcomeUnknownError",
-        afterTakeover: cursor("maybe", "1"),
-      })
-    })
+    }
 
     it("fails a commit as outcome-unknown once the owner, still open, answers no tab in time", async () => {
       let holdCommits = false

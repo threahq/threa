@@ -184,6 +184,18 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     ])
   })
 
+  it("runs again from the start when SQLite storage lost its owner before the apply committed", async () => {
+    const lost = new DOMException("The tab running SQLite storage closed during this transaction", "OwnerLostError")
+    const transaction = vi.spyOn(getActiveDb(), "transaction").mockRejectedValueOnce(lost)
+    const bootstrap = makeBootstrap()
+    bootstrap.workspace.name = "Landed"
+
+    await applyWorkspaceBootstrap("ws_1", bootstrap, Date.now())
+    transaction.mockRestore()
+
+    expect((await db.workspaces.get("ws_1"))?.name).toBe("Landed")
+  })
+
   it("removes stale streams not in bootstrap", async () => {
     const fetchStartedAt = Date.now() - 1000 // fetch started 1s ago
 

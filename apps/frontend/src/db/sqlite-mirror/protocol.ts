@@ -47,7 +47,9 @@ export type MirrorRequest =
   /** Holds every request of other transactions, and outside any, until this one commits or rolls back. */
   | { type: "begin"; tx: number; readonly: boolean }
   | { type: "write"; tx: number; write: MirrorWrite }
-  | { type: "commit"; tx: number }
+  /** `ledger` names it among commits, recorded with its writes so a tab that lost the owner meanwhile can ask whether it landed. */
+  | { type: "commit"; tx: number; ledger: string }
+  | { type: "committed"; ledger: string }
   | { type: "rollback"; tx: number }
   | { type: "backlog"; limit: number }
   | { type: "backlogDone"; through: number }
@@ -64,6 +66,7 @@ export type MirrorReply =
       /** Positions of a write's entries whose `add` met an existing key. */
       failures?: number[]
       batches?: BacklogBatch[]
+      committed?: boolean
     }
   | { ok: false; error: string; message: string }
 

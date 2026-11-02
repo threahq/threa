@@ -49,12 +49,33 @@ describe("mirror handler", () => {
     expect(reports).toBe(5)
   })
 
+  it("answers whether a commit landed from the ledger it wrote with it, for the most recent commits", async () => {
+    const send = await openHandler()
+    for (let tx = 1; tx <= 1002; tx++) {
+      await send({ type: "begin", tx, readonly: false })
+      await send({ type: "commit", tx, ledger: `tab:${tx}` })
+    }
+    await send({ type: "begin", tx: 1003, readonly: false })
+    await send(put(1003, "k", "v"))
+    await send({ type: "rollback", tx: 1003 })
+    const committed = async (ledger: string) => {
+      const reply = await send({ type: "committed", ledger })
+      return reply.ok && reply.committed
+    }
+    expect({
+      latest: await committed("tab:1002"),
+      oldestKept: await committed("tab:3"),
+      pruned: await committed("tab:2"),
+      rolledBack: await committed("tab:1003"),
+    }).toEqual({ latest: true, oldestKept: true, pruned: false, rolledBack: false })
+  })
+
   it("syncs every commit to disk, whatever the connection was set to before it opened", async () => {
     db.exec("PRAGMA synchronous=OFF")
     const send = await openHandler()
     await send({ type: "begin", tx: 1, readonly: false })
     await send(put(1, "k", "v"))
-    await send({ type: "commit", tx: 1 })
+    await send({ type: "commit", tx: 1, ledger: "tab:1" })
     expect(db.selectValue("PRAGMA synchronous")).toBe(2)
   })
 
@@ -68,7 +89,7 @@ describe("mirror handler", () => {
       write: { store: "missing", op: "delete", keys: [encodeKey("k")] },
     })
     const afterFailure = await send(put(1, "third", "v"))
-    const commit = await send({ type: "commit", tx: 1 })
+    const commit = await send({ type: "commit", tx: 1, ledger: "tab:1" })
     expect({
       failed: failed.ok,
       afterFailure: failure(afterFailure),
@@ -91,8 +112,8 @@ describe("mirror handler", () => {
     await send(put(1, "frozen", "v"))
     const next = await send({ type: "begin", tx: 2, readonly: false })
     await send(put(2, "next", "v"))
-    await send({ type: "commit", tx: 2 })
-    const frozenCommit = await send({ type: "commit", tx: 1 })
+    await send({ type: "commit", tx: 2, ledger: "tab:2" })
+    const frozenCommit = await send({ type: "commit", tx: 1, ledger: "tab:1" })
     expect({
       next: next.ok,
       frozenCommit: failure(frozenCommit),
@@ -106,7 +127,7 @@ describe("mirror handler", () => {
     const send = await openHandler()
     await send({ type: "begin", tx: 1, readonly: false })
     await send(put(1, "k", "v"))
-    await send({ type: "commit", tx: 1 })
+    await send({ type: "commit", tx: 1, ledger: "tab:1" })
     const reset = await send({ type: "reset", incarnation: "next" })
     const kept = await send(get("k"))
     const destroy = await send({ type: "destroy", idbName: "test" })
@@ -122,7 +143,7 @@ describe("mirror handler", () => {
     const send = await openHandler()
     await send({ type: "begin", tx: 1, readonly: false })
     await send(put(1, "k", "before"))
-    await send({ type: "commit", tx: 1 })
+    await send({ type: "commit", tx: 1, ledger: "tab:1" })
     await send({ type: "begin", tx: 2, readonly: true })
     const first = await send(get("k", 2))
     let applied = false
@@ -135,7 +156,7 @@ describe("mirror handler", () => {
     })
     const second = await send(get("k", 2))
     const appliedBeforeCommit = applied
-    await send({ type: "commit", tx: 2 })
+    await send({ type: "commit", tx: 2, ledger: "tab:2" })
     await apply
     expect({ first, second, appliedBeforeCommit, after: await send(get("k")) }).toMatchObject({
       first: { result: encodeValue("before") },

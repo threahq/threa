@@ -236,6 +236,8 @@ interface RoutedTx {
   /** Answers given on a lost route, asked again and not yet matched: its commit waits for every one. */
   unmatched: number
   heldCommit: Asked | null
+  /** Its commit reached a route that was lost before answering: the next route's ledger tells whether it landed. */
+  committing: boolean
 }
 
 function answerOf(reply: OkReply): string {
@@ -291,6 +293,23 @@ export function isOutcomeUnknown(error: unknown): boolean {
 /** A transaction that never committed: its owner was lost, and running it again read what another tab wrote meanwhile. */
 export function isOwnerLost(error: unknown): boolean {
   return failedWith(error, "OwnerLostError")
+}
+
+function ledgerOf(routed: RoutedTx): string {
+  return (routed.asked.at(-1)!.request as Extract<MirrorRequest, { type: "commit" }>).ledger
+}
+
+const OWNER_LOST_RUNS = 3
+
+/** Runs `run` again from its start while a try fails having never committed; each try must hold no state of the last. */
+export async function rerunWhileOwnerLost<T>(run: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await run()
+    } catch (error) {
+      if (!isOwnerLost(error) || attempt === OWNER_LOST_RUNS) throw error
+    }
+  }
 }
 
 function deferred(): { promise: Promise<void>; resolve: () => void; settled: boolean } {
@@ -500,6 +519,8 @@ export class SqliteMirror {
   private ownerHeardAt = 0
   /** This tab's read-write transactions, in creation order. */
   private readonly transactions = new Map<number, RoutedTx>()
+  /** While the ledger answers whether commits a lost route was given landed, every other transaction waits behind them. */
+  private resuming = false
   /** Followers' transactions this owner runs, by tab, as transactions of its own. */
   private readonly served = new Map<string, Map<number, number>>()
 
@@ -540,7 +561,7 @@ export class SqliteMirror {
   }
 
   async commitTransaction(tx: number, wrote: boolean): Promise<void> {
-    await this.ask({ type: "commit", tx })
+    await this.ask({ type: "commit", tx, ledger: `${this.tabId}:${tx}` })
     if (wrote) this.scheduleDrain()
   }
 
@@ -1349,8 +1370,8 @@ export class SqliteMirror {
 
   private askInTx(tx: number, request: MirrorRequest): Promise<OkReply> {
     if (request.type === "begin") {
-      const route = this.route()
-      const failed = this.closing || (!route && this.routable.settled)
+      const route = this.resuming ? null : this.route()
+      const failed = this.closing || (!route && !this.resuming && this.routable.settled)
       this.transactions.set(tx, {
         readonly: request.readonly,
         route,
@@ -1358,6 +1379,7 @@ export class SqliteMirror {
         failed: failed ? unavailable() : null,
         unmatched: 0,
         heldCommit: null,
+        committing: false,
       })
     }
     const routed = this.transactions.get(tx)
@@ -1418,7 +1440,7 @@ export class SqliteMirror {
   /**
    * The worker behind `route` is gone with every transaction it held open,
    * uncommitted; each waits for the next route. A commit it was given may
-   * have landed, so that one fails as of unknown outcome, unless it only read.
+   * have landed: the next route answers whether it did, from SQLite's ledger.
    */
   private orphan(route: string): void {
     for (const [tx, routed] of this.transactions) {
@@ -1429,26 +1451,59 @@ export class SqliteMirror {
         this.transactions.delete(tx)
         last!.answer = ""
         last!.resolve({ ok: true, ms: 0 })
-      } else if (ending !== "commit") {
+      } else {
         routed.route = null
         routed.unmatched = 0
         routed.heldCommit = null
+        routed.committing = ending === "commit"
       }
     }
   }
 
-  /** Runs every transaction a lost route held again, in creation order, ahead of anything that waited for a route. */
+  /**
+   * Runs every transaction a lost route held again, in creation order, ahead
+   * of anything that waited for a route. A commit the lost route may have
+   * applied is first looked up in the next route's ledger, every later
+   * transaction waiting: one that landed completes, one that did not runs again
+   * ahead of them, as it was ordered.
+   */
   private resumeTransactions(): void {
+    if (this.resuming) return
     const route = this.route()
-    for (const [tx, routed] of this.transactions) {
-      if (routed.route !== null || routed.failed) continue
-      if (!route) {
-        this.failTx(tx, routed, unavailable())
-        continue
+    const waiting = [...this.transactions].filter(([, routed]) => routed.route === null && !routed.failed)
+    const committing = route ? waiting.filter(([, routed]) => routed.committing) : []
+    if (committing.length === 0) {
+      for (const [tx, routed] of waiting) {
+        if (!route) {
+          this.failTx(tx, routed, routed.committing ? outcomeUnknown() : unavailable())
+          continue
+        }
+        routed.route = route
+        for (const asked of routed.asked) this.sendInTx(tx, routed, asked)
       }
-      routed.route = route
-      for (const asked of routed.asked) this.sendInTx(tx, routed, asked)
+      return
     }
+    this.resuming = true
+    const landed = committing.map(([, routed]) =>
+      this.dispatch(route!, { type: "committed", ledger: ledgerOf(routed) }).then(
+        (reply) => reply.committed === true,
+        () => null
+      )
+    )
+    void Promise.all(landed).then((answers) => {
+      this.resuming = false
+      committing.forEach(([tx, routed], i) => {
+        if (this.transactions.get(tx) !== routed || routed.failed) return
+        routed.committing = false
+        if (answers[i] === null) return this.failTx(tx, routed, outcomeUnknown())
+        if (!answers[i]) return
+        this.transactions.delete(tx)
+        const commit = routed.asked.at(-1)!
+        commit.answer = ""
+        commit.resolve({ ok: true, ms: 0 })
+      })
+      this.resumeTransactions()
+    })
   }
 
   private call(owner: string, request: MirrorRequest): Promise<OkReply> {
@@ -1496,7 +1551,7 @@ export class SqliteMirror {
     this.settleServing(true)
   }
 
-  /** What this follower had in flight on the owner runs again on the next owner, but a commit, which fails as of unknown outcome. */
+  /** What this follower had in flight on the owner runs again on the next owner, which also answers whether a commit it was given landed. */
   private loseOwner(): void {
     const owner = this.owner
     if (!owner) return

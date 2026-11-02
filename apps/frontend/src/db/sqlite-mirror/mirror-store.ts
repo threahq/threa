@@ -62,11 +62,14 @@ interface BackfillState {
 const META_TABLE = "_mirror_meta"
 const BACKLOG_TABLE = "_idb_backlog"
 const WRITERS_TABLE = "_mirror_writers"
+const COMMITS_TABLE = "_mirror_commits"
 const VERSION_KEY = "idbVersion"
 const SCHEMA_KEY = "schema"
 const INCARNATION_KEY = "incarnation"
 /** Rows per progress report of a long request, and per backlog batch of a reseed. */
 const ROWS_PER_STEP = 500
+/** Ledger rows kept: a tab asks about its commit right after the next owner takes over, many fewer commits later. */
+const KEPT_COMMITS = 1000
 /** Per writer and store: commits applied before the one they follow, which may never arrive. */
 const MAX_UNCHAINED_COMMITS = 1024
 const STORE_NAME_PATTERN = /^[A-Za-z0-9_]+$/
@@ -173,6 +176,7 @@ export class MirrorStore {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS ${WRITERS_TABLE} (writer TEXT NOT NULL, store TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY (writer, store)) WITHOUT ROWID`
     )
+    this.db.exec(`CREATE TABLE IF NOT EXISTS ${COMMITS_TABLE} (seq INTEGER PRIMARY KEY, ledger TEXT NOT NULL UNIQUE)`)
     const storedVersion = this.db.selectValue(`SELECT value FROM ${META_TABLE} WHERE key = ?`, [VERSION_KEY])
     const storedSchema = this.db.selectValue(`SELECT value FROM ${META_TABLE} WHERE key = ?`, [SCHEMA_KEY])
     const previous = new Map(
@@ -305,6 +309,16 @@ export class MirrorStore {
 
   appendBacklog(batch: readonly MirrorMutation[]): void {
     this.run(`INSERT INTO ${BACKLOG_TABLE} (batch) VALUES (?)`, [serializeBatch(batch)])
+  }
+
+  /** Inside the committing transaction, so the ledger row lands exactly when its writes do. */
+  recordCommit(ledger: string): void {
+    this.run(`INSERT INTO ${COMMITS_TABLE} (ledger) VALUES (?)`, [ledger])
+    this.run(`DELETE FROM ${COMMITS_TABLE} WHERE seq <= (SELECT MAX(seq) FROM ${COMMITS_TABLE}) - ?`, [KEPT_COMMITS])
+  }
+
+  committed(ledger: string): boolean {
+    return this.all(`SELECT 1 FROM ${COMMITS_TABLE} WHERE ledger = ?`, [ledger]).length > 0
   }
 
   readBacklog(limit: number): Array<{ seq: number; batch: MirrorMutation[] }> {
