@@ -227,11 +227,12 @@ test.describe("Inbox sidebar section", () => {
         })
       )
       .toBe(true)
-    // The first press may only dismiss a lingering unread divider; the next settles.
-    await page.keyboard.press("Escape")
-    await page.keyboard.press("Escape")
-
-    await expect(sidebarRow(sectionByHeading(page, "Inbox"), streamId)).toHaveCount(0)
+    // A press may only dismiss a lingering unread divider, and a second press
+    // landing before the re-render dismisses it again, so press until it settles.
+    await expect(async () => {
+      await page.keyboard.press("Escape")
+      await expect(sidebarRow(sectionByHeading(page, "Inbox"), streamId)).toHaveCount(0, { timeout: 1000 })
+    }).toPass({ timeout: 10000 })
     await expect(sidebarRow(sectionByHeading(page, "Channels"), streamId)).toBeVisible({ timeout: 10000 })
 
     await otherContext.close()
