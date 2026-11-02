@@ -65,6 +65,8 @@ export interface ModeLock {
   exclusive(waitMs: number): Promise<(() => void) | null>
   /** The shared side, held for the rest of this tab's life. */
   shared(): Promise<void>
+  /** Runs `run` holding the shared side if no tab holds or awaits the exclusive one, else without it; never waits. */
+  ifShared<T>(run: (held: boolean) => Promise<T>): Promise<T>
 }
 
 export function browserModeLock(idbName: string): ModeLock {
@@ -86,6 +88,8 @@ export function browserModeLock(idbName: string): ModeLock {
           return new Promise<never>(() => {})
         })
       }),
+    ifShared: (run) =>
+      navigator.locks.request(name, { mode: "shared", ifAvailable: true }, (lock) => run(lock !== null)),
   }
 }
 

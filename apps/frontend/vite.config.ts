@@ -334,6 +334,7 @@ export default defineConfig({
           setupFiles: ["./src/test/setup.ts", "./src/db/sqlite-mirror/read-write.setup.ts"],
           include: [
             "src/db/{database,event-writes}.test.ts",
+            "src/lib/sw-prefetch-inbox.test.ts",
             "src/sync/**/*.test.ts",
             "src/stores/**/*.test.{ts,tsx}",
             "src/hooks/use-{all-drafts,draft,stash,stashed,queue-draft,command-dispatch,delete-message,events,unread-counts}*.test.{ts,tsx}",

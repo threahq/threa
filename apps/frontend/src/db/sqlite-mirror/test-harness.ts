@@ -76,6 +76,17 @@ export function createBus() {
           while (exclusive) await new Promise<void>((wake) => waitingForLock.push(wake))
           sharing.add(tab)
         },
+        async ifShared(run) {
+          if (exclusive) return run(false)
+          const hold = {}
+          sharing.add(hold)
+          try {
+            return await run(true)
+          } finally {
+            sharing.delete(hold)
+            wakeLockWaiters()
+          }
+        },
         close() {
           sharing.delete(tab)
           if (exclusive === tab) exclusive = null

@@ -1,5 +1,6 @@
 import type { ThreaDatabase } from "../database"
 import { getPerfCapture } from "@/lib/perf/capture"
+import { discardPrefetches } from "../prefetch-inbox"
 import {
   DEFAULT_DEADLINES,
   createBrowserMirror,
@@ -169,6 +170,7 @@ async function switchMode(
   const { name, verno } = database
   try {
     if (from === "read-write") {
+      await discardPrefetches(name)
       await onWorker(boot, async (ask) => {
         await ask({ type: "open", idbName: name, schema: mirroredSchema(database), idbVersion: verno })
         await drainBacklog(ask, name)
