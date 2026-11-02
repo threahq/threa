@@ -145,8 +145,7 @@ export class BridgeClient {
     params: BridgeSendMessage & { streamId: string }
   ): Promise<BridgeSendMessageResponse> {
     const { streamId, ...body } = params
-    const res = await this.write(address, messagesPath(streamId), "POST", body)
-    return bridgeSendMessageResponseSchema.parse(await res.json())
+    return bridgeSendMessageResponseSchema.parse(await this.write(address, messagesPath(streamId), "POST", body))
   }
 
   async editMessage(
@@ -191,48 +190,54 @@ export class BridgeClient {
     method: "GET" | "POST",
     body?: unknown
   ): Promise<unknown> {
-    const where = `${method} ${path.split("?")[0]}`
-    let res: Response
-    let text: string
-    try {
-      res = await this.send(address, path, method, body)
-      text = await res.text()
-    } catch (error) {
-      throw hostUnreachable(`Bridge ${where} failed: ${error instanceof Error ? error.message : String(error)}`)
-    }
+    const { where, res, text } = await this.exchange(address, path, method, body)
     if (!res.ok) {
       const answer = `Bridge ${where} answered ${res.status}`
       throw isRetryable(res.status) ? hostUnreachable(answer) : new Error(answer)
     }
-    return text ? JSON.parse(text) : null
+    return parseBody(text)
   }
 
   /**
-   * A write the host answered with a 4xx is refused for good; one it never
-   * answered, answered with a 5xx, or asked to slow down (408, 429) may be retried.
+   * The host's JSON answer to a write, or null for an empty one. A write the host answered with a 4xx is refused for
+   * good; one it never answered, broke off mid-body, answered with a 5xx, or asked to slow down (408, 429) may be
+   * retried.
    */
   private async write(
     address: ConnectionAddress,
     path: string,
     method: BridgeMethod,
     body?: unknown
-  ): Promise<Response> {
-    const where = `${method} ${path.split("?")[0]}`
-    let res: Response
+  ): Promise<unknown> {
+    const { where, res, text } = await this.exchange(address, path, method, body)
+    if (res.ok) return parseBody(text)
+    let reason = ""
     try {
-      res = await this.send(address, path, method, body)
-    } catch (error) {
-      logger.warn({ ...address, where, err: error }, "Bridge write failed")
-      throw hostUnreachable(`Bridge ${where} failed: ${error instanceof Error ? error.message : String(error)}`)
+      const error = (parseBody(text) as { error?: unknown } | null)?.error
+      if (typeof error === "string") reason = `: ${error}`
+    } catch {
+      // A refusal whose body isn't JSON is reported by its status alone.
     }
-    if (res.ok) return res
-    const reason = await res
-      .json()
-      .then((body: { error?: unknown } | null) => (typeof body?.error === "string" ? `: ${body.error}` : ""))
-      .catch(() => "")
     const answer = `Bridge ${where} answered ${res.status}${reason}`
     logger.warn({ ...address, where, status: res.status }, answer)
     throw isRetryable(res.status) ? hostUnreachable(answer) : writeRefused(answer)
+  }
+
+  /** Sends a bridge call and reads its whole body; failing either means the host didn't answer. */
+  private async exchange(
+    address: ConnectionAddress,
+    path: string,
+    method: BridgeMethod,
+    body?: unknown
+  ): Promise<{ where: string; res: Response; text: string }> {
+    const where = `${method} ${path.split("?")[0]}`
+    try {
+      const res = await this.send(address, path, method, body)
+      return { where, res, text: await res.text() }
+    } catch (error) {
+      logger.warn({ ...address, where, err: error }, "Bridge call failed")
+      throw hostUnreachable(`Bridge ${where} failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   private send(address: ConnectionAddress, path: string, method: BridgeMethod, body?: unknown): Promise<Response> {
@@ -260,4 +265,8 @@ function messagePath(streamId: string, messageId: string): string {
 
 function reactionPath(streamId: string, messageId: string, emoji: string): string {
   return `${messagePath(streamId, messageId)}/reactions/${encodeURIComponent(emoji)}`
+}
+
+function parseBody(text: string): unknown {
+  return text ? JSON.parse(text) : null
 }
