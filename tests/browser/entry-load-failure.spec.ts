@@ -75,8 +75,11 @@ test("should keep the CSS watchdog reloading when the only stylesheet with rules
 
   await page.goto("/")
 
+  // The watchdog reloads the page under the poll; a read that a reload cuts off is a "not yet".
   await expect
-    .poll(() => page.evaluate(() => sessionStorage.getItem("sw-recovery-attempts")), { timeout: 15_000 })
+    .poll(() => page.evaluate(() => sessionStorage.getItem("sw-recovery-attempts")).catch(() => null), {
+      timeout: 15_000,
+    })
     .toBe("2")
 })
 
