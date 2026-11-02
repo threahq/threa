@@ -23,6 +23,7 @@ let counter = 0
 /** Tabs on one in-memory channel; the first to claim owns until it resigns. */
 function createBus() {
   const listeners = new Set<(message: MirrorBroadcast) => void>()
+  const live = new Set<string>()
   const queue: Array<(owner: boolean) => void> = []
   let holder: ((owner: boolean) => void) | null = null
   let held: Array<() => void> | null = null
@@ -40,17 +41,31 @@ function createBus() {
       held = null
       for (const deliver of deliveries) deliver()
     },
-    coordination(): MirrorCoordination & { resigned: () => boolean } {
+    /** A tab that runs no mirror but is alive, as one still booting would be. */
+    liveTab(tabId: string) {
+      live.add(tabId)
+    },
+    coordination(): MirrorCoordination & { resigned: () => boolean; die: () => void } {
       let mine: ((owner: boolean) => void) | null = null
       let resigned = false
       const own = new Set<(message: MirrorBroadcast) => void>()
+      const tabId = `tab-${++counter}`
+      live.add(tabId)
       const resign = () => {
         resigned = true
         if (holder === mine) handOver()
-        else if (mine) queue.splice(queue.indexOf(mine), 1)
+        else if (mine && queue.includes(mine)) queue.splice(queue.indexOf(mine), 1)
       }
       return {
+        tabId,
+        liveTabs: async () => new Set(live),
         resigned: () => resigned,
+        /** The tab is killed: it hears nothing more and its lock is released. */
+        die() {
+          live.delete(tabId)
+          for (const listener of own) listeners.delete(listener)
+          resign()
+        },
         claim(onChange) {
           mine = onChange
           if (!holder) {
@@ -183,7 +198,29 @@ describe("SqliteMirror", () => {
     await database.syncCursors.put({ key: "kept", value: "y", updatedAt: 2 } as never)
     await settle()
 
-    expect(mirrored(sqlite, "syncCursors")).toEqual([{ key: "kept", value: "y", updatedAt: 2 }])
+    expect({ rows: mirrored(sqlite, "syncCursors"), dirty: dirtyKeys() }).toEqual({
+      rows: [{ key: "kept", value: "y", updatedAt: 2 }],
+      dirty: [],
+    })
+  })
+
+  it("journals a write before IndexedDB can commit it", async () => {
+    const { database, start } = setup()
+    await database.open()
+    start()
+    await settle()
+
+    let duringTransaction: string[] = []
+    await database.transaction("rw", database.syncCursors, async () => {
+      await database.syncCursors.put({ key: "k", value: "v", updatedAt: 1 } as never)
+      duringTransaction = dirtyKeys()
+    })
+    await settle()
+
+    expect({ duringTransaction: duringTransaction.length, after: dirtyKeys() }).toEqual({
+      duringTransaction: 1,
+      after: [],
+    })
   })
 
   it("copies a value as it was put, not as the caller later changed it", async () => {
@@ -244,6 +281,75 @@ describe("SqliteMirror", () => {
       dirty: dirtyKeys(),
     }).toEqual({ begun: stores.length, dirty: [] })
     await second.stop()
+  })
+
+  it("reclaims only the dirty keys of tabs that are no longer alive", async () => {
+    const { database, mirror, bus, start } = setup()
+    await database.open()
+    bus.liveTab("booting")
+    localStorage.setItem(`threa:sqliteDirty:${database.name}:booting`, "1")
+    localStorage.setItem(`threa:sqliteDirty:${database.name}:dead-tab`, "1")
+    start()
+    await settle()
+
+    expect(dirtyKeys()).toEqual([`threa:sqliteDirty:${database.name}:booting`])
+    await mirror.stop()
+  })
+
+  it("re-sends a batch its owner died holding to the next owner", async () => {
+    counter += 1
+    const name = `sqlite_mirror_heir_${counter}_${Date.now()}`
+    const bus = createBus()
+    const tab = (transport: () => MirrorTransport) => {
+      const database = openDatabase(name)
+      const coordination = bus.coordination()
+      const mirror = new SqliteMirror({ database, coordination, createTransport: transport })
+      database.sqliteMirror = mirror
+      return { database, coordination, mirror }
+    }
+    const deadSqlite: Database = new sqlite3.oo1.DB(":memory:")
+    const heirSqlite: Database = new sqlite3.oo1.DB(":memory:")
+    owned.push(
+      () => deadSqlite.close(),
+      () => heirSqlite.close()
+    )
+    const dying = tab(() => {
+      const inner = inProcessTransport(deadSqlite)
+      return {
+        request: (request) => (request.type === "apply" ? new Promise<MirrorReply>(() => {}) : inner.request(request)),
+        close: () => {},
+      }
+    })
+    const heir = tab(() => inProcessTransport(heirSqlite))
+    const writer = tab(() => {
+      throw new Error("a follower never opens the file")
+    })
+    await dying.database.open()
+    dying.mirror.start()
+    await settle()
+    heir.mirror.start()
+    writer.mirror.start()
+
+    await writer.database.syncCursors.put({ key: "held", value: "by the dead owner", updatedAt: 1 } as never)
+    await settle()
+    dying.coordination.die()
+    await settle()
+    bus.hold()
+    await writer.database.syncCursors.put({ key: "later", value: "x", updatedAt: 2 } as never)
+    const journaledWhileUnacked = dirtyKeys().length
+    bus.release()
+    await settle()
+
+    expect({ journaledWhileUnacked, rows: mirrored(heirSqlite, "syncCursors"), dirty: dirtyKeys() }).toEqual({
+      journaledWhileUnacked: 1,
+      rows: [
+        { key: "held", value: "by the dead owner", updatedAt: 1 },
+        { key: "later", value: "x", updatedAt: 2 },
+      ],
+      dirty: [],
+    })
+    await writer.mirror.stop()
+    await heir.mirror.stop()
   })
 
   it("applies a follower's batch as IndexedDB holds it now, whichever commit arrives first", async () => {

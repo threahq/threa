@@ -31,6 +31,8 @@ describe("sqlite shadow lifecycle", () => {
         new SqliteMirror({
           database,
           coordination: {
+            tabId: "tab",
+            liveTabs: async () => new Set(["tab"]),
             claim: (cb) => cb(true),
             resign: () => {},
             close: () => {},

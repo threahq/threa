@@ -14,9 +14,22 @@ export type IdbWrite =
   | { store: string; op: "delete"; keys: IDBValidKey[] }
   | { store: string; op: "deleteRange"; range: DBCoreKeyRange }
 
-/** Receives each committed readwrite transaction's writes, in commit order. */
+/**
+ * Receives each readwrite transaction's writes. `begin` runs synchronously
+ * before the transaction's first mirrored mutation is issued, so whatever it
+ * records exists before IndexedDB can commit; then exactly one of `commit`
+ * (in commit order, possibly with no writes) or `abort` follows.
+ */
 export interface IdbWriteSink {
-  commit(writes: IdbWrite[]): void
+  begin(): number
+  commit(id: number, writes: IdbWrite[]): void
+  abort(id: number): void
+}
+
+interface BufferedWrites {
+  sink: IdbWriteSink
+  id: number | null
+  writes: IdbWrite[]
 }
 
 /**
@@ -112,14 +125,22 @@ function settle(observed: WeakMap<DBCoreTransaction, ObservedTransaction>, tx: D
 function bufferWrites(
   tx: DBCoreTransaction,
   sink: IdbWriteSink,
-  buffers: WeakMap<DBCoreTransaction, IdbWrite[]>
+  buffers: WeakMap<DBCoreTransaction, BufferedWrites>
 ): void {
-  const writes: IdbWrite[] = []
-  buffers.set(tx, writes)
-  ;(tx as unknown as IDBTransaction).addEventListener(
+  const buffer: BufferedWrites = { sink, id: null, writes: [] }
+  buffers.set(tx, buffer)
+  const target = tx as unknown as IDBTransaction
+  target.addEventListener(
     "complete",
     () => {
-      if (writes.length > 0) sink.commit(writes)
+      if (buffer.id !== null) sink.commit(buffer.id, buffer.writes)
+    },
+    { once: true }
+  )
+  target.addEventListener(
+    "abort",
+    () => {
+      if (buffer.id !== null) sink.abort(buffer.id)
     },
     { once: true }
   )
@@ -159,7 +180,7 @@ function recordWrite(
 function trackRequests(
   table: DBCoreTable,
   observed: WeakMap<DBCoreTransaction, ObservedTransaction>,
-  buffers: WeakMap<DBCoreTransaction, IdbWrite[]>
+  buffers: WeakMap<DBCoreTransaction, BufferedWrites>
 ): DBCoreTable {
   const track =
     <R extends { trans: DBCoreTransaction }, T>(call: (req: R) => Promise<T>) =>
@@ -172,11 +193,12 @@ function trackRequests(
   return {
     ...table,
     mutate: (req) => {
-      const writes = mirrored ? buffers.get(req.trans) : undefined
-      if (!writes) return mutate(req)
+      const buffer = mirrored ? buffers.get(req.trans) : undefined
+      if (!buffer) return mutate(req)
+      buffer.id ??= buffer.sink.begin()
       const encoded = req.type === "add" || req.type === "put" ? req.values.map(tryEncode) : []
       return mutate(req).then((res) => {
-        recordWrite(table.name, req, encoded, res, writes)
+        recordWrite(table.name, req, encoded, res, buffer.writes)
         return res
       })
     },
@@ -204,7 +226,7 @@ export function createTransactionMiddleware(currentSink: () => IdbWriteSink | nu
     create(down) {
       const storeOrder = down.schema.tables.map((table) => table.name).sort()
       const observed = new WeakMap<DBCoreTransaction, ObservedTransaction>()
-      const buffers = new WeakMap<DBCoreTransaction, IdbWrite[]>()
+      const buffers = new WeakMap<DBCoreTransaction, BufferedWrites>()
       return {
         transaction(stores, mode, options) {
           const durability = transactionDurability(stores, mode, relaxedDurability)

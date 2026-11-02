@@ -13,15 +13,24 @@ import { createWorkerTransport } from "./worker-transport"
 const BACKFILL_CHUNK_ROWS = 500
 const MIN_RECORDED_APPLY_MS = 30
 
-/** A follower's committed writes, and the owner's acknowledgement once SQLite holds them. */
+/**
+ * A follower's committed writes, the owner's acknowledgement once SQLite holds
+ * them, and a new owner's announcement, on which followers re-send every batch
+ * still unacknowledged: the previous owner may have died holding it.
+ */
 export type MirrorBroadcast =
   | { type: "batch"; from: string; id: number; touched: Touched[] }
   | { type: "ack"; to: string; id: number }
+  | { type: "owner" }
 
 type RemoteBatch = Extract<MirrorBroadcast, { type: "batch" }>
 
 /** Decides which tab owns the SQLite file, and carries other tabs' batches to it. */
 export interface MirrorCoordination {
+  /** This tab, live for as long as the page is. */
+  readonly tabId: string
+  /** Tabs still alive, this one included; a tab missing from it can no longer write. */
+  liveTabs(): Promise<ReadonlySet<string>>
   /** Reports ownership: `false` at once when another tab holds it, then `true` when it is handed to this tab. */
   claim(onChange: (owner: boolean) => void): void
   /** Gives up ownership, or the queued claim for it, so another tab can own the file; the channel stays open. */
@@ -35,6 +44,10 @@ export function createBrowserCoordination(idbName: string): MirrorCoordination {
   if (typeof navigator === "undefined" || !navigator.locks) throw new Error("Web Locks API is unavailable")
   if (typeof BroadcastChannel === "undefined") throw new Error("BroadcastChannel is unavailable")
   const name = `threa-sqlite-mirror:${idbName}`
+  const tabPrefix = `threa-sqlite-mirror-tab:${idbName}:`
+  const tabId = crypto.randomUUID()
+  // Never released: the page may write IndexedDB unmirrored after the mirror stops, so it stays live until it unloads.
+  void navigator.locks.request(`${tabPrefix}${tabId}`, () => new Promise<void>(() => {}))
   const channel = new BroadcastChannel(name)
   let releaseLock: (() => void) | null = null
   let resigned = false
@@ -52,6 +65,16 @@ export function createBrowserCoordination(idbName: string): MirrorCoordination {
   }
 
   return {
+    tabId,
+    async liveTabs() {
+      const { held = [], pending = [] } = await navigator.locks.query()
+      const tabs = new Set<string>()
+      // Pending too: a tab that just started may journal before its lock is granted.
+      for (const lock of [...held, ...pending]) {
+        if (lock.name?.startsWith(tabPrefix)) tabs.add(lock.name.slice(tabPrefix.length))
+      }
+      return tabs
+    },
     claim(onChange) {
       void navigator.locks.request(name, { ifAvailable: true }, (lock) => {
         if (lock) return hold(onChange)()
@@ -129,10 +152,12 @@ export class SqliteMirror implements IdbWriteSink {
   private stopListening: (() => void) | null = null
   private starting: Promise<void> | null = null
   private wasFollower = false
+  /** Batches this tab broadcast that no owner has acknowledged yet. */
+  private readonly unacked = new Map<number, Touched[]>()
   private readonly journal: DirtyJournal
 
   constructor(private readonly options: SqliteMirrorOptions) {
-    this.journal = new DirtyJournal(options.database.name, crypto.randomUUID())
+    this.journal = new DirtyJournal(options.database.name, options.coordination.tabId)
   }
 
   start(): void {
@@ -147,7 +172,16 @@ export class SqliteMirror implements IdbWriteSink {
     })
   }
 
-  commit(writes: IdbWrite[]): void {
+  begin(): number {
+    return this.journal.begin()
+  }
+
+  abort(id: number): void {
+    this.journal.end(id)
+  }
+
+  commit(id: number, writes: IdbWrite[]): void {
+    if (writes.length === 0) return this.journal.end(id)
     const batch: MirrorMutation[] = []
     const lossy = new Set<string>()
     for (const write of writes) {
@@ -166,7 +200,7 @@ export class SqliteMirror implements IdbWriteSink {
       }
     }
     if (lossy.size > 0) this.lose([...lossy], new Error("Unmirrorable value"))
-    this.routeLocal({ batch, touched: writes.map(touchedOf), journalId: this.journal.begin() })
+    this.routeLocal({ batch, touched: writes.map(touchedOf), journalId: id })
   }
 
   /** Stops mirroring; the owner deletes the SQLite file, which only the owner can reach. */
@@ -233,17 +267,26 @@ export class SqliteMirror implements IdbWriteSink {
   }
 
   private broadcastLocal(local: LocalCommit): void {
-    this.options.coordination.broadcast({
-      type: "batch",
-      from: this.journal.tabId,
-      id: local.journalId,
-      touched: local.touched,
-    })
+    this.unacked.set(local.journalId, local.touched)
+    this.broadcastBatch(local.journalId, local.touched)
+  }
+
+  private broadcastBatch(id: number, touched: Touched[]): void {
+    this.options.coordination.broadcast({ type: "batch", from: this.journal.tabId, id, touched })
+  }
+
+  private acknowledged(id: number): void {
+    this.unacked.delete(id)
+    this.journal.end(id)
   }
 
   private receive(message: MirrorBroadcast): void {
     if (message.type === "ack") {
-      if (message.to === this.journal.tabId) this.journal.end(message.id)
+      if (message.to === this.journal.tabId) this.acknowledged(message.id)
+    } else if (message.type === "owner") {
+      if (this.role === "follower" || this.role === "failed") {
+        for (const [id, touched] of this.unacked) this.broadcastBatch(id, touched)
+      }
     } else if (this.role === "owner") {
       this.applyRemote(message)
     } else if (this.role === "pending" || this.role === "starting") {
@@ -260,8 +303,9 @@ export class SqliteMirror implements IdbWriteSink {
     const stores = message.touched.map((touched) => touched.store)
     readTouched(this.options.database.backendDB(), message.touched, (rows) => {
       void this.send({ type: "apply", batch: this.mutationsFor(rows) }).then((reply) => {
-        if (reply) this.options.coordination.broadcast({ type: "ack", to: message.from, id: message.id })
-        else this.lose(stores, new Error("SQLite mirror apply failed"))
+        if (!reply) return this.lose(stores, new Error("SQLite mirror apply failed"))
+        if (message.from === this.journal.tabId) this.acknowledged(message.id)
+        else this.options.coordination.broadcast({ type: "ack", to: message.from, id: message.id })
       })
     }).catch((error: unknown) => this.lose(stores, error))
   }
@@ -351,6 +395,9 @@ export class SqliteMirror implements IdbWriteSink {
       if (!opened) throw new Error("SQLite mirror could not open its database")
       capture.mark("sqlite.open", performance.now() - openedAt)
       this.role = "owner"
+      this.options.coordination.broadcast({ type: "owner" })
+      const tabId = this.journal.tabId
+      for (const [id, touched] of this.unacked) this.remotePending.push({ type: "batch", from: tabId, id, touched })
       for (const local of this.localPending) this.applyOwn(local)
       for (const remote of this.remotePending) this.applyRemote(remote)
       this.localPending = []
@@ -360,8 +407,11 @@ export class SqliteMirror implements IdbWriteSink {
       if (!status) throw new Error("SQLite mirror could not report its status")
       // An inherited or journaled-dirty file may lack writes nobody can name, so nothing in it is trusted.
       const stale = this.journal.staleKeys()
+      // Taken before the backfill reads: a tab dead by now committed everything it ever will.
+      const dead = this.journal.deadKeys(stale, await this.options.coordination.liveTabs())
+      if (this.role !== "owner") return
       const trusted = handedOver || stale.length > 0 ? [] : (status.ok && status.backfilled) || []
-      if (await this.backfill(stores.filter((store) => !trusted.includes(store)))) this.journal.clear(stale)
+      if (await this.backfill(stores.filter((store) => !trusted.includes(store)))) this.journal.clear(dead)
     } catch (error) {
       if (!this.isStopped()) this.fail(error)
     }

@@ -5,10 +5,12 @@ function prefixFor(idbName: string): string {
 }
 
 /**
- * Records, in localStorage, that this tab committed IndexedDB writes SQLite may
- * not hold yet. The key is written synchronously at commit, so a tab killed
- * before the mirror acknowledged its writes leaves the key behind, and the next
- * owner re-backfills instead of trusting a copy that lost them.
+ * Records, in localStorage, that this tab has IndexedDB writes SQLite may not
+ * hold yet. The key is written synchronously before a transaction's first
+ * write is issued, so a tab killed at any point between that write reaching
+ * IndexedDB and the mirror acknowledging it leaves the key behind, and the
+ * next owner re-backfills instead of trusting a copy that lost it. Only this
+ * tab removes its key while it lives; other tabs reclaim it once it is dead.
  */
 export class DirtyJournal {
   private readonly key: string
@@ -26,7 +28,8 @@ export class DirtyJournal {
 
   begin(): number {
     const id = this.nextId++
-    if (this.pending.size === 0) this.storage.setItem(this.key, "1")
+    // Unconditional: re-asserts a key another tab removed while this one had writes pending.
+    this.storage.setItem(this.key, "1")
     this.pending.add(id)
     return id
   }
@@ -51,6 +54,12 @@ export class DirtyJournal {
       if (key?.startsWith(prefix) && key !== this.key) keys.push(key)
     }
     return keys
+  }
+
+  /** Of `keys`, those whose tab is not in `liveTabs`; such a tab can no longer write. */
+  deadKeys(keys: readonly string[], liveTabs: ReadonlySet<string>): string[] {
+    const prefix = prefixFor(this.idbName)
+    return keys.filter((key) => !liveTabs.has(key.slice(prefix.length)))
   }
 
   clear(keys: readonly string[]): void {
