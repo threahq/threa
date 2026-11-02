@@ -1221,6 +1221,8 @@ export class ThreaDatabase extends Dexie {
 
   /** The SQLite copy of this database's writes, while one is running. */
   sqliteMirror: SqliteMirror | null = null
+  /** A flag-off boot landing what a read-write session left in SQLite; IndexedDB opens after it. */
+  sqliteBoot: Promise<void> | null = null
   readonly sqliteWriter: IdbWriter
   private idbOpened = false
   private idbOpenWaiters: Array<() => void> = []
@@ -1905,6 +1907,16 @@ export class ThreaDatabase extends Dexie {
       },
       true
     )
+    // Before any transaction of the app: whether it goes to SQLite or IndexedDB is decided once IndexedDB is open.
+    // A Dexie promise, so the handlers after it keep the open's exclusive access.
+    this.on(
+      "ready",
+      () => {
+        const routable = this.sqliteMirror?.whenRoutable()
+        return routable && Dexie.Promise.resolve(routable)
+      },
+      true
+    )
     if (owner) this.on("ready", () => claimCacheOwnership(this, owner), true)
 
     // Another tab upgraded the shared per-account database. Dexie closes this
@@ -1932,6 +1944,12 @@ export class ThreaDatabase extends Dexie {
   // Auto-open routes through here too (Dexie calls `db.open()` on first use),
   // so this is the one seam every open failure crosses.
   override open(): PromiseExtended<Dexie> {
+    const gate = this.sqliteBoot ?? this.sqliteMirror?.beforeIdbOpen()
+    if (gate) return Dexie.Promise.resolve(gate).then(() => this.openNow()) as PromiseExtended<Dexie>
+    return this.openNow()
+  }
+
+  private openNow(): PromiseExtended<Dexie> {
     return super.open().catch((error: unknown) => {
       if (!this.upgradeRecoveryAvailable || !isRecoverableOpenFailure(error)) throw error
       this.upgradeRecoveryAvailable = false

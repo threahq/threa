@@ -7,13 +7,22 @@ import type {
   MirrorRow,
   MirrorStatus,
   MirrorStoreSchema,
+  MirrorWrite,
 } from "./mirror-store"
 
-export type MirrorReadRequest =
+/** `tx` names the read-write transaction a read belongs to, which sees that transaction's own writes. */
+export type MirrorReadRequest = (
   | { type: "get"; store: string; key: Uint8Array }
   | { type: "getMany"; store: string; keys: Uint8Array[] }
   | { type: "query"; store: string; query: MirrorQuery }
   | { type: "count"; store: string; index: string | null; range: EncodedRange }
+) & { tx?: number }
+
+/** A committed read-write transaction's writes, still to be replayed into IndexedDB. */
+export interface BacklogBatch {
+  seq: number
+  batch: MirrorMutation[]
+}
 
 /** What each read answers with; values stay encoded, `undefined` where no row exists. */
 export interface MirrorReadResults {
@@ -33,10 +42,27 @@ export type MirrorRequest =
   | { type: "reset"; incarnation: string }
   | { type: "forgetWriters"; writers: string[] }
   | { type: "destroy"; idbName: string }
+  /** Holds every request of other transactions, and outside any, until this one commits or rolls back. */
+  | { type: "begin"; tx: number; readonly: boolean; strict: boolean }
+  | { type: "write"; tx: number; write: MirrorWrite }
+  | { type: "commit"; tx: number }
+  | { type: "rollback"; tx: number }
+  | { type: "backlog"; limit: number }
+  | { type: "backlogDone"; through: number }
   | MirrorReadRequest
 
 export type MirrorReply =
-  | { ok: true; ms: number; status?: MirrorStatus; result?: MirrorReadResults[keyof MirrorReadResults] }
+  | {
+      ok: true
+      ms: number
+      status?: MirrorStatus
+      /** Rows of `_idb_backlog` when the database opened. */
+      backlog?: number
+      result?: MirrorReadResults[keyof MirrorReadResults]
+      /** Positions of a write's entries whose `add` met an existing key. */
+      failures?: number[]
+      batches?: BacklogBatch[]
+    }
   | { ok: false; error: string; message: string }
 
 /** Carries requests to the mirror's owner and resolves each with its reply, in request order. */
@@ -54,3 +80,8 @@ export interface WorkerEnvelope {
 
 /** `started` as the worker begins a request; `reply` once it is done. */
 export type WorkerResponse = { id: number; started: true } | { id: number; reply: MirrorReply }
+
+/** The transaction a request belongs to, if any. */
+export function txOf(request: MirrorRequest): number | undefined {
+  return "tx" in request ? request.tx : undefined
+}

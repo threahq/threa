@@ -16,6 +16,7 @@ import {
   type WorkspaceBootstrap,
 } from "@threahq/types"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
+import { resetWorkspaceTableRegistry } from "@/stores/workspace-table-registry"
 import { streamKeys } from "./use-streams"
 import { workspaceKeys } from "./use-workspaces"
 import { useUnreadCounts } from "./use-unread-counts"
@@ -222,6 +223,8 @@ describe("useUnreadCounts", () => {
       value: { controller: { postMessage: mockPostMessage } },
     })
     await clearAllCachedData()
+    // A previous test's live query, kept through its teardown grace, would otherwise answer this test's first render.
+    resetWorkspaceTableRegistry()
   })
 
   afterEach(() => {
@@ -699,6 +702,7 @@ describe("useUnreadCounts", () => {
       result.current.markAsRead("stream_1", "event_new")
     })
     await waitFor(() => expect(mockMarkAsRead).toHaveBeenCalledWith("ws_1", "stream_1", "event_new"))
+    await waitForReadHandlerToSettle(queryClient)
   })
 
   it("dismisses the stream's push notification when advancing the read pointer", async () => {
@@ -723,6 +727,7 @@ describe("useUnreadCounts", () => {
       workspaceId: "ws_1",
       streamId: "stream_1",
     })
+    await waitForReadHandlerToSettle(queryClient)
   })
 
   it("clears activity without touching membership state when the read returns a null membership", async () => {

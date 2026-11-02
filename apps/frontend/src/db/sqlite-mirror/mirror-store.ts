@@ -14,6 +14,9 @@ export type MirrorMutation =
   | { store: string; op: "delete"; keys: Uint8Array[] }
   | { store: string; op: "deleteRange"; range: EncodedRange }
 
+/** A write of a read-write transaction: an `add` fails, per entry, on a key the store already holds. */
+export type MirrorWrite = MirrorMutation | { store: string; op: "add"; entries: MirrorEntry[] }
+
 export interface MirrorIndexSchema {
   name: string
   keyPath: string | string[]
@@ -57,6 +60,7 @@ interface BackfillState {
 }
 
 const META_TABLE = "_mirror_meta"
+const BACKLOG_TABLE = "_idb_backlog"
 const WRITERS_TABLE = "_mirror_writers"
 const VERSION_KEY = "idbVersion"
 const SCHEMA_KEY = "schema"
@@ -107,6 +111,30 @@ function splitWriterStore(id: string): { writer: string; store: string } {
   return { store: id.slice(0, at), writer: id.slice(at + 1) }
 }
 
+function serializeBatch(batch: readonly MirrorMutation[]): string {
+  return JSON.stringify(batch, (_, value: unknown) =>
+    value instanceof Uint8Array
+      ? { $bytes: Array.from(value, (byte) => byte.toString(16).padStart(2, "0")).join("") }
+      : value
+  )
+}
+
+function parseBatch(text: string): MirrorMutation[] {
+  return JSON.parse(text, (_, value: unknown) => {
+    if (value === null || typeof value !== "object" || !("$bytes" in value)) return value
+    const hex = String(value.$bytes)
+    const bytes = new Uint8Array(hex.length / 2)
+    for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+    return bytes
+  }) as MirrorMutation[]
+}
+
+/** Rows a committed read-write transaction left for IndexedDB; none when the database never ran read-write. */
+export function backlogSize(db: Database): number {
+  const exists = db.selectValue(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`, [BACKLOG_TABLE])
+  return exists === undefined ? 0 : Number(db.selectValue(`SELECT COUNT(*) FROM ${BACKLOG_TABLE}`))
+}
+
 export interface MirrorStatus {
   backfilled: string[]
   writers: HeldCommits
@@ -139,7 +167,7 @@ export class MirrorStore {
     }
     this.closeStatements()
     this.db.exec(`CREATE TABLE IF NOT EXISTS ${META_TABLE} (key TEXT PRIMARY KEY, value TEXT)`)
-    this.db.exec(`CREATE TABLE IF NOT EXISTS ${META_TABLE} (key TEXT PRIMARY KEY, value TEXT)`)
+    this.db.exec(`CREATE TABLE IF NOT EXISTS ${BACKLOG_TABLE} (seq INTEGER PRIMARY KEY, batch TEXT NOT NULL)`)
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS ${WRITERS_TABLE} (writer TEXT NOT NULL, store TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY (writer, store)) WITHOUT ROWID`
     )
@@ -219,6 +247,44 @@ export class MirrorStore {
       for (const step of advanced) step.write()
     })
     for (const step of advanced) step.keep()
+  }
+
+  /**
+   * Applies one write inside the caller's transaction. An `add` entry whose key
+   * the store holds, or an earlier entry of the same write added, is skipped
+   * and reported. What was applied comes back for the IndexedDB backlog.
+   */
+  write(write: MirrorWrite): { failures: number[]; applied: MirrorMutation } {
+    if (write.op !== "add") {
+      this.applyMutation(write)
+      return { failures: [], applied: write }
+    }
+    const failures: number[] = []
+    const entries: MirrorEntry[] = []
+    write.entries.forEach((entry, index) => {
+      if (this.all(`SELECT 1 FROM ${storeTable(write.store)} WHERE k = ?`, [entry.key]).length > 0) {
+        failures.push(index)
+        return
+      }
+      this.putRow(write.store, entry)
+      entries.push(entry)
+    })
+    return { failures, applied: { store: write.store, op: "put", entries } }
+  }
+
+  appendBacklog(batch: readonly MirrorMutation[]): void {
+    this.run(`INSERT INTO ${BACKLOG_TABLE} (batch) VALUES (?)`, [serializeBatch(batch)])
+  }
+
+  readBacklog(limit: number): Array<{ seq: number; batch: MirrorMutation[] }> {
+    return this.all(`SELECT seq, batch FROM ${BACKLOG_TABLE} ORDER BY seq LIMIT ?`, [limit]).map((row) => ({
+      seq: Number(row[0]),
+      batch: parseBatch(String(row[1])),
+    }))
+  }
+
+  dropBacklog(through: number): void {
+    this.run(`DELETE FROM ${BACKLOG_TABLE} WHERE seq <= ?`, [through])
   }
 
   beginBackfill(store: string): void {

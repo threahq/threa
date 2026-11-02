@@ -8,6 +8,7 @@ import {
   stopAndDestroySqliteMirror,
 } from "./lifecycle"
 import type { MirrorRequest } from "./protocol"
+import { createBus } from "./test-harness"
 
 afterEach(() => localStorage.removeItem("threa:sqliteStorage"))
 
@@ -35,12 +36,14 @@ describe("sqlite mirror lifecycle", () => {
           coordination: {
             tabId: "tab",
             liveTabs: async () => new Set(["tab"]),
+            watchTab: () => () => {},
             claim: (cb) => cb(true),
             resign: () => {},
             close: () => {},
             broadcast: () => {},
             onBroadcast: () => () => {},
           },
+          guard: createBus().guard(database.name),
           createTransport: () => ({
             request: async (request) => {
               requests.push(request.type)

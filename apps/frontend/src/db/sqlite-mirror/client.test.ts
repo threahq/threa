@@ -2,8 +2,8 @@ import sqlite3InitModule, { type Database } from "@sqlite.org/sqlite-wasm"
 import Dexie from "dexie"
 import { afterEach, beforeAll, describe, expect, it } from "vitest"
 import { ThreaDatabase } from "../database"
-import { SqliteMirror } from "./client"
-import { SQLITE_INCARNATION_STORE, isSqliteMarksStore, type MirrorBroadcast, type SqliteMark } from "./marks"
+import { SqliteMirror, type CoordinationMessage } from "./client"
+import { SQLITE_INCARNATION_STORE, isSqliteMarksStore, type SqliteMark } from "./marks"
 import type { MirrorReply, MirrorRequest, MirrorTransport } from "./protocol"
 import { isMirroredStore } from "./stores"
 import { createBus, inProcessTransport, settle } from "./test-harness"
@@ -47,8 +47,9 @@ function mirrorTab(
     throw new Error("a follower never opens the file")
   }
 ) {
-  const coordination = bus.coordination(database.sqliteWriter.id)
-  const mirror = new SqliteMirror({ database, mode: "shadow", coordination, createTransport: transport })
+  const guard = bus.guard(database.name)
+  const coordination = bus.coordination(database.sqliteWriter.id, guard)
+  const mirror = new SqliteMirror({ database, mode: "shadow", coordination, guard, createTransport: transport })
   database.sqliteMirror = mirror
   mirror.start()
   return { mirror, coordination }
@@ -399,7 +400,7 @@ describe("SqliteMirror", () => {
     await settle()
     for (let i = 0; i < 1001; i++) await database.syncCursors.put({ key: `k${i}`, value: "v", updatedAt: i } as never)
 
-    const resent: MirrorBroadcast[] = []
+    const resent: CoordinationMessage[] = []
     const listener = bus.coordination()
     listener.onBroadcast((message) => resent.push(message))
     listener.broadcast({ type: "owner" })
@@ -449,6 +450,7 @@ describe("SqliteMirror", () => {
       database: followerDb,
       mode: "shadow",
       coordination: { ...base, claim: (onChange) => (answerClaim = onChange) },
+      guard: owner.bus.guard(followerDb.name),
       createTransport: () => {
         throw new Error("a follower never opens the file")
       },
@@ -469,11 +471,13 @@ describe("SqliteMirror", () => {
     const database = openDatabase(`sqlite_mirror_stop_${counter}`)
     const requests: MirrorRequest["type"][] = []
     let closed = 0
-    const coordination = newBus().coordination()
+    const bus = newBus()
+    const coordination = bus.coordination()
     const mirror = new SqliteMirror({
       database,
       mode: "shadow",
       coordination,
+      guard: bus.guard(database.name),
       createTransport: () => ({
         request: async (request) => {
           requests.push(request.type)

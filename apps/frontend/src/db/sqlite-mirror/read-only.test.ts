@@ -2,139 +2,41 @@ import sqlite3InitModule, { type Database } from "@sqlite.org/sqlite-wasm"
 import Dexie, { liveQuery, type DBCoreCursor, type DBCoreKeyRange, type Transaction } from "dexie"
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 import { NO_CAPTURE, PerfCapture, armPerfCapture } from "@/lib/perf/capture"
-import { ThreaDatabase, type CachedEvent } from "../database"
-import { SqliteMirror, type MirrorCoordination, type MirrorDeadlines, type SqliteMirrorMode } from "./client"
+import type { CachedEvent, ThreaDatabase } from "../database"
 import { isSqliteMarksStore, type SqliteMark } from "./marks"
-import type { MirrorRequest, MirrorTransport } from "./protocol"
-import { isMirroredStore } from "./stores"
-import { createBus, inProcessTransport, settle } from "./test-harness"
+import {
+  READS,
+  WS,
+  event,
+  gate,
+  mirroredDatabases,
+  mirroredStores,
+  until,
+  type MirroredOptions,
+} from "./mirrored-databases"
+import { createBus, settle } from "./test-harness"
 import { encodeValue } from "./value-codec"
 
-const WS = "ws_1"
 const EVENTS = "eventsByWorkspace"
-const READS: ReadonlySet<string> = new Set(["get", "getMany", "query", "count"])
 const OWNER = "workos_user_1"
 
 let sqlite3: Awaited<ReturnType<typeof sqlite3InitModule>>
+let openMirrored: ReturnType<typeof mirroredDatabases>["openMirrored"]
+let plainDatabase: ReturnType<typeof mirroredDatabases>["plainDatabase"]
+const owned: Array<() => void> = []
 beforeAll(async () => {
   sqlite3 = await sqlite3InitModule()
+  ;({ openMirrored, plainDatabase } = mirroredDatabases(sqlite3, owned))
 })
 
-const owned: Array<() => void> = []
 afterEach(() => {
   for (const cleanup of owned.splice(0)) cleanup()
   for (const key of Object.keys(localStorage)) if (key.startsWith("threa:sqlite")) localStorage.removeItem(key)
   armPerfCapture(NO_CAPTURE)
 })
 
-let counter = 0
-
-function event(id: string, streamId: string, sequence: number, extra: Partial<CachedEvent> = {}): CachedEvent {
-  return {
-    id,
-    workspaceId: WS,
-    streamId,
-    sequence: String(sequence),
-    _sequenceNum: sequence,
-    eventType: sequence % 4 === 0 ? "reaction_added" : "message_created",
-    payload: { messageId: `msg_${id}`, at: new Date(sequence * 1000) },
-    actorId: null,
-    actorType: null,
-    createdAt: new Date(sequence * 1000).toISOString(),
-    ...extra,
-  } as CachedEvent
-}
-
-interface MirroredOptions {
-  mode?: SqliteMirrorMode
-  bus?: ReturnType<typeof createBus>
-  name?: string
-  sqlite?: Database
-  failReads?: (request: MirrorRequest) => boolean
-  /** Awaited before each request reaches the worker. */
-  beforeRequest?: (request: MirrorRequest) => Promise<void> | undefined
-  deadlines?: Partial<MirrorDeadlines>
-  /** Constructs the database as the app does for a signed-in account, gated on cache ownership. */
-  owner?: string
-  /** Holds every request, the open included, until this settles. */
-  workerStarted?: Promise<void>
-  failOpen?: boolean
-  /** Holds this tab's claim until this settles, as the Web Locks API answers asynchronously. */
-  claimAnswered?: Promise<void>
-}
-
-function withDelayedClaim(coordination: MirrorCoordination, answered: Promise<void>): MirrorCoordination {
-  return { ...coordination, claim: (onChange) => void answered.then(() => coordination.claim(onChange)) }
-}
-
-function gate() {
-  let open = () => {}
-  const opened = new Promise<void>((resolve) => (open = resolve))
-  return { opened, open }
-}
-
-function openMirrored(options: MirroredOptions = {}) {
-  counter += 1
-  const name = options.name ?? `read_only_${counter}_${Date.now()}`
-  const database = new ThreaDatabase(name, options.owner)
-  owned.push(() => database.close())
-  let sqlite = options.sqlite
-  if (!sqlite) {
-    const created: Database = new sqlite3.oo1.DB(":memory:")
-    owned.push(() => created.close())
-    sqlite = created
-  }
-  const log: MirrorRequest["type"][] = []
-  const bus = options.bus ?? createBus()
-  const transport = (): MirrorTransport => {
-    const inner = inProcessTransport(sqlite, log)
-    return {
-      request: async (request) => {
-        await options.workerStarted
-        await options.beforeRequest?.(request)
-        if (request.type === "open" && options.failOpen) throw new Error("The worker failed to start")
-        if (READS.has(request.type) && options.failReads?.(request))
-          return { ok: false, error: "SQLiteError", message: "disk I/O error" }
-        return inner.request(request)
-      },
-      heardAt: inner.heardAt,
-      close: inner.close,
-    }
-  }
-  const coordination = bus.coordination()
-  const mirror = new SqliteMirror({
-    database,
-    mode: options.mode ?? "read-only",
-    coordination: options.claimAnswered ? withDelayedClaim(coordination, options.claimAnswered) : coordination,
-    createTransport: transport,
-    deadlines: options.deadlines,
-  })
-  database.sqliteMirror = mirror
-  mirror.start()
-  const sqliteReads = () => log.filter((type) => READS.has(type)).length
-  return { database, sqlite, mirror, bus, name, log, sqliteReads }
-}
-
-function plainDatabase(name: string): ThreaDatabase {
-  const database = new ThreaDatabase(name)
-  owned.push(() => database.close())
-  return database
-}
-
-async function until(condition: () => boolean, what: string): Promise<void> {
-  for (let i = 0; i < 200; i++) {
-    if (condition()) return
-    await new Promise((resolve) => setTimeout(resolve, 5))
-  }
-  throw new Error(`Timed out waiting for ${what}`)
-}
-
 const counted = (capture: PerfCapture, name: string) =>
   capture.snapshot().filter((sample) => sample.name === name).length
-
-function mirroredStores(database: ThreaDatabase): string[] {
-  return database.tables.map((table) => table.name).filter(isMirroredStore)
-}
 
 /** A previous session of this account that left SQLite holding every store, and the trusted set persisted. */
 async function previousSession() {

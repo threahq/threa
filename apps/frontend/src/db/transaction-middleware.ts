@@ -21,6 +21,11 @@ const DEVICE_ONLY_STORES: ReadonlySet<string> = new Set([
   "cacheOwnership",
 ])
 
+/** Whether a write over these stores touches data that exists nowhere but this device. */
+export function touchesDeviceOnlyData(stores: readonly string[]): boolean {
+  return stores.some((store) => DEVICE_ONLY_STORES.has(store))
+}
+
 let relaxedDurability = defaultFeatureFlagValue("idbRelaxedDurability") === "on"
 
 /** Apply the `idbRelaxedDurability` flag; read per transaction, so it takes effect on the next write. */
@@ -34,7 +39,7 @@ function transactionDurability(
   relaxed: boolean
 ): "relaxed" | undefined {
   if (!relaxed || mode !== "readwrite") return undefined
-  return stores.some((store) => DEVICE_ONLY_STORES.has(store)) ? undefined : "relaxed"
+  return touchesDeviceOnlyData(stores) ? undefined : "relaxed"
 }
 
 interface ObservedTransaction {
