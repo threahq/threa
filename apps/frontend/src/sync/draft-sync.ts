@@ -32,6 +32,7 @@ import { EMPTY_DOC, isEmptyContent } from "@/lib/prosemirror-utils"
 import { clearStagedDraft, listStagedDrafts, type StagedDraft } from "@/lib/drafts/draft-staging"
 import { getAccountAssertionGeneration } from "@/api/account-assertion"
 import { isResolvedDraftEcho, markDraftMigrated } from "./draft-resolution-guard"
+import { newOperationStamp } from "./operation-stamp"
 
 /**
  * Stage 3 draft sync — wires the local-first draft store (Stage 2) to the
@@ -272,10 +273,6 @@ export async function migrateLocalDraftId(
 // Operation-queue helpers (the queue is the source of truth for "dirty")
 // ============================================================================
 
-function operationId(): string {
-  return `op_${Date.now()}_${Math.random().toString(36).slice(2)}`
-}
-
 function writeId(): string {
   // The write id gates in-place overwrites server-side (lineage CAS), so a
   // cross-device collision must be out of the question — use real entropy.
@@ -422,11 +419,10 @@ export async function enqueueDraftUpsert(
     const priorWriteIds = [...new Set(dupes.flatMap(opWriteLineage))].slice(0, MAX_PRIOR_WRITE_IDS)
     if (dupes.length > 0) await database.pendingOperations.bulkDelete(dupes.map((op) => op.id))
     await database.pendingOperations.add({
-      id: operationId(),
+      ...newOperationStamp(),
       workspaceId,
       type: "upsert_draft",
       payload: { draftId, writeId: writeId(), priorWriteIds },
-      createdAt: Date.now(),
       retryCount: 0,
     })
   })
@@ -465,11 +461,10 @@ export async function enqueueDraftDelete(
     const stale = [...upserts, ...deletes]
     if (stale.length > 0) await database.pendingOperations.bulkDelete(stale.map((op) => op.id))
     await database.pendingOperations.add({
-      id: operationId(),
+      ...newOperationStamp(),
       workspaceId,
       type: "delete_draft",
       payload: { draftId, supersededWriteIds },
-      createdAt: Date.now(),
       retryCount: 0,
     })
   })
@@ -514,11 +509,10 @@ export async function enqueueDraftResolve(
     const stale = [...staleResolves, ...(await pendingDraftOps("delete_draft", draftId, database))]
     if (stale.length > 0) await database.pendingOperations.bulkDelete(stale.map((op) => op.id))
     await database.pendingOperations.add({
-      id: operationId(),
+      ...newOperationStamp(),
       workspaceId,
       type: "resolve_draft",
       payload: { draftId, expectedVersion, supersededWriteIds },
-      createdAt: Date.now(),
       retryCount: 0,
     })
   })

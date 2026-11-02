@@ -11,6 +11,7 @@ import { dexieDocLocalCopies } from "@/lib/docs/doc-local-copy"
 import { persistScheduledRows, removeScheduledRow, replaceLocalScheduledRow } from "@/hooks/use-scheduled"
 import { executeDraftDelete, executeDraftResolve, executeDraftUpsert, type DraftsServiceLike } from "./draft-sync"
 import { bumpLaterOptimisticAnchors } from "./stream-sync"
+import { newOperationStamp } from "./operation-stamp"
 import { isPrivacyConfirmationError, surfacePrivacyConfirmToast } from "@/lib/share-privacy-toast"
 
 function getRetryDelay(retryCount: number): number {
@@ -21,10 +22,6 @@ function getRetryDelay(retryCount: number): number {
 }
 
 const OPERATION_QUEUE_LOCK = "threa-operation-queue"
-
-function generateId(): string {
-  return `op_${Date.now()}_${Math.random().toString(36).slice(2)}`
-}
 
 interface MessageServiceLike {
   update: (wid: string, mid: string, data: any) => Promise<any>
@@ -130,11 +127,10 @@ export async function enqueueOperation(
   payload: Record<string, unknown>
 ): Promise<void> {
   await db.pendingOperations.add({
-    id: generateId(),
+    ...newOperationStamp(),
     workspaceId,
     type,
     payload,
-    createdAt: Date.now(),
     retryCount: 0,
   })
 }
@@ -157,11 +153,10 @@ export async function enqueueDocUpdate(workspaceId: string, docId: string, updat
       return
     }
     await db.pendingOperations.add({
-      id: generateId(),
+      ...newOperationStamp(),
       workspaceId,
       type: "doc_update",
       payload: { docId, update },
-      createdAt: Date.now(),
       retryCount: 0,
     })
   })

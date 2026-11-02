@@ -67,15 +67,10 @@ describe("useMessageReactions", () => {
     vi.spyOn(messagesApi, "addReaction").mockRejectedValue(new TypeError("Failed to fetch"))
     vi.spyOn(messagesApi, "removeReaction").mockRejectedValue(new TypeError("Failed to fetch"))
     const reactions = setup()
-    // Queued operations order by enqueue millisecond; two enqueues in one millisecond tie.
-    let clock = Date.now()
-    const now = vi.spyOn(Date, "now").mockImplementation(() => clock++)
-
     await act(async () => {
       await reactions.current.addReaction("👍")
       await reactions.current.removeReaction("👍")
     })
-    now.mockRestore()
 
     expect({ errors: errorToast.mock.calls, queued: await queuedOperations() }).toEqual({
       errors: [],
