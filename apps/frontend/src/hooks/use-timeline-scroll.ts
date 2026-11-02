@@ -101,6 +101,12 @@ interface UseTimelineScrollOptions {
    */
   programmaticScrollAtRef?: React.MutableRefObject<number>
   /**
+   * Runs on every resize the observer sees while detached from the tail. Row
+   * entries arrive after virtua has committed the new heights, in the same
+   * frame, so a caller holding the reader's position corrects it before paint.
+   */
+  onDetachedResizeRef?: React.RefObject<(() => void) | null>
+  /**
    * CSS variable the scroller's reserved composer height is published under.
    * Defaults to {@link DEFAULT_COMPOSER_HEIGHT_VAR}, which
    * `applyPersistedComposerHeight` sets on `:root` at boot — so it resolves on
@@ -209,6 +215,7 @@ export function useTimelineScroll({
   landingPendingRef,
   landingTargetMissingRef,
   programmaticScrollAtRef,
+  onDetachedResizeRef,
   composerHeightVar = DEFAULT_COMPOSER_HEIGHT_VAR,
 }: UseTimelineScrollOptions): UseTimelineScrollReturn {
   const listRef = useRef<VirtualizerHandle>(null)
@@ -820,8 +827,8 @@ export function useTimelineScroll({
         pinToBottom()
         return
       }
-      // Detached (reading): hands-off, for BOTH entry kinds. Content resizes
-      // leave clientHeight unchanged anyway; a viewport resize (keyboard or
+      // Detached (reading): this hook is hands-off, for BOTH entry kinds.
+      // Content resizes leave clientHeight unchanged; a viewport resize (keyboard or
       // composer chrome opening/closing) shrinks or grows the scroller at its
       // BOTTOM edge, so an untouched scrollTop keeps whatever the user
       // positioned at the top of the viewport exactly where it is. Shifting
@@ -830,6 +837,7 @@ export function useTimelineScroll({
       // on every composer open. When the viewport grows past the content end
       // the browser clamps scrollTop on its own; handleScroll never reads that
       // clamp as a user scroll (it lands exactly at the new bottom).
+      onDetachedResizeRef?.current?.()
     }
     const observer = new ResizeObserver(onResize)
     observer.observe(scroller)

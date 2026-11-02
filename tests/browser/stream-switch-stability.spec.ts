@@ -1,5 +1,12 @@
 import { test, expect, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
+import {
+  loginAndCreateWorkspace,
+  loginAndCreateWorkspaceViaApi,
+  createChannel,
+  createChannelViaApi,
+  expectApiOk,
+  openChannel,
+} from "./helpers"
 
 /**
  * A sidebar stream switch must not flicker after first paint: once the
@@ -171,6 +178,20 @@ function readSamples(page: Page): Promise<FrameSample[]> {
   return page.evaluate(() => (window as unknown as { __stabilitySamples?: FrameSample[] }).__stabilitySamples ?? [])
 }
 
+/** Every frame where an on-screen row sits lower than the highest point it reached. */
+function rowsSlidDown(samples: FrameSample[]): Array<{ sample: FrameSample; why: string }> {
+  const highestTop = new Map<string, number>()
+  const violations: Array<{ sample: FrameSample; why: string }> = []
+  for (const s of samples) {
+    for (const [id, top] of Object.entries(s.onScreen)) {
+      const highest = highestTop.get(id) ?? top
+      if (top > highest + 2) violations.push({ sample: s, why: `row ${id} slid down from ${highest}px to ${top}px` })
+      highestTop.set(id, Math.min(highest, top))
+    }
+  }
+  return violations
+}
+
 /**
  * Wait until the sampler has seen the reveal (rows painted, mask down) plus
  * `holdMs` of trailing samples, then assert nothing moved after the reveal.
@@ -209,14 +230,8 @@ async function expectStablePostReveal(page: Page, holdMs: number, label: string)
   const settled = samples.slice(revealIdx + 2).filter((s) => s.t <= samples[revealIdx].t + holdMs)
   const base = settled[0]
   const baseDist = base.scrollHeight - base.scrollTop - base.clientHeight
-  const highestTop = new Map<string, number>()
-  const violations: Array<{ sample: FrameSample; why: string }> = []
+  const violations = rowsSlidDown(settled)
   for (const s of settled) {
-    for (const [id, top] of Object.entries(s.onScreen)) {
-      const highest = highestTop.get(id) ?? top
-      if (top > highest + 2) violations.push({ sample: s, why: `row ${id} slid down from ${highest}px to ${top}px` })
-      highestTop.set(id, Math.min(highest, top))
-    }
     const dist = s.scrollHeight - s.scrollTop - s.clientHeight
     if (dist > baseDist + 2) violations.push({ sample: s, why: `drifted off the bottom (base dist ${baseDist})` })
   }
@@ -312,5 +327,105 @@ test.describe("Stream switch stability", () => {
 
     await page.reload()
     await expectStablePostReveal(page, 1500, "dead og-image reload")
+  })
+  test("a regroup at the row cut by the viewport top holds the reader's rows still", async ({ page }) => {
+    // Conversation extraction landing while someone reads regroups author
+    // runs: a run splits under a new conversation, so the row that starts the
+    // new run gains an author header. When that row straddles the viewport
+    // top, the header grows it above everything the reader sees, and the rows
+    // below it slid down. Reassigning messages to a new conversation is the
+    // same server-pushed membership change as a late extraction, but lands on
+    // the row this test picks instead of wherever the worker happens to be.
+    const { testId, workspaceId } = await loginAndCreateWorkspaceViaApi(page, "regroup-hold")
+    const prefix = `[${testId}]`
+    const streamId = await createChannelViaApi(page, workspaceId, `regroup-${testId}`, "public")
+    const messageIds: string[] = []
+    for (let i = 1; i <= 40; i++) {
+      const response = await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
+        data: { streamId, content: `${prefix} msg-${String(i).padStart(3, "0")}` },
+      })
+      await expectApiOk(response, `Send message ${i}`)
+      messageIds.push(((await response.json()) as { message: { id: string } }).message.id)
+    }
+    await waitForConversationsSettled(page, workspaceId, streamId, messageIds.length)
+
+    const reassign = async (ids: string[], targetConversationId: string | null) =>
+      expectApiOk(
+        await page.request.post(`/api/workspaces/${workspaceId}/conversations/reassign-messages`, {
+          data: { streamId, messageIds: ids, targetConversationId },
+        }),
+        "Reassign messages"
+      )
+    // The stub extractor gives every message its own conversation, so every
+    // row heads its own run. Fold them into the first one: one author run.
+    const listed = await page.request.get(`/api/workspaces/${workspaceId}/streams/${streamId}/conversations?limit=100`)
+    await expectApiOk(listed, "List conversations")
+    const { conversations } = (await listed.json()) as { conversations: Array<{ id: string; messageIds: string[] }> }
+    const firstConversation = conversations.find((c) => c.messageIds.includes(messageIds[0]))
+    expect(firstConversation, "the first message should have a conversation").toBeDefined()
+    await reassign(messageIds.slice(1), firstConversation!.id)
+
+    await page.setViewportSize({ width: 1024, height: 500 })
+    await openChannel(page, workspaceId, streamId)
+    await expect(page.getByTestId("settle-mask")).toHaveCount(0, { timeout: 20000 })
+    const lastRow = page.locator(`[data-author-id][data-message-id="${messageIds[messageIds.length - 1]}"]`)
+    await expect(lastRow).toHaveAttribute("data-group-continuation", "true", { timeout: 20000 })
+
+    // Read mid-history with a row cut by the viewport top. Wheel from near
+    // the top edge: the jump-to-latest button covers the scroller's center.
+    const scroller = page.locator("[data-suppress-pull-refresh]")
+    const box = await scroller.boundingBox()
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + 24)
+    // Rows are ~27px tall, so 9px wheel steps can't skip the band where one
+    // is cut by the viewport top.
+    const readPosition = () =>
+      page.evaluate(
+        () =>
+          new Promise<{ cutRowId: string | null; distFromBottom: number }>((resolve) => {
+            const el = document.querySelector("[data-suppress-pull-refresh]") as HTMLElement
+            let last = el.scrollTop
+            const tick = () => {
+              if (el.scrollTop !== last) {
+                last = el.scrollTop
+                setTimeout(tick, 100)
+                return
+              }
+              const top = el.getBoundingClientRect().top
+              const cut = Array.from(el.querySelectorAll<HTMLElement>("[data-author-id][data-message-id]")).find(
+                (row) => row.getBoundingClientRect().top < top - 8 && row.getBoundingClientRect().bottom > top + 8
+              )
+              resolve({
+                cutRowId: cut?.dataset.messageId ?? null,
+                distFromBottom: el.scrollHeight - el.scrollTop - el.clientHeight,
+              })
+            }
+            setTimeout(tick, 100)
+          })
+      )
+    let position: { cutRowId: string | null; distFromBottom: number } = { cutRowId: null, distFromBottom: 0 }
+    await expect
+      .poll(
+        async () => {
+          await page.mouse.wheel(0, position.distFromBottom < 250 ? -150 : -9)
+          position = await readPosition()
+          return position.distFromBottom >= 250 && position.cutRowId !== null && position.cutRowId !== messageIds[0]
+        },
+        { timeout: 20000, message: "should park mid-history with a message row cut by the viewport top" }
+      )
+      .toBe(true)
+    const cutRowId = position.cutRowId!
+    // Past the reading-position snapshot debounce (250ms).
+    await page.waitForTimeout(600)
+
+    await startSampler(page)
+    await reassign(messageIds.slice(messageIds.indexOf(cutRowId)), null)
+    await expect(
+      page.locator(`[data-author-id][data-message-id="${cutRowId}"]`),
+      "the cut row should head a new run"
+    ).not.toHaveAttribute("data-group-continuation", "true", { timeout: 15000 })
+    await page.waitForTimeout(1000)
+
+    const samples = (await readSamples(page)).filter((s) => Object.keys(s.onScreen).length > 0)
+    expect(rowsSlidDown(samples).slice(0, 6), `rows moved under the reader after regrouping ${cutRowId}`).toEqual([])
   })
 })

@@ -18,18 +18,26 @@ export const UNREAD_MARKER_TOP_GAP_PX = 56
  */
 const SCROLL_SETTLE_STABLE_TICKS = 3
 
-/** The topmost timeline row intersecting the scroller viewport, with its
- *  offset from the viewport top (negative when partially scrolled off). */
+/**
+ * The reader's anchor row with its offset from the viewport top: the topmost
+ * row that starts inside the viewport, or the row cut by the viewport top when
+ * none does (negative offset). The cut row's hidden top can grow — an author
+ * header appearing when a run regroups — and anchoring it would slide
+ * everything below by that much.
+ */
 export function snapshotTopVisibleRow(el: HTMLElement): { id: string; offsetPx: number } | null {
   const sr = el.getBoundingClientRect()
-  let best: { id: string; top: number } | null = null
+  let starting: { id: string; top: number } | null = null
+  let cut: { id: string; top: number } | null = null
   for (const row of el.querySelectorAll<HTMLElement>("[data-message-id], [data-event-id]")) {
     const rr = row.getBoundingClientRect()
     if (rr.bottom <= sr.top + 1 || rr.top >= sr.bottom) continue
     const id = row.dataset.messageId ?? row.dataset.eventId
     if (!id) continue
-    if (!best || rr.top < best.top) best = { id, top: rr.top }
+    if (rr.top < sr.top - 1) cut ??= { id, top: rr.top }
+    else if (!starting || rr.top < starting.top) starting = { id, top: rr.top }
   }
+  const best = starting ?? cut
   return best ? { id: best.id, offsetPx: Math.round(best.top - sr.top) } : null
 }
 
