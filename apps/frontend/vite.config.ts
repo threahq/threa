@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react"
 import { VitePWA } from "vite-plugin-pwa"
 import { execSync } from "child_process"
 import { createHash } from "node:crypto"
+import type { Server } from "node:http"
 import { readdir, readFile, stat } from "node:fs/promises"
 import path from "path"
 import { postHogSourceMapPlugins } from "./scripts/posthog-source-maps"
@@ -75,6 +76,24 @@ function katexWoff2OnlyPlugin(): Plugin {
       const trimmed = code.replace(/(src:url\([^)]+\.woff2\) format\("woff2"\))[^}]*/g, "$1")
       return trimmed === code ? null : { code: trimmed, map: null }
     },
+  }
+}
+
+/**
+ * Node closes idle keep-alive connections after 5s. Playwright's request context
+ * pools them, so a spec that pauses about that long between API calls can send
+ * on a socket the server is closing and get ECONNRESET. Matches the backend's 65s.
+ */
+function keepAliveTimeoutPlugin(): Plugin {
+  const extend = (httpServer: Server | null) => {
+    if (!httpServer) return
+    httpServer.keepAliveTimeout = 65_000
+    httpServer.headersTimeout = 66_000
+  }
+  return {
+    name: "keep-alive-timeout",
+    configureServer: (server) => extend(server.httpServer as Server | null),
+    configurePreviewServer: (server) => extend(server.httpServer as Server),
   }
 }
 
@@ -192,6 +211,7 @@ const postHogPlugins = postHogSourceMapPlugins()
 export default defineConfig({
   plugins: [
     react(),
+    keepAliveTimeoutPlugin(),
     versionJsonPlugin(),
     katexWoff2OnlyPlugin(),
     precacheSizeGuardPlugin(postHogPlugins.length > 0 ? 0 : POSTHOG_CHUNK_ID_RESERVE_BYTES),
