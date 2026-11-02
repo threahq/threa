@@ -36,14 +36,55 @@ function mirrorPools(page: Page): Promise<string[]> {
   })
 }
 
-// Two reloads and four stream switches against a dev server.
-test.describe.configure({ timeout: 120_000 })
+/** Whether a read-write session made SQLite the primary copy of any database, durably. */
+function sqlitePrimary(page: Page): Promise<boolean> {
+  return page.evaluate(
+    () =>
+      new Promise<boolean>((resolve) => {
+        const request = indexedDB.open("threa-sqlite-primary")
+        request.onupgradeneeded = () => request.transaction?.abort()
+        request.onerror = () => resolve(false)
+        request.onsuccess = () => {
+          const markers = request.result
+          const count = markers.transaction("primary").objectStore("primary").count()
+          count.onsuccess = () => {
+            markers.close()
+            resolve(count.result > 0)
+          }
+        }
+      })
+  )
+}
 
-for (const mode of ["shadow", "read-only"] as const) {
+/** Whether the mirror's owner recorded SQLite as holding every mirrored store in full, which read-write needs. */
+function mirrorHoldsEveryStore(page: Page): Promise<boolean> {
+  return page.evaluate(async () => {
+    const unmirrored = new Set(["e2eDeviceKeys", "uploadJobs", "sqliteMarks"])
+    for (const { name } of await indexedDB.databases()) {
+      const hint = name ? localStorage.getItem(`threa:sqliteTrusted:${name}`) : null
+      if (!name || !hint) continue
+      const trusted = new Set((JSON.parse(hint) as { stores: string[] }).stores)
+      const database = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(name)
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      const stores = [...database.objectStoreNames]
+      database.close()
+      return stores.every((store) => unmirrored.has(store) || trusted.has(store))
+    }
+    return false
+  })
+}
+
+// Two reloads and four stream switches against a dev server; read-write also waits out a full copy.
+test.describe.configure({ timeout: 180_000 })
+
+for (const mode of ["shadow", "read-only", "read-write"] as const) {
   test(`keeps messages across stream switches and reloads with sqliteStorage=${mode}`, async ({ page }) => {
     const mirrorErrors: string[] = []
     page.on("console", (entry) => {
-      if (entry.type() === "error" && entry.text().includes("SQLite mirror")) mirrorErrors.push(entry.text())
+      if (entry.type() === "error" && entry.text().includes("SQLite")) mirrorErrors.push(entry.text())
     })
     const { workspaceId, testId } = await loginAndCreateWorkspaceViaApi(page, `sqlite-${mode}`)
     await enrollUserFlag(page, workspaceId, "sqliteStorage", mode)
@@ -66,6 +107,9 @@ for (const mode of ["shadow", "read-only"] as const) {
     await switchTo(page, first.slug)
     await expect(message(page, `hello first ${mode}`)).toBeVisible()
 
+    // Read-write starts on the boot after one that copied every store into SQLite.
+    if (mode === "read-write") await expect.poll(() => mirrorHoldsEveryStore(page), { timeout: 90_000 }).toBe(true)
+
     // A boot that reads what the previous one mirrored.
     await page.reload()
     await expect(message(page, `hello first ${mode}`)).toBeVisible({ timeout: 20_000 })
@@ -75,6 +119,7 @@ for (const mode of ["shadow", "read-only"] as const) {
     await switchTo(page, first.slug)
     await switchTo(page, second.slug)
     await expect(message(page, `after reload ${mode}`)).toBeVisible()
+    expect(await sqlitePrimary(page)).toBe(mode === "read-write")
 
     expect(mirrorErrors).toEqual([])
   })
