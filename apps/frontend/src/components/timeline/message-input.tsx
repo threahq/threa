@@ -38,6 +38,7 @@ import {
 import type { ComposerControlHandle, ComposerSubmitOptions } from "@/components/composer"
 import { useScheduleMessage } from "@/hooks"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
+import { useLatest } from "@/hooks/use-latest"
 import { referenceAudienceTargetFor, useReferenceAudience } from "@/hooks/use-reference-audience"
 import { buildImageIndexByAttachment, isMaterializableAttachment } from "./attachment-image-index"
 import { useEditLastMessage } from "./edit-last-message-context"
@@ -460,6 +461,7 @@ function MessageInputComponent({
   const mobileChromeOpenRef = useRef(false)
   const [preserveConversationStripSpace, setPreserveConversationStripSpace] = useState(false)
   composerRef.current = composer
+  const currentStreamId = useLatest(streamId)
 
   // Imperative handle for programmatic focus from outside (e.g. quote reply insertion)
   const composerFocusRef = useRef<ComposerControlHandle | null>(null)
@@ -727,6 +729,7 @@ function MessageInputComponent({
     // restore the content.
     composer.setContent(EMPTY_DOC)
     collapse()
+    const sentFrom = streamId
     try {
       const result = await sendMessage({
         contentJson: messageContent,
@@ -752,12 +755,17 @@ function MessageInputComponent({
         stream?.isDraft === false
           ? "Failed to send message. Please try again."
           : "Failed to create stream. Please try again."
-      // Route changes abort a stale promotion wait. The old scope still owns
-      // its durable draft; restoring here would inject it into the next stream.
-      // Any other failure, a send storage could not keep among them, comes back.
-      if (!(error instanceof DraftPromotionAbortedError)) {
-        composer.setContent(liveContent)
-        if (isPrivacyConfirmationError(error)) blockOnPrivacy(liveContent)
+      // After a route change the old scope still owns its durable draft;
+      // restoring here would inject it into the next stream. Any other failure,
+      // a send storage could not keep among them, comes back ahead of whatever
+      // was typed while it was in flight.
+      if (!(error instanceof DraftPromotionAbortedError) && currentStreamId() === sentFrom) {
+        const typed = composerRef.current.content
+        const restored = hasDocContent(typed)
+          ? { ...liveContent, content: [...(liveContent.content ?? []), ...(typed.content ?? [])] }
+          : liveContent
+        composerRef.current.setContent(restored)
+        if (isPrivacyConfirmationError(error)) blockOnPrivacy(restored)
         else setError(isGuestDmPolicyError(error) ? GUEST_DM_CLOSED_REASON : sendFailure)
       }
     } finally {

@@ -1,6 +1,7 @@
 import type { EncodedRange } from "./key-codec"
 import type { WriterCommit } from "./marks"
 import type {
+  CommitLedger,
   MirrorEntry,
   MirrorMutation,
   MirrorQuery,
@@ -48,8 +49,8 @@ export type MirrorRequest =
   | { type: "begin"; tx: number; readonly: boolean }
   | { type: "write"; tx: number; write: MirrorWrite }
   /** `ledger` names it among commits, recorded with its writes so a tab that lost the owner meanwhile can ask whether it landed. */
-  | { type: "commit"; tx: number; ledger: string }
-  | { type: "committed"; ledger: string }
+  | { type: "commit"; tx: number; ledger: CommitLedger }
+  | { type: "committed"; ledger: CommitLedger }
   | { type: "rollback"; tx: number }
   | { type: "backlog"; limit: number }
   | { type: "backlogDone"; through: number }
@@ -66,7 +67,8 @@ export type MirrorReply =
       /** Positions of a write's entries whose `add` met an existing key. */
       failures?: number[]
       batches?: BacklogBatch[]
-      committed?: boolean
+      /** `null` when the ledger no longer knows. */
+      committed?: boolean | null
     }
   | { ok: false; error: string; message: string }
 

@@ -291,7 +291,10 @@ export function useQueueDraftMessage(workspaceId: string) {
           _cachedAt: Date.now(),
         }
         if (getAccountGeneration() !== account.generation) return { clientId }
-        await account.database.streams.put(optimisticStream)
+        // The message is queued already: failing the send here would restore it for a duplicate retry.
+        await account.database.streams
+          .put(optimisticStream)
+          .catch((err: unknown) => console.error("Failed to cache the draft stream for the sidebar", err))
       }
 
       // For thread drafts, show a pending reply indicator on the anchor item by

@@ -17,7 +17,14 @@ import {
   type WriterCommit,
 } from "./marks"
 import type { IdbWrite } from "./middleware"
-import type { MirrorEntry, MirrorMutation, MirrorStatus, MirrorStoreSchema, MirrorWrite } from "./mirror-store"
+import type {
+  CommitLedger,
+  MirrorEntry,
+  MirrorMutation,
+  MirrorStatus,
+  MirrorStoreSchema,
+  MirrorWrite,
+} from "./mirror-store"
 import type { MirrorReadRequest, MirrorReadResults, MirrorReply, MirrorRequest, MirrorTransport } from "./protocol"
 import { txOf } from "./protocol"
 import { ranRequestedMode, readSqliteStorageMode, recordMode, reloadEveryTab, takeModeReload } from "./storage-mode"
@@ -295,7 +302,7 @@ export function isOwnerLost(error: unknown): boolean {
   return failedWith(error, "OwnerLostError")
 }
 
-function ledgerOf(routed: RoutedTx): string {
+function ledgerOf(routed: RoutedTx): CommitLedger {
   return (routed.asked.at(-1)!.request as Extract<MirrorRequest, { type: "commit" }>).ledger
 }
 
@@ -561,7 +568,7 @@ export class SqliteMirror {
   }
 
   async commitTransaction(tx: number, wrote: boolean): Promise<void> {
-    await this.ask({ type: "commit", tx, ledger: `${this.tabId}:${tx}` })
+    await this.ask({ type: "commit", tx, ledger: { tab: this.tabId, tx } })
     if (wrote) this.scheduleDrain()
   }
 
@@ -1486,7 +1493,7 @@ export class SqliteMirror {
     this.resuming = true
     const landed = committing.map(([, routed]) =>
       this.dispatch(route!, { type: "committed", ledger: ledgerOf(routed) }).then(
-        (reply) => reply.committed === true,
+        (reply) => reply.committed ?? null,
         () => null
       )
     )

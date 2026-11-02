@@ -207,7 +207,10 @@ function StorageFailure({ db }: { db: ThreaDatabase }) {
     <Alert variant="destructive" className="fixed inset-x-4 top-4 z-50 mx-auto max-w-md bg-background shadow-lg">
       <AlertTitle>Storage on this device stopped responding</AlertTitle>
       <AlertDescription className="flex items-center justify-between gap-4">
-        <p>Reload to try again. If it keeps happening, free up disk space.</p>
+        <p>
+          Copy anything you haven’t sent yet, since it may not have been saved, then reload to try again. If it keeps
+          happening, free up disk space.
+        </p>
         <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
           Reload
         </Button>

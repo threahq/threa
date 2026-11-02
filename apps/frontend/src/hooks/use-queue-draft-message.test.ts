@@ -193,6 +193,33 @@ describe("useQueueDraftMessage", () => {
     })
   })
 
+  it("sends a queued scratchpad draft whose sidebar entry storage failed to keep", async () => {
+    vi.spyOn(dbModule.db.streams, "put").mockRejectedValue(
+      new DOMException("Storage could not keep it", "OwnerLostError")
+    )
+    vi.spyOn(console, "error").mockImplementation(() => {})
+
+    const { result } = setup()
+    let queued: unknown
+    await act(async () => {
+      queued = await result.current.queueDraftMessage(
+        { contentJson: CONTENT },
+        {
+          workspaceId: WORKSPACE_ID,
+          streamId: PANEL_ID,
+          streamCreation: { type: StreamTypes.SCRATCHPAD },
+          draftId: PANEL_ID,
+        }
+      )
+    })
+
+    expect({ queued, pending: mockPendingAdd.mock.calls.length, notified: mockNotifyQueue.mock.calls.length }).toEqual({
+      queued: { clientId: expect.any(String) },
+      pending: 1,
+      notified: 1,
+    })
+  })
+
   it("bumps the anchor with an optimistic thread summary so the card keeps its preview row", async () => {
     const replySpy = vi.spyOn(streamSyncModule, "optimisticReplyCountUpdate")
 
