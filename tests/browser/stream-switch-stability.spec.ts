@@ -10,10 +10,11 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
  * at pick time (#804), so a settled window must not reshape when pixels
  * arrive.
  *
- * The sampler reads scroller metrics every frame from the moment the sidebar
- * link is clicked: while the settle mask is up, movement is expected and
- * hidden (that is the mask's job); flicker is any scrollHeight/scrollTop
- * movement AFTER the first masked-down frame with content.
+ * The sampler reads scroller metrics and the on-screen position of every
+ * visible row each frame from the moment the sidebar link is clicked: while
+ * the settle mask is up, movement is expected and hidden (that is the mask's
+ * job); flicker is a visible row sliding down, or the viewport leaving the
+ * bottom, AFTER the first masked-down frame with content.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -79,6 +80,39 @@ async function sendImageMessage(page: Page): Promise<void> {
   await expect(editor.locator("span[data-type='attachment-reference']")).toHaveCount(0, { timeout: 15000 })
 }
 
+/**
+ * Wait until boundary extraction has settled every message of the stream:
+ * assigned, and no send-time provisional placement left for the extractor to
+ * confirm or move. Each settle can regroup author runs (a run splits under a
+ * new header, its Collapse control moves), so one landing mid-check is a live
+ * server-pushed reshape, not the landing under test.
+ */
+async function waitForConversationsSettled(
+  page: Page,
+  workspaceId: string,
+  streamId: string,
+  messageCount: number
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `/api/workspaces/${workspaceId}/streams/${streamId}/conversations?limit=100`
+        )
+        await expectApiOk(response, "List conversations")
+        const { conversations } = (await response.json()) as {
+          conversations: Array<{ messageIds: string[]; settlingMessageIds: string[] }>
+        }
+        return {
+          assigned: new Set(conversations.flatMap((c) => c.messageIds)).size,
+          settling: conversations.flatMap((c) => c.settlingMessageIds).length,
+        }
+      },
+      { timeout: 30000, message: "boundary extraction should settle every seeded message" }
+    )
+    .toEqual({ assigned: messageCount, settling: 0 })
+}
+
 interface FrameSample {
   t: number
   maskUp: boolean
@@ -86,35 +120,51 @@ interface FrameSample {
   scrollTop: number
   scrollHeight: number
   clientHeight: number
+  /** Viewport-relative top of each on-screen message row, by event id. */
+  onScreen: Record<string, number>
 }
 
-/** Install an open-ended per-frame sampler into the CURRENT document (30s cap). */
-function startSampler(page: Page): Promise<void> {
-  return page
-    .evaluate(() => {
-      const out: FrameSample[] = []
-      ;(window as unknown as { __stabilitySamples: FrameSample[] }).__stabilitySamples = out
-      const start = performance.now()
-      const tick = () => {
-        const el = document.querySelector("[data-suppress-pull-refresh]")
-        const t = Math.round(performance.now() - start)
-        if (el instanceof HTMLElement) {
-          out.push({
-            t,
-            maskUp: !!document.querySelector('[data-testid="settle-mask"]'),
-            rows: el.querySelectorAll(".message-item").length,
-            scrollTop: Math.round(el.scrollTop),
-            scrollHeight: el.scrollHeight,
-            clientHeight: el.clientHeight,
-          })
-        } else {
-          out.push({ t, maskUp: false, rows: 0, scrollTop: 0, scrollHeight: 0, clientHeight: 0 })
+/**
+ * Per-frame sampler (30s cap). Runs in the page, through `page.evaluate` or
+ * `page.addInitScript`, so it must stay self-contained.
+ */
+function sampleFrames(): void {
+  const out: FrameSample[] = []
+  ;(window as unknown as { __stabilitySamples: FrameSample[] }).__stabilitySamples = out
+  const start = performance.now()
+  const tick = () => {
+    const el = document.querySelector("[data-suppress-pull-refresh]")
+    const t = Math.round(performance.now() - start)
+    if (el instanceof HTMLElement) {
+      const viewport = el.getBoundingClientRect()
+      const rows = el.querySelectorAll(".message-item")
+      const onScreen: Record<string, number> = {}
+      for (const row of rows) {
+        const id = row.closest("[data-event-id]")?.getAttribute("data-event-id")
+        const rect = row.getBoundingClientRect()
+        if (id && rect.bottom > viewport.top && rect.top < viewport.bottom) {
+          onScreen[id] = Math.round(rect.top - viewport.top)
         }
-        if (t < 30_000) requestAnimationFrame(tick)
       }
-      requestAnimationFrame(tick)
-    })
-    .then(() => {})
+      out.push({
+        t,
+        maskUp: !!document.querySelector('[data-testid="settle-mask"]'),
+        rows: rows.length,
+        scrollTop: Math.round(el.scrollTop),
+        scrollHeight: el.scrollHeight,
+        clientHeight: el.clientHeight,
+        onScreen,
+      })
+    } else {
+      out.push({ t, maskUp: false, rows: 0, scrollTop: 0, scrollHeight: 0, clientHeight: 0, onScreen: {} })
+    }
+    if (t < 30_000) requestAnimationFrame(tick)
+  }
+  requestAnimationFrame(tick)
+}
+
+function startSampler(page: Page): Promise<void> {
+  return page.evaluate(sampleFrames)
 }
 
 function readSamples(page: Page): Promise<FrameSample[]> {
@@ -143,21 +193,30 @@ async function expectStablePostReveal(page: Page, holdMs: number, label: string)
 
   const samples = await readSamples(page)
   const revealIdx = samples.findIndex((s) => s.rows > 0 && !s.maskUp)
-  // One frame of slack for the reveal commit itself, then two invariants —
-  // calibrated for a TAIL landing, where bottom-pinned growth is legitimate
-  // (a live message or a late-arriving preview card grows content and the pin
-  // absorbs it; the bottom edge is what the reader is anchored to):
-  //  - content never SHRINKS (a collapsing preview card, the staging bounce);
+  // One frame of slack for the reveal commit itself, then two invariants on
+  // what the reader sees — calibrated for a TAIL landing, where bottom-pinned
+  // growth is legitimate (a live message, a late preview card, a run splitting
+  // under a new author header grows content and the pin absorbs it, moving
+  // rows UP; the bottom edge is what the reader is anchored to):
+  //  - no on-screen row ever slides DOWN from the highest point it reached
+  //    (a collapsing preview card, the staging bounce);
   //  - the viewport never drifts off the bottom (distance-from-bottom never
   //    grows — a pin failure would slide the reader up through the content).
+  // Total scrollHeight is not an invariant: once scrolling idles, virtua
+  // mounts its buffer above the viewport and swaps size estimates for real
+  // heights there, compensating scrollTop in the same frame, so the total
+  // moves either way while nothing on screen does.
   const settled = samples.slice(revealIdx + 2).filter((s) => s.t <= samples[revealIdx].t + holdMs)
   const base = settled[0]
   const baseDist = base.scrollHeight - base.scrollTop - base.clientHeight
-  let maxHeight = base.scrollHeight
+  const highestTop = new Map<string, number>()
   const violations: Array<{ sample: FrameSample; why: string }> = []
   for (const s of settled) {
-    if (s.scrollHeight < maxHeight - 2) violations.push({ sample: s, why: `content shrank from ${maxHeight}` })
-    maxHeight = Math.max(maxHeight, s.scrollHeight)
+    for (const [id, top] of Object.entries(s.onScreen)) {
+      const highest = highestTop.get(id) ?? top
+      if (top > highest + 2) violations.push({ sample: s, why: `row ${id} slid down from ${highest}px to ${top}px` })
+      highestTop.set(id, Math.min(highest, top))
+    }
     const dist = s.scrollHeight - s.scrollTop - s.clientHeight
     if (dist > baseDist + 2) violations.push({ sample: s, why: `drifted off the bottom (base dist ${baseDist})` })
   }
@@ -195,6 +254,8 @@ test.describe("Stream switch stability", () => {
         .locator(".message-item")
         .filter({ hasText: `${prefix} msg-030` })
     ).toBeVisible({ timeout: 20000 })
+    // 1 image + 25 + 1 link + 4 text messages.
+    await waitForConversationsSettled(page, workspaceId, targetStreamId, 31)
 
     // Second channel to switch back from.
     await createChannel(page, `other-${testId}`)
@@ -233,6 +294,8 @@ test.describe("Stream switch stability", () => {
     await expect(page.getByRole("main").locator(".message-item").filter({ hasText: "pull/1873" })).toBeVisible({
       timeout: 20000,
     })
+    // 10 + 1 link + 5 text messages.
+    await waitForConversationsSettled(page, workspaceId, streamId, 16)
 
     // Kill every og-image fetch from here on — the reload's cards must render
     // their thumbnail boxes, fail the image, and hold the layout anyway.
@@ -245,28 +308,7 @@ test.describe("Stream switch stability", () => {
     // can fire within the first ~100ms of boot, before a post-reload evaluate
     // could attach — an after-the-fact sampler would record only the already-
     // collapsed steady state and pass vacuously.
-    await page.addInitScript(() => {
-      const out: Array<{ t: number; maskUp: boolean; rows: number; scrollTop: number; scrollHeight: number }> = []
-      ;(window as unknown as { __stabilitySamples: typeof out }).__stabilitySamples = out
-      const start = performance.now()
-      const tick = () => {
-        const el = document.querySelector("[data-suppress-pull-refresh]")
-        const t = Math.round(performance.now() - start)
-        if (el instanceof HTMLElement) {
-          out.push({
-            t,
-            maskUp: !!document.querySelector('[data-testid="settle-mask"]'),
-            rows: el.querySelectorAll(".message-item").length,
-            scrollTop: Math.round(el.scrollTop),
-            scrollHeight: el.scrollHeight,
-          })
-        } else {
-          out.push({ t, maskUp: false, rows: 0, scrollTop: 0, scrollHeight: 0 })
-        }
-        if (t < 30_000) requestAnimationFrame(tick)
-      }
-      requestAnimationFrame(tick)
-    })
+    await page.addInitScript(sampleFrames)
 
     await page.reload()
     await expectStablePostReveal(page, 1500, "dead og-image reload")
