@@ -226,6 +226,58 @@ describe("join wave summary", () => {
     expect(perJoin).toEqual([{ event: "room_join_failure", fields: { reason: "unknown" } }])
   })
 
+  it("should start a new wave when the socket reconnects mid-wave", async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+    socket.ackDelayMs = 10
+    diagnosticsModule.setSocketDiagnosticContext(socket, { connectionId: "conn_split", generation: 1 })
+    captureJoinEvents()
+    const recorded: Array<{ event: diagnosticsModule.ConnectivityEvent; fields?: diagnosticsModule.DiagnosticFields }> =
+      []
+    vi.spyOn(diagnosticsModule, "recordConnectivityEvent").mockImplementation((event, fields) => {
+      if (fields?.connectionId === "conn_split") recorded.push({ event, fields })
+    })
+
+    const before = joinRoomWithAck(asSocket(socket), "ws:w:stream:a")
+    diagnosticsModule.setSocketDiagnosticContext(socket, { connectionId: "conn_split", generation: 2 })
+    const after = joinRoomWithAck(asSocket(socket), "ws:w:stream:b")
+    await vi.advanceTimersByTimeAsync(10)
+    await Promise.all([before, after])
+    await vi.advanceTimersByTimeAsync(1000)
+
+    const wave = { connectionId: "conn_split", count: 1, failed: 0, p50Ms: 10, p95Ms: 10, maxMs: 10 }
+    expect(recorded).toEqual([
+      { event: "room_join_wave", fields: { ...wave, generation: 1 } },
+      { event: "room_join_wave", fields: { ...wave, generation: 2 } },
+    ])
+  })
+
+  it("should measure ack latency from the emit, not from the connection wait", async () => {
+    vi.useFakeTimers()
+    const socket = new MockSocket()
+    socket.connected = false
+    socket.ackDelayMs = 10
+    diagnosticsModule.setSocketDiagnosticContext(socket, { connectionId: "conn_wait", generation: 1 })
+    const perJoin = captureJoinEvents()
+    const recorded: Array<diagnosticsModule.DiagnosticFields | undefined> = []
+    vi.spyOn(diagnosticsModule, "recordConnectivityEvent").mockImplementation((_event, fields) => {
+      if (fields?.connectionId === "conn_wait") recorded.push(fields)
+    })
+
+    const join = joinRoomWithAck(asSocket(socket), "ws:w:stream:a", { timeoutMs: 10_000 })
+    await vi.advanceTimersByTimeAsync(2 * SLOW_JOIN_ACK_MS)
+    socket.connected = true
+    socket.trigger("connect")
+    await vi.advanceTimersByTimeAsync(10)
+    await join
+    await vi.advanceTimersByTimeAsync(1000)
+
+    expect(perJoin).toEqual([{ event: "room_join_connection_wait", fields: {} }])
+    expect(recorded).toEqual([
+      { connectionId: "conn_wait", generation: 1, count: 1, failed: 0, p50Ms: 10, p95Ms: 10, maxMs: 10 },
+    ])
+  })
+
   it("should still record a slow ack individually", async () => {
     vi.useFakeTimers()
     const socket = new MockSocket()

@@ -41,9 +41,16 @@ interface JoinWave {
 const joinWavesBySocket = new WeakMap<Socket, JoinWave>()
 
 function enterJoinWave(socket: Socket): JoinWave {
+  const context = getSocketDiagnosticContext(socket)
   let wave = joinWavesBySocket.get(socket)
-  if (!wave) {
-    wave = { inFlight: 0, ackMs: [], failed: 0, timer: null, context: getSocketDiagnosticContext(socket) }
+  // A reconnect gives the socket a new context; its joins start a new wave
+  // while the previous one still settles on its own.
+  if (
+    !wave ||
+    wave.context?.connectionId !== context?.connectionId ||
+    wave.context?.generation !== context?.generation
+  ) {
+    wave = { inFlight: 0, ackMs: [], failed: 0, timer: null, context }
     joinWavesBySocket.set(socket, wave)
   }
   if (wave.timer) clearTimeout(wave.timer)
@@ -58,7 +65,7 @@ function leaveJoinWave(socket: Socket, wave: JoinWave, outcome: { ackMs: number 
   else if (outcome !== "aborted") wave.ackMs.push(outcome.ackMs)
   if (wave.inFlight > 0) return
   wave.timer = setTimeout(() => {
-    joinWavesBySocket.delete(socket)
+    if (joinWavesBySocket.get(socket) === wave) joinWavesBySocket.delete(socket)
     recordJoinWave(wave)
   }, JOIN_WAVE_SETTLE_MS)
 }
@@ -258,16 +265,16 @@ export async function joinRoomWithAck(socket: Socket, room: string, options?: Jo
     generation: socketContext?.generation,
   })
   const wave = enterJoinWave(socket)
-  const startedAt = performance.now()
   const joinPromise = (async () => {
     try {
       await waitForConnection(socket, room, timeoutMs, observation, signal)
       if (signal?.aborted) throw joinFailure(`Join aborted for room "${room}"`, "abort")
+      const emittedAt = performance.now()
       await emitJoinWithAck(socket, room, timeoutMs)
-      const elapsedMs = Math.round(performance.now() - startedAt)
+      const ackMs = Math.round(performance.now() - emittedAt)
       // Fast acks are evidence only in aggregate; the wave summary carries them.
-      if (elapsedMs >= SLOW_JOIN_ACK_MS) observation.record("room_join_ack")
-      leaveJoinWave(socket, wave, { ackMs: elapsedMs })
+      if (ackMs >= SLOW_JOIN_ACK_MS) observation.record("room_join_ack")
+      leaveJoinWave(socket, wave, { ackMs })
     } catch (error) {
       const failureReason = joinFailureReason(error)
       const reason = failureReason === "abort" || failureReason === "timeout" ? failureReason : "unknown"
