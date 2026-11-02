@@ -3,13 +3,15 @@ import { defaultFeatureFlagValue } from "@threahq/types"
 import { NO_CAPTURE, getPerfCapture, type PerfCaptureLike } from "@/lib/perf/capture"
 import { touchedOf } from "./sqlite-mirror/idb-reads"
 import {
-  SQLITE_MARKS_STORE,
+  SQLITE_INCARNATION_STORE,
+  isSqliteMarksStore,
+  sqliteMarksStore,
   writerBatch,
   type IdbWriter,
   type SqliteMark,
   type WriterCommit,
 } from "./sqlite-mirror/marks"
-import { SQLITE_UNMIRRORED_STORES } from "./sqlite-mirror/stores"
+import { isMirroredStore } from "./sqlite-mirror/stores"
 import { encodeValue } from "./sqlite-mirror/value-codec"
 
 /**
@@ -125,10 +127,6 @@ function settle(observed: WeakMap<DBCoreTransaction, ObservedTransaction>, tx: D
   state.lastSettledAt = at
 }
 
-function isMirrored(store: string): boolean {
-  return !SQLITE_UNMIRRORED_STORES.has(store)
-}
-
 function bufferWrites(
   tx: DBCoreTransaction,
   writer: IdbWriter,
@@ -204,11 +202,10 @@ function trackRequests(
     }
   const mutate = track((req: Parameters<DBCoreTable["mutate"]>[0]) => table.mutate(req))
   const store = table.name
-  const mirrored = isMirrored(store)
   return {
     ...table,
     mutate: (req) => {
-      const buffer = mirrored && marks ? buffers.get(req.trans) : undefined
+      const buffer = marks ? buffers.get(req.trans) : undefined
       if (!buffer || !marks) return mutate(req)
       if (!buffer.marked.has(store)) {
         buffer.marked.add(store)
@@ -237,10 +234,10 @@ function trackRequests(
  * Sets per-transaction durability and, while a perf capture is armed, records
  * slow transactions: lifetime, a write's commit after its last request (the
  * disk flush), a read's wait for its first result, and a bitmask of its stores
- * (bit = index in the schema's store names, sorted).
+ * (bit = index in the schema's store names, sorted, marks stores left out).
  *
- * Each readwrite transaction over a mirrored store also takes the marks store
- * and marks each mirrored store it writes. Once it commits, its successful
+ * Each readwrite transaction over mirrored stores also takes their marks
+ * stores, and marks each mirrored store it writes. Once it commits, its successful
  * mutations go to `currentSink` (read per transaction, as the table core is
  * cached at open) or, with no mirror running, are announced to whichever tab
  * owns one; an aborted transaction hands over nothing.
@@ -253,26 +250,35 @@ export function createTransactionMiddleware(
     stack: "dbcore",
     name: "threaTransactions",
     create(down) {
-      const storeOrder = down.schema.tables.map((table) => table.name).sort()
+      const storeOrder = down.schema.tables
+        .map((table) => table.name)
+        .filter((name) => !isSqliteMarksStore(name))
+        .sort()
       const observed = new WeakMap<DBCoreTransaction, ObservedTransaction>()
       const buffers = new WeakMap<DBCoreTransaction, BufferedWrites>()
+      const names = new Set(down.schema.tables.map((table) => table.name))
       // Absent only from the cores Dexie builds for an upgrade, whose writes run in the versionchange transaction.
-      const marks = down.schema.tables.some((table) => table.name === SQLITE_MARKS_STORE)
-        ? down.table(SQLITE_MARKS_STORE)
-        : null
+      const marking = names.has(SQLITE_INCARNATION_STORE)
+      const marksOf = (store: string): DBCoreTable | null => {
+        if (!marking || !isMirroredStore(store)) return null
+        const name = sqliteMarksStore(store)
+        // A write to a mirrored store must never commit unmarked.
+        if (!names.has(name)) throw new Error(`Mirrored store ${store} has no marks store ${name}`)
+        return down.table(name)
+      }
       return {
         transaction(stores, mode, options) {
           const durability = transactionDurability(stores, mode, relaxedDurability)
-          const marking = marks !== null && mode === "readwrite" && stores.some(isMirrored)
-          const scope = marking ? [...stores, SQLITE_MARKS_STORE] : stores
+          const marked = mode === "readwrite" ? stores.filter((store) => marksOf(store) !== null) : []
+          const scope = marked.length > 0 ? [...stores, ...marked.map(sqliteMarksStore)] : stores
           const tx = down.transaction(scope, mode, durability ? { ...options, durability } : options)
           const capture = getPerfCapture()
           if (capture !== NO_CAPTURE) observe(tx, stores, mode, storeOrder, capture, observed)
-          if (marking) bufferWrites(tx, writer, currentSink(), buffers)
+          if (marked.length > 0) bufferWrites(tx, writer, currentSink(), buffers)
           return tx
         },
         table(name) {
-          return trackRequests(down.table(name), marks, writer, observed, buffers)
+          return trackRequests(down.table(name), marksOf(name), writer, observed, buffers)
         },
       }
     },

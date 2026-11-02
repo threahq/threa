@@ -16,7 +16,7 @@ import {
 } from "./marks"
 import type { MirrorEntry, MirrorMutation, MirrorStatus } from "./mirror-store"
 import type { MirrorReply, MirrorRequest, MirrorTransport } from "./protocol"
-import { SQLITE_UNMIRRORED_STORES } from "./stores"
+import { isMirroredStore } from "./stores"
 import { encodeValue } from "./value-codec"
 import { createWorkerTransport } from "./worker-transport"
 
@@ -122,7 +122,7 @@ function markFailure(error: unknown): void {
 }
 
 function mirroredStores(database: ThreaDatabase): string[] {
-  return database.tables.map((table) => table.name).filter((name) => !SQLITE_UNMIRRORED_STORES.has(name))
+  return database.tables.map((table) => table.name).filter(isMirroredStore)
 }
 
 /** `null` when any value cannot be represented, after marking the failure. */
@@ -410,7 +410,7 @@ export class SqliteMirror implements IdbWriteSink {
   private async reconcile(
     stores: string[]
   ): Promise<{ status: MirrorStatus; marks: SqliteMark[]; trusted: Set<string> } | null> {
-    const { incarnation, marks } = await readMarks(this.options.database.backendDB())
+    const { incarnation, marks } = await readMarks(this.options.database.backendDB(), stores)
     if (this.role !== "owner") return null
     const reply = await this.send({ type: "status" })
     if (this.role !== "owner") return null

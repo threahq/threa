@@ -30,7 +30,8 @@ import type { KdfParams } from "@/lib/crypto/passphrase"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { createTransactionMiddleware } from "./transaction-middleware"
 import type { SqliteMirror } from "./sqlite-mirror/client"
-import { IdbWriter, SQLITE_MARKS_STORE } from "./sqlite-mirror/marks"
+import { IdbWriter, SQLITE_INCARNATION_STORE, sqliteMarksSchema } from "./sqlite-mirror/marks"
+import { isMirroredStore } from "./sqlite-mirror/stores"
 
 const WORKSPACE_USERS_STORE = "workspaceUsersByWorkspace"
 const PERSONAS_STORE = "personasByWorkspace"
@@ -1863,10 +1864,12 @@ export class ThreaDatabase extends Dexie {
       docStates: "[workspaceId+docId], workspaceId",
     })
 
-    // v58: the SQLite mirror's marks, committed with every write to a mirrored
-    // store. Also closes connections from builds that write without them.
+    // v58: the SQLite mirror's marks, one store per mirrored store, committed
+    // with every write to it. Also closes connections from builds that write
+    // without them. A version adding a mirrored store adds its marks store too.
     this.version(58).stores({
-      [SQLITE_MARKS_STORE]: "[store+writer]",
+      [SQLITE_INCARNATION_STORE]: "id",
+      ...sqliteMarksSchema(this.tables.map((table) => table.name).filter(isMirroredStore)),
     })
 
     this.composerLoaded = this.table(COMPOSER_LOADED_STORE)
@@ -1899,6 +1902,11 @@ export class ThreaDatabase extends Dexie {
       if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload()
       return false
     })
+  }
+
+  override close(options?: { disableAutoOpen: boolean }): void {
+    super.close(options)
+    this.sqliteWriter.close()
   }
 
   // Auto-open routes through here too (Dexie calls `db.open()` on first use),

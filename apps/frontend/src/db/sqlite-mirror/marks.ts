@@ -1,12 +1,29 @@
 import { transactionDone, type Touched } from "./idb-reads"
 
+const SQLITE_MARKS_PREFIX = "sqliteMarks:"
+
 /**
- * IndexedDB's record of who wrote each mirrored store. Every readwrite
- * transaction over a mirrored store, from any context (tab, service worker,
- * mirror running or not), puts a mark in the same transaction as its writes,
- * so no write can commit without one.
+ * IndexedDB's record of who wrote `store`. Every readwrite transaction over a
+ * mirrored store, from any context (tab, service worker, mirror running or
+ * not), puts a mark in the store's own marks store in the same transaction as
+ * its writes, so no write can commit without one. One marks store per mirrored
+ * store keeps transactions on disjoint stores from serializing on their marks.
  */
-export const SQLITE_MARKS_STORE = "sqliteMarks"
+export function sqliteMarksStore(store: string): string {
+  return SQLITE_MARKS_PREFIX + store
+}
+
+export function isSqliteMarksStore(name: string): boolean {
+  return name.startsWith(SQLITE_MARKS_PREFIX)
+}
+
+/** Dexie schema for the marks stores of `stores`, keyed by writer. */
+export function sqliteMarksSchema(stores: readonly string[]): Record<string, string> {
+  return Object.fromEntries(stores.map((store) => [sqliteMarksStore(store), "writer"]))
+}
+
+/** Names this IndexedDB's lifetime; a deleted and recreated database gets a new one, so its SQLite copy is not trusted. */
+export const SQLITE_INCARNATION_STORE = "sqliteIncarnation"
 
 /**
  * The latest transaction of `writer` that wrote `store`. SQLite holds every
@@ -19,10 +36,7 @@ export interface SqliteMark {
   seq: number
 }
 
-/** Names this IndexedDB's lifetime; a deleted and recreated database gets a new one, so its SQLite copy is not trusted. */
 interface IncarnationRow {
-  store: ""
-  writer: "incarnation"
   id: string
 }
 
@@ -70,10 +84,11 @@ export class IdbWriter {
   readonly id = crypto.randomUUID()
   private lastSeq = 0
   private readonly lastCommitted = new Map<string, number>()
+  private channel: BroadcastChannel | null = null
 
   constructor(readonly idbName: string) {}
 
-  /** At transaction creation: transactions sharing the marks store commit in creation order. */
+  /** At transaction creation: transactions marking the same store share its marks store, so commit in creation order. */
   nextSeq(): number {
     return ++this.lastSeq
   }
@@ -91,42 +106,49 @@ export class IdbWriter {
   /** A handle without a running mirror tells a live owner what it wrote; its marks cover an owner that is not listening. */
   announce(batch: MirrorBatch): void {
     if (typeof BroadcastChannel === "undefined") return
-    const channel = new BroadcastChannel(mirrorChannelName(this.idbName))
-    channel.postMessage(batch)
-    channel.close()
+    this.channel ??= new BroadcastChannel(mirrorChannelName(this.idbName))
+    this.channel.postMessage(batch)
+  }
+
+  close(): void {
+    this.channel?.close()
+    this.channel = null
   }
 }
 
-/** Every mark, and this database's incarnation, created on first read. */
-export async function readMarks(idb: IDBDatabase): Promise<{ incarnation: string; marks: SqliteMark[] }> {
-  const tx = idb.transaction(SQLITE_MARKS_STORE, "readwrite")
-  const store = tx.objectStore(SQLITE_MARKS_STORE)
-  const rows = store.getAll()
+/** Every mark on `stores`, and this database's incarnation, created on first read. */
+export async function readMarks(
+  idb: IDBDatabase,
+  stores: readonly string[]
+): Promise<{ incarnation: string; marks: SqliteMark[] }> {
+  const marksStores = stores.map(sqliteMarksStore)
+  const tx = idb.transaction([SQLITE_INCARNATION_STORE, ...marksStores], "readwrite")
+  const incarnationStore = tx.objectStore(SQLITE_INCARNATION_STORE)
+  const found = incarnationStore.getAll()
   let incarnation = ""
-  rows.onsuccess = () => {
-    const found = (rows.result as Array<SqliteMark | IncarnationRow>).find((row) => row.store === "")
-    if (found) {
-      incarnation = (found as IncarnationRow).id
+  found.onsuccess = () => {
+    const row = (found.result as IncarnationRow[])[0]
+    if (row) {
+      incarnation = row.id
       return
     }
     incarnation = crypto.randomUUID()
-    store.put({ store: "", writer: "incarnation", id: incarnation } satisfies IncarnationRow)
+    incarnationStore.put({ id: incarnation } satisfies IncarnationRow)
   }
+  const rows = marksStores.map((name) => tx.objectStore(name).getAll())
   await transactionDone(tx)
-  const marks = (rows.result as Array<SqliteMark | IncarnationRow>).filter((row): row is SqliteMark => row.store !== "")
-  return { incarnation, marks }
+  return { incarnation, marks: rows.flatMap((request) => request.result as SqliteMark[]) }
 }
 
 /** Deletes each mark still at the seq it was read at; one a writer has advanced since stays. */
 export async function deleteMarks(idb: IDBDatabase, marks: readonly SqliteMark[]): Promise<void> {
   if (marks.length === 0) return
-  const tx = idb.transaction(SQLITE_MARKS_STORE, "readwrite")
-  const store = tx.objectStore(SQLITE_MARKS_STORE)
+  const tx = idb.transaction([...new Set(marks.map((mark) => sqliteMarksStore(mark.store)))], "readwrite")
   for (const mark of marks) {
-    const key = [mark.store, mark.writer]
-    const current = store.get(key)
+    const store = tx.objectStore(sqliteMarksStore(mark.store))
+    const current = store.get(mark.writer)
     current.onsuccess = () => {
-      if ((current.result as SqliteMark | undefined)?.seq === mark.seq) store.delete(key)
+      if ((current.result as SqliteMark | undefined)?.seq === mark.seq) store.delete(mark.writer)
     }
   }
   await transactionDone(tx)

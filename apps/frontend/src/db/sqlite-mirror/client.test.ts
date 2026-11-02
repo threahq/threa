@@ -3,9 +3,9 @@ import Dexie from "dexie"
 import { afterEach, beforeAll, describe, expect, it } from "vitest"
 import { ThreaDatabase } from "../database"
 import { SqliteMirror } from "./client"
-import { SQLITE_MARKS_STORE, type MirrorBroadcast, type SqliteMark } from "./marks"
+import { SQLITE_INCARNATION_STORE, isSqliteMarksStore, type MirrorBroadcast, type SqliteMark } from "./marks"
 import type { MirrorReply, MirrorRequest, MirrorTransport } from "./protocol"
-import { SQLITE_UNMIRRORED_STORES } from "./stores"
+import { isMirroredStore } from "./stores"
 import { createBus, inProcessTransport, settle } from "./test-harness"
 import { decodeValue } from "./value-codec"
 
@@ -78,11 +78,15 @@ async function behind(database: ThreaDatabase, sqlite: Database): Promise<string
   const held = new Map(
     sqlite.selectArrays(`SELECT writer, store, seq FROM _mirror_writers`).map(([w, st, s]) => [`${w}/${st}`, Number(s)])
   )
-  const marks = (await database.table(SQLITE_MARKS_STORE).toArray()) as Array<SqliteMark & { id?: string }>
-  const stores = marks
-    .filter((m) => m.store !== "" && m.seq > (held.get(`${m.writer}/${m.store}`) ?? 0))
+  const stores = (await allMarks(database))
+    .filter((m) => m.seq > (held.get(`${m.writer}/${m.store}`) ?? 0))
     .map((m) => m.store)
   return [...new Set(stores)].sort()
+}
+
+async function allMarks(database: ThreaDatabase): Promise<SqliteMark[]> {
+  const tables = database.tables.filter((table) => isSqliteMarksStore(table.name))
+  return (await Promise.all(tables.map((table) => table.toArray() as Promise<SqliteMark[]>))).flat()
 }
 
 function begun(requests: MirrorRequest["type"][]): number {
@@ -90,7 +94,7 @@ function begun(requests: MirrorRequest["type"][]): number {
 }
 
 function mirroredStores(database: ThreaDatabase): string[] {
-  return database.tables.map((t) => t.name).filter((name) => !SQLITE_UNMIRRORED_STORES.has(name))
+  return database.tables.map((t) => t.name).filter(isMirroredStore)
 }
 
 /** The previous owner is gone without stopping, as a killed tab is; the next one opens the same file. */
@@ -136,7 +140,7 @@ describe("SqliteMirror", () => {
     expect(expected.syncCursors).toHaveLength(3)
     expect(
       sqlite.selectValues(
-        `SELECT name FROM sqlite_master WHERE name IN ('s_e2eDeviceKeys','s_uploadJobs','s_${SQLITE_MARKS_STORE}')`
+        `SELECT name FROM sqlite_master WHERE name IN ('s_e2eDeviceKeys','s_uploadJobs','s_${SQLITE_INCARNATION_STORE}') OR name LIKE 's_sqliteMarks%'`
       )
     ).toEqual([])
     expect(await behind(database, sqlite)).toEqual([])
@@ -154,17 +158,17 @@ describe("SqliteMirror", () => {
         throw new Error("abort")
       })
     ).rejects.toThrow("abort")
-    const afterAbort = await database.table(SQLITE_MARKS_STORE).toArray()
+    const afterAbort = await allMarks(database)
     await database.syncCursors.put({ key: "kept", value: "y", updatedAt: 2 } as never)
     await settle()
 
     expect({
       afterAbort,
-      marks: (await database.table(SQLITE_MARKS_STORE).toArray()).filter((mark) => mark.store !== ""),
+      marks: await allMarks(database),
       rows: mirrored(sqlite, "syncCursors"),
       behind: await behind(database, sqlite),
     }).toEqual({
-      afterAbort: [expect.objectContaining({ store: "" })],
+      afterAbort: [],
       marks: [{ store: "syncCursors", writer: database.sqliteWriter.id, seq: expect.any(Number) }],
       rows: [{ key: "kept", value: "y", updatedAt: 2 }],
       behind: [],
@@ -218,7 +222,7 @@ describe("SqliteMirror", () => {
 
     expect({
       backfilled: next.backfilled(),
-      marks: (await database.table(SQLITE_MARKS_STORE).toArray()).filter((mark) => mark.store !== ""),
+      marks: await allMarks(database),
     }).toEqual({ backfilled: 0, marks: [] })
   })
 
