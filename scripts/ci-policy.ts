@@ -176,6 +176,11 @@ export const areas: Area[] = [
     specs: ["invitation-flow"],
   },
   {
+    name: "storage",
+    sources: [`${fe}db/`, `${fe}hooks/use-sqlite-storage-flag`],
+    specs: ["sqlite-storage"],
+  },
+  {
     name: "personas",
     sources: [`${fe}components/persona-editor/`, `${fe}components/bot-profile/`, `${be}bot-runtimes/`],
     specs: ["bot-"],

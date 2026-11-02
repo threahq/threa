@@ -34,17 +34,34 @@ export async function sendApiOk(send: () => Promise<APIResponse>, action: string
   }
 }
 
-/** Turns a feature flag on for one workspace through the backend internal API, replacing its other flag overrides. */
-export async function enrollWorkspaceFlag(page: Page, workspaceId: string, flag: string): Promise<void> {
+/** Sets a feature flag for one workspace through the backend internal API, replacing its other flag overrides. */
+export async function enrollWorkspaceFlag(page: Page, workspaceId: string, flag: string, value = "on"): Promise<void> {
+  await setFlagOverride(page, workspaceId, "workspace", workspaceId, flag, value)
+}
+
+/** Sets a feature flag for the signed-in account within one workspace, replacing its other flag overrides. */
+export async function enrollUserFlag(page: Page, workspaceId: string, flag: string, value = "on"): Promise<void> {
+  const account = await currentAccount(page)
+  await setFlagOverride(page, workspaceId, "user", account.id, flag, value)
+}
+
+async function setFlagOverride(
+  page: Page,
+  workspaceId: string,
+  subjectType: "workspace" | "user",
+  subjectId: string,
+  flag: string,
+  value: string
+): Promise<void> {
   const backendPort = process.env.PLAYWRIGHT_BACKEND_PORT
   const internalApiKey = process.env.PLAYWRIGHT_INTERNAL_API_KEY
   if (!backendPort || !internalApiKey) throw new Error("Browser test feature-flag fixture is unavailable")
   await expectApiOk(
     await page.request.post(`http://localhost:${backendPort}/internal/feature-flags`, {
       headers: { "x-internal-api-key": internalApiKey },
-      data: { workspaceId, subjectType: "workspace", subjectId: workspaceId, overrides: { [flag]: "on" } },
+      data: { workspaceId, subjectType, subjectId, overrides: { [flag]: value } },
     }),
-    `Enroll workspace in ${flag}`
+    `Enroll ${subjectType} in ${flag}`
   )
 }
 
