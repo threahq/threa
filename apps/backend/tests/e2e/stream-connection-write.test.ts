@@ -299,7 +299,9 @@ describe("Stream connection partner writes", () => {
     let refusedManifestReads = 0
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input, init) => {
       const url = input instanceof Request ? input.url : String(input)
-      if (url.includes(`/stream-connections/`) && url.endsWith("/bridge/manifest") && refusedManifestReads === 0) {
+      // Only the delete's own catch-up gets the 401; a background pull of the same connection must not consume it.
+      const fromCatchUp = new Error().stack?.includes("catchUp") ?? false
+      if (url.endsWith("/bridge/manifest") && fromCatchUp && refusedManifestReads === 0) {
         refusedManifestReads++
         return new Response(null, { status: 401 })
       }

@@ -71,8 +71,7 @@ export class BridgeClient {
 
   /** The host's shared tree: every stream a partner copies, with its current name and head. */
   async getManifest(address: ConnectionAddress): Promise<BridgeManifest> {
-    const res = await this.request(address, "/manifest", "GET")
-    return bridgeManifestSchema.parse(await res.json())
+    return bridgeManifestSchema.parse(await this.request(address, "/manifest", "GET"))
   }
 
   /** A page of one host stream's changes after a cursor. */
@@ -81,46 +80,49 @@ export class BridgeClient {
     params: { streamId: string; after: bigint; limit: number }
   ): Promise<BridgeEvents> {
     const query = new URLSearchParams({ after: params.after.toString(), limit: String(params.limit) })
-    const res = await this.request(address, `/streams/${encodeURIComponent(params.streamId)}/events?${query}`, "GET")
-    return bridgeEventsSchema.parse(await res.json())
+    return bridgeEventsSchema.parse(
+      await this.request(address, `/streams/${encodeURIComponent(params.streamId)}/events?${query}`, "GET")
+    )
   }
 
   /** Whether a host attachment's bytes can be fetched yet, and from where. */
   async getAttachment(address: ConnectionAddress, attachmentId: string): Promise<BridgeAttachmentResponse> {
-    const res = await this.request(address, `/attachments/${encodeURIComponent(attachmentId)}`, "GET")
-    return bridgeAttachmentResponseSchema.parse(await res.json())
+    return bridgeAttachmentResponseSchema.parse(
+      await this.request(address, `/attachments/${encodeURIComponent(attachmentId)}`, "GET")
+    )
   }
 
   /** The id and card version of every memo the host shares from the channel. */
   async getMemoIndex(address: ConnectionAddress): Promise<BridgeMemoIndex> {
-    const res = await this.request(address, "/memos", "GET")
-    return bridgeMemoIndexSchema.parse(await res.json())
+    return bridgeMemoIndexSchema.parse(await this.request(address, "/memos", "GET"))
   }
 
   /** The given memos, for those the host still shares. */
   async getMemos(address: ConnectionAddress, memoIds: string[]): Promise<BridgeMemos> {
-    const res = await this.request(address, "/memos", "POST", { memoIds } satisfies BridgeMemosRequest)
-    return bridgeMemosSchema.parse(await res.json())
+    return bridgeMemosSchema.parse(
+      await this.request(address, "/memos", "POST", { memoIds } satisfies BridgeMemosRequest)
+    )
   }
 
   /** The conversations in the shared tree, each with its version. */
   async getConversationIndex(address: ConnectionAddress): Promise<BridgeConversationIndex> {
-    const res = await this.request(address, "/conversations", "GET")
-    return bridgeConversationIndexSchema.parse(await res.json())
+    return bridgeConversationIndexSchema.parse(await this.request(address, "/conversations", "GET"))
   }
 
   /** The given conversations, for those still in the shared tree. */
   async getConversations(address: ConnectionAddress, conversationIds: string[]): Promise<BridgeConversations> {
-    const res = await this.request(address, "/conversations", "POST", {
-      conversationIds,
-    } satisfies BridgeConversationsRequest)
-    return bridgeConversationsSchema.parse(await res.json())
+    return bridgeConversationsSchema.parse(
+      await this.request(address, "/conversations", "POST", {
+        conversationIds,
+      } satisfies BridgeConversationsRequest)
+    )
   }
 
   /** The other end's current name and avatar of the given users, for those it shares. */
   async getProfiles(address: ConnectionAddress, userIds: string[]): Promise<BridgeProfiles> {
-    const res = await this.request(address, "/profiles", "POST", { userIds } satisfies BridgeProfilesRequest)
-    return bridgeProfilesSchema.parse(await res.json())
+    return bridgeProfilesSchema.parse(
+      await this.request(address, "/profiles", "POST", { userIds } satisfies BridgeProfilesRequest)
+    )
   }
 
   /** Tells the other end some of this end's users changed, so it refreshes its copies of them. */
@@ -179,23 +181,30 @@ export class BridgeClient {
     await this.write(address, `${reactionPath(params.streamId, params.messageId, params.emoji)}?${query}`, "DELETE")
   }
 
-  /** A read the host never answered, answered with a 5xx, or asked to slow down may be retried. */
+  /**
+   * The host's JSON answer, or null for an empty one. A read the host never answered, broke off mid-body, answered
+   * with a 5xx, or asked to slow down may be retried.
+   */
   private async request(
     address: ConnectionAddress,
     path: string,
     method: "GET" | "POST",
     body?: unknown
-  ): Promise<Response> {
+  ): Promise<unknown> {
     const where = `${method} ${path.split("?")[0]}`
     let res: Response
+    let text: string
     try {
       res = await this.send(address, path, method, body)
+      text = await res.text()
     } catch (error) {
       throw hostUnreachable(`Bridge ${where} failed: ${error instanceof Error ? error.message : String(error)}`)
     }
-    if (res.ok) return res
-    const answer = `Bridge ${where} answered ${res.status}`
-    throw isRetryable(res.status) ? hostUnreachable(answer) : new Error(answer)
+    if (!res.ok) {
+      const answer = `Bridge ${where} answered ${res.status}`
+      throw isRetryable(res.status) ? hostUnreachable(answer) : new Error(answer)
+    }
+    return text ? JSON.parse(text) : null
   }
 
   /**
