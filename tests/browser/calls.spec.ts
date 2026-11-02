@@ -162,6 +162,15 @@ async function setUpDmPair(
   }
 }
 
+/** Every getUserMedia result the `p2p` capture probe in setUpDmPair recorded, by track id. */
+function readCaptures(page: Page): Promise<Array<{ audio: string[]; video: string[] }>> {
+  return page.evaluate(
+    () =>
+      (window as typeof window & { __testCallCaptures?: Array<{ audio: string[]; video: string[] }> })
+        .__testCallCaptures ?? []
+  )
+}
+
 async function startCallFromHeader(page: Page): Promise<void> {
   // The header call button is a menu (Start voice call / Start video call); open it
   // and pick the mic-only voice start.
@@ -557,6 +566,9 @@ test.describe("1:1 DM calls", () => {
       await expect(a.locator(CALL_TILE)).toHaveCount(2, { timeout: 20000 })
       await expect(b.locator(CALL_TILE)).toHaveCount(2, { timeout: 20000 })
       await b.getByRole("button", { name: "Turn camera on" }).click()
+      await expect
+        .poll(async () => (await readCaptures(b)).some(({ video }) => video.length > 0), { timeout: 10000 })
+        .toBe(true)
 
       const getSnapshot = async (page: Page) => {
         const response = await page.request.get(`/api/workspaces/${workspaceId}/calls/${callId}`)
@@ -574,15 +586,7 @@ test.describe("1:1 DM calls", () => {
       }
       expect(await getSnapshot(a)).toMatchObject({ mediaTransport: "sfu", transportGeneration: 1 })
       await enrollWorkspaceFlag(a, workspaceId, "callsP2p")
-      const capturesBeforeForward = await Promise.all(
-        [a, b].map((page) =>
-          page.evaluate(
-            () =>
-              (window as typeof window & { __testCallCaptures?: Array<{ audio: string[]; video: string[] }> })
-                .__testCallCaptures ?? []
-          )
-        )
-      )
+      const capturesBeforeForward = await Promise.all([a, b].map(readCaptures))
 
       await a.getByRole("button", { name: "Connection diagnostics" }).click()
       await a.getByRole("button", { name: "Switch to Peer to peer" }).click()
@@ -626,15 +630,7 @@ test.describe("1:1 DM calls", () => {
         .toMatchObject({ mediaTransport: "p2p", transportGeneration: 2 })
       await expect.poll(async () => (await getSnapshot(a)).transfer?.phase, { timeout: 10000 }).toBe("completed")
       await Promise.all([expectDecodedMediaOnEveryEdge(a, 1), expectDecodedMediaOnEveryEdge(b, 1)])
-      const capturesAfterForward = await Promise.all(
-        [a, b].map((page) =>
-          page.evaluate(
-            () =>
-              (window as typeof window & { __testCallCaptures?: Array<{ audio: string[]; video: string[] }> })
-                .__testCallCaptures ?? []
-          )
-        )
-      )
+      const capturesAfterForward = await Promise.all([a, b].map(readCaptures))
       expect(capturesAfterForward).toEqual(capturesBeforeForward)
       const timerBefore = await a.getByLabel("Call duration").textContent()
 
@@ -655,15 +651,7 @@ test.describe("1:1 DM calls", () => {
       await a.getByRole("button", { name: "Turn camera on" }).click()
       await expect.poll(() => sourceMediaSelected(b), { timeout: 20000 }).toBe(true)
       const [beforeAbortA, beforeAbortB] = await Promise.all([readMediaEdgeEvidence(a), readMediaEdgeEvidence(b)])
-      const capturesBeforeAbort = await Promise.all(
-        [a, b].map((page) =>
-          page.evaluate(
-            () =>
-              (window as typeof window & { __testCallCaptures?: Array<{ audio: string[]; video: string[] }> })
-                .__testCallCaptures ?? []
-          )
-        )
-      )
+      const capturesBeforeAbort = await Promise.all([a, b].map(readCaptures))
 
       await expect
         .poll(
@@ -702,15 +690,7 @@ test.describe("1:1 DM calls", () => {
       ])
       await expect(a.locator("body > audio")).toHaveCount(1)
       await expect(b.locator("body > audio")).toHaveCount(1)
-      const capturesAfter = await Promise.all(
-        [a, b].map((page) =>
-          page.evaluate(
-            () =>
-              (window as typeof window & { __testCallCaptures?: Array<{ audio: string[]; video: string[] }> })
-                .__testCallCaptures ?? []
-          )
-        )
-      )
+      const capturesAfter = await Promise.all([a, b].map(readCaptures))
       expect(capturesAfter).toEqual(capturesBeforeAbort)
       expect(await a.getByLabel("Call duration").textContent()).not.toBe("0:00")
       expect(timerBefore).not.toBeNull()
