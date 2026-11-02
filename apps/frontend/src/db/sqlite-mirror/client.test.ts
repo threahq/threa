@@ -48,7 +48,7 @@ function mirrorTab(
   }
 ) {
   const coordination = bus.coordination(database.sqliteWriter.id)
-  const mirror = new SqliteMirror({ database, coordination, createTransport: transport })
+  const mirror = new SqliteMirror({ database, mode: "shadow", coordination, createTransport: transport })
   database.sqliteMirror = mirror
   mirror.start()
   return { mirror, coordination }
@@ -238,6 +238,7 @@ describe("SqliteMirror", () => {
         return {
           request: (request) =>
             request.type === "apply" && !applies ? new Promise<MirrorReply>(() => {}) : inner.request(request),
+          heardAt: () => 0,
           close: () => {},
         }
       })
@@ -352,6 +353,7 @@ describe("SqliteMirror", () => {
       const inner = inProcessTransport(deadSqlite)
       return {
         request: (request) => (request.type === "apply" ? new Promise<MirrorReply>(() => {}) : inner.request(request)),
+        heardAt: () => 0,
         close: () => {},
       }
     })
@@ -391,6 +393,7 @@ describe("SqliteMirror", () => {
       request: async () => {
         throw new Error("no OPFS")
       },
+      heardAt: () => 0,
       close: () => {},
     }))
     await settle()
@@ -444,6 +447,7 @@ describe("SqliteMirror", () => {
     const base = owner.bus.coordination(followerDb.sqliteWriter.id)
     const follower = new SqliteMirror({
       database: followerDb,
+      mode: "shadow",
       coordination: { ...base, claim: (onChange) => (answerClaim = onChange) },
       createTransport: () => {
         throw new Error("a follower never opens the file")
@@ -468,12 +472,14 @@ describe("SqliteMirror", () => {
     const coordination = newBus().coordination()
     const mirror = new SqliteMirror({
       database,
+      mode: "shadow",
       coordination,
       createTransport: () => ({
         request: async (request) => {
           requests.push(request.type)
           return { ok: true, ms: 0 }
         },
+        heardAt: () => 0,
         close: () => closed++,
       }),
     })
@@ -481,7 +487,7 @@ describe("SqliteMirror", () => {
     await mirror.stop()
 
     expect({ requests, closed, released: coordination.resigned() }).toEqual({
-      requests: ["destroy"],
+      requests: ["open", "destroy"],
       closed: 1,
       released: true,
     })
@@ -496,6 +502,7 @@ describe("SqliteMirror", () => {
     const crashing = mirrorTab(database, bus, () => ({
       request: (request): Promise<MirrorReply> =>
         request.type === "open" ? Promise.resolve({ ok: true, ms: 0 }) : new Promise((_, reject) => (crash = reject)),
+      heardAt: () => 0,
       close: () => crash(new Error("closed")),
     }))
     await settle()

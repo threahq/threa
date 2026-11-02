@@ -10,7 +10,7 @@ import { ThreaDatabase, accountDbName } from "@/db"
 // sole writer of the active-db pointer, so the mutator is intentionally kept
 // off the shared barrel (INV-9 — single-owner scope bridge).
 import { setActiveDb } from "@/db/database"
-import { resumeSqliteShadow } from "@/db/sqlite-mirror/lifecycle"
+import { resumeSqliteMirror } from "@/db/sqlite-mirror/lifecycle"
 import { setStorageAccount } from "@/lib/account-storage"
 import { makeQueryClient } from "@/contexts/query-client"
 import { resetWorkspaceStoreCache } from "@/stores/workspace-store"
@@ -211,7 +211,7 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
       inst = new ThreaDatabase(accountDbName(id), id)
       // Here, not in the constructor: the service worker opens the same class,
       // and the mirror's worker import must stay out of its bundle.
-      resumeSqliteShadow(inst)
+      resumeSqliteMirror(inst)
       dbRegistry.current.set(id, inst)
     }
     return inst

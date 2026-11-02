@@ -1,5 +1,5 @@
 import type { DBCoreKeyRange } from "dexie"
-import type { IdbWrite } from "../transaction-middleware"
+import type { IdbWrite } from "./middleware"
 
 /** What a committed write touched: the keys or key range IndexedDB must be asked about again. */
 export type Touched = { store: string; keys: IDBValidKey[] } | { store: string; range: DBCoreKeyRange }

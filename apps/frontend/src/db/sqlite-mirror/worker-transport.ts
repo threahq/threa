@@ -4,6 +4,7 @@ export function createWorkerTransport(): MirrorTransport {
   const worker = new Worker(new URL("./mirror-worker.ts", import.meta.url), { type: "module" })
   const pending = new Map<number, { resolve: (reply: MirrorReply) => void; reject: (error: Error) => void }>()
   let nextId = 0
+  let heardAt = 0
 
   function rejectAll(error: Error): void {
     for (const { reject } of pending.values()) reject(error)
@@ -11,6 +12,8 @@ export function createWorkerTransport(): MirrorTransport {
   }
 
   worker.onmessage = ({ data }: MessageEvent<WorkerResponse>) => {
+    heardAt = performance.now()
+    if (!("reply" in data)) return
     pending.get(data.id)?.resolve(data.reply)
     pending.delete(data.id)
   }
@@ -25,6 +28,7 @@ export function createWorkerTransport(): MirrorTransport {
         worker.postMessage(envelope)
       })
     },
+    heardAt: () => heardAt,
     close() {
       worker.terminate()
       rejectAll(new Error("SQLite mirror closed"))
