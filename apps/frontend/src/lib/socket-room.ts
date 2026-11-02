@@ -4,6 +4,7 @@ import {
   beginConnectivityObservation,
   categorizeRoom,
   getSocketDiagnosticContext,
+  recordConnectivityEvent,
   type ConnectivityObservation,
 } from "./connectivity-diagnostics/facade"
 
@@ -22,6 +23,61 @@ const JOIN_FAILURE_REASON = Symbol("joinFailureReason")
 type JoinFailureReason = "abort" | "timeout" | "disconnect"
 type JoinFailure = Error & { [JOIN_FAILURE_REASON]?: JoinFailureReason }
 const pendingJoinsBySocket = new WeakMap<Socket, Map<string, Promise<void>>>()
+// A reconnect rejoins every subscribed room one call at a time; joins that
+// start within this window of the previous settle belong to the same wave.
+const JOIN_WAVE_SETTLE_MS = 1000
+// Production acks sit near 100ms at p50 and under 800ms at p99.9; the request
+// threshold (5s) would equal the join timeout and never fire.
+export const SLOW_JOIN_ACK_MS = 1000
+
+interface JoinWave {
+  inFlight: number
+  ackMs: number[]
+  failed: number
+  timer: ReturnType<typeof setTimeout> | null
+  context: { connectionId: string; generation: number } | undefined
+}
+
+const joinWavesBySocket = new WeakMap<Socket, JoinWave>()
+
+function enterJoinWave(socket: Socket): JoinWave {
+  let wave = joinWavesBySocket.get(socket)
+  if (!wave) {
+    wave = { inFlight: 0, ackMs: [], failed: 0, timer: null, context: getSocketDiagnosticContext(socket) }
+    joinWavesBySocket.set(socket, wave)
+  }
+  if (wave.timer) clearTimeout(wave.timer)
+  wave.timer = null
+  wave.inFlight++
+  return wave
+}
+
+function leaveJoinWave(socket: Socket, wave: JoinWave, outcome: { ackMs: number } | "failed" | "aborted") {
+  wave.inFlight--
+  if (outcome === "failed") wave.failed++
+  else if (outcome !== "aborted") wave.ackMs.push(outcome.ackMs)
+  if (wave.inFlight > 0) return
+  wave.timer = setTimeout(() => {
+    joinWavesBySocket.delete(socket)
+    recordJoinWave(wave)
+  }, JOIN_WAVE_SETTLE_MS)
+}
+
+function recordJoinWave(wave: JoinWave): void {
+  const count = wave.ackMs.length + wave.failed
+  if (count === 0) return
+  const sorted = [...wave.ackMs].sort((a, b) => a - b)
+  const percentile = (q: number) => (sorted.length ? sorted[Math.ceil(q * sorted.length) - 1] : undefined)
+  recordConnectivityEvent("room_join_wave", {
+    connectionId: wave.context?.connectionId,
+    generation: wave.context?.generation,
+    count,
+    failed: wave.failed,
+    p50Ms: percentile(0.5),
+    p95Ms: percentile(0.95),
+    maxMs: sorted.at(-1),
+  })
+}
 
 function joinFailure(message: string, reason: JoinFailureReason): Error {
   const error: JoinFailure = new Error(message)
@@ -201,17 +257,23 @@ export async function joinRoomWithAck(socket: Socket, room: string, options?: Jo
     connectionId: socketContext?.connectionId,
     generation: socketContext?.generation,
   })
-  observation.record("room_join_start")
+  const wave = enterJoinWave(socket)
+  const startedAt = performance.now()
   const joinPromise = (async () => {
     try {
       await waitForConnection(socket, room, timeoutMs, observation, signal)
       if (signal?.aborted) throw joinFailure(`Join aborted for room "${room}"`, "abort")
       await emitJoinWithAck(socket, room, timeoutMs)
-      observation.record("room_join_ack")
+      const elapsedMs = Math.round(performance.now() - startedAt)
+      // Fast acks are evidence only in aggregate; the wave summary carries them.
+      if (elapsedMs >= SLOW_JOIN_ACK_MS) observation.record("room_join_ack")
+      leaveJoinWave(socket, wave, { ackMs: elapsedMs })
     } catch (error) {
       const failureReason = joinFailureReason(error)
       const reason = failureReason === "abort" || failureReason === "timeout" ? failureReason : "unknown"
-      observation.record(failureReason === "abort" ? "room_join_abort" : "room_join_failure", { reason })
+      const aborted = failureReason === "abort"
+      observation.record(aborted ? "room_join_abort" : "room_join_failure", { reason })
+      leaveJoinWave(socket, wave, aborted ? "aborted" : "failed")
       throw error
     }
   })()

@@ -106,7 +106,6 @@ export async function requestMultipart<T>(
   fallback: { code?: string; message?: string } = {}
 ): Promise<T> {
   const observation = beginConnectivityObservation({ method: "POST", route: categorizeRoute(path), transport: "fetch" })
-  observation.record("http_start")
   const startedAt = performance.now()
   // Phase detail (headers/body) is only evidence for slow requests; fast ones
   // would triple telemetry volume without improving diagnosis.
@@ -182,7 +181,6 @@ async function apiFetch<T>(path: string, options: ApiRequestInit = {}): Promise<
   const { timeoutMs = DEFAULT_TIMEOUT_MS, signal: callerSignal, ...init } = options
   const method = (init.method ?? "GET") as "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
   const observation = beginConnectivityObservation({ method, route: categorizeRoute(path), transport: "fetch" })
-  observation.record("http_start")
   const startedAt = performance.now()
   // Phase detail (headers/body) is only evidence for slow requests; fast ones
   // would triple telemetry volume without improving diagnosis.

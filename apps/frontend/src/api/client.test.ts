@@ -168,7 +168,7 @@ describe("apiFetch body lifetime", () => {
     expect(error).toBe(transport.signal().reason)
     expect(error).toMatchObject({ name: "AbortError" })
     expect(ApiError.isApiError(error)).toBe(false)
-    expect(events.map(({ event }) => event)).toEqual(["http_start", "http_abort"])
+    expect(events.map(({ event }) => event)).toEqual(["http_abort"])
   })
 
   it.each([200, 401])("should time out a held %s body without producing an auth error", async (status) => {
@@ -184,7 +184,7 @@ describe("apiFetch body lifetime", () => {
     expect(error).toMatchObject({ message: "Request timed out after 50ms" })
     expect(ApiError.isApiError(error)).toBe(false)
     expect(transport.signal().aborted).toBe(true)
-    expect(events.map(({ event }) => event)).toEqual(["http_start", "http_stalled", "http_timeout"])
+    expect(events.map(({ event }) => event)).toEqual(["http_stalled", "http_timeout"])
   })
 
   it.each([200, 204])("should clean up cancellation and timeout after a completed %s response", async (status) => {
@@ -222,11 +222,10 @@ describe("apiFetch body lifetime", () => {
     await expect(api.get("/anything", { signal: caller.signal })).rejects.toBe(error)
     expect(remove).toHaveBeenCalledExactlyOnceWith("abort", expect.any(Function))
     expect(events.map(({ event, fields }) => ({ event, reason: fields.reason }))).toEqual([
-      { event: "http_start", reason: undefined },
       { event: "http_failure", reason: "network" },
     ])
     await vi.advanceTimersByTimeAsync(20000)
-    expect(events.map(({ event }) => event)).toEqual(["http_start", "http_failure"])
+    expect(events.map(({ event }) => event)).toEqual(["http_failure"])
   })
 
   it("should preserve a real server 401 and malformed successful JSON", async () => {
@@ -247,9 +246,7 @@ describe("apiFetch body lifetime", () => {
     })
     await vi.advanceTimersByTimeAsync(20000)
     expect(events.map(({ event, fields }) => ({ event, reason: fields.reason }))).toEqual([
-      { event: "http_start", reason: undefined },
       { event: "http_failure", reason: "server" },
-      { event: "http_start", reason: undefined },
       { event: "http_failure", reason: "unknown" },
     ])
   })
@@ -285,7 +282,7 @@ describe("HTTP connectivity phases", () => {
     finishBody?.({ ok: true })
 
     await expect(request).resolves.toEqual({ ok: true })
-    expect(events.map((entry) => entry.event)).toEqual(["http_start", "http_stalled", "http_body_complete"])
+    expect(events.map((entry) => entry.event)).toEqual(["http_stalled", "http_body_complete"])
     expect(events.find((entry) => entry.event === "http_body_complete")?.fields).toEqual({
       method: "GET",
       route: "streams",
@@ -296,7 +293,7 @@ describe("HTTP connectivity phases", () => {
     })
   })
 
-  it("should keep fast requests to a single start event", async () => {
+  it("should record nothing for a fast request", async () => {
     const events: RecordedEvent[] = []
     captureConnectivityEvents(events)
     globalThis.fetch = vi.fn().mockResolvedValue(
@@ -307,12 +304,7 @@ describe("HTTP connectivity phases", () => {
     ) as unknown as typeof fetch
 
     await expect(api.get("/api/workspaces/ws/streams")).resolves.toEqual({ ok: true })
-    expect(events).toEqual([
-      {
-        event: "http_start",
-        fields: { method: "GET", route: "streams", transport: "fetch", operationId: "op_test" },
-      },
-    ])
+    expect(events).toEqual([])
   })
 
   it("should instrument multipart fetch without adding a request timeout", async () => {
@@ -328,12 +320,7 @@ describe("HTTP connectivity phases", () => {
     await expect(
       postMultipartFile("/api/workspaces/ws/profile/avatar", new File(["x"], "x.png"), "avatar")
     ).resolves.toEqual({ ok: true })
-    expect(events).toEqual([
-      {
-        event: "http_start",
-        fields: { method: "POST", route: "avatars", transport: "fetch", operationId: "op_test" },
-      },
-    ])
+    expect(events).toEqual([])
     expect(vi.mocked(globalThis.fetch).mock.calls[0]![1]).not.toHaveProperty("signal")
   })
 
@@ -355,10 +342,6 @@ describe("HTTP connectivity phases", () => {
 
     expect(error).toBeInstanceOf(SyntaxError)
     expect(events).toEqual([
-      {
-        event: "http_start",
-        fields: { method: "POST", route: "avatars", transport: "fetch", operationId: "op_test" },
-      },
       {
         event: "http_failure",
         fields: {

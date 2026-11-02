@@ -71,7 +71,7 @@ describe("connectivity diagnostics persistence", () => {
     })
 
     configureConnectivityDiagnostics(scope)
-    recordConnectivityEvent("http_start", { operationId: "op_1", method: "GET", route: "streams" })
+    recordConnectivityEvent("http_failure", { operationId: "op_1", method: "GET", route: "streams" })
     await settleWrites()
 
     expect(await flushConnectivityDiagnostics()).toBe(false)
@@ -94,7 +94,7 @@ describe("connectivity diagnostics persistence", () => {
     const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }))
 
     configureConnectivityDiagnostics(scope)
-    recordConnectivityEvent("http_start", { method: "GET", route: "workspace_config" })
+    recordConnectivityEvent("http_failure", { method: "GET", route: "workspace_config" })
 
     expect(await flushConnectivityDiagnostics()).toBe(false)
     await vi.waitFor(async () => {
@@ -177,7 +177,7 @@ describe("connectivity diagnostics persistence", () => {
   it("should bound persisted rows, encoded bytes, and age", async () => {
     configureConnectivityDiagnostics(scope)
     for (let index = 0; index < connectivityDiagnosticsTestApi.MAX_ROWS + 80; index++) {
-      recordConnectivityEvent("http_start", { operationId: crypto.randomUUID(), method: "GET", route: "messages" })
+      recordConnectivityEvent("http_failure", { operationId: crypto.randomUUID(), method: "GET", route: "messages" })
       if (index % 50 === 49) await new Promise((resolve) => setTimeout(resolve, 0))
     }
     await settleWrites()
@@ -186,7 +186,7 @@ describe("connectivity diagnostics persistence", () => {
     await connectivityDiagnosticsTestApi.db.events.update(existing!.id, {
       createdAt: Date.now() - connectivityDiagnosticsTestApi.MAX_AGE_MS - 1,
     })
-    recordConnectivityEvent("http_start", { method: "GET", route: "sync" })
+    recordConnectivityEvent("http_failure", { method: "GET", route: "sync" })
     await new Promise((resolve) => setTimeout(resolve, 20))
 
     const rows = await connectivityDiagnosticsTestApi.db.events.toArray()
@@ -367,7 +367,7 @@ describe("connectivity diagnostics persistence", () => {
       (_, index) => `op_${index}`
     )
     for (const operationId of operationIds)
-      recordConnectivityEvent("http_start", { operationId, method: "GET", route: "messages" })
+      recordConnectivityEvent("http_failure", { operationId, method: "GET", route: "messages" })
     await settleWrites()
 
     expect(await flushConnectivityDiagnostics()).toBe(true)
@@ -379,6 +379,53 @@ describe("connectivity diagnostics persistence", () => {
         .sort()
     ).toEqual(operationIds.sort())
     expect(await connectivityDiagnosticsTestApi.db.events.count()).toBe(0)
+  })
+
+  it("should deliver elapsed time on observed rows and only bounded wave fields", async () => {
+    const batches: Array<Array<{ event: string; properties: Record<string, unknown> }>> = []
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      batches.push(JSON.parse(String(init?.body)).batch)
+      return new Response(null, { status: 200 })
+    })
+    configureConnectivityDiagnostics(scope)
+    beginConnectivityObservation({ room: "stream" }).record("room_join_failure", { reason: "timeout" })
+    recordConnectivityEvent("room_join_wave", { count: 3, failed: 1, p50Ms: 10, p95Ms: 12, maxMs: -1 })
+    await settleWrites()
+
+    expect(await flushConnectivityDiagnostics()).toBe(true)
+    const pick = ({ event, properties }: { event: string; properties: Record<string, unknown> }) => ({
+      event,
+      elapsedMs: properties.elapsedMs,
+      count: properties.count,
+      failed: properties.failed,
+      p50Ms: properties.p50Ms,
+      p95Ms: properties.p95Ms,
+      maxMs: properties.maxMs,
+    })
+    const delivered = batches
+      .flat()
+      .map(pick)
+      .sort((a, b) => a.event.localeCompare(b.event))
+    expect(delivered).toEqual([
+      {
+        event: "connectivity_room_join_failure",
+        elapsedMs: expect.any(Number),
+        count: undefined,
+        failed: undefined,
+        p50Ms: undefined,
+        p95Ms: undefined,
+        maxMs: undefined,
+      },
+      {
+        event: "connectivity_room_join_wave",
+        elapsedMs: undefined,
+        count: 3,
+        failed: 1,
+        p50Ms: 10,
+        p95Ms: 12,
+        maxMs: undefined,
+      },
+    ])
   })
 
   it("should retain a single-task burst beyond the drain target", async () => {
@@ -394,7 +441,7 @@ describe("connectivity diagnostics persistence", () => {
       (_, index) => `op_${index}`
     )
     for (const operationId of operationIds)
-      recordConnectivityEvent("http_start", { operationId, method: "GET", route: "messages" })
+      recordConnectivityEvent("http_failure", { operationId, method: "GET", route: "messages" })
     await settleWrites()
 
     expect(await flushConnectivityDiagnostics()).toBe(true)
@@ -455,11 +502,11 @@ describe("connectivity diagnostics persistence", () => {
     configureConnectivityDiagnostics(scope)
     await new Promise((resolve) => setTimeout(resolve, 0))
     for (let index = 0; index < connectivityDiagnosticsTestApi.MAX_MEMORY_HARD_ROWS + 50; index++)
-      recordConnectivityEvent("http_start", { operationId: `op_${index}`, method: "GET", route: "messages" })
+      recordConnectivityEvent("http_failure", { operationId: `op_${index}`, method: "GET", route: "messages" })
     await settleWrites()
 
     expect(await flushConnectivityDiagnostics()).toBe(true)
-    const delivered = batches.flat().filter((event) => event.event === "connectivity_http_start")
+    const delivered = batches.flat().filter((event) => event.event === "connectivity_http_failure")
     const dropEvents = batches.flat().filter((event) => event.event === "connectivity_diagnostics_dropped")
     expect(dropEvents).toHaveLength(1)
     expect(dropEvents[0]!.properties).toMatchObject({
@@ -478,7 +525,7 @@ describe("connectivity diagnostics persistence", () => {
       Array.from({ length: connectivityDiagnosticsTestApi.MAX_ROWS + overflow }, (_, index) => ({
         id: `seeded_${index}`,
         scope: connectivityDiagnosticsTestApi.scopeOf(scope),
-        event: "http_start" as const,
+        event: "http_failure" as const,
         bootId: "boot_test",
         browserSessionId: "session_test",
         appVersion: "test",

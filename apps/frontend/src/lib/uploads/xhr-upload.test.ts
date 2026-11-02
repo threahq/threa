@@ -80,7 +80,6 @@ describe("xhrUpload connectivity phases", () => {
       operationId: "op_test",
     }
     expect(events).toEqual([
-      { event: "http_start", fields: base },
       { event: "http_stalled", fields: base },
       { event: "http_upload_complete", fields: base },
       { event: "http_headers", fields: { ...base, status: 201, correlationId: "railway_1" } },
@@ -89,7 +88,7 @@ describe("xhrUpload connectivity phases", () => {
     expect(events[0]!.fields).not.toHaveProperty("url")
   })
 
-  it("should keep a fast upload to start and upload-complete events", async () => {
+  it("should keep a fast upload to its upload-complete event", async () => {
     const result = xhrUpload({
       url: "/api/workspaces/ws/attachments/id/content",
       blob: new Blob(["payload"]),
@@ -107,10 +106,7 @@ describe("xhrUpload connectivity phases", () => {
       transport: "xhr" as const,
       operationId: "op_test",
     }
-    expect(events).toEqual([
-      { event: "http_start", fields: base },
-      { event: "http_upload_complete", fields: base },
-    ])
+    expect(events).toEqual([{ event: "http_upload_complete", fields: base }])
   })
 
   it("should preserve caller cancellation and classify it as an abort", async () => {
@@ -130,9 +126,6 @@ describe("xhrUpload connectivity phases", () => {
       transport: "xhr" as const,
       operationId: "op_test",
     }
-    expect(events).toEqual([
-      { event: "http_start", fields: base },
-      { event: "http_abort", fields: { ...base, reason: "abort" } },
-    ])
+    expect(events).toEqual([{ event: "http_abort", fields: { ...base, reason: "abort" } }])
   })
 })

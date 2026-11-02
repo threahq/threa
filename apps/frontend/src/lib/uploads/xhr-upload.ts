@@ -57,7 +57,6 @@ export function xhrUpload({
     formData.append("file", blob, filename)
 
     const observation = beginConnectivityObservation({ method: "POST", route: categorizeRoute(url), transport: "xhr" })
-    observation.record("http_start")
     const startedAt = performance.now()
     // Phase detail (headers/body) is only evidence for slow requests; fast ones
     // would triple telemetry volume without improving diagnosis.
