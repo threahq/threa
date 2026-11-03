@@ -9,7 +9,15 @@ import { encodeValue } from "./value-codec"
 import { adoptDeliveredMode, resumeSqliteMirror } from "./lifecycle"
 import { WS, gate, mirroredDatabases, mirroredStores, until, type MirroredOptions } from "./mirrored-databases"
 import { txOf, type MirrorReply, type MirrorRequest } from "./protocol"
-import { readRecordedMode, recordMode, resetStorageRestartForTests } from "./storage-mode"
+import * as storageDiagnostics from "./storage-diagnostics"
+import {
+  onStorageUpgrade,
+  readRecordedMode,
+  recordMode,
+  resetStorageRestartForTests,
+  storageUpgrade,
+  type StorageUpgradeProgress,
+} from "./storage-mode"
 import { createBus, inProcessTransport } from "./test-harness"
 
 let openMirrored: ReturnType<typeof mirroredDatabases>["openMirrored"]
@@ -362,22 +370,77 @@ describe("read-write SQLite storage", () => {
     expect(recordedAtWrite).toEqual(["read-write"])
   })
 
-  it("asks for a restart once the backfill an entering boot deferred on completes, never reloading itself", async () => {
+  it("holds the app behind the upgrade lock while an entering boot copies every store, then restarts every tab", async () => {
+    const name = `upgrade_${Date.now()}`
+    const seeded = plainDatabase(name)
+    await seeded.syncCursors.bulkPut([cursor("a", "1"), cursor("b", "1"), cursor("c", "1")])
+    seeded.close()
+    adoptDeliveredMode(name, WS, "read-write")
+    const seen: Array<StorageUpgradeProgress | null> = []
+    owned.push(onStorageUpgrade(() => seen.push(storageUpgrade())))
+    const requestRestart = vi.fn()
+    const restartEveryTab = vi.fn()
+    const entering = openMirrored({ name, mode: "read-write", entering: true, requestRestart, restartEveryTab })
+    await entering.database.open()
+    await until(() => restartEveryTab.mock.calls.length === 1, "every tab to be restarted")
+    expect({
+      first: seen[0],
+      last: seen.at(-1),
+      locked: storageUpgrade() !== null,
+      asked: requestRestart.mock.calls.length,
+      recorded: await readRecordedMode(name),
+      reloads: reloadSpy.mock.calls.length,
+    }).toEqual({
+      first: { copied: 0, total: null },
+      last: { copied: 3, total: 3 },
+      locked: true,
+      asked: 0,
+      recorded: "off",
+      reloads: 0,
+    })
+  })
+
+  it("unlocks an upgrade that outlasts its lock, reporting it unfinished, and asks for the restart once the copy completes", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
     owned.push(() => warn.mockRestore())
-    const name = `deferred_${Date.now()}`
+    const failures = vi.spyOn(storageDiagnostics, "reportStorageFailure")
+    owned.push(() => failures.mockRestore())
+    const name = `upgrade_late_${Date.now()}`
+    const seeded = plainDatabase(name)
+    await seeded.syncCursors.put(cursor("a", "1"))
+    seeded.close()
     adoptDeliveredMode(name, WS, "read-write")
+    const copying = gate()
     const requestRestart = vi.fn()
-    const entering = openMirrored({ name, mode: "read-write", entering: true, requestRestart })
+    const restartEveryTab = vi.fn()
+    const entering = openMirrored({
+      name,
+      mode: "read-write",
+      entering: true,
+      requestRestart,
+      restartEveryTab,
+      deadlines: { upgradeMs: 20 },
+      beforeRequest: (request) => (request.type === "backfillChunk" ? copying.opened : undefined),
+    })
     await entering.database.open()
+    await until(() => failures.mock.calls.some(([kind]) => kind === "upgrade_unfinished"), "the lock to run out")
+    const unlocked = storageUpgrade()
+    copying.open()
     await until(() => requestRestart.mock.calls.length === 1, "a restart to be asked for")
-    const afterBackfill = { readWrite: entering.mirror.readWrite, recorded: await readRecordedMode(name) }
-    await entering.database.syncCursors.put(cursor("a", "1"))
+    await entering.database.syncCursors.put(cursor("b", "1"))
     expect({
-      afterBackfill,
+      unlocked,
+      restarted: restartEveryTab.mock.calls.length,
+      readWrite: entering.mirror.readWrite,
       cursors: await cursorsIn(plainDatabase(name)),
       reloads: reloadSpy.mock.calls.length,
-    }).toEqual({ afterBackfill: { readWrite: false, recorded: "off" }, cursors: [cursor("a", "1")], reloads: 0 })
+    }).toEqual({
+      unlocked: null,
+      restarted: 0,
+      readWrite: false,
+      cursors: [cursor("a", "1"), cursor("b", "1")],
+      reloads: 0,
+    })
   })
 
   it("hands a read-write database back to IndexedDB in every tab when SQLite no longer holds every store, as after an upgrade", async () => {
@@ -802,6 +865,35 @@ describe("read-write SQLite storage", () => {
         readWrite: entering.database.sqliteMirror?.readWrite,
         recorded: await readRecordedMode(name),
       }).toEqual({ whileBlocked: { mirror: null, recorded: "off" }, readWrite: true, recorded: "read-write" })
+    })
+
+    it("holds every other tab out while the entering boot copies, until the upgrade restarts them all", async () => {
+      const name = `upgrade_hold_${Date.now()}`
+      adoptDeliveredMode(name, WS, "read-write")
+      const sqlite: Database = new sqlite3.oo1.DB(":memory:")
+      owned.push(() => sqlite.close())
+      const bus = createBus()
+      const copying = gate()
+      const entering = bootTab(name, sqlite, bus, async (request, next) => {
+        if (request.type === "backfillBegin") await copying.opened
+        return next()
+      })
+      await entering.database.open()
+      await until(() => storageUpgrade() !== null, "the upgrade to lock the app")
+      let opened = false
+      void bootTab(name, sqlite, bus)
+        .database.open()
+        .then(() => (opened = true))
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const whileCopying = opened
+      copying.open()
+      await until(() => reloadSpy.mock.calls.length === 1, "every tab to be restarted")
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      expect({ whileCopying, afterCopy: opened, locked: storageUpgrade() !== null }).toEqual({
+        whileCopying: false,
+        afterCopy: false,
+        locked: true,
+      })
     })
 
     it("leaves read-write only once every tab closed, landing every tab's rows in IndexedDB and dropping SQLite", async () => {

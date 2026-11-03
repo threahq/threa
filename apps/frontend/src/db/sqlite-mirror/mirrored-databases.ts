@@ -16,6 +16,8 @@ export interface MirroredOptions {
   /** This boot holds every other tab out, so read-write may make SQLite the primary copy. */
   entering?: boolean
   requestRestart?: () => void
+  /** Stands in for reloading every tab once an upgrade copied every store; a no-op by default. */
+  restartEveryTab?: () => void
   bus?: ReturnType<typeof createBus>
   name?: string
   sqlite?: Database
@@ -114,6 +116,7 @@ export function mirroredDatabases(sqlite3: Sqlite3, owned: Array<() => void>) {
       deadlines: options.deadlines,
       entering: options.entering,
       requestRestart: options.requestRestart,
+      restartEveryTab: options.restartEveryTab ?? (() => {}),
     })
     database.sqliteMirror = mirror
     database.sqliteBoot = mirror.beforeIdbOpen()

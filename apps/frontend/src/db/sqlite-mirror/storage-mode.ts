@@ -135,9 +135,34 @@ export function onStorageRestartPending(listener: () => void): () => void {
 export function resetStorageRestartForTests(): void {
   restartPending.clear()
   restartDismissed = false
+  upgrade = null
 }
 
-/** Every tab of this origin boots again, under the modes recorded meanwhile; only the user asks for it. */
+/** Rows copied into SQLite so far, of `total`; `null` until the rows are counted. */
+export interface StorageUpgradeProgress {
+  copied: number
+  total: number | null
+}
+
+let upgrade: StorageUpgradeProgress | null = null
+const upgradeListeners = new Set<() => void>()
+
+/** SQLite storage copies every store before it switches to read-write; the app waits behind a lock meanwhile. */
+export function storageUpgrade(): StorageUpgradeProgress | null {
+  return upgrade
+}
+
+export function reportStorageUpgrade(progress: StorageUpgradeProgress | null): void {
+  upgrade = progress
+  for (const listener of upgradeListeners) listener()
+}
+
+export function onStorageUpgrade(listener: () => void): () => void {
+  upgradeListeners.add(listener)
+  return () => upgradeListeners.delete(listener)
+}
+
+/** Every tab of this origin boots again, under the modes recorded meanwhile; only the user asks for it, or an upgrade it waits for. */
 export function reloadEveryTab(): void {
   const channel = new BroadcastChannel(RELOAD_CHANNEL)
   channel.postMessage("reload")

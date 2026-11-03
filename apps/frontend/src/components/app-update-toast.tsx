@@ -3,6 +3,7 @@ import { toast } from "@/lib/sonner-module"
 import { Toaster } from "@/components/ui/sonner"
 import { useAppUpdate } from "@/hooks/use-app-update"
 import { StorageRestartNotifier } from "@/components/storage-restart-notifier"
+import { StorageUpgradeLock } from "@/components/storage-upgrade-lock"
 
 const TOAST_ID = "app-update"
 
@@ -140,6 +141,7 @@ export function AppToastHost() {
       <Toaster />
       <AppUpdateNotifier />
       <StorageRestartNotifier />
+      <StorageUpgradeLock />
     </>
   )
 }

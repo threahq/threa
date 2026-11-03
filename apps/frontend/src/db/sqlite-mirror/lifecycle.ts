@@ -138,13 +138,16 @@ async function bootStorage(database: ThreaDatabase, boot: StorageBoot): Promise<
     throw cannotRunReadWrite(name)
   }
   if (release) {
-    // Entering read-write holds the others out until the mirror decided, recording the mode before any of them boots.
+    // Entering read-write holds the others out until the mirror decided, recording the mode before any of them boots,
+    // and, short of a full copy, until the upgrade that restarts them all ends.
     // A boot taking the exclusive side before this tab's shared one is granted re-reads that mode, so it switches
     // only on a flag change, which asks every tab for a restart; its worker cannot open the file this tab's worker holds.
-    void (entering && mirror ? mirror.whenRoutable() : Promise.resolve()).then(() => {
-      release()
-      return boot.lock.shared()
-    })
+    void (entering && mirror ? mirror.whenRoutable().then(() => mirror.whenUpgradeEnds()) : Promise.resolve()).then(
+      () => {
+        release()
+        return boot.lock.shared()
+      }
+    )
   }
   await mirror?.beforeIdbOpen()
 }

@@ -48,6 +48,14 @@ export async function readChunk(
   return { keys: keys.result, values: values.result }
 }
 
+export async function countRows(idb: IDBDatabase, stores: string[]): Promise<number> {
+  if (stores.length === 0) return 0
+  const tx = idb.transaction(stores, "readonly")
+  const counts = stores.map((store) => tx.objectStore(store).count())
+  await transactionDone(tx)
+  return counts.reduce((sum, count) => sum + count.result, 0)
+}
+
 /**
  * Reads what IndexedDB holds now for each touched key or range (a missing key
  * reads as `undefined`) and hands the rows to `onRead` before the transaction
