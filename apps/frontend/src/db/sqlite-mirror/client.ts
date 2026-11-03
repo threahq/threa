@@ -1,6 +1,7 @@
 import { RangeSet } from "dexie"
 import type { ThreaDatabase } from "../database"
 import { getPerfCapture } from "@/lib/perf/capture"
+import { discardPrefetches } from "../prefetch-inbox"
 import { drainBacklog } from "./idb-backlog"
 import { readChunk, readTouched, touchedOf, type Touched, type TouchedRows } from "./idb-reads"
 import { encodeKey, encodeRange } from "./key-codec"
@@ -1105,6 +1106,7 @@ export class SqliteMirror {
     } else if (entering) {
       this.settleServing(false)
     } else {
+      await discardPrefetches(database.name)
       await this.drain()
       await recordMode(database.name, "read-only")
       ;(this.options.reloadEveryTab ?? reloadEveryTab)()

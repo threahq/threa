@@ -11,6 +11,7 @@ import { ThreaDatabase, accountDbName } from "@/db"
 // off the shared barrel (INV-9 — single-owner scope bridge).
 import { setActiveDb } from "@/db/database"
 import { resumeSqliteMirror } from "@/db/sqlite-mirror/lifecycle"
+import { drainPrefetchesOnOpen, watchPrefetchInbox } from "@/lib/sw-prefetch-inbox"
 import { setStorageAccount } from "@/lib/account-storage"
 import { makeQueryClient } from "@/contexts/query-client"
 import { resetWorkspaceStoreCache } from "@/stores/workspace-store"
@@ -212,6 +213,7 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
       // Here, not in the constructor: the service worker opens the same class,
       // and the mirror's worker import must stay out of its bundle.
       resumeSqliteMirror(inst)
+      drainPrefetchesOnOpen(inst)
       dbRegistry.current.set(id, inst)
     }
     return inst
@@ -266,6 +268,9 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
     setStorageAccount(effectiveId)
     setAdopted({ id: effectiveId })
   }, [adopted, effectiveId, resolveDb])
+
+  const adoptedId = adopted?.id ?? null
+  useEffect(() => (adoptedId ? watchPrefetchInbox(resolveDb(adoptedId)) : undefined), [adoptedId, resolveDb])
 
   const effectiveIdRef = useRef(effectiveId)
   effectiveIdRef.current = effectiveId

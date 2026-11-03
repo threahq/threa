@@ -1,10 +1,17 @@
-import { ACCOUNT_ASSERTION_HEADER, AuthorTypes, type LastMessagePreview, type StreamEvent } from "@threahq/types"
-import type { CachedEvent, ThreaDatabase } from "../db/database"
-import { putEventsBounded } from "../db/event-writes"
-import { writeSlotCarrier } from "../stores/slot-store"
+import { ACCOUNT_ASSERTION_HEADER } from "@threahq/types"
+import type { ThreaDatabase } from "../db/database"
+import {
+  browserModeLock,
+  readRecordedMode,
+  type ModeLock,
+  type SqliteStorageMode,
+} from "../db/sqlite-mirror/storage-mode"
+import { SW_MSG_PREFETCH_INBOX } from "./sw-messages"
+import { appendPrefetch, hasPrefetches, type PrefetchPayload } from "../db/prefetch-inbox"
+import { applyPrefetch } from "./sw-prefetch-inbox"
 
 // Push bootstrap pre-fetch — warm stream data so it's instant on notification tap
-// (stream: IndexedDB; workspace: the Cache API entry served by the SW fetch
+// (stream: the account database, or the inbox the app drains into it; workspace: the Cache API entry served by the SW fetch
 // interceptor to a page with no local state). Lives outside sw.ts so unit tests
 // can drive it without a ServiceWorkerGlobalScope; sw.ts wires it to the
 // push/message/sync events.
@@ -140,38 +147,6 @@ async function openAccountDb(workosUserId: string): Promise<ThreaDatabase> {
 }
 
 /**
- * While SQLite is the account database's primary copy, a native write would
- * land only in its IndexedDB backup; the warm-up is skipped instead. Unreadable
- * reads as primary.
- */
-async function nativeWritesAllowed(workosUserId: string): Promise<boolean> {
-  const { accountDbName } = await import("../db/database")
-  const { readRecordedMode } = await import("../db/sqlite-mirror/storage-mode")
-  return readRecordedMode(accountDbName(workosUserId)).then(
-    (mode) => mode !== "read-write",
-    () => false
-  )
-}
-
-/** Find the most recent message_created event. Bootstrap events are ordered oldest → newest. */
-function findLatestMessageEvent(events: StreamEvent[]): StreamEvent | null {
-  for (let i = events.length - 1; i >= 0; i--) {
-    if (events[i].eventType === "message_created") return events[i]
-  }
-  return null
-}
-
-function buildPreviewFromEvent(event: StreamEvent): LastMessagePreview {
-  const payload = (event.payload ?? {}) as { contentMarkdown?: string }
-  return {
-    authorId: event.actorId ?? "",
-    authorType: event.actorType ?? AuthorTypes.USER,
-    content: payload.contentMarkdown ?? "",
-    createdAt: event.createdAt,
-  }
-}
-
-/**
  * Fetch options for a prefetch made on behalf of `workosUserId`. The owner check
  * reads the cookie once and the account can move before these requests land;
  * stating the recipient makes the server refuse rather than answer as whoever
@@ -179,6 +154,70 @@ function buildPreviewFromEvent(event: StreamEvent): LastMessagePreview {
  */
 function prefetchInit(workosUserId: string): RequestInit {
   return { credentials: "include", headers: { [ACCOUNT_ASSERTION_HEADER]: workosUserId } }
+}
+
+/** Where a prefetch lands, split out so tests can stand in for Web Locks, the recorded mode and the window clients. */
+export interface PrefetchStore {
+  /** `null` without Web Locks: then no tab can run a mirror, so none can have made SQLite the primary copy. */
+  modeLock(dbName: string): Pick<ModeLock, "ifShared"> | null
+  readMode(dbName: string): Promise<SqliteStorageMode>
+  hasPrefetches(dbName: string): Promise<boolean>
+  appendPrefetch(dbName: string, payload: PrefetchPayload): Promise<void>
+  writeNative(workosUserId: string, payload: PrefetchPayload): Promise<void>
+  announce(dbName: string): Promise<void>
+}
+
+interface WindowClients {
+  clients?: {
+    matchAll(options: {
+      type: "window"
+      includeUncontrolled: boolean
+    }): Promise<Array<{ postMessage(m: unknown): void }>>
+  }
+}
+
+export function browserPrefetchStore(): PrefetchStore {
+  return {
+    modeLock: (dbName) => (typeof navigator !== "undefined" && navigator.locks ? browserModeLock(dbName) : null),
+    readMode: readRecordedMode,
+    hasPrefetches,
+    appendPrefetch,
+    writeNative: async (workosUserId, payload) => applyPrefetch(await openAccountDb(workosUserId), payload),
+    announce: async (dbName) => {
+      const windows = await (self as unknown as WindowClients).clients?.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      })
+      for (const client of windows ?? []) client.postMessage({ type: SW_MSG_PREFETCH_INBOX, dbName })
+    },
+  }
+}
+
+/**
+ * Writes the account database itself only holding the shared mode lock, so no
+ * boot changes the mode meanwhile, and only while IndexedDB is the primary copy
+ * (its marks then tell a mirror what changed) and the inbox holds nothing older.
+ * Otherwise, read-write storage or a switch underway, it queues the prefetch in
+ * the inbox for the app to apply through SQLite or IndexedDB, whichever is primary.
+ */
+export async function storePrefetch(
+  workosUserId: string,
+  payload: PrefetchPayload,
+  store: PrefetchStore
+): Promise<void> {
+  const { accountDbName } = await import("../db/database")
+  const dbName = accountDbName(workosUserId)
+  const lock = store.modeLock(dbName)
+  if (!lock) return store.writeNative(workosUserId, payload)
+  const queued = await lock.ifShared(async (held) => {
+    if (held && (await store.readMode(dbName)) !== "read-write" && !(await store.hasPrefetches(dbName))) {
+      await store.writeNative(workosUserId, payload)
+      return false
+    }
+    await store.appendPrefetch(dbName, payload)
+    return true
+  })
+  if (queued) await store.announce(dbName)
 }
 
 /**
@@ -189,7 +228,8 @@ async function prefetchEventsAround(
   workosUserId: string,
   workspaceId: string,
   streamId: string,
-  messageId: string
+  messageId: string,
+  store: PrefetchStore
 ): Promise<void> {
   try {
     const url = `/api/workspaces/${workspaceId}/streams/${streamId}/events/around?messageId=${messageId}&limit=30`
@@ -197,31 +237,24 @@ async function prefetchEventsAround(
     if (!response.ok) return
 
     const body = await response.json()
-    const data = body.data ?? body
-    if (data?.events?.length > 0) {
-      const now = Date.now()
-      const [db, { sequenceToNum }] = await Promise.all([openAccountDb(workosUserId), import("../db/database")])
-      await db.transaction("rw", [db.events, db.slots], async () => {
-        await putEventsBounded(
-          db.events,
-          data.events.map((e: Record<string, unknown>) => ({
-            ...e,
-            workspaceId,
-            _sequenceNum: sequenceToNum(e.sequence as string),
-            _cachedAt: now,
-          })) as CachedEvent[]
-        )
-        // Warm the pointer slots this prefetch exists to preserve; an
-        // events-around window merges (it is not an authoritative snapshot).
-        await writeSlotCarrier({ database: db, workspaceId, streamId, carrier: data, mode: "merge", cachedAt: now })
-      })
-    }
+    const around = body.data ?? body
+    if (!(around?.events?.length > 0)) return
+    await storePrefetch(
+      workosUserId,
+      { kind: "eventsAround", workspaceId, streamId, fetchedAt: Date.now(), around },
+      store
+    )
   } catch {
     // Best-effort
   }
 }
 
-async function prefetchStreamBootstrap(workosUserId: string, workspaceId: string, streamId: string): Promise<void> {
+async function prefetchStreamBootstrap(
+  workosUserId: string,
+  workspaceId: string,
+  streamId: string,
+  store: PrefetchStore
+): Promise<void> {
   const url = `/api/workspaces/${workspaceId}/streams/${streamId}/bootstrap`
   const response = await fetch(url, prefetchInit(workosUserId))
   if (!response.ok) return
@@ -236,59 +269,11 @@ async function prefetchStreamBootstrap(workosUserId: string, workspaceId: string
     const body = await response.json()
     const bootstrap = body.data ?? body
     if (!bootstrap?.events?.length) return
-
-    const now = Date.now()
-    const [db, { sequenceToNum }] = await Promise.all([openAccountDb(workosUserId), import("../db/database")])
-
-    const events: StreamEvent[] = bootstrap.events
-    const latestMessageEvent = findLatestMessageEvent(events)
-    const derivedPreview = latestMessageEvent ? buildPreviewFromEvent(latestMessageEvent) : null
-
-    // The stream bootstrap endpoint returns a plain Stream without
-    // lastMessagePreview — a blind put would wipe the sidebar preview and
-    // sink the stream into "Other". Merge via update() so lastMessagePreview
-    // and membership-derived fields (notificationLevel) from
-    // applyWorkspaceBootstrap survive.
-    await db.transaction("rw", [db.events, db.streams, db.slots], async () => {
-      await putEventsBounded(
-        db.events,
-        events.map((e) => ({
-          ...e,
-          workspaceId,
-          _sequenceNum: sequenceToNum(e.sequence),
-          _cachedAt: now,
-        }))
-      )
-
-      // Warm the bootstrap's pointer slots in the same transaction; a cold
-      // notification tap otherwise persists events but discards the pointer
-      // state this store exists to preserve (Amendment A2). A replace prefetch
-      // can land against a live scrolled-up session, so it scopes its delete
-      // to the fetched window's events (B2) — out-of-window keys survive.
-      await writeSlotCarrier(
-        bootstrap.syncMode === "append"
-          ? { database: db, workspaceId, streamId, carrier: bootstrap, mode: "merge", cachedAt: now }
-          : {
-              database: db,
-              workspaceId,
-              streamId,
-              carrier: bootstrap,
-              mode: "replace",
-              windowEvents: events,
-              cachedAt: now,
-            }
-      )
-
-      if (!bootstrap.stream) return
-
-      const patch: { _cachedAt: number; lastMessagePreview?: LastMessagePreview } = { _cachedAt: now }
-      if (derivedPreview) patch.lastMessagePreview = derivedPreview
-
-      const updated = await db.streams.update([workspaceId, bootstrap.stream.id], patch)
-      if (updated === 0) {
-        await db.streams.put({ ...bootstrap.stream, ...patch, workspaceId })
-      }
-    })
+    await storePrefetch(
+      workosUserId,
+      { kind: "streamBootstrap", workspaceId, streamId, fetchedAt: Date.now(), bootstrap },
+      store
+    )
   } catch {
     // Best-effort — normal fetch path takes over if this fails
   }
@@ -350,17 +335,20 @@ export async function resolveCredentialOwner(): Promise<string | null> {
  * Both halves require `workosUserId` (see BootstrapSyncTarget) and a session
  * cookie that authenticates as that same account.
  */
-export async function runBootstrapSync(target: BootstrapSyncTarget): Promise<void> {
+export async function runBootstrapSync(
+  target: BootstrapSyncTarget,
+  store: PrefetchStore = browserPrefetchStore()
+): Promise<void> {
   // No named recipient (a target persisted by an older SW version), or the
   // browser is currently signed in as somebody else: skip rather than warm one
   // account's storage with another's data. The tap path then loads normally.
   if (!target.workosUserId) return
   if ((await resolveCredentialOwner()) !== target.workosUserId) return
 
-  if (target.streamId && (await nativeWritesAllowed(target.workosUserId))) {
-    await prefetchStreamBootstrap(target.workosUserId, target.workspaceId, target.streamId)
+  if (target.streamId) {
+    await prefetchStreamBootstrap(target.workosUserId, target.workspaceId, target.streamId, store)
     if (target.messageId) {
-      await prefetchEventsAround(target.workosUserId, target.workspaceId, target.streamId, target.messageId)
+      await prefetchEventsAround(target.workosUserId, target.workspaceId, target.streamId, target.messageId, store)
     }
   }
   await prefetchWorkspaceBootstrap(target.workosUserId, target.workspaceId)

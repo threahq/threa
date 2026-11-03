@@ -4,6 +4,9 @@ export const SW_MSG_NOTIFICATION_CLICK = "NOTIFICATION_CLICK"
 /** Posted to all windows when the push subscription is rotated by the browser. */
 export const SW_MSG_SUBSCRIPTION_CHANGED = "PUSH_SUBSCRIPTION_CHANGED"
 
+/** Posted to all windows once the SW queued a prefetch in the inbox, carrying the account database's `dbName`. */
+export const SW_MSG_PREFETCH_INBOX = "PREFETCH_INBOX"
+
 /** Posted from the app to the SW to dismiss one stream's notifications; send via {@link postClearNotifications}. */
 export const SW_MSG_CLEAR_NOTIFICATIONS = "CLEAR_NOTIFICATIONS"
 

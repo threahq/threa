@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { ACCOUNT_ASSERTION_HEADER, sharedMessageSlotKey, type StreamEvent } from "@threahq/types"
 import { ThreaDatabase, accountDbName, db } from "@/db"
-import { recordMode } from "@/db/sqlite-mirror/storage-mode"
 import {
   parsePersistedSyncTarget,
   pruneUnownedBootstrapSnapshots,
@@ -91,29 +90,6 @@ describe("runBootstrapSync account routing", () => {
     // untouched — writing there is exactly the bug this guards against.
     const defaultEvents = await db.events.where("[workspaceId+streamId]").equals(["ws_1", streamId]).toArray()
     expect(defaultEvents).toEqual([])
-  })
-
-  it("writes nothing to the account's database while SQLite is its primary copy", async () => {
-    const workosUserId = "user_acct_read_write"
-    const streamId = "stream_read_write"
-    mockFetch(
-      {
-        [`/streams/${streamId}/bootstrap`]: {
-          stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
-          events: [makeEvent({ id: "evt_rw", streamId, sequence: "1" })],
-        },
-      },
-      workosUserId
-    )
-    await recordMode(accountDbName(workosUserId), "read-write")
-
-    await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: "evt_rw", workosUserId })
-
-    const accountDb = new ThreaDatabase(accountDbName(workosUserId))
-    expect({
-      events: await accountDb.events.where("[workspaceId+streamId]").equals(["ws_1", streamId]).count(),
-      streams: await accountDb.streams.count(),
-    }).toEqual({ events: 0, streams: 0 })
   })
 
   it("writes events-around results for the pushed message into the account's database", async () => {
