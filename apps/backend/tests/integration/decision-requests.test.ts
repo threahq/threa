@@ -143,22 +143,27 @@ describe("decision requests", () => {
       optionId: "yes",
       version: decision.version,
     })
-    const second = service
-      .resolve({
-        workspaceId: workspace,
-        id: decision.id,
-        userId: author,
-        optionId: "no",
-        version: decision.version,
-      })
-      .catch((error: unknown) => error)
+    const second = service.resolve({
+      workspaceId: workspace,
+      id: decision.id,
+      userId: author,
+      optionId: "no",
+      version: decision.version,
+    })
 
-    const [winner, loser] = await Promise.all([first, second])
-    expect(winner.status).toBe("resolved")
-    expect(loser).toMatchObject({
-      status: 409,
-      code: "DECISION_NOT_OPEN",
-      details: expect.objectContaining({ id: decision.id, status: "resolved", version: 2 }),
+    const settled = await Promise.allSettled([first, second])
+    expect({
+      winners: settled.filter((outcome) => outcome.status === "fulfilled").map((outcome) => outcome.value.status),
+      losers: settled.filter((outcome) => outcome.status === "rejected").map((outcome) => outcome.reason),
+    }).toMatchObject({
+      winners: ["resolved"],
+      losers: [
+        {
+          status: 409,
+          code: "DECISION_NOT_OPEN",
+          details: expect.objectContaining({ id: decision.id, status: "resolved", version: 2 }),
+        },
+      ],
     })
   })
 
