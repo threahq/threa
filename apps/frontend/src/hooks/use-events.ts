@@ -798,9 +798,9 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
 
   /**
    * Jump to a calendar date: load events around the first message on/after the
-   * instant and switch to bidirectional pagination. Returns the `anchorMessageId`
-   * the caller should scroll to, or null when no message lands on/after the date
-   * (the date is past the last message — caller stays on the live tail).
+   * instant (else the last message before it) and switch to bidirectional
+   * pagination. Returns the `anchorMessageId` the caller should scroll to, or
+   * null when the stream has no messages.
    */
   const jumpToEventByDate = useCallback(
     async (isoDate: string): Promise<string | null | "superseded"> => {

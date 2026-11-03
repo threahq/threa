@@ -448,23 +448,28 @@ export function shouldRunEdgePagination(args: {
  * stream has no older history left to fetch (the window already starts at the
  * beginning). Otherwise the earliest on-or-after-target message may live below
  * the loaded window, so we return `null` and the caller fetches.
+ *
+ * A target past every loaded message lands on the last one when the window is
+ * the live tail (no newer events) — the closest message to a future date.
  */
 export function resolveDateJumpAnchor(args: {
   events: Array<Pick<StreamEvent, "eventType" | "createdAt" | "payload">>
   targetDayMs: number
   hasOlderEvents: boolean
+  hasNewerEvents: boolean
 }): string | null {
-  const { events, targetDayMs, hasOlderEvents } = args
-  let sawEarlierMessage = false
+  const { events, targetDayMs, hasOlderEvents, hasNewerEvents } = args
+  let lastMessage: Pick<StreamEvent, "payload"> | null = null
   for (const event of events) {
     if (event.eventType !== "message_created" && event.eventType !== "companion_response") continue
     if (localStartOfDayMs(new Date(event.createdAt)) >= targetDayMs) {
-      if (!sawEarlierMessage && hasOlderEvents) return null
+      if (!lastMessage && hasOlderEvents) return null
       return (event.payload as { messageId?: string })?.messageId ?? null
     }
-    sawEarlierMessage = true
+    lastMessage = event
   }
-  return null
+  if (!lastMessage || hasNewerEvents) return null
+  return (lastMessage.payload as { messageId?: string })?.messageId ?? null
 }
 
 /**
@@ -1907,15 +1912,16 @@ export function StreamContent({
   )
 
   // Jump to a calendar date from the floating date header. Scrolls to the first
-  // message on or after the local day: in-window targets scroll directly (no
-  // round-trip, no jump mode); older targets load a window then scroll to the
-  // server-resolved anchor via the existing pendingScrollTarget driver.
+  // message on or after the local day, else the last message before it (a date
+  // past the newest message lands on the latest): in-window targets scroll
+  // directly (no round-trip, no jump mode); other targets load a window then
+  // scroll to the server-resolved anchor via the pendingScrollTarget driver.
   const handleJumpToDate = useCallback(
     async (date: Date) => {
       userInteractedAtRef.current = 0
       const targetDayMs = localStartOfDayMs(date)
       disableAutoScroll()
-      const inWindowMessageId = resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents })
+      const inWindowMessageId = resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents, hasNewerEvents })
       if (inWindowMessageId) {
         // Explicit navigation: abandon whatever jump is in flight — a
         // late-resolving one would swap the window under this scroll.
@@ -1937,12 +1943,13 @@ export function StreamContent({
         setPendingScrollRequestVersion((version) => version + 1)
       } else {
         pendingScrollTarget.current = null
-        toast.info("No messages on or after that date")
+        toast.info("No messages to jump to")
       }
     },
     [
       events,
       hasOlderEvents,
+      hasNewerEvents,
       cancelPendingJump,
       disableAutoScroll,
       scrollToMessage,
@@ -3286,7 +3293,7 @@ const TimelineMessageList = memo(function TimelineMessageList({
   batchPointerHandlers?: React.HTMLAttributes<HTMLElement>
   conversationOverlay?: ConversationOverlayContext
   runFoldStore: RunFoldStore
-  /** Jump to the first message on or after a date (floating date header). */
+  /** Jump to the message nearest a date (floating date header). */
   onJumpToDate: (date: Date) => void
   /** True while floating date/jump chrome must yield to the composer. */
   floatingChromeHidden: boolean

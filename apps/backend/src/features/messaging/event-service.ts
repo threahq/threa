@@ -2681,10 +2681,10 @@ export class EventService {
   }
 
   /**
-   * Fetch events surrounding the first message at or after a calendar instant
-   * (jump-to-date). `anchorMessageId` is the message the client scrolls to —
-   * null when the date is past the stream's last message, in which case the
-   * window is empty and the client falls back to the live tail.
+   * Fetch events surrounding the message nearest a calendar instant
+   * (jump-to-date): the first at or after it, else the last before it.
+   * `anchorMessageId` is the message the client scrolls to — null only when
+   * the stream has no messages, with an empty window.
    */
   async listEventsAroundDate(
     workspaceId: string,
@@ -2693,7 +2693,7 @@ export class EventService {
     options?: { limit?: number; viewerId?: string }
   ): Promise<{ events: StreamEvent[]; hasOlder: boolean; hasNewer: boolean; anchorMessageId: string | null }> {
     return withClient(this.pool, async (client) => {
-      const anchor = await StreamEventRepository.findFirstMessageOnOrAfter(client, workspaceId, streamId, date)
+      const anchor = await StreamEventRepository.findDateJumpAnchor(client, workspaceId, streamId, date)
       if (!anchor) {
         return { events: [], hasOlder: false, hasNewer: false, anchorMessageId: null }
       }

@@ -1473,8 +1473,8 @@ describe("EventService.listEventsAroundDate", () => {
     mock.restore()
   })
 
-  it("returns an empty window with a null anchor when no message lands on or after the date", async () => {
-    spyOn(StreamEventRepository, "findFirstMessageOnOrAfter").mockResolvedValue(null)
+  it("returns an empty window with a null anchor when the stream has no messages", async () => {
+    spyOn(StreamEventRepository, "findDateJumpAnchor").mockResolvedValue(null)
     const listAround = spyOn(StreamEventRepository, "listAround")
 
     const service = new EventService({} as any)
@@ -1484,7 +1484,7 @@ describe("EventService.listEventsAroundDate", () => {
     expect(listAround).not.toHaveBeenCalled()
   })
 
-  it("centers the window on the first message and returns its messageId as the anchor", async () => {
+  it("centers the window on the date anchor and returns its messageId", async () => {
     const anchor: StreamEvent = {
       id: "evt_anchor",
       streamId: "stream_1",
@@ -1496,7 +1496,7 @@ describe("EventService.listEventsAroundDate", () => {
       actorType: "user",
       createdAt: new Date("2026-06-16T09:00:00.000Z"),
     }
-    const findFirst = spyOn(StreamEventRepository, "findFirstMessageOnOrAfter").mockResolvedValue(anchor)
+    const findFirst = spyOn(StreamEventRepository, "findDateJumpAnchor").mockResolvedValue(anchor)
     const around = { events: [anchor], hasOlder: true, hasNewer: true }
     const listAround = spyOn(StreamEventRepository, "listAround").mockResolvedValue(around)
 

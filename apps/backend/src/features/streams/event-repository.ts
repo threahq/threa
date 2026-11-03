@@ -456,14 +456,15 @@ export const StreamEventRepository = {
   },
 
   /**
-   * The first message row (`message_created` / `companion_response`) created
-   * at or after `date`, by creation time — the anchor for a jump-to-date.
-   * Returns null when no message lands on or after the date (the date is past
-   * the stream's last message). Ordered by `created_at` then `sequence` so a
-   * timestamp tie resolves deterministically; backed by the
+   * The anchor for a jump-to-date: the first message row (`message_created` /
+   * `companion_response`) created at or after `date`, or — when the date is
+   * past the stream's last message — the last message before it, so a jump
+   * into the future lands on the latest message. Null only for a stream with
+   * no messages. Each branch is ordered by `created_at` then `sequence` so a
+   * timestamp tie resolves deterministically; both are backed by the
    * `(stream_id, created_at)` index.
    */
-  async findFirstMessageOnOrAfter(
+  async findDateJumpAnchor(
     db: Querier,
     workspaceId: string,
     streamId: string,
@@ -471,12 +472,30 @@ export const StreamEventRepository = {
   ): Promise<StreamEvent | null> {
     const result = await db.query<StreamEventRow>(sql`
       SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
-      FROM stream_events
-      WHERE workspace_id = ${workspaceId}
-        AND stream_id = ${streamId}
-        AND event_type IN ('message_created', 'companion_response')
-        AND created_at >= ${date}
-      ORDER BY created_at ASC, sequence ASC
+      FROM (
+        (
+          SELECT *, 0 AS side
+          FROM stream_events
+          WHERE workspace_id = ${workspaceId}
+            AND stream_id = ${streamId}
+            AND event_type IN ('message_created', 'companion_response')
+            AND created_at >= ${date}
+          ORDER BY created_at ASC, sequence ASC
+          LIMIT 1
+        )
+        UNION ALL
+        (
+          SELECT *, 1 AS side
+          FROM stream_events
+          WHERE workspace_id = ${workspaceId}
+            AND stream_id = ${streamId}
+            AND event_type IN ('message_created', 'companion_response')
+            AND created_at < ${date}
+          ORDER BY created_at DESC, sequence DESC
+          LIMIT 1
+        )
+      ) candidates
+      ORDER BY side
       LIMIT 1
     `)
     return result.rows[0] ? mapRowToEvent(result.rows[0]) : null

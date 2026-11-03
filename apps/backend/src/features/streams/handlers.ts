@@ -397,7 +397,7 @@ const listEventsAroundQuerySchema = z
   .object({
     eventId: z.string().optional(),
     messageId: z.string().optional(),
-    /** ISO datetime — jump to the first message on or after this instant. */
+    /** ISO datetime — jump to the first message on or after this instant, else the last before it. */
     date: z.string().datetime().optional(),
     limit: z.coerce.number().int().min(2).max(100).optional(),
   })
@@ -782,7 +782,7 @@ export function createStreamHandlers({
 
       const stream = await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
-      // Date jumps resolve to the first message on/after the instant and carry
+      // Date jumps resolve to the message nearest the instant and carry
       // an explicit scroll anchor; id jumps center on the given event/message.
       let result: Awaited<ReturnType<typeof eventService.listEventsAround>>
       let anchorMessageId: string | null | undefined

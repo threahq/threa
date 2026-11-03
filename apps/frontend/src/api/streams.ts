@@ -171,9 +171,9 @@ export const streamsApi = {
   },
 
   /**
-   * Jump-to-date: events around the first message on or after `isoDate`, plus
-   * the `anchorMessageId` to scroll to (null when the date is past the last
-   * message). Shares the `/events/around` endpoint with the id-based jump.
+   * Jump-to-date: events around the first message on or after `isoDate` (else
+   * the last message before it), plus the `anchorMessageId` to scroll to (null
+   * only when the stream has no messages). Shares the `/events/around` endpoint with the id-based jump.
    */
   async getEventsAroundDate(
     workspaceId: string,
