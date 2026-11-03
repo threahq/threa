@@ -1,19 +1,18 @@
 import { useEffect } from "react"
 import { getActiveDb } from "@/db"
-import { persistSqliteStorageMode, stopAndDestroySqliteMirror } from "@/db/sqlite-mirror/lifecycle"
-import { useFeatureFlagWhenKnown } from "./use-feature-flags"
+import { adoptDeliveredMode } from "@/db/sqlite-mirror/lifecycle"
+import { reloadEveryTab } from "@/db/sqlite-mirror/storage-mode"
+import { useDeliveredFeatureFlag } from "./use-feature-flags"
 
 /**
- * Persists the user's `sqliteStorage` flag for the next boot, which is
- * when the mode takes effect. Turning it off also stops and deletes a running
- * mirror, the one change that is safe mid-session. Waits for the delivered
- * value: acting on the pre-bootstrap default would delete the mirror on every boot.
+ * Takes the user's `sqliteStorage` flag as the server delivered it this
+ * session, never a stale copy, and reloads every tab when it changes the
+ * database's requested mode, so the first boot able to hold the others out
+ * switches it.
  */
 export function useSqliteStorageFlag(workspaceId: string): void {
-  const mode = useFeatureFlagWhenKnown(workspaceId, "sqliteStorage")
+  const mode = useDeliveredFeatureFlag(workspaceId, "sqliteStorage")
   useEffect(() => {
-    if (mode === null) return
-    persistSqliteStorageMode(mode)
-    if (mode === "off") void stopAndDestroySqliteMirror(getActiveDb())
-  }, [mode])
+    if (mode !== null && adoptDeliveredMode(getActiveDb().name, workspaceId, mode)) reloadEveryTab()
+  }, [mode, workspaceId])
 }

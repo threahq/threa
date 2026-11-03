@@ -1221,6 +1221,8 @@ export class ThreaDatabase extends Dexie {
 
   /** The SQLite copy of this database's writes, while one is running. */
   sqliteMirror: SqliteMirror | null = null
+  /** The boot settling which storage mode this tab runs; IndexedDB opens after it. */
+  sqliteBoot: Promise<void> | null = null
   readonly sqliteWriter: IdbWriter
   private idbOpened = false
   private idbOpenWaiters: Array<() => void> = []
@@ -1875,6 +1877,10 @@ export class ThreaDatabase extends Dexie {
       ...sqliteMarksSchema(this.tables.map((table) => table.name).filter(isMirroredStore)),
     })
 
+    // v59: closes connections from builds that predate read-write storage's
+    // recorded mode, so no tab writes IndexedDB while SQLite is the primary copy.
+    this.version(59).stores({})
+
     this.composerLoaded = this.table(COMPOSER_LOADED_STORE)
     this.composerTarget = this.table(COMPOSER_TARGET_STORE)
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE)
@@ -1905,15 +1911,32 @@ export class ThreaDatabase extends Dexie {
       },
       true
     )
+    // Before any transaction of the app: whether it goes to SQLite or IndexedDB is decided once IndexedDB is open.
+    // A Dexie promise, so the handlers after it keep the open's exclusive access.
+    this.on(
+      "ready",
+      () => {
+        const routable = this.sqliteMirror?.whenRoutable()
+        return routable && Dexie.Promise.resolve(routable)
+      },
+      true
+    )
     if (owner) this.on("ready", () => claimCacheOwnership(this, owner), true)
 
     // Another tab upgraded the shared per-account database. Dexie closes this
     // connection but leaves auto-open on, so the next operation would reopen
     // with the older schema against the newer physical DB and throw
-    // VersionError for the rest of the tab's life.
+    // VersionError for the rest of the tab's life. Read-write storage first
+    // lands SQLite's backlog under the schema it was written in; the upgrade
+    // waits on this connection meanwhile.
     this.on("versionchange", () => {
-      this.close()
-      if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload()
+      const closeAndReload = () => {
+        this.close()
+        if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload()
+      }
+      const drained = this.sqliteMirror?.drainBeforeClose()
+      if (drained) void drained.then((closable) => closable && closeAndReload())
+      else closeAndReload()
       return false
     })
   }
@@ -1932,6 +1955,12 @@ export class ThreaDatabase extends Dexie {
   // Auto-open routes through here too (Dexie calls `db.open()` on first use),
   // so this is the one seam every open failure crosses.
   override open(): PromiseExtended<Dexie> {
+    const gate = this.sqliteBoot
+    if (gate) return Dexie.Promise.resolve(gate).then(() => this.openNow()) as PromiseExtended<Dexie>
+    return this.openNow()
+  }
+
+  private openNow(): PromiseExtended<Dexie> {
     return super.open().catch((error: unknown) => {
       if (!this.upgradeRecoveryAvailable || !isRecoverableOpenFailure(error)) throw error
       this.upgradeRecoveryAvailable = false

@@ -65,8 +65,17 @@ export const FEATURE_FLAGS = {
   // OPFS and compares a sample of reads against it; IndexedDB answers every
   // read. "read-only" also serves readonly transactions from SQLite in the tab
   // owning the copy, for stores it holds in full; writes still go to
-  // IndexedDB first. Read at boot, so a change applies on the next load.
-  sqliteStorage: defineFlag({ values: ["off", "shadow", "read-only"], scopes: ["user"], default: "off" }),
+  // IndexedDB first. "read-write" serves every read and write of the copied
+  // stores from SQLite once a boot finds all of them copied in full, and
+  // replays each committed write into IndexedDB in the background. A change
+  // reloads every tab; the mode switches at the first boot with no other tab
+  // of the database open, after replaying SQLite's backlog when leaving
+  // read-write. Until then every tab keeps the database's recorded mode.
+  sqliteStorage: defineFlag({
+    values: ["off", "shadow", "read-only", "read-write"],
+    scopes: ["user"],
+    default: "off",
+  }),
   calls: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }),
   callsP2p: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "off" }),
   composeTraces: defineFlag({ values: ["off", "capture"], scopes: ["workspace"], default: "off" }),

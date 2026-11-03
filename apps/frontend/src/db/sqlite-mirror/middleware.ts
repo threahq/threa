@@ -12,6 +12,7 @@ import { getPerfCapture } from "@/lib/perf/capture"
 import type { SqliteMirror } from "./client"
 import { EmulatedTransaction } from "./emulated-transaction"
 import { touchedOf } from "./idb-reads"
+import { indexKeys } from "./index-keys"
 import { decodeKey, encodeKey, encodeRange, keyId } from "./key-codec"
 import { SQLITE_INCARNATION_STORE, sqliteMarksStore, writerBatch, type IdbWriter, type SqliteMark } from "./marks"
 import { CURSOR_PAGE_ROWS, materializedCursor } from "./materialized-cursor"
@@ -44,6 +45,9 @@ type ReadRequest<K extends MirrorReadRequest["type"]> = Extract<MirrorReadReques
 
 type MutateRequest = Parameters<DBCoreTable["mutate"]>[0]
 type MutateResponse = Awaited<ReturnType<DBCoreTable["mutate"]>>
+
+const RANGE_TYPE_NEVER = 4
+const NOTHING_MUTATED: MutateResponse = { numFailures: 0, failures: {}, results: [], lastResult: undefined }
 
 function tryEncode(value: unknown): string | null {
   try {
@@ -153,7 +157,9 @@ class RunningWriters {
  * transaction whose reads SQLite serves; a read SQLite cannot serve is served
  * again from IndexedDB, in a native readonly transaction of its own. In
  * `shadow` mode a sample of native readonly reads is repeated on SQLite and
- * compared, never changing the result.
+ * compared, never changing the result. In `read-write` mode every transaction
+ * over mirrored stores is emulated, its writes included, and takes no marks:
+ * it never reaches IndexedDB.
  */
 export function createSqliteMirrorMiddleware(
   currentMirror: () => SqliteMirror | null,
@@ -217,6 +223,10 @@ export function createSqliteMirrorMiddleware(
         decode: (result: never) => T,
         native: (trans: DBCoreTransaction) => Promise<T>
       ): Promise<T> {
+        const id = tx.id
+        // Under read-write storage IndexedDB is a backup that may lag, never an answer.
+        if (id !== undefined)
+          return tx.run(() => tx.mirror.read({ ...request(), tx: id }).then((r) => decode(r as never)))
         return tx.run(() => {
           if (fallbacks.has(tx)) return native(nativeTransaction(tx))
           const read = request()
@@ -284,6 +294,48 @@ export function createSqliteMirrorMiddleware(
         })
       }
 
+      /** IndexedDB's outcome for each entry: an `add` over an existing key fails alone, the rest still apply. */
+      function emulatedMutate(
+        tx: EmulatedTransaction,
+        table: DBCoreTable,
+        req: MutateRequest
+      ): Promise<MutateResponse> {
+        const store = table.name
+        const id = tx.id
+        if (id === undefined) {
+          return Promise.reject(new DOMException("The transaction is read-only.", "ReadOnlyError"))
+        }
+        return tx.run(async () => {
+          if (req.type === "deleteRange") {
+            if (req.range.type === RANGE_TYPE_NEVER) return NOTHING_MUTATED
+            await tx.mirror.write(id, { store, op: "deleteRange", range: encodeRange(req.range) })
+            return NOTHING_MUTATED
+          }
+          if (req.type === "delete") {
+            if (req.keys.length === 0) return NOTHING_MUTATED
+            await tx.mirror.write(id, { store, op: "delete", keys: req.keys.map(requestKey) })
+            return { numFailures: 0, failures: {}, results: req.keys, lastResult: undefined }
+          }
+          if (req.values.length === 0) return NOTHING_MUTATED
+          const { keyPath } = table.schema.primaryKey
+          if (!keyPath) throw new Error(`Read-write SQLite storage cannot key rows of ${store}`)
+          const entries = req.values.map((value) => {
+            const [key] = indexKeys(value, keyPath, false)
+            if (!key) throw new DOMException(`A row of ${store} has no valid key at its key path.`, "DataError")
+            const encoded = tryEncode(value)
+            if (encoded === null) throw new DOMException(`A row of ${store} cannot be stored.`, "DataCloneError")
+            return { key, value: encoded }
+          })
+          const failed = new Set(await tx.mirror.write(id, { store, op: req.type, entries }))
+          const failures: Record<number, Error> = {}
+          for (const index of failed) {
+            failures[index] = new DOMException("Key already exists in the object store.", "ConstraintError")
+          }
+          const results = entries.map((entry, index) => (failed.has(index) ? undefined : decodeKey(entry.key)))
+          return { numFailures: failed.size, failures, results, lastResult: results[results.length - 1] }
+        })
+      }
+
       function mirroredTable(table: DBCoreTable, marks: DBCoreTable | null): DBCoreTable {
         const store = table.name
         const getRequest = (key: unknown): ReadRequest<"get"> => ({
@@ -295,6 +347,7 @@ export function createSqliteMirrorMiddleware(
         return {
           ...table,
           mutate: (req) => {
+            if (req.trans instanceof EmulatedTransaction) return emulatedMutate(req.trans, table, req)
             const buffer = buffers.get(req.trans)
             if (!buffer || !marks) return table.mutate(req)
             if (!buffer.marked.has(store)) {
@@ -444,8 +497,25 @@ export function createSqliteMirrorMiddleware(
         ...down,
         transaction(stores, mode, options) {
           const mirror = currentMirror()
+          if (mirror?.readWrite) {
+            const mirrored = stores.filter(isMirroredStore)
+            if (mirrored.length === stores.length) {
+              return new EmulatedTransaction(mirror, stores, mode) as unknown as DBCoreTransaction
+            }
+            if (mirrored.length > 0) {
+              throw new Error(
+                `A transaction over ${stores.join(", ")} mixes stores SQLite serves with IndexedDB-only ones`
+              )
+            }
+            return down.transaction(stores, mode, options)
+          }
           if (mirror && mode === "readonly" && mirror.servesReads(stores)) {
-            return new EmulatedTransaction(mirror, stores, writers.overlapping(stores)) as unknown as DBCoreTransaction
+            return new EmulatedTransaction(
+              mirror,
+              stores,
+              "readonly",
+              writers.overlapping(stores)
+            ) as unknown as DBCoreTransaction
           }
           const marked = mode === "readwrite" ? stores.filter((store) => marksOf(store) !== null) : []
           const scope = marked.length > 0 ? [...stores, ...marked.map(sqliteMarksStore)] : stores

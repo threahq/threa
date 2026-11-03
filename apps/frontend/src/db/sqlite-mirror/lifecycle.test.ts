@@ -1,65 +1,29 @@
 import { afterEach, describe, expect, it } from "vitest"
 import { ThreaDatabase } from "../database"
-import { SqliteMirror } from "./client"
-import {
-  persistSqliteStorageMode,
-  readSqliteStorageMode,
-  startSqliteMirror,
-  stopAndDestroySqliteMirror,
-} from "./lifecycle"
-import type { MirrorRequest } from "./protocol"
+import { adoptDeliveredMode, startSqliteMirror } from "./lifecycle"
+import { readSqliteStorageMode } from "./storage-mode"
 
-afterEach(() => localStorage.removeItem("threa:sqliteStorage"))
+afterEach(() => {
+  for (const key of Object.keys(localStorage)) if (key.startsWith("threa:sqlite")) localStorage.removeItem(key)
+})
 
 describe("sqlite mirror lifecycle", () => {
-  it("persists the mode and removes it when off", () => {
-    persistSqliteStorageMode("read-only")
-    expect(readSqliteStorageMode()).toBe("read-only")
-    persistSqliteStorageMode("off")
-    expect({ mode: readSqliteStorageMode(), stored: localStorage.getItem("threa:sqliteStorage") }).toEqual({
-      mode: "off",
-      stored: null,
+  it("moves a database's requested mode only on a change in one workspace's own delivered value", () => {
+    const name = "lifecycle_delivered"
+    const adopted = [
+      adoptDeliveredMode(name, "ws_on", "read-write"),
+      adoptDeliveredMode(name, "ws_off", "off"),
+      adoptDeliveredMode(name, "ws_on", "read-write"),
+      adoptDeliveredMode(name, "ws_off", "off"),
+    ]
+    const whileTheyDiffer = { requested: readSqliteStorageMode(name), other: readSqliteStorageMode("other_database") }
+    const turnedOff = adoptDeliveredMode(name, "ws_on", "off")
+    expect({ adopted, whileTheyDiffer, turnedOff, requested: readSqliteStorageMode(name) }).toEqual({
+      adopted: [true, false, false, false],
+      whileTheyDiffer: { requested: "read-write", other: "off" },
+      turnedOff: true,
+      requested: "off",
     })
-  })
-
-  it("destroys the mirror's file when stopped for off", async () => {
-    const database = new ThreaDatabase(`lifecycle_${Date.now()}`)
-    const requests: MirrorRequest["type"][] = []
-    startSqliteMirror(
-      database,
-      "shadow",
-      () =>
-        new SqliteMirror({
-          database,
-          mode: "shadow",
-          coordination: {
-            tabId: "tab",
-            liveTabs: async () => new Set(["tab"]),
-            claim: (cb) => cb(true),
-            resign: () => {},
-            close: () => {},
-            broadcast: () => {},
-            onBroadcast: () => () => {},
-          },
-          createTransport: () => ({
-            request: async (request) => {
-              requests.push(request.type)
-              const status = { backfilled: [], writers: {}, incarnation: null }
-              return request.type === "status" ? { ok: true, ms: 0, status } : { ok: true, ms: 0 }
-            },
-            heardAt: () => 0,
-            close: () => {},
-          }),
-        })
-    )
-    await new Promise((resolve) => setTimeout(resolve, 100))
-    await stopAndDestroySqliteMirror(database)
-    expect({ opened: requests[0], last: requests.at(-1), mirror: database.sqliteMirror }).toEqual({
-      opened: "open",
-      last: "destroy",
-      mirror: null,
-    })
-    database.close()
   })
 
   it("marks a failure and does not start when Web Locks are missing", () => {

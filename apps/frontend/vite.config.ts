@@ -328,6 +328,23 @@ export default defineConfig({
       {
         extends: true,
         test: {
+          name: "frontend-sqlite-read-write",
+          globals: true,
+          environment: "jsdom",
+          setupFiles: ["./src/test/setup.ts", "./src/db/sqlite-mirror/read-write.setup.ts"],
+          include: [
+            "src/db/{database,event-writes}.test.ts",
+            "src/sync/**/*.test.ts",
+            "src/stores/**/*.test.{ts,tsx}",
+            "src/hooks/use-{all-drafts,draft,stash,stashed,queue-draft,command-dispatch,delete-message,events,unread-counts}*.test.{ts,tsx}",
+          ],
+          // They observe IndexedDB itself: its cursors, and writes made around Dexie as the service worker makes them.
+          exclude: ["src/**/*.node.test.ts", "src/stores/stream-store.test.ts", "src/sync/stream-sync.test.ts"],
+        },
+      },
+      {
+        extends: true,
+        test: {
           name: "frontend-node",
           globals: true,
           environment: "node",

@@ -122,6 +122,10 @@ describe("two composers on one draft scope (board card + conversation panel)", (
 
     // The card still shows "B" on screen, but it must also survive its unmount.
     expect(card.result.current.content).toEqual(makeDoc("B"))
+    // A live query can deliver the resolve a timer tick after its commit, as it does over read-write SQLite storage.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
     card.unmount()
 
     // The rescue is fire-and-forget (and serialized behind the write chain), so
