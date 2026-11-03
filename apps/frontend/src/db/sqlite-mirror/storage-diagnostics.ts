@@ -16,7 +16,7 @@ let context: StorageContext = { storageMode: "off", requestedMode: "off" }
 let sqliteReadMs: number[] = []
 let rangeReadMs: number[] = []
 let fallbacks = 0
-let summaryTimer: ReturnType<typeof setInterval> | null = null
+let summarizedAt = Date.now()
 
 function common(): DiagnosticFields {
   return { ...context, restartPending: isStorageRestartPending() }
@@ -42,22 +42,23 @@ export function reportStorageRecovered(fields: DiagnosticFields = {}): void {
 
 export function observeSqliteRead(ms: number): void {
   if (sqliteReadMs.length < MAX_SAMPLES) sqliteReadMs.push(ms)
-  scheduleSummary()
+  summarizeWhenDue()
 }
 
 export function observeReadFallback(): void {
   fallbacks++
-  scheduleSummary()
+  summarizeWhenDue()
 }
 
 /** A timeline range read, whichever engine answered: the latency the user waits on at a stream switch. */
 export function observeRangeRead(ms: number): void {
   if (rangeReadMs.length < MAX_SAMPLES) rangeReadMs.push(ms)
-  scheduleSummary()
+  summarizeWhenDue()
 }
 
-function scheduleSummary(): void {
-  summaryTimer ??= setInterval(flushStorageSummary, SUMMARY_INTERVAL_MS)
+/** Summaries ride on observations rather than a timer: an idle session has nothing to summarize, and no timer outlives its page or test. */
+function summarizeWhenDue(): void {
+  if (Date.now() - summarizedAt >= SUMMARY_INTERVAL_MS) flushStorageSummary()
 }
 
 function percentiles(samples: number[]): { p50?: number; p95?: number } {
@@ -68,6 +69,7 @@ function percentiles(samples: number[]): { p50?: number; p95?: number } {
 }
 
 export function flushStorageSummary(): void {
+  summarizedAt = Date.now()
   if (sqliteReadMs.length === 0 && rangeReadMs.length === 0 && fallbacks === 0) return
   const sqlite = percentiles(sqliteReadMs)
   const range = percentiles(rangeReadMs)
@@ -90,6 +92,5 @@ export function resetStorageDiagnosticsForTests(): void {
   sqliteReadMs = []
   rangeReadMs = []
   fallbacks = 0
-  if (summaryTimer) clearInterval(summaryTimer)
-  summaryTimer = null
+  summarizedAt = Date.now()
 }
