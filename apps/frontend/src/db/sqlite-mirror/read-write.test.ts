@@ -327,6 +327,27 @@ describe("read-write SQLite storage", () => {
     })
   }
 
+  it("stops starting workers for a database once it closes", async () => {
+    let failing = false
+    let opens = 0
+    const { database } = await readWriteSession({
+      intercept: async (request, next) => {
+        if (request.type === "open") opens++
+        if (failing) throw new Error("worker died")
+        return next()
+      },
+      deadlines: { recoverMs: 1 },
+    })
+    vi.spyOn(console, "error").mockImplementation(() => {})
+    failing = true
+    void database.syncCursors.get("b").catch(() => {})
+    await until(() => opens >= 3, "workers to keep failing")
+    database.close()
+    const opensAtClose = opens
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(opens - opensAtClose).toBeLessThanOrEqual(1)
+  })
+
   it("records read-write, durably, before the first write only SQLite holds", async () => {
     const recordedAtWrite: string[] = []
     let name = ""
