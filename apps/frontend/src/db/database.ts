@@ -28,7 +28,10 @@ import type {
 } from "@threahq/types"
 import type { KdfParams } from "@/lib/crypto/passphrase"
 import type { DraftContextRef } from "@/lib/context-bag/types"
-import { transactionMiddleware } from "./transaction-middleware"
+import { createTransactionMiddleware } from "./transaction-middleware"
+import type { SqliteMirror } from "./sqlite-mirror/client"
+import { IdbWriter, SQLITE_INCARNATION_STORE, sqliteMarksSchema } from "./sqlite-mirror/marks"
+import { isMirroredStore } from "./sqlite-mirror/stores"
 
 const WORKSPACE_USERS_STORE = "workspaceUsersByWorkspace"
 const PERSONAS_STORE = "personasByWorkspace"
@@ -1215,6 +1218,10 @@ export class ThreaDatabase extends Dexie {
   docStates!: Table<CachedDocState, [string, string]>
   cacheOwnership!: EntityTable<CacheOwnership, "id">
 
+  /** The SQLite shadow copy of this database's writes, while one is running. */
+  sqliteMirror: SqliteMirror | null = null
+  readonly sqliteWriter: IdbWriter
+
   private upgradeRecoveryAvailable = true
 
   constructor(name: string, owner?: string) {
@@ -1857,6 +1864,14 @@ export class ThreaDatabase extends Dexie {
       docStates: "[workspaceId+docId], workspaceId",
     })
 
+    // v58: the SQLite mirror's marks, one store per mirrored store, committed
+    // with every write to it. Also closes connections from builds that write
+    // without them. A version adding a mirrored store adds its marks store too.
+    this.version(58).stores({
+      [SQLITE_INCARNATION_STORE]: "id",
+      ...sqliteMarksSchema(this.tables.map((table) => table.name).filter(isMirroredStore)),
+    })
+
     this.composerLoaded = this.table(COMPOSER_LOADED_STORE)
     this.composerTarget = this.table(COMPOSER_TARGET_STORE)
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE)
@@ -1870,7 +1885,8 @@ export class ThreaDatabase extends Dexie {
     this.boardHiddenConversations = this.table(BOARD_HIDDEN_CONVERSATIONS_STORE)
     this.streamContextItems = this.table(STREAM_CONTEXT_ITEMS_STORE)
 
-    this.use(transactionMiddleware)
+    this.sqliteWriter = new IdbWriter(name)
+    this.use(createTransactionMiddleware(() => this.sqliteMirror, this.sqliteWriter))
 
     // Dexie holds every other transaction until this resolves, so nothing reads
     // or writes a database before its contents are known to belong to the
@@ -1886,6 +1902,11 @@ export class ThreaDatabase extends Dexie {
       if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload()
       return false
     })
+  }
+
+  override close(options?: { disableAutoOpen: boolean }): void {
+    super.close(options)
+    this.sqliteWriter.close()
   }
 
   // Auto-open routes through here too (Dexie calls `db.open()` on first use),

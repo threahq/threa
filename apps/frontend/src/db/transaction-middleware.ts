@@ -1,6 +1,41 @@
-import type { DBCore, DBCoreTable, DBCoreTransaction, Middleware } from "dexie"
+import type { DBCore, DBCoreKeyRange, DBCoreTable, DBCoreTransaction, Middleware } from "dexie"
 import { defaultFeatureFlagValue } from "@threahq/types"
 import { NO_CAPTURE, getPerfCapture, type PerfCaptureLike } from "@/lib/perf/capture"
+import { touchedOf } from "./sqlite-mirror/idb-reads"
+import {
+  SQLITE_INCARNATION_STORE,
+  isSqliteMarksStore,
+  sqliteMarksStore,
+  writerBatch,
+  type IdbWriter,
+  type SqliteMark,
+  type WriterCommit,
+} from "./sqlite-mirror/marks"
+import { isMirroredStore } from "./sqlite-mirror/stores"
+import { encodeValue } from "./sqlite-mirror/value-codec"
+
+/**
+ * One successful mutation of a store, as it reached IndexedDB. Put values are
+ * encoded when the mutation is issued, as IndexedDB clones them then; `null`
+ * marks a value the mirror cannot represent.
+ */
+export type IdbWrite =
+  | { store: string; op: "put"; keys: IDBValidKey[]; values: Array<string | null> }
+  | { store: string; op: "delete"; keys: IDBValidKey[] }
+  | { store: string; op: "deleteRange"; range: DBCoreKeyRange }
+
+/** Receives, in commit order, each committed readwrite transaction that wrote a mirrored store. */
+export interface IdbWriteSink {
+  commit(commit: WriterCommit, writes: IdbWrite[]): void
+}
+
+/** `sink` is read at creation: put values are encoded only for a running mirror. */
+interface BufferedWrites {
+  sink: IdbWriteSink | null
+  seq: number
+  marked: Set<string>
+  writes: IdbWrite[]
+}
 
 /**
  * Stores holding what exists nowhere but this device: unsent messages,
@@ -92,16 +127,101 @@ function settle(observed: WeakMap<DBCoreTransaction, ObservedTransaction>, tx: D
   state.lastSettledAt = at
 }
 
-function trackRequests(table: DBCoreTable, observed: WeakMap<DBCoreTransaction, ObservedTransaction>): DBCoreTable {
+function bufferWrites(
+  tx: DBCoreTransaction,
+  writer: IdbWriter,
+  sink: IdbWriteSink | null,
+  buffers: WeakMap<DBCoreTransaction, BufferedWrites>
+): void {
+  const buffer: BufferedWrites = { sink, seq: writer.nextSeq(), marked: new Set(), writes: [] }
+  buffers.set(tx, buffer)
+  const target = tx as unknown as IDBTransaction
+  target.addEventListener(
+    "complete",
+    () => {
+      if (buffer.marked.size === 0) return
+      const commit = writer.committed(buffer.seq, buffer.marked)
+      if (sink) sink.commit(commit, buffer.writes)
+      else writer.announce(writerBatch(commit, buffer.writes.map(touchedOf)))
+    },
+    { once: true }
+  )
+}
+
+function abortTransaction(tx: DBCoreTransaction): void {
+  try {
+    ;(tx as unknown as IDBTransaction).abort()
+  } catch {
+    // Already finished: then the mark committed or nothing did.
+  }
+}
+
+function tryEncode(value: unknown): string | null {
+  try {
+    return encodeValue(value)
+  } catch {
+    return null
+  }
+}
+
+function recordWrite(
+  store: string,
+  req: Parameters<DBCoreTable["mutate"]>[0],
+  encoded: Array<string | null>,
+  res: Awaited<ReturnType<DBCoreTable["mutate"]>>,
+  writes: IdbWrite[]
+): void {
+  if (req.type === "add" || req.type === "put") {
+    const keys: IDBValidKey[] = []
+    const values: Array<string | null> = []
+    req.values.forEach((_, index) => {
+      if (res.failures[index]) return
+      keys.push(res.results?.[index])
+      values.push(encoded[index] ?? null)
+    })
+    if (keys.length > 0) writes.push({ store, op: "put", keys, values })
+  } else if (req.type === "delete") {
+    writes.push({ store, op: "delete", keys: req.keys })
+  } else {
+    writes.push({ store, op: "deleteRange", range: req.range })
+  }
+}
+
+function trackRequests(
+  table: DBCoreTable,
+  marks: DBCoreTable | null,
+  writer: IdbWriter,
+  observed: WeakMap<DBCoreTransaction, ObservedTransaction>,
+  buffers: WeakMap<DBCoreTransaction, BufferedWrites>
+): DBCoreTable {
   const track =
     <R extends { trans: DBCoreTransaction }, T>(call: (req: R) => Promise<T>) =>
     (req: R): Promise<T> => {
       const result = call(req)
       return observed.has(req.trans) ? result.finally(() => settle(observed, req.trans)) : result
     }
+  const mutate = track((req: Parameters<DBCoreTable["mutate"]>[0]) => table.mutate(req))
+  const store = table.name
   return {
     ...table,
-    mutate: track((req) => table.mutate(req)),
+    mutate: (req) => {
+      const buffer = marks ? buffers.get(req.trans) : undefined
+      if (!buffer || !marks) return mutate(req)
+      if (!buffer.marked.has(store)) {
+        buffer.marked.add(store)
+        // Issued before the write it covers; without it the write must not commit.
+        const mark: SqliteMark = { store, writer: writer.id, seq: buffer.seq }
+        marks.mutate({ type: "put", trans: req.trans, values: [mark] }).then(
+          (res) => res.numFailures > 0 && abortTransaction(req.trans),
+          () => abortTransaction(req.trans)
+        )
+      }
+      const encoded = buffer.sink && (req.type === "add" || req.type === "put") ? req.values.map(tryEncode) : []
+      return mutate(req).then((res) => {
+        recordWrite(store, req, encoded, res, buffer.writes)
+        return res
+      })
+    },
     get: track((req) => table.get(req)),
     getMany: track((req) => table.getMany(req)),
     query: track((req) => table.query(req)),
@@ -114,25 +234,53 @@ function trackRequests(table: DBCoreTable, observed: WeakMap<DBCoreTransaction, 
  * Sets per-transaction durability and, while a perf capture is armed, records
  * slow transactions: lifetime, a write's commit after its last request (the
  * disk flush), a read's wait for its first result, and a bitmask of its stores
- * (bit = index in the schema's store names, sorted).
+ * (bit = index in the schema's store names, sorted, marks stores left out).
+ *
+ * Each readwrite transaction over mirrored stores also takes their marks
+ * stores, and marks each mirrored store it writes. Once it commits, its successful
+ * mutations go to `currentSink` (read per transaction, as the table core is
+ * cached at open) or, with no mirror running, are announced to whichever tab
+ * owns one; an aborted transaction hands over nothing.
  */
-export const transactionMiddleware: Middleware<DBCore> = {
-  stack: "dbcore",
-  name: "threaTransactions",
-  create(down) {
-    const storeOrder = down.schema.tables.map((table) => table.name).sort()
-    const observed = new WeakMap<DBCoreTransaction, ObservedTransaction>()
-    return {
-      transaction(stores, mode, options) {
-        const durability = transactionDurability(stores, mode, relaxedDurability)
-        const tx = down.transaction(stores, mode, durability ? { ...options, durability } : options)
-        const capture = getPerfCapture()
-        if (capture !== NO_CAPTURE) observe(tx, stores, mode, storeOrder, capture, observed)
-        return tx
-      },
-      table(name) {
-        return trackRequests(down.table(name), observed)
-      },
-    }
-  },
+export function createTransactionMiddleware(
+  currentSink: () => IdbWriteSink | null,
+  writer: IdbWriter
+): Middleware<DBCore> {
+  return {
+    stack: "dbcore",
+    name: "threaTransactions",
+    create(down) {
+      const storeOrder = down.schema.tables
+        .map((table) => table.name)
+        .filter((name) => !isSqliteMarksStore(name))
+        .sort()
+      const observed = new WeakMap<DBCoreTransaction, ObservedTransaction>()
+      const buffers = new WeakMap<DBCoreTransaction, BufferedWrites>()
+      const names = new Set(down.schema.tables.map((table) => table.name))
+      // Absent only from the cores Dexie builds for an upgrade, whose writes run in the versionchange transaction.
+      const marking = names.has(SQLITE_INCARNATION_STORE)
+      const marksOf = (store: string): DBCoreTable | null => {
+        if (!marking || !isMirroredStore(store)) return null
+        const name = sqliteMarksStore(store)
+        // A write to a mirrored store must never commit unmarked.
+        if (!names.has(name)) throw new Error(`Mirrored store ${store} has no marks store ${name}`)
+        return down.table(name)
+      }
+      return {
+        transaction(stores, mode, options) {
+          const durability = transactionDurability(stores, mode, relaxedDurability)
+          const marked = mode === "readwrite" ? stores.filter((store) => marksOf(store) !== null) : []
+          const scope = marked.length > 0 ? [...stores, ...marked.map(sqliteMarksStore)] : stores
+          const tx = down.transaction(scope, mode, durability ? { ...options, durability } : options)
+          const capture = getPerfCapture()
+          if (capture !== NO_CAPTURE) observe(tx, stores, mode, storeOrder, capture, observed)
+          if (marked.length > 0) bufferWrites(tx, writer, currentSink(), buffers)
+          return tx
+        },
+        table(name) {
+          return trackRequests(down.table(name), marksOf(name), writer, observed, buffers)
+        },
+      }
+    },
+  }
 }
