@@ -66,26 +66,34 @@ function requestedMode(page: Page): Promise<string | null> {
     .catch(() => null)
 }
 
-/** Counts the page's loads, so a test can wait out the reload a flag change triggers by itself. */
+/** Counts the page's loads, so a test can wait out the restart it took. */
 function countLoads(page: Page): () => number {
   let loads = 0
   page.on("load", () => loads++)
   return () => loads
 }
 
-/** Opens the channel and waits out the reload the delivered flag triggers, then the boot under its mode; returns the page's load count. */
+/** Nothing reloads on its own: storage asks for a restart and the user takes it. */
+async function restart(page: Page, timeout = 30_000) {
+  await expect(page.getByText("Storage upgrade ready")).toBeVisible({ timeout })
+  await page.getByRole("button", { name: "Restart" }).click()
+}
+
+/** Opens the channel, takes the restart the delivered flag asks for, then waits for the boot under its mode; returns the page's load count. */
 async function openUnderFlag(page: Page, path: string, slug: string, mode: string): Promise<() => number> {
   const loads = countLoads(page)
   await page.goto(path)
   await expect.poll(() => requestedMode(page), { timeout: 30_000 }).toBe(mode)
+  await restart(page)
   await expect.poll(loads, { timeout: 30_000 }).toBeGreaterThanOrEqual(2)
   await opened(page, slug)
   return loads
 }
 
-/** The boot that copied every store into SQLite reloads every tab by itself; the boot after enters read-write. */
+/** The boot that copied every store into SQLite asks for a restart; the boot after enters read-write. */
 async function enterReadWrite(page: Page, slug: string, loads: () => number) {
-  await expect.poll(loads, { timeout: 90_000 }).toBe(3)
+  await restart(page, 90_000)
+  await expect.poll(loads, { timeout: 30_000 }).toBe(3)
   await opened(page, slug)
   await expect.poll(() => recordedModes(page)).toEqual(["read-write"])
 }
@@ -136,7 +144,9 @@ for (const mode of ["shadow", "read-only", "read-write"] as const) {
   })
 }
 
-test("turning read-write off with a second tab open reloads both and keeps every message", async ({ page }) => {
+test("turning read-write off with a second tab open restarts both on request and keeps every message", async ({
+  page,
+}) => {
   const mirrorErrors = sqliteErrors(page)
   const { workspaceId, testId } = await loginAndCreateWorkspaceViaApi(page, "sqlite-flip")
   await enrollUserFlag(page, workspaceId, "sqliteStorage", "read-write")
@@ -161,6 +171,7 @@ test("turning read-write off with a second tab open reloads both and keeps every
 
   const loads = [countLoads(page), countLoads(other)]
   await enrollUserFlag(page, workspaceId, "sqliteStorage", "off")
+  await restart(page)
   for (const loaded of loads) await expect.poll(loaded, { timeout: 20_000 }).toBeGreaterThan(0)
   await expect.poll(() => requestedMode(page)).toBeNull()
   // The first boot holding the other tab out lands SQLite's backlog, then drops it.
