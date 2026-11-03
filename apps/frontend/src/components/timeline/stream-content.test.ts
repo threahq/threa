@@ -357,29 +357,36 @@ describe("resolveDateJumpAnchor", () => {
     // Window straddles the day: Jan 14 is before, Jan 15/16 are on-or-after, so
     // the first on-or-after match is the genuine anchor.
     const events = [msg("m_before", -1), msg("m_anchor", 0), msg("m_after", 1)]
-    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true })).toBe("m_anchor")
+    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true, hasNewerEvents: false })).toBe("m_anchor")
   })
 
   it("fetches when every loaded message is newer than the target and older history exists", () => {
     // The regression: parked at the live tail (all messages on/after the target),
     // a find-first match would return the oldest loaded row. Must fetch instead.
     const events = [msg("m_oldest_loaded", 5), msg("m_mid", 6), msg("m_newest", 7)]
-    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true })).toBeNull()
+    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true, hasNewerEvents: false })).toBeNull()
   })
 
   it("scrolls to the first message when the window is the start of the stream (no older history)", () => {
     // No older events to fetch — the first loaded message IS the earliest
     // on-or-after the target, even though nothing precedes it in the window.
     const events = [msg("m_first", 2), msg("m_next", 3)]
-    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: false })).toBe("m_first")
+    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: false, hasNewerEvents: false })).toBe("m_first")
   })
 
-  it("fetches when no loaded message lands on or after the target day", () => {
-    // Jumping forward of everything loaded (e.g. scrolled up in old history,
-    // then picked today): no in-window match, so fetch a fresh window.
+  it("fetches when no loaded message lands on or after the target day and newer history exists", () => {
+    // Jumping forward of a jump-mode window (scrolled up in old history, then
+    // picked today): the nearest message lives above the window, so fetch.
     const events = [msg("m_a", -10), msg("m_b", -9)]
-    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true })).toBeNull()
-    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: false })).toBeNull()
+    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true, hasNewerEvents: true })).toBeNull()
+    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: false, hasNewerEvents: true })).toBeNull()
+  })
+
+  it("lands on the latest message when the target day is past the live tail", () => {
+    // Picking today when the last message was days ago: the newest loaded
+    // message is the closest one to the target.
+    const events = [msg("m_a", -10), msg("m_latest", -3)]
+    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true, hasNewerEvents: false })).toBe("m_latest")
   })
 
   it("ignores non-message events when locating the anchor", () => {
@@ -393,7 +400,7 @@ describe("resolveDateJumpAnchor", () => {
       },
       msg("m_anchor", 0),
     ]
-    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true })).toBe("m_anchor")
+    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true, hasNewerEvents: false })).toBe("m_anchor")
   })
 
   it("treats companion responses as anchors", () => {
@@ -405,7 +412,9 @@ describe("resolveDateJumpAnchor", () => {
         payload: { messageId: "m_companion" },
       },
     ]
-    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true })).toBe("m_companion")
+    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true, hasNewerEvents: false })).toBe(
+      "m_companion"
+    )
   })
 
   it("fetches when the in-window match carries no messageId in its payload", () => {
@@ -413,7 +422,7 @@ describe("resolveDateJumpAnchor", () => {
       msg("m_before", -1),
       { eventType: "message_created" as const, createdAt: REF.toISOString(), payload: {} },
     ]
-    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true })).toBeNull()
+    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true, hasNewerEvents: false })).toBeNull()
   })
 })
 

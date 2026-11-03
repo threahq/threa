@@ -12,7 +12,7 @@ interface StreamDateHeaderProps {
   dayStartMs: number | null
   /** Whether the pill is shown (faded out while parked near the top/tail). */
   visible: boolean
-  /** Jump the timeline to the first message on or after the chosen date. */
+  /** Jump the timeline to the message nearest the chosen date. */
   onJumpToDate: (date: Date) => void
   /**
    * The timeline scroller. The pill is an overlay sibling of the scroller (not a
