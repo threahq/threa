@@ -115,9 +115,13 @@ function mountScopeTree(opts?: MountOptions) {
 }
 
 async function waitForActive(handle: { current: AccountScopeValue | null }, id: string) {
-  await waitFor(() => {
-    expect(handle.current?.activeWorkosUserId).toBe(id)
-  })
+  // Account setup waits for async auth; landing timeouts are asserted separately.
+  await waitFor(
+    () => {
+      expect(handle.current?.activeWorkosUserId).toBe(id)
+    },
+    { timeout: 5000 }
+  )
 }
 
 /** `/api/accounts/switch` refuses; identity revalidation keeps naming account A. */
