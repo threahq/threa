@@ -1276,7 +1276,7 @@ export class SqliteMirror {
       this.announce()
     } else if (entering || this.demoted) {
       // Begun before requests settle on IndexedDB, so the boot holding the other tabs out keeps holding them.
-      if (entering && !this.demoted) this.beginUpgrade()
+      if (entering && !this.demoted && !readWriteBlocker(database)) this.beginUpgrade()
       this.settleServing(false)
     } else {
       await discardPrefetches(database.name)
@@ -1816,6 +1816,8 @@ export class SqliteMirror {
         if (this.upgrade) reportStorageUpgrade({ ...progress })
       })
       if (outcome === "interrupted") return null
+      // A store SQLite cannot hold rules read-write out: the app stops waiting on the rest.
+      if (outcome === "unmirrorable") this.endUpgrade(true)
       if (outcome === "done") {
         done.add(store)
         this.trust(store)

@@ -443,6 +443,40 @@ describe("read-write SQLite storage", () => {
     })
   })
 
+  it("unlocks an upgrade as soon as a store proves unmirrorable, without waiting on the rest of the copy", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    owned.push(() => warn.mockRestore())
+    const failures = vi.spyOn(storageDiagnostics, "reportStorageFailure")
+    owned.push(() => failures.mockRestore())
+    const name = `upgrade_unmirrorable_${Date.now()}`
+    const seeded = plainDatabase(name)
+    await seeded.syncCursors.put({ key: "bad", value: new Date(Number.NaN), updatedAt: 1 } as never)
+    seeded.close()
+    adoptDeliveredMode(name, WS, "read-write")
+    const rest = gate()
+    let pastUnmirrorable = false
+    const restartEveryTab = vi.fn()
+    const entering = openMirrored({
+      name,
+      mode: "read-write",
+      entering: true,
+      restartEveryTab,
+      beforeRequest: (request) => {
+        if (request.type !== "backfillBegin") return undefined
+        if (pastUnmirrorable) return rest.opened
+        if (request.store === "syncCursors") pastUnmirrorable = true
+        return undefined
+      },
+    })
+    owned.push(() => rest.open())
+    await entering.database.open()
+    await until(() => failures.mock.calls.some(([kind]) => kind === "upgrade_unfinished"), "the lock to lift")
+    expect({ locked: storageUpgrade() !== null, restarted: restartEveryTab.mock.calls.length }).toEqual({
+      locked: false,
+      restarted: 0,
+    })
+  })
+
   it("hands a read-write database back to IndexedDB in every tab when SQLite no longer holds every store, as after an upgrade", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
     owned.push(() => warn.mockRestore())
