@@ -3,6 +3,7 @@ import { replaceEqualDeep } from "@tanstack/react-query"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
+import { observeRangeRead } from "@/db/sqlite-mirror/storage-diagnostics"
 import { getDraftPromotionEvents, releaseDraftPromotionEvents } from "@/lib/draft-promotions"
 import { getPerfCapture, NO_CAPTURE } from "@/lib/perf/capture"
 import { useLiveWrites } from "@/sync/live-writes-context"
@@ -29,7 +30,11 @@ export function resetStreamStoreCache(): void {}
 
 function readTimelineEvents(collection: Collection<CachedEvent, [string, string]>, kind: "range" | "unsent") {
   const capture = getPerfCapture()
-  if (capture === NO_CAPTURE) return collection.toArray()
+  const startedAt = performance.now()
+  const observe = () => {
+    if (kind === "range") observeRangeRead(performance.now() - startedAt)
+  }
+  if (capture === NO_CAPTURE) return collection.toArray().finally(observe)
 
   // Elapsed time includes the wait behind earlier writers, not just IDB execution.
   capture.count(kind === "range" ? "timeline.rangeReadStarted" : "timeline.unsentReadStarted")
@@ -40,7 +45,10 @@ function readTimelineEvents(collection: Collection<CachedEvent, [string, string]
       capture.mark(kind === "range" ? "timeline.rangeRows" : "timeline.unsentRows", rows.length)
       return rows
     })
-    .finally(stop)
+    .finally(() => {
+      stop()
+      observe()
+    })
 }
 
 /**

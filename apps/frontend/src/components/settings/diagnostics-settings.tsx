@@ -99,7 +99,7 @@ export function DiagnosticsSettings() {
           <div className="space-y-1">
             <Label htmlFor="performance-diagnostics">Share performance diagnostics</Label>
             <p className="text-sm text-muted-foreground">
-              Store up to 500 connectivity events, 256 KB total, on this device. Events can be sent for up to seven days
+              Store up to 500 diagnostics events, 256 KB total, on this device. Events can be sent for up to seven days
               and are removed after that when Threa next runs. With analytics consent, Threa sends them to PostHog
               periodically while online and after reconnecting. Performance measurements use a separate in-memory
               buffer. Message content is never collected.

@@ -15,7 +15,7 @@ export interface MirroredOptions {
   mode?: SqliteMirrorMode
   /** This boot holds every other tab out, so read-write may make SQLite the primary copy. */
   entering?: boolean
-  reloadEveryTab?: () => void
+  requestRestart?: () => void
   bus?: ReturnType<typeof createBus>
   name?: string
   sqlite?: Database
@@ -113,7 +113,7 @@ export function mirroredDatabases(sqlite3: Sqlite3, owned: Array<() => void>) {
       createTransport: transport,
       deadlines: options.deadlines,
       entering: options.entering,
-      reloadEveryTab: options.reloadEveryTab,
+      requestRestart: options.requestRestart,
     })
     database.sqliteMirror = mirror
     database.sqliteBoot = mirror.beforeIdbOpen()

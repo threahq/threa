@@ -18,7 +18,7 @@ import { mirroredDatabases } from "@/db/sqlite-mirror/mirrored-databases"
 import { readRecordedMode } from "@/db/sqlite-mirror/storage-mode"
 import { createBus, inProcessTransport } from "@/db/sqlite-mirror/test-harness"
 import { browserPrefetchStore, storePrefetch } from "./sw-bootstrap-prefetch"
-import { applyPrefetch, drainPrefetchInbox, drainPrefetchesOnOpen } from "./sw-prefetch-inbox"
+import { applyPrefetch, drainPrefetchInbox, drainPrefetchesOnOpen, watchPrefetchInbox } from "./sw-prefetch-inbox"
 
 const WS = "ws_1"
 const FETCHED_AT = Date.now()
@@ -90,6 +90,11 @@ async function forgetStream(database: ThreaDatabase, streamId: string) {
 }
 
 const nextStream = () => `stream_inbox_${++streams}`
+
+const owned: Array<() => void> = []
+afterEach(() => {
+  for (const cleanup of owned.splice(0)) cleanup()
+})
 
 describe("drainPrefetchInbox", () => {
   it("applies prefetches oldest first through the app's database and empties the inbox", async () => {
@@ -194,6 +199,40 @@ describe("drainPrefetchInbox", () => {
     })
   })
 
+  it("lets an open in progress drain first when the page becomes visible, instead of holding it", async () => {
+    const queues = new Map<string, Promise<unknown>>()
+    const locks = {
+      request: (name: string, callback: () => Promise<unknown>) => {
+        const run = (queues.get(name) ?? Promise.resolve()).then(callback, callback)
+        queues.set(
+          name,
+          run.catch(() => undefined)
+        )
+        return run
+      },
+    }
+    Object.defineProperty(navigator, "locks", { value: locks, configurable: true })
+    owned.push(() => Reflect.deleteProperty(navigator, "locks"))
+    const visible = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible")
+    owned.push(() => visible.mockRestore())
+    const database = new ThreaDatabase(`inbox_visible_${++streams}`)
+    owned.push(() => database.close())
+    const streamId = nextStream()
+    for (const payload of twoPrefetches(streamId)) await appendPrefetch(database.name, payload)
+    drainPrefetchesOnOpen(database)
+    owned.push(watchPrefetchInbox(database))
+
+    const opening = database.open()
+    document.dispatchEvent(new Event("visibilitychange"))
+    await opening
+    await vi.waitFor(async () => expect(await hasPrefetches(database.name)).toBe(false))
+    expect((await streamState(database, streamId)).events.map((e) => e.id)).toEqual([
+      `${streamId}_1`,
+      `${streamId}_2`,
+      `${streamId}_3`,
+    ])
+  })
+
   it("drops the oldest prefetches of a database past its cap, leaving other databases alone", async () => {
     const elsewhere = `inbox_other_${streams}`
     const other = around(nextStream(), [])
@@ -217,7 +256,6 @@ describe("service-worker prefetch under read-write storage", () => {
   let openMirrored: ReturnType<typeof mirroredDatabases>["openMirrored"]
   let copiedSession: ReturnType<typeof mirroredDatabases>["copiedSession"]
   let plainDatabase: ReturnType<typeof mirroredDatabases>["plainDatabase"]
-  const owned: Array<() => void> = []
   beforeAll(async () => {
     ;({ openMirrored, copiedSession, plainDatabase } = mirroredDatabases(await sqlite3InitModule(), owned))
   })
@@ -230,9 +268,6 @@ describe("service-worker prefetch under read-write storage", () => {
     const copied = await copiedSession({ name, mode: "read-write", entering: true })
     return openMirrored({ ...copied, bus, mode: "read-write", entering: true })
   }
-  afterEach(() => {
-    for (const cleanup of owned.splice(0)) cleanup()
-  })
 
   it("never writes the account's IndexedDB, and reaches SQLite once the app drains the inbox", async () => {
     const workosUserId = `user_rw_${++streams}`

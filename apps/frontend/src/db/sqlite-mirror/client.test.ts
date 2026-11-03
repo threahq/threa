@@ -1,8 +1,8 @@
 import sqlite3InitModule, { type Database } from "@sqlite.org/sqlite-wasm"
 import Dexie from "dexie"
-import { afterEach, beforeAll, describe, expect, it } from "vitest"
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 import { ThreaDatabase } from "../database"
-import { SqliteMirror, type CoordinationMessage } from "./client"
+import { SqliteMirror, withProgressDeadline, type CoordinationMessage } from "./client"
 import { SQLITE_INCARNATION_STORE, isSqliteMarksStore, type SqliteMark } from "./marks"
 import type { MirrorReply, MirrorRequest, MirrorTransport } from "./protocol"
 import { isMirroredStore } from "./stores"
@@ -115,6 +115,27 @@ async function nextOwner(database: ThreaDatabase, sqlite: Database) {
   await settle()
   return { requests, heir, backfilled: () => begun(requests) }
 }
+
+describe("withProgressDeadline", () => {
+  const silentTransport = { heardAt: () => 0 } as MirrorTransport
+  const replyAfter = (ms: number) => new Promise<string>((resolve) => setTimeout(() => resolve("reply"), ms))
+
+  it("rejects once the worker was silent for the deadline", async () => {
+    await expect(withProgressDeadline(silentTransport, replyAfter(200), 40, "read")).rejects.toThrow(
+      /reported nothing for 40 ms/
+    )
+  })
+
+  it("does not count time the page was frozen, during which no reply could arrive", async () => {
+    const now = performance.now.bind(performance)
+    let frozenMs = 0
+    const spy = vi.spyOn(performance, "now").mockImplementation(() => now() + frozenMs)
+    owned.push(() => spy.mockRestore())
+    const reply = withProgressDeadline(silentTransport, replyAfter(60), 40, "read")
+    frozenMs = 5_000
+    await expect(reply).resolves.toBe("reply")
+  })
+})
 
 describe("SqliteMirror", () => {
   it("mirrors committed writes and backfills pre-existing rows", async () => {

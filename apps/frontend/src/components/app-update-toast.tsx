@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react"
 import { toast } from "@/lib/sonner-module"
 import { Toaster } from "@/components/ui/sonner"
 import { useAppUpdate } from "@/hooks/use-app-update"
+import { StorageRestartNotifier } from "@/components/storage-restart-notifier"
 
 const TOAST_ID = "app-update"
 
@@ -138,6 +139,7 @@ export function AppToastHost() {
     <>
       <Toaster />
       <AppUpdateNotifier />
+      <StorageRestartNotifier />
     </>
   )
 }

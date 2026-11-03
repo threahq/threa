@@ -129,11 +129,17 @@ export function drainPrefetchesOnOpen(database: ThreaDatabase): void {
   )
 }
 
-/** Drains on each worker announcement for `database` and whenever the page becomes visible; returns the unsubscribe. */
+/**
+ * Drains on each worker announcement for `database` and whenever the page
+ * becomes visible; returns the unsubscribe. An open in progress drains on its
+ * own first: a drain holding the inbox lock while its write waits for the open
+ * would hold the open's drain, and so the open, forever.
+ */
 export function watchPrefetchInbox(database: ThreaDatabase): () => void {
   let draining = Promise.resolve()
   const drain = () => {
     draining = draining
+      .then(() => database.open())
       .then(() => drainPrefetchInbox(database))
       .catch((error: unknown) =>
         console.error("Could not apply the service worker's prefetches; retrying later", error)
