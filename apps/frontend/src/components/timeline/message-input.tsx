@@ -21,7 +21,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { relocateLoadedDraft, stashLoadedDraft } from "@/hooks/use-draft-message"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useComposeTrace } from "@/lib/compose-trace"
-import { getDraftPromotionSource } from "@/lib/draft-promotions"
+import { DraftPromotionAbortedError, getDraftPromotionSource } from "@/lib/draft-promotions"
 import { GUEST_DM_CLOSED_REASON, isGuestDmPolicyError } from "@/lib/guest-dm-policy"
 import { isPrivacyConfirmationError } from "@/lib/share-privacy-toast"
 import { useSharePrivacyConfirm } from "@/hooks/use-share-privacy-confirm"
@@ -38,6 +38,7 @@ import {
 import type { ComposerControlHandle, ComposerSubmitOptions } from "@/components/composer"
 import { useScheduleMessage } from "@/hooks"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
+import { useLatest } from "@/hooks/use-latest"
 import { referenceAudienceTargetFor, useReferenceAudience } from "@/hooks/use-reference-audience"
 import { buildImageIndexByAttachment, isMaterializableAttachment } from "./attachment-image-index"
 import { useEditLastMessage } from "./edit-last-message-context"
@@ -460,6 +461,7 @@ function MessageInputComponent({
   const mobileChromeOpenRef = useRef(false)
   const [preserveConversationStripSpace, setPreserveConversationStripSpace] = useState(false)
   composerRef.current = composer
+  const currentStreamId = useLatest(streamId)
 
   // Imperative handle for programmatic focus from outside (e.g. quote reply insertion)
   const composerFocusRef = useRef<ComposerControlHandle | null>(null)
@@ -727,6 +729,7 @@ function MessageInputComponent({
     // restore the content.
     composer.setContent(EMPTY_DOC)
     collapse()
+    const sentFrom = streamId
     try {
       const result = await sendMessage({
         contentJson: messageContent,
@@ -748,15 +751,22 @@ function MessageInputComponent({
         navigate(result.navigateTo, { replace: result.replace ?? false })
       }
     } catch (error) {
-      // Route changes abort a stale promotion wait. The old scope still owns
-      // its durable draft; restoring here would inject it into the next stream.
-      // Real stream message failures are handled in the timeline with retry,
-      // so this is a failed draft promotion.
-      if (!(error instanceof Error && error.name === "AbortError")) {
-        composer.setContent(liveContent)
-        if (isPrivacyConfirmationError(error)) blockOnPrivacy(liveContent)
-        else
-          setError(isGuestDmPolicyError(error) ? GUEST_DM_CLOSED_REASON : "Failed to create stream. Please try again.")
+      const sendFailure =
+        stream?.isDraft === false
+          ? "Failed to send message. Please try again."
+          : "Failed to create stream. Please try again."
+      // After a route change the old scope still owns its durable draft;
+      // restoring here would inject it into the next stream. Any other failure,
+      // a send storage could not keep among them, comes back ahead of whatever
+      // was typed while it was in flight.
+      if (!(error instanceof DraftPromotionAbortedError) && currentStreamId() === sentFrom) {
+        const typed = composerRef.current.content
+        const restored = hasDocContent(typed)
+          ? { ...liveContent, content: [...(liveContent.content ?? []), ...(typed.content ?? [])] }
+          : liveContent
+        composerRef.current.setContent(restored)
+        if (isPrivacyConfirmationError(error)) blockOnPrivacy(restored)
+        else setError(isGuestDmPolicyError(error) ? GUEST_DM_CLOSED_REASON : sendFailure)
       }
     } finally {
       composer.setIsSending(false)

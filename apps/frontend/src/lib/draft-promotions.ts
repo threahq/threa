@@ -78,6 +78,11 @@ export function releaseDraftPromotionEvents(workspaceId: string, realStreamId: s
   if (promotion) delete promotion.events
 }
 
+/** The composer gave up waiting for a draft's promotion, as when it moved to another stream. */
+export class DraftPromotionAbortedError extends Error {
+  override readonly name = "AbortError"
+}
+
 export function waitForDraftPromotion(
   workspaceId: string,
   draftId: string,
@@ -94,9 +99,7 @@ export function waitForDraftPromotion(
     }, options.timeoutMs ?? 30_000)
     const abort = () => {
       cleanup()
-      const error = new Error("Draft promotion wait aborted")
-      error.name = "AbortError"
-      reject(error)
+      reject(new DraftPromotionAbortedError("Draft promotion wait aborted"))
     }
     const cleanup = () => {
       clearTimeout(timeout)

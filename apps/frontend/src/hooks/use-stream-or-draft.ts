@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react"
 import { replaceEqualDeep, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { db, sequenceToNum, type CachedEvent, type CachedStream, type DraftScratchpad } from "@/db"
-import { isOutcomeUnknown } from "@/db/sqlite-mirror/client"
+import { isOutcomeUnknown, isOwnerLost } from "@/db/sqlite-mirror/client"
 import { useStreamService, useMessageService, usePendingMessages } from "@/contexts"
 import { useUser } from "@/auth"
 import { type SealStreamMessageResult } from "@/lib/crypto/message-envelope"
@@ -522,6 +522,39 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
   }
 }
 
+const MAX_SEND_WRITES = 3
+const FIRST_LANDED_CHECK_RETRY_MS = 250
+const MAX_LANDED_CHECK_RETRY_MS = 30_000
+
+/**
+ * Whether a send whose commit lost its answer landed, asked until storage
+ * answers: a failed check says nothing, and only a send known unsent is taken
+ * back. A landed one the queue sends; the server dedupes by client id.
+ */
+async function sendLanded(clientId: string): Promise<boolean> {
+  for (let waitMs = FIRST_LANDED_CHECK_RETRY_MS; ; waitMs = Math.min(waitMs * 2, MAX_LANDED_CHECK_RETRY_MS)) {
+    try {
+      return (await db.pendingMessages.get(clientId)) !== undefined
+    } catch (error) {
+      console.error("Could not tell whether a send reached storage; asking again", error)
+      await new Promise((resolve) => setTimeout(resolve, waitMs))
+    }
+  }
+}
+
+/** A send's durable write runs again while storage says it never committed. */
+async function persistSend(clientId: string, write: () => Promise<void>): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await write()
+    } catch (err) {
+      const unknown = isOutcomeUnknown(err)
+      if (unknown && (await sendLanded(clientId))) return
+      if (!(unknown || isOwnerLost(err)) || attempt === MAX_SEND_WRITES) throw err
+    }
+  }
+}
+
 /**
  * Implementation for real streams (stored on server).
  */
@@ -735,46 +768,44 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         // The trace's own IndexedDB read finishes here, behind the published
         // row, never ahead of it.
         const composeTrace = await input.composeTrace
-        await db.transaction("rw", [db.pendingMessages, db.events], async () => {
-          const [anchorSequence, allocatedSequence] = await Promise.all([
-            getLatestPersistedSequence(workspaceId, streamId),
-            nextOptimisticSequence(workspaceId, streamId),
-          ])
-          await db.pendingMessages.add({
-            clientId,
-            workspaceId,
-            streamId,
-            content: contentMarkdown,
-            contentFormat: "markdown",
-            contentJson: input.contentJson,
-            attachmentIds: input.attachmentIds,
-            conversation: input.conversation,
-            composeTrace,
-            enqueue: input.enqueue,
-            confirmedPrivacyWarning: input.confirmedPrivacyWarning,
-            createdAt: Date.now(),
-            retryCount: 0,
-            ...(e2eFields ?? {}),
-          })
+        await persistSend(clientId, () =>
+          db.transaction("rw", [db.pendingMessages, db.events], async () => {
+            const [anchorSequence, allocatedSequence] = await Promise.all([
+              getLatestPersistedSequence(workspaceId, streamId),
+              nextOptimisticSequence(workspaceId, streamId),
+            ])
+            await db.pendingMessages.add({
+              clientId,
+              workspaceId,
+              streamId,
+              content: contentMarkdown,
+              contentFormat: "markdown",
+              contentJson: input.contentJson,
+              attachmentIds: input.attachmentIds,
+              conversation: input.conversation,
+              composeTrace,
+              enqueue: input.enqueue,
+              confirmedPrivacyWarning: input.confirmedPrivacyWarning,
+              createdAt: Date.now(),
+              retryCount: 0,
+              ...(e2eFields ?? {}),
+            })
 
-          await db.events.add({
-            ...optimisticEvent,
-            workspaceId,
-            sequence: allocatedSequence,
-            _sequenceNum: sequenceToNum(allocatedSequence),
-            ...(anchorSequence != null && { _anchorSequenceNum: sequenceToNum(anchorSequence) }),
-            _clientId: clientId,
-            _status: "pending",
-            _cachedAt: Date.now(),
+            await db.events.add({
+              ...optimisticEvent,
+              workspaceId,
+              sequence: allocatedSequence,
+              _sequenceNum: sequenceToNum(allocatedSequence),
+              ...(anchorSequence != null && { _anchorSequenceNum: sequenceToNum(anchorSequence) }),
+              _clientId: clientId,
+              _status: "pending",
+              _cachedAt: Date.now(),
+            })
           })
-        })
+        )
       } catch (err) {
-        // SQLite storage lost the commit's answer; once it routes again, the queued row says whether it landed.
-        const landed = isOutcomeUnknown(err) && (await db.pendingMessages.get(clientId).catch(() => undefined))
-        if (!landed) {
-          revokeOptimisticEvent(clientId)
-          throw err
-        }
+        revokeOptimisticEvent(clientId)
+        throw err
       }
 
       notifyQueue()

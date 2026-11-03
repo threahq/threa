@@ -17,6 +17,7 @@ import {
   type CachedWorkspaceUser,
 } from "@/db"
 import { getAccountGeneration } from "@/db/event-writes"
+import { rerunWhileOwnerLost } from "@/db/sqlite-mirror/client"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { mergeConversationByTitleRevision, mergeStreamByRevision } from "@/lib/title-merge"
 import { findArchivedAncestor } from "@/lib/streams"
@@ -3127,11 +3128,20 @@ function mapArchivedStreamRows(
   })
 }
 
-export async function applyWorkspaceBootstrap(
+export function applyWorkspaceBootstrap(
   workspaceId: string,
   bootstrap: WorkspaceBootstrap,
   fetchStartedAt?: number,
   account: AccountWriteContext = { generation: getAccountGeneration(), database: getActiveDb() }
+): Promise<AppliedWorkspaceBootstrap> {
+  return rerunWhileOwnerLost(() => applyWorkspaceBootstrapOnce(workspaceId, bootstrap, fetchStartedAt, account))
+}
+
+async function applyWorkspaceBootstrapOnce(
+  workspaceId: string,
+  bootstrap: WorkspaceBootstrap,
+  fetchStartedAt: number | undefined,
+  account: AccountWriteContext
 ): Promise<AppliedWorkspaceBootstrap> {
   if (getAccountGeneration() !== account.generation) return { anyChanged: false, bootstrap }
   const db = account.database

@@ -1,6 +1,7 @@
 import type { EncodedRange } from "./key-codec"
 import type { WriterCommit } from "./marks"
 import type {
+  CommitLedger,
   MirrorEntry,
   MirrorMutation,
   MirrorQuery,
@@ -40,12 +41,16 @@ export type MirrorRequest =
   | { type: "backfillFinish"; store: string; covered: Record<string, number> }
   | { type: "status" }
   | { type: "reset"; incarnation: string }
+  /** Keeps every row and queues all of them for the IndexedDB incarnation named, which lacks them. */
+  | { type: "reseed"; incarnation: string }
   | { type: "forgetWriters"; writers: string[] }
   | { type: "destroy"; idbName: string }
   /** Holds every request of other transactions, and outside any, until this one commits or rolls back. */
   | { type: "begin"; tx: number; readonly: boolean }
   | { type: "write"; tx: number; write: MirrorWrite }
-  | { type: "commit"; tx: number }
+  /** `ledger` names it among commits, recorded with its writes so a tab that lost the owner meanwhile can ask whether it landed. */
+  | { type: "commit"; tx: number; ledger: CommitLedger }
+  | { type: "committed"; ledger: CommitLedger }
   | { type: "rollback"; tx: number }
   | { type: "backlog"; limit: number }
   | { type: "backlogDone"; through: number }
@@ -62,6 +67,8 @@ export type MirrorReply =
       /** Positions of a write's entries whose `add` met an existing key. */
       failures?: number[]
       batches?: BacklogBatch[]
+      /** `null` when the ledger no longer knows. */
+      committed?: boolean | null
     }
   | { ok: false; error: string; message: string }
 
@@ -78,8 +85,8 @@ export interface WorkerEnvelope {
   request: MirrorRequest
 }
 
-/** `started` as the worker begins a request; `reply` once it is done. */
-export type WorkerResponse = { id: number; started: true } | { id: number; reply: MirrorReply }
+/** `progress` as the worker begins a request and while a long one runs; `reply` once it is done. */
+export type WorkerResponse = { id: number; progress: true } | { id: number; reply: MirrorReply }
 
 /** The transaction a request belongs to, if any. */
 export function txOf(request: MirrorRequest): number | undefined {

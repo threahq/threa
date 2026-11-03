@@ -54,12 +54,15 @@ export async function readChunk(
  * ends. A readwrite transaction overlapping these stores cannot commit until
  * this one finishes, so whatever `onRead` sends is ordered before that commit.
  */
-export function readTouched(
+export async function readTouched(
   idb: IDBDatabase,
   touched: readonly Touched[],
   onRead: (rows: TouchedRows[]) => void
 ): Promise<void> {
-  const tx = idb.transaction([...new Set(touched.map((t) => t.store))], "readonly")
+  const stores = [...new Set(touched.map((t) => t.store))]
+  // A commit whose every write failed touched nothing, and IndexedDB refuses a transaction over no store.
+  if (stores.length === 0) return onRead([])
+  const tx = idb.transaction(stores, "readonly")
   const done = transactionDone(tx)
   const rows: TouchedRows[] = []
   let outstanding = 0
