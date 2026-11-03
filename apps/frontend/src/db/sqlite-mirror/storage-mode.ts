@@ -96,8 +96,9 @@ export function browserModeLock(idbName: string): ModeLock {
           return new Promise<never>(() => {})
         })
       }),
-    ifShared: (run) =>
-      navigator.locks.request(name, { mode: "shared", ifAvailable: true }, (lock) => run(lock !== null)),
+    // `await` flattens the callback's promise: TypeScript 5.9's DOM typings, which the deploy build uses, return Promise<Promise<T>>.
+    ifShared: async (run) =>
+      await navigator.locks.request(name, { mode: "shared", ifAvailable: true }, (lock) => run(lock !== null)),
   }
 }
 
