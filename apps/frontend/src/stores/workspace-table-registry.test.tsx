@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, render, renderHook, waitFor } from "@testing-library/react"
 import { useSyncExternalStore } from "react"
+import { whenReadsSettled } from "./apply-window"
 import { db, type CachedWorkspaceUser } from "@/db"
 import * as perfCapture from "@/lib/perf/capture"
 import { resetWorkspaceStoreCache, useWorkspaceUsers } from "./workspace-store"
@@ -71,6 +72,33 @@ describe("workspace table registry", () => {
   afterEach(() => {
     resetWorkspaceTableRegistry()
     vi.restoreAllMocks()
+  })
+
+  it("should keep the apply barrier open until a subscribed table read has finished", async () => {
+    let releaseRead!: () => void
+    const held = new Promise<void>((resolve) => {
+      releaseRead = resolve
+    })
+    const get = db.unreadState.get.bind(db.unreadState)
+    const read = vi
+      .spyOn(db.unreadState, "get")
+      .mockImplementation((key) => get(key).then((value) => held.then(() => value)))
+    const unsubscribe = subscribeWorkspaceTable(WORKSPACE, "unreadState", () => {})
+    try {
+      await waitFor(() => expect(read).toHaveBeenCalled())
+      let settled = false
+      const barrier = whenReadsSettled().then(() => {
+        settled = true
+      })
+      await new Promise((resolve) => setTimeout(resolve, 40))
+      expect(settled).toBe(false)
+      releaseRead()
+      await barrier
+      await waitFor(() => expect(getWorkspaceTableSnapshot(WORKSPACE, "unreadState")).toEqual([]))
+    } finally {
+      releaseRead()
+      unsubscribe()
+    }
   })
 
   it("twenty consumers of useWorkspaceUsers open one IDB read", async () => {

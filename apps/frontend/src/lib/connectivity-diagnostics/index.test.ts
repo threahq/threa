@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import * as diagnosticsFacade from "./facade"
 import { clearConnectivityConsentTombstone, tombstoneConnectivityAuthorization } from "./consent-cache"
 import {
   authorizeConnectivityDiagnostics,
@@ -42,12 +43,17 @@ describe("connectivity diagnostics persistence", () => {
     await connectivityDiagnosticsTestApi.db.events.clear()
     await connectivityDiagnosticsTestApi.db.consent.clear()
     vi.restoreAllMocks()
+    // Background producers share the registered runtime; keep their events out of this persistence fixture.
+    vi.spyOn(diagnosticsFacade, "recordConnectivityEvent").mockImplementation(() => {})
     connectivityDiagnosticsTestApi.setNetworkTimeoutMs(connectivityDiagnosticsTestApi.NETWORK_TIMEOUT_MS)
     connectivityDiagnosticsTestApi.setRetryBaseMs(20)
     connectivityDiagnosticsTestApi.clearDropCounters()
   })
 
-  afterEach(() => suspendConnectivityDiagnostics())
+  afterEach(() => {
+    suspendConnectivityDiagnostics()
+    vi.restoreAllMocks()
+  })
 
   it("should retain a newer grant when an older denial arrives after effect cleanup", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }))

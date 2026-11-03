@@ -1,4 +1,5 @@
 import { liveQuery, type Subscription } from "dexie"
+import { trackPendingRead } from "./apply-window"
 import { semanticEqual } from "@/sync/bootstrap-diff"
 // Namespace import so a test can spy the facade against the module (INV-48).
 import * as perfCapture from "@/lib/perf/capture"
@@ -204,7 +205,14 @@ function ensureEntry(workspaceId: string, tableKey: WorkspaceTableKey): HeldEntr
     teardown: null,
   }))
   if (isNew) {
-    entry.subscription = liveQuery(() => WORKSPACE_TABLE_QUERIES[tableKey](database, workspaceId)).subscribe((rows) => {
+    entry.subscription = liveQuery(async () => {
+      const release = trackPendingRead()
+      try {
+        return await WORKSPACE_TABLE_QUERIES[tableKey](database, workspaceId)
+      } finally {
+        release()
+      }
+    }).subscribe((rows) => {
       // The captured entry, checked against the registry: an emission that
       // arrives after this entry was torn down (or after its account was
       // replaced) has nowhere to land.

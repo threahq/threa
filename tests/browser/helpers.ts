@@ -129,7 +129,11 @@ export async function loginAndCreateWorkspaceViaApi(
 
   await devLogin(page, email, name)
 
-  const createWorkspaceResponse = await page.request.post("/api/workspaces", {
+  const controlPlanePort = process.env.PLAYWRIGHT_CONTROL_PLANE_PORT
+  if (!controlPlanePort) throw new Error("Browser workspace fixture requires PLAYWRIGHT_CONTROL_PLANE_PORT")
+  // Fixture creation must not be repeated after an ambiguous Wrangler restart.
+  // The user-journey spec covers workspace creation through the router.
+  const createWorkspaceResponse = await page.request.post(`http://localhost:${controlPlanePort}/api/workspaces`, {
     data: { name: workspaceName },
   })
   await expectApiOk(createWorkspaceResponse, "Workspace creation")

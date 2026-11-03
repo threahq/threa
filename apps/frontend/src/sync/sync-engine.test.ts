@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { onlineManager, QueryObserver } from "@tanstack/react-query"
 import { SyncEngine, CATCHUP_COLLAPSE_THRESHOLD } from "./sync-engine"
 import { toCachedStreamBootstrap } from "./stream-sync"
-import { isApplyWindowOpen, resetApplyWindow, subscribeApplyWindow } from "@/stores/apply-window"
+import { isApplyWindowOpen, resetApplyWindow, subscribeApplyWindow, trackPendingRead } from "@/stores/apply-window"
 import { resetAgentActivityStore, getAgentActivityForStream, upsertAgentSession } from "@/stores/agent-activity-store"
 import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -2000,30 +2000,52 @@ describe("SyncEngine sync cursor (active mode)", () => {
     }
   })
 
-  it("replays a small catch-up gap through the live handlers without collapsing", async () => {
+  it.each([3, CATCHUP_COLLAPSE_THRESHOLD - 1])("should replay %i catch-up entries without collapsing", async (size) => {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
-    // A handful of missed entries stays on the per-entry replay path — cheap, and
-    // it avoids an extra full-snapshot fetch. The bootstrap is only the connect
-    // one (no collapse fallback), and the entries' handler writes land.
-    const smallPage = Array.from({ length: 3 }, (_, i) => userAddedEntry(String(11 + i), `small_user_${i}`))
-    const catchUp = vi.fn().mockResolvedValueOnce({ entries: smallPage, head: "13" }).mockResolvedValue(emptyPage("13"))
+    const replayEntries = Array.from({ length: size }, (_, i) => userAddedEntry(String(11 + i), `replay_user_${i}`))
+    const lastSyncId = String(10 + size)
+    const catchUp = vi
+      .fn()
+      .mockResolvedValueOnce({ entries: replayEntries, head: "5000" })
+      .mockResolvedValue(emptyPage("5000"))
     const deps = makeActiveDeps(catchUp)
     const engine = new SyncEngine(deps)
     const applyWindow = trackApplyWindow()
 
     await engine.onConnect(asSocket(new MockSocket()))
 
-    await vi.waitFor(async () => expect(await db.workspaceUsers.get(["ws_1", "small_user_2"])).toBeDefined())
-    expect(engine.getSyncCursor()).toBe("13")
+    await vi.waitFor(async () => expect(await db.workspaceUsers.get(["ws_1", `replay_user_${size - 1}`])).toBeDefined())
+    expect(engine.getSyncCursor()).toBe(lastSyncId)
     expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1)
     // A page shorter than the limit ends the run; no confirming empty fetch.
     expect(catchUp).toHaveBeenCalledTimes(1)
-    // Replaying opens the apply-window once and closes it once, so the batched
-    // store hooks settle the three streams in a single re-read rather than three.
+    await vi.waitFor(() => expect(isApplyWindowOpen()).toBe(false))
     applyWindow.stop()
     expect(applyWindow.transitions).toEqual([...connectBootstrapWindow, true, false])
     expect(isApplyWindowOpen()).toBe(false)
     engine.destroy()
+  })
+
+  it("should hold catch-up publication until its readers have settled", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const catchUp = vi.fn().mockResolvedValue({ entries: [userAddedEntry("11", "pending_reader")], head: "11" })
+    const engine = new SyncEngine(makeActiveDeps(catchUp))
+    let releaseRead: (() => void) | undefined
+    const stop = subscribeApplyWindow(() => {
+      if (isApplyWindowOpen() && catchUp.mock.calls.length > 0) releaseRead ??= trackPendingRead()
+    })
+    try {
+      await engine.onConnect(asSocket(new MockSocket()))
+      await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("11"))
+      await new Promise((resolve) => setTimeout(resolve, 40))
+      expect(isApplyWindowOpen()).toBe(true)
+      releaseRead!()
+      await vi.waitFor(() => expect(isApplyWindowOpen()).toBe(false))
+    } finally {
+      releaseRead?.()
+      stop()
+      engine.destroy()
+    }
   })
 
   it("leaves the apply window closed when catch-up finds nothing to apply", async () => {
