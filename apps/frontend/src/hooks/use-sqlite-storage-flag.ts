@@ -1,6 +1,6 @@
 import { useEffect } from "react"
 import { getActiveDb } from "@/db"
-import { persistSqliteStorageMode, stopAndDestroySqliteShadow } from "@/db/sqlite-mirror/lifecycle"
+import { persistSqliteStorageMode, stopAndDestroySqliteMirror } from "@/db/sqlite-mirror/lifecycle"
 import { useFeatureFlagWhenKnown } from "./use-feature-flags"
 
 /**
@@ -14,6 +14,6 @@ export function useSqliteStorageFlag(workspaceId: string): void {
   useEffect(() => {
     if (mode === null) return
     persistSqliteStorageMode(mode)
-    if (mode === "off") void stopAndDestroySqliteShadow(getActiveDb())
+    if (mode === "off") void stopAndDestroySqliteMirror(getActiveDb())
   }, [mode])
 }

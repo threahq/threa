@@ -57,5 +57,7 @@ const scope = self as unknown as {
 }
 
 scope.onmessage = ({ data }) => {
-  void handler.handle(data.request).then((reply) => scope.postMessage({ id: data.id, reply }))
+  void handler
+    .handle(data.request, () => scope.postMessage({ id: data.id, started: true }))
+    .then((reply) => scope.postMessage({ id: data.id, reply }))
 }

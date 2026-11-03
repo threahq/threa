@@ -1,7 +1,8 @@
 import sqlite3InitModule, { type Database } from "@sqlite.org/sqlite-wasm"
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { encodeKey, encodeRange } from "./key-codec"
-import { MirrorStore, type MirrorEntry, type MirrorMutation } from "./mirror-store"
+import { MirrorStore, type MirrorEntry, type MirrorMutation, type MirrorStoreSchema } from "./mirror-store"
+import { encodeValue } from "./value-codec"
 
 type Sqlite3 = Awaited<ReturnType<typeof sqlite3InitModule>>
 
@@ -13,10 +14,12 @@ beforeAll(async () => {
   sqlite3 = await sqlite3InitModule()
 })
 
+const plain = (...names: string[]): MirrorStoreSchema[] => names.map((name) => ({ name, indexes: [] }))
+
 beforeEach(() => {
   db = new sqlite3.oo1.DB(":memory:")
   store = new MirrorStore(db)
-  store.ensureSchema(["a", "b"], 1)
+  store.ensureSchema(plain("a", "b"), 1)
 })
 
 afterEach(() => {
@@ -112,23 +115,53 @@ describe("MirrorStore", () => {
       store.beginBackfill("a")
       store.finishBackfill("a")
       const reopened = new MirrorStore(db)
-      reopened.ensureSchema(["a", "b"], 1)
+      reopened.ensureSchema(plain("a", "b"), 1)
       expect(reopened.status().backfilled).toEqual(["a"])
     })
   })
 
-  it("wipes data and backfill state when the IndexedDB version changes", () => {
-    store.apply([put("a", entry(1, "x"))])
+  it("keeps data but drops trust when the IndexedDB version changes, and drops removed stores", () => {
+    store.apply([put("a", entry(1, "x")), put("b", entry(1, "y"))])
     store.beginBackfill("a")
     store.finishBackfill("a")
     store.apply([put("a", entry(1, "x"))])
     const upgraded = new MirrorStore(db)
-    upgraded.ensureSchema(["a", "c"], 2)
+    upgraded.ensureSchema(plain("a", "c"), 2)
     const tables = db.selectValues(`SELECT name FROM sqlite_master WHERE name LIKE 's\\_%' ESCAPE '\\' ORDER BY name`)
-    expect({ tables, a: rows("a"), done: upgraded.status().backfilled.includes("a") }).toEqual({
+    expect({ tables, a: rows("a"), backfilled: upgraded.status().backfilled }).toEqual({
       tables: ["s_a", "s_c"],
-      a: [],
-      done: false,
+      a: ["x"],
+      backfilled: [],
+    })
+  })
+
+  describe("indexes", () => {
+    const value = (record: Record<string, unknown>) => encodeValue(record)
+    const schema = (keyPath: string | string[], multiEntry = false): MirrorStoreSchema[] => [
+      { name: "a", indexes: [{ name: "idx", keyPath, multiEntry }] },
+    ]
+    const indexRows = () =>
+      db
+        .selectArrays(`SELECT ik, k FROM "i_a__idx" ORDER BY ik, k`)
+        .map(([ik, k]) => [Array.from(ik as Uint8Array), Array.from(k as Uint8Array)])
+    const expected = (...pairs: Array<[IDBValidKey, IDBValidKey]>) =>
+      pairs.map(([ik, k]) => [Array.from(encodeKey(ik)), Array.from(encodeKey(k))])
+
+    it("follows put, overwrite, delete and deleteRange", () => {
+      store.ensureSchema(schema("tags", true), 1)
+      store.apply([
+        put("a", entry(1, value({ tags: ["x", "y", "x"] })), entry(2, value({ tags: "y" })), entry(3, value({}))),
+      ])
+      store.apply([put("a", entry(1, value({ tags: ["z"] })))])
+      store.apply([del("a", 3), delRange("a", 2, 2)])
+      expect(indexRows()).toEqual(expected(["z", 1]))
+    })
+
+    it("is rebuilt from stored values when its definition changes", () => {
+      store.ensureSchema(schema("n"), 1)
+      store.apply([put("a", entry(1, value({ n: 5, m: "q" }))), put("a", entry(2, value({ m: "p" })))])
+      store.ensureSchema(schema("m"), 2)
+      expect(indexRows()).toEqual(expected(["p", 2], ["q", 1]))
     })
   })
 
@@ -162,7 +195,7 @@ describe("MirrorStore", () => {
     it("keeps what it holds across a reopen", () => {
       store.apply([put("a", entry(1, "x"))], commit(1, { a: 0 }))
       const reopened = new MirrorStore(db)
-      reopened.ensureSchema(["a", "b"], 1)
+      reopened.ensureSchema(plain("a", "b"), 1)
       expect(reopened.status().writers).toEqual({ w: { a: 1 } })
     })
 

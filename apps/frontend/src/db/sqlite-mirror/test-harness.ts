@@ -99,11 +99,13 @@ export function createBus() {
 
 export function inProcessTransport(sqlite: Database, log: MirrorRequest["type"][] = []): MirrorTransport {
   const handler = createMirrorHandler(async () => ({ db: sqlite, close: () => {}, destroy: async () => {} }))
+  let heardAt = 0
   return {
     request: (request) => {
       log.push(request.type)
-      return handler.handle(request)
+      return handler.handle(request, () => (heardAt = performance.now()))
     },
+    heardAt: () => heardAt,
     close: () => {},
   }
 }

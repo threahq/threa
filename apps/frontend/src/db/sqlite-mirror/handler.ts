@@ -1,6 +1,6 @@
 import type { Database } from "@sqlite.org/sqlite-wasm"
 import { MirrorStore, type MirrorStatus } from "./mirror-store"
-import type { MirrorReply, MirrorRequest } from "./protocol"
+import type { MirrorReadResults, MirrorReply, MirrorRequest } from "./protocol"
 
 export interface MirrorDatabase {
   db: Database
@@ -24,13 +24,15 @@ export function createMirrorHandler(openDatabase: (idbName: string) => Promise<M
     return session
   }
 
-  async function run(request: MirrorRequest): Promise<{ status?: MirrorStatus }> {
+  async function run(
+    request: MirrorRequest
+  ): Promise<{ status?: MirrorStatus; result?: MirrorReadResults[keyof MirrorReadResults] }> {
     if (request.type === "open") {
       session?.database.close()
       session = null
       const database = await openDatabase(request.idbName)
       const store = new MirrorStore(database.db)
-      store.ensureSchema(request.stores, request.idbVersion)
+      store.ensureSchema(request.schema, request.idbVersion)
       session = { database, store }
       return {}
     }
@@ -62,10 +64,19 @@ export function createMirrorHandler(openDatabase: (idbName: string) => Promise<M
       case "forgetWriters":
         store.forgetWriters(request.writers)
         return {}
+      case "get":
+        return { result: store.get(request.store, request.key) }
+      case "getMany":
+        return { result: store.getMany(request.store, request.keys) }
+      case "query":
+        return { result: store.query(request.store, request.query) }
+      case "count":
+        return { result: store.count(request.store, request.index, request.range) }
     }
   }
 
-  async function timed(request: MirrorRequest): Promise<MirrorReply> {
+  async function timed(request: MirrorRequest, onStart: () => void): Promise<MirrorReply> {
+    onStart()
     const startedAt = performance.now()
     try {
       const data = await run(request)
@@ -77,8 +88,9 @@ export function createMirrorHandler(openDatabase: (idbName: string) => Promise<M
   }
 
   return {
-    handle(request: MirrorRequest): Promise<MirrorReply> {
-      const reply = tail.then(() => timed(request))
+    /** `onStart` runs as the request begins, so the caller can tell a busy worker from a dead one. */
+    handle(request: MirrorRequest, onStart: () => void = () => {}): Promise<MirrorReply> {
+      const reply = tail.then(() => timed(request, onStart))
       tail = reply
       return reply
     },

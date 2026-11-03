@@ -75,6 +75,72 @@ export function encodeKey(key: IDBValidKey): Uint8Array {
   return Uint8Array.from(out)
 }
 
+interface Reader {
+  bytes: Uint8Array
+  pos: number
+}
+
+function readNumber(reader: Reader): number {
+  const view = new DataView(new ArrayBuffer(8))
+  const negative = (reader.bytes[reader.pos] & 0x80) === 0
+  for (let i = 0; i < 8; i++) {
+    const byte = reader.bytes[reader.pos + i]
+    const positive = i === 0 ? byte ^ 0x80 : byte
+    view.setUint8(i, negative ? ~byte & 0xff : positive)
+  }
+  reader.pos += 8
+  return view.getFloat64(0)
+}
+
+function readEscapedBytes(reader: Reader): Uint8Array<ArrayBuffer> {
+  const out: number[] = []
+  const { bytes } = reader
+  for (;;) {
+    const byte = bytes[reader.pos++]
+    if (byte !== 0) {
+      out.push(byte)
+      continue
+    }
+    if (bytes[reader.pos++] === 0x01) return Uint8Array.from(out)
+    out.push(0)
+  }
+}
+
+function readKey(reader: Reader): IDBValidKey {
+  const tag = reader.bytes[reader.pos++]
+  switch (tag) {
+    case TAG_NUMBER:
+      return readNumber(reader)
+    case TAG_DATE:
+      return new Date(readNumber(reader))
+    case TAG_STRING: {
+      const units = readEscapedBytes(reader)
+      let text = ""
+      for (let i = 0; i < units.length; i += 2) text += String.fromCharCode((units[i] << 8) | units[i + 1])
+      return text
+    }
+    case TAG_BINARY:
+      return readEscapedBytes(reader).buffer
+    case TAG_ARRAY: {
+      const elements: IDBValidKey[] = []
+      while (reader.bytes[reader.pos] !== TAG_ARRAY_END) elements.push(readKey(reader))
+      reader.pos++
+      return elements
+    }
+    default:
+      throw new Error(`Unknown key tag ${tag}`)
+  }
+}
+
+/** The key `encodeKey` encoded, as IndexedDB returns it: binary keys come back as ArrayBuffer. */
+export function decodeKey(bytes: Uint8Array): IDBValidKey {
+  return readKey({ bytes, pos: 0 })
+}
+
+export function keyId(key: Uint8Array): string {
+  return key.join(",")
+}
+
 export function compareBytes(a: Uint8Array, b: Uint8Array): number {
   const shared = Math.min(a.length, b.length)
   for (let i = 0; i < shared; i++) {

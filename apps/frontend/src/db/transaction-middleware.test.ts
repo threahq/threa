@@ -49,8 +49,8 @@ describe("transaction durability", () => {
     await db.pendingMessages.put({ clientId: "client_1", streamId: "stream_1", createdAt: 1 } as never)
 
     expect(writes).toEqual([
-      { stores: ["syncCursors", "sqliteMarks:syncCursors"], durability: "relaxed" },
-      { stores: ["pendingMessages", "sqliteMarks:pendingMessages"], durability: "default" },
+      { stores: ["syncCursors"], durability: "relaxed" },
+      { stores: ["pendingMessages"], durability: "default" },
     ])
     db.close()
   })
@@ -62,12 +62,7 @@ describe("transaction durability", () => {
       await db.syncCursors.put({ key: "cursor_1", value: "1", updatedAt: 1 } as never)
     })
 
-    expect(writes).toEqual([
-      {
-        stores: ["syncCursors", "docStates", "sqliteMarks:syncCursors", "sqliteMarks:docStates"],
-        durability: "default",
-      },
-    ])
+    expect(writes).toEqual([{ stores: ["syncCursors", "docStates"], durability: "default" }])
     db.close()
   })
 
@@ -77,7 +72,7 @@ describe("transaction durability", () => {
 
     await db.syncCursors.put({ key: "cursor_1", value: "1", updatedAt: 1 } as never)
 
-    expect(writes).toEqual([{ stores: ["syncCursors", "sqliteMarks:syncCursors"], durability: "default" }])
+    expect(writes).toEqual([{ stores: ["syncCursors"], durability: "default" }])
     db.close()
   })
 })

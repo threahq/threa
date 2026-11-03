@@ -28,7 +28,8 @@ import type {
 } from "@threahq/types"
 import type { KdfParams } from "@/lib/crypto/passphrase"
 import type { DraftContextRef } from "@/lib/context-bag/types"
-import { createTransactionMiddleware } from "./transaction-middleware"
+import { transactionMiddleware } from "./transaction-middleware"
+import { createSqliteMirrorMiddleware } from "./sqlite-mirror/middleware"
 import type { SqliteMirror } from "./sqlite-mirror/client"
 import { IdbWriter, SQLITE_INCARNATION_STORE, sqliteMarksSchema } from "./sqlite-mirror/marks"
 import { isMirroredStore } from "./sqlite-mirror/stores"
@@ -1218,9 +1219,11 @@ export class ThreaDatabase extends Dexie {
   docStates!: Table<CachedDocState, [string, string]>
   cacheOwnership!: EntityTable<CacheOwnership, "id">
 
-  /** The SQLite shadow copy of this database's writes, while one is running. */
+  /** The SQLite copy of this database's writes, while one is running. */
   sqliteMirror: SqliteMirror | null = null
   readonly sqliteWriter: IdbWriter
+  private idbOpened = false
+  private idbOpenWaiters: Array<() => void> = []
 
   private upgradeRecoveryAvailable = true
 
@@ -1886,11 +1889,22 @@ export class ThreaDatabase extends Dexie {
     this.streamContextItems = this.table(STREAM_CONTEXT_ITEMS_STORE)
 
     this.sqliteWriter = new IdbWriter(name)
-    this.use(createTransactionMiddleware(() => this.sqliteMirror, this.sqliteWriter))
+    this.use(transactionMiddleware)
+    // Read per transaction: the table cores are built once, at open.
+    this.use(createSqliteMirrorMiddleware(() => this.sqliteMirror, this.sqliteWriter))
 
     // Dexie holds every other transaction until this resolves, so nothing reads
     // or writes a database before its contents are known to belong to the
     // opener. The pre-auth handle passes no owner and stays ungated.
+    // Subscribed first: ready subscribers run one after another, and the claim's reads may wait for the mirror to read IndexedDB.
+    this.on(
+      "ready",
+      () => {
+        this.idbOpened = true
+        for (const resolve of this.idbOpenWaiters.splice(0)) resolve()
+      },
+      true
+    )
     if (owner) this.on("ready", () => claimCacheOwnership(this, owner), true)
 
     // Another tab upgraded the shared per-account database. Dexie closes this
@@ -1907,6 +1921,12 @@ export class ThreaDatabase extends Dexie {
   override close(options?: { disableAutoOpen: boolean }): void {
     super.close(options)
     this.sqliteWriter.close()
+  }
+
+  /** Resolves once IndexedDB is open and upgraded, before the rest of `open()`'s ready handlers have run. */
+  whenIdbOpen(): Promise<void> {
+    if (this.idbOpened) return Promise.resolve()
+    return new Promise((resolve) => this.idbOpenWaiters.push(resolve))
   }
 
   // Auto-open routes through here too (Dexie calls `db.open()` on first use),
