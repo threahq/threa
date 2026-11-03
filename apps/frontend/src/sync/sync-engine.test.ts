@@ -2000,26 +2000,25 @@ describe("SyncEngine sync cursor (active mode)", () => {
     }
   })
 
-  it("replays a small catch-up gap through the live handlers without collapsing", async () => {
+  it.each([3, CATCHUP_COLLAPSE_THRESHOLD - 1])("should replay %i catch-up entries without collapsing", async (size) => {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
-    // A handful of missed entries stays on the per-entry replay path — cheap, and
-    // it avoids an extra full-snapshot fetch. The bootstrap is only the connect
-    // one (no collapse fallback), and the entries' handler writes land.
-    const smallPage = Array.from({ length: 3 }, (_, i) => userAddedEntry(String(11 + i), `small_user_${i}`))
-    const catchUp = vi.fn().mockResolvedValueOnce({ entries: smallPage, head: "13" }).mockResolvedValue(emptyPage("13"))
+    const replayEntries = Array.from({ length: size }, (_, i) => userAddedEntry(String(11 + i), `replay_user_${i}`))
+    const lastSyncId = String(10 + size)
+    const catchUp = vi
+      .fn()
+      .mockResolvedValueOnce({ entries: replayEntries, head: "5000" })
+      .mockResolvedValue(emptyPage("5000"))
     const deps = makeActiveDeps(catchUp)
     const engine = new SyncEngine(deps)
     const applyWindow = trackApplyWindow()
 
     await engine.onConnect(asSocket(new MockSocket()))
 
-    await vi.waitFor(async () => expect(await db.workspaceUsers.get(["ws_1", "small_user_2"])).toBeDefined())
-    expect(engine.getSyncCursor()).toBe("13")
+    await vi.waitFor(async () => expect(await db.workspaceUsers.get(["ws_1", `replay_user_${size - 1}`])).toBeDefined())
+    expect(engine.getSyncCursor()).toBe(lastSyncId)
     expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1)
     // A page shorter than the limit ends the run; no confirming empty fetch.
     expect(catchUp).toHaveBeenCalledTimes(1)
-    // Replaying opens the apply-window once and closes it once, so the batched
-    // store hooks settle the three streams in a single re-read rather than three.
     applyWindow.stop()
     expect(applyWindow.transitions).toEqual([...connectBootstrapWindow, true, false])
     expect(isApplyWindowOpen()).toBe(false)

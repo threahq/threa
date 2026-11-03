@@ -43,10 +43,8 @@ test.describe.configure({ timeout: 240_000 })
 
 /** Past any real sync id, so the head probe returns the head and no entries. */
 const HEAD_PROBE_CURSOR = "9223372036854775807"
-/** `CATCHUP_COLLAPSE_THRESHOLD` in `apps/frontend/src/sync/sync-engine.ts`. */
-const COLLAPSE_THRESHOLD = 200
 /** Well past any client-side wait; the apply window has no timer, so a slow catch-up must not expose partial state. */
-const SLOW_CATCHUP_DELAY_MS = 6_500
+const SLOW_BOOTSTRAP_DELAY_MS = 6_500
 const QUIET_MS = 2_500
 /**
  * The channel timeline's rows land in the sweep's render, but the virtualizer
@@ -419,22 +417,20 @@ async function arrange(page: Page, context: BrowserContext): Promise<Fixture> {
   }
 }
 
-interface GapShape {
-  /** Stop once the head has advanced by at least this many entries. */
-  atLeast: number
-  /** Never let the head advance past this; posts go one at a time near the ceiling. */
-  atMost?: number
-}
-
 /**
  * Everything the phone did while the desktop was closed: new messages in the
  * open channel and its thread, messages elsewhere (one channel then read from
  * the phone, one left unread), a rename, an archive, then filler in #home
- * until the sync head has moved by the requested amount. Returns the delta.
+ * until the owner's catch-up has at least the requested number of entries.
  */
-async function openGap(f: Fixture, shape: GapShape): Promise<{ delta: number; lastHome: string; lastThread: string }> {
+async function openGap(f: Fixture, minimumEntries: number) {
   const start = await syncHead(f.other, f.workspaceId)
   const { workspaceId } = f
+  const entryCount = async () => {
+    const response = await f.owner.get(`/api/workspaces/${workspaceId}/sync?after=${start}&limit=500`)
+    await expectApiOk(response, "measure owner's catch-up gap")
+    return ((await response.json()) as { entries: unknown[] }).entries.length
+  }
 
   await postMessage(f.other, workspaceId, f.home, `gap home 1 ${f.testId}`)
   await postMessage(f.other, workspaceId, f.readElsewhere, `gap read-elsewhere ${f.testId}`)
@@ -450,30 +446,19 @@ async function openGap(f: Fixture, shape: GapShape): Promise<{ delta: number; la
   )
   await expectApiOk(await f.owner.post(`/api/workspaces/${workspaceId}/streams/${f.doomed}/archive`), "archive channel")
 
-  // One message fans out into several sync entries (the event, the preview,
-  // one counter per member), and the count varies by message, so the filler
-  // is posted one at a time near the ceiling and stops two messages short of
-  // it by the largest fan-out seen so far.
   let lastHome = `gap home 1 ${f.testId}`
-  let head = await syncHead(f.other, workspaceId)
-  let perMessage = 4
+  let entries = await entryCount()
   let n = 1
-  while (head - start < BigInt(shape.atLeast)) {
-    const delta = Number(head - start)
-    if (shape.atMost !== undefined && delta + perMessage * 2 > shape.atMost) break
-    const remaining = shape.atLeast - delta
-    const nearCeiling = shape.atMost !== undefined && shape.atMost - delta < perMessage * 6
-    const batch = nearCeiling ? 1 : Math.max(1, Math.min(5, Math.ceil(remaining / perMessage)))
+  while (entries < minimumEntries) {
+    const batch = Math.min(5, minimumEntries - entries)
     for (let i = 0; i < batch; i++) {
       n += 1
       lastHome = `gap home ${n} ${f.testId}`
       await postMessage(f.other, workspaceId, f.home, lastHome)
     }
-    const next = await syncHead(f.other, workspaceId)
-    perMessage = Math.max(perMessage, Math.ceil(Number(next - head) / batch))
-    head = next
+    entries = await entryCount()
   }
-  return { delta: Number(head - start), lastHome, lastThread }
+  return { entries, lastHome, lastThread }
 }
 
 interface Reopened {
@@ -487,15 +472,18 @@ async function reopen(
   context: BrowserContext,
   f: Fixture,
   landed: { lastHome: string; lastThread: string } | null,
-  options: { slowCatchUp?: boolean } = {}
+  options: { slowBootstrap?: boolean } = {}
 ): Promise<Reopened> {
   const page = await context.newPage()
   await page.addInitScript({ content: OBSERVER_SOURCE })
-  if (options.slowCatchUp) {
-    await page.route("**/api/workspaces/*/sync?**", async (route) => {
-      await new Promise((resolve) => setTimeout(resolve, SLOW_CATCHUP_DELAY_MS))
-      await route.continue()
-    })
+  if (options.slowBootstrap) {
+    await page.route(
+      (url) => url.pathname.startsWith("/api/workspaces/") && url.pathname.endsWith("/bootstrap"),
+      async (route) => {
+        await new Promise((resolve) => setTimeout(resolve, SLOW_BOOTSTRAP_DELAY_MS))
+        await route.continue()
+      }
+    )
   }
   await page.goto(f.url)
 
@@ -558,8 +546,8 @@ test.describe("Cold open lands in two states", () => {
 
   test("a small gap lands in one render", async ({ page, context }) => {
     const f = await arrange(page, context)
-    const gap = await openGap(f, { atLeast: 10 })
-    expect(gap.delta).toBeLessThan(COLLAPSE_THRESHOLD)
+    const gap = await openGap(f, 10)
+    expect(gap.entries).toBeGreaterThanOrEqual(10)
     const reopened = await reopen(context, f, gap)
     expectTwoStates(f, reopened, true)
     const finalSidebar = reopened.analysis.paints.sidebar.at(-1)!
@@ -572,26 +560,26 @@ test.describe("Cold open lands in two states", () => {
     expect(finalSidebar).toContain(`*#unread-elsewhere-${f.testId} |`)
   })
 
-  test("a gap just under the collapse threshold lands in one render", async ({ page, context }) => {
+  test("a moderate gap lands in one render", async ({ page, context }) => {
     const f = await arrange(page, context)
-    const gap = await openGap(f, { atLeast: COLLAPSE_THRESHOLD - 30, atMost: COLLAPSE_THRESHOLD - 1 })
-    expect(gap.delta).toBeLessThan(COLLAPSE_THRESHOLD)
+    const gap = await openGap(f, 170)
+    expect(gap.entries).toBeGreaterThanOrEqual(170)
     const reopened = await reopen(context, f, gap)
     expectTwoStates(f, reopened, true)
   })
 
-  test("a gap past the collapse threshold lands in one render", async ({ page, context }) => {
+  test("a large gap lands in one render", async ({ page, context }) => {
     const f = await arrange(page, context)
-    const gap = await openGap(f, { atLeast: COLLAPSE_THRESHOLD + 20 })
-    expect(gap.delta).toBeGreaterThanOrEqual(COLLAPSE_THRESHOLD)
+    const gap = await openGap(f, 220)
+    expect(gap.entries).toBeGreaterThanOrEqual(220)
     const reopened = await reopen(context, f, gap)
     expectTwoStates(f, reopened, true)
   })
 
-  test("a slow catch-up keeps the cached state until everything lands", async ({ page, context }) => {
+  test("a slow bootstrap keeps the cached state until everything lands", async ({ page, context }) => {
     const f = await arrange(page, context)
-    const gap = await openGap(f, { atLeast: 10 })
-    const reopened = await reopen(context, f, gap, { slowCatchUp: true })
+    const gap = await openGap(f, 10)
+    const reopened = await reopen(context, f, gap, { slowBootstrap: true })
     expectTwoStates(f, reopened, true)
   })
 })
