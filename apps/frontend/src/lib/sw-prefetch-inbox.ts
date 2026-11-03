@@ -90,7 +90,7 @@ export async function applyPrefetch(database: ThreaDatabase, payload: PrefetchPa
  * leaves the inbox only once its write committed; one tab drains at a time,
  * so no entry lands after a later one.
  */
-export function drainPrefetchInbox(database: ThreaDatabase, now: () => number = Date.now): Promise<void> {
+export async function drainPrefetchInbox(database: ThreaDatabase, now: () => number = Date.now): Promise<void> {
   const drain = async () => {
     for (;;) {
       const entry = await oldestPrefetch(database.name)
@@ -105,7 +105,7 @@ export function drainPrefetchInbox(database: ThreaDatabase, now: () => number = 
     }
   }
   if (!navigator.locks) return drain()
-  return navigator.locks.request(prefetchInboxLockName(database.name), drain)
+  await navigator.locks.request(prefetchInboxLockName(database.name), drain)
 }
 
 /**
