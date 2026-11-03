@@ -74,8 +74,8 @@ function countLoads(page: Page): () => number {
 }
 
 /** Nothing reloads on its own: storage asks for a restart and the user takes it. */
-async function restart(page: Page, timeout = 30_000) {
-  await expect(page.getByText("Storage upgrade ready")).toBeVisible({ timeout })
+async function restart(page: Page) {
+  await expect(page.getByText("Storage upgrade ready")).toBeVisible({ timeout: 30_000 })
   await page.getByRole("button", { name: "Restart" }).click()
 }
 
@@ -90,10 +90,9 @@ async function openUnderFlag(page: Page, path: string, slug: string, mode: strin
   return loads
 }
 
-/** The boot that copied every store into SQLite asks for a restart; the boot after enters read-write. */
+/** The boot that copies every store into SQLite restarts every tab by itself once done; the boot after enters read-write. */
 async function enterReadWrite(page: Page, slug: string, loads: () => number) {
-  await restart(page, 90_000)
-  await expect.poll(loads, { timeout: 30_000 }).toBe(3)
+  await expect.poll(loads, { timeout: 90_000 }).toBe(3)
   await opened(page, slug)
   await expect.poll(() => recordedModes(page)).toEqual(["read-write"])
 }

@@ -73,6 +73,7 @@ export const PERF_MARK_NAMES = [
   "sqlite.readSkipped",
   "sqlite.readFallback",
   "sqlite.readWriteDeferred",
+  "sqlite.upgrade",
   "sqlite.drainFailure",
   "sqlite.foreignWrite",
   "sqlite.decisionOverdue",

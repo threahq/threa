@@ -135,28 +135,57 @@ export function onStorageRestartPending(listener: () => void): () => void {
 export function resetStorageRestartForTests(): void {
   restartPending.clear()
   restartDismissed = false
+  upgrade = null
 }
 
-/** Every tab of this origin boots again, under the modes recorded meanwhile; only the user asks for it. */
-export function reloadEveryTab(): void {
+/** Rows copied into SQLite so far, of `total`; `null` until the rows are counted. */
+export interface StorageUpgradeProgress {
+  copied: number
+  total: number | null
+}
+
+let upgrade: StorageUpgradeProgress | null = null
+const upgradeListeners = new Set<() => void>()
+
+/** SQLite storage copies every store before it switches to read-write; the app waits behind a lock meanwhile. */
+export function storageUpgrade(): StorageUpgradeProgress | null {
+  return upgrade
+}
+
+export function reportStorageUpgrade(progress: StorageUpgradeProgress | null): void {
+  upgrade = progress
+  for (const listener of upgradeListeners) listener()
+}
+
+export function onStorageUpgrade(listener: () => void): () => void {
+  upgradeListeners.add(listener)
+  return () => upgradeListeners.delete(listener)
+}
+
+/** Who restarted every tab: the user, or an upgrade that finished its copy. */
+export type SwitchReload = "user" | "upgrade"
+
+/** Every tab of this origin boots again, under the modes recorded meanwhile; only the user asks for it, or an upgrade it waits for. */
+export function reloadEveryTab(cause: SwitchReload): void {
   const channel = new BroadcastChannel(RELOAD_CHANNEL)
-  channel.postMessage("reload")
+  channel.postMessage(cause)
   channel.close()
-  reloadToSwitch()
+  reloadToSwitch(cause)
 }
 
 /** Marks the next boot as one that may wait for the other tabs, all reloading too, to close. */
-function reloadToSwitch(): void {
-  sessionStorage.setItem(SWITCH_RELOAD_KEY, "1")
+function reloadToSwitch(cause: SwitchReload): void {
+  sessionStorage.setItem(SWITCH_RELOAD_KEY, cause)
   window.location.reload()
 }
 
-/** Whether this tab reloaded for a mode switch; only the first boot after it asks. */
-export function takeSwitchReload(): boolean {
-  if (typeof sessionStorage === "undefined") return false
-  const took = sessionStorage.getItem(SWITCH_RELOAD_KEY) !== null
+/** Why this tab reloaded for a mode switch, if it did; only the first boot after it asks. */
+export function takeSwitchReload(): SwitchReload | null {
+  if (typeof sessionStorage === "undefined") return null
+  const cause = sessionStorage.getItem(SWITCH_RELOAD_KEY)
   sessionStorage.removeItem(SWITCH_RELOAD_KEY)
-  return took
+  if (cause === null) return null
+  return cause === "upgrade" ? "upgrade" : "user"
 }
 
 let listening = false
@@ -164,5 +193,6 @@ let listening = false
 export function reloadWhenAsked(): void {
   if (listening) return
   listening = true
-  new BroadcastChannel(RELOAD_CHANNEL).onmessage = reloadToSwitch
+  new BroadcastChannel(RELOAD_CHANNEL).onmessage = (event: MessageEvent<unknown>) =>
+    reloadToSwitch(event.data === "upgrade" ? "upgrade" : "user")
 }

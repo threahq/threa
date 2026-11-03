@@ -80,6 +80,7 @@ const STORAGE_FAILURE_KINDS = [
   "drain_refused",
   "mode_unreadable",
   "apply_failed",
+  "upgrade_unfinished",
 ] as const
 
 export interface DiagnosticFields {

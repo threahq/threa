@@ -3,7 +3,7 @@ import type { ThreaDatabase } from "../database"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { discardPrefetches } from "../prefetch-inbox"
 import { drainBacklog } from "./idb-backlog"
-import { readChunk, readTouched, touchedOf, type Touched, type TouchedRows } from "./idb-reads"
+import { countRows, readChunk, readTouched, touchedOf, type Touched, type TouchedRows } from "./idb-reads"
 import { encodeKey, encodeRange } from "./key-codec"
 import {
   deleteMarks,
@@ -34,7 +34,13 @@ import {
   reportStorageFailure,
   reportStorageRecovered,
 } from "./storage-diagnostics"
-import { readSqliteStorageMode, recordMode, requestStorageRestart } from "./storage-mode"
+import {
+  readSqliteStorageMode,
+  recordMode,
+  reloadEveryTab,
+  reportStorageUpgrade,
+  requestStorageRestart,
+} from "./storage-mode"
 import { isMirroredStore } from "./stores"
 import { encodeValue } from "./value-codec"
 import { createWorkerTransport } from "./worker-transport"
@@ -64,6 +70,8 @@ export interface MirrorDeadlines {
   drainRetryMs: number
   /** Read-write: the wait before this tab claims ownership again after its worker failed; each next one waits twice as long. */
   recoverMs: number
+  /** How long an entering boot keeps the app behind the upgrade lock while it copies; past it the copy goes on in the background. */
+  upgradeMs: number
 }
 
 export const DEFAULT_DEADLINES: MirrorDeadlines = {
@@ -73,6 +81,7 @@ export const DEFAULT_DEADLINES: MirrorDeadlines = {
   decidedMs: 15_000,
   drainRetryMs: 1_000,
   recoverMs: 1_000,
+  upgradeMs: 120_000,
 }
 
 const MAX_DRAIN_RETRY_MS = 60_000
@@ -231,6 +240,10 @@ export interface SqliteMirrorOptions {
   entering?: boolean
   /** The flag asks for a mode only a restart of every tab can switch to; the user is asked for one. */
   requestRestart?: () => void
+  /** The user restarted for this entering boot: short of a full copy, it holds the app until the copy is done. */
+  upgrade?: boolean
+  /** An upgrade the app waited for finished: every tab boots again, into read-write. */
+  restartEveryTab?: () => void
 }
 
 type Role = "idle" | "pending" | "follower" | "starting" | "owner" | "failed"
@@ -534,6 +547,8 @@ export class SqliteMirror {
   private recoveries = 0
   /** The owner found SQLite short of a store under read-write: this session runs on IndexedDB, until a restart. */
   private demoted = false
+  /** An entering boot copying every store while the app waits behind the upgrade lock; it restarts every tab once done. */
+  private upgrade: { startedAt: number; stopTimer: () => void; ended: ReturnType<typeof deferred> } | null = null
   private bootReported = false
   /** IndexedDB is being upgraded: no transaction begins on this owner any more. */
   private closing = false
@@ -586,6 +601,11 @@ export class SqliteMirror {
   /** What Dexie's ready handlers wait for: whether this tab's transactions go to SQLite or IndexedDB. */
   whenRoutable(): Promise<void> {
     return this.routable.promise
+  }
+
+  /** Settles once no upgrade holds the app: none began, it gave up, or it outlasted its lock. */
+  whenUpgradeEnds(): Promise<void> {
+    return this.upgrade?.ended.promise ?? Promise.resolve()
   }
 
   /** Queues a transaction in creation order, as IndexedDB orders them; one that fails to begin fails its requests and commit. */
@@ -1133,6 +1153,7 @@ export class SqliteMirror {
     if (this.role === "failed") return
     markFailure(error)
     reportStorageFailure("worker_failed", { attempt: this.recoveries })
+    this.endUpgrade(true)
     const served = [...this.trusted].filter((store) => this.trusts(store))
     this.role = "failed"
     this.decided = false
@@ -1212,12 +1233,12 @@ export class SqliteMirror {
       this.settle()
       // Taken before the backfill reads: a writer dead by now committed everything it ever will.
       const live = await this.options.coordination.liveTabs()
-      if (this.role !== "owner") return
+      if (this.role !== "owner") return this.endUpgrade(true)
       const backfilled = await this.backfill(
         stores.filter((store) => !reconciled.trusted.has(store)),
         reconciled.marks
       )
-      if (!backfilled) return
+      if (!backfilled) return this.endUpgrade(true)
       await this.forget(reconciled, backfilled, live)
       if (this.role === "owner") this.askToEnterReadWrite(stores)
     } catch (error) {
@@ -1256,6 +1277,8 @@ export class SqliteMirror {
       this.resumeServing()
       this.announce()
     } else if (entering || this.demoted) {
+      // Begun before requests settle on IndexedDB, so the boot holding the other tabs out keeps holding them.
+      if (entering && this.options.upgrade && !this.demoted && !readWriteBlocker(database)) this.beginUpgrade()
       this.settleServing(false)
     } else {
       await discardPrefetches(database.name)
@@ -1289,13 +1312,42 @@ export class SqliteMirror {
   /**
    * The flag asks for read-write and SQLite now holds every store, yet this
    * session runs on IndexedDB: only a boot holding every other tab out may
-   * enter, so the user is asked to restart. Nothing reloads on its own.
+   * enter. The upgrade the user restarted for restarts every tab itself; any
+   * other session asks the user to restart.
    */
   private askToEnterReadWrite(stores: readonly string[]): void {
     const { database } = this.options
-    if (this.primary || readSqliteStorageMode(database.name) !== "read-write") return
-    if (readWriteBlocker(database) || !stores.every((store) => this.trusted.has(store))) return
-    this.askToRestart()
+    const ready =
+      !this.primary &&
+      readSqliteStorageMode(database.name) === "read-write" &&
+      !readWriteBlocker(database) &&
+      stores.every((store) => this.trusted.has(store))
+    if (!ready) return this.endUpgrade(true)
+    if (!this.upgrade) return this.askToRestart()
+    // The lock stays up until every tab reloads.
+    this.upgrade.stopTimer()
+    getPerfCapture().mark("sqlite.upgrade", performance.now() - this.upgrade.startedAt)
+    ;(this.options.restartEveryTab ?? (() => reloadEveryTab("upgrade")))()
+  }
+
+  /** The app waits behind the upgrade lock until every store is copied, or for `upgradeMs` at most. */
+  private beginUpgrade(): void {
+    if (this.upgrade) return
+    const timer = setTimeout(() => this.endUpgrade(true), this.deadlines.upgradeMs)
+    this.upgrade = { startedAt: performance.now(), stopTimer: () => clearTimeout(timer), ended: deferred() }
+    reportStorageUpgrade({ copied: 0, total: null })
+  }
+
+  /** The app no longer waits on the upgrade; a copy finishing later asks the user to restart instead. */
+  private endUpgrade(unfinished: boolean): void {
+    const upgrade = this.upgrade
+    if (!upgrade) return
+    this.upgrade = null
+    upgrade.stopTimer()
+    upgrade.ended.resolve()
+    reportStorageUpgrade(null)
+    if (unfinished)
+      reportStorageFailure("upgrade_unfinished", { elapsedMs: Math.round(performance.now() - upgrade.startedAt) })
   }
 
   private askToRestart(): void {
@@ -1753,11 +1805,21 @@ export class SqliteMirror {
     const capture = getPerfCapture()
     const startedAt = performance.now()
     const done = new Set<string>()
+    const progress = {
+      copied: 0,
+      total: this.upgrade ? await countRows(this.options.database.backendDB(), stores) : null,
+    }
+    if (this.upgrade) reportStorageUpgrade(progress)
     for (const store of stores) {
       const storeStartedAt = performance.now()
       const covered = Object.fromEntries(marks.filter((mark) => mark.store === store).map((m) => [m.writer, m.seq]))
-      const outcome = await this.backfillStore(store, covered)
+      const outcome = await this.backfillStore(store, covered, (rows) => {
+        progress.copied += rows
+        if (this.upgrade) reportStorageUpgrade({ ...progress })
+      })
       if (outcome === "interrupted") return null
+      // A store SQLite cannot hold rules read-write out: the app stops waiting on the rest.
+      if (outcome === "unmirrorable") this.endUpgrade(true)
       if (outcome === "done") {
         done.add(store)
         this.trust(store)
@@ -1771,7 +1833,8 @@ export class SqliteMirror {
   /** `covered`: the store's marks read before the backfill began, so it holds their writes. */
   private async backfillStore(
     store: string,
-    covered: Record<string, number>
+    covered: Record<string, number>,
+    onCopied: (rows: number) => void
   ): Promise<"done" | "unmirrorable" | "interrupted"> {
     const idb = this.options.database.backendDB()
     if (!(await this.send({ type: "backfillBegin", store }))) return "interrupted"
@@ -1783,6 +1846,7 @@ export class SqliteMirror {
       const entries = encodeRows(store, rows.keys, rows.values)
       if (!entries) return "unmirrorable"
       if (!(await this.send({ type: "backfillChunk", store, entries }))) return "interrupted"
+      onCopied(rows.keys.length)
       last = rows.keys[rows.keys.length - 1]
       await yieldToEventLoop()
       if (this.role !== "owner") return "interrupted"
@@ -1791,12 +1855,18 @@ export class SqliteMirror {
   }
 }
 
-export function createBrowserMirror(database: ThreaDatabase, mode: SqliteMirrorMode, entering = false): SqliteMirror {
+export function createBrowserMirror(
+  database: ThreaDatabase,
+  mode: SqliteMirrorMode,
+  entering = false,
+  upgrade = false
+): SqliteMirror {
   return new SqliteMirror({
     database,
     mode,
     coordination: createBrowserCoordination(database.name, database.sqliteWriter.id),
     createTransport: createWorkerTransport,
     entering,
+    upgrade,
   })
 }
