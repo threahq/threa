@@ -476,10 +476,12 @@ async function reopen(
 ): Promise<Reopened> {
   const page = await context.newPage()
   await page.addInitScript({ content: OBSERVER_SOURCE })
+  let delayedBootstraps = 0
   if (options.slowBootstrap) {
-    await page.route(
+    await context.route(
       (url) => url.pathname.startsWith("/api/workspaces/") && url.pathname.endsWith("/bootstrap"),
       async (route) => {
+        delayedBootstraps += 1
         await new Promise((resolve) => setTimeout(resolve, SLOW_BOOTSTRAP_DELAY_MS))
         await route.continue()
       }
@@ -489,6 +491,9 @@ async function reopen(
 
   const nav = page.getByRole("navigation", { name: "Sidebar navigation" })
   await expect(nav.locator('a[href*="/s/"]').first()).toBeVisible({ timeout: 20000 })
+  if (options.slowBootstrap) {
+    await expect.poll(() => delayedBootstraps, { message: "the slow bootstrap handler never ran" }).toBeGreaterThan(0)
+  }
   if (landed) {
     await expect(nav.locator("a", { hasText: landed.lastHome })).toBeVisible({ timeout: 40000 })
     await expect(nav.locator("a", { hasText: `${f.renamedSlug}-v2` })).toBeVisible({ timeout: 40000 })

@@ -2019,6 +2019,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
     expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1)
     // A page shorter than the limit ends the run; no confirming empty fetch.
     expect(catchUp).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(isApplyWindowOpen()).toBe(false))
     applyWindow.stop()
     expect(applyWindow.transitions).toEqual([...connectBootstrapWindow, true, false])
     expect(isApplyWindowOpen()).toBe(false)
