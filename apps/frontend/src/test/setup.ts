@@ -7,6 +7,7 @@ import { onlineManager } from "@tanstack/react-query"
 import { afterEach, beforeEach, vi } from "vitest"
 import { setAssertedAccount } from "@/api/account-assertion"
 import { setActiveDb, ThreaDatabase } from "@/db/database"
+import { resetStorageDiagnosticsForTests } from "@/db/sqlite-mirror/storage-diagnostics"
 import { setStorageAccount } from "@/lib/account-storage"
 import { __resetCollapseCacheForTests } from "@/lib/markdown/collapse-cache"
 
@@ -40,10 +41,14 @@ if (typeof globalThis.localStorage === "undefined" || typeof globalThis.localSto
 
 // The markdown-block + link-preview collapse cache is module-scoped, so its
 // state would otherwise leak between tests. Reset it before each case so
-// every test starts with an empty (unhydrated) cache.
+// every test starts with an empty (unhydrated) cache. Storage diagnostics
+// flush a summary once five minutes have passed since module load, which a
+// shared worker crosses mid-suite; a range read left over from an earlier
+// file would then record into whichever file is running.
 beforeEach(() => {
   setStorageAccount(TEST_STORAGE_ACCOUNT)
   __resetCollapseCacheForTests()
+  resetStorageDiagnosticsForTests()
 })
 
 // In-memory BroadcastChannel (jsdom lacks it). Cross-instance delivery within
