@@ -1226,8 +1226,8 @@ export class ThreaDatabase extends Dexie {
   readonly sqliteWriter: IdbWriter
   private idbOpened = false
   private idbOpenWaiters: Array<() => void> = []
-  private storageFailed = false
-  private readonly storageFailureListeners = new Set<() => void>()
+  private storageReconnectingNow = false
+  private readonly storageReconnectingListeners = new Set<() => void>()
 
   private upgradeRecoveryAvailable = true
 
@@ -1948,20 +1948,20 @@ export class ThreaDatabase extends Dexie {
     this.sqliteWriter.close()
   }
 
-  /** SQLite storage cannot serve this database, and the user has to be told; what it holds is kept. */
-  get storageFailure(): boolean {
-    return this.storageFailed
+  /** SQLite holds this database's primary copy but nothing serves it right now; requests wait for the next owner. */
+  get storageReconnecting(): boolean {
+    return this.storageReconnectingNow
   }
 
-  reportStorageFailure(failed: boolean): void {
-    if (this.storageFailed === failed) return
-    this.storageFailed = failed
-    for (const listener of this.storageFailureListeners) listener()
+  reportStorageReconnecting(reconnecting: boolean): void {
+    if (this.storageReconnectingNow === reconnecting) return
+    this.storageReconnectingNow = reconnecting
+    for (const listener of this.storageReconnectingListeners) listener()
   }
 
-  onStorageFailure(listener: () => void): () => void {
-    this.storageFailureListeners.add(listener)
-    return () => this.storageFailureListeners.delete(listener)
+  onStorageReconnecting(listener: () => void): () => void {
+    this.storageReconnectingListeners.add(listener)
+    return () => this.storageReconnectingListeners.delete(listener)
   }
 
   /** Resolves once IndexedDB is open and upgraded, before the rest of `open()`'s ready handlers have run. */

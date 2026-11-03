@@ -27,7 +27,14 @@ import type {
 } from "./mirror-store"
 import type { MirrorReadRequest, MirrorReadResults, MirrorReply, MirrorRequest, MirrorTransport } from "./protocol"
 import { txOf } from "./protocol"
-import { ranRequestedMode, readSqliteStorageMode, recordMode, reloadEveryTab, takeModeReload } from "./storage-mode"
+import {
+  observeReadFallback,
+  observeSqliteRead,
+  reportStorageBoot,
+  reportStorageFailure,
+  reportStorageRecovered,
+} from "./storage-diagnostics"
+import { readSqliteStorageMode, recordMode, requestStorageRestart } from "./storage-mode"
 import { isMirroredStore } from "./stores"
 import { encodeValue } from "./value-codec"
 import { createWorkerTransport } from "./worker-transport"
@@ -69,8 +76,8 @@ export const DEFAULT_DEADLINES: MirrorDeadlines = {
 }
 
 const MAX_DRAIN_RETRY_MS = 60_000
-/** Workers in a row that fail before serving; past it requests fail and the user is told. */
-const MAX_RECOVERIES = 3
+/** A primary tab claims ownership again after every worker failure; the wait between claims grows to this. */
+const MAX_RECOVER_WAIT_MS = 60_000
 /** Tabs of builds speaking another protocol never follow each other. */
 const READ_WRITE_PROTOCOL = 1
 
@@ -106,6 +113,7 @@ export function withProgressDeadline<T>(
 export type ReadWriteMessage =
   | { type: "hello"; from: string; protocol: number }
   | { type: "decided"; tab: string; protocol: number }
+  | { type: "demoted" }
   | { type: "call"; from: string; to: string; id: number; request: MirrorRequest }
   | { type: "reply"; to: string; id: number; reply: MirrorReply }
 
@@ -201,7 +209,8 @@ export interface SqliteMirrorOptions {
   deadlines?: Partial<MirrorDeadlines>
   /** Read-write only: this boot holds every other tab out, so it may make SQLite the primary copy; otherwise SQLite already is. */
   entering?: boolean
-  reloadEveryTab?: () => void
+  /** The flag asks for a mode only a restart of every tab can switch to; the user is asked for one. */
+  requestRestart?: () => void
 }
 
 type Role = "idle" | "pending" | "follower" | "starting" | "owner" | "failed"
@@ -267,7 +276,7 @@ interface Outgoing {
 }
 
 function unavailable(): DOMException {
-  return new DOMException("SQLite storage is unavailable in this tab; reload to recover", "UnknownError")
+  return new DOMException("SQLite storage has no owner serving this tab", "UnknownError")
 }
 
 function ownerLost(): DOMException {
@@ -503,6 +512,9 @@ export class SqliteMirror {
   private drainRetryMs = 0
   /** Workers this primary tab failed on in a row before one served. */
   private recoveries = 0
+  /** The owner found SQLite short of a store under read-write: this session runs on IndexedDB, until a restart. */
+  private demoted = false
+  private bootReported = false
   /** IndexedDB is being upgraded: no transaction begins on this owner any more. */
   private closing = false
   /** Settles once requests have somewhere to go: SQLite, here or through the owner, or IndexedDB. */
@@ -680,6 +692,15 @@ export class SqliteMirror {
    * read leaves its store on IndexedDB this session.
    */
   async read<T extends MirrorReadRequest>(request: T): Promise<MirrorReadResults[T["type"]]> {
+    const sentAt = performance.now()
+    try {
+      return await this.readUnobserved(request)
+    } finally {
+      observeSqliteRead(performance.now() - sentAt)
+    }
+  }
+
+  private async readUnobserved<T extends MirrorReadRequest>(request: T): Promise<MirrorReadResults[T["type"]]> {
     if (this.serving) return (await this.ask(request)).result as MirrorReadResults[T["type"]]
     await this.awaitClaim()
     const transport = this.transport
@@ -705,6 +726,7 @@ export class SqliteMirror {
   fellBack(store: string, error: unknown): void {
     if (this.trusts(store)) this.distrust([store])
     getPerfCapture().count("sqlite.readFallback")
+    observeReadFallback()
     if (this.reportedFallback) return
     this.reportedFallback = true
     console.error(`SQLite mirror could not serve a read of ${store}; IndexedDB answered`, error)
@@ -828,6 +850,8 @@ export class SqliteMirror {
       if (this.role !== "follower" || this.owner) return
       getPerfCapture().count("sqlite.decisionOverdue")
       console.error(`No tab answered as SQLite storage's owner within ${decidedMs} ms; requests fail until one does`)
+      reportStorageFailure("owner_lost", { elapsedMs: decidedMs })
+      this.options.database.reportStorageReconnecting(true)
       this.settleServing(true)
       hello()
     }, decidedMs)
@@ -866,9 +890,13 @@ export class SqliteMirror {
 
   private receive(message: CoordinationMessage): void {
     if (message.type === "hello") {
-      if (this.role === "owner" && this.decided && message.protocol === READ_WRITE_PROTOCOL) this.announce()
+      if (this.role !== "owner" || message.protocol !== READ_WRITE_PROTOCOL) return
+      if (this.decided) this.announce()
+      else if (this.demoted) this.options.coordination.broadcast({ type: "demoted" })
     } else if (message.type === "decided") {
       if (this.role === "follower" && message.protocol === READ_WRITE_PROTOCOL) this.followOwner(message.tab)
+    } else if (message.type === "demoted") {
+      if (this.primary && this.role !== "owner" && this.role !== "starting") this.demote()
     } else if (message.type === "call") {
       if (message.to === this.tabId) this.serveCall(message)
     } else if (message.type === "reply") {
@@ -954,6 +982,7 @@ export class SqliteMirror {
   /** SQLite missed writes to these stores: they leave its reads, and their marks stay ahead of it, so the next owner re-backfills them. */
   private lose(stores: readonly string[], error: unknown): void {
     markFailure(new Error(`Lost writes to ${[...new Set(stores)].join(", ")}`, { cause: error }))
+    reportStorageFailure("apply_failed", { count: new Set(stores).size })
     this.distrust(stores)
   }
 
@@ -1083,6 +1112,7 @@ export class SqliteMirror {
   private fail(error: unknown): void {
     if (this.role === "failed") return
     markFailure(error)
+    reportStorageFailure("worker_failed", { attempt: this.recoveries })
     const served = [...this.trusted].filter((store) => this.trusts(store))
     this.role = "failed"
     this.decided = false
@@ -1101,16 +1131,12 @@ export class SqliteMirror {
     this.clearRemote()
   }
 
-  /** Requests wait for the next owner, this tab or another; once workers keep failing they fail instead, and the user is told. */
+  /** Requests wait for the next owner, this tab or another, for as long as it takes; the user sees storage reconnecting. */
   private recover(): void {
     this.unroute()
-    if (this.recoveries === MAX_RECOVERIES) {
-      console.error(`SQLite storage failed on ${MAX_RECOVERIES} workers in a row; its requests fail until a reload`)
-      this.options.database.reportStorageFailure(true)
-      this.settleServing(true)
-      return
-    }
-    const waitMs = this.deadlines.recoverMs * 2 ** this.recoveries++
+    this.options.database.reportStorageReconnecting(true)
+    const waitMs = Math.min(this.deadlines.recoverMs * 2 ** this.recoveries, MAX_RECOVER_WAIT_MS)
+    this.recoveries++
     setTimeout(() => {
       if (this.role !== "failed" || this.options.database.hasBeenClosed()) return
       this.role = "pending"
@@ -1132,7 +1158,9 @@ export class SqliteMirror {
       this.transport = createTransport()
       const opened = await this.send({ type: "open", idbName: database.name, schema, idbVersion: database.verno })
       if (!opened) throw new Error("SQLite mirror could not open its database")
-      capture.mark("sqlite.open", performance.now() - openedAt)
+      const openMs = performance.now() - openedAt
+      capture.mark("sqlite.open", openMs)
+      this.reportBoot("owner", { openMs: Math.round(openMs) })
       this.role = "owner"
       this.options.coordination.broadcast({ type: "owner" })
       for (const local of this.localPending) this.applyOwn(local)
@@ -1171,7 +1199,7 @@ export class SqliteMirror {
       )
       if (!backfilled) return
       await this.forget(reconciled, backfilled, live)
-      if (this.role === "owner") this.reloadToEnterReadWrite(stores)
+      if (this.role === "owner") this.askToEnterReadWrite(stores)
     } catch (error) {
       this.fail(error)
     }
@@ -1200,37 +1228,64 @@ export class SqliteMirror {
   private async decide(full: boolean): Promise<void> {
     const { database } = this.options
     const entering = this.options.entering && !this.primary
-    if (full) {
-      if (entering) {
-        await recordMode(database.name, "read-write")
-        ranRequestedMode(database.name)
-      }
+    if (full && !this.demoted) {
+      if (entering) await recordMode(database.name, "read-write")
       this.primary = true
       if (this.role !== "owner") return
       this.decided = true
-      this.recoveries = 0
-      this.settleServing(true)
+      this.resumeServing()
       this.announce()
-    } else if (entering) {
+    } else if (entering || this.demoted) {
       this.settleServing(false)
     } else {
       await discardPrefetches(database.name)
       await this.drain()
       await recordMode(database.name, "read-only")
-      ;(this.options.reloadEveryTab ?? reloadEveryTab)()
+      if (this.role !== "owner") return
+      this.demote()
+      this.options.coordination.broadcast({ type: "demoted" })
+      this.askToRestart()
     }
+  }
+
+  /** SQLite serves this tab's requests again, itself or through an owner. */
+  private resumeServing(): void {
+    const recovered = this.recoveries > 0
+    this.recoveries = 0
+    this.settleServing(true)
+    this.options.database.reportStorageReconnecting(false)
+    if (recovered) reportStorageRecovered()
+  }
+
+  /** SQLite is no longer the primary copy: IndexedDB, holding everything once the backlog landed, serves this session. */
+  private demote(): void {
+    this.primary = false
+    this.demoted = true
+    this.loseOwner()
+    this.settleServing(false)
+    this.options.database.reportStorageReconnecting(false)
   }
 
   /**
    * The flag asks for read-write and SQLite now holds every store, yet this
-   * session runs on IndexedDB: every tab reloads, so the next boot may wait
-   * for the others to close and enter. A plain reload never waits for them.
+   * session runs on IndexedDB: only a boot holding every other tab out may
+   * enter, so the user is asked to restart. Nothing reloads on its own.
    */
-  private reloadToEnterReadWrite(stores: readonly string[]): void {
+  private askToEnterReadWrite(stores: readonly string[]): void {
     const { database } = this.options
     if (this.primary || readSqliteStorageMode(database.name) !== "read-write") return
     if (readWriteBlocker(database) || !stores.every((store) => this.trusted.has(store))) return
-    if (takeModeReload(database.name, "enter")) (this.options.reloadEveryTab ?? reloadEveryTab)()
+    this.askToRestart()
+  }
+
+  private askToRestart(): void {
+    ;(this.options.requestRestart ?? (() => requestStorageRestart(this.options.database.name)))()
+  }
+
+  private reportBoot(role: "owner" | "follower", fields: { openMs?: number } = {}): void {
+    if (this.bootReported) return
+    this.bootReported = true
+    reportStorageBoot(role, fields)
   }
 
   /**
@@ -1272,24 +1327,17 @@ export class SqliteMirror {
     }
   }
 
-  /** Rejects only once this tab no longer owns the worker; the user is told while IndexedDB keeps refusing it. */
+  /** Rejects only once this tab no longer owns the worker; IndexedDB refusing the backlog is retried for as long as it takes. */
   private async drainUntilLanded(): Promise<void> {
-    const { database } = this.options
-    let refused = false
-    try {
-      for (let waitMs = this.deadlines.drainRetryMs; ; waitMs = Math.min(waitMs * 2, MAX_DRAIN_RETRY_MS)) {
-        try {
-          return await this.drain()
-        } catch (error) {
-          if (this.role !== "owner") throw error
-          reportDrainFailure(error)
-          refused = true
-          database.reportStorageFailure(true)
-          await new Promise((resolve) => setTimeout(resolve, waitMs))
-        }
+    for (let attempt = 0, waitMs = this.deadlines.drainRetryMs; ; waitMs = Math.min(waitMs * 2, MAX_DRAIN_RETRY_MS)) {
+      try {
+        return await this.drain()
+      } catch (error) {
+        if (this.role !== "owner") throw error
+        reportDrainFailure(error)
+        if (attempt++ === 0) reportStorageFailure("drain_refused")
+        await new Promise((resolve) => setTimeout(resolve, waitMs))
       }
-    } finally {
-      if (refused) database.reportStorageFailure(false)
     }
   }
 
@@ -1502,7 +1550,10 @@ export class SqliteMirror {
       committing.forEach(([tx, routed], i) => {
         if (this.transactions.get(tx) !== routed || routed.failed) return
         routed.committing = false
-        if (answers[i] === null) return this.failTx(tx, routed, outcomeUnknown())
+        if (answers[i] === null) {
+          reportStorageFailure("outcome_unknown")
+          return this.failTx(tx, routed, outcomeUnknown())
+        }
         if (!answers[i]) return
         this.transactions.delete(tx)
         const commit = routed.asked.at(-1)!
@@ -1554,8 +1605,8 @@ export class SqliteMirror {
       this.loseOwner()
       this.owner = { tab, unwatch: this.options.coordination.watchTab(tab, () => this.loseOwner()) }
     }
-    this.recoveries = 0
-    this.settleServing(true)
+    this.reportBoot("follower")
+    this.resumeServing()
   }
 
   /** What this follower had in flight on the owner runs again on the next owner, which also answers whether a commit it was given landed. */
@@ -1566,8 +1617,16 @@ export class SqliteMirror {
     owner.unwatch()
     this.unroute()
     this.orphan(owner.tab)
+    let commits = 0
     for (const [id, call] of this.calls) {
-      if (call.owner === owner.tab) this.dropCall(id, call.commit ? outcomeUnknown() : ownerLost())
+      if (call.owner !== owner.tab) continue
+      if (call.commit) commits++
+      this.dropCall(id, call.commit ? outcomeUnknown() : ownerLost())
+    }
+    if (this.primary && this.role !== "owner" && this.role !== "starting") {
+      reportStorageFailure("owner_lost", { count: commits })
+      this.recoveries++
+      this.options.database.reportStorageReconnecting(true)
     }
   }
 

@@ -749,20 +749,6 @@ describe("AccountScope", () => {
     }
   })
 
-  it("tells the user when local storage stops responding, over the app rather than in place of it", async () => {
-    const { handle } = mountScopeTree({ children: <span data-testid="active-subtree">Ready</span> })
-    await waitForActive(handle, "workos_A")
-
-    act(() => getActiveDb().reportStorageFailure(true))
-    expect(screen.getByRole("alert")).toHaveTextContent("Storage on this device stopped responding")
-    expect(screen.getByTestId("active-subtree")).toBeVisible()
-    fireEvent.click(screen.getByRole("button", { name: "Reload" }))
-    expect(reloadSpy).toHaveBeenCalledTimes(1)
-
-    act(() => getActiveDb().reportStorageFailure(false))
-    expect(screen.queryByRole("alert")).toBeNull()
-  })
-
   it("should let the outgoing subtree's teardown write to its own database", async () => {
     // Unmount cleanups run under whatever the `db` proxy points at when they
     // fire. Moving the pointer while the outgoing subtree was still mounted put

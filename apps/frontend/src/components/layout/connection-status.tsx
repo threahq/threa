@@ -1,4 +1,5 @@
-import { useEffect, useState, useSyncExternalStore } from "react"
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react"
+import { useAccountScopeOptional } from "@/auth/account-scope"
 import { useCoordinatedLoading, useSocketStatus } from "@/contexts"
 import { usePageActivity } from "@/hooks/use-page-activity"
 import { WifiOff, Loader2 } from "lucide-react"
@@ -20,12 +21,22 @@ export function useIsOnline(): boolean {
   )
 }
 
-type ConnectionState = "connected" | "connecting" | "offline" | "reconnecting" | "disconnected"
+type ConnectionState = "connected" | "connecting" | "offline" | "reconnecting" | "disconnected" | "storage"
+
+/** SQLite holds this account's primary copy but nothing serves it right now; its requests wait for the next owner. */
+function useStorageReconnecting(): boolean {
+  const db = useAccountScopeOptional()?.getDb() ?? null
+  const subscribe = useCallback((listener: () => void) => db?.onStorageReconnecting(listener) ?? (() => {}), [db])
+  return useSyncExternalStore(subscribe, () => db?.storageReconnecting ?? false)
+}
 
 export function useConnectionState(): ConnectionState {
   const socketStatus = useSocketStatus()
   const isOnline = useIsOnline()
+  const storageReconnecting = useStorageReconnecting()
 
+  const socketStable = socketStatus === "connected" || socketStatus === "connecting"
+  if (socketStable && storageReconnecting) return "storage"
   if (socketStatus === "connected") return "connected"
   if (socketStatus === "connecting") return "connecting"
   if (!isOnline) return "offline"
@@ -70,15 +81,20 @@ export function ConnectionStatus() {
           "shadow-sm backdrop-blur-md",
           "animate-in fade-in slide-in-from-top-2 duration-200",
           state === "offline" && "bg-amber-500/15 text-amber-600 dark:text-amber-400 ring-1 ring-amber-500/20",
-          state === "reconnecting" && "bg-muted/80 text-muted-foreground ring-1 ring-border",
+          (state === "reconnecting" || state === "storage") && "bg-muted/80 text-muted-foreground ring-1 ring-border",
           state === "disconnected" && "bg-destructive/10 text-destructive ring-1 ring-destructive/20"
         )}
       >
-        {state === "reconnecting" ? <Loader2 className="h-3 w-3 animate-spin" /> : <WifiOff className="h-3 w-3" />}
+        {state === "reconnecting" || state === "storage" ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : (
+          <WifiOff className="h-3 w-3" />
+        )}
         <span>
           {state === "offline" && "Offline"}
           {state === "reconnecting" && "Reconnecting"}
           {state === "disconnected" && "Disconnected"}
+          {state === "storage" && "Storage reconnecting"}
         </span>
       </div>
     </div>

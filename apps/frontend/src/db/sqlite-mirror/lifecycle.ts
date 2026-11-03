@@ -17,16 +17,15 @@ import {
   mayBeReadWrite,
   parseMode,
   readRecordedMode,
-  ranRequestedMode,
   readSqliteStorageMode,
-  reloadEveryTab,
-  takeModeReload,
   recordMode,
   reloadWhenAsked,
+  requestStorageRestart,
   takeSwitchReload,
   type ModeLock,
   type SqliteStorageMode,
 } from "./storage-mode"
+import { reportStorageFailure, setStorageContext } from "./storage-diagnostics"
 import { createWorkerTransport } from "./worker-transport"
 
 const DELIVERED_PREFIX = "threa:sqliteStorageDelivered:"
@@ -34,6 +33,7 @@ const DELIVERED_PREFIX = "threa:sqliteStorageDelivered:"
 /** How long a boot changing the mode right after a reload for it waits for the other tabs to close. */
 const SWITCH_WAIT_MS = 5_000
 const MODE_READ_ATTEMPTS = 3
+const MAX_MODE_READ_WAIT_MS = 5_000
 
 function storeMode(key: string, mode: SqliteStorageMode): void {
   if (mode === "off") localStorage.removeItem(key)
@@ -63,7 +63,7 @@ interface StorageBoot {
   createTransport: () => MirrorTransport
   /** How long a boot changing the mode waits for the other tabs to close; by default, only right after a reload for it. */
   switchWaitMs?: number
-  reloadEveryTab?: () => void
+  requestRestart?: () => void
 }
 
 export function startSqliteMirror(
@@ -93,11 +93,7 @@ export function startSqliteMirror(
  * read-write fails to open rather than open its backup.
  */
 export function resumeSqliteMirror(database: ThreaDatabase, boot: StorageBoot | null = browserBoot(database)): void {
-  const booted = boot ? bootStorage(database, boot) : refuseReadWrite(database.name)
-  database.sqliteBoot = booted.catch((error: unknown) => {
-    database.reportStorageFailure(true)
-    throw error
-  })
+  database.sqliteBoot = boot ? bootStorage(database, boot) : refuseReadWrite(database.name)
 }
 
 async function refuseReadWrite(name: string): Promise<void> {
@@ -124,8 +120,8 @@ async function bootStorage(database: ThreaDatabase, boot: StorageBoot): Promise<
   const waitMs = boot.switchWaitMs ?? (takeSwitchReload() ? SWITCH_WAIT_MS : 0)
   const switching = requested !== (await recordedModeAtBoot(name))
   const release = switching ? await boot.lock.exclusive(waitMs) : null
-  // Another tab runs the recorded mode and nothing else would ever reload it: every tab reloads, the next boot waiting for the others.
-  if (switching && !release && takeModeReload(name, "switch")) (boot.reloadEveryTab ?? reloadEveryTab)()
+  // Another tab runs the recorded mode: only a restart of every tab, by the user, lets a boot switch it.
+  if (switching && !release) (boot.requestRestart ?? (() => requestStorageRestart(name)))()
   if (!release) await boot.lock.shared()
   let mode = await recordedModeAtBoot(name).catch((error: unknown) => {
     release?.()
@@ -133,8 +129,8 @@ async function bootStorage(database: ThreaDatabase, boot: StorageBoot): Promise<
   })
   const entering = release !== null && requested === "read-write" && mode !== "read-write"
   if (release && !entering && mode !== requested) mode = await switchMode(database, mode, requested, boot)
-  if (mode === requested) ranRequestedMode(name)
   const running = entering ? "read-write" : mode
+  setStorageContext(running, requested)
   if (running !== "off") startSqliteMirror(database, running, boot.createMirror, entering)
   const mirror = database.sqliteMirror
   if (!mirror && mode === "read-write") {
@@ -144,7 +140,7 @@ async function bootStorage(database: ThreaDatabase, boot: StorageBoot): Promise<
   if (release) {
     // Entering read-write holds the others out until the mirror decided, recording the mode before any of them boots.
     // A boot taking the exclusive side before this tab's shared one is granted re-reads that mode, so it switches
-    // only on a flag change, which reloads this tab too; its worker cannot open the file this tab's worker holds.
+    // only on a flag change, which asks every tab for a restart; its worker cannot open the file this tab's worker holds.
     void (entering && mirror ? mirror.whenRoutable() : Promise.resolve()).then(() => {
       release()
       return boot.lock.shared()
@@ -156,24 +152,24 @@ async function bootStorage(database: ThreaDatabase, boot: StorageBoot): Promise<
 /**
  * The recorded mode, retried. Unreadable, it is unknown: a database never
  * recorded read-write since it last recorded another mode cannot have SQLite
- * as its primary copy, so it runs off; any other boot fails rather than open
- * IndexedDB, possibly a stale backup.
+ * as its primary copy, so it runs off; any other boot keeps trying, with
+ * backoff, rather than open IndexedDB, possibly a stale backup.
  */
 async function recordedModeAtBoot(name: string): Promise<SqliteStorageMode> {
   for (let attempt = 1; ; attempt++) {
     try {
       return await readRecordedMode(name)
     } catch (error) {
-      if (attempt < MODE_READ_ATTEMPTS) {
-        await new Promise((resolve) => setTimeout(resolve, 50 * attempt))
-        continue
+      if (attempt === MODE_READ_ATTEMPTS) {
+        getPerfCapture().count("sqlite.mirrorFailure")
+        if (!mayBeReadWrite(name)) {
+          console.error(`SQLite storage mode of ${name} is unreadable; it was never read-write, so it runs off`, error)
+          return "off"
+        }
+        reportStorageFailure("mode_unreadable", { attempt })
+        console.error(`Cannot tell yet whether SQLite holds the primary copy of ${name}; retrying`, error)
       }
-      getPerfCapture().count("sqlite.mirrorFailure")
-      if (mayBeReadWrite(name)) {
-        throw new Error(`Cannot tell whether SQLite holds the primary copy of ${name}`, { cause: error })
-      }
-      console.error(`SQLite storage mode of ${name} is unreadable; it was never read-write, so it runs off`, error)
-      return "off"
+      await new Promise((resolve) => setTimeout(resolve, Math.min(50 * attempt, MAX_MODE_READ_WAIT_MS)))
     }
   }
 }

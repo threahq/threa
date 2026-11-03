@@ -3,7 +3,10 @@ import { act } from "@testing-library/react"
 import { render, screen } from "@/test"
 import { ConnectionStatus } from "./connection-status"
 import * as contextsModule from "@/contexts"
+import * as accountScopeModule from "@/auth/account-scope"
 import * as pageActivityModule from "@/hooks/use-page-activity"
+// eslint-disable-next-line no-restricted-imports -- test raises the storage signal the pill reads through the account scope
+import { ThreaDatabase } from "@/db"
 
 const mockState = {
   phase: "ready" as "loading" | "skeleton" | "ready",
@@ -92,6 +95,33 @@ describe("ConnectionStatus", () => {
       })
 
       expect(screen.getByText("Offline")).toBeInTheDocument()
+    })
+
+    it("shows storage reconnecting while the socket is fine, and the socket's own states over it", () => {
+      const db = new ThreaDatabase(`storage_pill_${Date.now()}`)
+      vi.spyOn(accountScopeModule, "useAccountScopeOptional").mockReturnValue({
+        getDb: () => db,
+      } as unknown as ReturnType<typeof accountScopeModule.useAccountScopeOptional>)
+      const { rerender } = render(<ConnectionStatus />)
+      act(() => db.reportStorageReconnecting(true))
+      act(() => {
+        vi.advanceTimersByTime(3000)
+      })
+      const whileReconnecting = screen.queryByText("Storage reconnecting")?.textContent ?? null
+
+      mockState.socketStatus = "reconnecting"
+      rerender(<ConnectionStatus />)
+      const socketFirst = screen.queryByText("Reconnecting")?.textContent ?? null
+
+      mockState.socketStatus = "connected"
+      rerender(<ConnectionStatus />)
+      act(() => db.reportStorageReconnecting(false))
+
+      expect({ whileReconnecting, socketFirst, after: screen.queryByText("Storage reconnecting") }).toEqual({
+        whileReconnecting: "Storage reconnecting",
+        socketFirst: "Reconnecting",
+        after: null,
+      })
     })
 
     it("does not re-arm the delay when flipping between unstable subtypes", () => {

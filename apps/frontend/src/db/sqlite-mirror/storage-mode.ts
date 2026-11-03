@@ -7,7 +7,6 @@ const MODE_DATABASE = "threa-sqlite-mode"
 const MODE_STORE = "mode"
 const RELOAD_CHANNEL = "threa-sqlite-storage-reload"
 const SWITCH_RELOAD_KEY = "threa:sqliteSwitchReload"
-const MODE_RELOAD_PREFIX = "threa:sqliteModeReload:"
 const MAY_BE_READ_WRITE_PREFIX = "threa:sqliteMayBeReadWrite:"
 export const REQUESTED_PREFIX = "threa:sqliteStorage:"
 
@@ -102,7 +101,42 @@ export function browserModeLock(idbName: string): ModeLock {
   }
 }
 
-/** Every tab of this origin boots again, under the modes recorded meanwhile. */
+const restartPending = new Set<string>()
+let restartDismissed = false
+const restartListeners = new Set<() => void>()
+
+/**
+ * The flag asks for a mode this session cannot switch to while other tabs run
+ * it, or while it holds no worker: the user restarts every tab to switch, as
+ * for an app update. Nothing reloads on its own.
+ */
+export function requestStorageRestart(idbName: string): void {
+  if (restartPending.has(idbName)) return
+  restartPending.add(idbName)
+  for (const listener of restartListeners) listener()
+}
+
+/** Whether any database of this page waits for a restart the user has not waved off this session. */
+export function isStorageRestartPending(): boolean {
+  return restartPending.size > 0 && !restartDismissed
+}
+
+export function dismissStorageRestart(): void {
+  restartDismissed = true
+  for (const listener of restartListeners) listener()
+}
+
+export function onStorageRestartPending(listener: () => void): () => void {
+  restartListeners.add(listener)
+  return () => restartListeners.delete(listener)
+}
+
+export function resetStorageRestartForTests(): void {
+  restartPending.clear()
+  restartDismissed = false
+}
+
+/** Every tab of this origin boots again, under the modes recorded meanwhile; only the user asks for it. */
 export function reloadEveryTab(): void {
   const channel = new BroadcastChannel(RELOAD_CHANNEL)
   channel.postMessage("reload")
@@ -122,26 +156,6 @@ export function takeSwitchReload(): boolean {
   const took = sessionStorage.getItem(SWITCH_RELOAD_KEY) !== null
   sessionStorage.removeItem(SWITCH_RELOAD_KEY)
   return took
-}
-
-/**
- * Why a tab reloads every tab for a mode it does not run: a switch a plain boot
- * could not take, or read-write once SQLite holds every store. Each fires once
- * per tab session until the requested mode runs, so a failing switch cannot loop.
- */
-export type ModeReload = "switch" | "enter"
-
-export function takeModeReload(idbName: string, reason: ModeReload): boolean {
-  const key = `${MODE_RELOAD_PREFIX}${reason}:${idbName}`
-  if (sessionStorage.getItem(key) !== null) return false
-  sessionStorage.setItem(key, "1")
-  return true
-}
-
-export function ranRequestedMode(idbName: string): void {
-  for (const reason of ["switch", "enter"] satisfies ModeReload[]) {
-    sessionStorage.removeItem(`${MODE_RELOAD_PREFIX}${reason}:${idbName}`)
-  }
 }
 
 let listening = false
