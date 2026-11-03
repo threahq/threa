@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { onlineManager, QueryObserver } from "@tanstack/react-query"
 import { SyncEngine, CATCHUP_COLLAPSE_THRESHOLD } from "./sync-engine"
 import { toCachedStreamBootstrap } from "./stream-sync"
-import { isApplyWindowOpen, resetApplyWindow, subscribeApplyWindow } from "@/stores/apply-window"
+import { isApplyWindowOpen, resetApplyWindow, subscribeApplyWindow, trackPendingRead } from "@/stores/apply-window"
 import { resetAgentActivityStore, getAgentActivityForStream, upsertAgentSession } from "@/stores/agent-activity-store"
 import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -2023,6 +2023,28 @@ describe("SyncEngine sync cursor (active mode)", () => {
     expect(applyWindow.transitions).toEqual([...connectBootstrapWindow, true, false])
     expect(isApplyWindowOpen()).toBe(false)
     engine.destroy()
+  })
+
+  it("should hold catch-up publication until its readers have settled", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const catchUp = vi.fn().mockResolvedValue({ entries: [userAddedEntry("11", "pending_reader")], head: "11" })
+    const engine = new SyncEngine(makeActiveDeps(catchUp))
+    let releaseRead: (() => void) | undefined
+    const stop = subscribeApplyWindow(() => {
+      if (isApplyWindowOpen() && catchUp.mock.calls.length > 0) releaseRead ??= trackPendingRead()
+    })
+    try {
+      await engine.onConnect(asSocket(new MockSocket()))
+      await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("11"))
+      await new Promise((resolve) => setTimeout(resolve, 40))
+      expect(isApplyWindowOpen()).toBe(true)
+      releaseRead!()
+      await vi.waitFor(() => expect(isApplyWindowOpen()).toBe(false))
+    } finally {
+      releaseRead?.()
+      stop()
+      engine.destroy()
+    }
   })
 
   it("leaves the apply window closed when catch-up finds nothing to apply", async () => {

@@ -538,6 +538,9 @@ function expectTwoStates(f: Fixture, { records, analysis }: Reopened, expectChan
 }
 
 test.describe("Cold open lands in two states", () => {
+  // Keep the watched sidebar rows inside its scroll viewport.
+  test.use({ viewport: { width: 1280, height: 1200 } })
+
   test("no gap: the cached state paints once and nothing moves", async ({ page, context }) => {
     const f = await arrange(page, context)
     const reopened = await reopen(context, f, null)
