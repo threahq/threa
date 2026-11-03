@@ -120,13 +120,13 @@ async function bootStorage(database: ThreaDatabase, boot: StorageBoot): Promise<
   const waitMs = boot.switchWaitMs ?? (takeSwitchReload() ? SWITCH_WAIT_MS : 0)
   const switching = requested !== (await recordedModeAtBoot(name))
   const release = switching ? await boot.lock.exclusive(waitMs) : null
-  // Another tab runs the recorded mode: only a restart of every tab, by the user, lets a boot switch it.
-  if (switching && !release) (boot.requestRestart ?? (() => requestStorageRestart(name)))()
   if (!release) await boot.lock.shared()
   let mode = await recordedModeAtBoot(name).catch((error: unknown) => {
     release?.()
     throw error
   })
+  // Another tab runs the recorded mode: only a restart of every tab, by the user, lets a boot switch it.
+  if (!release && mode !== requested) (boot.requestRestart ?? (() => requestStorageRestart(name)))()
   const entering = release !== null && requested === "read-write" && mode !== "read-write"
   if (release && !entering && mode !== requested) mode = await switchMode(database, mode, requested, boot)
   const running = entering ? "read-write" : mode

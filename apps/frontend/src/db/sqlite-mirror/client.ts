@@ -85,6 +85,31 @@ class DeadlineError extends Error {
   override readonly name = "DeadlineError"
 }
 
+/** A timer this late ran on a page that was frozen or blocked, which could hear nothing meanwhile. */
+const LATE_TIMER_MS = 1_000
+
+/**
+ * Calls `onSilent` once `heardAt()` reported nothing for `ms`; the returned
+ * function stops waiting. Time the page could not run does not count: a
+ * frozen page resumes with a reply on its way, not a dead worker.
+ */
+function whenSilent(ms: number, heardAt: () => number, onSilent: () => void): () => void {
+  let since = performance.now()
+  let timer: ReturnType<typeof setTimeout>
+  const wait = (delay: number) => {
+    const dueAt = performance.now() + delay
+    timer = setTimeout(() => {
+      const now = performance.now()
+      if (now - dueAt > LATE_TIMER_MS) since = now
+      const silent = now - Math.max(since, heardAt())
+      if (silent >= ms) onSilent()
+      else wait(ms - silent)
+    }, delay)
+  }
+  wait(ms)
+  return () => clearTimeout(timer)
+}
+
 /** Rejects once the worker has reported nothing for `ms` since the request was sent. */
 export function withProgressDeadline<T>(
   transport: MirrorTransport,
@@ -92,16 +117,11 @@ export function withProgressDeadline<T>(
   ms: number,
   what: string
 ): Promise<T> {
-  const sentAt = performance.now()
   return new Promise<T>((resolve, reject) => {
-    let timer: ReturnType<typeof setTimeout>
-    const check = () => {
-      const silent = performance.now() - Math.max(sentAt, transport.heardAt())
-      if (silent >= ms) reject(new DeadlineError(`${what}: the worker reported nothing for ${ms} ms`))
-      else timer = setTimeout(check, ms - silent)
-    }
-    timer = setTimeout(check, ms)
-    promise.then(resolve, reject).finally(() => clearTimeout(timer))
+    const stop = whenSilent(ms, transport.heardAt, () =>
+      reject(new DeadlineError(`${what}: the worker reported nothing for ${ms} ms`))
+    )
+    promise.then(resolve, reject).finally(stop)
   })
 }
 
@@ -529,7 +549,7 @@ export class SqliteMirror {
     {
       owner: string
       commit: boolean
-      deadline: ReturnType<typeof setTimeout>
+      stopDeadline: () => void
       resolve: (reply: OkReply) => void
       reject: (error: unknown) => void
     }
@@ -847,7 +867,7 @@ export class SqliteMirror {
     hello()
     const { decidedMs } = this.deadlines
     setTimeout(() => {
-      if (this.role !== "follower" || this.owner) return
+      if (this.role !== "follower" || this.owner || this.demoted) return
       getPerfCapture().count("sqlite.decisionOverdue")
       console.error(`No tab answered as SQLite storage's owner within ${decidedMs} ms; requests fail until one does`)
       reportStorageFailure("owner_lost", { elapsedMs: decidedMs })
@@ -1567,18 +1587,14 @@ export class SqliteMirror {
   private call(owner: string, request: MirrorRequest): Promise<OkReply> {
     const id = ++this.nextCall
     const commit = request.type === "commit"
-    const sentAt = performance.now()
-    const { workerMs } = this.deadlines
-    const check = () => {
-      const call = this.calls.get(id)
-      if (!call) return
-      const silent = performance.now() - Math.max(sentAt, this.ownerHeardAt)
-      if (silent < workerMs) call.deadline = setTimeout(check, workerMs - silent)
-      else this.dropCall(id, commit ? outcomeUnknown() : ownerLost())
-    }
-    const reply = new Promise<OkReply>((resolve, reject) =>
-      this.calls.set(id, { owner, commit, deadline: setTimeout(check, workerMs), resolve, reject })
-    )
+    const reply = new Promise<OkReply>((resolve, reject) => {
+      const stopDeadline = whenSilent(
+        this.deadlines.workerMs,
+        () => this.ownerHeardAt,
+        () => this.dropCall(id, commit ? outcomeUnknown() : ownerLost())
+      )
+      this.calls.set(id, { owner, commit, stopDeadline, resolve, reject })
+    })
     this.options.coordination.broadcast({ type: "call", from: this.tabId, to: owner, id, request })
     return reply
   }
@@ -1587,7 +1603,7 @@ export class SqliteMirror {
     const call = this.calls.get(message.id)
     if (!call) return
     this.calls.delete(message.id)
-    clearTimeout(call.deadline)
+    call.stopDeadline()
     if (message.reply.ok) call.resolve(message.reply)
     else call.reject(new DOMException(message.reply.message, message.reply.error))
   }
@@ -1596,7 +1612,7 @@ export class SqliteMirror {
     const call = this.calls.get(id)
     if (!call) return
     this.calls.delete(id)
-    clearTimeout(call.deadline)
+    call.stopDeadline()
     call.reject(error)
   }
 

@@ -386,6 +386,33 @@ describe("read-write SQLite storage", () => {
     })
   })
 
+  it("keeps a follower demoted while it waited for an owner on IndexedDB once the wait runs out", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    owned.push(() => warn.mockRestore())
+    const name = `demoted_waiting_${Date.now()}`
+    await recordMode(name, "read-write")
+    const requestRestart = vi.fn()
+    const owner = openMirrored({ name, mode: "read-write", requestRestart })
+    const follower = openMirrored({
+      name,
+      sqlite: owner.sqlite,
+      bus: owner.bus,
+      mode: "read-write",
+      requestRestart,
+      deadlines: { decidedMs: 300 },
+    })
+    await Promise.all([owner.database.open(), follower.database.open()])
+    await until(() => requestRestart.mock.calls.length === 1, "a restart to be asked for")
+    // The owner demoted the follower while it waited; the wait then runs out with nothing left to wait for.
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    await follower.database.syncCursors.put(cursor("follower", "1"))
+    expect({
+      readWrite: follower.mirror.readWrite,
+      reconnecting: follower.database.storageReconnecting,
+      cursors: await cursorsIn(plainDatabase(name)),
+    }).toEqual({ readWrite: false, reconnecting: false, cursors: [cursor("follower", "1")] })
+  })
+
   it("closes the connections of builds that predate the recorded mode", async () => {
     const name = `evicted_${Date.now()}`
     const request = indexedDB.open(name, 580)
@@ -869,6 +896,33 @@ describe("read-write SQLite storage", () => {
         asked: 2,
         restartedMode: "read-only",
         recorded: "read-only",
+      })
+    })
+
+    it("asks for no restart from a boot that lost the switch to another, which switched to the flag's mode", async () => {
+      const { name, sqlite } = await copiedSession({ mode: "read-only" })
+      const bus = createBus()
+      adoptDeliveredMode(name, WS, "read-only")
+      const requestRestart = vi.fn()
+      const release = await bus.modeLock().exclusive(0)
+      const open = indexedDB.open.bind(indexedDB)
+      const modeRead = new Promise<void>((resolve) => {
+        const spy = vi.spyOn(indexedDB, "open").mockImplementation((modes, version) => {
+          const request = open(modes, version)
+          if (modes === "threa-sqlite-mode") request.addEventListener("success", () => resolve())
+          return request
+        })
+        owned.push(() => spy.mockRestore())
+      })
+      const racing = bootTab(name, sqlite, bus, undefined, requestRestart)
+      await modeRead
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await recordMode(name, "read-only")
+      release?.()
+      await racing.database.open()
+      expect({ asked: requestRestart.mock.calls.length, mode: racing.database.sqliteMirror?.mode }).toEqual({
+        asked: 0,
+        mode: "read-only",
       })
     })
 
