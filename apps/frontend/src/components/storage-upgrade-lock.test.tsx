@@ -10,14 +10,17 @@ describe("StorageUpgradeLock", () => {
   it("holds the app with the copy's progress until the upgrade ends, and Escape does not dismiss it", async () => {
     render(
       <>
-        <button type="button">Behind</button>
+        <button type="button" autoFocus>
+          Behind
+        </button>
         <StorageUpgradeLock />
       </>
     )
     expect(screen.queryByRole("alertdialog")).toBeNull()
 
     act(() => reportStorageUpgrade({ copied: 0, total: null }))
-    expect(await screen.findByRole("alertdialog", { name: "Upgrading storage" })).toBeInTheDocument()
+    const lock = await screen.findByRole("alertdialog", { name: "Upgrading storage" })
+    await vi.waitFor(() => expect(lock).toHaveFocus())
     act(() => reportStorageUpgrade({ copied: 25, total: 100 }))
     await userEvent.keyboard("{Escape}")
     expect({

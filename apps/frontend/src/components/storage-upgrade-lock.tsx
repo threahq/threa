@@ -18,7 +18,15 @@ export function StorageUpgradeLock() {
 
   return (
     <AlertDialog open={progress !== null}>
-      <AlertDialogContent onEscapeKeyDown={(event) => event.preventDefault()}>
+      <AlertDialogContent
+        tabIndex={-1}
+        // With no action to focus, the dialog takes focus itself, so keys stop reaching the app it holds.
+        onOpenAutoFocus={(event) => {
+          event.preventDefault()
+          ;(event.currentTarget as HTMLElement).focus()
+        }}
+        onEscapeKeyDown={(event) => event.preventDefault()}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>Upgrading storage</AlertDialogTitle>
           <AlertDialogDescription>Threa restarts when it's done.</AlertDialogDescription>

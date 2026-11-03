@@ -240,6 +240,8 @@ export interface SqliteMirrorOptions {
   entering?: boolean
   /** The flag asks for a mode only a restart of every tab can switch to; the user is asked for one. */
   requestRestart?: () => void
+  /** The user restarted for this entering boot: short of a full copy, it holds the app until the copy is done. */
+  upgrade?: boolean
   /** An upgrade the app waited for finished: every tab boots again, into read-write. */
   restartEveryTab?: () => void
 }
@@ -1276,7 +1278,7 @@ export class SqliteMirror {
       this.announce()
     } else if (entering || this.demoted) {
       // Begun before requests settle on IndexedDB, so the boot holding the other tabs out keeps holding them.
-      if (entering && !this.demoted && !readWriteBlocker(database)) this.beginUpgrade()
+      if (entering && this.options.upgrade && !this.demoted && !readWriteBlocker(database)) this.beginUpgrade()
       this.settleServing(false)
     } else {
       await discardPrefetches(database.name)
@@ -1325,7 +1327,7 @@ export class SqliteMirror {
     // The lock stays up until every tab reloads.
     this.upgrade.stopTimer()
     getPerfCapture().mark("sqlite.upgrade", performance.now() - this.upgrade.startedAt)
-    ;(this.options.restartEveryTab ?? reloadEveryTab)()
+    ;(this.options.restartEveryTab ?? (() => reloadEveryTab("upgrade")))()
   }
 
   /** The app waits behind the upgrade lock until every store is copied, or for `upgradeMs` at most. */
@@ -1853,12 +1855,18 @@ export class SqliteMirror {
   }
 }
 
-export function createBrowserMirror(database: ThreaDatabase, mode: SqliteMirrorMode, entering = false): SqliteMirror {
+export function createBrowserMirror(
+  database: ThreaDatabase,
+  mode: SqliteMirrorMode,
+  entering = false,
+  upgrade = false
+): SqliteMirror {
   return new SqliteMirror({
     database,
     mode,
     coordination: createBrowserCoordination(database.name, database.sqliteWriter.id),
     createTransport: createWorkerTransport,
     entering,
+    upgrade,
   })
 }

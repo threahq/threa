@@ -55,7 +55,12 @@ export function adoptDeliveredMode(idbName: string, workspaceId: string, mode: S
   return true
 }
 
-type CreateMirror = (database: ThreaDatabase, mode: SqliteMirrorMode, entering: boolean) => SqliteMirror
+type CreateMirror = (
+  database: ThreaDatabase,
+  mode: SqliteMirrorMode,
+  entering: boolean,
+  upgrade: boolean
+) => SqliteMirror
 
 interface StorageBoot {
   lock: ModeLock
@@ -70,11 +75,12 @@ export function startSqliteMirror(
   database: ThreaDatabase,
   mode: SqliteMirrorMode,
   createMirror: CreateMirror = createBrowserMirror,
-  entering = false
+  entering = false,
+  upgrade = false
 ): void {
   if (database.sqliteMirror) return
   try {
-    const mirror = createMirror(database, mode, entering)
+    const mirror = createMirror(database, mode, entering, upgrade)
     database.sqliteMirror = mirror
     mirror.start()
   } catch (error) {
@@ -117,7 +123,8 @@ function browserBoot(database: ThreaDatabase): StorageBoot | null {
 async function bootStorage(database: ThreaDatabase, boot: StorageBoot): Promise<void> {
   const { name } = database
   const requested = readSqliteStorageMode(name)
-  const waitMs = boot.switchWaitMs ?? (takeSwitchReload() ? SWITCH_WAIT_MS : 0)
+  const reloaded = takeSwitchReload()
+  const waitMs = boot.switchWaitMs ?? (reloaded ? SWITCH_WAIT_MS : 0)
   const switching = requested !== (await recordedModeAtBoot(name))
   const release = switching ? await boot.lock.exclusive(waitMs) : null
   if (!release) await boot.lock.shared()
@@ -131,7 +138,8 @@ async function bootStorage(database: ThreaDatabase, boot: StorageBoot): Promise<
   if (release && !entering && mode !== requested) mode = await switchMode(database, mode, requested, boot)
   const running = entering ? "read-write" : mode
   setStorageContext(running, requested)
-  if (running !== "off") startSqliteMirror(database, running, boot.createMirror, entering)
+  // Only a restart the user took may hold the app for the copy and restart every tab after it; never one the copy took.
+  if (running !== "off") startSqliteMirror(database, running, boot.createMirror, entering, reloaded === "user")
   const mirror = database.sqliteMirror
   if (!mirror && mode === "read-write") {
     release?.()
