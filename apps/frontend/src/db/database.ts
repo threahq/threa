@@ -1227,6 +1227,7 @@ export class ThreaDatabase extends Dexie {
   private idbOpened = false
   private idbOpenWaiters: Array<() => void> = []
   private storageReconnectingNow = false
+  private closedForGood = false
   private readonly storageReconnectingListeners = new Set<() => void>()
 
   private upgradeRecoveryAvailable = true
@@ -1945,7 +1946,13 @@ export class ThreaDatabase extends Dexie {
 
   override close(options?: { disableAutoOpen: boolean }): void {
     super.close(options)
+    if (options?.disableAutoOpen !== false) this.closedForGood = true
     this.sqliteWriter.close()
+  }
+
+  // Dexie 4.4's own check compares the stored error's name with "DatabaseClosed", but a close stores a DatabaseClosedError, so it never reports one.
+  override hasBeenClosed(): boolean {
+    return this.closedForGood
   }
 
   /** SQLite holds this database's primary copy but nothing serves it right now; requests wait for the next owner. */
@@ -1973,6 +1980,7 @@ export class ThreaDatabase extends Dexie {
   // Auto-open routes through here too (Dexie calls `db.open()` on first use),
   // so this is the one seam every open failure crosses.
   override open(): PromiseExtended<Dexie> {
+    this.closedForGood = false
     const gate = this.sqliteBoot
     if (gate) return Dexie.Promise.resolve(gate).then(() => this.openNow()) as PromiseExtended<Dexie>
     return this.openNow()
