@@ -300,12 +300,14 @@ describe("SqliteMirror", () => {
     })
 
     it("re-backfills only the stores a handle with no mirror wrote while no owner listened", async () => {
-      const { database, sqlite, start } = setup()
+      const { database, sqlite, start, dispose } = setup()
       await database.open()
       start()
       await settle()
       await database.syncCursors.put({ key: "k", value: "v", updatedAt: 1 } as never)
       await settle()
+
+      dispose()
 
       const unmirrored = openDatabase(database.name)
       await unmirrored.transaction("rw", unmirrored.streams, unmirrored.events, async () => {
