@@ -7,9 +7,9 @@ import {
   PREFETCH_INBOX_MAX_AGE_MS,
   PREFETCH_INBOX_MAX_ENTRIES,
   appendPrefetch,
-  deletePrefetch,
+  deletePrefetches,
   hasPrefetches,
-  oldestPrefetch,
+  queuedPrefetches,
   type PrefetchPayload,
 } from "@/db/prefetch-inbox"
 import { SqliteMirror } from "@/db/sqlite-mirror/client"
@@ -91,6 +91,28 @@ async function forgetStream(database: ThreaDatabase, streamId: string) {
 
 const nextStream = () => `stream_inbox_${++streams}`
 
+/** Holds the inbox's store in a busy readwrite transaction for `ms`, as a stalled IndexedDB engine would. */
+async function stallInbox(ms: number): Promise<void> {
+  const inbox = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open("threa-sw-inbox", 1)
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+  const tx = inbox.transaction("entries", "readwrite")
+  const entries = tx.objectStore("entries")
+  const until = performance.now() + ms
+  const spin = () => {
+    if (performance.now() < until) entries.get(0).onsuccess = spin
+  }
+  spin()
+  return new Promise<void>((resolve) => {
+    tx.oncomplete = () => {
+      inbox.close()
+      resolve()
+    }
+  })
+}
+
 const owned: Array<() => void> = []
 afterEach(() => {
   for (const cleanup of owned.splice(0)) cleanup()
@@ -139,13 +161,13 @@ describe("drainPrefetchInbox", () => {
   it("keeps every entry when a write fails, and applies them on the next drain", async () => {
     const streamId = nextStream()
     for (const payload of twoPrefetches(streamId)) await appendPrefetch(db.name, payload)
-    const first = await oldestPrefetch(db.name)
+    const queued = await queuedPrefetches(db.name)
     const failing = vi.spyOn(Dexie.prototype, "transaction").mockRejectedValueOnce(new Error("disk full"))
 
     await expect(drainPrefetchInbox(db)).rejects.toThrow("disk full")
     failing.mockRestore()
-    expect({ oldest: await oldestPrefetch(db.name), events: (await streamState(db, streamId)).events }).toEqual({
-      oldest: first,
+    expect({ queued: await queuedPrefetches(db.name), events: (await streamState(db, streamId)).events }).toEqual({
+      queued,
       events: [],
     })
 
@@ -176,12 +198,9 @@ describe("drainPrefetchInbox", () => {
     await appendPrefetch(db.name, bootstrap(streamId, []))
     await appendPrefetch(db.name, second)
 
-    const queued: PrefetchPayload[] = []
-    for (let entry = await oldestPrefetch(db.name); entry; entry = await oldestPrefetch(db.name)) {
-      queued.push(entry.payload)
-      await deletePrefetch(entry.key)
-    }
-    expect(queued).toEqual([bootstrap(streamId, []), second])
+    const queued = await queuedPrefetches(db.name)
+    await deletePrefetches(queued.map((entry) => entry.key))
+    expect(queued.map((entry) => entry.payload)).toEqual([bootstrap(streamId, []), second])
   })
 
   it("lands what was queued before the database opened ahead of the app's first transaction", async () => {
@@ -197,6 +216,27 @@ describe("drainPrefetchInbox", () => {
       events: [`${streamId}_1`, `${streamId}_2`, `${streamId}_3`],
       queued: false,
     })
+  })
+
+  it("opens without waiting out a stalled inbox, and drops what the late read finds unapplied", async () => {
+    const database = new ThreaDatabase(`inbox_stalled_${++streams}`)
+    owned.push(() => database.close())
+    const streamId = nextStream()
+    for (const payload of twoPrefetches(streamId)) await appendPrefetch(database.name, payload)
+    const stalled = stallInbox(1_000)
+    drainPrefetchesOnOpen(database)
+
+    const startedAt = performance.now()
+    const firstRead = await streamState(database, streamId)
+    const waitedMs = performance.now() - startedAt
+    await stalled
+    await vi.waitFor(async () => expect(await hasPrefetches(database.name)).toBe(false))
+
+    expect({
+      firstRead: firstRead.events,
+      openedDuringStall: waitedMs < 1_000,
+      afterStall: (await streamState(database, streamId)).events,
+    }).toEqual({ firstRead: [], openedDuringStall: true, afterStall: [] })
   })
 
   it("lets an open in progress drain first when the page becomes visible, instead of holding it", async () => {
@@ -245,9 +285,9 @@ describe("drainPrefetchInbox", () => {
     await drainPrefetchInbox(db)
 
     const landed = await Promise.all(streamIds.map(async (id) => (await streamState(db, id)).events.length > 0))
-    expect({ landed, other: (await oldestPrefetch(elsewhere))?.payload }).toEqual({
+    expect({ landed, other: (await queuedPrefetches(elsewhere)).map((entry) => entry.payload) }).toEqual({
       landed: streamIds.map((_, index) => index >= 2),
-      other,
+      other: [other],
     })
   })
 })
@@ -294,13 +334,13 @@ describe("service-worker prefetch under read-write storage", () => {
       opened,
       native: writeNative.mock.calls.length,
       announced: announce.mock.calls,
-      queued: (await oldestPrefetch(name))?.payload,
+      queued: (await queuedPrefetches(name)).map((entry) => entry.payload),
       sqlite: (await streamState(tab.database, streamId)).events,
     }).toEqual({
       opened: ["threa-sqlite-mode", "threa-sw-inbox"],
       native: 0,
       announced: [[name]],
-      queued: payload,
+      queued: [payload],
       sqlite: [],
     })
 

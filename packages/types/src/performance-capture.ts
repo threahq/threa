@@ -83,6 +83,7 @@ export const PERF_MARK_NAMES = [
   "sqlite.drainFailure",
   "sqlite.foreignWrite",
   "sqlite.decisionOverdue",
+  "prefetch.inboxLate",
   "probe.idbRead",
   "probe.fileRead",
   "probe.fileReadsDuringIdbStall",
