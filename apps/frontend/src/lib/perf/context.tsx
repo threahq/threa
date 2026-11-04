@@ -5,6 +5,8 @@ import {
   armPerfCapture,
   getPerfArmingSources,
   isCaptureArmed,
+  isPerfConsentRemembered,
+  setPerfConsentArmed,
   setPerfDevArmed,
   shouldArmCapture,
   subscribePerfArming,
@@ -26,8 +28,11 @@ const PerfCaptureContext = createContext<PerfCaptureLike>(NO_CAPTURE)
 export function PerfCaptureProvider({ children }: { children: ReactNode }) {
   const sources = useSyncExternalStore(subscribePerfArming, getPerfArmingSources, getPerfArmingSources)
 
+  // Runs after the consent gate's first effect, so a withdrawal it has already
+  // read has also cleared the remembered consent.
   useEffect(() => {
     setPerfDevArmed(isCaptureArmed())
+    if (isPerfConsentRemembered()) setPerfConsentArmed(true)
   }, [])
 
   const captureRef = useRef<PerfCapture | null>(null)

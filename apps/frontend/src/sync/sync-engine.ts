@@ -1133,9 +1133,9 @@ export class SyncEngine {
       // stamp the cursor at a head they read themselves, so it is fresh too.
       // A reconnect always has local state on screen, so only forceFull (the
       // below-floor fallback) needs the cache bypass there.
-      const stopWorkspaceRead = getPerfCapture().time("bootstrap.workspaceRead")
+      const stopWorkspaceRead = _isReconnect ? null : getPerfCapture().time("bootstrap.workspaceRead")
       const cachedWorkspace = _isReconnect ? undefined : await db.workspaces.get(workspaceId)
-      stopWorkspaceRead()
+      stopWorkspaceRead?.()
       const localCursor = _isReconnect ? null : (this.syncLogCursor?.get() ?? null)
       const fresh = _isReconnect ? forceFull : forceFull || localCursor !== null || cachedWorkspace !== undefined
 

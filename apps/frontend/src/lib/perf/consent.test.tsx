@@ -3,10 +3,11 @@ import { render } from "@testing-library/react"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
 import { NO_CAPTURE, getPerfCapture, isUploadPermitted, resetPerfArming, setPerfConsentArmed } from "./capture"
+import { setStorageAccount } from "@/lib/account-storage"
 import { PerfCaptureProvider } from "./context"
 import { PerfCaptureConsentGate } from "./consent"
 
-const CONSENT_WORKSPACE_KEY = "threa:perf:consentWorkspace"
+const CONSENT_WORKSPACE_KEY = "threa:acct:acct_1:perf:consentWorkspace"
 
 function mockConsent(flag: "off" | "available" | null, optIn: boolean | null) {
   vi.spyOn(hooksModule, "useFeatureFlagWhenKnown").mockReturnValue(flag as never)
@@ -31,6 +32,7 @@ describe("perf capture consent arming", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     resetPerfArming()
+    setStorageAccount("acct_1")
     window.localStorage.removeItem(CONSENT_WORKSPACE_KEY)
   })
 
@@ -38,6 +40,7 @@ describe("perf capture consent arming", () => {
     resetPerfArming()
     window.localStorage.removeItem(CONSENT_WORKSPACE_KEY)
     window.history.replaceState(null, "", "/")
+    setStorageAccount(null)
   })
 
   it("arms only when the flag is available AND the preference is on", () => {
@@ -112,15 +115,21 @@ describe("perf capture consent arming", () => {
     expect(window.localStorage.getItem(CONSENT_WORKSPACE_KEY)).toBeNull()
   })
 
-  it("arms at module load only when the page opens into the remembered workspace", async () => {
+  it("arms at mount from the account's remembered consent only on that workspace's pages", () => {
     window.localStorage.setItem(CONSENT_WORKSPACE_KEY, "ws_1")
-
-    window.history.replaceState(null, "", "/w/ws_1/s/stream_1")
-    vi.resetModules()
-    expect((await import("./capture")).getPerfArmingSources().consent).toBe(true)
+    mockConsent(null, null)
 
     window.history.replaceState(null, "", "/w/ws_10/s/stream_1")
-    vi.resetModules()
-    expect((await import("./capture")).getPerfArmingSources().consent).toBe(false)
+    renderGate().unmount()
+    expect(getPerfCapture()).toBe(NO_CAPTURE)
+
+    setStorageAccount("acct_2")
+    window.history.replaceState(null, "", "/w/ws_1/s/stream_1")
+    renderGate().unmount()
+    expect(getPerfCapture()).toBe(NO_CAPTURE)
+
+    setStorageAccount("acct_1")
+    renderGate()
+    expect(getPerfCapture()).not.toBe(NO_CAPTURE)
   })
 })
