@@ -179,7 +179,9 @@ export const SyncLogRepository = {
           AND groups @> ARRAY['user:' || ${userId}]
         ORDER BY payload->>'streamId', sync_id DESC
       ),
-      visible_streams AS (
+      -- MATERIALIZED is load-bearing: inlined, the planner re-runs this access
+      -- resolution (a streams scan) once per walked log row.
+      visible_streams AS MATERIALIZED (
         -- Direct memberships: every stream the user actually joined, bounded by
         -- its own join position. Covers thread rows created by message-move
         -- (event-service inserts stream_members on the destination thread),
