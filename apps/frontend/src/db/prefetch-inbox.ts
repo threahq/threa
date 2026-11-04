@@ -109,19 +109,20 @@ export function hasPrefetches(dbName: string): Promise<boolean> {
   })
 }
 
-export function oldestPrefetch(dbName: string): Promise<InboxEntry | null> {
+/** Every prefetch queued for `dbName`, oldest first. */
+export function queuedPrefetches(dbName: string): Promise<InboxEntry[]> {
   return withInbox("readonly", (entries) => {
-    const cursor = entries.index(BY_DATABASE_INDEX).openCursor(dbName)
-    return () => {
-      const found = cursor.result
-      return found ? { key: found.primaryKey as number, payload: (found.value as InboxRow).payload } : null
-    }
+    const index = entries.index(BY_DATABASE_INDEX)
+    const keys = index.getAllKeys(dbName)
+    const rows = index.getAll(dbName)
+    return () => (rows.result as InboxRow[]).map((row, i) => ({ key: keys.result[i] as number, payload: row.payload }))
   })
 }
 
-export function deletePrefetch(key: number): Promise<void> {
+export function deletePrefetches(keys: readonly number[]): Promise<void> {
+  if (keys.length === 0) return Promise.resolve()
   return withInbox("readwrite", (entries) => {
-    entries.delete(key)
+    for (const key of keys) entries.delete(key)
     return nothing
   })
 }

@@ -3,12 +3,14 @@ import type { CachedEvent, CachedStream, ThreaDatabase } from "@/db/database"
 import { putEventsBounded } from "@/db/event-writes"
 import {
   PREFETCH_INBOX_MAX_AGE_MS,
-  deletePrefetch,
+  deletePrefetches,
   discardPrefetches,
-  oldestPrefetch,
   prefetchInboxLockName,
+  queuedPrefetches,
+  type InboxEntry,
   type PrefetchPayload,
 } from "@/db/prefetch-inbox"
+import { getPerfCapture } from "@/lib/perf/capture"
 import { SW_MSG_PREFETCH_INBOX } from "@/lib/sw-messages"
 import { writeSlotCarrier } from "@/stores/slot-store"
 
@@ -85,27 +87,35 @@ export async function applyPrefetch(database: ThreaDatabase, payload: PrefetchPa
 }
 
 /**
- * Applies `database`'s prefetches oldest first through its own write path, so
- * they reach SQLite under read-write storage and IndexedDB otherwise. An entry
- * leaves the inbox only once its write committed; one tab drains at a time,
- * so no entry lands after a later one.
+ * How long an open waits to read the inbox. IndexedDB can stall for seconds
+ * while SQLite answers at once; a read answering later finds the open gone on
+ * and drops what it read, as the boot's own sync is fresher.
  */
-export async function drainPrefetchInbox(database: ThreaDatabase, now: () => number = Date.now): Promise<void> {
-  const drain = async () => {
-    for (;;) {
-      const entry = await oldestPrefetch(database.name)
-      if (!entry) return
-      const { payload } = entry
-      if (payload.kind !== "streamBootstrap" && payload.kind !== "eventsAround") {
-        console.error("Dropping a service-worker prefetch of unknown kind", payload)
-      } else if (payload.fetchedAt >= now() - PREFETCH_INBOX_MAX_AGE_MS) {
-        await applyPrefetch(database, payload)
-      }
-      await deletePrefetch(entry.key)
+const OPEN_INBOX_WAIT_MS = 300
+
+/** Applies `entries` oldest first through `database`'s own write path, so they reach SQLite under read-write storage and IndexedDB otherwise. */
+async function applyPrefetches(database: ThreaDatabase, entries: readonly InboxEntry[], now: () => number) {
+  for (const { payload } of entries) {
+    if (payload.kind !== "streamBootstrap" && payload.kind !== "eventsAround") {
+      console.error("Dropping a service-worker prefetch of unknown kind", payload)
+    } else if (payload.fetchedAt >= now() - PREFETCH_INBOX_MAX_AGE_MS) {
+      await applyPrefetch(database, payload)
     }
   }
+}
+
+function withDrainLock(dbName: string, drain: () => Promise<void>): Promise<void> {
   if (!navigator.locks) return drain()
-  await navigator.locks.request(prefetchInboxLockName(database.name), drain)
+  return navigator.locks.request(prefetchInboxLockName(dbName), drain)
+}
+
+/** Applies `database`'s prefetches oldest first; they leave the inbox only once every write committed. */
+export function drainPrefetchInbox(database: ThreaDatabase, now: () => number = Date.now): Promise<void> {
+  return withDrainLock(database.name, async () => {
+    const entries = await queuedPrefetches(database.name)
+    await applyPrefetches(database, entries, now)
+    await deletePrefetches(entries.map((entry) => entry.key))
+  })
 }
 
 /**
@@ -118,12 +128,28 @@ export function drainPrefetchesOnOpen(database: ThreaDatabase): void {
   database.on(
     "ready",
     (vip) =>
-      // `vip` passes Dexie's open gate, which holds every other transaction until this settles.
-      drainPrefetchInbox(vip as ThreaDatabase).catch(async (error: unknown) => {
-        console.error("Could not apply the service worker's prefetches; discarding them", error)
-        await discardPrefetches(database.name).catch((discardError: unknown) =>
-          console.error("Could not discard the service worker's prefetches", discardError)
-        )
+      // `vip` passes Dexie's open gate, which holds every other transaction until `admit` runs.
+      new Promise<void>((admit) => {
+        const startedAt = performance.now()
+        let waiting = true
+        const timer = setTimeout(() => {
+          waiting = false
+          admit()
+        }, OPEN_INBOX_WAIT_MS)
+        withDrainLock(database.name, async () => {
+          const entries = await queuedPrefetches(database.name)
+          clearTimeout(timer)
+          if (waiting) await applyPrefetches(vip as ThreaDatabase, entries, Date.now)
+          else getPerfCapture().mark("prefetch.inboxLate", performance.now() - startedAt)
+          admit()
+          await deletePrefetches(entries.map((entry) => entry.key))
+        }).catch(async (error: unknown) => {
+          admit()
+          console.error("Could not apply the service worker's prefetches; discarding them", error)
+          await discardPrefetches(database.name).catch((discardError: unknown) =>
+            console.error("Could not discard the service worker's prefetches", discardError)
+          )
+        })
       }),
     true
   )
