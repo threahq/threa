@@ -167,4 +167,26 @@ describe("SyncLogRepository", () => {
     const rows = await fetchLog(workspaceId)
     expect(rows.map((r) => r.sync_id)).toEqual(Array.from({ length: batches * perBatch }, (_, i) => String(i + 1)))
   })
+
+  test("should return each workspace's highest sync id and omit workspaces with no entries", async () => {
+    const workspaceA = uniqueWorkspaceId()
+    const workspaceB = uniqueWorkspaceId()
+    const emptyWorkspace = uniqueWorkspaceId()
+    const ids = await reserveOutboxIds(4)
+    await SyncLogRepository.appendForWorkspace(pool, workspaceA, [
+      makeEntry(ids[0]),
+      makeEntry(ids[1]),
+      makeEntry(ids[2]),
+    ])
+    await SyncLogRepository.appendForWorkspace(pool, workspaceB, [makeEntry(ids[3])])
+
+    const heads = await SyncLogRepository.getHeads(pool, [workspaceA, workspaceB, emptyWorkspace])
+
+    expect(heads).toEqual(
+      new Map([
+        [workspaceA, 3n],
+        [workspaceB, 1n],
+      ])
+    )
+  })
 })
