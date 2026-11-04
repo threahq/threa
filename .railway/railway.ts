@@ -33,9 +33,23 @@ export default defineRailway(() => {
     replicas: { "europe-west4-drams3a": 1 },
   })
 
+  const pgCacheDrop = service("pg-cache-drop", {
+    source: github("threahq/threa", { branch: "main", checkSuites: false }),
+    build: {
+      builder: "DOCKERFILE",
+      dockerfilePath: "Dockerfile.pg-cache-drop",
+      watchPatterns: ["apps/pg-cache-drop/**", "Dockerfile.pg-cache-drop"],
+    },
+    deploy: {
+      cronSchedule: "15 */4 * * *",
+      restartPolicyType: "NEVER",
+    },
+    replicas: { "europe-west4-drams3a": 1 },
+  })
+
   const options = {
     variables: { managed: false },
-    resources: [enclave],
+    resources: [enclave, pgCacheDrop],
   } satisfies ProjectOptions
 
   return project("threa", options)
