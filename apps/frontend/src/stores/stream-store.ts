@@ -7,7 +7,7 @@ import { observeRangeRead } from "@/db/sqlite-mirror/storage-diagnostics"
 import { getDraftPromotionEvents, releaseDraftPromotionEvents } from "@/lib/draft-promotions"
 import { getPerfCapture, NO_CAPTURE } from "@/lib/perf/capture"
 import { useLiveWrites } from "@/sync/live-writes-context"
-import { trackPendingRead } from "./apply-window"
+import { trackPendingRead, trackRead } from "./apply-window"
 import { getWorkspaceTableRow, subscribeWorkspaceTableRow } from "./workspace-table-registry"
 
 /**
@@ -419,25 +419,21 @@ export function useStreamEvents(
 
   // Both reads register with the apply window while in flight so a bootstrap
   // sweep holds its window until the timeline has re-read what it wrote.
-  const tail = useLiveQuery(async () => {
+  const tail = useLiveQuery(() => {
     if (!writesLanded) return undefined
     if (!streamId || !bounded) return stampStreamEvents([], workspaceId, streamId)
-    const release = trackPendingRead()
-    try {
+    return trackRead(async () => {
       const stopLoad = getPerfCapture().time("timeline.tailLoad")
       const events = await loadStreamTail(workspaceId, streamId, tailFloor, tailScanFloor)
       stopLoad()
       return stampStreamEvents(events, workspaceId, streamId, tailFloor)
-    } finally {
-      release()
-    }
+    })
   }, [workspaceId, streamId, tailFloor, tailScanFloor, bounded, writesLanded])
 
-  const result = useLiveQuery(async () => {
+  const result = useLiveQuery(() => {
     if (!writesLanded) return undefined
     if (!streamId) return stampStreamEvents([], workspaceId, streamId)
-    const release = trackPendingRead()
-    try {
+    return trackRead(async () => {
       const capture = getPerfCapture()
       capture.count("liveQuery.rerun")
       const stopLoad = capture.time("liveQuery.load")
@@ -449,9 +445,7 @@ export function useStreamEvents(
       // distinguish a fresh empty result from a stale empty result left over
       // from the previous workspace or stream.
       return stampStreamEvents(events, workspaceId, streamId, bounded ? tailFloor : null)
-    } finally {
-      release()
-    }
+    })
   }, [workspaceId, streamId, floor, tailFloor, bounded, writesLanded])
 
   // Until `useLiveQuery` re-runs after a key change, `result` is still the
