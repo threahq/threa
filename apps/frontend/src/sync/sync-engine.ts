@@ -2466,12 +2466,11 @@ export class SyncEngine {
         // reflects the replay's final state plus the spliced live events together.
         // Inside its own finally: a rejected resume must still release, or every
         // batched hook holds its stale value until a reload.
-        try {
-          if (holdingApplyWindow) await whenReadsSettled()
-        } finally {
-          if (holdingApplyWindow) endApplyWindow()
-          stopReplay()
+        if (holdingApplyWindow) {
+          await whenReadsSettled()
+          endApplyWindow()
         }
+        stopReplay()
       }
     }
   }

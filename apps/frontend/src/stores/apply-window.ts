@@ -124,6 +124,15 @@ export function trackPendingRead(): () => void {
   }
 }
 
+/**
+ * Runs `read` as a tracked pending read, released when it settles either way.
+ * `read()` evaluates before `trackPendingRead()`, so a synchronous throw leaves
+ * no count behind.
+ */
+export function trackRead<T>(read: () => Promise<T>): Promise<T> {
+  return read().finally(trackPendingRead())
+}
+
 const READS_SETTLE_DEADLINE_MS = 2000
 
 /**

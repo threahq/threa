@@ -7,6 +7,7 @@ import {
   resetApplyWindow,
   subscribeApplyWindow,
   trackPendingRead,
+  trackRead,
   useBatchedValue,
   whenReadsSettled,
 } from "./apply-window"
@@ -176,6 +177,26 @@ describe("whenReadsSettled", () => {
     const settled = whenReadsSettled()
     expect(await settles(settled, 30)).toBe(false)
     releaseSecond()
+    expect(await settles(settled, 100)).toBe(true)
+  })
+
+  it("releases a tracked read when it rejects, and never counts one that throws before starting", async () => {
+    let rejectRead!: (error: Error) => void
+    const read = trackRead(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectRead = reject
+        })
+    )
+    expect(() =>
+      trackRead(() => {
+        throw new Error("sync")
+      })
+    ).toThrow("sync")
+    const settled = whenReadsSettled()
+    expect(await settles(settled, 30)).toBe(false)
+    rejectRead(new Error("read failed"))
+    await expect(read).rejects.toThrow("read failed")
     expect(await settles(settled, 100)).toBe(true)
   })
 
