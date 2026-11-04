@@ -142,6 +142,29 @@ describe("DocBlockGutter", () => {
     ])
   })
 
+  for (const pointerInside of [false, true]) {
+    it(`should ${pointerInside ? "retain" : "clear"} hover when the caret moves and the pointer is ${pointerInside ? "inside" : "outside"} the column`, async () => {
+      await mount(new Map())
+      const column = screen.getByTestId("column")
+      vi.spyOn(column, "matches").mockImplementation((selector) =>
+        selector === ":hover" ? pointerInside : Element.prototype.matches.call(column, selector)
+      )
+      fireEvent.focus(currentEditor!.view.dom)
+      fireEvent.pointerMove(column, { clientY: 10, pointerType: "mouse" })
+      expect(hrefs("Comment on this block")).toEqual([
+        `/w/ws_1?panel=${encodeURIComponent(`draft:${DOC_ID}:${FIRST_ID}`)}`,
+      ])
+
+      act(() => {
+        currentEditor!.commands.setTextSelection(currentEditor!.state.doc.content.size - 1)
+      })
+
+      expect(hrefs("Comment on this block")).toEqual(
+        pointerInside ? [`/w/ws_1?panel=${encodeURIComponent(`draft:${DOC_ID}:${FIRST_ID}`)}`] : []
+      )
+    })
+  }
+
   it("should keep the count chip but hide Comment from a viewer who cannot comment", async () => {
     await mount(threadOnSecond, false)
 

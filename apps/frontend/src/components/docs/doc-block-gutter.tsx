@@ -84,7 +84,10 @@ export function DocBlockGutter({ editor, container, docId, threads, canComment }
       setBlocks((previous) => (sameBlocks(previous, next) ? previous : next))
     }
     let focused = editor.isFocused
-    const trackCaret = () => setCaretIndex(focused ? editor.state.selection.$from.index(0) : null)
+    const trackCaret = () => {
+      if (!container.matches(":hover")) setHoveredIndex(null)
+      setCaretIndex(focused ? editor.state.selection.$from.index(0) : null)
+    }
     const onFocus = () => {
       focused = true
       trackCaret()
