@@ -521,6 +521,49 @@ describe("SyncEngine.handlePageResume", () => {
     })
   })
 
+  it("should await all member-room joins together before completing connection setup", async () => {
+    const deps = makeDeps()
+    const bootstrap = makeWorkspaceBootstrap()
+    bootstrap.streamMemberships = ["stream_7", "stream_8"].map((streamId) => ({
+      streamId,
+      memberId: "user_1",
+      notificationLevel: null,
+      joinedAt: new Date().toISOString(),
+    }))
+    deps.workspaceService.bootstrap.mockResolvedValueOnce(bootstrap)
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    const joins = new Map<string, ReturnType<typeof deferred<void>>>()
+    socket.joinInterceptor = async (room) => {
+      if (!room.includes(":stream:")) return
+      const gate = deferred<void>()
+      joins.set(room, gate)
+      await gate.promise
+    }
+    let connected = false
+    const connecting = engine.onConnect(asSocket(socket)).then(() => {
+      connected = true
+    })
+
+    try {
+      await vi.waitFor(() => expect([...joins.keys()]).toEqual(["ws:ws_1:stream:stream_7", "ws:ws_1:stream:stream_8"]))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(connected).toBe(false)
+
+      joins.get("ws:ws_1:stream:stream_7")!.resolve()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(connected).toBe(false)
+
+      joins.get("ws:ws_1:stream:stream_8")!.resolve()
+      await connecting
+      expect(connected).toBe(true)
+    } finally {
+      for (const gate of joins.values()) gate.resolve()
+      await connecting
+      engine.destroy()
+    }
+  })
+
   it("joins member-stream rooms from the cache when the fresh bootstrap fails", async () => {
     // Regression: a slow/failed first bootstrap must not leave the user in zero
     // stream rooms. Without the cache fallback, stream:activity (sidebar unread +
