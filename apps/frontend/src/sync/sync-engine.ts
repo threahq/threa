@@ -1120,7 +1120,9 @@ export class SyncEngine {
       // client is still reconnecting; in that case we still fetch fresh
       // bootstrap data and skip the room-join step.
       if (this.socket) {
+        const stopJoin = getPerfCapture().time("bootstrap.wsJoin")
         await joinRoomBestEffort(this.socket, `ws:${workspaceId}`, "SyncEngine")
+        stopJoin()
       }
 
       // The service worker's lock-time snapshot may only answer when nothing
@@ -1131,7 +1133,9 @@ export class SyncEngine {
       // stamp the cursor at a head they read themselves, so it is fresh too.
       // A reconnect always has local state on screen, so only forceFull (the
       // below-floor fallback) needs the cache bypass there.
+      const stopWorkspaceRead = getPerfCapture().time("bootstrap.workspaceRead")
       const cachedWorkspace = _isReconnect ? undefined : await db.workspaces.get(workspaceId)
+      stopWorkspaceRead()
       const localCursor = _isReconnect ? null : (this.syncLogCursor?.get() ?? null)
       const fresh = _isReconnect ? forceFull : forceFull || localCursor !== null || cachedWorkspace !== undefined
 
@@ -1142,6 +1146,7 @@ export class SyncEngine {
         // Cursor-before-join per stream is owned by joinStreamForCatchUp —
         // see its doc for why the order is load-bearing (INV-53).
         const catchupCursors = new Map<string, string | null>()
+        const stopStreamJoins = getPerfCapture().time("bootstrap.streamJoins")
         await Promise.all(
           visibleStreamIds.map(async (streamId) => {
             const controller = sweep.controllers.get(streamId)!
@@ -1153,6 +1158,7 @@ export class SyncEngine {
             }
           })
         )
+        stopStreamJoins()
 
         const stopFetch = getPerfCapture().time("bootstrap.fetch")
         const [workspaceBootstrap, streamResults] = await Promise.all([
@@ -1650,9 +1656,16 @@ export class SyncEngine {
   private async joinStreamForCatchUp(streamId: string): Promise<string | null> {
     // Deferred live writes are rows this client already received: the cursor
     // must count them.
+    const capture = getPerfCapture()
+    const stopSettle = capture.time("stream.catchupSettle")
     await this.liveCommitBatch.settle(streamId)
+    stopSettle()
+    const stopCursorRead = capture.time("stream.cursorRead")
     const after = await getLatestPersistedSequence(this.workspaceId, streamId)
+    stopCursorRead()
+    const stopJoin = capture.time("stream.roomJoin")
     await this.ensureStreamSubscription(streamId, { awaitJoin: true })
+    stopJoin()
     return after
   }
 

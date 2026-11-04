@@ -1,6 +1,7 @@
 import { PERF_CAPTURE_MAX_SAMPLES, type PerfMarkName, type PerformanceSample } from "@threahq/types"
 
 const CAPTURE_STORAGE_KEY = "threa:perf:capture"
+const CONSENT_WORKSPACE_KEY = "threa:perf:consentWorkspace"
 const PINNED_MAX = 48
 const RING_CAPACITY = PERF_CAPTURE_MAX_SAMPLES - PINNED_MAX
 
@@ -140,6 +141,35 @@ export function isCaptureArmed(): boolean {
 }
 
 /**
+ * True when this device last confirmed consent in the workspace the page opens
+ * into. Consent otherwise arms only once preferences and flags come out of
+ * storage, seconds into a slow start, so the start itself is never measured.
+ * The consent gate confirms or withdraws it once both halves are known.
+ */
+function consentRememberedForLocation(): boolean {
+  if (typeof window === "undefined") return false
+  try {
+    const workspaceId = window.localStorage.getItem(CONSENT_WORKSPACE_KEY)
+    if (!workspaceId) return false
+    const path = window.location.pathname
+    return path === `/w/${workspaceId}` || path.startsWith(`/w/${workspaceId}/`)
+  } catch {
+    return false
+  }
+}
+
+export function rememberPerfConsent(workspaceId: string, consented: boolean): void {
+  try {
+    if (consented) window.localStorage.setItem(CONSENT_WORKSPACE_KEY, workspaceId)
+    else if (window.localStorage.getItem(CONSENT_WORKSPACE_KEY) === workspaceId) {
+      window.localStorage.removeItem(CONSENT_WORKSPACE_KEY)
+    }
+  } catch {
+    // Blocked storage: consent still arms, just not from page load.
+  }
+}
+
+/**
  * The two independent reasons capture may be running. `dev` is chunk 2's
  * query-param/localStorage switch — it works in any build but only measures
  * locally; it never permits upload. `consent` is the real pair (flag available AND the user's
@@ -152,9 +182,9 @@ export interface PerfArmingSources {
 
 const DISARMED: PerfArmingSources = { dev: false, consent: false }
 
-// Dev arming is read at module load so marks taken during the first commit's
-// child effects (which run before any provider effect) land in a real capture.
-let armingSources: PerfArmingSources = { dev: isCaptureArmed(), consent: false }
+// Both are read at module load so marks taken during the first commit's child
+// effects (which run before any provider effect) land in a real capture.
+let armingSources: PerfArmingSources = { dev: isCaptureArmed(), consent: consentRememberedForLocation() }
 const armingListeners = new Set<() => void>()
 
 function setArmingSources(next: PerfArmingSources): void {

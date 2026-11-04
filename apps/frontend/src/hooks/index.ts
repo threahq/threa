@@ -40,7 +40,7 @@ export { useExternalThreadDraftPromotion } from "./use-external-thread-draft-pro
 
 export { useSidebarConfig } from "./use-sidebar-config"
 
-export { useFeatureFlag } from "./use-feature-flags"
+export { useFeatureFlag, useFeatureFlagWhenKnown } from "./use-feature-flags"
 
 export { useDraftScratchpads } from "./use-draft-scratchpads"
 
