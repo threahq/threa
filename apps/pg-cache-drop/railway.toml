@@ -1,0 +1,9 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile.pg-cache-drop"
+watchPatterns = ["apps/pg-cache-drop/**", "Dockerfile.pg-cache-drop"]
+
+[deploy]
+cronSchedule = "15 */4 * * *"
+restartPolicyType = "NEVER"
+region = "europe-west4-drams3a"

@@ -1,0 +1,3 @@
+FROM postgres:17-alpine
+COPY apps/pg-cache-drop/drop.sh /drop.sh
+CMD ["sh", "/drop.sh"]
