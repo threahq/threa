@@ -228,7 +228,7 @@ describe("SqliteMirror", () => {
     await settle()
 
     await database.syncCursors.bulkPut([
-      { key: "bad", value: new Blob(["x"]), updatedAt: 1 },
+      { key: "bad", value: new Date(Number.NaN), updatedAt: 1 },
       { key: "good", value: "ok", updatedAt: 2 },
     ] as never)
     await settle()
