@@ -1556,20 +1556,9 @@ export class SyncEngine {
     return Array.from(new Set(streamIds.filter(isServerStreamId)))
   }
 
-  /**
-   * Join rooms + register socket handlers for a set of member streams.
-   * Idempotent per stream — skips ones already subscribed. Runs on every
-   * bootstrap (success path and the cache-only failure path) so `stream:activity`
-   * reaches every stream the user belongs to, not just the ones they opened this
-   * session. Without it the sidebar unread badge and hover-to-preview only update
-   * for streams whose room the user has explicitly joined.
-   */
+  /** Member rooms must join before catch-up can advance past events they would miss. */
   private async subscribeMemberStreams(streamIds: string[]): Promise<void> {
-    for (const streamId of streamIds) {
-      if (!this.subscribedStreams.has(streamId)) {
-        await this.ensureStreamSubscription(streamId)
-      }
-    }
+    await Promise.all(streamIds.map((streamId) => this.ensureStreamSubscription(streamId, { awaitJoin: true })))
   }
 
   /**
