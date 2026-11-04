@@ -245,7 +245,7 @@ test.describe("Doc pane", () => {
 
   test("should keep bold toggled on an empty new line when the server's block id lands before typing", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const { testId } = await loginAndCreateWorkspace(page, "doc-bold")
     const workspaceId = workspaceIdFromUrl(page)
     const channelId = await createChannelViaApi(page, workspaceId, `bold-docs-${testId}`, "private")
@@ -264,6 +264,26 @@ test.describe("Doc pane", () => {
     await anchorRow(page, docId).click()
     const editor = docEditor(page, docId)
     await expect(editor).toHaveAttribute("contenteditable", "true", { timeout: 15000 })
+    await editor.evaluate((element) => {
+      const current = element.editor!
+      const column = element.closest(".relative")!
+      const events: unknown[] = []
+      const record = (event: string) => {
+        events.push({
+          event,
+          time: performance.now(),
+          focused: current.isFocused,
+          selection: current.state.selection.toJSON(),
+          block: current.state.selection.$from.index(0),
+          columnHovered: column.matches(":hover"),
+        })
+      }
+      current.on("transaction", () => record("transaction"))
+      current.on("selectionUpdate", () => record("selectionUpdate"))
+      column.addEventListener("pointerleave", () => record("pointerleave"))
+      column.addEventListener("pointermove", () => record("pointermove"))
+      Object.assign(window, { docGutterEvents: events })
+    })
     await typeAtEnd(page, editor, "Rotation tracker")
     await page.mouse.move(0, 0)
     const commentOnBlock = pane(page, docId).getByRole("link", { name: "Comment on this block" })
@@ -271,7 +291,42 @@ test.describe("Doc pane", () => {
 
     heldSave = new Promise((resolve) => (releaseSave = resolve))
     await page.keyboard.press("Enter")
-    await expect(commentOnBlock).toHaveCount(0)
+    try {
+      await expect(commentOnBlock).toHaveCount(0)
+    } catch (error) {
+      try {
+        const diagnostics = await editor.evaluate((element) => {
+          const current = element.editor!
+          const column = element.closest(".relative")!
+          const selection = window.getSelection()
+          return {
+            events: (window as unknown as { docGutterEvents: unknown[] }).docGutterEvents,
+            focused: current.isFocused,
+            selection: current.state.selection.toJSON(),
+            block: current.state.selection.$from.index(0),
+            document: current.getJSON(),
+            nativeSelection: {
+              anchor: selection?.anchorNode?.parentElement?.outerHTML,
+              anchorOffset: selection?.anchorOffset,
+              focus: selection?.focusNode?.parentElement?.outerHTML,
+              focusOffset: selection?.focusOffset,
+            },
+            columnHovered: column.matches(":hover"),
+            commentLinks: Array.from(column.querySelectorAll('a[aria-label="Comment on this block"]'), (link) => ({
+              href: link.getAttribute("href"),
+              top: link.getBoundingClientRect().top,
+            })),
+          }
+        })
+        await testInfo.attach("doc-gutter-state", {
+          body: JSON.stringify(diagnostics, null, 2),
+          contentType: "application/json",
+        })
+      } catch (diagnosticError) {
+        console.error("Could not attach doc gutter diagnostics", diagnosticError)
+      }
+      throw error
+    }
     await page.keyboard.press("ControlOrMeta+b")
     releaseSave()
     await expect(commentOnBlock).toBeVisible({ timeout: 15000 })
