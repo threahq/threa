@@ -2,9 +2,8 @@ import { appendFileSync, readFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import path from "node:path"
 
-// Every PR runs the cheap base: lint, typecheck, unit and integration suites and
-// the browser smoke journeys. An area's expensive suites join only when the PR
-// touches that area. Main pushes and manual runs take everything.
+// CI runs required release checks and smoke. Regression Tests uses this plan
+// for advisory broad suites; main pushes and manual runs select everything.
 
 interface Area {
   name: string
@@ -214,6 +213,7 @@ const browserHarness = [
 // Changing how CI installs or selects work can break any gated job.
 const ciInfra = [
   ".github/workflows/ci.yml",
+  ".github/workflows/regression-tests.yml",
   "scripts/ci-policy.ts",
   ".github/actions/",
   ".bun-version",

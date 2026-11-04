@@ -40,7 +40,7 @@ jobs:
               core.setFailed('Refusing to dispatch for a fork PR')
               return
             }
-            for (const workflow_id of ['ci.yml', 'browser-tests.yml', 'production-images.yml']) {
+            for (const workflow_id of ['ci.yml', 'regression-tests.yml', 'browser-tests.yml']) {
               await github.rest.actions.createWorkflowDispatch({ ...repo, workflow_id, ref: pr.head.ref })
             }
             await github.rest.reactions.createForIssueComment({

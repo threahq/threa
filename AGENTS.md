@@ -46,8 +46,8 @@ Test-first when practical; else run the nearest suite and verify manually. Never
 PR verification:
 
 - Open ready-for-review PRs when the local work is reviewed so CodeRabbit can review each push.
-- Every PR runs the base: lint, typecheck, unit and integration suites, and the browser smoke journeys (`tests/browser/smoke.spec.ts`). `scripts/ci-policy.ts` adds an area's full browser suites when the diff touches that area (timeline, composer, calls, docs, …) and gates app-update, public-site and extension jobs on their paths; every spec belongs to an area or to `mainOnlySpecs`. Production images build on a PR only when packaging inputs change (`production-images.yml` paths). Read the CI plan summary when checking coverage.
-- Main runs everything after merge: every browser spec, every gated job, and the images whose sources changed. A red post-merge run is a regression to fix first.
+- Required release verification is the `CI` workflow: lint, typecheck, deployable builds, WorkOS sync/drift, browser smoke, and production image checks must pass on each current stack head. The same successful main CI run triggers Cloudflare deployment and supplies its exact frontend artifact; Railway autodeploy remains independent.
+- `Regression Tests` and full browser runs provide broad advisory coverage. Red advisory results need triage and recorded evidence; advisory status does not prove a flake, and useful tests stay in place while defects are repaired. Main still runs the full regression coverage. `scripts/ci-policy.ts` selects affected browser suites and gates app-update, public-site and extension work by paths. `/e2e` remains the full advisory browser proof.
 - Scary, complicated or large changes run that same full verification before merge: comment `/e2e` on the PR. For a long stack, run it on the top layer, not every layer.
 - Before reporting ready to merge, every stack layer needs green CI on its current revision.
 

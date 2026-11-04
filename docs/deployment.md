@@ -246,27 +246,19 @@ Key env vars for inter-service wiring:
 
 ## CI Pipeline
 
-GitHub Actions runs on every PR and push to `main`:
-
 ### CI (`.github/workflows/ci.yml`)
 
-- Lints frontend (ESLint)
-- Runs `bun run check:dockerfiles` to verify every workspace `package.json` is COPY-ed into each Dockerfile that runs `bun install --frozen-lockfile` (see the workspace COPY discipline section above)
-- Runs full test suite against Postgres 17 + pgvector + MinIO
-- Backend unit/integration tests, control-plane tests, workspace-router tests, frontend tests
+Required release verification runs lint, monorepo typecheck, deployable builds, WorkOS drift/sync, browser smoke, and production image checks. Cloudflare deploys only after successful main CI and downloads the frontend artifact from that exact CI run. Railway autodeploy remains independent.
 
-### Browser Tests (`.github/workflows/browser-tests.yml`)
+### Regression Tests (`.github/workflows/regression-tests.yml`)
 
-- Playwright E2E tests in Chromium
-- Sharded across 2 parallel runners
-- Runs on push to `main` and PRs
+Broad backend, frontend, control-plane, package, extension, public-site, app-update, and affected-area browser suites run as advisory checks. Full browser coverage also runs independently on main and through `/e2e`.
 
 ### Cloudflare deploy (`.github/workflows/deploy-cloudflare.yml`)
 
-- Fires on `workflow_run` after CI completes successfully on `main`
-- Deploy jobs publish the production frontend, public site, workspace router, backoffice, and backoffice router
+Fires on `workflow_run` after CI completes successfully on `main`. It deploys only the current main revision.
 
-CI and Browser Tests must pass before merging. The deploy workflow is best-effort post-merge.
+See `AGENTS.md` for agent guidance on required and advisory verification.
 
 ## Environment Variables
 

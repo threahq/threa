@@ -1,24 +1,12 @@
 name: Production Images
 
-# Pull requests build images only when packaging inputs change; main builds the
-# images whose sources changed.
+# CI calls this for PR release verification; main source selection remains here.
 on:
-  pull_request:
-    paths:
-      - ".bun-version"
-      - ".dockerignore"
-      - "Dockerfile.*"
-      - "package.json"
-      - "bun.lock"
-      - "patches/**"
-      - "apps/*/package.json"
-      - "packages/*/package.json"
-      - ".github/workflows/production-images.yml"
-      - "scripts/production-images.bake.hcl"
-      - "scripts/production-image-smoke.compose.yml"
-      - "scripts/smoke-production-image.sh"
-  push:
-    branches: [main]
+  workflow_call:
+    inputs:
+      packaging:
+        type: boolean
+        required: true
   workflow_dispatch:
 
 permissions:
@@ -102,6 +90,7 @@ jobs:
       - id: select
         env:
           EVENT_NAME: ${{ github.event_name }}
+          PACKAGING: ${{ inputs.packaging }}
           COMMON: ${{ steps.paths.outputs.common }}
           BACKEND: ${{ steps.paths.outputs.backend }}
           CONTROL_PLANE: ${{ steps.paths.outputs.control-plane }}
@@ -117,7 +106,9 @@ jobs:
             done
           fi
 
-          if [[ "$EVENT_NAME" != push || "$COMMON" == true ]]; then
+          if [[ "$EVENT_NAME" == pull_request && "$PACKAGING" != true ]]; then
+            services='[]'
+          elif [[ "$EVENT_NAME" != push || "$COMMON" == true ]]; then
             services='["backend","control-plane","db-read-proxy","enclave"]'
           else
             services=$(jq -cn \

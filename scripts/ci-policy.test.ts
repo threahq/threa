@@ -58,7 +58,12 @@ describe("CI policy", () => {
   })
 
   test("should open every gate when CI infrastructure changes", () => {
-    for (const file of ["bun.lock", ".github/workflows/ci.yml", ".github/actions/setup-bun/action.yml"]) {
+    for (const file of [
+      "bun.lock",
+      ".github/workflows/ci.yml",
+      ".github/workflows/regression-tests.yml",
+      ".github/actions/setup-bun/action.yml",
+    ]) {
       expect(pr(file)).toEqual({
         browser: [smokeSpec],
         gates: { app_update: true, public_site: true, extensions: true },
