@@ -299,6 +299,8 @@ test.describe("Doc pane", () => {
           const current = element.editor!
           const column = element.closest(".relative")!
           const selection = window.getSelection()
+          const selectionNodeHTML = (node: Node | null) =>
+            node instanceof Element ? node.outerHTML : node?.parentElement?.outerHTML
           return {
             events: (window as unknown as { docGutterEvents: unknown[] }).docGutterEvents,
             focused: current.isFocused,
@@ -306,9 +308,9 @@ test.describe("Doc pane", () => {
             block: current.state.selection.$from.index(0),
             document: current.getJSON(),
             nativeSelection: {
-              anchor: selection?.anchorNode?.parentElement?.outerHTML,
+              anchor: selectionNodeHTML(selection?.anchorNode ?? null),
               anchorOffset: selection?.anchorOffset,
-              focus: selection?.focusNode?.parentElement?.outerHTML,
+              focus: selectionNodeHTML(selection?.focusNode ?? null),
               focusOffset: selection?.focusOffset,
             },
             columnHovered: column.matches(":hover"),
