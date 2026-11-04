@@ -1,6 +1,8 @@
 import { PERF_CAPTURE_MAX_SAMPLES, type PerfMarkName, type PerformanceSample } from "@threahq/types"
+import { accountStorageKey } from "@/lib/account-storage"
 
 const CAPTURE_STORAGE_KEY = "threa:perf:capture"
+const CONSENT_WORKSPACE_SUFFIX = "perf:consentWorkspace"
 const PINNED_MAX = 48
 const RING_CAPACITY = PERF_CAPTURE_MAX_SAMPLES - PINNED_MAX
 
@@ -136,6 +138,38 @@ export function isCaptureArmed(): boolean {
     return stored === "1" || stored === "true"
   } catch {
     return false
+  }
+}
+
+/**
+ * True when the signed-in account last confirmed consent on this device in the
+ * workspace the page is on. Consent otherwise arms only once preferences and
+ * flags come out of storage, seconds into a slow start, so the start itself is
+ * never measured. The consent gate confirms or withdraws it once both halves
+ * are known.
+ */
+export function isPerfConsentRemembered(): boolean {
+  if (typeof window === "undefined") return false
+  const key = accountStorageKey(CONSENT_WORKSPACE_SUFFIX)
+  if (!key) return false
+  try {
+    const workspaceId = window.localStorage.getItem(key)
+    if (!workspaceId) return false
+    const path = window.location.pathname
+    return path === `/w/${workspaceId}` || path.startsWith(`/w/${workspaceId}/`)
+  } catch {
+    return false
+  }
+}
+
+export function rememberPerfConsent(workspaceId: string, consented: boolean): void {
+  const key = accountStorageKey(CONSENT_WORKSPACE_SUFFIX)
+  if (!key) return
+  try {
+    if (consented) window.localStorage.setItem(key, workspaceId)
+    else if (window.localStorage.getItem(key) === workspaceId) window.localStorage.removeItem(key)
+  } catch {
+    // Blocked storage: consent still arms, just not at mount.
   }
 }
 
