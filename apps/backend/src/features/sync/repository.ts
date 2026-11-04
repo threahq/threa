@@ -228,17 +228,20 @@ export const SyncLogRepository = {
   /**
    * Heads for a batch of workspaces in one statement (INV-56), for the
    * heartbeat tick. Workspaces with no log entries are absent from the map;
-   * callers default them to 0.
+   * callers default them to 0. A per-workspace MAX lets Postgres read one
+   * primary-key entry each; `MAX … GROUP BY` over `ANY(...)` reads every key.
    */
   async getHeads(db: Querier, workspaceIds: string[]): Promise<Map<string, bigint>> {
     if (workspaceIds.length === 0) {
       return new Map()
     }
     const result = await db.query<{ workspace_id: string; head: string }>(sql`
-      SELECT workspace_id, MAX(sync_id) AS head
-      FROM sync_log
-      WHERE workspace_id = ANY(${workspaceIds})
-      GROUP BY workspace_id
+      SELECT w.workspace_id, h.head
+      FROM unnest(${workspaceIds}::text[]) AS w(workspace_id)
+      CROSS JOIN LATERAL (
+        SELECT MAX(sync_id) AS head FROM sync_log WHERE sync_log.workspace_id = w.workspace_id
+      ) h
+      WHERE h.head IS NOT NULL
     `)
     return new Map(result.rows.map((row) => [row.workspace_id, BigInt(row.head)]))
   },
