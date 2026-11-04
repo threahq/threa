@@ -109,14 +109,19 @@ async function setUpUnreadChannel(browser: Browser, ownerPage: Page, unreadCount
     await other.page.request.post(`/api/workspaces/${workspaceId}/streams/${streamId}/join`, { data: {} }),
     "Second user joins the channel"
   )
+  let firstUnreadMessageId!: string
   await expect
     .poll(
-      async () =>
-        (
-          await other.page.request.post(`/api/workspaces/${workspaceId}/messages`, {
-            data: { streamId, content: `${prefix}-unread msg-001` },
-          })
-        ).status(),
+      async () => {
+        const response = await other.page.request.post(`/api/workspaces/${workspaceId}/messages`, {
+          data: { streamId, content: `${prefix}-unread msg-001` },
+        })
+        if (response.status() === 201) {
+          const { message } = (await response.json()) as { message: { id: string } }
+          firstUnreadMessageId = message.id
+        }
+        return response.status()
+      },
       { timeout: 10000, message: "second user's first post should be accepted after joining" }
     )
     .toBe(201)
@@ -130,7 +135,7 @@ async function setUpUnreadChannel(browser: Browser, ownerPage: Page, unreadCount
     })
     .toBeGreaterThanOrEqual(unreadCount)
 
-  return { testId, prefix, workspaceId, streamId, otherContext: other.context }
+  return { testId, prefix, workspaceId, streamId, firstUnreadMessageId, otherContext: other.context }
 }
 
 test.describe("Timeline auto-read", () => {
@@ -393,15 +398,12 @@ test.describe("Timeline auto-read", () => {
     // advance silently stops and nothing ever marks, even though every row was
     // painted on the way down. Large wheel deltas reproduce that scan gap
     // deterministically.
-    const { prefix, workspaceId, streamId, otherContext } = await setUpUnreadChannel(browser, page, 25)
+    const { firstUnreadMessageId, workspaceId, streamId, otherContext } = await setUpUnreadChannel(browser, page, 25)
     await page.setViewportSize({ width: 1024, height: 500 })
 
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
     await expect(
-      page
-        .getByRole("main")
-        .locator(".message-item")
-        .filter({ has: page.getByText(`${prefix}-unread msg-001`, { exact: true }) })
+      page.getByRole("main").locator(`[data-event-id][data-message-id="${firstUnreadMessageId}"] .message-item`)
     ).toBeVisible({ timeout: 20000 })
 
     const scroller = page.locator("[data-suppress-pull-refresh]")
