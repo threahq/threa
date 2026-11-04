@@ -380,7 +380,8 @@ const SELECT_FIELDS_ALIASED = SELECT_FIELDS.split(",")
   .join(", ")
 
 /**
- * Streams with the last message per stream, ending at the workspace pin so each
+ * Streams with the last message per stream (highest sequence, one
+ * `idx_messages_stream_seq` probe per stream), ending at the workspace pin so each
  * list variant appends its own `AND` terms. LEFT JOIN against `e2e_streams` so
  * the workspace bootstrap surfaces the E2E flag inline — without it, cold-loaded
  * sidebar rows have undefined `e2eEnabled` until the per-stream bootstrap fires,
@@ -390,17 +391,6 @@ const SELECT_FIELDS_ALIASED = SELECT_FIELDS.split(",")
  */
 function selectStreamsWithPreviewSql(workspaceId: string) {
   return sql`
-    WITH last_messages AS (
-      SELECT DISTINCT ON (stream_id)
-        stream_id,
-        author_id,
-        author_type,
-        content_json,
-        created_at
-      FROM messages
-      WHERE workspace_id = ${workspaceId} AND deleted_at IS NULL
-      ORDER BY stream_id, created_at DESC
-    )
     SELECT
       ${sql.raw(SELECT_FIELDS_ALIASED)},
       lm.author_id as last_message_author_id,
@@ -416,7 +406,13 @@ function selectStreamsWithPreviewSql(workspaceId: string) {
         WHERE a.workspace_id = s.workspace_id AND a.stream_id = s.id
       ) AS e2e_actors
     FROM streams s
-    LEFT JOIN last_messages lm ON lm.stream_id = s.id
+    LEFT JOIN LATERAL (
+      SELECT m.author_id, m.author_type, m.content_json, m.created_at
+      FROM messages m
+      WHERE m.stream_id = s.id AND m.workspace_id = s.workspace_id AND m.deleted_at IS NULL
+      ORDER BY m.sequence DESC
+      LIMIT 1
+    ) lm ON true
     LEFT JOIN e2e_streams e ON e.stream_id = s.id AND e.workspace_id = s.workspace_id
     WHERE s.workspace_id = ${workspaceId}
   `
