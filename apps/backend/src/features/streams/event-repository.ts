@@ -899,17 +899,20 @@ export const StreamEventRepository = {
       SELECT
         m.stream_id,
         GREATEST(
-          COUNT(*) FILTER (WHERE e.sequence > m.last_read_seq)
-          - COALESCE((
+          c.above_watermark
+          - (
               SELECT COUNT(*) FROM stream_member_message_reads r
               WHERE r.workspace_id = $4 AND r.stream_id = m.stream_id AND r.member_id = m.member_id
-            ), 0),
+            ),
           0
         )::text as unread_count,
-        COUNT(e.id)::text as total_count
+        c.total::text as total_count
       FROM memberships m
-      LEFT JOIN stream_events e ON e.stream_id = m.stream_id AND e.event_type = 'message_created' AND e.workspace_id = $4
-      GROUP BY m.stream_id, m.member_id
+      CROSS JOIN LATERAL (
+        SELECT COUNT(*) FILTER (WHERE e.sequence > m.last_read_seq) AS above_watermark, COUNT(*) AS total
+        FROM stream_events e
+        WHERE e.workspace_id = $4 AND e.stream_id = m.stream_id AND e.event_type = 'message_created'
+      ) c
     `,
       [streamIds, memberIds, lastReadEventIds, workspaceId]
     )
