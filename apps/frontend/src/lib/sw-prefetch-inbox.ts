@@ -104,9 +104,9 @@ async function applyPrefetches(database: ThreaDatabase, entries: readonly InboxE
   }
 }
 
-function withDrainLock(dbName: string, drain: () => Promise<void>): Promise<void> {
+async function withDrainLock(dbName: string, drain: () => Promise<void>): Promise<void> {
   if (!navigator.locks) return drain()
-  return navigator.locks.request(prefetchInboxLockName(dbName), drain)
+  await navigator.locks.request(prefetchInboxLockName(dbName), drain)
 }
 
 /** Applies `database`'s prefetches oldest first; they leave the inbox only once every write committed. */
