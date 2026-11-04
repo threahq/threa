@@ -1,0 +1,274 @@
+name: Regression Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: regression-tests-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    name: Select CI plan
+    runs-on: ubuntu-latest
+    outputs:
+      browser: ${{ steps.plan.outputs.browser }}
+      app_update: ${{ steps.plan.outputs.app_update }}
+      public_site: ${{ steps.plan.outputs.public_site }}
+      extensions: ${{ steps.plan.outputs.extensions }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check main tip
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: tip
+        uses: ./.github/actions/check-main-tip
+        with:
+          expected-sha: ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Reject obsolete main revision
+        if: steps.tip.outputs.is-tip == 'false'
+        run: exit 1
+
+      - uses: ./.github/actions/setup-bun
+
+      - id: plan
+        run: bun scripts/ci-policy.ts
+
+  backend:
+    name: Backend (${{ matrix.part }})
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Integration alone fills a runner for as long as everything else together.
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [integration, rest]
+    env:
+      TEST_DATABASE_URL: postgresql://threa:threa@localhost:5454/threa_test
+      S3_ENDPOINT: http://localhost:9000
+      S3_BUCKET: threa-test-uploads
+      S3_ACCESS_KEY_ID: minioadmin
+      S3_SECRET_ACCESS_KEY: minioadmin
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Started in the background so the pulls and boot overlap install and the
+      # unit tests. Throwaway data: no fsync, tmpfs. Four test workers each run
+      # a server and their own pools, past the default 100 connections.
+      - name: Start Postgres and MinIO
+        run: |
+          docker run -d --name postgres -p 5454:5432 \
+            -e POSTGRES_USER=threa -e POSTGRES_PASSWORD=threa -e POSTGRES_DB=threa \
+            --tmpfs /var/lib/postgresql/data \
+            pgvector/pgvector:pg17 \
+            postgres -c max_connections=400 -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
+            > /tmp/postgres.log 2>&1 &
+          docker run -d --name minio -p 9000:9000 \
+            -e AWS_ACCESS_KEY_ID=minioadmin -e AWS_SECRET_ACCESS_KEY=minioadmin \
+            chrislusf/seaweedfs:4.47 mini -dir=/data -s3.port=9000 -bucket=threa-test-uploads \
+            > /tmp/minio.log 2>&1 &
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+
+      - name: Install dependencies
+        id: install
+        run: bun install --frozen-lockfile
+
+      - name: Run scripts tests
+        if: matrix.part == 'rest'
+        run: bun run test:scripts
+
+      - name: Run backend unit tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.part == 'rest' }}
+        run: bun run --cwd apps/backend test:unit
+
+      - name: Wait for Postgres and MinIO
+        id: services
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: |
+          ready() {
+            timeout 90 bash -c "until $1; do sleep 0.5; done" && return
+            cat /tmp/postgres.log /tmp/minio.log
+            docker ps -a
+            docker logs postgres || true
+            docker logs minio || true
+            return 1
+          }
+          ready "pg_isready -q -h localhost -p 5454 -U threa"
+          ready "curl -sf http://localhost:9000/healthz"
+          PGPASSWORD=threa psql -h localhost -p 5454 -U threa -d postgres -c "CREATE DATABASE threa_control_plane_test;"
+
+      - name: Run backend integration tests
+        if: ${{ !cancelled() && steps.services.outcome == 'success' && matrix.part == 'integration' }}
+        run: bun run --cwd apps/backend test:integration
+
+      - name: Run backend e2e tests
+        if: ${{ !cancelled() && steps.services.outcome == 'success' && matrix.part == 'rest' }}
+        # Two workers: each boots a polling test server, and at four the slowest
+        # e2e cases cross their 5s timeout on a 4-vCPU runner.
+        run: bun run --cwd apps/backend test:e2e tests/e2e/ --workers 2
+
+      # Packs the published bot-runtime packages, whose declaration build needs
+      # bot-runtime-client's own deps (mdast) that the root install does not hoist.
+      - name: Run published SDK consumer test
+        if: ${{ !cancelled() && steps.services.outcome == 'success' && needs.plan.outputs.extensions == 'true' && matrix.part == 'rest' }}
+        run: |
+          bun install --frozen-lockfile --cwd extensions/bot-runtime-client
+          bun run --cwd apps/backend test:e2e tests/published-sdk/
+
+      - name: Run control-plane tests
+        if: ${{ !cancelled() && steps.services.outcome == 'success' && matrix.part == 'rest' }}
+        run: bun run --cwd apps/control-plane test
+        env:
+          TEST_DATABASE_URL: postgresql://threa:threa@localhost:5454/threa_control_plane_test
+
+      - name: Run package tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.part == 'rest' }}
+        run: |
+          bun run --cwd apps/workspace-router test
+          bun run --cwd apps/enclave test
+          bun run --cwd packages/cli test
+          bun run --cwd packages/types test
+          bun run --cwd packages/backend-common test
+          bun run --cwd packages/prosemirror test
+          bun run --cwd packages/agent-runtime test
+          bun run --cwd packages/user-guide test
+
+  frontend-tests:
+    name: Frontend Tests
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run frontend tests
+        run: bun run --cwd apps/frontend test
+
+  extension-tests:
+    name: Extension Tests
+    needs: plan
+    if: needs.plan.outputs.extensions == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+
+      # Extensions live outside the root Bun workspaces (apps/*, packages/*):
+      # each is a standalone package with its own bun.lock, linked by file:
+      # deps (bot-runtime-client → harness-client/remote-session → claude-code-remote), so
+      # installs must run per-package in dependency order. pi-remote is a
+      # pi-package with tests but no standalone typecheck (deferred per #1153).
+      # The root install is also required: bot-runtime-client's crypto parity
+      # test typechecks against the canonical packages/crypto sources, whose
+      # deps (@hpke/*) resolve from the root node_modules.
+      - name: Install extension dependencies
+        run: |
+          bun install --frozen-lockfile
+          bun install --frozen-lockfile --cwd extensions/bot-runtime-client
+          bun install --frozen-lockfile --cwd extensions/harness-client
+          bun install --frozen-lockfile --cwd extensions/pi-remote
+          bun install --frozen-lockfile --cwd extensions/remote-session
+          bun install --frozen-lockfile --cwd extensions/claude-code-remote
+          bun install --frozen-lockfile --cwd extensions/harness-daemon
+          bun install --frozen-lockfile --cwd extensions/threa-bot
+          bun install --frozen-lockfile --cwd extensions/hermes-remote
+          bun install --frozen-lockfile --cwd extensions/t3code-remote
+
+      - name: Run extension tests
+        run: |
+          bun run --cwd extensions/bot-runtime-client test
+          bun run --cwd extensions/harness-client test
+          bun run --cwd extensions/pi-remote test
+          bun run --cwd extensions/remote-session test
+          bun run --cwd extensions/claude-code-remote test
+          bun run --cwd extensions/harness-daemon test
+          bun run --cwd extensions/threa-bot test
+          bun run --cwd extensions/hermes-remote test
+          bun run --cwd extensions/t3code-remote test
+
+  app-update-browser:
+    name: App Update Browser Proof
+    needs: plan
+    if: needs.plan.outputs.app_update == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The image ships the browsers' system packages. `playwright install-deps`
+    # on the runner fetches them from the Azure Ubuntu mirror, which has stalled
+    # past the job timeout and cancelled main's CI (no Cloudflare deploy).
+    container:
+      image: mcr.microsoft.com/playwright:v1.59.1-noble
+      options: --ipc=host
+    env:
+      HOME: /root
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # setup-bun needs `unzip`, which the image lacks.
+      - name: Setup Bun
+        run: npm install -g "bun@$(cat .bun-version)"
+
+      - uses: ./.github/actions/bun-install-cache
+        with:
+          share-across-jobs: "false"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # A no-op while the lockfile matches the image; after a Playwright bump it
+      # fetches the matching browsers from the CDN, no apt involved.
+      - name: Install Playwright browsers
+        run: bunx playwright install chromium firefox
+
+      - name: Run app-update browser proof
+        run: bun run test:app-update
+        env:
+          CI: true
+
+  public-site-build-and-test:
+    name: Public Site Build and Test
+    needs: plan
+    if: needs.plan.outputs.public_site == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-bun
+      - run: bun install --frozen-lockfile
+      - name: Build public site
+        run: bun run --cwd apps/public-site build
+      - name: Test public site
+        run: bun run --cwd apps/public-site test
+
+  browser:
+    name: Affected Browser Tests
+    needs: plan
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/browser-tests.yml
+    with:
+      files: ${{ needs.plan.outputs.browser }}
+    permissions:
+      contents: read

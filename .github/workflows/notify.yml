@@ -2,7 +2,7 @@ name: Notify Threa
 
 on:
   workflow_run:
-    workflows: [CI, Deploy Cloudflare, Browser E2E Tests, Production Images]
+    workflows: [CI, Regression Tests, Deploy Cloudflare, Browser E2E Tests, Production Images]
     types: [completed]
     branches: [main]
 
@@ -83,6 +83,8 @@ jobs:
 
             const icon = { success: "✅", failure: "❌", timed_out: "⏱" }[conclusion] ?? "⚠️"
             const status = { success: "succeeded", failure: "failed", timed_out: "timed out" }[conclusion] ?? conclusion
+            const advisory = ["Regression Tests", "Browser E2E Tests"].includes(workflow)
+            const label = advisory ? " (advisory, non-blocking)" : ""
             const short = (s) => s.slice(0, 7)
             const firstLine = (msg) => (msg ?? "").split("\n", 1)[0]
 
@@ -155,7 +157,7 @@ jobs:
             let content
             if (commits.length === 1 && omitted === 0) {
               content =
-                `${icon} **${workflow} ${status}** on \`main\`\n\n` +
+                `${icon} **${workflow}${label} ${status}** on \`main\`\n\n` +
                 `\`${short(commits[0].sha)}\` — ${firstLine(commits[0].message)}\n` +
                 `by @${actor} · [View run](${runUrl})`
             } else {
@@ -163,7 +165,7 @@ jobs:
               const lines = commits.map((c) => `- \`${short(c.sha)}\` — ${firstLine(c.message)}`)
               if (omitted > 0) lines.unshift(`- …and ${omitted} earlier`)
               content =
-                `${icon} **${workflow} ${status}** on \`main\` — ${total} commits\n\n` +
+                `${icon} **${workflow}${label} ${status}** on \`main\` — ${total} commits\n\n` +
                 `${lines.join("\n")}\n` +
                 `by @${actor} · [View run](${runUrl})`
             }
