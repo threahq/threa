@@ -135,9 +135,9 @@ interface UseTimelineScrollReturn {
   /** Ref for the inner content wrapper (sized to the full scroll height). */
   contentRef: React.RefObject<HTMLDivElement | null>
   /**
-   * virtua `shift` value for the current render. True when rows landed above
-   * the first row (an older page prepended), so virtua maintains position from
-   * the end and the viewport does not move, including mid-scroll.
+   * virtua `shift` value for the current render. True when the window's first
+   * row changed (an older page prepended, or the start trimmed), never for
+   * growth inside the window, so virtua holds the viewport from the end.
    */
   shift: boolean
   /** True when scrolled far enough from the bottom to show "Jump to latest". */
@@ -337,21 +337,21 @@ export function useTimelineScroll({
     setIsInitialSettling(!skipInitialScroll)
   }
 
-  // Compute `shift` for this render: true tells virtua to maintain from the end.
-  // A shifted update moves virtua's whole size cache by the count change from
-  // the start, and virtua re-measures a row only when its index or box changes.
-  // A row that keeps its index across one (an arrival sorted above your own
-  // in-flight send, a hole filled mid-window) keeps its predecessor's height
-  // for good and the rows below draw over it. So shift only when the first row
-  // changed, and while following only when the last row held too.
+  // Compute `shift` for this render: true tells virtua the count change happened
+  // at the start. It moves its whole size cache by that delta and re-measures a
+  // row only when its index or box changes, so a row that keeps its index across
+  // a shifted update (an arrival sorted above your own in-flight send, a hole
+  // filled mid-window) keeps its predecessor's height for good and the rows
+  // below draw over it. So shift only when the first row changed. While
+  // following, also require growth under a held last row: a moved tail is
+  // end-side growth, re-landed by `tailReplaced` below.
   const firstKey = itemCount > 0 ? getFirstKey() : null
   const lastKey = itemCount > 0 ? getLastKey() : null
+  const windowStartHeld = firstKey === prevFirstKeyRef.current
+  const tailMoved = lastKey !== prevLastKeyRef.current
   let shift = false
-  if (itemCount > 0 && prevCountRef.current > 0) {
-    const startChanged = prevFirstKeyRef.current !== null && firstKey !== prevFirstKeyRef.current
-    shift = isFollowingTailRef.current
-      ? startChanged && itemCount > prevCountRef.current && lastKey === prevLastKeyRef.current
-      : startChanged
+  if (itemCount > 0 && prevCountRef.current > 0 && prevFirstKeyRef.current !== null && !windowStartHeld) {
+    shift = !isFollowingTailRef.current || (itemCount > prevCountRef.current && !tailMoved)
   }
   // While following the tail, a window whose row count or last row changed —
   // and that is not a single live append (a sweep landing a gap, a window
@@ -369,8 +369,6 @@ export function useTimelineScroll({
   // virtua's deferred scroll after our pin, a few px above the true bottom. An
   // append always moves the last key, so requiring that here keeps a ONE-row
   // insert in the middle — a single-slot hole backfill — on the re-take path.
-  const windowStartHeld = firstKey === prevFirstKeyRef.current
-  const tailMoved = lastKey !== prevLastKeyRef.current
   const appendedOneRow = itemCount === prevCountRef.current + 1 && windowStartHeld && tailMoved
   const swappedTailInPlace = itemCount === prevCountRef.current && windowStartHeld
   const windowChanged = itemCount !== prevCountRef.current || tailMoved

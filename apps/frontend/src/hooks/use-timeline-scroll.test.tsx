@@ -131,6 +131,17 @@ describe("useTimelineScroll — shift (prepend) detection", () => {
     expect(harness.current.shift).toBe(false)
   })
 
+  it("does not shift while following when rows land between an unchanged first and last row", () => {
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    // The panel's cached rail: the opening row plus the newest few.
+    harness.rerender(opts({ itemCount: 6, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+
+    // The server page fills the 34 rows between them; first and last rows hold.
+    harness.rerender(opts({ itemCount: 40, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+
+    expect(harness.current.shift).toBe(false)
+  })
+
   it("resets the prepend baseline on stream switch", () => {
     const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
     harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10" }))

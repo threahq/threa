@@ -222,6 +222,7 @@ test("a message arriving above an in-flight send does not overlap the row above 
 
   let releaseSend!: () => void
   const sendHeld = new Promise<void>((resolve) => (releaseSend = resolve))
+  // page.request goes from the test runner, so only the composer's own POST is held.
   await page.route(/\/api\/workspaces\/[^/]+\/messages$/, async (route) => {
     if (route.request().method() === "POST") await sendHeld
     await route.continue()
@@ -230,7 +231,8 @@ test("a message arriving above an in-flight send does not overlap the row above 
   await editor.click()
   await editor.pressSequentially("Own send held in flight")
   await page.keyboard.press("Enter")
-  await expect(rows.filter({ hasText: "Own send held in flight" })).toBeVisible()
+  const ownSend = rows.filter({ hasText: "Own send held in flight" })
+  await expect(ownSend).toBeVisible()
 
   await expectApiOk(
     await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
@@ -240,16 +242,17 @@ test("a message arriving above an in-flight send does not overlap the row above 
   )
   const arrival = rows.filter({ hasText: "Arrival above the in-flight send" })
   await expect(arrival).toBeVisible()
+  const [arrivalBox, ownSendBox] = await Promise.all([arrival.boundingBox(), ownSend.boundingBox()])
+  expect(arrivalBox!.y, "the arrival must sort above the in-flight send").toBeLessThan(ownSendBox!.y)
   releaseSend()
 
-  await expect
-    .poll(async () => {
-      const [tallBox, arrivalBox] = await Promise.all([tallRow.boundingBox(), arrival.boundingBox()])
-      return tallBox && arrivalBox ? Math.round(arrivalBox.y - (tallBox.y + tallBox.height)) : null
-    })
-    .toBeGreaterThanOrEqual(0)
-  // Hold it: a size cache that is merely late would converge, a stale one never does.
+  const gapBelowTallRow = async () => {
+    const [tallBox, arrivalBox] = await Promise.all([tallRow.boundingBox(), arrival.boundingBox()])
+    return tallBox && arrivalBox ? arrivalBox.y - (tallBox.y + tallBox.height) : null
+  }
+  await expect.poll(gapBelowTallRow).toBeGreaterThanOrEqual(-1)
+  // The released send's echo re-renders the window after the first good frame;
+  // a stale size never converges, so it must still hold after that.
   await page.waitForTimeout(1000)
-  const [tallBox, arrivalBox] = await Promise.all([tallRow.boundingBox(), arrival.boundingBox()])
-  expect(arrivalBox!.y).toBeGreaterThanOrEqual(tallBox!.y + tallBox!.height - 1)
+  expect(await gapBelowTallRow()).toBeGreaterThanOrEqual(-1)
 })
