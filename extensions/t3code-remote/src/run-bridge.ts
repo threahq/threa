@@ -1637,12 +1637,14 @@ export class T3TurnRunner {
     return withoutUpdatePrefix(await this.fullText(threadId, item))
   }
 
-  /** A wait notice quotes what T3 asks, as its prompt or command, with nothing in it to upload. */
+  /** A wait notice quotes what T3 asks, as its prompt or command, in a code block, where no link uploads and no mention notifies. */
   private async updateText(threadId: string, item: ThreadItem): Promise<string> {
     const notice = WAIT_NOTICES[item.type]
     if (!notice) return this.replyText(threadId, item)
-    const detail = redactAttachDirectives(await this.fullText(threadId, item)).trim()
-    return detail ? `${notice}\n\n${detail.replace(/^/gm, "> ")}` : notice
+    const detail = (await this.fullText(threadId, item)).trim()
+    if (!detail) return notice
+    // Threa ends a code block at any line opening with ``` and reads a `THREA_ATTACH:` line anywhere as an upload.
+    return `${notice}\n\n\`\`\`\n${detail.replace(/^(?=```|THREA_ATTACH:)/gm, " ")}\n\`\`\``
   }
 
   private async postUpdates(
