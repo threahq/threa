@@ -275,9 +275,6 @@ export function useUnreadCounts(workspaceId: string) {
   return { ...actions, unreadCounts, getUnreadCount, getTotalUnreadCount, isInInbox, isInboxHeld }
 }
 
-/** Every hand-settle (Settle, Escape, ⌘K) runs under this key, so a surface can tell them from the settling rule. */
-export const clearInboxMutationKey = (workspaceId: string) => ["clear-inbox", workspaceId] as const
-
 /** The read/unread mutations, without subscribing the caller to the unread row. */
 export function useUnreadActions(workspaceId: string) {
   const queryClient = useQueryClient()
@@ -488,7 +485,6 @@ export function useUnreadActions(workspaceId: string) {
   })
 
   const clearInboxMutation = useMutation({
-    mutationKey: clearInboxMutationKey(workspaceId),
     mutationFn: async ({ streamIds }: { streamIds: string[] }) => {
       const startedAt = Date.now()
       const response = await workspaceService.clearInbox(workspaceId, streamIds)

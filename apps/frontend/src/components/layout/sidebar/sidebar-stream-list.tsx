@@ -225,8 +225,6 @@ interface SidebarStreamListProps {
    * disabled or unbound it — the hint is omitted rather than shown stale.
    */
   clearInboxKeyHint?: string
-  /** A receipt for something a rule just did, shown under the section with `sectionId` (last when none). */
-  receipt?: { sectionId: string | null; node: ReactNode }
 }
 
 export const SidebarStreamList = memo(function SidebarStreamList({
@@ -255,7 +253,6 @@ export const SidebarStreamList = memo(function SidebarStreamList({
   onClearInbox,
   onInboxRowHoverChange,
   clearInboxKeyHint,
-  receipt,
 }: SidebarStreamListProps) {
   // Drag-to-file is a mouse interaction; a finger does the same through the
   // action drawer's section picker. Keyed on the active input (not capability)
@@ -585,8 +582,6 @@ export const SidebarStreamList = memo(function SidebarStreamList({
       />
     )
 
-    const receiptHere = receipt?.sectionId === section.id ? receipt.node : null
-
     // Custom and label sections are drop targets — a stream dragged onto a
     // custom section is filed there; one dragged onto a label section is
     // tagged with that label. Other section kinds render as-is.
@@ -600,7 +595,6 @@ export const SidebarStreamList = memo(function SidebarStreamList({
           onDropStream={(streamId) => handleDropIntoSection(streamId, sectionId)}
         >
           {sectionEl}
-          {receiptHere}
         </StreamDropZone>
       )
     }
@@ -614,16 +608,10 @@ export const SidebarStreamList = memo(function SidebarStreamList({
           onDropStream={(streamId) => handleDropOntoLabel(streamId, labelId)}
         >
           {sectionEl}
-          {receiptHere}
         </StreamDropZone>
       )
     }
-    return (
-      <Fragment key={section.id}>
-        {sectionEl}
-        {receiptHere}
-      </Fragment>
-    )
+    return <Fragment key={section.id}>{sectionEl}</Fragment>
   })
 
   return (
@@ -644,7 +632,6 @@ export const SidebarStreamList = memo(function SidebarStreamList({
             ? quickLinksSlot
             : null}
           {sectionElements}
-          {receipt && receipt.sectionId === null && receipt.node}
         </SidebarQuickJumpProvider>
       </SidebarRowOpenersProvider>
     </SidebarLabelsProvider>
