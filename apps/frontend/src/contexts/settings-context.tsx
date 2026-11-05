@@ -47,11 +47,20 @@ export function withoutSettingsWindow(params: URLSearchParams): URLSearchParams 
   return next
 }
 
-/**
- * History state of a page pushed over the phone index, so Back returns to the
- * index. Pages reached any other way replace, and Back closes the window.
- */
-export const SETTINGS_DRILL_STATE = { settingsDrill: true } as const
+/** The history state a link in the settings window pushes. */
+export interface SettingsLinkHistory {
+  state?: SettingsDepthState
+}
+
+/** History state of an entry the window pushed over its own: how many of its entries lie beneath. */
+interface SettingsDepthState {
+  settingsDepth: number
+}
+
+function settingsDepthOf(state: unknown): number {
+  const depth = (state as Partial<SettingsDepthState> | null)?.settingsDepth
+  return typeof depth === "number" ? depth : 0
+}
 
 interface SettingsContextValue {
   isOpen: boolean
@@ -74,12 +83,14 @@ interface SettingsContextValue {
   /** Opens a page, the overview without one; `setting` lands on one row. */
   openSettings: (tab?: SettingsTab, setting?: string) => void
   closeSettings: () => void
-  setActiveTab: (tab: SettingsTab | null, setting?: string) => void
   getSettingsUrl: (tab?: SettingsTab, setting?: string) => string
-  /** The open page was pushed over the phone index (`SETTINGS_DRILL_STATE`). */
-  drilled: boolean
-  /** Back to the index: pops a drilled page, replaces otherwise. */
-  returnToIndex: () => void
+  /**
+   * How links move: every place in the window is its own history entry, so
+   * Back walks the places visited and close unwinds them all.
+   */
+  linkHistory: SettingsLinkHistory
+  /** Back as the browser's: pops an entry the window pushed, or replaces with `fallback` on the window's first. */
+  back: (fallback: string) => void
   /**
    * A stream's page in this window, its first page without one; `setting`
    * lands on one row. Without a stream the window asks which one.
@@ -102,7 +113,7 @@ function isStreamSettingsTab(value: string | null): value is StreamSettingsTab {
 }
 
 /** Whether a URL's params open the settings window. */
-export function settingsWindowOpen(params: URLSearchParams): boolean {
+function settingsWindowOpen(params: URLSearchParams): boolean {
   return (
     params.get(SETTINGS_PARAM) !== null ||
     (params.get(STREAM_SETTINGS_PARAM) !== null &&
@@ -159,14 +170,16 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
   const scopeParam = searchParams.get(SETTINGS_SCOPE_PARAM)
   const overviewScope = settingsParam === "" && isSettingsScope(scopeParam) ? scopeParam : null
   const activeSetting = searchParams.get(SETTING_PARAM)
-  const drilled =
-    (activeTab !== null || activeStreamTab !== null) &&
-    (location.state as Partial<typeof SETTINGS_DRILL_STATE> | null)?.settingsDrill === true
-  // Closing a drilled page pops to the index first, then closes from there;
-  // the window reads as closed from the first step.
-  const [closing, setClosing] = useState(false)
   const stillOpen = settingsWindowOpen(searchParams)
+  const depth = stillOpen ? settingsDepthOf(location.state) : 0
+  // Closing pops back to the entry that opened the window first, then closes
+  // from there; the window reads as closed from the first step.
+  const [closing, setClosing] = useState(false)
   const isOpen = stillOpen && !closing
+  const linkHistory = useMemo<SettingsLinkHistory>(
+    () => ({ state: stillOpen ? { settingsDepth: depth + 1 } : undefined }),
+    [stillOpen, depth]
+  )
 
   // Bookmarks and restored launches from before the one settings window still
   // carry `?ws-settings=<tab>` or a retired `?settings=<tab>`; land them on the
@@ -188,11 +201,9 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     setSearchParams(next, { replace: true })
   }, [legacyWorkspaceTab, legacyPersonalTab, searchParams, setSearchParams])
 
-  // Opening pushes so back closes the window; moving within it replaces, and
-  // a drilled page stays drilled.
   const openWindowAt = useCallback(
-    (next: URLSearchParams) => setSearchParams(next, { replace: isOpen, state: isOpen ? location.state : undefined }),
-    [isOpen, location.state, setSearchParams]
+    (next: URLSearchParams) => setSearchParams(next, linkHistory),
+    [linkHistory, setSearchParams]
   )
 
   const openSettings = useCallback(
@@ -212,27 +223,23 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
 
   const closeCover = useCoverClose(SETTINGS_WINDOW_COVER)
   const closeSettings = useCallback(() => {
-    if (!drilled) return closeCover()
+    if (depth === 0) return closeCover()
     setClosing(true)
-    navigate(-1)
-  }, [drilled, closeCover, navigate])
+    navigate(-depth)
+  }, [depth, closeCover, navigate])
   useEffect(() => {
-    if (!closing || drilled) return
+    if (!closing || depth > 0) return
     if (stillOpen) closeCover()
     else setClosing(false)
-  }, [closing, drilled, stillOpen, closeCover])
+  }, [closing, depth, stillOpen, closeCover])
 
-  const setActiveTab = useCallback(
-    (tab: SettingsTab | null, setting?: string) => {
-      setSearchParams(withSettings(searchParams, tab, setting), { replace: true, state: location.state })
+  const back = useCallback(
+    (fallback: string) => {
+      if (depth > 0) navigate(-1)
+      else navigate(fallback, { replace: true, state: location.state })
     },
-    [location.state, searchParams, setSearchParams]
+    [depth, location.state, navigate]
   )
-
-  const returnToIndex = useCallback(() => {
-    if (drilled) navigate(-1)
-    else setSearchParams(withSettings(searchParams, null), { replace: true })
-  }, [drilled, navigate, searchParams, setSearchParams])
 
   const getStreamSettingsUrl = useCallback(
     (sid: string | null, tab?: StreamSettingsTab, setting?: string) =>
@@ -258,10 +265,9 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       landingKey: location.key,
       openSettings,
       closeSettings,
-      setActiveTab,
       getSettingsUrl,
-      drilled,
-      returnToIndex,
+      linkHistory,
+      back,
       getStreamSettingsUrl,
     }),
     [
@@ -276,10 +282,9 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       location.key,
       openSettings,
       closeSettings,
-      setActiveTab,
       getSettingsUrl,
-      drilled,
-      returnToIndex,
+      linkHistory,
+      back,
       getStreamSettingsUrl,
     ]
   )

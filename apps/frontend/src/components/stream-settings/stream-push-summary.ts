@@ -89,8 +89,8 @@ export function summarizeStreamPush(input: StreamPushInput, noun: string): Strea
   }
   if (input.device === "server-off") {
     return {
-      result: `You won't get pushes from this ${noun}. Push is off on this Threa installation.`,
-      reasons: [...reasons, [{ text: "Push is off on this Threa installation", setting: "push-device" }, "."]],
+      result: `You won't get pushes from this ${noun}. Push isn't set up on this Threa server.`,
+      reasons: [...reasons, [{ text: "Push isn't set up on this Threa server", setting: "push-device" }, "."]],
     }
   }
   const device = input.device && DEVICE_BLOCKS[input.device]

@@ -28,7 +28,7 @@ import {
 import { PushActionsSection } from "./push-actions-section"
 import {
   ChoiceSetting,
-  INSTALLATION_OFF,
+  NOT_SET_UP_ON_SERVER,
   SETTING_CONTROL_CLASS,
   SETTING_CONTROL_HEIGHT,
   SettingBadge,
@@ -261,7 +261,7 @@ function TestPushControls({ workspaceId }: { workspaceId: string }) {
 const PUSH_DEVICE_REASONS: Partial<Record<PushDeviceState, string>> = {
   unsupported: "This browser can't receive push notifications.",
   blocked: "Your browser blocks notifications from Threa. Allow them in the browser's site settings, then reload.",
-  "server-off": INSTALLATION_OFF.reason,
+  "server-off": NOT_SET_UP_ON_SERVER.push.reason,
 }
 
 /** Push on this device, with the notification buttons that only show while pushes reach it. */

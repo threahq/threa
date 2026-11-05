@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { defaultKeyOf, formatActionBinding, formatKeyBindingText, getShortcutAction } from "@/lib/keyboard-shortcuts"
+import { defaultKeyOf, formatActionBinding, getShortcutAction } from "@/lib/keyboard-shortcuts"
 import { KeyboardSettings } from "./keyboard-settings"
 import * as contextsModule from "@/contexts"
 import * as mobileModule from "@/hooks/use-mobile"
@@ -71,11 +71,10 @@ describe("KeyboardSettings", () => {
 
     expect(container.querySelector("#setting-shortcut-formatBold")).not.toBeNull()
     expect(container.querySelector("#setting-send-side")).not.toBeNull()
-    const button = screen.getByRole("button", { name: toggleSidebarName })
-    expect(button).toHaveAttribute("title", formatKeyBindingText("mod+§"))
+    expect(screen.getByRole("button", { name: toggleSidebarName })).toBeInTheDocument()
   })
 
-  it("lays each shortcut out as a standard row, its keys filling the row's control column", () => {
+  it("lays each shortcut out as a standard row, its keys in the row's control column", () => {
     mount({ keyboardShortcuts: { formatBold: "mod+shift+b" } })
     const row = (actionId: string) => document.getElementById(`setting-shortcut-${actionId}`)!
     const keys = shortcutButton("Bold")

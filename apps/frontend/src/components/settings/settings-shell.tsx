@@ -24,7 +24,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { SETTINGS_PAGE_CONFIG, settingResultTrail, type SettingSearchResult } from "./settings-registry"
 import { SETTING_GROUP_BAND_CLASS, SettingBadge, SettingScopeBadges } from "./setting-primitives"
 import { SETTING_LEGIBLE_MUTED, SETTING_NOTE_TEXT } from "./setting-text"
-import { useInWindowLinkHistory, type SettingsLinkHistory } from "./settings-link-history"
+import { useSettingsLinkHistory, type SettingsLinkHistory } from "./settings-link-history"
 
 /**
  * The settings window's frame: sizes, nav rows, header, search and the phone
@@ -117,7 +117,7 @@ export function SettingsNavLink({
   onNavigate?: () => void
 }) {
   const accessId = useId()
-  const history = useInWindowLinkHistory()
+  const history = useSettingsLinkHistory()
   const content = (
     <>
       <span className={cn(active ? "text-accent-foreground" : "text-muted-foreground")}>{icon}</span>
@@ -135,7 +135,6 @@ export function SettingsNavLink({
   return (
     <Link
       to={href}
-      replace={history.replace}
       state={history.state}
       onClick={onNavigate}
       aria-current={active ? "page" : undefined}
@@ -202,7 +201,6 @@ function SettingsIndexRow({ item, history }: { item: SettingsIndexItem; history:
   return (
     <Link
       to={href}
-      replace={history.replace}
       state={history.state}
       aria-describedby={access ? accessId : undefined}
       className="flex h-full min-h-12 items-start gap-3 px-4 py-2.5 outline-none hover:bg-muted/60 active:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:min-h-10 sm:px-3 sm:py-2"
@@ -326,7 +324,7 @@ export function SettingsSearchResults({
   results,
   activeId,
   hrefOf,
-  historyOf,
+  history,
   valueOf,
   onPicked,
   onKeyDown,
@@ -337,7 +335,7 @@ export function SettingsSearchResults({
   /** The search field's keys: the list is a tab stop of its own, so Tab past the field reaches the results too. */
   onKeyDown: (event: KeyboardEvent<HTMLElement>) => void
   hrefOf: (result: SettingSearchResult) => string
-  historyOf: (result: SettingSearchResult) => SettingsLinkHistory
+  history: SettingsLinkHistory
   /** A result's current value, where one reads in a few words. */
   valueOf: (result: SettingSearchResult) => string | undefined
   onPicked: () => void
@@ -359,7 +357,7 @@ export function SettingsSearchResults({
       result={result}
       active={optionId(result) === activeId}
       href={hrefOf(result)}
-      history={historyOf(result)}
+      history={history}
       value={valueOf(result)}
       onPicked={onPicked}
     />
@@ -436,7 +434,6 @@ function SettingsSearchOption({
         aria-selected={active}
         tabIndex={-1}
         to={href}
-        replace={history.replace}
         state={history.state}
         onClick={onPicked}
         className="flex min-h-11 items-start gap-3 px-4 py-3 outline-none transition-colors hover:bg-muted/60 aria-selected:bg-muted"
@@ -596,7 +593,10 @@ export function SettingsDesktopLayout({
           </div>
           {headerExtra && <div className="mt-2">{headerExtra}</div>}
         </header>
-        <div ref={contentRef} className="min-h-0 flex-1 overflow-y-auto px-8 pb-10 pt-6 scrollbar-thin">
+        <div
+          ref={contentRef}
+          className="min-h-0 flex-1 overflow-y-auto px-8 pb-10 pt-6 scrollbar-thin [scrollbar-gutter:stable]"
+        >
           {children}
         </div>
       </div>
@@ -643,7 +643,7 @@ export function SettingsMobileLayout({
       <header className="flex items-center gap-1 border-b px-2 pb-2 pt-3 sm:pt-2">
         {back ? (
           <Button variant="ghost" size="icon" className="h-11 w-11 shrink-0" asChild>
-            <Link to={back.href} replace aria-label={back.label} onClick={back.onClick}>
+            <Link to={back.href} aria-label={back.label} onClick={back.onClick}>
               <ArrowLeft className="h-5 w-5" />
             </Link>
           </Button>
@@ -668,7 +668,10 @@ export function SettingsMobileLayout({
           {subheader && <div className="px-2">{subheader}</div>}
         </div>
       )}
-      <div ref={contentRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 pt-4">
+      <div
+        ref={contentRef}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 pt-4 [scrollbar-gutter:stable]"
+      >
         {children}
       </div>
     </div>

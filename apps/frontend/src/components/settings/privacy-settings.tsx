@@ -6,7 +6,7 @@ import { useWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { ApiError } from "@/api/client"
 import { EncryptionKeysSetting } from "@/components/encryption"
 import type { UpdateUserPreferencesInput, UserPreferences } from "@threahq/types"
-import { INSTALLATION_OFF, SettingsSection, SwitchSetting, type SettingUnavailable } from "./setting-primitives"
+import { NOT_SET_UP_ON_SERVER, SettingsSection, SwitchSetting, type SettingUnavailable } from "./setting-primitives"
 import { DiagnosticsSettings } from "./diagnostics-settings"
 
 const NEEDS_CRASH_REPORTS: SettingUnavailable = {
@@ -31,7 +31,8 @@ export function dataSharingUnavailable(
   analyticsConfigured: boolean,
   granted: boolean
 ): Record<"crashReports" | "sessionRecording", SettingUnavailable | null> {
-  if (!analyticsConfigured) return { crashReports: INSTALLATION_OFF, sessionRecording: INSTALLATION_OFF }
+  if (!analyticsConfigured)
+    return { crashReports: NOT_SET_UP_ON_SERVER.analytics, sessionRecording: NOT_SET_UP_ON_SERVER.analytics }
   return { crashReports: null, sessionRecording: granted ? null : NEEDS_CRASH_REPORTS }
 }
 

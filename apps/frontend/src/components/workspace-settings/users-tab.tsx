@@ -26,6 +26,7 @@ import {
 import { SETTING_ICON_BUTTON, SETTING_MUTED_NOTE_TEXT, SETTING_NOTE_TEXT } from "@/components/settings/setting-text"
 import { rankMatches } from "@/lib/match-score"
 import { cn } from "@/lib/utils"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   AlertDialog,
@@ -403,12 +404,18 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
                               : "Never expires"}
                           </p>
                           {invitation.note && (
-                            <p
-                              className={cn("truncate text-muted-foreground", SETTING_NOTE_TEXT)}
-                              title={invitation.note}
-                            >
-                              {invitation.note}
-                            </p>
+                            <TooltipProvider delayDuration={300}>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <p className={cn("truncate text-muted-foreground", SETTING_NOTE_TEXT)}>
+                                    {invitation.note}
+                                  </p>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="max-w-xs text-xs">
+                                  {invitation.note}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
                           )}
                         </div>
                         <div className="flex shrink-0 items-center gap-1">

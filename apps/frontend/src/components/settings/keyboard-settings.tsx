@@ -421,36 +421,7 @@ function ShortcutRow({
       notice={shared ? `Same keys as ${actionLabels(sharedWith)}` : undefined}
       noticeIcon={CircleAlert}
       control={
-        <div className="flex items-center gap-1">
-          <button
-            {...FOCUS_ITEM}
-            id={ids.control}
-            type="button"
-            aria-label={
-              capturing
-                ? `Change shortcut for ${action.label}. Press the new keys`
-                : `Change shortcut for ${action.label}, currently ${bindingLabel(action.id, binding)}`
-            }
-            aria-describedby={
-              [description && ids.description, shared && ids.notice].filter(Boolean).join(" ") || undefined
-            }
-            title={!capturing && binding ? formatKeyBindingText(binding) : undefined}
-            onClick={() => (capturing ? onCancel(action.id, true) : onStartCapture(action.id))}
-            onBlur={() => capturing && onCancel(action.id, false)}
-            className={cn(
-              "flex min-w-0 flex-1 items-center rounded-md border px-3 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-              SETTING_CONTROL_HEIGHT,
-              capturing
-                ? "border-primary bg-primary/10 font-mono font-semibold text-primary motion-safe:animate-pulse"
-                : "border-input bg-background hover:bg-muted",
-              !capturing && (binding ? "font-mono font-semibold text-foreground" : "text-muted-foreground")
-            )}
-          >
-            <span className="truncate">
-              {capturing && "Press keys…"}
-              {!capturing && (binding ? formatActionBinding(action.id, binding) : "Not set")}
-            </span>
-          </button>
+        <div className="flex items-center gap-1 sm:justify-end">
           {isCustom && !edit && (
             <TooltipProvider delayDuration={300}>
               <Tooltip>
@@ -471,6 +442,34 @@ function ShortcutRow({
               </Tooltip>
             </TooltipProvider>
           )}
+          <button
+            {...FOCUS_ITEM}
+            id={ids.control}
+            type="button"
+            aria-label={
+              capturing
+                ? `Change shortcut for ${action.label}. Press the new keys`
+                : `Change shortcut for ${action.label}, currently ${bindingLabel(action.id, binding)}`
+            }
+            aria-describedby={
+              [description && ids.description, shared && ids.notice].filter(Boolean).join(" ") || undefined
+            }
+            onClick={() => (capturing ? onCancel(action.id, true) : onStartCapture(action.id))}
+            onBlur={() => capturing && onCancel(action.id, false)}
+            className={cn(
+              "flex min-w-0 flex-1 items-center rounded-md border px-3 text-left text-sm sm:w-40 sm:flex-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+              SETTING_CONTROL_HEIGHT,
+              capturing
+                ? "border-primary bg-primary/10 font-mono font-semibold text-primary motion-safe:animate-pulse"
+                : "border-input bg-background hover:bg-muted",
+              !capturing && (binding ? "font-mono font-semibold text-foreground" : "text-muted-foreground")
+            )}
+          >
+            <span className="truncate">
+              {capturing && "Press keys…"}
+              {!capturing && (binding ? formatActionBinding(action.id, binding) : "Not set")}
+            </span>
+          </button>
         </div>
       }
     >
@@ -511,9 +510,16 @@ function ConflictChoice({
   return (
     <div role="group" aria-labelledby={textId} className="space-y-3">
       <p id={textId} className="text-sm">
-        <span className="font-mono font-semibold" title={formatKeyBindingText(binding)}>
-          {formatActionBinding(action.id, binding)}
-        </span>{" "}
+        <TooltipProvider delayDuration={300}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="font-mono font-semibold">{formatActionBinding(action.id, binding)}</span>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">
+              {formatKeyBindingText(binding)}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>{" "}
         is already used by {owners}. Moving it leaves {owners} without a shortcut.
       </p>
       <div className="flex flex-wrap justify-end gap-2">

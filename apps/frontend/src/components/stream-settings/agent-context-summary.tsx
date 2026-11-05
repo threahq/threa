@@ -210,7 +210,7 @@ function AgentContextDetailRow({
           </div>
           {href && (
             <p className="text-sm">
-              <SettingsLink to={href} replace={false}>
+              <SettingsLink to={href} leavesWindow>
                 Edit agent
               </SettingsLink>
             </p>

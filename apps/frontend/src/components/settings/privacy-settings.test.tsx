@@ -60,7 +60,9 @@ describe("PrivacySettings", () => {
       { checked: "false", disabled: "true", reason: true },
       { checked: "false", disabled: "true", reason: true },
     ])
-    expect(switches[0]).toHaveAccessibleDescription(expect.stringContaining("Turned off for this Threa installation."))
+    expect(switches[0]).toHaveAccessibleDescription(
+      expect.stringContaining("Usage reporting isn't set up on this Threa server.")
+    )
   })
 
   it("keeps a locked switch in the Tab order with its reason, and ignores pressing it", async () => {

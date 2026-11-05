@@ -260,7 +260,7 @@ describe("a stream's pages in the settings window", () => {
     fireEvent.click(within(streamGroup).getByRole("link", { name: /^Agent/ }))
     expect(await screen.findByText("Agent panel")).toBeVisible()
 
-    fireEvent.click(screen.getByRole("link", { name: "All settings" }))
+    fireEvent.click(screen.getByRole("link", { name: "Back" }))
     expect(await screen.findByRole("region", { name: "This stream · Direct chat" })).toBeInTheDocument()
   })
 

@@ -659,7 +659,7 @@ function ArchiveSection({
           sealedById && (
             <span data-testid="sealed-by-ancestor">
               Sealed by{" "}
-              <SettingsLink to={`/w/${workspaceId}/s/${sealedById}`} replace={false}>
+              <SettingsLink to={`/w/${workspaceId}/s/${sealedById}`} leavesWindow>
                 {sealingAncestorName ?? "an archived parent"}
               </SettingsLink>
               . It stays read-only and out of the sidebar until that is unarchived.

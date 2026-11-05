@@ -140,10 +140,20 @@ export interface SettingUnavailable {
   value: string
 }
 
-export const INSTALLATION_OFF: SettingUnavailable = {
-  reason: "Turned off for this Threa installation.",
-  value: "Off on this installation",
+function notSetUpOnServer(feature: string): SettingUnavailable {
+  return {
+    reason: `${feature} isn't set up on this Threa server. Whoever runs the server can set it up.`,
+    value: "Not set up on this server",
+  }
 }
+
+/** Features the server needs configured before anyone can use them: the viewer can't, so the reason names who can. */
+export const NOT_SET_UP_ON_SERVER = {
+  analytics: notSetUpOnServer("Usage reporting"),
+  push: notSetUpOnServer("Push"),
+  github: notSetUpOnServer("The GitHub app"),
+  linear: notSetUpOnServer("Linear"),
+} as const
 
 /**
  * Something to know before using a row, under its description in the reason's
@@ -1285,9 +1295,9 @@ const numberErrorId = (id: string) => `${id}-error`
 
 /**
  * The input of a bounded whole number, `field` from `useCommittedInteger`
- * driving it: its unit joined to its end and its range announced with it. It
- * fills its slot unless `compact`. Show {@link NumberFieldError} while
- * `field.invalid`.
+ * driving it: its unit joined to its end and its range announced with it. As
+ * wide as a few digits, at its column's end from `sm` up; `compact` sits
+ * inline instead. Show {@link NumberFieldError} while `field.invalid`.
  */
 export function NumberInput({
   id,
@@ -1304,7 +1314,7 @@ export function NumberInput({
   const unitId = `${id}-unit`
   const rangeId = `${id}-range`
   return (
-    <div className={cn("flex items-stretch", compact && "w-fit")}>
+    <div className={cn("flex w-fit items-stretch", !compact && "sm:ml-auto")}>
       <Input
         ref={field.fieldRef}
         id={id}
@@ -1329,7 +1339,7 @@ export function NumberInput({
             field.commit()
           }
         }}
-        className={cn(compact ? "w-24" : "min-w-0 flex-1", SETTING_CONTROL_HEIGHT, unit && "rounded-r-none")}
+        className={cn("w-24", SETTING_CONTROL_HEIGHT, unit && "rounded-r-none")}
       />
       {unit && (
         <FieldAddon side="end" id={unitId}>
@@ -1376,7 +1386,7 @@ export function NumberField({ value, onCommit, onDraftChange, ...input }: Number
     onDraftChange,
   })
   return (
-    <div className="grid gap-1">
+    <div className="grid gap-1 sm:justify-items-end">
       <NumberInput {...input} field={field} />
       {field.invalid && <NumberFieldError id={input.id} min={input.min} max={input.max} />}
     </div>

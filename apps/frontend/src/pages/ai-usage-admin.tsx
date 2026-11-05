@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
-import { ArrowLeft, DollarSign, Settings2 } from "lucide-react"
+import { DollarSign, Settings2 } from "lucide-react"
 import { buttonVariants } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useAIBudget, useAIUsage, useAIUserLimits, useUpdateAIBudget } from "@/hooks"
@@ -21,6 +21,7 @@ import { DailySpendChart } from "@/components/ai-usage/daily-spend-chart"
 import { computeMetrics, type BudgetMetrics } from "@/components/ai-usage/metrics"
 import { TopSpendersCard, UsageSplitCard } from "@/components/ai-usage/usage-breakdown"
 import { SidebarToggle } from "@/components/layout"
+import { PageBackLink } from "@/components/panes/page-pane-chrome"
 
 export function AIUsageAdminPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
@@ -145,13 +146,7 @@ export function AIUsageAdminPage() {
       <header className="flex flex-col gap-1 border-b px-4 py-2 sm:h-12 sm:flex-row sm:items-center sm:gap-2 sm:py-0">
         <div className="flex min-w-0 items-center gap-2">
           <SidebarToggle location="page" />
-          <Link
-            to={`/w/${workspaceId}`}
-            className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8 shrink-0")}
-            aria-label="Back to workspace"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
+          <PageBackLink to={`/w/${workspaceId}`} label="Back to workspace" />
           <DollarSign className="h-5 w-5 shrink-0 text-muted-foreground" />
           <h1 className="truncate font-semibold">AI Usage &amp; Budget</h1>
         </div>

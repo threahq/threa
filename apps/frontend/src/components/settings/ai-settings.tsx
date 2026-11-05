@@ -117,7 +117,7 @@ function ExistingScratchpadAgentLink({ workspaceId }: { workspaceId: string }) {
             ? pick
             : `/w/${workspaceId}?${withStreamSettings(new URLSearchParams(), null, "companion", "stream-agent")}`
         }
-        replace={routeStreamId === null}
+        leavesWindow={routeStreamId !== null}
       >
         Change a scratchpad&apos;s agent
       </SettingsLink>

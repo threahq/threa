@@ -64,6 +64,7 @@ import { usePersonaKnowledgeUploads } from "./use-persona-knowledge-uploads"
 import { PersonaConflictBanner } from "./persona-conflict-banner"
 import { PersonaEditorFooter } from "./persona-editor-footer"
 import { ToolChecklist } from "./tool-checklist"
+import { hasHistoryBeneath } from "@/hooks/use-launch-ancestors"
 
 const ESCALATION_NONE = "__none__"
 
@@ -270,7 +271,7 @@ export function CustomPersonaEditor({
   const handleArchive = () => {
     if (archive.isPending) return
     archive.mutate(personaId, {
-      onSuccess: () => navigate(returnTo),
+      onSuccess: () => (hasHistoryBeneath() ? navigate(-1) : navigate(returnTo, { replace: true })),
       onError: () => toast.error("Failed to archive persona"),
     })
   }

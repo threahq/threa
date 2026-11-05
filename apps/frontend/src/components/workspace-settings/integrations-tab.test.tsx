@@ -301,12 +301,12 @@ describe("IntegrationsTab permissions", () => {
       github: {
         disabled: "true",
         description: "setting-github-integration-description setting-github-integration-reason",
-        reason: "Turned off for this Threa installation.",
+        reason: "The GitHub app isn't set up on this Threa server. Whoever runs the server can set it up.",
         purpose: "Rich previews for GitHub links.",
       },
       linear: {
         disabled: "true",
-        reason: "Turned off for this Threa installation.",
+        reason: "Linear isn't set up on this Threa server. Whoever runs the server can set it up.",
         purpose: "Rich previews for Linear links.",
       },
       focusMovedOnToLinear: true,

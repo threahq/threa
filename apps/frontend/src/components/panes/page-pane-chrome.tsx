@@ -1,9 +1,10 @@
 import { useRef, type ComponentProps, type ReactNode } from "react"
-import { Link } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import { ArrowLeft } from "lucide-react"
 import { buttonVariants } from "@/components/ui/button"
 import { useInPaneDrawer, usePanel, useSidebar } from "@/contexts"
 import { useElementWidth } from "@/hooks/use-element-width"
+import { hasHistoryBeneath } from "@/hooks/use-launch-ancestors"
 import { pageTitleOf } from "@/lib/page-panes"
 import { foldHeaderControls, PANE_TITLE_MIN_WIDTH } from "@/lib/pane-header-fold"
 import { TAB_ACTIONS_WIDTH, tabRowReserve } from "@/lib/panel-tab-fit"
@@ -19,6 +20,30 @@ const BACK_WIDTH = 32
 const PAGE_ICON_WIDTH = 20
 /** The room a page's search field takes beside its icon before it gets a row of its own, its count included. */
 const PAGE_SEARCH_FIELD_WIDTH = 272
+
+/**
+ * A page's way back, as the browser's: it pops when the app's own history lies
+ * beneath, so Back and Forward still mean what they did, and follows `to` only
+ * on a cold load.
+ */
+export function PageBackLink({ to, label }: { to: string; label: string }) {
+  const navigate = useNavigate()
+  return (
+    <Link
+      to={to}
+      onClick={(event) => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+        if (!hasHistoryBeneath()) return
+        event.preventDefault()
+        navigate(-1)
+      }}
+      className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8 shrink-0")}
+      aria-label={label}
+    >
+      <ArrowLeft className="h-4 w-4" />
+    </Link>
+  )
+}
 
 /** Whether this pane keeps the page's own way back: the first column's does, and on a phone the route's. */
 function useKeepsBack(): boolean {
@@ -95,15 +120,7 @@ export function PagePaneHeader({
 }: PagePaneHeaderProps) {
   const { panelId } = usePanel()
   const keepsBack = useKeepsBack()
-  const backLink = keepsBack && back && (
-    <Link
-      to={back.to}
-      className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8 shrink-0")}
-      aria-label={back.label}
-    >
-      <ArrowLeft className="h-4 w-4" />
-    </Link>
-  )
+  const backLink = keepsBack && back && <PageBackLink to={back.to} label={back.label} />
 
   // Back is part of the page's identity: the tab row standing in for the title stands in for it too.
   return (

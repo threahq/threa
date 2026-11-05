@@ -67,7 +67,8 @@ const DialogContent = React.forwardRef<React.ElementRef<typeof DialogPrimitive.C
         <DialogPrimitive.Content
           ref={ref}
           className={cn(
-            "fixed z-50 w-full max-w-lg gap-4 border bg-background p-6 shadow-lg",
+            // Taller content scrolls inside the window rather than running past the viewport.
+            "fixed z-50 max-h-[calc(100dvh-2rem)] w-full max-w-lg gap-4 overflow-y-auto border bg-background p-6 shadow-lg",
             // Mobile: full-screen, flex layout for proper overflow/scroll
             // NOTE: twMerge does not merge across breakpoint prefixes. Callers that
             // pass `p-0` or `gap-0` must also pass `max-sm:p-0` / `max-sm:gap-0`

@@ -166,8 +166,8 @@ describe("summarizeSettings", () => {
     )
 
     expect({ notifications: pages.notifications, device: values["push-device"] }).toEqual({
-      notifications: "Push is off on this installation",
-      device: "Off on this installation",
+      notifications: "Push isn't set up on this server",
+      device: "Not set up on this server",
     })
   })
 
@@ -186,7 +186,7 @@ describe("summarizeSettings", () => {
       unknown: sharing(undefined),
     }).toEqual({
       collected: ["On", "On"],
-      notCollected: ["Off on this installation", "Off on this installation"],
+      notCollected: ["Not set up on this server", "Not set up on this server"],
       crashReportsOff: ["Off", "Off until crash reports are on"],
       unknown: [undefined, undefined],
     })
@@ -302,9 +302,9 @@ describe("summarizeSettings", () => {
       github: values["github-integration"],
       linear: values["linear-integration"],
     }).toEqual({
-      page: "Off on this installation",
-      github: "Off on this installation",
-      linear: "Off on this installation",
+      page: "Not set up on this server",
+      github: "Not set up on this server",
+      linear: "Not set up on this server",
     })
   })
 

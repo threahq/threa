@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Link, useSearchParams } from "react-router-dom"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import { botsApi, type CreateBotInput } from "@/api/bots"
@@ -8,7 +8,7 @@ import { ChevronRight } from "lucide-react"
 import { BotAvatar } from "./bot-avatar"
 import { BotDetail } from "./bot-detail"
 import { BotProfileDialog } from "./bot-profile-dialog"
-import { SETTINGS_BOT_PARAM } from "@/contexts/settings-context"
+import { SETTINGS_BOT_PARAM, useSettings } from "@/contexts/settings-context"
 import { useCachedWorkspaceBootstrap, workspaceKeys } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"
 import { useWorkspaceBots } from "@/stores/workspace-store"
@@ -33,34 +33,34 @@ interface BotsTabProps {
 }
 
 export function BotsTab({ workspaceId, scope }: BotsTabProps) {
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const { linkHistory, back } = useSettings()
   const selectedBotId = searchParams.get(SETTINGS_BOT_PARAM)
 
-  const setSelectedBotId = (botId: string | null) => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        if (botId) next.set(SETTINGS_BOT_PARAM, botId)
-        else next.delete(SETTINGS_BOT_PARAM)
-        return next
-      },
-      { replace: true }
-    )
+  const searchWithBot = (botId: string | null) => {
+    const next = new URLSearchParams(searchParams)
+    if (botId) next.set(SETTINGS_BOT_PARAM, botId)
+    else next.delete(SETTINGS_BOT_PARAM)
+    return `?${next.toString()}`
   }
 
   if (selectedBotId) {
-    const detail = <BotDetail workspaceId={workspaceId} botId={selectedBotId} onBack={() => setSelectedBotId(null)} />
+    const detail = (
+      <BotDetail workspaceId={workspaceId} botId={selectedBotId} onBack={() => back(searchWithBot(null))} />
+    )
     if (scope === "shared") return <SettingsSection section="workspace-bots">{detail}</SettingsSection>
     return detail
   }
 
-  const botSearch = (botId: string) => {
-    const next = new URLSearchParams(searchParams)
-    next.set(SETTINGS_BOT_PARAM, botId)
-    return `?${next.toString()}`
-  }
-
-  return <BotList workspaceId={workspaceId} scope={scope} botSearch={botSearch} onSelectBot={setSelectedBotId} />
+  return (
+    <BotList
+      workspaceId={workspaceId}
+      scope={scope}
+      botSearch={searchWithBot}
+      onSelectBot={(botId) => navigate(searchWithBot(botId), linkHistory)}
+    />
+  )
 }
 
 function BotList({
@@ -199,13 +199,14 @@ function BotListItems({
   workspaceId: string
   botSearch: (botId: string) => string
 }) {
+  const { linkHistory } = useSettings()
   return (
     <ul className="divide-y divide-border">
       {bots.map((bot) => (
         <li key={bot.id}>
           <Link
             to={{ search: botSearch(bot.id) }}
-            replace
+            state={linkHistory.state}
             className="group -mx-4 flex min-h-11 items-center gap-3 px-4 py-2 transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none"
           >
             <BotAvatar bot={bot} workspaceId={workspaceId} size={32} />

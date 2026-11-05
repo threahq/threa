@@ -92,7 +92,7 @@ import {
   type SettingsIndexItem,
   type SettingsPageAccess,
 } from "./settings-shell"
-import { DRILL_LINK_HISTORY, useInWindowLinkHistory, type SettingsLinkHistory } from "./settings-link-history"
+import type { SettingsLinkHistory } from "./settings-link-history"
 
 const GROUPS: SettingsGroup[] = ["you", "workspace"]
 
@@ -243,7 +243,8 @@ function SettingsWindow({
     closeSettings,
     getSettingsUrl,
     getStreamSettingsUrl,
-    returnToIndex,
+    linkHistory,
+    back,
   } = useSettings()
   const isMobile = useResponsiveMode()
   const singleColumn = useSettingsSingleColumn()
@@ -287,9 +288,6 @@ function SettingsWindow({
   // One column shows the search field on the index, and on a page once asked for.
   const searchShown = !singleColumn || !onPage || pageSearchOpen
 
-  const inWindowLink = useInWindowLinkHistory()
-  const indexLink = singleColumn ? DRILL_LINK_HISTORY : inWindowLink
-  const pageLink = onPage ? inWindowLink : indexLink
   const resultHref = (result: SettingSearchResult): string =>
     result.target.kind === "settings"
       ? getSettingsUrl(result.target.tab, result.target.anchor)
@@ -307,7 +305,7 @@ function SettingsWindow({
   )
   const settingsSearch = useSettingsSearch(search, (result) => {
     clearSearch()
-    navigate(resultHref(result), pageLink)
+    navigate(resultHref(result), linkHistory)
   })
   const { query, searching, changeQuery } = settingsSearch
   const clearSearch = () => {
@@ -367,7 +365,7 @@ function SettingsWindow({
     scope: overviewScope ?? (streamIndex ? "stream" : null),
     getSettingsUrl,
     getStreamSettingsUrl,
-    linkHistory: indexLink,
+    linkHistory,
     onChangedEmptied: focusHeading,
     container: content,
   }
@@ -382,7 +380,7 @@ function SettingsWindow({
         tab={picking}
         setting={activeSetting}
         getStreamSettingsUrl={getStreamSettingsUrl}
-        linkHistory={pageLink}
+        linkHistory={linkHistory}
       />
     )
   } else if (tab) {
@@ -409,7 +407,7 @@ function SettingsWindow({
           results={settingsSearch.results}
           activeId={settingsSearch.activeId}
           hrefOf={resultHref}
-          historyOf={() => pageLink}
+          history={linkHistory}
           valueOf={(result) => summaries.values[result.id as keyof SettingsSummaries["values"]]}
           onPicked={clearSearch}
           onKeyDown={settingsSearch.onKeyDown}
@@ -460,10 +458,10 @@ function SettingsWindow({
           onPage
             ? {
                 href: getSettingsUrl(),
-                label: "All settings",
+                label: "Back",
                 onClick: (event: MouseEvent) => {
                   event.preventDefault()
-                  returnToIndex()
+                  back(getSettingsUrl())
                 },
               }
             : null
@@ -947,7 +945,7 @@ function DesktopNav({
       aria-label="Settings pages"
       aria-busy={visibility.permissionsLoaded ? undefined : true}
       data-clipped={clipped ? "" : undefined}
-      className="min-h-0 flex-1 overflow-y-auto px-3 scrollbar-thin data-[clipped]:[mask-image:linear-gradient(to_bottom,#000_calc(100%_-_2rem),transparent)]"
+      className="min-h-0 flex-1 overflow-y-auto px-3 scrollbar-thin [scrollbar-gutter:stable] data-[clipped]:[mask-image:linear-gradient(to_bottom,#000_calc(100%_-_2rem),transparent)]"
     >
       <div className="pb-2">
         <SettingsNavLink
@@ -1126,7 +1124,6 @@ function ChangedSettings({ visibility, summaries, getSettingsUrl, linkHistory, o
               <li key={id} className="flex items-center gap-2 pr-2">
                 <Link
                   to={tab ? getSettingsUrl(tab, id) : getSettingsUrl()}
-                  replace={linkHistory.replace}
                   state={linkHistory.state}
                   className="min-w-0 flex-1 px-4 py-2.5 outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 >

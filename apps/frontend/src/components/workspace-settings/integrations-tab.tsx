@@ -8,7 +8,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { cn } from "@/lib/utils"
 import {
   INACTIVE_CONTROL_CLASS,
-  INSTALLATION_OFF,
+  NOT_SET_UP_ON_SERVER,
   SETTING_CONTROL_HEIGHT,
   SETTING_CONTROL_WIDTH,
   SettingActions,
@@ -164,7 +164,7 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
       <SettingRow
         setting="github-integration"
         description={githubDescription}
-        inactive={githubOff ? INSTALLATION_OFF.reason : undefined}
+        inactive={githubOff ? NOT_SET_UP_ON_SERVER.github.reason : undefined}
         control={
           configured ? (
             <Button size="sm" variant="outline" className={SETTING_CONTROL_HEIGHT} asChild>
@@ -300,7 +300,7 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
       <SettingRow
         setting="linear-integration"
         description={linearDescription}
-        inactive={linearOff ? INSTALLATION_OFF.reason : undefined}
+        inactive={linearOff ? NOT_SET_UP_ON_SERVER.linear.reason : undefined}
         control={
           linearConfigured ? (
             <SettingActions>

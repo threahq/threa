@@ -169,14 +169,14 @@ describe("summarizeStreamPush", () => {
     })
   })
 
-  it("says nothing pushes while push is off on this installation, naming that as the last reason", () => {
+  it("says nothing pushes while push isn't set up on the server, naming that as the last reason", () => {
     expect(explain({ quietOutsideWorkingHours: true, device: "server-off" })).toEqual({
-      result: "You won't get pushes from this channel. Push is off on this Threa installation.",
+      result: "You won't get pushes from this channel. Push isn't set up on this Threa server.",
       reasons: [
         "This channel follows the channel default, Mentions only.",
         `Your [push setting→notification-level] is ${PUSH.all}.`,
         "None arrive outside your [working hours→quiet-hours].",
-        "[Push is off on this Threa installation→push-device].",
+        "[Push isn't set up on this Threa server→push-device].",
       ],
     })
   })

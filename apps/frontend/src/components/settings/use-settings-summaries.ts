@@ -63,7 +63,7 @@ import {
 import { formatWorkScheduleLine } from "./work-schedule-editor"
 import { dataSharingUnavailable, effectiveDataSharing } from "./privacy-settings"
 import { pushButtonsSummary, pushButtonsUnavailable, supportsNotificationActions } from "./push-actions-section"
-import { INSTALLATION_OFF } from "./setting-primitives"
+import { NOT_SET_UP_ON_SERVER } from "./setting-primitives"
 import { subagentModelsState } from "./subagent-models-settings"
 
 export interface SettingsSummaries {
@@ -138,7 +138,7 @@ function lineFoldSummary(enabled: boolean, threshold: number): string {
 }
 
 function providerSummary({ connected, available }: { connected: number; available: boolean }, active: string): string {
-  if (!available) return INSTALLATION_OFF.value
+  if (!available) return NOT_SET_UP_ON_SERVER.github.value
   return connected === 0 ? "Not connected" : active
 }
 
@@ -152,7 +152,7 @@ const PUSH_DEVICE_VALUES: Record<PushDeviceState, string> = {
   off: "Off for this device",
   blocked: "Blocked on this device",
   unsupported: "Not supported on this device",
-  "server-off": INSTALLATION_OFF.value,
+  "server-off": NOT_SET_UP_ON_SERVER.push.value,
   error: "Couldn't turn on for this device",
 }
 
@@ -222,10 +222,10 @@ export function summarizeSettings(input: SettingsSummaryInput): SettingsSummarie
       p.quietOutsideWorkingHours && "quiet outside working hours",
       lowerFirst(values["push-device"]),
     ].filter(Boolean)
-    // With push off for the whole installation the level promises nothing, so the line says only that.
+    // With push not set up on the server the level promises nothing, so the line says only that.
     pages.notifications =
       input.pushDevice === "server-off"
-        ? "Push is off on this installation"
+        ? "Push isn't set up on this server"
         : [values["notification-level"], ...holds].join(" · ")
 
     const previews =
@@ -328,7 +328,7 @@ export function summarizeSettings(input: SettingsSummaryInput): SettingsSummarie
     )
     values["linear-integration"] = providerSummary(linear, "Connected")
     const connected = github.connected + linear.connected
-    if (!github.available && !linear.available) pages.integrations = INSTALLATION_OFF.value
+    if (!github.available && !linear.available) pages.integrations = NOT_SET_UP_ON_SERVER.github.value
     else pages.integrations = connected === 0 ? "None connected" : `${connected} connected`
   }
   pages.bots = countOrNone(input.sharedBots, "bot", "bots")

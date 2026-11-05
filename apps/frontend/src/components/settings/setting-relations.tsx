@@ -3,6 +3,7 @@ import { SettingsLink } from "@/components/workspace-settings/settings-link"
 import { usePreferencesOptional } from "@/contexts"
 import { useSettingHref } from "@/hooks/use-setting-href"
 import { cn } from "@/lib/utils"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { SETTINGS, SETTINGS_PAGE_CONFIG, relatedSetting, tabOfSetting, type SettingId } from "./settings-registry"
 import { isSettingChanged } from "./setting-defaults"
 import { SETTING_NOTE_TEXT } from "./setting-text"
@@ -16,10 +17,19 @@ export function SettingChangedMark({ setting, changed }: { setting: string; chan
   const differs = isSettingChanged(setting, usePreferencesOptional()?.preferences)
   if (!(changed ?? differs)) return null
   return (
-    <span className="inline-flex items-center" title="Changed from default">
-      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-primary" />
-      <span className="sr-only">Changed from default</span>
-    </span>
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex items-center">
+            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-primary" />
+            <span className="sr-only">Changed from default</span>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-xs">
+          Changed from default
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }
 
