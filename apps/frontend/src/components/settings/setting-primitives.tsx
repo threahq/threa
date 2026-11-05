@@ -40,6 +40,7 @@ import { cn } from "@/lib/utils"
 import { useOptionalSettings } from "@/contexts/settings-context"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useScrollEdges } from "@/hooks/use-scroll-edges"
 import {
   sectionTitle,
   settingAnchorId,
@@ -87,8 +88,41 @@ export const SETTING_CONTROL_WIDTH = "w-full sm:w-72"
  */
 export const SETTING_CONTROL_HEIGHT = "h-11 sm:h-9 [@media(pointer:coarse)]:min-h-11"
 
-/** A scrolling people list: about eight and a half rows, so the cut-off row shows there's more. */
-export const SETTING_PEOPLE_LIST_HEIGHT = "max-h-[28rem]"
+/** Dividers between the items of a list inside a row: lighter than the card's own row dividers. */
+export const SETTING_ITEM_DIVIDERS = "divide-y divide-border/50"
+
+const PEOPLE_LIST_FADE = {
+  above: "[mask-image:linear-gradient(to_top,#000_calc(100%_-_2rem),transparent)]",
+  below: "[mask-image:linear-gradient(to_bottom,#000_calc(100%_-_2rem),transparent)]",
+  both: "[mask-image:linear-gradient(to_bottom,transparent,#000_2rem,#000_calc(100%_-_2rem),transparent)]",
+} as const
+
+/**
+ * A scrolling list of people in a setting row, about eight and a half rows
+ * tall. It runs to the card's edges, its scrollbar on the card's border, and
+ * fades at an edge rows continue past. As the row's last element it also runs
+ * into the bottom padding, so a clipped row meets the card's edge.
+ */
+export function SettingPeopleList({ className, ...props }: ComponentPropsWithoutRef<"ul">) {
+  const [list, setList] = useState<HTMLUListElement | null>(null)
+  const { above, below } = useScrollEdges(list)
+  let fade: string | undefined
+  if (above && below) fade = PEOPLE_LIST_FADE.both
+  else if (above) fade = PEOPLE_LIST_FADE.above
+  else if (below) fade = PEOPLE_LIST_FADE.below
+  return (
+    <ul
+      ref={setList}
+      className={cn(
+        "-mx-4 max-h-[28rem] overflow-y-auto px-4 scrollbar-thin last:-mb-3 last:pb-3",
+        SETTING_ITEM_DIVIDERS,
+        fade,
+        className
+      )}
+      {...props}
+    />
+  )
+}
 
 /** A single-line control (select, input, picker trigger) in a row's right-hand column. */
 export const SETTING_CONTROL_CLASS = `${SETTING_CONTROL_HEIGHT} ${SETTING_CONTROL_WIDTH}`

@@ -19,6 +19,7 @@ import {
   SettingBadge,
   settingIds,
   useSettingDescribedBy,
+  SETTING_ITEM_DIVIDERS,
 } from "@/components/settings/setting-primitives"
 import { SETTING_ICON_BUTTON, SETTING_MUTED_NOTE_TEXT } from "@/components/settings/setting-text"
 import { settingDef, type SettingId } from "@/components/settings/settings-registry"
@@ -185,7 +186,7 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
         {(installations.length > 0 || githubLoadError) && (
           <div className="space-y-2">
             {installations.length > 0 && (
-              <ul aria-label="GitHub accounts" className="divide-y divide-border">
+              <ul aria-label="GitHub accounts" className={SETTING_ITEM_DIVIDERS}>
                 {installations.map((installation) => {
                   const isActive = installation.status === "active"
                   const repositories = installation.repositories ?? []

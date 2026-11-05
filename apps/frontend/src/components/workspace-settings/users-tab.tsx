@@ -15,7 +15,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "@/components/ui/input"
 import {
   SETTING_CONTROL_HEIGHT,
-  SETTING_PEOPLE_LIST_HEIGHT,
+  SettingPeopleList,
   SettingActions,
   SettingControlSkeleton,
   SettingEmptyNote,
@@ -25,6 +25,7 @@ import {
   SettingsSection,
   settingIds,
   SettingBadge,
+  SETTING_ITEM_DIVIDERS,
 } from "@/components/settings/setting-primitives"
 import { SETTING_ICON_BUTTON, SETTING_MUTED_NOTE_TEXT, SETTING_NOTE_TEXT } from "@/components/settings/setting-text"
 import { rankMatches } from "@/lib/match-score"
@@ -161,7 +162,7 @@ function InvitationList({
   actions: InvitationRowActions
 }) {
   return (
-    <ul aria-label={label} className="divide-y divide-border">
+    <ul aria-label={label} className={SETTING_ITEM_DIVIDERS}>
       {invitations.map((invitation) => (
         <li
           key={invitation.id}
@@ -454,10 +455,7 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
               onChange={(event) => setMemberFilter(event.target.value)}
               className={SETTING_CONTROL_HEIGHT}
             />
-            <ul
-              aria-labelledby={settingIds("members").label}
-              className={cn("divide-y divide-border overflow-y-auto", SETTING_PEOPLE_LIST_HEIGHT)}
-            >
+            <SettingPeopleList aria-labelledby={settingIds("members").label}>
               {shownUsers.map((user) => {
                 const isSelf = user.workosUserId === authUser?.id
                 const name = user.name || user.slug
@@ -536,11 +534,13 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
                   </li>
                 )
               })}
-            </ul>
+            </SettingPeopleList>
             {shownUsers.length === 0 && <SettingEmptyNote>No members match.</SettingEmptyNote>}
           </div>
         </SettingRow>
+      </SettingsSection>
 
+      <SettingsSection section="workspace-invitations">
         <SettingRow
           setting="invites"
           labelFor={false}

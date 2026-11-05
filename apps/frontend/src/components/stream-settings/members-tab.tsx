@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Input } from "@/components/ui/input"
 import {
   SETTING_CONTROL_HEIGHT,
-  SETTING_PEOPLE_LIST_HEIGHT,
+  SettingPeopleList,
   SettingAddButton,
   SettingEmptyNote,
   SettingRemoveButton,
@@ -11,6 +11,7 @@ import {
   SettingsSection,
   settingIds,
   SettingBadge,
+  SETTING_ITEM_DIVIDERS,
 } from "@/components/settings/setting-primitives"
 import { SETTING_MUTED_NOTE_TEXT } from "@/components/settings/setting-text"
 import { SearchableSelect } from "@/components/ui/searchable-select"
@@ -32,7 +33,6 @@ import { useStreamService } from "@/contexts"
 import { botsApi } from "@/api/bots"
 import { isPickableUser, useWorkspaceUsers, useWorkspaceBots } from "@/stores/workspace-store"
 import { rankMatches } from "@/lib/match-score"
-import { cn } from "@/lib/utils"
 import { hasPermission } from "@/lib/permissions"
 import {
   roleDisplayName,
@@ -187,7 +187,7 @@ export function MembersTab({ workspaceId, streamId, currentUserId }: MembersTabP
               className={SETTING_CONTROL_HEIGHT}
             />
 
-            <ul className={cn("divide-y divide-border overflow-y-auto", SETTING_PEOPLE_LIST_HEIGHT)}>
+            <SettingPeopleList>
               {filteredMembers.map((member) => {
                 const name = member.name || member.slug
                 return (
@@ -218,7 +218,7 @@ export function MembersTab({ workspaceId, streamId, currentUserId }: MembersTabP
                   </li>
                 )
               })}
-            </ul>
+            </SettingPeopleList>
             {emptyNote && <SettingEmptyNote>{emptyNote}</SettingEmptyNote>}
             {canAddUserMembers && availableToAdd.length === 0 && (
               <SettingEmptyNote>Everyone in the workspace is a member.</SettingEmptyNote>
@@ -378,7 +378,7 @@ export function StreamBotsSection({
   let list: ReactNode
   if (botsWithAccess.length > 0) {
     list = (
-      <ul className="divide-y divide-border">
+      <ul className={SETTING_ITEM_DIVIDERS}>
         {botsWithAccess.map((bot) => (
           <li key={bot.id} className={LIST_ITEM}>
             <ActorIdentity

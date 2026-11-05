@@ -93,6 +93,7 @@ import {
   type SettingsPageAccess,
 } from "./settings-shell"
 import type { SettingsLinkHistory } from "./settings-link-history"
+import { useScrollEdges } from "@/hooks/use-scroll-edges"
 
 const GROUPS: SettingsGroup[] = ["you", "workspace"]
 
@@ -856,25 +857,6 @@ interface NavItem {
   access?: SettingsPageAccess
 }
 
-/** Whether rows sit below the nav's visible end, so its bottom fades to show there is more. */
-function useClippedBelow(nav: HTMLElement | null): boolean {
-  const [clipped, setClipped] = useState(false)
-  useLayoutEffect(() => {
-    if (!nav) return
-    const measure = () => setClipped(nav.scrollTop + nav.clientHeight < nav.scrollHeight - 1)
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(nav)
-    if (nav.firstElementChild) observer.observe(nav.firstElementChild)
-    nav.addEventListener("scroll", measure, { passive: true })
-    return () => {
-      observer.disconnect()
-      nav.removeEventListener("scroll", measure)
-    }
-  }, [nav])
-  return clipped
-}
-
 /** A group's pages in order, with a placeholder where permissions still decide. */
 function navTabsOfGroup(visibility: ViewerSettingsVisibility, group: SettingsGroup) {
   return SETTINGS_TABS.filter(
@@ -906,7 +888,7 @@ function DesktopNav({
 }) {
   const groupId = useId()
   const [nav, setNav] = useState<HTMLElement | null>(null)
-  const clipped = useClippedBelow(nav)
+  const clipped = useScrollEdges(nav).below
   const streamId = stream?.streamId
   useLayoutEffect(() => {
     const current = nav?.querySelector<HTMLElement>('[aria-current="page"]')

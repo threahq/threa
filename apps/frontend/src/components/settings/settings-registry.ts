@@ -246,6 +246,7 @@ export const SETTINGS_SECTIONS = {
   "dev-keys": { tab: "developer", title: "API keys" },
   "dev-bots": { tab: "developer", title: "Your bots" },
   "workspace-people": { tab: "members", title: "People" },
+  "workspace-invitations": { tab: "members", title: "Invitations" },
   "workspace-access": { tab: "members", title: "Access" },
   "workspace-identity": { tab: "workspace", title: "Details" },
   "defaults-time": { tab: "workspace-defaults", title: "Working hours" },
@@ -759,9 +760,9 @@ export const SETTINGS = {
     keywords: ["people", "who's here", "users", "roles", "remove member", "admin"],
   },
   invites: {
-    section: "workspace-people",
-    label: "Invitations",
-    description: "Invite people by email or share a join link.",
+    section: "workspace-invitations",
+    label: "Invite people",
+    description: "By email or with a join link.",
     keywords: ["invite", "teammate", "add people", "join link", "onboard"],
   },
   "guest-dms": {

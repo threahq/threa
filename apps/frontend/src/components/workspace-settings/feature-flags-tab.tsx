@@ -1,5 +1,5 @@
 import type { FeatureFlagKey, FeatureFlagValue } from "@threahq/types"
-import { SettingBadge, SettingEmptyNote } from "@/components/settings/setting-primitives"
+import { SettingBadge, SettingEmptyNote, SETTING_ITEM_DIVIDERS } from "@/components/settings/setting-primitives"
 import { SETTING_NOTE_TEXT } from "@/components/settings/setting-text"
 import { cn } from "@/lib/utils"
 import { useOverriddenFeatureFlags } from "@/hooks/use-feature-flags"
@@ -56,7 +56,7 @@ export function FeatureFlagsTab({ workspaceId }: FeatureFlagsTabProps) {
   if (flags.length === 0) return <SettingEmptyNote>No early features are on for you.</SettingEmptyNote>
 
   return (
-    <ul className="divide-y divide-border">
+    <ul className={SETTING_ITEM_DIVIDERS}>
       {flags.map(({ key, value, defaultValue, scope }) => (
         <li key={key} className="flex min-h-11 items-start justify-between gap-3 py-2">
           <div className="min-w-0">

@@ -31,6 +31,7 @@ import {
   SettingFieldError,
   SettingsDisclosureTrigger,
   SettingBadge,
+  SETTING_ITEM_DIVIDERS,
 } from "@/components/settings/setting-primitives"
 import { SettingCheckboxList } from "@/components/settings/setting-lists"
 import { SETTING_ICON_BUTTON, SETTING_MUTED_NOTE_TEXT, SETTING_NOTE_TEXT } from "@/components/settings/setting-text"
@@ -134,7 +135,7 @@ export function ApiKeysPanel({
       )}
 
       {activeKeys.length > 0 ? (
-        <ul className="divide-y divide-border">
+        <ul className={SETTING_ITEM_DIVIDERS}>
           {activeKeys.map((key) => (
             <li key={key.id} className="flex min-h-11 items-start justify-between gap-2 py-2">
               <div className="min-w-0 flex-1">
@@ -266,7 +267,7 @@ export function RevokedList({
         heading={`${items.length} revoked ${noun}${items.length > 1 ? "s" : ""}`}
       />
       <CollapsibleContent>
-        <ul className="divide-y divide-border">
+        <ul className={SETTING_ITEM_DIVIDERS}>
           {items.map((item) => (
             <li key={item.id} className="flex min-h-11 items-center gap-2 py-2 text-muted-foreground">
               <span className="truncate text-sm line-through">{item.name}</span>

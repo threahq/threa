@@ -14,6 +14,7 @@ import {
   SettingsSection,
   settingIds,
   SettingBadge,
+  SETTING_ITEM_DIVIDERS,
 } from "@/components/settings/setting-primitives"
 import { SETTING_NOTE_TEXT } from "@/components/settings/setting-text"
 import { useArchivedPersonas, usePersonas, useUnarchivePersona } from "@/hooks/use-personas"
@@ -51,7 +52,7 @@ export function PersonasTab({ workspaceId }: PersonasTabProps) {
     )
   } else if (personas && personas.length > 0) {
     personaList = (
-      <ul aria-labelledby={settingIds("workspace-personas").label} className="divide-y divide-border">
+      <ul aria-labelledby={settingIds("workspace-personas").label} className={SETTING_ITEM_DIVIDERS}>
         {personas.map((persona) => (
           <li key={persona.id} className="flex min-h-11 items-center gap-3 py-2">
             <PersonaListAvatar workspaceId={workspaceId} persona={persona} size="lg" />
@@ -93,7 +94,7 @@ export function PersonasTab({ workspaceId }: PersonasTabProps) {
         </SettingRow>
         {archived && archived.length > 0 && (
           <SettingsDisclosure label="Archived agents" settings={[]} summary={`${archived.length} archived`}>
-            <ul aria-label="Archived agents" className="divide-y divide-border">
+            <ul aria-label="Archived agents" className={SETTING_ITEM_DIVIDERS}>
               {archived.map((persona) => (
                 <li key={persona.id} className="flex min-h-11 items-center gap-3 px-4 py-2">
                   <PersonaListAvatar workspaceId={workspaceId} persona={persona} size="lg" />
