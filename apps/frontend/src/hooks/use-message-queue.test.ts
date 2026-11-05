@@ -288,19 +288,21 @@ describe("useMessageQueue", () => {
       })
     })
 
-    it("should not hold an account switch while waiting for the other tab, nor drain once the account it waited for is retired", async () => {
+    it("should not hold an account switch while waiting for the other tab, nor drain or re-run a kick once the account it waited for is retired", async () => {
       const release = holdOutboxInAnotherTab()
       mockPendingMessages = [queued("temp_switch")]
       const record = vi.spyOn(diagnosticsModule, "recordConnectivityEvent").mockImplementation(() => {})
       const { unmount } = renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
       await waitFor(() => expect(record).toHaveBeenCalledWith("message_queue_blocked", { blockedBy: "lock" }))
+      const kick = mockRegisterQueueNotify.mock.calls.at(-1)![0] as () => void
+      kick()
 
       const started = performance.now()
       await act(() => retireAccountWork(1000))
       const switchMs = performance.now() - started
-      unmount()
       release()
       await new Promise((resolve) => setTimeout(resolve, 50))
+      unmount()
 
       expect({ switchedQuickly: switchMs < 500, sent: mockCreate.mock.calls.length }).toEqual({
         switchedQuickly: true,

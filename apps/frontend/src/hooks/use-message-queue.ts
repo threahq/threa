@@ -551,7 +551,11 @@ export function useMessageQueue(workspaceId: string): void {
       if (navigator.locks) {
         const waitedFor = currentAccountFence()
         const drainHolding = async () => {
-          if (waitedFor.isRetired()) return
+          if (waitedFor.isRetired()) {
+            // A kick re-run here would drain under a fence the switch never waits on; the switch's remount drains instead.
+            if (pendingWorkGenerationRef.current === workspaceGeneration) pendingWorkGenerationRef.current = null
+            return
+          }
           if (wasLockBlockedRef.current && workspaceGenerationRef.current === workspaceGeneration) {
             wasLockBlockedRef.current = false
             recordQueueTransition(workspaceGeneration, "message_queue_unblocked", "lock")
