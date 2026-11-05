@@ -28,7 +28,7 @@ A PIN or biometric unlock is a shortcut you set up on a device that is already u
 
 ## Lock now
 
-In **Settings**, [AI](app:settings/ai), the **Encrypted scratchpads** section shows **Lock now** while you are unlocked. It drops the key from memory and deletes the key saved on this device, together with any PIN or biometric unlock set up for it. The next unlock asks for your passphrase, and **Keep me unlocked on this device** is off until you turn it on again. While locked, an encrypted scratchpad shows Unlock instead of its messages.
+On the [Privacy & security](app:settings/privacy) settings page, the **Encrypted scratchpads** section shows **Lock now** while you are unlocked. It drops the key from memory and deletes the key saved on this device, together with any PIN or biometric unlock set up for it. The next unlock asks for your passphrase, and **Keep me unlocked on this device** is off until you turn it on again. While locked, an encrypted scratchpad shows Unlock instead of its messages.
 
 Only your unlocked device can give an invited agent access to a scratchpad's key. If an agent cannot reply until your device does that, Threa can send a push notification titled "Your assistant is waiting": "Unlock Threa to let your assistant reply in your encrypted scratchpad." See [Encrypted scratchpads](/guide/encrypted-scratchpads) for inviting agents.
 

@@ -25,7 +25,7 @@ A follow-up has one of these states: Scheduled, Ran, Cancelled or Failed.
 
 ## Limit
 
-Each stream has a limit on pending follow-ups, 10 by default. At the limit the agent can't schedule another until one fires or is cancelled. Workspace admins can change the limit, from 1 to 100, under **Assistant follow-ups** in the AI Agents tab of Workspace Settings (see [Workspace AI agents](/guide/workspace-ai-agents)).
+Each stream has a limit on pending follow-ups, 10 by default. At the limit the agent can't schedule another until one fires or is cancelled. Workspace admins can change the limit, from 1 to 100, under **Follow-up limit** on the **Workspace AI** settings page (see [Workspace AI agents](/guide/workspace-ai-agents)).
 
 ## Related
 

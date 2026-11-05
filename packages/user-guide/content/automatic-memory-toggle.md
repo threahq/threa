@@ -11,7 +11,7 @@ order: 3
 
 ## Change the setting
 
-Open the stream's settings (choose **Open stream settings** in the command palette), go to the **General** tab and use the **Automatic memory** switch. It is available for channels, scratchpads and direct messages. The switch applies right away and no confirmation appears.
+Open the stream's settings (choose **Open stream settings** in the command palette), go to the **General** page and use the **Automatic memory** switch. It is available for channels, scratchpads and direct messages. The switch applies right away and no confirmation appears.
 
 ## Defaults
 

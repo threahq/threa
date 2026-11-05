@@ -17,7 +17,7 @@ You can attach files to any message. Everything uploaded to a workspace is liste
 
 A sent attachment can show **Uploading…** and then **Scanning…** in the timeline until it is ready. A file that fails the malware scan is quarantined and shown as blocked. A single file can be up to 100 MB.
 
-On desktop the files sit in a tray above the text. On mobile, files you pick with **Attach files** are placed in the message text as a chip at the cursor, and removing the chip keeps the file attached. The **Insert files at the cursor** switch in the **Composer** settings tab turns that off, and it is on by default. See [Writing and sending messages](/guide/composer-basics).
+On desktop the files sit in a tray above the text. On mobile, files you pick with **Attach files** are placed in the message text as a chip at the cursor, and removing the chip keeps the file attached. The **Insert files at the cursor** switch on the **Keyboard & composer** settings page turns that off, and it is on by default. See [Writing and sending messages](/guide/composer-basics).
 
 ## Viewing files
 

@@ -1,37 +1,37 @@
 ---
 title: Workspace general settings
-summary: What the General tab of Workspace Settings shows, and who can change the workspace timezone used to report AI spend.
+summary: What the Workspace details page shows, who can rename the workspace, and the time zone used for AI spend.
 section: workspace
 order: 1
 ---
 
 # Workspace general settings
 
-Workspace Settings is where workspace-wide settings live. The **General** tab shows the basics of your workspace and holds one setting you can change, the workspace timezone.
+Workspace-wide settings are the **Workspace** pages of the settings window. **Workspace details** shows the basics of your workspace and holds two settings you can change: the workspace name and the AI spend time zone.
 
-## Open Workspace Settings
+## Open the workspace pages
 
-Choose **Workspace Settings** from the menu in the sidebar footer, which opens on the Users tab, or run **Workspace Settings** from the command palette, which opens on General. Every member can open it. Some tabs and controls are for workspace admins only.
+Choose **Workspace settings** from the menu in the sidebar footer, which opens the settings Overview at the workspace pages, or run **Settings: Workspace details** from the command palette. Every member can open them. Pages you can't change are marked **View only**, and **Workspace AI** is shown to admins only.
 
-## What the General tab shows
+## What Workspace details shows
 
-- **Name**: the workspace name.
-- **Data region**: where your workspace data is stored, such as Europe (Stockholm) or US East (Virginia). It appears when the workspace has a region recorded.
+- **Workspace name**: workspace admins can rename the workspace here. Other members see the name without a field.
+- **Data region**: where messages and files are stored, such as Europe (Stockholm) or US East (Virginia). It is set when the workspace is created and can't be changed.
+- **AI spend reset time zone**: see below.
 - **Created**: the date the workspace was created.
 
-These three are read-only. There is no field in the app for renaming the workspace or moving it to another region.
+## AI spend reset time zone
 
-## Workspace timezone
-
-**Workspace timezone** sets the timezone that AI spend is reported in. On the [AI usage and budget](/guide/ai-usage-and-budget) page, members can switch the view between their own timezone and the workspace timezone, so a distributed team can read one shared set of day and month lines. A workspace created in the app starts on the creator's timezone; if none was available it uses UTC.
+Monthly AI spend limits reset at midnight on the 1st in this time zone. On the [AI usage and budget](/guide/ai-usage-and-budget) page, members can switch the view between their own timezone and the workspace timezone, so a distributed team can read one shared set of day and month lines. A workspace created in the app starts on the creator's timezone; if none was available it uses UTC.
 
 Workspace admins can change it with the timezone picker. Other members see the current value without a picker.
 
-## Other workspace tabs
+## Other workspace pages
 
-The tab list in Workspace Settings is General, Working hours, Statuses, Dictation, Users, AI Agents, Integrations, Bots and API Keys. A **Feature flags** tab appears only if your account has flags switched away from their defaults, and **AI Agents** only for admins.
+The workspace pages are Members, Workspace details, Defaults & presets, Workspace AI, Integrations and Shared bots. Personal API keys and personal bots are under **You**, on **API keys & bots**.
 
-- [Members, invitations and roles](/guide/members-invitations-and-roles) covers Users.
-- [Statuses and default working hours](/guide/workspace-statuses-and-schedule) covers Statuses and Working hours.
-- [Managing AI agents](/guide/workspace-ai-agents) covers AI Agents.
-- [Bots](/guide/bots-overview) and [Personal API keys](/guide/personal-api-keys) cover Bots and API Keys.
+- [Members, invitations and roles](/guide/members-invitations-and-roles) covers Members.
+- [Statuses and default working hours](/guide/workspace-statuses-and-schedule) covers Defaults & presets.
+- [Managing AI agents](/guide/workspace-ai-agents) covers Workspace AI.
+- [GitHub and Linear](/guide/github-and-linear) covers Integrations.
+- [Bots](/guide/bots-overview) and [Personal API keys](/guide/personal-api-keys) cover Shared bots and API keys & bots.

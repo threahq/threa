@@ -11,9 +11,9 @@ An incoming webhook is a secret URL that posts into one channel or scratchpad as
 
 ## Create one
 
-1. Open [Bots](app:workspace-settings/bots) in Workspace Settings and select the bot that should post.
+1. Open the bot that should post, from **Your bots** on [API keys & bots](app:settings/developer) or from [Shared bots](app:settings/bots).
 2. In **Webhooks**, select **New webhook**.
-3. Enter a **Webhook name** and choose the stream it **Posts to**.
+3. Enter a **Name** and choose the stream it **Posts to**.
 4. Select **Create webhook** and copy the URLs.
 
 Both URLs are shown once, labeled **Native** and **Slack**. Threa cannot show them again. A webhook belongs to its bot, and every message it delivers is posted by that bot. The target must be a channel or a scratchpad. Threads and end-to-end encrypted streams are not accepted, because a webhook holds no key and cannot encrypt what it posts.

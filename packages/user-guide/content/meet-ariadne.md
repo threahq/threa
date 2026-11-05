@@ -50,4 +50,4 @@ Where **Automatic memory** is on, decisions, facts and how-tos from a conversati
 
 ## Choose a different agent
 
-Your default companion is set under **Default companion** in your [AI settings](app:settings/ai). A workspace admin can set a workspace default, and each scratchpad has its own companion setting that overrides both. Custom agents that your workspace adds appear in the same list.
+Your default companion is set under **Your default agent** on the [Your AI](app:settings/ai) settings page. A workspace admin can set a workspace default, and each scratchpad has its own companion setting that overrides both. Custom agents that your workspace adds appear in the same list.

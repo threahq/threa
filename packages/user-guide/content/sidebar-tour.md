@@ -65,8 +65,8 @@ The menu at the bottom of the sidebar, opened from your avatar, contains:
 - **Getting started**, when the checklist can be restored.
 - **Customize sidebar**.
 - **Appearance**, with System, Light and Dark themes.
-- **Settings** and **Workspace Settings**.
-- **AI Usage**.
+- **Profile**, **Settings** and **Workspace settings**, which open the settings window. See [Settings overview](/guide/settings-overview).
+- **AI usage**.
 - **App status**.
 - **Switch account** and **Log out**. See [Signing in and switching accounts](/guide/sign-in-and-accounts).
 

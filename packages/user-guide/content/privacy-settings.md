@@ -1,31 +1,31 @@
 ---
 title: Privacy and diagnostics options
-summary: The three switches in the Privacy tab: crash reports and usage data, session recording, and telling agents which device you're on.
+summary: The data-sharing switches on the Privacy & security page: crash reports and usage data, session recording, sharing your device with agents, and performance diagnostics.
 section: settings
 order: 7
 ---
 
 # Privacy and diagnostics options
 
-The **Privacy** tab of your [settings](app:settings/privacy) has three switches. The first two control what Threa collects to find and fix bugs. The third controls what agents know about your device.
+The **Data sharing** section of the [Privacy & security](app:settings/privacy) page of your settings has three switches. The first two control what Threa collects to find and fix bugs. The third controls what agents know about your device. The same page holds **Encrypted scratchpads** (see [Encrypted scratchpads](/guide/encrypted-scratchpads)).
 
-## Send crash reports and usage data
+## Crash reports and usage data
 
-This helps find and fix bugs. Message content is never included. If the workspace doesn't have this set up, the switch is disabled and says **Not configured for this workspace.**
+Errors and which features you use. Message content is never included. If the Threa server doesn't have usage reporting set up, the switch is disabled and says so.
 
 ## Record my sessions
 
-Records what you click and how the layout responds. Text, images and attachments are masked. It is off by default. While **Send crash reports and usage data** is off, this switch is disabled and says it requires crash reports and usage data.
+Records where you click or tap and how the screen responds. Text and images are masked. It is off by default. While **Crash reports and usage data** is off, this switch is disabled and says "Turn on crash reports and usage data first."
 
-## Tell agents which device I'm on
+## Share device and open docs with agents
 
-Agents see whether you're on the mobile or desktop layout, your operating system, and whether Threa is installed, so their directions match your screen. It is on by default. Only the latest is kept, and turning this off deletes it.
+Agents see your layout, your system and the docs you have open, so their directions match your screen. Your location is never shared. It is on by default. Only the latest is kept, and turning this off deletes what agents had.
 
 If a change doesn't save, an error notice appears.
 
-## Diagnostics tab
+## Performance diagnostics
 
-A separate **Diagnostics** tab holds the **Share performance diagnostics** switch, which is off by default. The tab only appears where performance diagnostics have been turned on for you or your workspace (see [Settings overview](/guide/settings-overview)). Message content is never collected.
+**Performance diagnostics** shares response times and dropped connections, and is off by default. It is kept on this device for seven days and sent with your usage data while that is on. The switch only appears where performance diagnostics have been turned on for you or your workspace. Message content is never collected.
 
 ## Related
 

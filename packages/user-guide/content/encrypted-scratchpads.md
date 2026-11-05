@@ -11,7 +11,7 @@ An encrypted scratchpad holds messages that are encrypted on your device before 
 
 ## Set it up once
 
-Open **Settings** and the [AI](app:settings/ai) tab. At the bottom, the **Encrypted scratchpads** section shows a status (Not set up, Locked or Unlocked). Choose **Set up encryption**.
+Open the [Privacy & security](app:settings/privacy) page of your settings. **End-to-end encryption**, in the **Encrypted scratchpads** section, shows a status (Not set up, Locked or Unlocked on this device). Choose **Set up encryption**.
 
 The **Set up encrypted scratchpads** dialog asks for:
 
@@ -37,7 +37,7 @@ While locked, an encrypted scratchpad shows an **Unlock** button instead of its 
 You can unlock with:
 
 - Your passphrase, in the **Unlock encrypted scratchpads** dialog.
-- A 6-digit PIN, set at setup or later with **Set a PIN** in the section (it shows while **Keep me unlocked on this device** is on). Five wrong PINs remove the PIN from the device and you need the passphrase again.
+- A 6-digit PIN, set at setup or later with **Set a PIN** in the same section (it shows while **Keep me unlocked on this device** is on). Five wrong PINs remove the PIN from the device and you need the passphrase again.
 - The device's fingerprint or face unlock, after you choose **Use biometrics** (offered only when the device supports it).
 
 The **Keep me unlocked on this device** switch stores an encrypted copy of the key on the device, so the passphrase is not asked each time. Do not enable it on a shared or public computer. If you have set a PIN or biometrics, **Unlock automatically** goes back to unlocking without any prompt.

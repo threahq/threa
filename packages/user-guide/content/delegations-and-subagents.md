@@ -42,8 +42,8 @@ The card's actions are **Open thread**, **Try again** for a failed or expired su
 
 ## Subagent models
 
-- You can narrow the list for your own conversations under **Subagent models** in your [AI settings](app:settings/ai). The section shows only if your workspace offers at least two models, with prices next to each.
-- Workspace admins set the list the workspace offers in the AI Agents tab of Workspace Settings (see [Workspace AI agents](/guide/workspace-ai-agents)).
+- You can narrow the list for your own conversations under **Your subagent models** on the [Your AI](app:settings/ai) settings page. The section shows only if your workspace offers at least two models, with prices next to each.
+- Workspace admins set the list the workspace offers under **Workspace subagent models** on the Workspace AI settings page (see [Workspace AI agents](/guide/workspace-ai-agents)).
 
 ## Track it
 

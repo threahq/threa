@@ -54,4 +54,4 @@ Active filters are listed under **Filtering the board**, with **Clear** to remov
 
 ## Board home
 
-Opening the board with no lens or view lands on your board home, which starts as the **All** lens. Change it by choosing **Set as board home** from a lens or view menu, or in the **Board home** section of your [Appearance settings](app:settings/appearance). Either a lens or one of your saved views can be the home. If the saved view is deleted, the board falls back to the lens.
+Opening the board with no lens or view lands on your board home, which starts as the **All** lens. Change it by choosing **Set as board home** from a lens or view menu, or with **Default view** on the [Sidebar & board](app:settings/inbox) settings page. Either a lens or one of your saved views can be the home. If the saved view is deleted, the board falls back to the lens.

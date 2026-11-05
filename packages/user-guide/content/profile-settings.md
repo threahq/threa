@@ -7,7 +7,7 @@ order: 2
 
 # Your profile
 
-Your profile is how people see you in a workspace. It belongs to that workspace, so each workspace you are in has its own. Open it in the **Profile** tab of your [settings](app:settings/profile).
+Your profile is how people see you in a workspace. It belongs to that workspace, so each workspace you are in has its own. Open it from **Profile** in the user menu at the bottom of the sidebar, or on the [Profile](app:settings/profile) settings page.
 
 ## Fields
 
@@ -18,9 +18,9 @@ Your profile is how people see you in a workspace. It belongs to that workspace,
 - **Pronouns**: **None**, **he/him**, **she/her**, **they/them**, **xe/xem** or **Custom** (up to 50 characters).
 - **Description**: up to 500 characters.
 - **Phone**: up to 30 characters.
-- **GitHub**: your GitHub username, shown after `github.com/`, up to 39 characters.
+- **GitHub username**: shown after `github.com/`, up to 39 characters.
 
-Display name, pronouns, phone and GitHub each get a **Save** button once you change them. **Description** has one too, and Enter saves the single-line fields.
+Each field saves when you leave it. Enter also saves the single-line fields.
 
 ## Related
 

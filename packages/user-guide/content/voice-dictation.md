@@ -1,6 +1,6 @@
 ---
 title: Dictating messages
-summary: Speak a message into the composer, how polished and original text work, and the Dictation settings for model, polish level and steering words.
+summary: Speak a message into the composer, how polished and original text work, and the dictation settings for model, cleanup level and dictation words.
 section: messages
 order: 13
 ---
@@ -25,12 +25,12 @@ How much the model changes is set under **Polish dictated text** in settings (se
 
 ## Dictation settings
 
-Open [Dictation](app:settings/dictation) in your settings.
+Dictation is on the [Voice & calls](app:settings/voice) page of your settings.
 
-- **Voice Dictation Model** chooses the speech-to-text provider. **Use server default** is currently ElevenLabs Scribe v2. The other options are ElevenLabs Scribe v2 and Deepgram Nova-3. Both detect the language automatically, and the Deepgram option is described as lower latency.
-- **Polish dictated text** has three levels. **Opinionated** is the default and cleans up the most: it drops filler words, applies self-corrections, formats lists and expands spoken emoji shortcodes. **Minor** only fixes punctuation, capitalization and obvious typos. **Off** puts the raw transcript into the editor with no model involved.
-- **Dictation steering words** are spellings the model is nudged toward, such as product names, people and jargon. Type a word and press Enter or comma to add it, and remove it with the x on its chip. You can add up to 50 words of up to 48 characters each. Threa and Ariadne are always included.
+- **Clean up dictated text** has three levels. **Full** is the default and cleans up the most: it drops filler words, applies self-corrections, formats lists and expands spoken emoji shortcodes. **Light** only fixes punctuation, capitalization and obvious typos. **Off** puts the text into the editor as transcribed. With Full or Light, **Show original** undoes the cleanup.
+- **Your dictation words** are spellings the model is nudged toward, such as product names, people and jargon. Type a word and press Enter or comma to add it, and remove it with the x on its chip. You can add up to 50 words of up to 48 characters each. Threa and Ariadne are always included.
+- **Transcription model** chooses the speech-to-text provider. **Automatic** lets Threa pick, currently ElevenLabs Scribe v2. The other options are ElevenLabs Scribe v2 and Deepgram Nova-3. Both detect the language automatically, and the Deepgram option is described as lower latency.
 
-## Workspace steering words
+## Workspace dictation words
 
-Workspace admins can add steering words that apply to everyone's dictation in [Dictation](app:workspace-settings/dictation) in the workspace settings. Other members see the list read-only, with the note "Only workspace admins can change the shared steering words." Your own words are added on top of the shared ones.
+Workspace admins can add words that apply to everyone's dictation under **Workspace dictation words** on the [Defaults & presets](app:settings/workspace-defaults) settings page. Other members see the list read-only, with the note "Only workspace admins can change this." Your own words are added on top of the shared ones.

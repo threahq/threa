@@ -49,10 +49,10 @@ The controls are **Mute**, the camera toggle, **Flip camera** (mobile only, when
 
 ## Call settings
 
-Open [Settings](app:settings/calls) and choose **Calls**:
+Call settings are in the **Calls** section of the [Voice & calls](app:settings/voice) page of your settings:
 
-- **Mirror my video**: **Automatic** mirrors a front-facing or desktop camera and leaves a phone's back camera normal. **Always mirror** and **Never mirror** override that.
+- **Mirror my video**: **Automatic** mirrors a front-facing or desktop camera and leaves a phone's back camera normal. **Always** and **Never** override that. Others always see you unflipped.
 - **Default layout**: **Speaker** or **Grid**.
-- **Desktop video**: where a call opens on desktop.
+- **Desktop video**: where a call opens on desktop: **Where you left it**, **Floating square**, **Sidebar** or **Fullscreen**.
 
 To start or join a call, see [Starting and joining calls](/guide/calls-basics).
