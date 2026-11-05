@@ -1,6 +1,6 @@
 import type { Database, PreparedStatement, SqlValue } from "@sqlite.org/sqlite-wasm"
 import { indexKeys } from "./index-keys"
-import { isKeyInRange, keyId, type EncodedRange } from "./key-codec"
+import type { EncodedRange } from "./key-codec"
 import { decodeValue } from "./value-codec"
 
 export interface MirrorEntry {
@@ -59,11 +59,6 @@ export interface CommitLedger {
   tx: number
 }
 
-interface BackfillState {
-  touchedKeys: Set<string>
-  touchedRanges: EncodedRange[]
-}
-
 const META_TABLE = "_mirror_meta"
 const COMMITS_TABLE = "_mirror_commits"
 const COMMIT_FLOORS_TABLE = "_mirror_commit_floors"
@@ -109,7 +104,6 @@ function where(conditions: readonly string[]): string {
 
 export class MirrorStore {
   private readonly schema = new Map<string, MirrorStoreSchema>()
-  private readonly backfilling = new Map<string, BackfillState>()
   private readonly statements = new Map<string, PreparedStatement>()
 
   constructor(private readonly db: Database) {}
@@ -123,37 +117,39 @@ export class MirrorStore {
       if (!STORE_NAME_PATTERN.test(name)) throw new Error(`Invalid store name for mirroring: ${name}`)
     }
     this.closeStatements()
-    this.db.exec(`CREATE TABLE IF NOT EXISTS ${META_TABLE} (key TEXT PRIMARY KEY, value TEXT)`)
-    // Left by the removed copy-back into IndexedDB.
-    this.db.exec(`DROP TABLE IF EXISTS _idb_backlog`)
-    this.db.exec(`DROP TABLE IF EXISTS _mirror_writers`)
-    this.db.exec(
-      `CREATE TABLE IF NOT EXISTS ${COMMITS_TABLE} (seq INTEGER PRIMARY KEY, tab TEXT NOT NULL, tx INTEGER NOT NULL, UNIQUE (tab, tx))`
-    )
-    this.db.exec(
-      `CREATE TABLE IF NOT EXISTS ${COMMIT_FLOORS_TABLE} (tab TEXT PRIMARY KEY, tx INTEGER NOT NULL) WITHOUT ROWID`
-    )
-    const storedSchema = this.db.selectValue(`SELECT value FROM ${META_TABLE} WHERE key = ?`, [SCHEMA_KEY])
-    const previous = new Map(
-      (storedSchema === undefined ? [] : (JSON.parse(String(storedSchema)) as MirrorStoreSchema[])).map((store) => [
-        store.name,
-        store,
-      ])
-    )
-    const next = new Map(schema.map((store) => [store.name, store]))
+    const serialized = JSON.stringify(schema)
+    // One commit: on OPFS every commit is flushed, and a first boot creates every table.
     this.db.transaction(() => {
+      this.db.exec(`CREATE TABLE IF NOT EXISTS ${META_TABLE} (key TEXT PRIMARY KEY, value TEXT)`)
+      // Left by the removed copy-back into IndexedDB.
+      this.db.exec(`DROP TABLE IF EXISTS _idb_backlog`)
+      this.db.exec(`DROP TABLE IF EXISTS _mirror_writers`)
+      this.db.exec(
+        `CREATE TABLE IF NOT EXISTS ${COMMITS_TABLE} (seq INTEGER PRIMARY KEY, tab TEXT NOT NULL, tx INTEGER NOT NULL, UNIQUE (tab, tx))`
+      )
+      this.db.exec(
+        `CREATE TABLE IF NOT EXISTS ${COMMIT_FLOORS_TABLE} (tab TEXT PRIMARY KEY, tx INTEGER NOT NULL) WITHOUT ROWID`
+      )
+      const storedSchema = this.db.selectValue(`SELECT value FROM ${META_TABLE} WHERE key = ?`, [SCHEMA_KEY])
+      if (storedSchema === serialized) return
+      const previous = new Map(
+        (storedSchema === undefined ? [] : (JSON.parse(String(storedSchema)) as MirrorStoreSchema[])).map((store) => [
+          store.name,
+          store,
+        ])
+      )
+      const next = new Map(schema.map((store) => [store.name, store]))
       for (const old of previous.values()) {
         if (!next.has(old.name)) this.dropStore(old)
       }
       for (const store of schema) this.reconcileStore(store, previous.get(store.name), progress)
       this.db.exec({
         sql: `INSERT OR REPLACE INTO ${META_TABLE} (key, value) VALUES (?, ?)`,
-        bind: [SCHEMA_KEY, JSON.stringify(schema)],
+        bind: [SCHEMA_KEY, serialized],
       })
     })
     this.schema.clear()
     for (const store of schema) this.schema.set(store.name, store)
-    this.backfilling.clear()
   }
 
   /**
@@ -196,30 +192,21 @@ export class MirrorStore {
     return floor !== undefined && Number(floor) >= tx ? null : false
   }
 
-  beginBackfill(store: string): void {
-    const { indexes } = this.storeSchema(store)
+  /** Empties `stores` in one commit, writing only the tables that hold rows: on OPFS every page a commit writes is flushed. */
+  beginBackfill(stores: readonly string[]): void {
+    const tables = stores
+      .flatMap((store) => [storeTable(store), ...this.storeSchema(store).indexes.map((i) => indexTable(store, i.name))])
+      .filter((table) => this.all(`SELECT 1 FROM ${table} LIMIT 1`).length > 0)
+    if (tables.length === 0) return
     this.db.transaction(() => {
-      this.run(`DELETE FROM ${storeTable(store)}`)
-      for (const index of indexes) this.run(`DELETE FROM ${indexTable(store, index.name)}`)
+      for (const table of tables) this.run(`DELETE FROM ${table}`)
     })
-    this.backfilling.set(store, { touchedKeys: new Set(), touchedRanges: [] })
   }
 
   backfillChunk(store: string, entries: MirrorEntry[]): void {
-    const state = this.backfilling.get(store)
-    if (!state) throw new Error(`Store ${store} is not backfilling`)
-    const fresh = entries.filter(
-      (entry) =>
-        !state.touchedKeys.has(keyId(entry.key)) && !state.touchedRanges.some((r) => isKeyInRange(entry.key, r))
-    )
     this.db.transaction(() => {
-      for (const entry of fresh) this.putRow(store, entry)
+      for (const entry of entries) this.putRow(store, entry)
     })
-  }
-
-  finishBackfill(store: string): void {
-    if (!this.backfilling.has(store)) throw new Error(`Store ${store} is not backfilling`)
-    this.backfilling.delete(store)
   }
 
   get(store: string, key: Uint8Array): string | undefined {
@@ -353,17 +340,12 @@ export class MirrorStore {
   private applyMutation(mutation: MirrorMutation): void {
     const { store } = mutation
     const { indexes } = this.storeSchema(store)
-    const state = this.backfilling.get(store)
     if (mutation.op === "put") {
-      for (const entry of mutation.entries) {
-        this.putRow(store, entry)
-        state?.touchedKeys.add(keyId(entry.key))
-      }
+      for (const entry of mutation.entries) this.putRow(store, entry)
     } else if (mutation.op === "delete") {
       for (const key of mutation.keys) {
         for (const index of indexes) this.run(`DELETE FROM ${indexTable(store, index.name)} WHERE k = ?`, [key])
         this.run(`DELETE FROM ${storeTable(store)} WHERE k = ?`, [key])
-        state?.touchedKeys.add(keyId(key))
       }
     } else {
       const bind: SqlValue[] = []
@@ -373,7 +355,6 @@ export class MirrorStore {
         this.run(`DELETE FROM ${table} WHERE k IN (SELECT k FROM ${storeTable(store)}${filter})`, bind)
       }
       this.run(`DELETE FROM ${storeTable(store)}${filter}`, bind)
-      state?.touchedRanges.push(mutation.range)
     }
   }
 

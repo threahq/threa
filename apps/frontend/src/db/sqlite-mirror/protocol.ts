@@ -19,9 +19,8 @@ export interface MirrorReadResults {
 
 export type MirrorRequest =
   | { type: "open"; idbName: string; schema: MirrorStoreSchema[] }
-  | { type: "backfillBegin"; store: string }
+  | { type: "backfillBegin"; stores: readonly string[] }
   | { type: "backfillChunk"; store: string; entries: MirrorEntry[] }
-  | { type: "backfillFinish"; store: string }
   /** Holds every request of other transactions, and outside any, until this one commits or rolls back. */
   | { type: "begin"; tx: number; readonly: boolean; stores: readonly string[] }
   | { type: "write"; tx: number; write: MirrorWrite }

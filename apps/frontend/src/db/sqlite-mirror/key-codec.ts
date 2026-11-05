@@ -137,10 +137,6 @@ export function decodeKey(bytes: Uint8Array): IDBValidKey {
   return readKey({ bytes, pos: 0 })
 }
 
-export function keyId(key: Uint8Array): string {
-  return key.join(",")
-}
-
 export function compareBytes(a: Uint8Array, b: Uint8Array): number {
   const shared = Math.min(a.length, b.length)
   for (let i = 0; i < shared; i++) {

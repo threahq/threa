@@ -75,40 +75,11 @@ describe("MirrorStore", () => {
     expect(() => apply([put("nope", entry(1, "x"))])).toThrow(/Unknown mirrored store/)
   })
 
-  describe("backfill", () => {
-    it("lets a live put win over a stale chunk row and fills the rest", () => {
-      store.beginBackfill("a")
-      apply([put("a", entry(1, "live"))])
-      store.backfillChunk("a", [entry(1, "stale"), entry(2, "old")])
-      store.finishBackfill("a")
-      expect(rows("a")).toEqual(["live", "old"])
-    })
-
-    it("keeps a live-deleted key absent", () => {
-      store.beginBackfill("a")
-      apply([del("a", 1)])
-      store.backfillChunk("a", [entry(1, "stale"), entry(2, "old")])
-      store.finishBackfill("a")
-      expect(rows("a")).toEqual(["old"])
-    })
-
-    it("skips chunk rows inside a range deleted during the backfill", () => {
-      store.beginBackfill("a")
-      store.backfillChunk("a", [entry(1, "one")])
-      apply([delRange("a", 2, 4)])
-      store.backfillChunk("a", [entry(2, "x"), entry(4, "y"), entry(5, "keep")])
-      store.finishBackfill("a")
-      expect(rows("a")).toEqual(["one", "keep"])
-    })
-
-    it("restarts cleanly and leaves other stores alone", () => {
-      apply([put("b", entry(1, "b1"))])
-      store.beginBackfill("a")
-      store.backfillChunk("a", [entry(1, "x")])
-      store.finishBackfill("a")
-      store.beginBackfill("a")
-      expect({ a: rows("a"), b: rows("b") }).toEqual({ a: [], b: ["b1"] })
-    })
+  it("empties the stores a backfill begins on and fills them from its chunks, leaving other stores alone", () => {
+    apply([put("a", entry(1, "stale")), put("b", entry(1, "b1"))])
+    store.beginBackfill(["a"])
+    store.backfillChunk("a", [entry(2, "two"), entry(3, "three")])
+    expect({ a: rows("a"), b: rows("b") }).toEqual({ a: ["two", "three"], b: ["b1"] })
   })
 
   it("keeps data across a reopen with a new schema, and drops removed stores", () => {

@@ -166,7 +166,7 @@ describe("mirror handler", () => {
     await send({ type: "begin", tx: 2, readonly: true, stores: ["a"] })
     const first = await send(get("k", 2))
     let cleared = false
-    const clear = send({ type: "backfillBegin", store: "a" }).then((reply) => {
+    const clear = send({ type: "backfillBegin", stores: ["a"] }).then((reply) => {
       cleared = true
       return reply
     })

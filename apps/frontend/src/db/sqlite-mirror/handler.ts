@@ -50,7 +50,7 @@ const OUTSIDE_READ: Scope = { readonly: true, stores: null }
 const OUTSIDE_WRITE: Scope = { readonly: false, stores: null }
 
 /** Requests outside a transaction that change what a transaction reads: they wait for every admitted one. */
-const WRITES_OUTSIDE: ReadonlySet<MirrorRequest["type"]> = new Set(["backfillBegin", "backfillChunk", "backfillFinish"])
+const WRITES_OUTSIDE: ReadonlySet<MirrorRequest["type"]> = new Set(["backfillBegin", "backfillChunk"])
 
 /** Under the owner's 30 s worker deadline, so a frozen tab's transaction ends before the owner presumes its worker dead. */
 const DEFAULT_TX_IDLE_MS = 10_000
@@ -201,13 +201,10 @@ export function createMirrorHandler(
       case "committed":
         return { committed: store.committed(request.ledger) }
       case "backfillBegin":
-        store.beginBackfill(request.store)
+        store.beginBackfill(request.stores)
         return {}
       case "backfillChunk":
         store.backfillChunk(request.store, request.entries)
-        return {}
-      case "backfillFinish":
-        store.finishBackfill(request.store)
         return {}
       case "get":
         return { result: store.get(request.store, request.key) }
