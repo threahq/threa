@@ -362,7 +362,7 @@ describe("Stream connection pull", () => {
     const snapshot = async () => {
       const events = await pool.query(
         `SELECT id, stream_id, event_type, sequence::text, broadcast_sequence::text FROM stream_events
-         WHERE workspace_id = $1 ORDER BY sequence`,
+         WHERE workspace_id = $1 ORDER BY stream_id, sequence`,
         [partner.id]
       )
       const cursors = await pool.query(
