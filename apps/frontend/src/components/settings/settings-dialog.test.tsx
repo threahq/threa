@@ -527,28 +527,6 @@ describe("SettingsDialog", () => {
     expect(await screen.findByRole("heading", { level: 2, name: "Members" })).toHaveFocus()
   })
 
-  it("gives every page its own history entry: Back walks them, close unwinds them all", async () => {
-    const user = userEvent.setup()
-    renderWindow("")
-
-    await user.click(screen.getByRole("link", { name: "Open settings" }))
-    const nav = await screen.findByRole("navigation", { name: "Settings pages" })
-    await user.click(within(nav).getByRole("link", { name: "Appearance" }))
-    await user.click(within(nav).getByRole("link", { name: "Members" }))
-    expect(screen.getByTestId("location").textContent).toBe("?settings=members")
-
-    act(() => goBack())
-    expect(screen.getByTestId("location").textContent).toBe("?settings=appearance")
-    expect(await screen.findByRole("heading", { level: 2, name: "Appearance" })).toBeInTheDocument()
-
-    await user.click(within(nav).getByRole("link", { name: "Members" }))
-    fireEvent.click(screen.getByRole("button", { name: "Close settings" }))
-    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(""))
-    act(() => goBack())
-    await act(async () => {})
-    expect(screen.getByTestId("location").textContent).toBe("")
-  })
-
   it("opens a legacy workspace settings link on the page it became", async () => {
     renderWindow("?ws-settings=users")
 

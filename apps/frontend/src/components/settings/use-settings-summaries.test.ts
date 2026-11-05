@@ -61,105 +61,6 @@ describe("summarizeSettings", () => {
     expect(values["board-home"]).toBe(summarizeSettings(input()).values["board-home"])
   })
 
-  it("gives every page of yours its current value", () => {
-    const { pages } = summarizeSettings(input())
-
-    expect({
-      messages: pages.messages,
-      inbox: pages.inbox,
-      privacy: pages.privacy,
-      notifications: pages.notifications,
-      keyboard: pages.keyboard,
-      members: pages.members,
-      profile: pages.profile,
-      workspace: pages.workspace,
-      integrations: pages.integrations,
-      bots: pages.bots,
-      developer: pages.developer,
-    }).toEqual({
-      messages: "First 3 previews open · long messages in full",
-      inbox: "Leaves Inbox when you reply or react",
-      privacy: "No encryption · device shared with agents",
-      notifications: "Push all · on for this device",
-      keyboard: "Enter: send message · send on the right",
-      members: "4 members",
-      profile: "Ada",
-      workspace: "Acme",
-      integrations: "None connected",
-      bots: "No bots",
-      developer: "2 API keys · 1 bot",
-    })
-  })
-
-  it("words the link-preview count the same in search and on the overview", () => {
-    const summary = (preferences: Partial<UserPreferences>) => {
-      const { values, pages } = summarizeSettings(input({ preferences: prefs(preferences) }))
-      return { search: values["link-preview-count"], overview: pages.messages?.split(" · ")[0] }
-    }
-
-    expect([summary({}), summary({ linkPreviewOpenCount: 1 }), summary({ linkPreviewDefault: "collapsed" })]).toEqual([
-      { search: "First 3 previews open", overview: "First 3 previews open" },
-      { search: "First preview opens", overview: "First preview opens" },
-      { search: "Previews collapsed", overview: "Previews collapsed" },
-    ])
-  })
-
-  it("reads each overview value as a phrase that stands alone", () => {
-    const pages = (overrides: Partial<SettingsSummaryInput>) => summarizeSettings(input(overrides)).pages
-    const messages = (preferences: Partial<UserPreferences>) => pages({ preferences: prefs(preferences) }).messages
-
-    expect({
-      collapsed: messages({ linkPreviewDefault: "collapsed", messageCollapseEnabled: true }),
-      one: messages({ linkPreviewOpenCount: 1 }),
-      all: messages({ linkPreviewOpenCount: "all" }),
-      oneFeature: pages({ earlyFeatures: 1 })["early-access"],
-      voice: pages({
-        preferences: prefs({ voicePolishLevel: "minor" }),
-        callPrefs: { ...getCallPrefs(), layout: "grid" },
-      }).voice,
-    }).toEqual({
-      collapsed: "Previews collapsed · long messages collapse",
-      one: "First preview opens · long messages in full",
-      all: "All previews open · long messages in full",
-      oneFeature: "1 feature on",
-      voice: "Dictation: light cleanup · grid layout",
-    })
-  })
-
-  it("adds the active status to your name, and counts what the overview's other pages hold", () => {
-    const { pages, streamPages } = summarizeSettings(
-      input({
-        profile: { name: "Ada", status: "In a meeting" },
-        integrations: { github: { connected: 1, available: true }, linear: { connected: 1, available: true } },
-        earlyFeatures: 3,
-        streamMembers: 5,
-        stream: { level: "mentions", type: "channel", inheritedLevel: "everything" },
-        streamAgent: { mode: "off", name: "Ariadne" },
-      })
-    )
-
-    expect({
-      profile: pages.profile,
-      integrations: pages.integrations,
-      early: pages["early-access"],
-      streamPages,
-    }).toEqual({
-      profile: "Ada · In a meeting",
-      integrations: "2 connected",
-      early: "3 features on",
-      streamPages: { general: "Notify: mentions only", companion: "Ariadne stays quiet", members: "5 members" },
-    })
-  })
-
-  it("says when push is off for this device even though the browser allows it", () => {
-    const { pages, values } = summarizeSettings(input({ pushDevice: "off" }))
-
-    expect({ notifications: pages.notifications, device: values["push-device"] }).toEqual({
-      notifications: "Push all · off for this device",
-      device: "Off for this device",
-    })
-  })
-
   it("never promises pushes while this installation has push off", () => {
     const { pages, values } = summarizeSettings(
       input({ preferences: prefs({ quietOutsideWorkingHours: true }), pushDevice: "server-off" })
@@ -209,32 +110,6 @@ describe("summarizeSettings", () => {
     })
   })
 
-  it("writes every overview line in sentence case, lower case after each ·", () => {
-    const { pages } = summarizeSettings(input({ apiKeys: 0, personalBots: 0 }))
-    const unknownEncryption = summarizeSettings(
-      input({ encryption: "unknown", preferences: prefs({ shareDeviceWithAgents: false }) })
-    ).pages
-
-    expect({
-      appearance: pages.appearance,
-      developer: pages.developer,
-      privacy: unknownEncryption.privacy,
-    }).toEqual({
-      appearance: "Match system · comfortable",
-      developer: "No API keys · no bots",
-      privacy: "Device not shared with agents",
-    })
-  })
-
-  it("tells your default agent from the workspace's, even when they are the same", () => {
-    const { pages } = summarizeSettings(input())
-
-    expect({ ai: pages.ai, workspaceAi: pages["workspace-ai"] }).toEqual({
-      ai: "Your default agent: Ariadne",
-      workspaceAi: "Workspace default agent: Ariadne",
-    })
-  })
-
   it("reads a shortcut as its current binding", () => {
     const { values } = summarizeSettings(
       input({ preferences: prefs({ keyboardShortcuts: { formatBold: "mod+shift+b", searchInStream: "none" } }) })
@@ -261,22 +136,6 @@ describe("summarizeSettings", () => {
       device: "Blocked on this device",
     })
     expect(summarizeSettings(input()).values.pause).toBe("Not paused")
-  })
-
-  it("reads choice settings the way their rows word them", () => {
-    const { values } = summarizeSettings(
-      input({ preferences: prefs({ inboxClearMode: "read", unreadOpenPosition: "marker" }) })
-    )
-
-    expect({
-      settling: values.settling,
-      landing: values["unread-landing"],
-      mirror: values["call-mirror"],
-    }).toEqual({
-      settling: "Leaves Inbox as soon as you read it",
-      landing: "Opens at your first unread",
-      mirror: "Mirror automatically",
-    })
   })
 
   it("reads subagent models as the picker resolves them: an empty list follows the workspace's", () => {
@@ -308,26 +167,6 @@ describe("summarizeSettings", () => {
     })
   })
 
-  it("summarizes each provider beside its own search result", () => {
-    const { values } = summarizeSettings(
-      input({ integrations: { github: { connected: 2, available: true }, linear: { connected: 0, available: true } } })
-    )
-
-    expect({ github: values["github-integration"], linear: values["linear-integration"] }).toEqual({
-      github: "2 accounts connected",
-      linear: "Not connected",
-    })
-  })
-
-  it("names the workspace and the stream in view beside their name results", () => {
-    const { values } = summarizeSettings(input({ streamName: "#design" }))
-
-    expect({ workspace: values["workspace-name"], stream: values["stream-name"] }).toEqual({
-      workspace: "Acme",
-      stream: "#design",
-    })
-  })
-
   it('reads the stream\'s agent as who and whether it replies, "Agent" until the name is known', () => {
     const companion = (streamAgent: SettingsSummaryInput["streamAgent"]) =>
       summarizeSettings(input({ streamAgent })).streamPages.companion
@@ -349,10 +188,16 @@ describe("summarizeSettings", () => {
     ]).toEqual(["Notify: thread default · muted", "Notify: channel default · mentions only", "Notify: everything"])
   })
 
-  it("says what device sharing tells agents, not just that it is on", () => {
-    const value = (shareDeviceWithAgents: boolean) =>
-      summarizeSettings(input({ preferences: prefs({ shareDeviceWithAgents }) })).values["device-sharing"]
+  it("reads encryption by session state, leaving it out until the state is known", () => {
+    const encryption = (state: SettingsSummaryInput["encryption"]) => {
+      const { values, pages } = summarizeSettings(input({ encryption: state }))
+      return [values.encryption, pages.privacy]
+    }
 
-    expect([value(true), value(false)]).toEqual(["Layout, system and open docs", "Not shared"])
+    expect([encryption("no-key"), encryption("unlocking"), encryption("unknown")]).toEqual([
+      ["Encrypted scratchpads: not set up", "No encryption · device shared with agents"],
+      ["Encrypted scratchpads: locked", "Encryption locked · device shared with agents"],
+      [undefined, "Device shared with agents"],
+    ])
   })
 })

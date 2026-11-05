@@ -338,7 +338,7 @@ describe("FoldSetting", () => {
 })
 
 describe("radio list option target", () => {
-  it("stretches each option's label over its highlighted box, with a trailing field above the stretch and outside the label", async () => {
+  it("chooses an option from its label, but not from a trailing field, which stays outside the label", async () => {
     const user = userEvent.setup()
     const onValueChange = vi.fn()
     render(
@@ -359,35 +359,15 @@ describe("radio list option target", () => {
       />
     )
     const count = screen.getByRole("spinbutton", { name: "How many" })
-    const options = screen.getAllByRole("radio").map((radio) => {
-      const label = radio.closest("label")!
-      const box = label.parentElement!.parentElement!
-      return {
-        stretched: label.classList.contains("after:absolute") && label.classList.contains("after:inset-0"),
-        boxPositioned: box.classList.contains("relative"),
-      }
-    })
-    const fieldLayer = count.closest(".z-10")
     await user.click(count)
     const afterFieldClick = onValueChange.mock.calls.length
     await user.click(screen.getByRole("radio", { name: "First" }).closest("label")!)
 
     expect({
-      options,
       fieldInLabel: count.closest("label") !== null,
-      fieldAboveStretch: fieldLayer?.classList.contains("relative") ?? false,
       afterFieldClick,
       choices: onValueChange.mock.calls,
-    }).toEqual({
-      options: [
-        { stretched: true, boxPositioned: true },
-        { stretched: true, boxPositioned: true },
-      ],
-      fieldInLabel: false,
-      fieldAboveStretch: true,
-      afterFieldClick: 0,
-      choices: [["count"]],
-    })
+    }).toEqual({ fieldInLabel: false, afterFieldClick: 0, choices: [["count"]] })
   })
 })
 

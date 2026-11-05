@@ -34,6 +34,7 @@ describe("searchSettings", () => {
     ["quiet", "quiet-hours"],
     ["channel notifications", "notification-level"],
     ["tiemzone", "timezone"],
+    ["zoon", "font-size"],
     ["encryption pin", "encryption-unlock-method"],
     ["stay unlocked", "encryption-keep-unlocked"],
   ])("%s → %s in the top 3", (query, expected) => {

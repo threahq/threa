@@ -121,6 +121,31 @@ export function typoBudget(queryLength: number): number {
   return 2
 }
 
+/** Whether `query` is within its length's `typoBudget` of `text`. */
+export function withinTypoBudget(query: string, text: string): boolean {
+  const budget = typoBudget(query.length)
+  return typoDistance(query, text, budget) <= budget
+}
+
+/** {@link wordMatchQuality} grades, best first. */
+export const WORD_MATCH = { exact: 1, prefix: 0.8, typo: 0.6, infix: 0.5 } as const
+
+/**
+ * How well one lowercased query word matches the best of `words`: exact, a
+ * prefix of one, within its typo budget of one, or (from 4 characters) inside
+ * one; 0 for no match.
+ */
+export function wordMatchQuality(word: string, words: readonly string[]): number {
+  let best = 0
+  for (const candidate of words) {
+    if (candidate === word) return WORD_MATCH.exact
+    if (candidate.startsWith(word)) best = WORD_MATCH.prefix
+    else if (best < WORD_MATCH.infix && word.length >= 4 && candidate.includes(word)) best = WORD_MATCH.infix
+  }
+  if (best < WORD_MATCH.typo && words.some((candidate) => withinTypoBudget(word, candidate))) return WORD_MATCH.typo
+  return best
+}
+
 /**
  * Damerau-Levenshtein distance between `a` and `b`, capped: any distance above
  * `budget` returns `budget + 1` rather than the true value. The cap is what

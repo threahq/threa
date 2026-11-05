@@ -537,6 +537,34 @@ function SettingMarks({ setting }: { setting: AnySettingId }) {
   )
 }
 
+/** A row's name and the marks beside it, for every row shape; `htmlFor` makes the name its control's label. */
+function SettingRowHeading({
+  id,
+  htmlFor,
+  label,
+  marks,
+}: {
+  id?: string
+  htmlFor?: string
+  label: ReactNode
+  marks?: ReactNode
+}) {
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      {htmlFor ? (
+        <Label id={id} htmlFor={htmlFor} className="cursor-pointer leading-snug">
+          {label}
+        </Label>
+      ) : (
+        <span id={id} className="text-sm font-medium leading-snug">
+          {label}
+        </span>
+      )}
+      {marks}
+    </span>
+  )
+}
+
 /**
  * The `aria-describedby` for a setting's own control: its description when it
  * has one, its scope badges when they show, then `extra` ids.
@@ -667,14 +695,6 @@ export function SettingRow(props: SettingRowProps) {
   const shownDescription = description ?? def?.description
   const landingAnchor = setting ?? ("landing" in props && props.landing ? anchor : undefined)
   const marks = setting ? <SettingMarks setting={setting} /> : "marks" in props && props.marks
-  const heading = (
-    <span className="flex flex-wrap items-center gap-2">
-      <span id={ids.label} className="text-sm font-medium leading-snug">
-        {label}
-      </span>
-      {marks}
-    </span>
-  )
   const descriptionText = (
     <>
       {shownDescription && (
@@ -699,23 +719,14 @@ export function SettingRow(props: SettingRowProps) {
         htmlFor={ids.control}
         className="flex min-h-11 min-w-0 flex-1 cursor-pointer flex-col justify-center gap-1 font-normal sm:min-h-0 [@media(pointer:coarse)]:min-h-11"
       >
-        {heading}
+        <SettingRowHeading id={ids.label} label={label} marks={marks} />
         {descriptionText}
       </Label>
     )
   } else {
     text = (
       <div className="min-w-0 flex-1 space-y-1">
-        {labelFor ? (
-          <span className="flex flex-wrap items-center gap-2">
-            <Label id={ids.label} htmlFor={ids.control} className="cursor-pointer leading-snug">
-              {label}
-            </Label>
-            {marks}
-          </span>
-        ) : (
-          heading
-        )}
+        <SettingRowHeading id={ids.label} htmlFor={labelFor ? ids.control : undefined} label={label} marks={marks} />
         {descriptionText}
       </div>
     )
@@ -850,10 +861,7 @@ export function SettingLinkRow(props: SettingLinkRowProps) {
       value={value}
       text={
         <>
-          <span className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium leading-snug">{label}</span>
-            {setting && <SettingMarks setting={setting} />}
-          </span>
+          <SettingRowHeading label={label} marks={setting && <SettingMarks setting={setting} />} />
           {description && (
             <span className={cn("mt-0.5 block text-muted-foreground", SETTING_NOTE_TEXT)}>{description}</span>
           )}
@@ -1521,8 +1529,15 @@ type SettingsDisclosureProps = {
  */
 export const SettingsDisclosureTrigger = forwardRef<
   HTMLButtonElement,
-  { heading: ReactNode; summary?: ReactNode; inactive?: ReactNode; className?: string }
->(function SettingsDisclosureTrigger({ heading, summary, inactive, className }, ref) {
+  {
+    heading: ReactNode
+    headingId?: string
+    marks?: ReactNode
+    summary?: ReactNode
+    inactive?: ReactNode
+    className?: string
+  }
+>(function SettingsDisclosureTrigger({ heading, headingId, marks, summary, inactive, className }, ref) {
   return (
     <CollapsibleTrigger
       ref={ref}
@@ -1535,7 +1550,7 @@ export const SettingsDisclosureTrigger = forwardRef<
       <SettingValueRowBody
         text={
           <span className="block space-y-1">
-            <span className="flex flex-wrap items-center gap-2">{heading}</span>
+            <SettingRowHeading id={headingId} label={heading} marks={marks} />
             {inactive && <DisabledReason>{inactive}</DisabledReason>}
           </span>
         }
@@ -1584,14 +1599,9 @@ export function SettingsDisclosure(props: SettingsDisclosureProps) {
       className={cn("first:rounded-t-lg last:rounded-b-lg", ids && LANDING_TARGET_CLASS)}
     >
       <SettingsDisclosureTrigger
-        heading={
-          <>
-            <span id={ids?.label} className="text-sm font-medium leading-snug">
-              {label}
-            </span>
-            {"setting" in props && <SettingMarks setting={props.setting} />}
-          </>
-        }
+        heading={label}
+        headingId={ids?.label}
+        marks={"setting" in props && <SettingMarks setting={props.setting} />}
         summary={summary}
         inactive={inactive}
       />

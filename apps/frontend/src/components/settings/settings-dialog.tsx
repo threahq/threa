@@ -1111,7 +1111,7 @@ function ChangedSettings({ visibility, summaries, getSettingsUrl, linkHistory, o
     <Collapsible className="rounded-lg border bg-card">
       <SettingsDisclosureTrigger
         ref={triggerRef}
-        heading={<span className="text-sm font-medium">Changed from default</span>}
+        heading="Changed from default"
         summary={changed.length === 1 ? "1 setting" : `${changed.length} settings`}
       />
       <CollapsibleContent>

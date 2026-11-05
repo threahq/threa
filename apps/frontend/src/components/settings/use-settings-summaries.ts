@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { useRef } from "react"
 import { useQuery } from "@tanstack/react-query"
 import {
   DEFAULT_LINK_PREVIEW_OPEN_COUNT,
@@ -414,18 +414,11 @@ export function useSettingsSummaries(
   const callPrefs = useCallPrefs()
   const ownHours = useEffectiveWorkSchedule(workspaceId)
   const workspaceHours = useWorkspaceDefaultWorkSchedule(workspaceId)
-  const activePause = currentUser ? resolveNotificationPause(currentUser) : null
-  const pauseUntil = activePause ? activePause.until : undefined
-  const pauseSource = activePause?.source
   const workspaceSubagentModels =
     useCachedWorkspaceBootstrap(workspaceId, (bootstrap) => bootstrap.workspaceSettings?.subagentModels) ??
     DEFAULT_SUBAGENT_MODELS
   const workspaceName = useWorkspaceFromStore(workspaceId)?.name
-  const profileName = currentUser?.name
-  const profileStatus = currentUser ? (resolveActiveStatus(currentUser)?.text ?? null) : null
   const bots = useWorkspaceBots(workspaceId).filter((bot) => !bot.archivedAt)
-  const sharedBots = bots.filter((bot) => bot.type === "shared").length
-  const personalBots = bots.filter((bot) => bot.type === "personal").length
   const earlyFeatures = useOverriddenFeatureFlags(workspaceId).length
   const isAdmin = hasPermission(useViewerPermissions(workspaceId), WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
   const apiKeys = useQuery({
@@ -444,79 +437,57 @@ export function useSettingsSummaries(
     queryFn: () => integrationsApi.getLinear(workspaceId),
     enabled: overview && isAdmin,
   }).data
-  const integrationsKnown = github !== undefined && linear !== undefined
-  const githubAvailable = !!github?.configured
-  const githubConnected = github?.integrations.filter((integration) => integration.status === "active").length ?? 0
-  const linearAvailable = !!linear?.configured
-  const linearConnected = linear?.integration?.status === "active" ? 1 : 0
 
-  return useMemo(
-    () =>
-      summarizeSettings({
-        preferences,
-        pause: pauseUntil === undefined || !pauseSource ? null : { until: pauseUntil, source: pauseSource },
-        pushDevice,
-        pushButtonsSupported: supportsNotificationActions(),
-        analyticsConfigured,
-        profile: profileName ? { name: profileName, status: profileStatus } : null,
-        workspaceName,
-        integrations: integrationsKnown
-          ? {
-              github: { connected: githubConnected, available: githubAvailable },
-              linear: { connected: linearConnected, available: linearAvailable },
-            }
-          : undefined,
-        apiKeys,
-        personalBots,
-        sharedBots,
-        earlyFeatures,
-        streamMembers,
-        encryption,
-        callPrefs,
-        ownHours,
-        workspaceHours,
-        defaultAgent: agents.effectiveDefault?.name,
-        workspaceDefaultAgent: agents.workspaceDefault?.name,
-        memberCount,
-        workspaceSubagentModels,
-        stream: streamLevel && streamType ? { level: streamLevel, type: streamType, inheritedLevel } : undefined,
-        streamName,
-        streamAgent: streamAgentMode ? { mode: streamAgentMode, name: streamAgentName } : undefined,
-        now: new Date(),
-      }),
-    [
-      preferences,
-      pauseUntil,
-      pauseSource,
-      pushDevice,
-      analyticsConfigured,
-      profileName,
-      profileStatus,
-      workspaceName,
-      integrationsKnown,
-      githubAvailable,
-      githubConnected,
-      linearAvailable,
-      linearConnected,
-      apiKeys,
-      personalBots,
-      sharedBots,
-      earlyFeatures,
-      streamMembers,
-      encryption,
-      callPrefs,
-      ownHours,
-      workspaceHours,
-      agents.effectiveDefault?.name,
-      agents.workspaceDefault?.name,
-      memberCount,
-      workspaceSubagentModels,
-      streamLevel,
-      streamType,
-      inheritedLevel,
-      streamName,
-      streamAgentMode,
-      streamAgentName,
-    ]
-  )
+  const summaries = summarizeSettings({
+    preferences,
+    pause: currentUser ? resolveNotificationPause(currentUser) : null,
+    pushDevice,
+    pushButtonsSupported: supportsNotificationActions(),
+    analyticsConfigured,
+    profile: currentUser?.name
+      ? { name: currentUser.name, status: resolveActiveStatus(currentUser)?.text ?? null }
+      : null,
+    workspaceName,
+    integrations:
+      github && linear
+        ? {
+            github: {
+              connected: github.integrations.filter((integration) => integration.status === "active").length,
+              available: github.configured,
+            },
+            linear: { connected: linear.integration?.status === "active" ? 1 : 0, available: linear.configured },
+          }
+        : undefined,
+    apiKeys,
+    personalBots: bots.filter((bot) => bot.type === "personal").length,
+    sharedBots: bots.filter((bot) => bot.type === "shared").length,
+    earlyFeatures,
+    streamMembers,
+    encryption,
+    callPrefs,
+    ownHours,
+    workspaceHours,
+    defaultAgent: agents.effectiveDefault?.name,
+    workspaceDefaultAgent: agents.workspaceDefault?.name,
+    memberCount,
+    workspaceSubagentModels,
+    stream: streamLevel && streamType ? { level: streamLevel, type: streamType, inheritedLevel } : undefined,
+    streamName,
+    streamAgent: streamAgentMode ? { mode: streamAgentMode, name: streamAgentName } : undefined,
+    now: new Date(),
+  })
+  // Summarizing is cheap, so it runs every render; memoized callers (the quick
+  // switcher's rows) key on `values`, so the same text keeps the same objects.
+  const stable = useRef(summaries)
+  if (!sameSummaries(stable.current, summaries)) stable.current = summaries
+  return stable.current
+}
+
+function sameRecord(a: Partial<Record<string, string>>, b: Partial<Record<string, string>>): boolean {
+  const keys = Object.keys(a)
+  return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key])
+}
+
+function sameSummaries(a: SettingsSummaries, b: SettingsSummaries): boolean {
+  return sameRecord(a.values, b.values) && sameRecord(a.pages, b.pages) && sameRecord(a.streamPages, b.streamPages)
 }

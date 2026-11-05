@@ -263,12 +263,7 @@ export function RevokedList({
     <Collapsible>
       <SettingsDisclosureTrigger
         className="-mx-4 w-[calc(100%+2rem)] rounded-none"
-        heading={
-          <span className="text-sm font-medium">
-            {items.length} revoked {noun}
-            {items.length > 1 ? "s" : ""}
-          </span>
-        }
+        heading={`${items.length} revoked ${noun}${items.length > 1 ? "s" : ""}`}
       />
       <CollapsibleContent>
         <ul className="divide-y divide-border">

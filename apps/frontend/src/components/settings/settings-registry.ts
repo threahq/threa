@@ -36,7 +36,7 @@ import {
   occupiedBindings,
   parseKeyBinding,
 } from "@/lib/keyboard-shortcuts"
-import { typoDistance } from "@/lib/fuzzy"
+import { WORD_MATCH, withinTypoBudget, wordMatchQuality } from "@/lib/fuzzy"
 import type { StreamSettingsTab } from "@/contexts/settings-context"
 import { streamHasMembers } from "@/components/stream-settings/use-stream-members"
 import { streamFallbackLabel } from "@/lib/streams"
@@ -1463,41 +1463,6 @@ const ANY_STREAM_ENTRIES: SearchEntry[] = STREAM_ENTRIES.map((entry) => ({
   result: { ...entry.result, needsStream: true },
 }))
 
-/** Match quality of one query word against an entry's words. */
-const EXACT = 1
-const PREFIX = 0.8
-const TYPO = 0.6
-const INFIX = 0.5
-
-/**
- * Edits a query word may be off by: none below five characters, where one
- * edit reaches too many unrelated words, then one, and two from eight.
- */
-function typoAllowance(length: number): number {
-  if (length < 5) return 0
-  return length < 8 ? 1 : 2
-}
-
-function withinTypo(word: string, candidate: string): boolean {
-  const allowance = typoAllowance(word.length)
-  return (
-    allowance > 0 &&
-    Math.abs(candidate.length - word.length) <= allowance &&
-    typoDistance(word, candidate, allowance) <= allowance
-  )
-}
-
-function wordQuality(word: string, candidates: readonly string[]): number {
-  let best = 0
-  for (const candidate of candidates) {
-    if (candidate === word) return EXACT
-    if (candidate.startsWith(word)) best = PREFIX
-    else if (best < INFIX && word.length >= 4 && candidate.includes(word)) best = INFIX
-  }
-  if (best < TYPO && candidates.some((candidate) => withinTypo(word, candidate))) return TYPO
-  return best
-}
-
 /**
  * How directly the whole query names the entry, above any word count: the
  * exact label first, then a label it starts, an exact keyword, and so on.
@@ -1556,9 +1521,9 @@ function scoreEntry(entry: SearchEntry, query: ParsedQuery, context: SettingsSea
     let best = 0
     let own = false
     for (const field of FIELDS) {
-      const quality = wordQuality(word, entry.words[field])
+      const quality = wordMatchQuality(word, entry.words[field])
       if (quality === 0) continue
-      if (field !== "description" && quality >= TYPO) strong = true
+      if (field !== "description" && quality >= WORD_MATCH.typo) strong = true
       if (field === "label" || field === "keywords") own = true
       best = Math.max(best, quality * FIELD_WEIGHT[field])
     }
@@ -1595,7 +1560,7 @@ function namedWords(entry: SearchEntry, query: ParsedQuery): string[] {
   const named = new Set<string>()
   for (const phrase of entry.phrases) {
     const hits = phrase.map((word) =>
-      query.words.find((queryWord) => queryWord === word || withinTypo(queryWord, word))
+      query.words.find((queryWord) => queryWord === word || withinTypoBudget(queryWord, word))
     )
     if (phrase.length === 0 || hits.some((hit) => hit === undefined)) continue
     for (const hit of hits) if (hit && query.meaningful.has(hit)) named.add(hit)
