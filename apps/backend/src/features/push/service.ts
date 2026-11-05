@@ -227,7 +227,13 @@ export interface PushSourceEvent {
 
 export type PushPreferences = Pick<
   UserPreferences,
-  "notificationLevel" | "pushActions" | "pushReminderMinutes" | "pushQuickReaction"
+  | "notificationLevel"
+  | "pushActions"
+  | "pushReminderMinutes"
+  | "pushQuickReaction"
+  | "quietOutsideWorkingHours"
+  | "workSchedule"
+  | "timezone"
 >
 
 /** Callbacks for resolving cross-feature data (INV-52: access via service layer, not repos) */
@@ -240,6 +246,13 @@ interface CrossFeatureLookups {
    * expired pause stops suppressing even while the user is offline.
    */
   isNotificationPaused: (workspaceId: string, userId: string) => Promise<boolean>
+  /** Whether `at` is outside the user's effective working hours, in their timezone. */
+  isOutsideWorkingHours: (
+    workspaceId: string,
+    userId: string,
+    prefs: Pick<PushPreferences, "workSchedule" | "timezone">,
+    at: Date
+  ) => Promise<boolean>
   /** Resolve a stream's type by ID within a workspace. Returns null if not found. */
   getStreamType: (workspaceId: string, streamId: string) => Promise<StreamType | null>
   /**
@@ -1188,9 +1201,8 @@ export class PushService {
     }
     // Do-not-disturb suppresses push delivery (the activity feed already
     // recorded the row — DND silences the alert, it does not drop history).
-    if (await this.lookups.isNotificationPaused(workspaceId, userId)) {
-      return { eligible: false, reason: PUSH_SUPPRESSION_REASONS.PAUSED }
-    }
+    const muted = await this.muteReason(workspaceId, userId, prefs, new Date())
+    if (muted) return { eligible: false, reason: muted }
     if (
       activity &&
       prefs.notificationLevel === PrefNotificationLevels.MENTIONS &&
@@ -1199,6 +1211,26 @@ export class PushService {
       return { eligible: false, reason: PUSH_SUPPRESSION_REASONS.MENTIONS_MODE }
     }
     return { eligible: true, prefs }
+  }
+
+  /**
+   * A manual or status pause, evaluated at delivery time, or quiet outside
+   * working hours, evaluated at `quietAt`.
+   */
+  private async muteReason(
+    workspaceId: string,
+    userId: string,
+    prefs: PushPreferences,
+    quietAt: Date
+  ): Promise<PushSuppressionReason | null> {
+    if (await this.lookups.isNotificationPaused(workspaceId, userId)) return PUSH_SUPPRESSION_REASONS.PAUSED
+    if (
+      prefs.quietOutsideWorkingHours &&
+      (await this.lookups.isOutsideWorkingHours(workspaceId, userId, prefs, quietAt))
+    ) {
+      return PUSH_SUPPRESSION_REASONS.QUIET_HOURS
+    }
+    return null
   }
 
   /**
@@ -1246,13 +1278,14 @@ export class PushService {
   async deliverCallRing(payload: CallInvitationCreatedOutboxPayload): Promise<void> {
     const kind = PUSH_SEND_KINDS.CALL_RING
     if (!this.canSend) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PUSH_DISABLED)
-    const { workspaceId, targetUserId, attemptId, callId, streamId, inviter, mode, expiresAt } = payload
+    const { workspaceId, targetUserId, attemptId, callId, streamId, inviter, mode, expiresAt, ringedAt } = payload
 
-    const { notificationLevel: prefLevel } = await this.lookups.getUserPushPreferences(workspaceId, targetUserId)
-    if (prefLevel === PrefNotificationLevels.NONE) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PREF_NONE)
-    if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) {
-      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PAUSED)
+    const prefs = await this.lookups.getUserPushPreferences(workspaceId, targetUserId)
+    if (prefs.notificationLevel === PrefNotificationLevels.NONE) {
+      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PREF_NONE)
     }
+    const muted = await this.muteReason(workspaceId, targetUserId, prefs, new Date(ringedAt))
+    if (muted) return this.suppress(kind, muted)
 
     const subscriptions = await PushSubscriptionRepository.findByUserId(this.pool, workspaceId, targetUserId)
     if (subscriptions.length === 0) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.NO_SUBSCRIPTIONS)
@@ -1290,18 +1323,20 @@ export class PushService {
    * itself was suppressed (NONE / do-not-disturb) then nothing was ever queued to
    * collapse, and a cancel push that shows no notification would burn the browser's
    * silent-push quota (Firefox revokes the subscription at 0) — so there is nothing
-   * to cancel.
+   * to cancel. Quiet hours are read at the ring's time, not the settle's, so a ring
+   * sent just before they start still gets its cancel.
    */
   async deliverCallRingCancel(payload: CallInvitationSettledOutboxPayload): Promise<void> {
     const kind = PUSH_SEND_KINDS.CALL_RING_CANCEL
     if (!this.canSend) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PUSH_DISABLED)
-    const { workspaceId, targetUserId, attemptId, inviterName } = payload
+    const { workspaceId, targetUserId, attemptId, inviterName, ringedAt } = payload
 
-    const { notificationLevel: prefLevel } = await this.lookups.getUserPushPreferences(workspaceId, targetUserId)
-    if (prefLevel === PrefNotificationLevels.NONE) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PREF_NONE)
-    if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) {
-      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PAUSED)
+    const prefs = await this.lookups.getUserPushPreferences(workspaceId, targetUserId)
+    if (prefs.notificationLevel === PrefNotificationLevels.NONE) {
+      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PREF_NONE)
     }
+    const muted = await this.muteReason(workspaceId, targetUserId, prefs, new Date(ringedAt))
+    if (muted) return this.suppress(kind, muted)
 
     const subscriptions = await PushSubscriptionRepository.findByUserId(this.pool, workspaceId, targetUserId)
     if (subscriptions.length === 0) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.NO_SUBSCRIPTIONS)

@@ -387,6 +387,21 @@ export class ControlPlaneWorkspaceService {
     logger.info({ workspaceId: payload.workspaceId, region: payload.region }, "Workspace provisioned in region")
   }
 
+  /**
+   * Mirror a rename made in the workspace's region, which owns the name after creation, here and
+   * on its WorkOS organization. A missing row answers 404 and a WorkOS failure throws, so the
+   * region's outbox retries both until they land.
+   */
+  async syncName(workspaceId: string, name: string): Promise<void> {
+    const updated = await WorkspaceRegistryRepository.updateName(this.pool, workspaceId, name)
+    if (!updated) {
+      throw new HttpError("Workspace not found", { status: 404, code: "NOT_FOUND" })
+    }
+    if (updated.workosOrganizationId) {
+      await this.workosOrgService.renameOrganization({ organizationId: updated.workosOrganizationId, name })
+    }
+  }
+
   /** The tier write and the fan-out outbox event commit atomically (INV-7). */
   async setTier(workspaceId: string, tier: WorkspaceTier): Promise<WorkspaceTier> {
     await withTransaction(this.pool, async (client) => {

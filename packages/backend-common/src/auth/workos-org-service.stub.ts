@@ -12,6 +12,8 @@ import type {
 
 export class StubWorkosOrgService implements WorkosOrgService {
   private orgsByExternalId = new Map<string, string>()
+  /** Test helper: each organization's current name, by org id. */
+  public organizationNames = new Map<string, string>()
   private appInvitations: WorkosAppInvitation[] = []
   /** Test helper: let callers pre-populate a user lookup table. */
   public users = new Map<string, WorkosUserSummary>()
@@ -53,8 +55,13 @@ export class StubWorkosOrgService implements WorkosOrgService {
   async createOrganization(params: { name: string; externalId: string }): Promise<{ id: string }> {
     const id = `org_stub_${ulid()}`
     this.orgsByExternalId.set(params.externalId, id)
+    this.organizationNames.set(id, params.name)
     logger.info({ orgId: id, name: params.name, externalId: params.externalId }, "Stub: Created organization")
     return { id }
+  }
+
+  async renameOrganization(params: { organizationId: string; name: string }): Promise<void> {
+    this.organizationNames.set(params.organizationId, params.name)
   }
 
   async getOrganizationByExternalId(externalId: string): Promise<{ id: string } | null> {

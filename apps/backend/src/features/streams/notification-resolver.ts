@@ -1,19 +1,8 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import type { NotificationLevel } from "@threahq/types"
+import { NOTIFICATION_INHERIT_DEPTH, resolveInheritedNotificationLevel, type NotificationLevel } from "@threahq/types"
 import type { Stream } from "./repository"
 import type { StreamMember } from "./member-repository"
-import { getDefaultLevel } from "./notification-config"
-
-/**
- * What a parent's explicit notification level means for child streams.
- * "mentions" and "activity" don't cascade (null stops the ancestor walk).
- */
-function cascadeLevel(parentLevel: NotificationLevel): NotificationLevel | null {
-  if (parentLevel === "everything") return "activity"
-  if (parentLevel === "muted") return "muted"
-  return null
-}
 
 export interface ResolvedNotification {
   memberId: string
@@ -44,37 +33,16 @@ export async function resolveNotificationLevelsForStream(
 
   if (needsResolution.length === 0) return resolved
 
-  const ancestorIds = await getAncestorIds(db, stream.workspaceId, stream.parentStreamId, 2)
-  if (ancestorIds.length === 0) {
-    for (const member of needsResolution) {
-      resolved.push({ memberId: member.memberId, effectiveLevel: getDefaultLevel(stream.type), source: "default" })
-    }
-    return resolved
-  }
-
+  const ancestorIds = await getAncestorIds(db, stream.workspaceId, stream.parentStreamId, NOTIFICATION_INHERIT_DEPTH)
   const memberIds = needsResolution.map((m) => m.memberId)
   const ancestorMemberships = await getAncestorMemberships(db, stream.workspaceId, ancestorIds, memberIds)
 
   for (const member of needsResolution) {
-    let inherited: NotificationLevel | null = null
-
-    for (const ancestorId of ancestorIds) {
-      const level = ancestorMemberships.get(ancestorId)?.get(member.memberId)
-      if (!level) continue
-
-      inherited = cascadeLevel(level)
-      break
-    }
-
-    if (inherited) {
-      resolved.push({ memberId: member.memberId, effectiveLevel: inherited, source: "inherited" })
-    } else {
-      resolved.push({
-        memberId: member.memberId,
-        effectiveLevel: getDefaultLevel(stream.type),
-        source: "default",
-      })
-    }
+    const { level, from } = resolveInheritedNotificationLevel(
+      stream.type,
+      ancestorIds.map((id) => ({ level: ancestorMemberships.get(id)?.get(member.memberId) }))
+    )
+    resolved.push({ memberId: member.memberId, effectiveLevel: level, source: from ? "inherited" : "default" })
   }
 
   return resolved
@@ -114,6 +82,7 @@ async function getAncestorMemberships(
   ancestorIds: string[],
   memberIds: string[]
 ): Promise<Map<string, Map<string, NotificationLevel>>> {
+  if (ancestorIds.length === 0) return new Map()
   const result = await db.query<{ stream_id: string; member_id: string; notification_level: string }>(sql`
     SELECT stream_id, member_id, notification_level
     FROM stream_members
@@ -133,4 +102,60 @@ async function getAncestorMemberships(
     memberMap.set(row.member_id, row.notification_level as NotificationLevel)
   }
   return map
+}
+
+/**
+ * One member's effective level on each of `streamIds`, set-based: their own
+ * level, else what their levels on the stream's ancestors carry down.
+ */
+export async function resolveNotificationLevelsForMember(
+  db: Querier,
+  workspaceId: string,
+  memberId: string,
+  streamIds: string[]
+): Promise<Map<string, NotificationLevel>> {
+  if (streamIds.length === 0) return new Map()
+
+  const result = await db.query<{
+    stream_id: string
+    type: Stream["type"]
+    depth: number
+    notification_level: NotificationLevel | null
+  }>(sql`
+    WITH RECURSIVE chain AS (
+      SELECT s.id AS stream_id, s.type, s.id AS node_id, s.parent_stream_id AS next_id, 0 AS depth
+      FROM streams s
+      WHERE s.workspace_id = ${workspaceId} AND s.id = ANY(${streamIds})
+
+      UNION ALL
+
+      SELECT c.stream_id, c.type, p.id, p.parent_stream_id, c.depth + 1
+      FROM chain c
+      JOIN streams p ON p.workspace_id = ${workspaceId} AND p.id = c.next_id
+      WHERE c.depth < ${NOTIFICATION_INHERIT_DEPTH}
+    )
+    SELECT c.stream_id, c.type, c.depth, sm.notification_level
+    FROM chain c
+    LEFT JOIN stream_members sm
+      ON sm.workspace_id = ${workspaceId} AND sm.stream_id = c.node_id AND sm.member_id = ${memberId}
+    ORDER BY c.stream_id, c.depth
+  `)
+
+  const chains = new Map<
+    string,
+    { type: Stream["type"]; own: NotificationLevel | null; ancestors: { level: NotificationLevel | null }[] }
+  >()
+  for (const row of result.rows) {
+    if (row.depth === 0) {
+      chains.set(row.stream_id, { type: row.type, own: row.notification_level, ancestors: [] })
+    } else {
+      chains.get(row.stream_id)?.ancestors.push({ level: row.notification_level })
+    }
+  }
+
+  const levels = new Map<string, NotificationLevel>()
+  for (const [streamId, chain] of chains) {
+    levels.set(streamId, chain.own ?? resolveInheritedNotificationLevel(chain.type, chain.ancestors).level)
+  }
+  return levels
 }

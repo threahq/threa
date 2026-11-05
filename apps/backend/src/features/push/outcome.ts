@@ -19,6 +19,7 @@ export const PUSH_SUPPRESSION_REASONS = {
   MEMBER_ADDED: "member_added",
   PREF_NONE: "pref_none",
   PAUSED: "paused",
+  QUIET_HOURS: "quiet_hours",
   MENTIONS_MODE: "mentions_mode",
   NO_SUBSCRIPTIONS: "no_subscriptions",
   /** Every device's session expired: those devices got the session-expired push instead. */

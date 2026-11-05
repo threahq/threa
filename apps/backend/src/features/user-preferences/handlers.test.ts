@@ -285,6 +285,16 @@ describe("updatePreferencesSchema mobileInlineAttachments", () => {
   })
 })
 
+describe("updatePreferencesSchema quietOutsideWorkingHours", () => {
+  it("accepts booleans and rejects other values", () => {
+    expect({
+      on: updatePreferencesSchema.parse({ quietOutsideWorkingHours: true }),
+      off: updatePreferencesSchema.parse({ quietOutsideWorkingHours: false }),
+      text: updatePreferencesSchema.safeParse({ quietOutsideWorkingHours: "yes" }).success,
+    }).toEqual({ on: { quietOutsideWorkingHours: true }, off: { quietOutsideWorkingHours: false }, text: false })
+  })
+})
+
 describe("updatePreferencesSchema accessibility.composerActionSide", () => {
   it("accepts both sides", () => {
     expect(updatePreferencesSchema.parse({ accessibility: { composerActionSide: "left" } }).accessibility).toEqual({

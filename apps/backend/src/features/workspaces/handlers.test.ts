@@ -32,6 +32,7 @@ function makeStreamService(archivedStreams: unknown[]) {
     listArchivedStreams: async () => archivedStreams,
     listInboxHeldStreamIds: async () => [],
     getInboxArrivedAt: async () => ({}),
+    listMutedStreamIds: async () => [],
   }
 }
 

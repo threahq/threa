@@ -217,6 +217,26 @@ export class ControlPlaneClient {
     }
   }
 
+  /** Mirror the workspace's current name into the control-plane registry. Throws so the outbox retries. */
+  async syncWorkspaceName(params: { workspaceId: string; name: string }): Promise<void> {
+    const url = `${this.baseUrl}/internal/workspaces/${encodeURIComponent(params.workspaceId)}/name`
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        [INTERNAL_API_KEY_HEADER]: this.internalApiKey,
+      },
+      body: JSON.stringify({ name: params.name }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "")
+      logger.error({ workspaceId: params.workspaceId, status: res.status, body }, "Failed to sync workspace name")
+      throw new Error(`Control-plane returned ${res.status}: ${body}`)
+    }
+  }
+
   /**
    * Register (upsert) a webhook routing entry so CP can fan a provider webhook
    * for `externalId` (e.g. a GitHub installation id) to this region. Idempotent

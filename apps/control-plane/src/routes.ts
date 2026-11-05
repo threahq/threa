@@ -301,6 +301,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
 
   app.get("/internal/workspaces/:workspaceId/region", internalAuth, workspace.getRegion)
   app.get("/internal/workspaces/:workspaceId/members/:workosUserId", internalAuth, workspace.confirmMembership)
+  app.post("/internal/workspaces/:workspaceId/name", internalAuth, workspace.syncName)
   app.post("/internal/invitation-shadows", internalAuth, shadow.create)
   app.patch("/internal/invitation-shadows/:id", internalAuth, shadow.update)
   app.post("/internal/invitation-shadows/:id/claim", internalAuth, shadow.notifyClaim)

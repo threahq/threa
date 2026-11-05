@@ -252,6 +252,8 @@ interface Dependencies {
   storage: StorageProvider
   ai: AI
   controlPlaneClient: ControlPlaneClient | null
+  /** This backend's region; null in single-region dev. */
+  region: string | null
   costService: AICostServiceLike
   accessLogService: AccessLogService
   analyticsReporter: AnalyticsReporter
@@ -338,6 +340,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     storage,
     ai,
     controlPlaneClient,
+    region,
     accessLogService,
     analyticsReporter,
     posthog,
@@ -390,6 +393,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     callService,
     pool,
     analytics: posthog ? { posthogToken: posthog.projectToken, posthogHost: posthog.host } : null,
+    region,
   })
   const docs = createDocHandlers({ docService, streamService })
   const streamBriefService = new StreamBriefService({ pool })
@@ -677,6 +681,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/workspaces", auth, audit("workspace.list", "read"), workspace.list)
   app.post("/api/workspaces", auth, audit("workspace.create", "write"), workspace.create)
   app.get("/api/workspaces/:workspaceId", ...authed, audit("workspace.get", "read"), workspace.get)
+  app.patch(
+    "/api/workspaces/:workspaceId",
+    ...authed,
+    audit("workspace.rename", "write"),
+    requireWorkspaceAdmin,
+    workspace.update
+  )
   app.get(
     "/api/workspaces/:workspaceId/bootstrap",
     ...authed,

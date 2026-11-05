@@ -159,6 +159,7 @@ describe("monitor push probe", () => {
       lookups: {
         getUserPushPreferences: unused,
         isNotificationPaused: unused,
+        isOutsideWorkingHours: unused,
         getStreamType: unused,
         getWorkosUserId: unused,
         resolveActivityPush: unused,

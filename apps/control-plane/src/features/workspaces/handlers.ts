@@ -1,7 +1,7 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
 import { HttpError, isValidIanaTimezone } from "@threahq/backend-common"
-import { WORKSPACE_TIER_VALUES } from "@threahq/types"
+import { WORKSPACE_TIER_VALUES, updateWorkspaceSchema, workspaceNameSchema } from "@threahq/types"
 import type { ControlPlaneWorkspaceService } from "./service"
 import type { InvitationShadowService } from "../invitation-shadows"
 
@@ -11,7 +11,7 @@ interface Dependencies {
 }
 
 const createWorkspaceSchema = z.object({
-  name: z.string().min(1).max(100),
+  name: workspaceNameSchema,
   region: z.string().min(1).optional(),
   // The creator's IANA zone, which the region seeds the workspace's billing
   // timezone from. Validated here, not just regionally: a value the region
@@ -85,6 +85,16 @@ export function createWorkspaceHandlers({ workspaceService, shadowService }: Dep
         throw new HttpError("Workspace not found", { status: 404, code: "NOT_FOUND" })
       }
       res.json({ region })
+    },
+
+    /** Region → control plane: the workspace's current name, so replays converge. */
+    async syncName(req: Request, res: Response) {
+      const parsed = updateWorkspaceSchema.safeParse(req.body)
+      if (!parsed.success) {
+        throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
+      }
+      await workspaceService.syncName(req.params.workspaceId, parsed.data.name)
+      res.status(204).send()
     },
 
     async confirmMembership(req: Request, res: Response) {

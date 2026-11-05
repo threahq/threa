@@ -400,8 +400,14 @@ export interface UserPreferences {
   pushReminderMinutes: number
   /** Emoji (character or `:shortcode:`) the quick-reaction push button sends. */
   pushQuickReaction: string
+  /** Suppress push notifications while the user is outside their effective working hours. */
+  quietOutsideWorkingHours: boolean
   scratchpadCustomPrompt: string | null
+  /** Whether long code blocks start collapsed at all; the threshold applies only when on. */
+  codeBlockCollapseEnabled: boolean
   codeBlockCollapseThreshold: number
+  /** Whether long quotes start collapsed at all; the threshold applies only when on. */
+  blockquoteCollapseEnabled: boolean
   blockquoteCollapseThreshold: number
   codeBlockWrap: CodeBlockWrap
   codeBlockWrapOverrides: Record<string, CodeBlockWrap>
@@ -551,8 +557,11 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   pushActions: [...DEFAULT_PUSH_ACTIONS],
   pushReminderMinutes: DEFAULT_PUSH_REMINDER_MINUTES,
   pushQuickReaction: DEFAULT_PUSH_QUICK_REACTION,
+  quietOutsideWorkingHours: false,
   scratchpadCustomPrompt: null,
+  codeBlockCollapseEnabled: true,
   codeBlockCollapseThreshold: DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD,
+  blockquoteCollapseEnabled: true,
   blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
   codeBlockWrap: DEFAULT_CODE_BLOCK_WRAP,
   codeBlockWrapOverrides: {},
@@ -609,8 +618,11 @@ export interface UpdateUserPreferencesInput {
   pushActions?: PushAction[]
   pushReminderMinutes?: number
   pushQuickReaction?: string
+  quietOutsideWorkingHours?: boolean
   scratchpadCustomPrompt?: string | null
+  codeBlockCollapseEnabled?: boolean
   codeBlockCollapseThreshold?: number
+  blockquoteCollapseEnabled?: boolean
   blockquoteCollapseThreshold?: number
   codeBlockWrap?: CodeBlockWrap
   codeBlockWrapOverrides?: Record<string, CodeBlockWrap>

@@ -414,6 +414,12 @@ export {
   LabelActorTypes,
 } from "./constants"
 
+export {
+  NOTIFICATION_INHERIT_DEPTH,
+  resolveInheritedNotificationLevel,
+  type InheritedNotificationLevel,
+} from "./notification-inheritance"
+
 // Single source of truth for how each stream event renders across the timeline
 // and the board/conversation projection (anti-drift spec — see stream-rows.ts).
 export {
@@ -1143,6 +1149,7 @@ export {
   typicalStartMinutes,
   startOfWorkForDay,
   firstWorkingWeekday,
+  isWithinWorkingHours,
 } from "./work-schedule"
 
 // Workspace settings
@@ -1506,6 +1513,13 @@ export {
   type PushTestDeviceProgress,
   type PushTestProgress,
 } from "./push"
+
+export {
+  WORKSPACE_NAME_MAX_LENGTH,
+  workspaceNameSchema,
+  updateWorkspaceSchema,
+  type WorkspaceNameUpdatedPayload,
+} from "./workspaces"
 
 // Org workspaces (Threa Connect: the unclaimed workspace for a counterpart org)
 export {
