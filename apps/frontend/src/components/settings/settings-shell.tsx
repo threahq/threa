@@ -32,7 +32,7 @@ import { useSettingsLinkHistory, type SettingsLinkHistory } from "./settings-lin
  */
 
 export const SETTINGS_WINDOW_CLASSNAMES = {
-  desktop: `w-[min(96vw,1060px)] max-w-none h-[min(800px,calc(100vh-1rem))] sm:flex flex-col overflow-hidden p-0 gap-0 ${SETTING_LEGIBLE_MUTED}`,
+  desktop: `w-[min(94vw,1400px)] max-w-none h-[min(1080px,calc(100vh-2rem))] sm:flex flex-col overflow-hidden p-0 gap-0 ${SETTING_LEGIBLE_MUTED}`,
   drawer: `flex h-[94dvh] flex-col gap-0 ${SETTING_LEGIBLE_MUTED}`,
 } as const
 

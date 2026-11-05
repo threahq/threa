@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Input } from "@/components/ui/input"
 import {
   SETTING_CONTROL_HEIGHT,
+  SETTING_PEOPLE_LIST_HEIGHT,
   SettingAddButton,
   SettingEmptyNote,
   SettingRemoveButton,
@@ -31,6 +32,7 @@ import { useStreamService } from "@/contexts"
 import { botsApi } from "@/api/bots"
 import { isPickableUser, useWorkspaceUsers, useWorkspaceBots } from "@/stores/workspace-store"
 import { rankMatches } from "@/lib/match-score"
+import { cn } from "@/lib/utils"
 import { hasPermission } from "@/lib/permissions"
 import {
   roleDisplayName,
@@ -185,7 +187,7 @@ export function MembersTab({ workspaceId, streamId, currentUserId }: MembersTabP
               className={SETTING_CONTROL_HEIGHT}
             />
 
-            <ul className="max-h-64 divide-y divide-border overflow-y-auto">
+            <ul className={cn("divide-y divide-border overflow-y-auto", SETTING_PEOPLE_LIST_HEIGHT)}>
               {filteredMembers.map((member) => {
                 const name = member.name || member.slug
                 return (

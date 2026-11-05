@@ -87,6 +87,9 @@ export const SETTING_CONTROL_WIDTH = "w-full sm:w-72"
  */
 export const SETTING_CONTROL_HEIGHT = "h-11 sm:h-9 [@media(pointer:coarse)]:min-h-11"
 
+/** A scrolling people list: about eight and a half rows, so the cut-off row shows there's more. */
+export const SETTING_PEOPLE_LIST_HEIGHT = "max-h-[28rem]"
+
 /** A single-line control (select, input, picker trigger) in a row's right-hand column. */
 export const SETTING_CONTROL_CLASS = `${SETTING_CONTROL_HEIGHT} ${SETTING_CONTROL_WIDTH}`
 

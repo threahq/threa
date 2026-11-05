@@ -10,7 +10,7 @@ import * as invitationsModule from "@/api/invitations"
 import * as workspacesModule from "@/hooks/use-workspaces"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as guestDmPolicyModule from "./guest-dm-policy-section"
-import { PendingEmailInvitationDetails, UsersTab } from "./users-tab"
+import { UsersTab } from "./users-tab"
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -81,21 +81,84 @@ it("should show Guest on a pending guest invitation when one is listed", async (
   expect(within(email.parentElement as HTMLElement).getByText("Guest")).toBeInTheDocument()
 })
 
-it("should retain role and local expiry for pending email invitations", () => {
-  const formatDate = vi.fn(() => "Jan 8, 2027")
-  render(
-    <PendingEmailInvitationDetails
-      email="invitee@example.com"
-      role="admin"
-      expiresAt="2027-01-08T10:00:00.000Z"
-      formatDate={formatDate}
-    />
-  )
+function invitation(overrides: Partial<WorkspaceInvitation>): WorkspaceInvitation {
+  return {
+    id: "inv_x",
+    workspaceId: "ws_1",
+    kind: "email",
+    email: null,
+    role: "member",
+    invitedBy: "usr_admin",
+    status: "pending",
+    note: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    acceptedAt: null,
+    maxUses: null,
+    useCount: 0,
+    ...overrides,
+  }
+}
 
-  expect(screen.getByText("invitee@example.com")).toBeInTheDocument()
-  expect(screen.getByText("Admin")).toBeInTheDocument()
-  expect(screen.getByText("Expires Jan 8, 2027")).toBeInTheDocument()
-  expect(formatDate).toHaveBeenCalledWith(new Date("2027-01-08T10:00:00.000Z"))
+const rowTexts = (list: HTMLElement) =>
+  within(list)
+    .getAllByRole("listitem")
+    .map((item) => item.textContent)
+
+it("should list usable invitations open, and fold accepted and expired ones away behind their counts", async () => {
+  const user = userEvent.setup()
+  renderUsersTab([
+    invitation({ id: "inv_open", email: "open@example.com" }),
+    invitation({
+      id: "inv_joined",
+      email: "joined@example.com",
+      status: "accepted",
+      acceptedAt: "2026-02-02T10:00:00.000Z",
+    }),
+    invitation({
+      id: "inv_lapsed",
+      email: "lapsed@example.com",
+      status: "expired",
+      expiresAt: "2026-01-08T10:00:00.000Z",
+    }),
+    invitation({ id: "inv_unswept", email: "unswept@example.com", expiresAt: "2026-01-09T10:00:00.000Z" }),
+    invitation({ id: "inv_link", kind: "link", maxUses: 5, useCount: 1, expiresAt: null }),
+    invitation({ id: "inv_used", kind: "link", maxUses: 1, useCount: 1, expiresAt: null }),
+    invitation({ id: "inv_revoked", email: "revoked@example.com", status: "revoked" }),
+  ])
+
+  const open = await screen.findByRole("list", { name: "Open invitations" })
+  const accepted = screen.getByRole("button", { name: /Accepted invitations/ })
+  const expired = screen.getByRole("button", { name: /Expired invitations/ })
+  const folded = {
+    open: rowTexts(open).map((text) => text?.match(/open@example\.com|Invite link/)?.[0]),
+    accepted: accepted.textContent,
+    expired: expired.textContent,
+    acceptedShown: screen.queryByRole("list", { name: "Accepted invitations" }) !== null,
+    revokedShown: screen.queryByText("revoked@example.com") !== null,
+  }
+  await user.click(expired)
+  const expiredRows = within(screen.getByRole("list", { name: "Expired invitations" }))
+    .getAllByRole("listitem")
+    .map((item) => ({
+      who: item.textContent?.match(/\w+@example\.com|Invite link/)?.[0],
+      resend: within(item).queryByRole("button", { name: "Resend" }) !== null,
+    }))
+
+  expect({ folded, expiredRows }).toEqual({
+    folded: {
+      open: ["open@example.com", "Invite link"],
+      accepted: expect.stringContaining("1 accepted"),
+      expired: expect.stringContaining("3 expired"),
+      acceptedShown: false,
+      revokedShown: false,
+    },
+    expiredRows: [
+      { who: "lapsed@example.com", resend: false },
+      { who: "unswept@example.com", resend: true },
+      { who: "Invite link", resend: false },
+    ],
+  })
 })
 
 it("should anchor the invite actions on the invitations row so the palette's Invite people lands on them", () => {

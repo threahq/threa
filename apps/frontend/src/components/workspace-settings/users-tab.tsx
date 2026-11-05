@@ -7,6 +7,7 @@ import {
   roleDisplayName,
   WORKSPACE_PERMISSION_SCOPES,
   WORKSPACE_ASSIGNABLE_ROLES,
+  type WorkspaceInvitation,
   type WorkspaceRoleSlug,
 } from "@threahq/types"
 import { Button } from "@/components/ui/button"
@@ -14,11 +15,13 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "@/components/ui/input"
 import {
   SETTING_CONTROL_HEIGHT,
+  SETTING_PEOPLE_LIST_HEIGHT,
   SettingActions,
   SettingControlSkeleton,
   SettingEmptyNote,
   SettingFieldError,
   SettingRow,
+  SettingsDisclosure,
   SettingsSection,
   settingIds,
   SettingBadge,
@@ -112,30 +115,205 @@ function invitationErrorMessage(error: unknown, fallback: string): string {
   return fallback
 }
 
-export function PendingEmailInvitationDetails({
-  email,
-  role,
-  expiresAt,
-  formatDate,
-}: {
-  email: string | null
-  role: WorkspaceRoleSlug
-  expiresAt: string | null
+type InvitationGroup = "active" | "accepted" | "expired"
+
+function isLapsed(invitation: WorkspaceInvitation, now: number): boolean {
+  return (
+    invitation.status === "expired" ||
+    (invitation.expiresAt !== null && new Date(invitation.expiresAt).getTime() <= now)
+  )
+}
+
+function isUsedUp(invitation: WorkspaceInvitation): boolean {
+  return invitation.maxUses !== null && invitation.useCount >= invitation.maxUses
+}
+
+/** Where an invitation lists: still usable, taken up, or no longer usable. Revoked ones don't list. */
+export function invitationGroup(invitation: WorkspaceInvitation, now: number): InvitationGroup | null {
+  if (invitation.status === "revoked") return null
+  if (invitation.status === "accepted") return "accepted"
+  return isLapsed(invitation, now) || isUsedUp(invitation) ? "expired" : "active"
+}
+
+interface InvitationRowActions {
+  now: number
   formatDate: (date: Date) => string
+  copiedId: string | null
+  hasToken: (invitationId: string) => boolean
+  onCopy: (invitationId: string) => void
+  onEdit: (invitationId: string) => void
+  onRevoke: (invitation: WorkspaceInvitation) => void
+  onResend: (invitationId: string) => void
+  revoking: boolean
+  resending: boolean
+}
+
+function InvitationList({
+  label,
+  invitations,
+  inset,
+  actions,
+}: {
+  label: string
+  invitations: WorkspaceInvitation[]
+  /** Rows sit in a card's own frame, as in a disclosure, rather than in a setting row's padding. */
+  inset?: boolean
+  actions: InvitationRowActions
 }) {
   return (
-    <div className="min-w-0 space-y-1">
-      <span className="inline-flex min-w-0 items-center gap-1.5 truncate text-sm font-medium">
-        <Mail className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        {email}
-      </span>
-      <div className="flex items-center gap-2">
-        <SettingBadge>{roleDisplayName(role)}</SettingBadge>
-        <span className={SETTING_MUTED_NOTE_TEXT}>
-          {expiresAt ? `Expires ${formatDate(new Date(expiresAt))}` : "Never expires"}
-        </span>
+    <ul aria-label={label} className="divide-y divide-border">
+      {invitations.map((invitation) => (
+        <li
+          key={invitation.id}
+          className={cn("flex min-h-11 items-center justify-between gap-2 py-2", inset && "px-4")}
+        >
+          {invitation.kind === "link" ? (
+            <InviteLinkRow invitation={invitation} actions={actions} />
+          ) : (
+            <EmailInvitationRow invitation={invitation} actions={actions} />
+          )}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function InviteLinkRow({ invitation, actions }: { invitation: WorkspaceInvitation; actions: InvitationRowActions }) {
+  const tokenInMemory = actions.hasToken(invitation.id)
+  let state: string | null = null
+  if (isLapsed(invitation, actions.now)) state = "Expired"
+  else if (isUsedUp(invitation)) state = "Used up"
+  const linkName = invitation.note ? `invite link “${invitation.note}”` : "invite link"
+  return (
+    <>
+      <div className="min-w-0 space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 text-sm font-medium">
+            <LinkIcon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            Invite link
+          </span>
+          {state && <SettingBadge>{state}</SettingBadge>}
+          <SettingBadge>{roleDisplayName(invitation.role)}</SettingBadge>
+        </div>
+        <p className={SETTING_MUTED_NOTE_TEXT}>
+          {invitation.useCount} of {invitation.maxUses ?? "unlimited"} joined ·{" "}
+          {invitation.expiresAt
+            ? `${state === "Expired" ? "Expired" : "Expires"} ${actions.formatDate(new Date(invitation.expiresAt))}`
+            : "Never expires"}
+        </p>
+        {invitation.note && (
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <p className={cn("truncate text-muted-foreground", SETTING_NOTE_TEXT)}>{invitation.note}</p>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs text-xs">
+                {invitation.note}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
       </div>
-    </div>
+      <div className="flex shrink-0 items-center gap-1">
+        {!state && (
+          <Button
+            size="sm"
+            variant="outline"
+            className={SETTING_CONTROL_HEIGHT}
+            onClick={() => actions.onCopy(invitation.id)}
+            disabled={!tokenInMemory}
+          >
+            <CopyLinkLabel isCopied={actions.copiedId === invitation.id} tokenInMemory={tokenInMemory} />
+          </Button>
+        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="icon" variant="ghost" className={SETTING_ICON_BUTTON} aria-label={`More for ${linkName}`}>
+              <MoreHorizontal aria-hidden />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => actions.onEdit(invitation.id)}>
+              <Pencil aria-hidden />
+              Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              disabled={actions.revoking}
+              onSelect={() => actions.onRevoke(invitation)}
+            >
+              Revoke
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </>
+  )
+}
+
+function emailInvitationDetail(invitation: WorkspaceInvitation, now: number, formatDate: (date: Date) => string) {
+  const on = (iso: string | null, word: string) => (iso ? `${word} ${formatDate(new Date(iso))}` : word)
+  if (invitation.status === "accepted") return on(invitation.acceptedAt, "Joined")
+  if (isLapsed(invitation, now)) return on(invitation.expiresAt, "Expired")
+  return invitation.expiresAt ? on(invitation.expiresAt, "Expires") : "Never expires"
+}
+
+function EmailInvitationRow({
+  invitation,
+  actions,
+}: {
+  invitation: WorkspaceInvitation
+  actions: InvitationRowActions
+}) {
+  return (
+    <>
+      <div className="min-w-0 space-y-1">
+        <span className="inline-flex min-w-0 items-center gap-1.5 truncate text-sm font-medium">
+          <Mail className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          {invitation.email}
+        </span>
+        <div className="flex items-center gap-2">
+          <SettingBadge>{roleDisplayName(invitation.role)}</SettingBadge>
+          <span className={SETTING_MUTED_NOTE_TEXT}>
+            {emailInvitationDetail(invitation, actions.now, actions.formatDate)}
+          </span>
+        </div>
+      </div>
+      {invitation.status === "pending" && (
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            size="sm"
+            variant="outline"
+            className={SETTING_CONTROL_HEIGHT}
+            onClick={() => actions.onResend(invitation.id)}
+            disabled={actions.resending}
+          >
+            Resend
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                className={SETTING_ICON_BUTTON}
+                aria-label={`More for the invitation to ${invitation.email}`}
+              >
+                <MoreHorizontal aria-hidden />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                disabled={actions.revoking}
+                onSelect={() => actions.onRevoke(invitation)}
+              >
+                Revoke
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -192,13 +370,16 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
   })
 
   const invitations = invitationsQuery.data ?? []
-  const pendingEmailInvitations = invitations.filter(
-    (invitation) => invitation.kind === "email" && invitation.status === "pending"
-  )
-  const linkInvitations = invitations.filter(
-    (invitation) => invitation.kind === "link" && invitation.status !== "revoked"
-  )
-  const editedInvitation = linkInvitations.find((invitation) => invitation.id === selectedLink) ?? null
+  const now = Date.now()
+  const grouped: Record<InvitationGroup, WorkspaceInvitation[]> = { active: [], accepted: [], expired: [] }
+  for (const invitation of invitations) {
+    const group = invitationGroup(invitation, now)
+    if (group) grouped[group].push(invitation)
+  }
+  const editedInvitation =
+    invitations.find(
+      (invitation) => invitation.id === selectedLink && invitation.kind === "link" && invitation.status !== "revoked"
+    ) ?? null
 
   const openLink = (value: string) => {
     const next = new URLSearchParams(searchParams)
@@ -225,7 +406,34 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
     }
   }
 
-  const missingToken = linkInvitations.some((invitation) => !tokensRef.current.has(invitation.id))
+  const missingToken = grouped.active.some(
+    (invitation) => invitation.kind === "link" && !tokensRef.current.has(invitation.id)
+  )
+
+  const rowActions: InvitationRowActions = {
+    now,
+    formatDate,
+    copiedId: copiedInvitationId,
+    hasToken: (invitationId) => tokensRef.current.has(invitationId),
+    onCopy: handleCopy,
+    onEdit: openLink,
+    onRevoke: (invitation) =>
+      revokeMutation.mutate(invitation.id, {
+        onError: (error) =>
+          toast.error(
+            invitationErrorMessage(
+              error,
+              invitation.kind === "link" ? "Failed to revoke link" : "Failed to revoke invitation"
+            )
+          ),
+      }),
+    onResend: (invitationId) =>
+      resendMutation.mutate(invitationId, {
+        onError: (error) => toast.error(invitationErrorMessage(error, "Failed to resend invitation")),
+      }),
+    revoking: revokeMutation.isPending,
+    resending: resendMutation.isPending,
+  }
 
   return (
     <div className="space-y-8">
@@ -248,7 +456,7 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
             />
             <ul
               aria-labelledby={settingIds("members").label}
-              className="max-h-64 divide-y divide-border overflow-y-auto"
+              className={cn("divide-y divide-border overflow-y-auto", SETTING_PEOPLE_LIST_HEIGHT)}
             >
               {shownUsers.map((user) => {
                 const isSelf = user.workosUserId === authUser?.id
@@ -373,151 +581,10 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
             </SettingActions>
           }
         >
-          {(linkInvitations.length > 0 || pendingEmailInvitations.length > 0 || invitationsQuery.isError) && (
+          {(grouped.active.length > 0 || invitationsQuery.isError) && (
             <div className="space-y-2">
-              {(linkInvitations.length > 0 || pendingEmailInvitations.length > 0) && (
-                <ul aria-label="Open invitations" className="divide-y divide-border">
-                  {linkInvitations.map((invitation) => {
-                    const tokenInMemory = tokensRef.current.has(invitation.id)
-                    const exhausted = invitation.maxUses !== null && invitation.useCount >= invitation.maxUses
-                    const expired =
-                      invitation.expiresAt !== null && new Date(invitation.expiresAt).getTime() <= Date.now()
-                    let state = "Active"
-                    if (expired) state = "Expired"
-                    else if (exhausted) state = "Used up"
-                    const linkName = invitation.note ? `invite link “${invitation.note}”` : "invite link"
-                    return (
-                      <li key={invitation.id} className="flex min-h-11 items-center justify-between gap-2 py-2">
-                        <div className="min-w-0 space-y-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="inline-flex items-center gap-1.5 text-sm font-medium">
-                              <LinkIcon className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                              Invite link
-                            </span>
-                            <SettingBadge>{state}</SettingBadge>
-                            <SettingBadge>{roleDisplayName(invitation.role)}</SettingBadge>
-                          </div>
-                          <p className={SETTING_MUTED_NOTE_TEXT}>
-                            {invitation.useCount} of {invitation.maxUses ?? "unlimited"} joined ·{" "}
-                            {invitation.expiresAt
-                              ? `Expires ${formatDate(new Date(invitation.expiresAt))}`
-                              : "Never expires"}
-                          </p>
-                          {invitation.note && (
-                            <TooltipProvider delayDuration={300}>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <p className={cn("truncate text-muted-foreground", SETTING_NOTE_TEXT)}>
-                                    {invitation.note}
-                                  </p>
-                                </TooltipTrigger>
-                                <TooltipContent side="top" className="max-w-xs text-xs">
-                                  {invitation.note}
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          )}
-                        </div>
-                        <div className="flex shrink-0 items-center gap-1">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className={SETTING_CONTROL_HEIGHT}
-                            onClick={() => handleCopy(invitation.id)}
-                            disabled={!tokenInMemory}
-                          >
-                            <CopyLinkLabel
-                              isCopied={copiedInvitationId === invitation.id}
-                              tokenInMemory={tokenInMemory}
-                            />
-                          </Button>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className={SETTING_ICON_BUTTON}
-                                aria-label={`More for ${linkName}`}
-                              >
-                                <MoreHorizontal aria-hidden />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem onSelect={() => openLink(invitation.id)}>
-                                <Pencil aria-hidden />
-                                Edit
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className="text-destructive focus:text-destructive"
-                                disabled={revokeMutation.isPending}
-                                onSelect={() =>
-                                  revokeMutation.mutate(invitation.id, {
-                                    onError: (error) =>
-                                      toast.error(invitationErrorMessage(error, "Failed to revoke link")),
-                                  })
-                                }
-                              >
-                                Revoke
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
-                      </li>
-                    )
-                  })}
-                  {pendingEmailInvitations.map((invitation) => (
-                    <li key={invitation.id} className="flex min-h-11 items-center justify-between gap-2 py-2">
-                      <PendingEmailInvitationDetails
-                        email={invitation.email}
-                        role={invitation.role}
-                        expiresAt={invitation.expiresAt}
-                        formatDate={formatDate}
-                      />
-                      <div className="flex shrink-0 items-center gap-1">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className={SETTING_CONTROL_HEIGHT}
-                          onClick={() =>
-                            resendMutation.mutate(invitation.id, {
-                              onError: (error) =>
-                                toast.error(invitationErrorMessage(error, "Failed to resend invitation")),
-                            })
-                          }
-                          disabled={resendMutation.isPending}
-                        >
-                          Resend
-                        </Button>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className={SETTING_ICON_BUTTON}
-                              aria-label={`More for the invitation to ${invitation.email}`}
-                            >
-                              <MoreHorizontal aria-hidden />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              className="text-destructive focus:text-destructive"
-                              disabled={revokeMutation.isPending}
-                              onSelect={() =>
-                                revokeMutation.mutate(invitation.id, {
-                                  onError: (error) =>
-                                    toast.error(invitationErrorMessage(error, "Failed to revoke invitation")),
-                                })
-                              }
-                            >
-                              Revoke
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+              {grouped.active.length > 0 && (
+                <InvitationList label="Open invitations" invitations={grouped.active} actions={rowActions} />
               )}
               {missingToken && (
                 <p className={SETTING_MUTED_NOTE_TEXT}>
@@ -532,6 +599,20 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
             </div>
           )}
         </SettingRow>
+        {grouped.accepted.length > 0 && (
+          <SettingsDisclosure
+            label="Accepted invitations"
+            settings={[]}
+            summary={`${grouped.accepted.length} accepted`}
+          >
+            <InvitationList label="Accepted invitations" invitations={grouped.accepted} inset actions={rowActions} />
+          </SettingsDisclosure>
+        )}
+        {grouped.expired.length > 0 && (
+          <SettingsDisclosure label="Expired invitations" settings={[]} summary={`${grouped.expired.length} expired`}>
+            <InvitationList label="Expired invitations" invitations={grouped.expired} inset actions={rowActions} />
+          </SettingsDisclosure>
+        )}
       </SettingsSection>
 
       <SettingsSection section="workspace-access">
