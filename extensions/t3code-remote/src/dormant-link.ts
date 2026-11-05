@@ -20,6 +20,8 @@ export interface DormantLinkOptions {
   windDown: () => Promise<void>
   /** Posts the wound-down session's last presence on its behalf, so messages and commands still reach it. */
   holdPresence: () => Promise<void>
+  /** The wound-down session's scratchpad was archived; its archive push went to the ended session, never the watcher. */
+  archivedWhileIdle: (rootStreamId: string) => void
   idleAfterMs: number
   now?: () => number
   log: (message: string) => void
@@ -72,7 +74,7 @@ export class DormantLink {
     if (this.stopped) return
     if (this.rootStreamId) {
       if (this.wanted && !this.waking) void this.wake()
-      if (this.mode === "idle" && !this.waking) await this.hold()
+      if (this.mode === "idle" && !this.waking) await this.holdUnlessArchived(this.rootStreamId)
       return
     }
     if (this.options.isBusy()) return this.touch()
@@ -140,6 +142,20 @@ export class DormantLink {
     this.rootStreamId = undefined
     this.mode = undefined
     this.wanted = false
+  }
+
+  private async holdUnlessArchived(rootStreamId: string): Promise<void> {
+    let archived = false
+    try {
+      archived = await this.options.isArchived(rootStreamId)
+    } catch (error) {
+      this.options.log(`could not check whether idle scratchpad ${rootStreamId} is archived: ${messageOf(error)}`)
+    }
+    // A wake that started during the check owns the session now, and re-checks the archive itself.
+    if (this.mode !== "idle" || this.stopped || this.waking || this.rootStreamId !== rootStreamId) return
+    if (!archived) return this.hold()
+    this.options.log(`scratchpad ${rootStreamId} archived while idle`)
+    this.options.archivedWhileIdle(rootStreamId)
   }
 
   private hold(): Promise<void> {

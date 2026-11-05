@@ -56,6 +56,10 @@ function harness(
       await options.holdPresence?.()
       state.events.push("held")
     },
+    archivedWhileIdle: (rootStreamId) => {
+      state.events.push(`archived ${rootStreamId}`)
+      link.sleep(rootStreamId)
+    },
     idleAfterMs: 90 * MINUTE,
     now: () => state.now,
     log: (message) => state.logs.push(message),
@@ -178,6 +182,44 @@ describe("DormantLink", () => {
       events: ["wound down", "held", "held", "revived"],
       open: 0,
     })
+  })
+
+  test("an idle session whose scratchpad is archived stops holding presence and waits for the restore", async () => {
+    const { link, state, nudge } = harness({ target: "stream_root" })
+    state.archived = false
+    state.now = 90 * MINUTE
+    await link.tick()
+    await nudge()
+    state.archived = true
+    state.now = 91 * MINUTE
+    await link.tick()
+    await link.tick()
+    state.archived = false
+    await nudge()
+
+    expect(state.events).toEqual(["wound down", "held", "archived stream_root", "revived"])
+  })
+
+  test("a wake that starts while an idle archive check is out keeps the session, whatever that check saw", async () => {
+    const linking = deferred<void>()
+    const { link, state, nudge, holdCheck } = harness({ target: "stream_root", revive: () => linking.promise })
+    state.archived = false
+    state.now = 90 * MINUTE
+    await link.tick()
+    await nudge()
+    const stale = deferred<boolean>()
+    holdCheck(stale.promise)
+    state.now = 91 * MINUTE
+    const ticking = link.tick()
+    await tick()
+    holdCheck(undefined)
+    await nudge("rts_ours")
+    stale.resolve(true)
+    await ticking
+    linking.resolve()
+    await tick()
+
+    expect(state.events).toEqual(["wound down", "held", "revived"])
   })
 
   test("the idle window counts from the last tick a turn was running or a message was delivered", async () => {

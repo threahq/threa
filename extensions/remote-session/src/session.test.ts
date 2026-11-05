@@ -2130,6 +2130,42 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     await session.shutdown()
   })
 
+  test("a cold start refused for an archived scratchpad tells the connector, and only that refusal does", async () => {
+    const refusals = [
+      new ThreaApiError("The linked scratchpad is archived", 409, "SCRATCHPAD_ARCHIVED"),
+      new ThreaApiError("unavailable", 503, "UNAVAILABLE"),
+    ]
+    const client = {
+      createSession: async () => {
+        throw refusals.shift()
+      },
+    } as unknown as ThreaClient
+    const logs: string[] = []
+    const told: Array<{ rootStreamId?: string }> = []
+    const { transport } = makeFakeTransport()
+    const session = new RemoteSession({
+      config: makeConfig({ coldStartIfArchived: "wait", expectedRootStreamId: "stream_root" }),
+      client,
+      delegate: { deliverTurn: async () => {}, onLinkRefusedArchived: (payload) => void told.push(payload) },
+      runtime: RUNTIME,
+      transport,
+      log: (message) => logs.push(message),
+    })
+    const ensureLink = () => (session as unknown as { ensureLink: () => Promise<void> }).ensureLink()
+
+    await ensureLink()
+    await ensureLink()
+
+    expect({ told, logs }).toEqual({
+      told: [{ rootStreamId: "stream_root" }],
+      logs: [
+        "could not link to Threa (will retry): The linked scratchpad is archived — waiting for the scratchpad to be unarchived",
+        "could not link to Threa (will retry): unavailable",
+      ],
+    })
+    await session.shutdown()
+  })
+
   test("a supervised cold start rejects a link to another root stream without allowing creation", async () => {
     let request: Record<string, unknown> | undefined
     const client = {

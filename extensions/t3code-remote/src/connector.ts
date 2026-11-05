@@ -10,6 +10,7 @@ import {
 import { T3Auth, type FetchLike } from "./auth"
 import { readJsonFile, type T3RemoteConfig } from "./config"
 import { DormantLink } from "./dormant-link"
+import { Hibernation, hibernationDir, systemctlUser, unitHibernation } from "./hibernation"
 import { T3CODE_RUNTIME, T3TurnRunner, type PendingSpawn, type ThreadStore } from "./run-bridge"
 import { createT3SessionControl } from "./session-control"
 import { T3Client, type ModelOption, type ModelSelection } from "./t3-client"
@@ -90,6 +91,9 @@ export function createFileThreadStore(path: string): ThreadStore {
 export interface T3ConnectorOptions {
   fetch?: FetchLike
   log?: (message: string) => void
+  hibernation?: Hibernation
+  /** Override the archive→restore grace window (tests). */
+  archiveGraceMs?: number
 }
 
 const IDLE_WIND_DOWN_AFTER_MS = 90 * 60_000
@@ -151,8 +155,29 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
   })
   let presence: RuntimePresenceReport | undefined
 
-  // An archived scratchpad, or 90 minutes without a turn, ends the session. The process stays up and links it again
-  // once the scratchpad is restored or a message arrives, holding the session's presence meanwhile when it went idle.
+  // Run as a unit, an archived scratchpad stops it: the waker starts it again, and nothing stays resident meanwhile.
+  const hibernation = config.systemdUnit
+    ? unitHibernation(
+        options.hibernation ?? new Hibernation(hibernationDir(), systemctlUser, log),
+        config.systemdUnit,
+        config.runtimeSessionId,
+        log
+      )
+    : undefined
+  // Wait rather than replace: an archive landing before the link must not mint a new scratchpad.
+  const linkOnly = (rootStreamId: string) => ({
+    coldStartIfArchived: "wait" as const,
+    expectedRootStreamId: rootStreamId,
+  })
+  const archived = (rootStreamId: string) => {
+    if (hibernation?.hibernate(rootStreamId)) return
+    log(`scratchpad ${rootStreamId} archived; waiting for it to be restored`)
+    dormant.sleep(rootStreamId)
+  }
+
+  // An archived scratchpad that could not hibernate, or 90 minutes without a turn, ends the session. The process stays
+  // up and links it again once the scratchpad is restored or a message arrives, holding the session's presence
+  // meanwhile when it went idle.
   const dormant = new DormantLink({
     runtimeSessionId: config.runtimeSessionId,
     watch: (nudge) => {
@@ -170,8 +195,7 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
     },
     isArchived: async (rootStreamId) => Boolean(await client.getStreamArchivedAt(rootStreamId)),
     revive: async (rootStreamId) => {
-      // Wait rather than replace: an archive landing between the check and the link must not mint a new scratchpad.
-      session = createSession({ coldStartIfArchived: "wait", expectedRootStreamId: rootStreamId })
+      session = createSession(linkOnly(rootStreamId))
       try {
         await session.start()
         if (!session.rootStreamId) throw new Error("the session did not link")
@@ -190,6 +214,7 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
     holdPresence: async () => {
       if (presence) await client.updatePresence(heldPresenceBody(presence))
     },
+    archivedWhileIdle: archived,
     idleAfterMs: IDLE_WIND_DOWN_AFTER_MS,
     log,
   })
@@ -209,19 +234,22 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
           return runner.deliverTurn(turn)
         },
         sessionControl,
+        onLinked: () => hibernation?.linked(),
         onArchived: ({ rootStreamId }) => {
           runner.shutdown()
-          log(`scratchpad ${rootStreamId} archived; waiting for it to be restored`)
-          dormant.sleep(rootStreamId)
+          archived(rootStreamId)
         },
+        onLinkRefusedArchived: ({ rootStreamId }) => void hibernation?.hibernate(rootStreamId),
       },
       runtime: T3CODE_RUNTIME,
       onPresence: (report) => {
         if (report.status !== "offline") presence = report
       },
       log,
+      ...(options.archiveGraceMs === undefined ? {} : { archiveGraceMs: options.archiveGraceMs }),
     })
-  session = createSession()
+  // A woken unit links only the scratchpad it hibernated on.
+  session = createSession(hibernation?.root ? linkOnly(hibernation.root) : {})
 
   return {
     start: async () => {

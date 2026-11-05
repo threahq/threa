@@ -6,8 +6,12 @@ export interface UserUnitInput {
   /** The runtime the unit execs: bun from a checkout, node from an npm install. */
   runtimePath: string
   entryPath: string
+  /** Arguments after the entry, e.g. a subcommand. */
+  args?: string[]
   workingDirectory: string
   logDir: string
+  /** Log file stem under `logDir`; defaults to `connector`. */
+  logName?: string
   envFile: string
   /** Services this one starts after and pulls in. */
   wants?: string[]
@@ -20,21 +24,23 @@ export interface UserUnitInput {
 
 /** A connector's systemd user unit: absolute paths, restart always, logs appended under `logDir`. */
 export function renderUserUnit(input: UserUnitInput): string {
-  for (const path of [
+  for (const value of [
     input.runtimePath,
     input.entryPath,
     input.workingDirectory,
     input.logDir,
     input.envFile,
     ...Object.values(input.pinnedEnvironment ?? {}),
+    ...(input.args ?? []),
   ]) {
-    if (/[\s\\\0]/.test(path)) {
+    if (/[\s\\\0]/.test(value)) {
       throw new Error(
-        `Cannot write a systemd unit for ${JSON.stringify(path)}: whitespace and backslashes need escaping systemd does not apply to every directive.`
+        `Cannot write a systemd unit for ${JSON.stringify(value)}: whitespace and backslashes need escaping systemd does not apply to every directive.`
       )
     }
   }
   const wants = input.wants ?? []
+  const logName = input.logName ?? "connector"
   const pinned = Object.entries(input.pinnedEnvironment ?? {}).map(([name, value]) => `${name}=${value}`)
   if (pinned.length > 0) pinned.unshift("/usr/bin/env")
   return [
@@ -48,11 +54,11 @@ export function renderUserUnit(input: UserUnitInput): string {
     `Environment=PATH=${dirname(input.runtimePath)}:/usr/local/bin:/usr/bin:/bin`,
     `EnvironmentFile=-${input.envFile}`,
     `WorkingDirectory=${input.workingDirectory}`,
-    `ExecStart=${[...pinned, input.runtimePath, input.entryPath].join(" ")}`,
+    `ExecStart=${[...pinned, input.runtimePath, input.entryPath, ...(input.args ?? [])].join(" ")}`,
     "Restart=always",
     "RestartSec=10",
-    `StandardOutput=append:${join(input.logDir, "connector.log")}`,
-    `StandardError=append:${join(input.logDir, "connector.error.log")}`,
+    `StandardOutput=append:${join(input.logDir, `${logName}.log`)}`,
+    `StandardError=append:${join(input.logDir, `${logName}.error.log`)}`,
     "",
     "[Install]",
     "WantedBy=default.target",
@@ -60,11 +66,13 @@ export function renderUserUnit(input: UserUnitInput): string {
   ].join("\n")
 }
 
-export function userUnitCommands(serviceName: string, start: boolean): string[][] {
+/** A single name stays accepted: published connectors on `^0.3` still pass one. */
+export function userUnitCommands(serviceNames: string | string[], start: boolean): string[][] {
+  const names = typeof serviceNames === "string" ? [serviceNames] : serviceNames
   return [
     ["systemctl", "--user", "daemon-reload"],
-    ["systemctl", "--user", "enable", serviceName],
-    ...(start ? [["systemctl", "--user", "restart", serviceName]] : []),
+    ["systemctl", "--user", "enable", ...names],
+    ...(start ? [["systemctl", "--user", "restart", ...names]] : []),
   ]
 }
 

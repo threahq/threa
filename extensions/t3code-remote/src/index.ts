@@ -2,8 +2,9 @@ import { mkdirSync } from "node:fs"
 import { hostname } from "node:os"
 import { readConfigFile, wireLifecycle } from "@threahq/remote-session"
 import { T3Auth } from "./auth"
-import { loadT3Config, loadT3Settings, t3Install, type T3RawConfig } from "./config"
+import { loadT3Config, loadT3Settings, t3Install, type T3RawConfig, type T3RemoteConfig } from "./config"
 import { createT3Connector } from "./connector"
+import { createWakeService } from "./waker"
 
 const LOG_PREFIX = "[threa-t3code]"
 
@@ -30,18 +31,20 @@ async function main(): Promise<void> {
     readConfigFile(install.configPath, (message) => process.stderr.write(`${LOG_PREFIX} ${message}\n`)) ?? {}
   const [command, ...args] = process.argv.slice(2)
   if (command === "login") return login(args[0], file)
-  if (command !== undefined) fail(`Unknown command "${command}". Usage: threa-t3code [login [pairing-code]]`)
+  if (command !== undefined && command !== "wake") {
+    fail(`Unknown command "${command}". Usage: threa-t3code [login [pairing-code] | wake]`)
+  }
 
   // The identity and downloaded attachments both follow the cwd, so a manual run and the service share one scratchpad.
   mkdirSync(install.workDir, { recursive: true, mode: 0o700 })
   process.chdir(install.workDir)
   const result = loadT3Config({ env: process.env, cwd: install.workDir, hostname: hostname(), install, file })
   if ("error" in result) fail(result.error)
-  const connector = createT3Connector(result.config, {
-    log: (message) => process.stderr.write(`${LOG_PREFIX} ${message}\n`),
-  })
-  wireLifecycle(connector, process, { logPrefix: LOG_PREFIX })
-  await connector.start()
+  const log = (message: string) => process.stderr.write(`${LOG_PREFIX} ${message}\n`)
+  const service =
+    command === "wake" ? createWakeService(result.config, { log }) : createT3Connector(result.config, { log })
+  wireLifecycle(service, process, { logPrefix: LOG_PREFIX })
+  await service.start()
 }
 
 if (import.meta.main) {
