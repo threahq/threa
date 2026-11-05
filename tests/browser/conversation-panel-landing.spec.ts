@@ -143,24 +143,25 @@ test.describe("Conversation panel landing", () => {
     const scrollerBox = await scroller.boundingBox()
     expect(scrollerBox).not.toBeNull()
 
+    // Polled, never read once: virtua can swap the row's node between a locator
+    // resolving and measuring it, which reads back as a null box. `missing` is
+    // the value that fails each bound, so a null box retries.
+    const tailGap = async (missing: number) => {
+      const box = await newest.boundingBox()
+      return box ? Math.round(scrollerBox!.y + scrollerBox!.height - (box.y + box.height)) : missing
+    }
     // Parked at the tail: the newest row's bottom sits inside the viewport.
     await expect
-      .poll(
-        async () => {
-          const box = await newest.boundingBox()
-          return box ? Math.round(scrollerBox!.y + scrollerBox!.height - (box.y + box.height)) : -9999
-        },
-        { timeout: 15000, message: "newest message should sit at the bottom of the panel" }
-      )
+      .poll(() => tailGap(-Infinity), {
+        timeout: 15000,
+        message: "newest message should sit at the bottom of the panel",
+      })
       .toBeGreaterThanOrEqual(-4)
     // …and not parked a screenful above it either: the only gap the tail leaves
     // under the newest row is the floating composer's reserve.
-    const tailGap = await newest
-      .boundingBox()
-      .then((box) => scrollerBox!.y + scrollerBox!.height - (box!.y + box!.height))
-    expect(tailGap, "newest message should not sit a screenful above the panel bottom").toBeLessThan(
-      scrollerBox!.height * 0.5
-    )
+    await expect
+      .poll(() => tailGap(Infinity), { message: "newest message should not sit a screenful above the panel bottom" })
+      .toBeLessThan(scrollerBox!.height * 0.5)
 
     // The opening message is 39 tall rows up — past `bufferSize` — so on a
     // virtualized panel it is not in the DOM at all. Asserting its geometry only
