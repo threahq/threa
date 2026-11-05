@@ -17,25 +17,17 @@ const LEGACY_PROVIDER_PARAM = "provider"
 export const STREAM_SETTINGS_PARAM = "stream-settings"
 /** The stream whose pages the window shows beside yours and the workspace's. */
 export const STREAM_SETTINGS_SID_PARAM = "sid"
-/** The overview's scope: phones show one scope at a time, desktop scrolls to it. */
-const SETTINGS_SCOPE_PARAM = "scope"
-
 /** Marks the sidebar's settings link: where focus goes when the window closes and its opener is gone. */
 export const SETTINGS_ENTRY_ATTRIBUTE = "data-settings-entry"
 
-const SETTINGS_SCOPES = ["stream", "you", "workspace"] as const
-export type SettingsScope = (typeof SETTINGS_SCOPES)[number]
+/** The overview's scope: phones show one scope at a time, desktop scrolls to it. */
+export type SettingsScope = "stream" | "you" | "workspace"
 
 export const STREAM_SETTINGS_TABS = ["general", "companion", "members", "connect"] as const
 export type StreamSettingsTab = (typeof STREAM_SETTINGS_TABS)[number]
 
 /** Every param the window owns; closing takes them all off. */
-const SETTINGS_WINDOW_COVER = [
-  ...SETTINGS_COVER,
-  STREAM_SETTINGS_PARAM,
-  STREAM_SETTINGS_SID_PARAM,
-  SETTINGS_SCOPE_PARAM,
-] as const
+const SETTINGS_WINDOW_COVER = [...SETTINGS_COVER, STREAM_SETTINGS_PARAM, STREAM_SETTINGS_SID_PARAM] as const
 
 /**
  * The URL's params without the settings window's, so a restored location
@@ -72,10 +64,6 @@ interface SettingsContextValue {
   streamIndex: boolean
   /** The stream a link opened the window on; its pages join the window's nav. */
   streamId: string | null
-  /** The overview scope a link named; null leaves the default. */
-  overviewScope: SettingsScope | null
-  /** Opens the overview on one scope, as `openSettings` opens a page. */
-  openOverview: (scope: SettingsScope) => void
   /** The setting to land on, when a link named one. */
   activeSetting: string | null
   /** New on every navigation, so following a link to the setting already named is a new request to land on it. */
@@ -104,10 +92,6 @@ function isSettingsTab(value: string | null): value is SettingsTab {
   return value !== null && (SETTINGS_TABS as readonly string[]).includes(value)
 }
 
-function isSettingsScope(value: string | null): value is SettingsScope {
-  return value !== null && (SETTINGS_SCOPES as readonly string[]).includes(value)
-}
-
 function isStreamSettingsTab(value: string | null): value is StreamSettingsTab {
   return value !== null && (STREAM_SETTINGS_TABS as readonly string[]).includes(value)
 }
@@ -126,7 +110,6 @@ function withSettings(params: URLSearchParams, tab?: SettingsTab | null, setting
   const next = new URLSearchParams(params)
   next.set(SETTINGS_PARAM, tab ?? "")
   next.delete(STREAM_SETTINGS_PARAM)
-  next.delete(SETTINGS_SCOPE_PARAM)
   if (setting) next.set(SETTING_PARAM, setting)
   else next.delete(SETTING_PARAM)
   next.delete(SETTINGS_BOT_PARAM)
@@ -142,7 +125,6 @@ export function withStreamSettings(
   const next = new URLSearchParams(params)
   next.delete(SETTINGS_PARAM)
   next.delete(SETTINGS_BOT_PARAM)
-  next.delete(SETTINGS_SCOPE_PARAM)
   next.set(STREAM_SETTINGS_PARAM, tab ?? "")
   if (streamId) next.set(STREAM_SETTINGS_SID_PARAM, streamId)
   else next.delete(STREAM_SETTINGS_SID_PARAM)
@@ -167,8 +149,6 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
   const onStreamPage = settingsParam === null && streamParam !== null
   const activeStreamTab = onStreamPage && isStreamSettingsTab(streamParam) ? streamParam : null
   const streamIndex = onStreamPage && streamId !== null && activeStreamTab === null
-  const scopeParam = searchParams.get(SETTINGS_SCOPE_PARAM)
-  const overviewScope = settingsParam === "" && isSettingsScope(scopeParam) ? scopeParam : null
   const activeSetting = searchParams.get(SETTING_PARAM)
   const stillOpen = settingsWindowOpen(searchParams)
   const depth = stillOpen ? settingsDepthOf(location.state) : 0
@@ -211,16 +191,6 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     [openWindowAt, searchParams]
   )
 
-  // Keeps `sid`, so a stream's scope stays offered.
-  const openOverview = useCallback(
-    (scope: SettingsScope) => {
-      const next = withSettings(searchParams, null)
-      next.set(SETTINGS_SCOPE_PARAM, scope)
-      openWindowAt(next)
-    },
-    [openWindowAt, searchParams]
-  )
-
   const closeCover = useCoverClose(SETTINGS_WINDOW_COVER)
   const closeSettings = useCallback(() => {
     if (depth === 0) return closeCover()
@@ -259,8 +229,6 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       activeStreamTab,
       streamIndex,
       streamId,
-      overviewScope,
-      openOverview,
       activeSetting,
       landingKey: location.key,
       openSettings,
@@ -276,8 +244,6 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       activeStreamTab,
       streamIndex,
       streamId,
-      overviewScope,
-      openOverview,
       activeSetting,
       location.key,
       openSettings,

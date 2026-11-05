@@ -12,7 +12,7 @@ All settings open in one window titled **Settings**. It opens on **Overview**, w
 ## Open Settings
 
 - Press Ctrl+. (⌘. on Mac).
-- Open the menu in the sidebar footer and choose **Settings**. **Profile** in the same menu opens the Profile page, and **Workspace settings** opens the Overview at the workspace pages.
+- Open the menu in the sidebar footer and choose **Settings**. **Profile** in the same menu opens the Profile page.
 - Open the command palette (Ctrl+Shift+K, ⌘⇧K on Mac) and choose **Open settings**, or **Settings:** followed by a page name to go straight to a page.
 
 ## The pages
@@ -52,7 +52,7 @@ The menu in the sidebar footer also holds:
 - **Pause notifications** (see [Pausing notifications and setting a status](/guide/pause-and-status)).
 - **Getting started** and **Customize sidebar** (see [Customize your sidebar](/guide/customize-your-sidebar)).
 - Theme choices.
-- **Profile**, **Settings** and **Workspace settings**, which open the settings window.
+- **Profile** and **Settings**, which open the settings window.
 - **AI usage** (see [AI usage and budget](/guide/ai-usage-and-budget)).
 - **App status** (see [Updates, offline and app status](/guide/updates-offline-and-app-status)). The page is also at [App status](app:app-status).
 - **Switch account** and **Log out**.

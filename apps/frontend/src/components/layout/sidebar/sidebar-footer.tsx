@@ -5,7 +5,6 @@ import {
   BookOpen,
   BellOff,
   ChevronUp,
-  Building2,
   DollarSign,
   FileText,
   Hash,
@@ -243,7 +242,7 @@ export const SidebarFooter = memo(function SidebarFooter({
   onShowGettingStarted,
 }: SidebarFooterProps) {
   const [, setSearchParams] = useSearchParams()
-  const { openSettings, openOverview } = useSettings()
+  const { openSettings } = useSettings()
   const { collapseOnMobile } = useSidebar()
   // Drawer vs. dropdown is a presentation choice — follow the active input so a
   // mouse on a touchscreen laptop gets the dropdown, a finger gets the sheet.
@@ -356,11 +355,6 @@ export const SidebarFooter = memo(function SidebarFooter({
     openSettings("profile")
   }, [collapseOnMobile, openSettings])
 
-  const openWorkspaceSettings = useCallback(() => {
-    collapseOnMobile()
-    openOverview("workspace")
-  }, [collapseOnMobile, openOverview])
-
   const openAccountSwitcher = useCallback(() => {
     collapseOnMobile()
     setSearchParams(
@@ -469,12 +463,6 @@ export const SidebarFooter = memo(function SidebarFooter({
         onSelect: handleOpenSettings,
       },
       {
-        id: "workspace-settings",
-        label: "Workspace settings",
-        icon: Building2,
-        onSelect: openWorkspaceSettings,
-      },
-      {
         id: "ai-usage",
         label: "AI usage",
         icon: DollarSign,
@@ -535,7 +523,6 @@ export const SidebarFooter = memo(function SidebarFooter({
       appearanceActions,
       handleOpenSettings,
       openProfile,
-      openWorkspaceSettings,
       openAccountSwitcher,
       collapseOnMobile,
       handleLogout,
