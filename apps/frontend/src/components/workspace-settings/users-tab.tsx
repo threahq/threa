@@ -55,8 +55,6 @@ import { accessDescription, useWorkspaceAccess } from "./workspace-permission"
 
 type WorkspaceUserRow = ReturnType<typeof useWorkspaceUsers>[number]
 
-/** A list item's ⋯ menu trigger, sized like its remove X. */
-
 function CopyLinkLabel({ isCopied, tokenInMemory }: { isCopied: boolean; tokenInMemory: boolean }) {
   if (isCopied) {
     return (

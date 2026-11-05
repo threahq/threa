@@ -27,11 +27,16 @@ export function useWorkspaceSettingMutation<K extends keyof UpdateWorkspaceSetti
   }
 ) {
   const queryClient = useQueryClient()
+  const scopeId = `workspace-setting:${workspaceId}:${key}`
+  // A queued save has already written its optimistic value (onMutate runs before
+  // the scope queue releases it), so an earlier save settling must leave the
+  // cache to it. Callbacks run while the settling mutation still counts as pending.
+  const isSuperseded = () => queryClient.isMutating({ predicate: (m) => m.options.scope?.id === scopeId }) > 1
 
   return useMutation({
     // Writes carry the key's whole value, so they reach the server in call order:
     // a later save landing first would be overwritten by an older one.
-    scope: { id: `workspace-setting:${workspaceId}:${key}` },
+    scope: { id: scopeId },
     mutationFn: (value: NonNullable<UpdateWorkspaceSettingsInput[K]>) =>
       workspaceSettingsApi.update(workspaceId, { [key]: value } as UpdateWorkspaceSettingsInput),
     onMutate: async (value) => {
@@ -48,7 +53,7 @@ export function useWorkspaceSettingMutation<K extends keyof UpdateWorkspaceSetti
       // Roll back only this key. Restoring the whole snapshot would revert any
       // other setting that changed while this save was in flight — a concurrent
       // admin's edit, or the `workspace_settings:updated` broadcast.
-      if (context?.previous) {
+      if (context?.previous && !isSuperseded()) {
         const restored = context.previous.value
         queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) =>
           old?.workspaceSettings ? { ...old, workspaceSettings: { ...old.workspaceSettings, [key]: restored } } : old
@@ -61,6 +66,7 @@ export function useWorkspaceSettingMutation<K extends keyof UpdateWorkspaceSetti
       // Same reason, inverted: the response is authoritative for committed state,
       // but a sibling mutation still in flight is not in it yet, so take only the
       // key this mutation owns. The broadcast reconciles the rest.
+      if (isSuperseded()) return
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) =>
         old?.workspaceSettings
           ? { ...old, workspaceSettings: { ...old.workspaceSettings, [key]: saved[key as keyof WorkspaceSettings] } }

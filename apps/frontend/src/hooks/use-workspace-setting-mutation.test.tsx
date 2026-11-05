@@ -84,6 +84,30 @@ describe("useWorkspaceSettingMutation", () => {
     expect(readSettings(queryClient).maxPendingFollowUps).toBe(25)
   })
 
+  it("keeps a queued save's value when an earlier save settles first", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
+    seed(queryClient, { userStatusPresets: [] })
+    const responses: Array<(settings: WorkspaceSettings) => void> = []
+    vi.spyOn(workspaceSettingsApi, "update").mockImplementation(() => new Promise((resolve) => responses.push(resolve)))
+    const first = [{ id: "a" }] as unknown as WorkspaceSettings["userStatusPresets"]
+    const second = [{ id: "b" }] as unknown as WorkspaceSettings["userStatusPresets"]
+
+    const { result } = renderHook(() => useWorkspaceSettingMutation("ws_1", "userStatusPresets", "failed"), {
+      wrapper: wrapper(queryClient),
+    })
+    result.current.mutate(first)
+    result.current.mutate(second)
+    await waitFor(() => expect(readSettings(queryClient).userStatusPresets).toEqual(second))
+
+    responses[0]({ userStatusPresets: first } as WorkspaceSettings)
+    await waitFor(() => expect(responses).toHaveLength(2))
+    expect(readSettings(queryClient).userStatusPresets).toEqual(second)
+
+    responses[1]({ userStatusPresets: second } as WorkspaceSettings)
+    await waitFor(() => expect(queryClient.isMutating()).toBe(0))
+    expect(readSettings(queryClient).userStatusPresets).toEqual(second)
+  })
+
   it("runs the caller's onError after rolling the cache back", async () => {
     const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
     seed(queryClient, { maxPendingFollowUps: 10 })
