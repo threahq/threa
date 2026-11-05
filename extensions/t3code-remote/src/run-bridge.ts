@@ -47,6 +47,8 @@ export interface BridgeSession {
   isEncrypted(streamId: string): Promise<boolean>
   failTurn(invocationId: string, errorMessage: string): Promise<boolean>
   requestDecision(input: DecisionRequestInput, opts?: { signal?: AbortSignal }): Promise<DecisionOutcome>
+  /** Hold the stream's open turns past their idle timeout. */
+  keepAlive(streamId: string): void
 }
 
 /** A `/spawn`'s fresh thread, waiting for its Threa thread's first turn. */
@@ -119,9 +121,12 @@ const TOOLS: Record<string, { label: string; statusText: string }> = {
   todo_list: { label: "Todo list", statusText: "Updating the todo list…" },
 }
 const NOTE_TYPES = new Set(["reasoning", "system_notice", "compaction", "error"])
-const BLOCKING_LABELS: Record<string, string> = {
-  approval_request: "an approval",
-  secret_request: "a secret",
+// T3's MCP can't answer these, so the turn tells the user where to and keeps following the run.
+const WAIT_NOTICES: Record<string, string> = {
+  approval_request:
+    "T3 Code is waiting for an approval. Threa can't approve T3 Code requests, so approve or decline it in T3 Code and this turn carries on.",
+  secret_request:
+    "T3 Code is waiting for a secret. Threa can't pass secrets to T3 Code, so enter it in T3 Code and this turn carries on.",
 }
 const RUN_STATE_TEXT: Partial<Record<RunStatus | "idle", string>> = {
   queued: "Queued in T3 Code, waiting for an earlier run…",
@@ -223,11 +228,12 @@ export class RunTrace {
   private readonly emitted = new Map<string, "started" | "final">()
   readonly runIds: Set<string>
   held?: ThreadItem
-  /** Finished `THREA_UPDATE:` messages not yet posted. */
+  /** Finished `THREA_UPDATE:` messages, and requests only T3 Code can answer, not yet posted. */
   readonly updates: ThreadItem[] = []
-  blockedOn?: string
   /** The item ids of questions still waiting on an answer. */
   readonly questions = new Set<string>()
+  /** The item ids of requests still waiting on an answer given in T3 Code. */
+  readonly waits = new Set<string>()
   lastError?: string
   /** The chips of tools still running, by item id, in the order they started. */
   private readonly runningTools = new Map<string, string>()
@@ -270,8 +276,13 @@ export class RunTrace {
     else this.runningTools.delete(item.itemId)
     if (item.type === "assistant_message") {
       this.held = item
-    } else if (item.type in BLOCKING_LABELS) {
-      if (open) this.blockedOn = item.type
+    } else if (item.type in WAIT_NOTICES) {
+      if (!open) this.waits.delete(item.itemId)
+      else if (!this.waits.has(item.itemId)) {
+        this.waits.add(item.itemId)
+        // What T3 asks is as revealing as the command it would run.
+        this.updates.push(this.mode === "headline" ? { ...item, text: null, nextTextOffset: null } : item)
+      }
     } else if (item.type === "user_input_request") {
       if (open) this.questions.add(item.itemId)
       else this.questions.delete(item.itemId)
@@ -1271,7 +1282,7 @@ export class T3TurnRunner {
     let cardWaits = 0
     let progressState: string | undefined
     try {
-      while (!signal.aborted && !trace.blockedOn && !run.unanswered) {
+      while (!signal.aborted && !run.unanswered) {
         try {
           const waitedOn = run.runId
           const waited = await this.client.call("t3_thread_wait", {
@@ -1324,6 +1335,8 @@ export class T3TurnRunner {
             if (result.retryable) throw new Error(`update not posted: ${result.message}`)
             this.log(`run ${run.runId} update not posted: ${result.message}`)
           })
+          // Like an open card, a request waiting on T3 Code keeps the turn from timing out under it.
+          if (trace.waits.size > 0) this.session.keepAlive(run.streamId)
           await this.withdrawAnsweredCard(run)
           if ((trace.questions.size > 0 || (run.runtimeOrigin && waited.status === "waiting")) && !run.asking)
             this.askQuestions(invocationId, run)
@@ -1373,14 +1386,6 @@ export class T3TurnRunner {
     if (run.unanswered) {
       if (!run.runtimeOrigin) this.stopChain(run)
       await this.session.failTurn(invocationId, run.unanswered)
-      return
-    }
-    if (trace.blockedOn) {
-      if (!run.runtimeOrigin) this.stopChain(run)
-      await this.session.failTurn(
-        invocationId,
-        `T3 Code stopped to ask for ${BLOCKING_LABELS[trace.blockedOn]}, which Threa can't answer yet. Give the connector full-access (t3Access) so runs never wait on one.`
-      )
       return
     }
     this.saveState({
@@ -1632,6 +1637,17 @@ export class T3TurnRunner {
     return withoutUpdatePrefix(await this.fullText(threadId, item))
   }
 
+  /** A wait notice quotes what T3 asks, as its prompt or command, in a code block, where no link uploads and no mention notifies. */
+  private async updateText(threadId: string, item: ThreadItem): Promise<string> {
+    const notice = WAIT_NOTICES[item.type]
+    if (!notice) return this.replyText(threadId, item)
+    const detail = (await this.fullText(threadId, item)).trim()
+    if (!detail) return notice
+    // A ``` line indented under four spaces would close the block, and a `THREA_ATTACH:` line anywhere reads as an
+    // upload; indented four spaces, each stays code.
+    return `${notice}\n\n\`\`\`\n${detail.replace(/^(?= {0,3}```|THREA_ATTACH:)/gm, "    ")}\n\`\`\``
+  }
+
   private async postUpdates(
     run: Pick<OpenRun, "threadId" | "trace">,
     post: (item: ThreadItem, text: string) => Promise<void>
@@ -1640,7 +1656,7 @@ export class T3TurnRunner {
     // Taken before posting, so a relay and the turn that took its run over never post one twice.
     for (let item = updates.shift(); item; item = updates.shift()) {
       try {
-        const text = await this.replyText(run.threadId, item)
+        const text = await this.updateText(run.threadId, item)
         if (text) await post(item, text)
       } catch (error) {
         updates.unshift(item)

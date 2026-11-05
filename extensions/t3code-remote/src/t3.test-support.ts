@@ -409,6 +409,7 @@ export function fakeSession(rootStreamId = "stream_root") {
   const outcomes: Array<DecisionOutcome | DecisionAbandonedError> = []
   const adoptions: Array<{ responseStreamId: string; externalRunId: string; attachmentRequestId: string }> = []
   const observations = new Map<string, AbortController>()
+  const keptAlive: string[] = []
   let answer: (() => void) | undefined
   let settle: () => void = () => {}
   let settled = new Promise<void>((resolve) => (settle = resolve))
@@ -451,6 +452,7 @@ export function fakeSession(rootStreamId = "stream_root") {
       return result
     },
     isEncrypted: async (streamId) => encrypted.has(streamId),
+    keepAlive: (streamId) => keptAlive.push(streamId),
     failTurn: async (invocationId, errorMessage) => {
       fails.push({ invocationId, errorMessage })
       settle()
@@ -487,6 +489,7 @@ export function fakeSession(rootStreamId = "stream_root") {
     postFailures,
     /** Streams Threa reports as end-to-end encrypted. */
     encrypted,
+    keptAlive,
     fails,
     decisions,
     /** Answer the open card, or the next one asked. */
