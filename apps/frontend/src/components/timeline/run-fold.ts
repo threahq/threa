@@ -1,6 +1,7 @@
 import { getRunCollapseMembers, setBlockCollapse } from "@/lib/markdown/collapse-cache"
 import { composeBlockCollapseKey } from "@/lib/markdown/markdown-block-context"
 import { isSameAuthorRun } from "@/lib/message-grouping"
+import { isPastFrontier } from "@/lib/read-frontier"
 import { isGroupableMessage, type TimelineItem } from "./event-list"
 
 /**
@@ -187,8 +188,7 @@ export function foldAuthorRuns(items: TimelineItem[], options: FoldAuthorRunsOpt
   }
 
   const frontier = options.frontierSequence
-  const isUnread = (member: RunMember) =>
-    !member.own && frontier !== undefined && (frontier === null || member.sequence > frontier)
+  const isUnread = (member: RunMember) => !member.own && isPastFrontier(member.sequence, frontier)
 
   const reveal = new Set(options.revealMessageIds.filter((id): id is string => !!id))
   const annotations = new Map<number, RunFold>()

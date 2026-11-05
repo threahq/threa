@@ -121,6 +121,7 @@ import {
   getTimelineItemKey,
   filterVisibleItems,
   mergeDocActivityRuns,
+  mergeAgentRunGroups,
   collectDividerAnchorIds,
   OLDER_SKELETON_ITEMS,
   type TimelineItem,
@@ -1487,8 +1488,9 @@ export function StreamContent({
   const visibleItems = useMemo(
     () =>
       timeDerive(() => {
-        const filtered = mergeDocActivityRuns(
-          useVirtualized ? filterVisibleItems(timelineItems, isChannel) : timelineItems
+        const filtered = mergeAgentRunGroups(
+          mergeDocActivityRuns(useVirtualized ? filterVisibleItems(timelineItems, isChannel) : timelineItems),
+          { frontierSequence }
         )
         const folded = foldRuns
           ? foldAuthorRuns(filtered, {
@@ -1522,6 +1524,11 @@ export function StreamContent({
       revealMessageId,
       restoreAnchorId,
     ]
+  )
+
+  const unvirtualizedItems = useMemo(
+    () => (useVirtualized ? timelineItems : mergeAgentRunGroups(timelineItems, { frontierSequence })),
+    [useVirtualized, timelineItems, frontierSequence]
   )
 
   const visibleItemCount = visibleItems.length
@@ -2997,7 +3004,7 @@ export function StreamContent({
                             </div>
                           )}
                           <EventList
-                            timelineItems={timelineItems}
+                            timelineItems={unvirtualizedItems}
                             isLoading={isLoading}
                             isConfirmedEmpty={isThreadConfirmedEmpty({
                               isConfirmedEmpty,

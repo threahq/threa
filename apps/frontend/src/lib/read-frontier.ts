@@ -25,3 +25,8 @@ export function resolveFrontierSequence(
   if (readState.lastReadSequence !== null) return BigInt(readState.lastReadSequence)
   return readState.lastReadEventId === null ? null : undefined
 }
+
+/** Whether a row at `sequence` is past the frontier: never-read counts everything, an unresolved frontier nothing. */
+export function isPastFrontier(sequence: bigint, frontier: bigint | null | undefined): boolean {
+  return frontier !== undefined && (frontier === null || sequence > frontier)
+}
