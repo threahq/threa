@@ -1,5 +1,5 @@
-import { SLUG_MAX_LENGTH, StreamTypes, streamCapabilities } from "@threahq/types"
-import type { StreamType } from "@threahq/types"
+import { SLUG_MAX_LENGTH, StreamTypes, isOpenVisibility, streamCapabilities } from "@threahq/types"
+import type { StreamType, Visibility } from "@threahq/types"
 import { Bell, File, FileText, Hash, MessageSquare, MessageSquareDashed, NotebookPen } from "lucide-react"
 import type { ComponentType } from "react"
 
@@ -318,4 +318,20 @@ export function collectSealedStreamIds(streams: readonly ArchivalChainStream[]):
     if (stream.archivedAt || findArchivedAncestor(stream, (id) => byId.get(id)).sealedBy) sealed.add(stream.id)
   }
   return sealed
+}
+
+/**
+ * Whether the viewer can read a stream (INV-62): access comes from its root,
+ * never the stream itself, so a thread is readable when the viewer is a member
+ * of its root or the root is public. A root missing from `streamsById` grants nothing.
+ */
+export function canReadThroughRoot(
+  stream: { id: string; rootStreamId?: string | null },
+  streamsById: ReadonlyMap<string, { visibility: Visibility }>,
+  memberStreamIds: ReadonlySet<string>
+): boolean {
+  const rootId = stream.rootStreamId ?? stream.id
+  if (memberStreamIds.has(rootId)) return true
+  const root = streamsById.get(rootId)
+  return root !== undefined && isOpenVisibility(root.visibility)
 }

@@ -3,6 +3,8 @@ import { render, screen, waitFor, act } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD, type CodeBlockWrap } from "@threahq/types"
 import { db } from "@/db"
+import { MemoryRouter } from "react-router-dom"
+import { SettingsProvider } from "@/contexts"
 import CodeBlock from "./code-block"
 import { MarkdownBlockProvider, hashMarkdownBlock, composeBlockCollapseKey } from "./markdown-block-context"
 import { hydrateCollapseCache } from "./collapse-cache"
@@ -13,6 +15,7 @@ import * as codeViewerModule from "@/contexts/code-viewer-context"
 
 // Stubbable preferences mock: each test can override via `currentPrefs`.
 let currentPrefs: {
+  codeBlockCollapseEnabled?: boolean
   codeBlockCollapseThreshold?: number
   codeBlockWrap?: CodeBlockWrap
   codeBlockWrapOverrides?: Record<string, CodeBlockWrap>
@@ -135,6 +138,18 @@ describe("CodeBlock collapse behavior", () => {
 
     expect(screen.getByText(/1 line, click to expand/i)).toBeInTheDocument()
     await waitFor(() => expect(document.querySelector("pre")).toBeInTheDocument())
+  })
+
+  it("shows every block in full, with no fold control, when folding is off", async () => {
+    currentPrefs = { codeBlockCollapseEnabled: false, codeBlockCollapseThreshold: 0 }
+    measure = { lineCount: 25, lineHeightPx: 20 }
+    renderCodeBlock(Array.from({ length: 25 }, (_, i) => `line ${i + 1}`).join("\n"))
+
+    await waitFor(() => expect(document.querySelector("pre")).toBeInTheDocument())
+    expect({
+      expandHint: screen.queryByText(/click to expand/i),
+      clamp: clampStyle(),
+    }).toEqual({ expandHint: null, clamp: undefined })
   })
 
   it("toggles collapsed → expanded on click and persists the choice to IDB", async () => {
@@ -330,5 +345,57 @@ describe("CodeBlock full-screen trigger", () => {
     renderCodeBlock("\nconst a = 1\n", "msg_test", "js")
     await userEvent.click(screen.getByRole("button", { name: "Open full screen" }))
     expect(open).toHaveBeenCalledWith({ code: "const a = 1", languageId: "javascript" })
+  })
+})
+
+describe("CodeBlock settings link", () => {
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    vi.spyOn(preferencesModule, "usePreferencesOptional").mockImplementation(() => buildPreferencesContext())
+    vi.spyOn(lineMeasureModule, "useMeasuredLineCount").mockImplementation(() => ({ ...measure, remeasure: () => {} }))
+    currentPrefs = { codeBlockCollapseThreshold: DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD }
+    await db.markdownBlockCollapse.clear()
+  })
+
+  function renderInWorkspace(code: string) {
+    return render(
+      <MemoryRouter initialEntries={["/w/ws_1/s/stream_1"]}>
+        <SettingsProvider>
+          <MarkdownBlockProvider messageId="msg_test">
+            <CodeBlock language="typescript">{code}</CodeBlock>
+          </MarkdownBlockProvider>
+        </SettingsProvider>
+      </MemoryRouter>
+    )
+  }
+
+  it("links a short block to the wrap setting", async () => {
+    measure = { lineCount: 2, lineHeightPx: 20 }
+    renderInWorkspace("const a = 1")
+
+    expect(screen.getByRole("link", { name: "Code block settings" })).toHaveAttribute(
+      "href",
+      "/w/ws_1/s/stream_1?settings=messages&setting=code-wrap"
+    )
+    await waitFor(() => expect(document.querySelector("pre")).toBeInTheDocument())
+  })
+
+  it("links a collapsed block to the collapse setting", async () => {
+    measure = { lineCount: 25, lineHeightPx: 20 }
+    renderInWorkspace(Array.from({ length: 25 }, (_, i) => `line ${i + 1}`).join("\n"))
+
+    expect(screen.getByRole("link", { name: "Code block settings" })).toHaveAttribute(
+      "href",
+      "/w/ws_1/s/stream_1?settings=messages&setting=code-collapse"
+    )
+    await waitFor(() => expect(document.querySelector("pre")).toBeInTheDocument())
+  })
+
+  it("renders no link outside the workspace shell", async () => {
+    measure = { lineCount: 2, lineHeightPx: 20 }
+    renderCodeBlock("const a = 1")
+
+    expect(screen.queryByRole("link", { name: "Code block settings" })).not.toBeInTheDocument()
+    await waitFor(() => expect(document.querySelector("pre")).toBeInTheDocument())
   })
 })

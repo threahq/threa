@@ -38,7 +38,8 @@ function renderSection(queryClient: QueryClient) {
  */
 async function pickZone(user: ReturnType<typeof userEvent.setup>, zone: RegExp) {
   await user.click(screen.getByRole("combobox"))
-  await user.type(screen.getByPlaceholderText("Search timezone..."), zone.source.replace(/\\/g, ""))
+  await user.click(screen.getByPlaceholderText("Search time zones"))
+  await user.paste(zone.source.replace(/\\/g, ""))
   const matches = await screen.findAllByText(zone)
   await user.click(matches[matches.length - 1])
 }

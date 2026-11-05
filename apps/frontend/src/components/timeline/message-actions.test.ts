@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest"
 import {
+  containsCodeBlock,
   getVisibleActions,
   groupVisibleActions,
   messageActions,
@@ -709,5 +710,17 @@ describe("the settling pair", () => {
     action.action?.(ctx)
 
     expect(onKeepInConversation).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("containsCodeBlock", () => {
+  it("finds a code block nested anywhere in the body, and nothing in inline code", () => {
+    const paragraph = { type: "paragraph", content: [{ type: "text", text: "x", marks: [{ type: "code" }] }] }
+    const nested = { type: "doc", content: [{ type: "blockquote", content: [{ type: "codeBlock", content: [] }] }] }
+    expect({
+      nested: containsCodeBlock(nested),
+      inlineOnly: containsCodeBlock({ type: "doc", content: [paragraph] }),
+      missing: containsCodeBlock(undefined),
+    }).toEqual({ nested: true, inlineOnly: false, missing: false })
   })
 })

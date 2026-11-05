@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { useEffect, useState } from "react"
 import { act, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { MemoryRouter } from "react-router-dom"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { EditorActionBar, type EditorFormatFoot } from "./editor-action-bar"
 import * as contextsModule from "@/contexts"
@@ -175,6 +176,32 @@ describe("action side", () => {
         expect(document.activeElement).toBe(editorEl)
       }
       editorEl.remove()
+    })
+
+    it("links the + menu to the composer settings and closes on the way there", async () => {
+      const user = userEvent.setup()
+      render(
+        <MemoryRouter initialEntries={["/w/ws_1/s/stream_1"]}>
+          <contextsModule.SettingsProvider>
+            <TooltipProvider>
+              <EditorActionBar
+                editorHandle={null}
+                formatOpen={false}
+                onFormatOpenChange={vi.fn()}
+                formatFoot={folded()}
+                footMenu={{ onAttach: vi.fn() }}
+                trailingContent={null}
+              />
+            </TooltipProvider>
+          </contextsModule.SettingsProvider>
+        </MemoryRouter>
+      )
+
+      await user.click(screen.getByRole("button", { name: "More" }))
+      const link = screen.getByRole("link", { name: "Composer settings" })
+      expect(link).toHaveAttribute("href", "/w/ws_1/s/stream_1?settings=keyboard&setting=send-key")
+      await user.click(link)
+      expect(screen.queryByTestId("composer-foot-menu")).toBeNull()
     })
 
     it("names what is waiting on the + and counts it on the rows", async () => {

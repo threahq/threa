@@ -177,6 +177,8 @@ interface RichEditorProps {
   ariaLabel: string
   /** IDs of elements that describe the editor surface */
   ariaDescribedBy?: string
+  /** ID of the error shown for the content; marks the editor surface invalid while set */
+  ariaErrorMessage?: string
   /** Blur the editor when Escape is pressed and no suggestion popup is active */
   blurOnEscape?: boolean
   /** Called after Escape blurs the editor */
@@ -312,6 +314,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     belowToolbarContent,
     ariaLabel,
     ariaDescribedBy,
+    ariaErrorMessage,
     blurOnEscape = false,
     onEscapeBlur,
     onFocus: onFocusProp,
@@ -776,6 +779,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         "aria-label": ariaLabel,
         "aria-multiline": "true",
         ...(ariaDescribedBy ? { "aria-describedby": ariaDescribedBy } : {}),
+        ...(ariaErrorMessage ? { "aria-invalid": "true", "aria-errormessage": ariaErrorMessage } : {}),
         class: cn("min-h-[40px] max-h-[200px] overflow-y-auto w-full py-2 outline-none text-sm", EDITOR_CONTENT_CLASS),
       },
       clipboardTextSerializer: serializeClipboardSlice,

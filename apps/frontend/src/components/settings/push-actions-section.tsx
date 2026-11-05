@@ -1,12 +1,16 @@
 import { Smile } from "lucide-react"
-import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { ReactionEmojiPicker } from "@/components/timeline/reaction-emoji-picker"
+import { SETTING_CONTROL_HEIGHT, SettingsDisclosure, type SettingUnavailable } from "./setting-primitives"
+import { SETTING_CHOICE_LABELS, settingDef } from "./settings-registry"
+import { SettingListItem } from "./setting-lists"
+import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { usePreferences } from "@/contexts"
 import { useAuth } from "@/auth"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { formatBody, formatTitle, resolveActions, resolvePushActionLimit } from "@/lib/sw-notification-format"
+import type { PushDeviceState } from "@/hooks/push-device-state"
 import {
   ActivityTypes,
   DEFAULT_PUSH_ACTIONS,
@@ -16,10 +20,12 @@ import {
   PUSH_ACTIONS_MAX,
   PushActions,
   getAvatarUrl,
+  type PrefNotificationLevel,
   type PushAction,
 } from "@threahq/types"
 
 const SLOT_LABELS = ["First button", "Second button"] as const
+const FIELD_CLASS = `w-40 shrink-0 ${SETTING_CONTROL_HEIGHT}`
 const NONE = "none"
 
 const ACTION_LABELS: Record<PushAction, string> = {
@@ -49,6 +55,32 @@ export function supportsNotificationActions(): boolean {
   if (typeof navigator !== "undefined" && resolvePushActionLimit(navigator.userAgent) === 0) return false
   const maxActions = (Notification as unknown as { maxActions?: number }).maxActions
   return typeof maxActions === "number" && maxActions > 0
+}
+
+/** One wording for the row's reason and for how search reads the buttons. */
+function shownOnly(condition: string): SettingUnavailable {
+  return { reason: `${condition}.`, value: condition }
+}
+
+const PUSH_BUTTONS_UNAVAILABLE = {
+  unsupported: shownOnly("Only shown in desktop Chrome"),
+  noPush: shownOnly(
+    `Shown once “${settingDef("notification-level").label}” isn't “${SETTING_CHOICE_LABELS["notification-level"].none}”`
+  ),
+}
+
+const SHOWN_ONCE_DEVICE_ON = `Shown once “${settingDef("push-device").label}” is on.`
+
+/** Why the buttons can't show anywhere: no support here, or no pushes at all. */
+export function pushButtonsUnavailable(supported: boolean, level: PrefNotificationLevel): SettingUnavailable | null {
+  if (!supported) return PUSH_BUTTONS_UNAVAILABLE.unsupported
+  if (level === "none") return PUSH_BUTTONS_UNAVAILABLE.noPush
+  return null
+}
+
+/** The buttons a push carries, as the row's summary and search both read them. */
+export function pushButtonsSummary(actions: readonly PushAction[]): string {
+  return actions.length > 0 ? actions.map((action) => ACTION_LABELS[action]).join(", ") : "None"
 }
 
 /** Put `action` in slot `index`; a slot that already held it elsewhere empties. */
@@ -86,7 +118,7 @@ function NotificationPreview({
   })
 
   return (
-    <div aria-label="Notification preview" className="max-w-sm rounded-lg border bg-card p-3 shadow-sm">
+    <div role="group" aria-label="Notification preview" className="max-w-sm rounded-md border bg-background p-3">
       <div className="flex items-start gap-3">
         <Avatar className="h-9 w-9">
           {avatarSrc && <AvatarImage src={avatarSrc} alt="" />}
@@ -110,107 +142,109 @@ function NotificationPreview({
   )
 }
 
-export function PushActionsSection({ workspaceId }: { workspaceId: string }) {
+/**
+ * The buttons on a push. Where they can't show, the row stays shut with the
+ * reason; with push off on this device it stays editable, since the buttons
+ * sync to the viewer's other devices.
+ */
+export function PushActionsSection({
+  workspaceId,
+  level,
+  pushDevice,
+}: {
+  workspaceId: string
+  level: PrefNotificationLevel
+  pushDevice: PushDeviceState
+}) {
   const { preferences, updatePreference } = usePreferences()
   const actions = preferences?.pushActions ?? [...DEFAULT_PUSH_ACTIONS]
   const reminderMinutes = preferences?.pushReminderMinutes ?? DEFAULT_PUSH_REMINDER_MINUTES
   const quickReaction = preferences?.pushQuickReaction ?? DEFAULT_PUSH_QUICK_REACTION
-
-  if (!supportsNotificationActions()) {
-    return (
-      <section className="space-y-1">
-        <h3 className="text-sm font-medium">Notification buttons</h3>
-        <p className="text-sm text-muted-foreground">
-          This device can't show buttons on a notification. Set them up from desktop Chrome, where they appear.
-        </p>
-      </section>
-    )
-  }
+  const phone = useIsMobileOrCoarse()
+  const unavailable = pushButtonsUnavailable(supportsNotificationActions(), level)
+  const deviceOff = pushDevice !== "on" && pushDevice !== "subscribing"
 
   return (
-    <section className="space-y-4">
-      <div>
-        <h3 className="text-sm font-medium">Notification buttons</h3>
-        <p className="text-sm text-muted-foreground">
-          Act on a message straight from the notification. Buttons show in desktop Chrome.
-        </p>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        {SLOT_LABELS.map((label, index) => (
-          <div key={label} className="space-y-1.5">
-            <Label htmlFor={`push-action-${index}`}>{label}</Label>
-            <Select
-              value={actions[index] ?? NONE}
-              onValueChange={(value) =>
-                updatePreference(
-                  "pushActions",
-                  assignSlot(actions, index, value === NONE ? null : (value as PushAction))
-                )
-              }
-            >
-              <SelectTrigger id={`push-action-${index}`} aria-label={label} className="h-9">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NONE}>None</SelectItem>
-                {PUSH_ACTION_OPTIONS.map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {ACTION_LABELS[option]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        ))}
-      </div>
-
-      {actions.includes(PushActions.REMIND) && (
-        <div className="space-y-1.5">
-          <Label htmlFor="push-reminder-minutes">Remind me after</Label>
-          <Select
-            value={String(reminderMinutes)}
-            onValueChange={(value) => updatePreference("pushReminderMinutes", Number(value))}
-          >
-            <SelectTrigger id="push-reminder-minutes" aria-label="Remind me after" className="h-9 w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {REMINDER_OPTIONS.map((option) => (
-                <SelectItem key={option.minutes} value={String(option.minutes)}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-
-      {actions.includes(PushActions.REACT) && (
-        <div className="space-y-1.5">
-          <Label>Quick reaction</Label>
-          <ReactionEmojiPicker
-            workspaceId={workspaceId}
-            onSelect={(emoji) => updatePreference("pushQuickReaction", emoji)}
-            trigger={
-              <button
-                type="button"
-                aria-label="Pick the quick reaction"
-                className="flex h-9 w-9 items-center justify-center rounded-md border border-input text-lg hover:bg-muted/50"
+    <SettingsDisclosure
+      setting="push-buttons"
+      summary={pushButtonsSummary(actions)}
+      defaultOpen={!phone}
+      inactive={unavailable?.reason}
+      description={deviceOff ? `${settingDef("push-buttons").description} ${SHOWN_ONCE_DEVICE_ON}` : undefined}
+    >
+      <div className="space-y-3">
+        <ul className="divide-y divide-border">
+          {SLOT_LABELS.map((label, index) => (
+            <SettingListItem key={label} label={label}>
+              <Select
+                value={actions[index] ?? NONE}
+                onValueChange={(value) =>
+                  updatePreference(
+                    "pushActions",
+                    assignSlot(actions, index, value === NONE ? null : (value as PushAction))
+                  )
+                }
               >
-                {quickReaction || <Smile className="h-4 w-4 text-muted-foreground" />}
-              </button>
-            }
-          />
-        </div>
-      )}
+                <SelectTrigger aria-label={label} className={FIELD_CLASS}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE}>None</SelectItem>
+                  {PUSH_ACTION_OPTIONS.map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {ACTION_LABELS[option]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingListItem>
+          ))}
+          {actions.includes(PushActions.REMIND) && (
+            <SettingListItem label="Remind me after">
+              <Select
+                value={String(reminderMinutes)}
+                onValueChange={(value) => updatePreference("pushReminderMinutes", Number(value))}
+              >
+                <SelectTrigger aria-label="Remind me after" className={FIELD_CLASS}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {REMINDER_OPTIONS.map((option) => (
+                    <SelectItem key={option.minutes} value={String(option.minutes)}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingListItem>
+          )}
+          {actions.includes(PushActions.REACT) && (
+            <SettingListItem label={<span id="push-quick-reaction-label">Quick reaction</span>}>
+              <ReactionEmojiPicker
+                workspaceId={workspaceId}
+                onSelect={(emoji) => updatePreference("pushQuickReaction", emoji)}
+                trigger={
+                  <button
+                    type="button"
+                    aria-label="Pick the quick reaction"
+                    aria-describedby="push-quick-reaction-label"
+                    className="flex size-11 items-center justify-center rounded-md border border-input text-lg hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 sm:size-9 [@media(pointer:coarse)]:size-11"
+                  >
+                    {quickReaction || <Smile aria-hidden className="h-4 w-4 text-muted-foreground" />}
+                  </button>
+                }
+              />
+            </SettingListItem>
+          )}
+        </ul>
 
-      <NotificationPreview
-        workspaceId={workspaceId}
-        actions={actions}
-        reminderMinutes={reminderMinutes}
-        quickReaction={quickReaction}
-      />
-    </section>
+        <NotificationPreview
+          workspaceId={workspaceId}
+          actions={actions}
+          reminderMinutes={reminderMinutes}
+          quickReaction={quickReaction}
+        />
+      </div>
+    </SettingsDisclosure>
   )
 }

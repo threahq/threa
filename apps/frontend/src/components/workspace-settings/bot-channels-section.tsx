@@ -3,11 +3,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { botsApi } from "@/api/bots"
 import { StreamTypes } from "@threahq/types"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { SearchableSelect } from "@/components/ui/searchable-select"
+import {
+  SettingAddButton,
+  SettingEmptyNote,
+  SettingFieldError,
+  SettingRemoveButton,
+  SettingRow,
+  SettingBadge,
+} from "@/components/settings/setting-primitives"
 import { VISIBILITY_LABELS } from "@/lib/stream-visuals"
-import { Hash, X } from "lucide-react"
+import { Hash } from "lucide-react"
 
 interface BotChannelsSectionProps {
   workspaceId: string
@@ -62,69 +68,64 @@ export function BotChannelsSection({ workspaceId, botId, isArchived }: BotChanne
     return enriched.sort((a, b) => (a.slug ?? a.displayName ?? "").localeCompare(b.slug ?? b.displayName ?? ""))
   }, [streamGrants, wsBootstrap])
 
+  const channelName = (grant: { slug: string | null; displayName: string | null; streamId: string }) =>
+    grant.slug ?? grant.displayName ?? grant.streamId
+
   return (
-    <section className="space-y-3">
-      <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Channel Access</h4>
-
-      <p className="text-xs text-muted-foreground">
-        Bots can access all public channels. Grant access to specific private channels below.
-      </p>
-
-      {grantedStreams.length > 0 && (
-        <div className="rounded-md border divide-y">
+    <SettingRow
+      label="Channel access"
+      description="Bots can access all public channels. Grant access to private ones here."
+      control={
+        !isArchived &&
+        availableChannels.length > 0 && (
+          <SearchableSelect
+            items={availableChannels}
+            value={null}
+            onChange={(stream) => grantStreamMutation.mutate(stream.id)}
+            getKey={(s) => s.id}
+            getKeywords={(s) =>
+              [s.slug ?? "", s.slug ? `#${s.slug}` : "", s.displayName ?? ""].filter(Boolean) as string[]
+            }
+            searchPlaceholder="Search channels"
+            emptyMessage="No matching channels"
+            align="end"
+            contentClassName="w-72"
+            trigger={<SettingAddButton disabled={grantStreamMutation.isPending}>Grant channel access</SettingAddButton>}
+            renderItem={(stream) => (
+              <>
+                <Hash className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                <span className="truncate text-sm">{stream.slug ?? stream.displayName}</span>
+                <SettingBadge className="ml-auto">{VISIBILITY_LABELS[stream.visibility]}</SettingBadge>
+              </>
+            )}
+          />
+        )
+      }
+    >
+      {grantedStreams.length > 0 ? (
+        <ul className="divide-y divide-border">
           {grantedStreams.map((grant) => (
-            <div key={grant.streamId} className="flex items-center justify-between px-3 py-2 group reveal-host">
-              <div className="flex items-center gap-2 min-w-0">
-                <Hash className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                <span className="text-sm truncate">{grant.slug ?? grant.displayName ?? grant.streamId}</span>
-              </div>
+            <li key={grant.streamId} className="flex min-h-11 items-center justify-between gap-2 py-2">
+              <span className="flex min-w-0 items-center gap-2">
+                <Hash className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                <span className="truncate text-sm font-medium">{channelName(grant)}</span>
+              </span>
               {!isArchived && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="reveal-actions h-6 w-6 shrink-0"
+                <SettingRemoveButton
+                  label={`Remove access to ${grant.slug ? `#${grant.slug}` : (grant.displayName ?? "this channel")}`}
                   onClick={() => revokeStreamMutation.mutate(grant.streamId)}
                   disabled={revokeStreamMutation.isPending}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </Button>
+                />
               )}
-            </div>
+            </li>
           ))}
-        </div>
+        </ul>
+      ) : (
+        <SettingEmptyNote>No private channels yet.</SettingEmptyNote>
       )}
-
-      {grantedStreams.length === 0 && (
-        <p className="text-xs text-muted-foreground italic">No private channel access granted.</p>
+      {(grantStreamMutation.error || revokeStreamMutation.error) && (
+        <SettingFieldError>Couldn&apos;t change channel access. Try again.</SettingFieldError>
       )}
-
-      {!isArchived && (
-        <SearchableSelect
-          items={availableChannels}
-          value={null}
-          onChange={(stream) => grantStreamMutation.mutate(stream.id)}
-          getKey={(s) => s.id}
-          getKeywords={(s) =>
-            [s.slug ?? "", s.slug ? `#${s.slug}` : "", s.displayName ?? ""].filter(Boolean) as string[]
-          }
-          placeholder={availableChannels.length === 0 ? "All channels granted" : "Grant channel access..."}
-          searchPlaceholder="Search channels..."
-          emptyMessage="No matching channels"
-          triggerIcon={Hash}
-          disabled={availableChannels.length === 0 || grantStreamMutation.isPending}
-          showAvailableCount
-          availableLabel={(n) => `${n} ${n === 1 ? "channel" : "channels"} available`}
-          renderItem={(stream) => (
-            <>
-              <Hash className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <span className="text-sm truncate">{stream.slug ?? stream.displayName}</span>
-              <Badge variant="outline" className="ml-auto text-[10px] shrink-0">
-                {VISIBILITY_LABELS[stream.visibility]}
-              </Badge>
-            </>
-          )}
-        />
-      )}
-    </section>
+    </SettingRow>
   )
 }

@@ -180,6 +180,11 @@ export const areas: Area[] = [
     specs: ["sqlite-storage"],
   },
   {
+    name: "settings",
+    sources: [`${fe}components/settings/`],
+    specs: ["settings-"],
+  },
+  {
     name: "personas",
     sources: [`${fe}components/persona-editor/`, `${fe}components/bot-profile/`, `${be}bot-runtimes/`],
     specs: ["bot-"],

@@ -1,7 +1,5 @@
-import type { ReactNode } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { act, render, screen, waitFor } from "@testing-library/react"
-import userEvent from "@testing-library/user-event"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { spyOnExport } from "@/test/spy"
 import { ServicesProvider, type StreamService } from "@/contexts"
@@ -13,16 +11,23 @@ import { DescriptionSection } from "./description-section"
 // Capture the controlled editor's props so the test can drive onChange without
 // mounting TipTap (and its auth/workspace provider chain).
 let lastOnChange: ((json: JSONContent) => void) | null = null
+let lastOnSubmit: (() => void) | null = null
 
-type RichEditorMockProps = { value: JSONContent; onChange: (json: JSONContent) => void; disabled?: boolean }
-type ActionBarMockProps = { trailingContent?: ReactNode }
+type RichEditorMockProps = {
+  value: JSONContent
+  onChange: (json: JSONContent) => void
+  onSubmit: () => void
+  disabled?: boolean
+}
 
 beforeEach(() => {
   lastOnChange = null
-  // RichEditor / EditorActionBar are forwardRef/const exports — swap via the
+  lastOnSubmit = null
+  // RichEditor is a forwardRef export — swap via the
   // getter accessor (vi.spyOn can't replace a non-function export).
   spyOnExport(editorModule, "RichEditor").mockReturnValue(((props: RichEditorMockProps) => {
     lastOnChange = props.onChange
+    lastOnSubmit = props.onSubmit
     // Render the seeded value as markdown so seeding is observable.
     return (
       <div data-testid="rich-editor" aria-disabled={props.disabled ?? false}>
@@ -30,12 +35,15 @@ beforeEach(() => {
       </div>
     )
   }) as unknown as typeof editorModule.RichEditor)
-  spyOnExport(editorModule, "EditorActionBar").mockReturnValue(((props: ActionBarMockProps) => (
-    <div data-testid="action-bar">{props.trailingContent}</div>
-  )) as unknown as typeof editorModule.EditorActionBar)
 })
 
 afterEach(() => vi.restoreAllMocks())
+
+const EDITED: JSONContent = {
+  type: "doc",
+  content: [{ type: "paragraph", content: [{ type: "text", text: "New blurb" }] }],
+}
+const STORED = EDITED as Stream["descriptionJson"]
 
 function channel(overrides: Partial<Stream> = {}): Stream {
   return {
@@ -98,26 +106,57 @@ describe("DescriptionSection", () => {
     }).toEqual({ editorDisabled: "true", save: null, reset: null })
   })
 
-  it("keeps Save disabled until the description changes", () => {
-    renderSection(channel({ description: "Existing" }))
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
+  it("saves nothing on blur when the description is unchanged", () => {
+    const { update } = renderSection(channel({ description: "Existing" }))
+    fireEvent.focusOut(screen.getByTestId("rich-editor"))
+    expect(update).not.toHaveBeenCalled()
   })
 
-  it("saves the edited content as descriptionJson (not markdown)", async () => {
+  it("autosaves the edited content as descriptionJson on blur and says Saved in place", async () => {
+    const saved = channel({ description: "New blurb", descriptionJson: STORED })
+    const { update } = renderSection(channel({ description: "" }), vi.fn().mockResolvedValue(saved))
+
+    act(() => lastOnChange?.(EDITED))
+    fireEvent.focusOut(screen.getByTestId("rich-editor"))
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", "stream_chan", { descriptionJson: STORED }))
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Saved"))
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull()
+  })
+
+  it("saves on ⌘/Ctrl+Enter without leaving the editor", async () => {
     const { update } = renderSection(channel({ description: "" }))
 
-    const edited: JSONContent = {
-      type: "doc",
-      content: [{ type: "paragraph", content: [{ type: "text", text: "New blurb" }] }],
-    }
-    act(() => lastOnChange?.(edited))
+    act(() => lastOnChange?.(EDITED))
+    act(() => lastOnSubmit?.())
 
-    await userEvent.click(screen.getByRole("button", { name: "Save" }))
-
-    await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", "stream_chan", { descriptionJson: edited }))
+    await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", "stream_chan", { descriptionJson: STORED }))
   })
 
-  it("preserves an in-progress edit when the stream object updates without a description change", () => {
+  it("reverts the draft on Escape instead of saving it", () => {
+    const { update } = renderSection(channel({ description: "Existing" }))
+
+    act(() => lastOnChange?.(EDITED))
+    expect(screen.getByTestId("rich-editor")).toHaveTextContent("New blurb")
+    fireEvent.keyDown(screen.getByTestId("rich-editor"), { key: "Escape" })
+    fireEvent.focusOut(screen.getByTestId("rich-editor"))
+
+    expect(screen.getByTestId("rich-editor")).toHaveTextContent("Existing")
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it("keeps a failed draft and says so in place", async () => {
+    const update = vi.fn().mockRejectedValue(new Error("offline"))
+    renderSection(channel({ description: "" }), update)
+
+    act(() => lastOnChange?.(EDITED))
+    fireEvent.focusOut(screen.getByTestId("rich-editor"))
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't save the description")
+    expect(screen.getByTestId("rich-editor")).toHaveTextContent("New blurb")
+  })
+
+  it("preserves an in-progress edit when the stream object updates without a description change", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const update = vi.fn().mockResolvedValue({})
     const wrap = (stream: Stream) => (
@@ -129,19 +168,29 @@ describe("DescriptionSection", () => {
     )
     const { rerender } = render(wrap(channel({ description: null, descriptionJson: null })))
 
-    const edited: JSONContent = {
-      type: "doc",
-      content: [{ type: "paragraph", content: [{ type: "text", text: "draft" }] }],
-    }
-    act(() => lastOnChange?.(edited))
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled()
+    act(() => lastOnChange?.(EDITED))
 
     // An unrelated stream-cache write lands: a new stream object with a new
-    // descriptionJson identity, but the saved description (markdown) is
-    // unchanged. The editor must NOT reset — re-seeding here would drop the edit.
+    // descriptionJson identity, but the same (empty) description. The editor
+    // must NOT reset — re-seeding here would drop the edit.
     rerender(wrap(channel({ description: null, descriptionJson: { type: "doc", content: [{ type: "paragraph" }] } })))
 
-    expect(screen.getByTestId("rich-editor")).toHaveTextContent("draft")
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled()
+    expect(screen.getByTestId("rich-editor")).toHaveTextContent("New blurb")
+    fireEvent.focusOut(screen.getByTestId("rich-editor"))
+    await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", "stream_chan", { descriptionJson: STORED }))
+  })
+
+  it("follows a description saved elsewhere when there is no draft", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrap = (stream: Stream) => (
+      <QueryClientProvider client={queryClient}>
+        <ServicesProvider services={{ streams: { update: vi.fn() } as unknown as StreamService }}>
+          <DescriptionSection workspaceId="ws_1" stream={stream} />
+        </ServicesProvider>
+      </QueryClientProvider>
+    )
+    const { rerender } = render(wrap(channel({ description: "Before" })))
+    rerender(wrap(channel({ description: "After", descriptionJson: STORED })))
+    expect(screen.getByTestId("rich-editor")).toHaveTextContent("New blurb")
   })
 })

@@ -21,7 +21,7 @@ import { StreamSection, TieredStreamSection, sectionVisibleItems } from "./secti
 import { StreamDropZone } from "./sidebar-dnd"
 import { defaultSectionOrder, sectionOrderOptions } from "@threahq/types"
 import { sectionPresentation, type SidebarSectionSpec } from "./sidebar-config"
-import type { SectionViewChange, SectionViewOptions } from "./section-view-options"
+import type { SectionSettingsLink, SectionViewChange, SectionViewOptions } from "./section-view-options"
 import { findSourceLabelId, type ResolvedSection } from "./resolve-sections"
 import { SidebarLabelsProvider } from "./sidebar-labels"
 import { SidebarRowOpenersProvider } from "./sidebar-row-openers"
@@ -68,6 +68,11 @@ function slotted<V>(slots: PropSlots, slot: string, key: unknown, create: () => 
   const value = create()
   slots.set(slot, { key, value })
   return value
+}
+
+const SECTION_SETTINGS: Partial<Record<SidebarSectionSpec["kind"], SectionSettingsLink>> = {
+  unread: { label: "Inbox settings", setting: "settling" },
+  label: { label: "Label settings", setting: "label-move" },
 }
 
 const ALL_CAUGHT_UP = <span className="text-[11px] italic text-muted-foreground/50">All caught up</span>
@@ -469,6 +474,7 @@ export const SidebarStreamList = memo(function SidebarStreamList({
           orderOptions: sectionOrderOptions(section.spec),
           reverse: viewReverse,
           onChange: (change) => onSectionViewChange(section.id, change),
+          settings: SECTION_SETTINGS[section.spec.kind],
         }))
     // Walk exactly what this section is about to render: a tiered section or a
     // filtered one holds a tail behind the "more" expander, so raw items are

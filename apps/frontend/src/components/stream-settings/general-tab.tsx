@@ -1,12 +1,9 @@
-import { useEffect, useState } from "react"
-import { Link } from "react-router-dom"
+import { Fragment, useState } from "react"
+import { ChevronDown } from "lucide-react"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Switch } from "@/components/ui/switch"
-import { VisibilityPicker } from "@/components/ui/visibility-picker"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
+import { VISIBILITY_HINTS } from "@/components/ui/visibility-picker"
 import {
   ResponsiveAlertDialog,
   ResponsiveAlertDialogAction,
@@ -17,9 +14,32 @@ import {
   ResponsiveAlertDialogHeader,
   ResponsiveAlertDialogTitle,
 } from "@/components/ui/responsive-alert-dialog"
+import {
+  ChoiceSetting,
+  SETTING_CONTROL_HEIGHT,
+  SETTING_CONTROL_WIDTH,
+  SettingRow,
+  SettingStateAction,
+  SettingValue,
+  SettingsSection,
+  SwitchSetting,
+  settingIds,
+  SaveError,
+  SaveIndicator,
+} from "@/components/settings/setting-primitives"
+import {
+  SETTING_CHOICE_LABELS,
+  settingDef,
+  streamNotifyDefaultChoice,
+  type StreamSettingId,
+  upperFirst,
+} from "@/components/settings/settings-registry"
+import { useCommittedText } from "@/components/settings/committed-field"
 import { ChannelSlugInput } from "./channel-slug-input"
 import { DescriptionSection } from "./description-section"
-import { canChangeArchiveState, getStreamName, getStreamTypeLabel } from "@/lib/streams"
+import { cn } from "@/lib/utils"
+import { canChangeArchiveState, getStreamName, getStreamTypeLabel, streamFallbackLabel } from "@/lib/streams"
+import { VISIBILITY_LABELS } from "@/lib/stream-visuals"
 import { useUpdateStream, useArchiveStream, useUnarchiveStream, useSetNotificationLevel } from "@/hooks"
 import { useRenameStream } from "@/hooks/use-rename-stream"
 import { useCanManageChannels } from "@/lib/use-can-manage-channels"
@@ -36,8 +56,19 @@ import {
   type NotificationLevel,
   type Visibility,
   isChannelLike,
+  isValidSlug,
+  resolveNotificationPause,
 } from "@threahq/types"
 import { toast } from "sonner"
+import { usePreferencesOptional } from "@/contexts/preferences-context"
+import { useOptionalSettings } from "@/contexts/settings-context"
+import { useCurrentWorkspaceUser } from "@/hooks/use-workspaces"
+import { formatNotificationPauseLabel } from "@/lib/status"
+import { SettingsLink } from "@/components/workspace-settings/settings-link"
+import { resolvePushDeviceState } from "@/hooks/push-device-state"
+import { usePushNotifications } from "@/hooks/use-push-notifications"
+import { STREAM_LETS_THROUGH, summarizeStreamPush, type StreamPushInput } from "./stream-push-summary"
+import { useInheritedNotificationLevel } from "./use-inherited-notification-level"
 
 interface GeneralTabProps {
   workspaceId: string
@@ -64,138 +95,133 @@ export function GeneralTab({
   const channelLike = isChannelLike(stream)
   const canManageChannels = useCanManageChannels(workspaceId)
   const channelLocked = channelLike && !canManageChannels
+  const conversation = isChannel || isScratchpad || isDm
 
-  // Build sections dynamically so we never render orphan or stacked dividers
-  const sections: React.ReactNode[] = []
-
-  if (stream.type !== StreamTypes.DOC) {
-    sections.push(
-      <NotificationSection
-        key="notifications"
-        workspaceId={workspaceId}
-        streamId={stream.id}
-        streamType={stream.type}
-        notificationLevel={notificationLevel}
+  let name: React.ReactNode = null
+  if (isChannel) name = <SlugRow workspaceId={workspaceId} stream={stream} locked={channelLocked} />
+  else if (isScratchpad) name = <DisplayNameRow workspaceId={workspaceId} stream={stream} />
+  else if (isDm)
+    name = (
+      <ReadOnlyRow
+        setting="stream-name"
+        value={dmDisplayName ?? stream.displayName ?? "Direct message"}
+        description="A direct message is named after the people in it."
       />
     )
-  }
+  else if (isThread) name = <ThreadNameRow workspaceId={workspaceId} stream={stream} />
 
+  let visibility: React.ReactNode = null
   if (channelLike) {
-    sections.push(
-      <VisibilitySection key="visibility" workspaceId={workspaceId} stream={stream} locked={channelLocked} />
-    )
-  } else if (isScratchpad) {
-    sections.push(<VisibilityDisplay key="visibility" label="Visibility" hint="Scratchpads are always private" />)
-  } else if (isDm) {
-    sections.push(<VisibilityDisplay key="visibility" label="Visibility" hint="DMs are always private" />)
-  } else if (isThread && rootStream) {
-    sections.push(
-      <ThreadVisibilityDisplay
-        key="visibility"
-        inheritedVisibility={rootStream.visibility}
-        rootStreamName={getStreamName(rootStream) ?? "parent stream"}
-      />
-    )
+    visibility = <VisibilityRow workspaceId={workspaceId} stream={stream} locked={channelLocked} />
   } else if (isThread) {
-    sections.push(
-      <VisibilityDisplay
-        key="visibility"
-        label="Visibility"
-        hint="Threads inherit visibility from their parent stream"
+    visibility = (
+      <ReadOnlyRow
+        setting="stream-visibility"
+        value={rootStream ? VISIBILITY_LABELS[rootStream.visibility] : "Inherited"}
+        description={`Threads follow ${(rootStream && getStreamName(rootStream)) ?? "their parent stream"}.`}
       />
     )
-  } else if (isSystem) {
-    sections.push(<VisibilityDisplay key="visibility" label="Visibility" hint="System messages are always private" />)
-  }
-
-  if (isChannel) {
-    sections.push(<SlugSection key="name" workspaceId={workspaceId} stream={stream} locked={channelLocked} />)
-  } else if (isScratchpad) {
-    sections.push(<DisplayNameSection key="name" workspaceId={workspaceId} stream={stream} />)
-  } else if (isDm) {
-    sections.push(
-      <DmDisplayNameSection key="name" displayName={dmDisplayName ?? stream.displayName ?? "Direct message"} />
-    )
-  } else if (isThread) {
-    sections.push(<ThreadDisplayNameSection key="name" workspaceId={workspaceId} stream={stream} />)
-  }
-
-  if (isChannel || isScratchpad || isDm) {
-    sections.push(
-      <DescriptionSection key="description" workspaceId={workspaceId} stream={stream} locked={channelLocked} />
-    )
-  }
-
-  // Memory automation is a per-stream gate on GAM extraction. Threads inherit
-  // from their root and system streams are read-only; every other type that
-  // produces memos (channels, scratchpads, DMs) gets the toggle.
-  if (isChannel || isScratchpad || isDm) {
-    sections.push(<MemorySection key="memory" workspaceId={workspaceId} stream={stream} locked={channelLocked} />)
-  }
-
-  if (isSystem) {
-    sections.push(<SystemDisclaimerSection key="disclaimer" />)
-  }
-
-  if (isChannel || isScratchpad || isThread) {
-    let archiveLabel: string
-    if (isChannel) {
-      archiveLabel = "channel"
-    } else if (isScratchpad) {
-      archiveLabel = "scratchpad"
-    } else {
-      archiveLabel = "thread"
-    }
-    sections.push(
-      <ArchiveSection
-        key="archive"
-        workspaceId={workspaceId}
-        stream={stream}
-        rootStream={rootStream ?? null}
-        currentUserId={currentUserId}
-        streamTypeLabel={archiveLabel}
-        locked={channelLocked}
+  } else if (isScratchpad || isDm || isSystem) {
+    visibility = (
+      <ReadOnlyRow
+        setting="stream-visibility"
+        value={VISIBILITY_LABELS.private}
+        description={`${getStreamTypeLabel(stream.type)}s are always private.`}
       />
     )
   }
 
-  const nodes: React.ReactNode[] = []
-  for (let i = 0; i < sections.length; i++) {
-    if (i > 0) {
-      nodes.push(<Separator key={`sep-${i}`} />)
-    }
-    nodes.push(sections[i])
-  }
+  return (
+    <div className="space-y-8">
+      {stream.type !== StreamTypes.DOC && (
+        <SettingsSection section="stream-notify">
+          <NotificationRow
+            workspaceId={workspaceId}
+            stream={stream}
+            notificationLevel={notificationLevel}
+            note={
+              isSystem ? "Automated system messages. It's read-only, so notifications are all there is to set." : null
+            }
+          />
+        </SettingsSection>
+      )}
 
-  return <div className="space-y-6 p-1">{nodes}</div>
+      {(name || visibility || conversation) && (
+        <SettingsSection section="stream-details">
+          {name}
+          {conversation && (
+            <SettingRow setting="stream-description" labelFor={false} stacked>
+              <DescriptionSection workspaceId={workspaceId} stream={stream} locked={channelLocked} />
+            </SettingRow>
+          )}
+          {visibility}
+        </SettingsSection>
+      )}
+
+      {conversation && (
+        <SettingsSection section="stream-memory">
+          <MemoryRow workspaceId={workspaceId} stream={stream} locked={channelLocked} />
+        </SettingsSection>
+      )}
+
+      {(isChannel || isScratchpad || isThread) && (
+        <ArchiveSection
+          workspaceId={workspaceId}
+          stream={stream}
+          rootStream={rootStream ?? null}
+          currentUserId={currentUserId}
+          locked={channelLocked}
+        />
+      )}
+    </div>
+  )
 }
 
-const NOTIFICATION_OPTION_META: Record<string, { label: string; description: string }> = {
-  default: { label: "Default", description: "Use workspace notification settings" },
-  everything: { label: "Everything", description: "All messages and activity" },
-  activity: { label: "Activity", description: "Mentions, reactions, and thread replies" },
-  mentions: { label: "Mentions only", description: "Only when you're @mentioned" },
-  muted: { label: "Muted", description: "No notifications from this stream" },
+/** Mentions only says it all in its label. */
+const NOTIFICATION_OPTION_DESCRIPTIONS: Partial<Record<NotificationLevel, string>> = {
+  everything: `${upperFirst(STREAM_LETS_THROUGH.everything)}.`,
+  activity: `${upperFirst(STREAM_LETS_THROUGH.activity)}.`,
+  muted: "Stays out of your inbox.",
 }
 
-function NotificationSection({
+/**
+ * What the default option follows and what that gives now, so it reads as
+ * "follow", not as a second copy of the level it currently equals. A stream
+ * with a parent also says that muting the parent mutes it.
+ */
+function defaultLevelDescription(
+  level: NotificationLevel,
+  streamType: StreamType,
+  followsParent: boolean,
+  parentName: string | null
+): string {
+  const now = SETTING_CHOICE_LABELS["stream-notifications"][level].toLowerCase()
+  if (followsParent && parentName) return `Follows ${parentName}, now ${now}.`
+  const follows = `Follows the default for ${streamFallbackLabel(streamType, "noun")}s, now ${now}.`
+  return parentName && level !== "muted" ? `${follows} Mutes with ${parentName}.` : follows
+}
+
+/** An explicit level equal to what the default gives now: the same today, but it stays when the default moves. */
+const MATCHES_DEFAULT = "Same as the default now, but stays if the default changes."
+
+function NotificationRow({
   workspaceId,
-  streamId,
-  streamType,
+  stream,
   notificationLevel,
+  note,
 }: {
   workspaceId: string
-  streamId: string
-  streamType: StreamType
+  stream: Stream
   notificationLevel: NotificationLevel | null
+  /** What kind of stream this is, where that explains why there's little else to set. */
+  note: string | null
 }) {
-  const mutation = useSetNotificationLevel(workspaceId, streamId)
-  const currentValue = notificationLevel ?? "default"
-  const { allowedLevels, defaultLevel } = NOTIFICATION_CONFIG[streamType]
-  const defaultMeta = NOTIFICATION_OPTION_META[defaultLevel]
-  const defaultDescription = defaultMeta
-    ? `Use stream default (${defaultMeta.label.toLowerCase()})`
-    : "Use stream default"
+  const mutation = useSetNotificationLevel(workspaceId, stream.id)
+  const labels = SETTING_CHOICE_LABELS["stream-notifications"]
+  const { allowedLevels } = NOTIFICATION_CONFIG[stream.type]
+  const inherited = useInheritedNotificationLevel(workspaceId, stream)
+  const parentId = inherited.fromStreamId ?? stream.parentStreamId
+  const parentName = useStreamName(workspaceId, parentId ?? "") ?? (parentId ? "its parent" : null)
 
   const handleChange = (value: string) => {
     const level = value === "default" ? null : (value as NotificationLevel)
@@ -204,31 +230,127 @@ function NotificationSection({
     })
   }
 
-  const options = [
-    { value: "default", label: "Default", description: defaultDescription },
-    ...allowedLevels.map((level) => ({
-      value: level,
-      ...NOTIFICATION_OPTION_META[level],
-    })),
-  ]
-
   return (
-    <div className="space-y-3">
-      <Label className="text-sm font-medium">Notifications</Label>
-      <Select value={currentValue} onValueChange={handleChange} disabled={mutation.isPending}>
-        <SelectTrigger className="w-full">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map((opt) => (
-            <SelectItem key={opt.value} value={opt.value}>
-              <span className="font-medium">{opt.label}</span>
-              <span className="text-muted-foreground ml-2 text-xs">{opt.description}</span>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
+    <ChoiceSetting
+      setting="stream-notifications"
+      variant="list"
+      value={notificationLevel ?? "default"}
+      options={[
+        {
+          value: "default",
+          label: streamNotifyDefaultChoice(stream.type).label,
+          description: defaultLevelDescription(
+            inherited.level,
+            stream.type,
+            inherited.fromStreamId !== null,
+            parentName
+          ),
+        },
+        ...allowedLevels.map((level) => {
+          const about = NOTIFICATION_OPTION_DESCRIPTIONS[level]
+          const matches = level === inherited.level
+          return {
+            value: level,
+            label: labels[level],
+            description: matches ? [about, MATCHES_DEFAULT].filter(Boolean).join(" ") : about,
+          }
+        }),
+      ]}
+      onValueChange={handleChange}
+      disabled={mutation.isPending}
+      description={
+        <>
+          {settingDef("stream-notifications").description}
+          {note && <span className="mt-0.5 block">{note}</span>}
+          <StreamPushLine
+            workspaceId={workspaceId}
+            streamType={stream.type}
+            level={notificationLevel}
+            inherited={{
+              level: inherited.level,
+              from:
+                inherited.fromStreamId && parentName ? { name: parentName, streamId: inherited.fromStreamId } : null,
+            }}
+          />
+        </>
+      }
+    />
+  )
+}
+
+/** What actually pushes from this stream, with the layers behind it (account level, pause, quiet hours, this device) one tap away. */
+function StreamPushLine({
+  workspaceId,
+  streamType,
+  level,
+  inherited,
+}: {
+  workspaceId: string
+  streamType: StreamType
+  level: NotificationLevel | null
+  inherited: StreamPushInput["inherited"]
+}) {
+  const settings = useOptionalSettings()
+  const preferences = usePreferencesOptional()?.preferences
+  const currentUser = useCurrentWorkspaceUser(workspaceId)
+  const device = resolvePushDeviceState(usePushNotifications(workspaceId))
+  const [open, setOpen] = useState(false)
+  if (!preferences) return null
+  const pause = currentUser ? resolveNotificationPause(currentUser) : null
+  const { result, reasons } = summarizeStreamPush(
+    {
+      streamType,
+      level,
+      inherited,
+      account: preferences.notificationLevel,
+      quietOutsideWorkingHours: preferences.quietOutsideWorkingHours ?? false,
+      pauseLabel: pause ? formatNotificationPauseLabel(pause) : null,
+      device,
+    },
+    streamFallbackLabel(streamType, "noun")
+  )
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} asChild>
+      <span className="mt-0.5 block">
+        <span className="flex flex-wrap items-baseline gap-x-2">
+          <span data-testid="stream-push-summary">{result}</span>
+          <CollapsibleTrigger className="group relative inline-flex items-center gap-0.5 rounded-sm font-medium text-foreground underline underline-offset-2 after:absolute after:-inset-x-1 after:-inset-y-3.5 after:content-[''] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:after:hidden">
+            Why
+            <ChevronDown
+              aria-hidden
+              className="size-3.5 transition-transform group-data-[state=open]:rotate-180 motion-reduce:transition-none"
+            />
+          </CollapsibleTrigger>
+        </span>
+        <CollapsibleContent asChild>
+          <span className="block" data-testid="stream-push-reasons">
+            {reasons.map((reason, index) => (
+              <span key={index} className="mt-0.5 block">
+                {reason.map((part, partIndex) => {
+                  if (typeof part === "string") return <Fragment key={partIndex}>{part}</Fragment>
+                  if ("setting" in part) {
+                    return (
+                      <SettingsLink key={partIndex} setting={part.setting}>
+                        {part.text}
+                      </SettingsLink>
+                    )
+                  }
+                  if (!settings) return <Fragment key={partIndex}>{part.text}</Fragment>
+                  return (
+                    <SettingsLink
+                      key={partIndex}
+                      to={settings.getStreamSettingsUrl(part.streamId, "general", "stream-notifications")}
+                    >
+                      {part.text}
+                    </SettingsLink>
+                  )
+                })}
+              </span>
+            ))}
+          </span>
+        </CollapsibleContent>
+      </span>
+    </Collapsible>
   )
 }
 
@@ -245,40 +367,37 @@ function visibilityChangeCopy(from: Visibility, to: Visibility, noun: string): s
   return `Making this ${noun} public will make it visible to all workspace members. Anyone will be able to join.`
 }
 
-function VisibilitySection({ workspaceId, stream, locked }: { workspaceId: string; stream: Stream; locked: boolean }) {
-  const [confirmOpen, setConfirmOpen] = useState(false)
+function VisibilityRow({ workspaceId, stream, locked }: { workspaceId: string; stream: Stream; locked: boolean }) {
   const [pendingVisibility, setPendingVisibility] = useState<Visibility | null>(null)
   const updateMutation = useUpdateStream(workspaceId, stream.id)
-
-  const handleVisibilityChange = (value: Visibility) => {
-    if (value === stream.visibility) return
-    setPendingVisibility(value)
-    setConfirmOpen(true)
-  }
 
   const handleConfirm = () => {
     if (!pendingVisibility) return
     updateMutation.mutate(
       { visibility: pendingVisibility },
-      {
-        onError: () => toast.error("Failed to update visibility"),
-      }
+      { onError: () => toast.error("Failed to update visibility") }
     )
-    setConfirmOpen(false)
-    setPendingVisibility(null)
-  }
-
-  const handleCancel = () => {
-    setConfirmOpen(false)
     setPendingVisibility(null)
   }
 
   return (
-    <div className="space-y-3">
-      <Label className="text-sm font-medium">Visibility</Label>
-      <VisibilityPicker value={stream.visibility} onChange={handleVisibilityChange} disabled={locked} />
+    <>
+      <ChoiceSetting
+        setting="stream-visibility"
+        variant="list"
+        value={stream.visibility}
+        options={VISIBILITY_ORDER.map((value) => ({
+          value,
+          label: VISIBILITY_LABELS[value],
+          description: VISIBILITY_HINTS[value],
+        }))}
+        onValueChange={(value) => {
+          if (value !== stream.visibility) setPendingVisibility(value)
+        }}
+        disabled={locked}
+      />
 
-      <ResponsiveAlertDialog open={confirmOpen} onOpenChange={handleCancel}>
+      <ResponsiveAlertDialog open={pendingVisibility !== null} onOpenChange={() => setPendingVisibility(null)}>
         <ResponsiveAlertDialogContent>
           <ResponsiveAlertDialogHeader>
             <ResponsiveAlertDialogTitle>Change visibility?</ResponsiveAlertDialogTitle>
@@ -297,78 +416,82 @@ function VisibilitySection({ workspaceId, stream, locked }: { workspaceId: strin
           </ResponsiveAlertDialogFooter>
         </ResponsiveAlertDialogContent>
       </ResponsiveAlertDialog>
-    </div>
+    </>
   )
 }
 
-function VisibilityDisplay({ label, hint }: { label: string; hint: string }) {
-  return (
-    <div className="space-y-3">
-      <Label className="text-sm font-medium">{label}</Label>
-      <VisibilityPicker value="private" onChange={() => {}} disabled />
-      <p className="text-xs text-muted-foreground">{hint}</p>
-    </div>
-  )
-}
+const VISIBILITY_ORDER: readonly Visibility[] = [Visibilities.PUBLIC, Visibilities.GUEST_PUBLIC, Visibilities.PRIVATE]
 
-function ThreadVisibilityDisplay({
-  inheritedVisibility,
-  rootStreamName,
+/** A setting this stream has but can't change, shown with its value. */
+function ReadOnlyRow({
+  setting,
+  value,
+  description,
 }: {
-  inheritedVisibility: Visibility
-  rootStreamName: string
+  setting: StreamSettingId
+  value: string
+  description: string
 }) {
   return (
-    <div className="space-y-3">
-      <Label className="text-sm font-medium">Visibility</Label>
-      <VisibilityPicker value={inheritedVisibility} onChange={() => {}} disabled />
-      <p className="text-xs text-muted-foreground">Threads inherit visibility from {rootStreamName}</p>
-    </div>
+    <SettingRow
+      setting={setting}
+      labelFor={false}
+      description={description}
+      control={<SettingValue>{value}</SettingValue>}
+    />
   )
 }
 
-function SlugSection({ workspaceId, stream, locked }: { workspaceId: string; stream: Stream; locked: boolean }) {
-  const [slug, setSlug] = useState(stream.slug ?? "")
-  const [isValid, setIsValid] = useState(true)
+function SlugRow({ workspaceId, stream, locked }: { workspaceId: string; stream: Stream; locked: boolean }) {
   const updateMutation = useUpdateStream(workspaceId, stream.id)
-  const hasChanged = slug !== (stream.slug ?? "")
-
-  const handleSave = () => {
-    if (!isValid || !hasChanged) return
-    updateMutation.mutate(
-      { slug },
-      {
-        onError: () => toast.error("Failed to update slug"),
-      }
-    )
+  const ids = settingIds("stream-name")
+  const saved = stream.slug ?? ""
+  const field = useCommittedText<HTMLInputElement>({
+    saved,
+    required: true,
+    commit: (slug) => updateMutation.mutateAsync({ slug }),
+    failureMessage: "Couldn't rename the channel",
+  })
+  // Availability is the server's call; a malformed slug waits for a fix.
+  const save = () => {
+    if (isValidSlug(field.value) || field.value === saved) void field.save()
   }
 
   return (
-    <div className="space-y-3">
-      <Label className="text-sm font-medium">Channel name</Label>
-      <ChannelSlugInput
-        workspaceId={workspaceId}
-        streamId={stream.id}
-        currentSlug={stream.slug ?? ""}
-        value={slug}
-        onChange={setSlug}
-        onValidityChange={setIsValid}
-        disabled={locked}
-      />
-      {hasChanged && (
-        <Button size="sm" onClick={handleSave} disabled={!isValid || updateMutation.isPending}>
-          {updateMutation.isPending ? "Saving..." : "Save"}
-        </Button>
-      )}
-    </div>
+    <SettingRow
+      setting="stream-name"
+      labelFor={false}
+      control={
+        <div className={cn("space-y-1.5", SETTING_CONTROL_WIDTH)}>
+          <ChannelSlugInput
+            id={ids.control}
+            aria-labelledby={ids.label}
+            inputRef={field.fieldRef}
+            workspaceId={workspaceId}
+            streamId={stream.id}
+            currentSlug={saved}
+            value={field.value}
+            onChange={field.onChange}
+            onValidityChange={() => undefined}
+            onBlur={save}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") return
+              event.preventDefault()
+              save()
+            }}
+            indicator={<SaveIndicator state={field.state} />}
+            saving={field.state.kind === "saving"}
+            disabled={locked}
+          />
+          <SaveError state={field.state} />
+        </div>
+      }
+    />
   )
 }
 
-function DisplayNameSection({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
-  const [name, setName] = useState(stream.displayName ?? "")
-  const [nameDirty, setNameDirty] = useState(false)
+function DisplayNameRow({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
   const renameStream = useRenameStream(workspaceId, stream.id, stream)
-  const hasChanged = name !== (stream.displayName ?? "")
   const locked = !renameStream.canRename
   const canRegenerate = isProtectedRegenerableTitle(stream.displayName, stream.displayNameSource)
   const regeneration = useRegenerateTitle(workspaceId, {
@@ -376,88 +499,92 @@ function DisplayNameSection({ workspaceId, stream }: { workspaceId: string; stre
     stream,
     currentTitle: stream.displayName ?? "",
   })
-  useEffect(() => {
-    if (!nameDirty) setName(stream.displayName ?? "")
-  }, [nameDirty, stream.displayName, stream.displayNameRevision])
-
-  const handleSave = async () => {
-    const trimmed = name.trim()
-    if (!trimmed || !hasChanged || locked) return
-    try {
-      await renameStream.rename(trimmed)
-      setNameDirty(false)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to update name")
-    }
-  }
+  const ids = settingIds("stream-name")
+  const errorId = `${ids.control}-error`
+  const field = useCommittedText<HTMLInputElement>({
+    saved: stream.displayName ?? "",
+    required: true,
+    commit: (name) => renameStream.rename(name),
+    failureMessage: "Couldn't rename this scratchpad",
+  })
 
   return (
-    <div className="space-y-3">
-      <Label className="text-sm font-medium">Display name</Label>
-      <Input
-        value={name}
-        onChange={(e) => {
-          const nextName = e.target.value
-          setName(nextName)
-          setNameDirty(nextName !== (stream.displayName ?? ""))
-        }}
-        placeholder="Scratchpad name"
-        maxLength={100}
-        disabled={locked}
-      />
-      {locked && <p className="text-xs text-muted-foreground">Unlock this scratchpad to rename it.</p>}
-      {hasChanged && !locked && (
-        <Button size="sm" onClick={() => void handleSave()} disabled={!name.trim() || renameStream.isPending}>
-          {renameStream.isPending ? "Saving..." : "Save"}
-        </Button>
-      )}
-      {canRegenerate && !hasChanged && (
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={locked || regeneration.isPending}
-          onClick={() => void regeneration.regenerate().catch(() => undefined)}
+    <SettingRow
+      setting="stream-name"
+      inactive={locked ? "Unlock this scratchpad to rename it." : undefined}
+      control={
+        <div className={cn("space-y-1.5", SETTING_CONTROL_WIDTH)}>
+          <div className="relative">
+            <Input
+              ref={field.fieldRef}
+              id={ids.control}
+              aria-describedby={locked ? ids.reason : undefined}
+              required
+              aria-invalid={field.state.kind === "error" || undefined}
+              aria-errormessage={field.state.kind === "error" ? errorId : undefined}
+              value={field.value}
+              onChange={(event) => field.onChange(event.target.value)}
+              onBlur={() => void field.save()}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return
+                event.preventDefault()
+                void field.save()
+              }}
+              enterKeyHint="done"
+              placeholder="Scratchpad name"
+              maxLength={100}
+              disabled={locked}
+              className={cn("pr-9", SETTING_CONTROL_HEIGHT)}
+            />
+            <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+              <SaveIndicator state={field.state} />
+            </span>
+          </div>
+          <SaveError state={field.state} id={errorId} />
+        </div>
+      }
+    >
+      {canRegenerate && (
+        <SettingStateAction
+          action={{
+            children: regeneration.isPending ? "Regenerating…" : "Regenerate title",
+            disabled: locked || field.dirty || regeneration.isPending,
+            onClick: () => void regeneration.regenerate().catch(() => undefined),
+          }}
         >
-          {regeneration.isPending ? "Regenerating…" : "Regenerate title"}
-        </Button>
+          Won&apos;t change on its own.
+        </SettingStateAction>
       )}
-    </div>
+    </SettingRow>
   )
 }
 
-function DmDisplayNameSection({ displayName }: { displayName: string }) {
-  return (
-    <div className="space-y-3">
-      <Label className="text-sm font-medium">Virtual stream name</Label>
-      <Input value={displayName} disabled readOnly className="bg-muted/50" />
-      <p className="text-xs text-muted-foreground">This name is for display only and cannot be edited.</p>
-    </div>
-  )
-}
-
-function ThreadDisplayNameSection({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
+function ThreadNameRow({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
   const title = stream.displayName ?? "Thread"
   const regeneration = useRegenerateTitle(workspaceId, { kind: "stream", stream, currentTitle: title })
   const canRegenerate = !stream.e2eEnabled && isProtectedRegenerableTitle(stream.displayName, stream.displayNameSource)
   return (
-    <div className="space-y-3">
-      <Label className="text-sm font-medium">Display name</Label>
-      <Input value={title} disabled readOnly className="bg-muted/50" />
-      {canRegenerate && (
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={regeneration.isPending}
-          onClick={() => void regeneration.regenerate().catch(() => undefined)}
-        >
-          {regeneration.isPending ? "Regenerating…" : "Regenerate title"}
-        </Button>
-      )}
-    </div>
+    <SettingRow
+      setting="stream-name"
+      labelFor={false}
+      description={title}
+      control={
+        canRegenerate && (
+          <Button
+            variant="outline"
+            className={SETTING_CONTROL_HEIGHT}
+            disabled={regeneration.isPending}
+            onClick={() => void regeneration.regenerate().catch(() => undefined)}
+          >
+            {regeneration.isPending ? "Regenerating…" : "Regenerate title"}
+          </Button>
+        )
+      }
+    />
   )
 }
 
-function MemorySection({ workspaceId, stream, locked }: { workspaceId: string; stream: Stream; locked: boolean }) {
+function MemoryRow({ workspaceId, stream, locked }: { workspaceId: string; stream: Stream; locked: boolean }) {
   const updateMutation = useUpdateStream(workspaceId, stream.id)
   // Absent on legacy cached rows synced before this shipped; treat as auto.
   const memoryOn = (stream.memoryMode ?? MemoryModes.AUTO) === MemoryModes.AUTO
@@ -465,42 +592,16 @@ function MemorySection({ workspaceId, stream, locked }: { workspaceId: string; s
   const handleChange = (checked: boolean) => {
     const memoryMode = checked ? MemoryModes.AUTO : MemoryModes.OFF
     if (memoryMode === (stream.memoryMode ?? MemoryModes.AUTO)) return
-    // Success is silent (INV-63) — the switch reflects the new state itself.
     updateMutation.mutate({ memoryMode }, { onError: () => toast.error("Failed to update memory setting") })
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0 space-y-1">
-          <Label htmlFor="memory-automation" className="text-sm font-medium">
-            Automatic memory
-          </Label>
-          <p className="text-xs text-muted-foreground">
-            Extract and save knowledge from this stream's conversations. Turn off for high-volume streams where captured
-            memories add noise.
-          </p>
-        </div>
-        <Switch
-          id="memory-automation"
-          checked={memoryOn}
-          onCheckedChange={handleChange}
-          disabled={locked || updateMutation.isPending}
-        />
-      </div>
-    </div>
-  )
-}
-
-function SystemDisclaimerSection() {
-  return (
-    <div className="space-y-3">
-      <Label className="text-sm font-medium">About</Label>
-      <p className="text-sm text-muted-foreground">
-        This stream contains automated system messages. It is read-only and cannot be configured beyond notification
-        preferences.
-      </p>
-    </div>
+    <SwitchSetting
+      setting="stream-memory"
+      checked={memoryOn}
+      onCheckedChange={handleChange}
+      disabled={locked || updateMutation.isPending}
+    />
   )
 }
 
@@ -509,14 +610,12 @@ function ArchiveSection({
   stream,
   rootStream,
   currentUserId,
-  streamTypeLabel,
   locked,
 }: {
   workspaceId: string
   stream: Stream
   rootStream: Stream | null
   currentUserId: string
-  streamTypeLabel: string
   locked: boolean
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -533,76 +632,70 @@ function ArchiveSection({
     if (stream.archivedAt) {
       unarchiveMutation.mutate(
         { streamId: stream.id, archivedAt: stream.archivedAt },
-        {
-          onError: () => toast.error("Failed to unarchive"),
-        }
+        { onError: () => toast.error("Failed to unarchive") }
       )
     } else {
-      archiveMutation.mutate(stream.id, {
-        onError: () => toast.error("Failed to archive"),
-      })
+      archiveMutation.mutate(stream.id, { onError: () => toast.error("Failed to archive") })
     }
     setConfirmOpen(false)
   }
 
-  const streamName = getStreamName(stream) ?? `this ${streamTypeLabel}`
+  const noun = streamFallbackLabel(stream.type, "noun")
+  const streamName = getStreamName(stream) ?? `this ${noun}`
+  const action = isArchived ? "Unarchive" : "Archive"
 
   return (
-    <div className="space-y-3">
-      <Label className="text-sm font-medium text-muted-foreground">Danger zone</Label>
-      <div className="rounded-lg border border-destructive/20 p-4">
-        <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <p className="text-sm font-medium">
-              {isArchived ? "Unarchive" : "Archive"} {streamTypeLabel}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              {isArchived
-                ? `Restore this ${streamTypeLabel} to the sidebar for all members.`
-                : `Hide this ${streamTypeLabel} from the sidebar. You can unarchive it later.`}
-            </p>
-            {ancestorArchived && sealedById && (
-              <p className="text-xs text-muted-foreground mt-1" data-testid="sealed-by-ancestor">
-                Sealed by{" "}
-                <Link to={`/w/${workspaceId}/s/${sealedById}`} className="underline underline-offset-2">
-                  {sealingAncestorName ?? "an archived parent"}
-                </Link>
-                . It stays read-only and out of the sidebar until that is unarchived.
-              </p>
-            )}
-          </div>
+    <SettingsSection section="stream-archive">
+      <SettingRow
+        setting="stream-archive"
+        labelFor={false}
+        description={
+          isArchived
+            ? `Restore this ${noun} to the sidebar for all members.`
+            : `Hide this ${noun} from the sidebar. You can unarchive it later.`
+        }
+        notice={
+          ancestorArchived &&
+          sealedById && (
+            <span data-testid="sealed-by-ancestor">
+              Sealed by{" "}
+              <SettingsLink to={`/w/${workspaceId}/s/${sealedById}`} leavesWindow>
+                {sealingAncestorName ?? "an archived parent"}
+              </SettingsLink>
+              . It stays read-only and out of the sidebar until that is unarchived.
+            </span>
+          )
+        }
+        control={
           <Button
             variant="outline"
-            size="sm"
-            className="shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
+            className={SETTING_CONTROL_HEIGHT}
             onClick={() => setConfirmOpen(true)}
             disabled={locked}
           >
-            {isArchived ? "Unarchive" : "Archive"}
+            {action}
           </Button>
-        </div>
-      </div>
+        }
+      />
 
       <ResponsiveAlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <ResponsiveAlertDialogContent>
           <ResponsiveAlertDialogHeader>
             <ResponsiveAlertDialogTitle>
-              {isArchived ? "Unarchive" : "Archive"} {streamName}?
+              {action} {streamName}?
             </ResponsiveAlertDialogTitle>
             <ResponsiveAlertDialogDescription>
               {isArchived
-                ? "This stream will be visible in the sidebar again."
-                : "This stream will be hidden from the sidebar. You can unarchive it later."}
+                ? `This ${noun} will be visible in the sidebar again.`
+                : `This ${noun} will be hidden from the sidebar. You can unarchive it later.`}
             </ResponsiveAlertDialogDescription>
           </ResponsiveAlertDialogHeader>
           <ResponsiveAlertDialogFooter>
             <ResponsiveAlertDialogCancel>Cancel</ResponsiveAlertDialogCancel>
-            <ResponsiveAlertDialogAction onClick={handleAction}>
-              {isArchived ? "Unarchive" : "Archive"}
-            </ResponsiveAlertDialogAction>
+            <ResponsiveAlertDialogAction onClick={handleAction}>{action}</ResponsiveAlertDialogAction>
           </ResponsiveAlertDialogFooter>
         </ResponsiveAlertDialogContent>
       </ResponsiveAlertDialog>
-    </div>
+    </SettingsSection>
   )
 }

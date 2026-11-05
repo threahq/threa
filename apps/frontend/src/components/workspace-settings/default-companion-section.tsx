@@ -1,25 +1,24 @@
-import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useWorkspaceSettingMutation } from "@/hooks/use-workspace-setting-mutation"
 import { usePersonas } from "@/hooks/use-personas"
-import { hasPermission } from "@/lib/permissions"
-import { Label } from "@/components/ui/label"
 import { CompanionAgentSelect, resolveCompanionSelection } from "@/components/stream-settings/companion-agent-select"
+import {
+  SETTING_CONTROL_CLASS,
+  SETTING_CONTROL_WIDTH,
+  SettingRow,
+  SettingValue,
+  settingIds,
+} from "@/components/settings/setting-primitives"
+import { GatedControl, accessDescription, useWorkspaceAccess } from "./workspace-permission"
 
 interface DefaultCompanionSectionProps {
   workspaceId: string
 }
 
-/**
- * Workspace default companion persona: which agent unpinned scratchpads run when
- * neither the user nor the stream has picked one. Editing is admin-gated; others
- * see the resolved name read-only. Applied at dispatch, so a change takes effect
- * on every unpinned scratchpad going forward.
- */
+/** A scratchpad pins its agent when it's created, so a change only reaches new scratchpads. */
 export function DefaultCompanionSection({ workspaceId }: DefaultCompanionSectionProps) {
-  const bootstrap = useCachedWorkspaceBootstrap(workspaceId)
-  const canManage = hasPermission(bootstrap?.viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
-  const settings = bootstrap?.workspaceSettings ?? null
+  const access = useWorkspaceAccess(workspaceId)
+  const settings = useCachedWorkspaceBootstrap(workspaceId)?.workspaceSettings ?? null
   const { data: personas } = usePersonas(workspaceId)
 
   // Resolve the stored id (null = Ariadne) against the roster so the trigger and
@@ -29,27 +28,33 @@ export function DefaultCompanionSection({ workspaceId }: DefaultCompanionSection
   const mutation = useWorkspaceSettingMutation(
     workspaceId,
     "defaultCompanionPersonaId",
-    "Failed to save the default companion"
+    "Couldn't save the default agent"
   )
 
+  const ids = settingIds("workspace-default-companion")
   return (
-    <div>
-      <Label className="text-sm font-medium">Default companion</Label>
-      <p className="text-xs text-muted-foreground mt-0.5">
-        The agent that answers in scratchpads where neither the scratchpad nor the member has picked one.
-      </p>
-      {canManage && personas && personas.length > 0 ? (
-        <CompanionAgentSelect
-          workspaceId={workspaceId}
-          personas={personas}
-          value={selectedPersonaId}
-          onChange={(personaId) => mutation.mutate(personaId)}
-          disabled={settings == null || mutation.isPending}
-          triggerClassName="mt-2 w-full sm:w-72"
-        />
-      ) : (
-        <p className="text-sm text-muted-foreground mt-2">{companionName}</p>
-      )}
-    </div>
+    <SettingRow
+      setting="workspace-default-companion"
+      labelFor={false}
+      description={accessDescription("workspace-default-companion", access)}
+      control={
+        <GatedControl access={access} readOnly={companionName}>
+          {personas && personas.length > 0 ? (
+            <CompanionAgentSelect
+              workspaceId={workspaceId}
+              personas={personas}
+              value={selectedPersonaId}
+              onChange={(personaId) => mutation.mutate(personaId)}
+              disabled={settings == null || mutation.isPending}
+              triggerClassName={SETTING_CONTROL_CLASS}
+              aria-labelledby={ids.label}
+              aria-describedby={ids.description}
+            />
+          ) : (
+            <SettingValue className={SETTING_CONTROL_WIDTH}>{companionName}</SettingValue>
+          )}
+        </GatedControl>
+      }
+    />
   )
 }

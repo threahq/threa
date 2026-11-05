@@ -1,41 +1,49 @@
+import { useId } from "react"
 import { BOT_TRAITS, type BotTrait } from "@threahq/types"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Label } from "@/components/ui/label"
+import { SettingCheckboxList } from "@/components/settings/setting-lists"
+import { SETTING_MUTED_NOTE_TEXT } from "@/components/settings/setting-text"
 
 export const BOT_TRAIT_LABELS: Record<BotTrait, string> = {
   mentionable: "Mentionable",
   "active-scratchpad": "Active scratchpad",
 }
 
-interface BotTraitsPickerProps {
-  traits: ReadonlySet<BotTrait>
-  onToggle: (trait: BotTrait) => void
+const BOT_TRAIT_DESCRIPTIONS: Record<BotTrait, string> = {
+  mentionable: "Can be invoked by @mention where it has access.",
+  "active-scratchpad": "Receives messages from scratchpads where this bot is the active actor.",
 }
 
-export function BotTraitsPicker({ traits, onToggle }: BotTraitsPickerProps) {
+const TRAIT_ITEMS = BOT_TRAITS.map((trait) => ({
+  value: trait,
+  label: BOT_TRAIT_LABELS[trait],
+  description: BOT_TRAIT_DESCRIPTIONS[trait],
+}))
+
+interface BotTraitsPickerProps {
+  traits: ReadonlySet<BotTrait>
+  onChange: (trait: BotTrait, checked: boolean) => void
+  disabled?: boolean
+}
+
+export function BotTraitsPicker({ traits, onChange, disabled }: BotTraitsPickerProps) {
+  const labelId = useId()
+  const descriptionId = useId()
   return (
-    <div className="space-y-2 rounded-md border p-3">
-      <div>
-        <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Capabilities</Label>
-        <p className="text-xs text-muted-foreground mt-1">
-          Enable how Threa can route work to this bot. Pi remote needs Active scratchpad.
-        </p>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {BOT_TRAITS.map((trait) => (
-          <label key={trait} className="flex items-start gap-2 rounded-md border px-2.5 py-2 text-sm">
-            <Checkbox checked={traits.has(trait)} onCheckedChange={() => onToggle(trait)} />
-            <span>
-              <span className="block font-medium">{BOT_TRAIT_LABELS[trait]}</span>
-              <span className="block text-xs text-muted-foreground">
-                {trait === "active-scratchpad"
-                  ? "Receives messages from scratchpads where this bot is the active actor."
-                  : "Can be invoked by @mention where it has access."}
-              </span>
-            </span>
-          </label>
-        ))}
-      </div>
+    <div className="space-y-1">
+      <p id={labelId} className="text-sm font-medium">
+        Capabilities
+      </p>
+      <p id={descriptionId} className={SETTING_MUTED_NOTE_TEXT}>
+        How Threa can route work to this bot. Pi remote needs Active scratchpad.
+      </p>
+      <SettingCheckboxList
+        aria-labelledby={labelId}
+        aria-describedby={descriptionId}
+        items={TRAIT_ITEMS}
+        selected={traits}
+        disabled={disabled}
+        onCheckedChange={onChange}
+      />
     </div>
   )
 }

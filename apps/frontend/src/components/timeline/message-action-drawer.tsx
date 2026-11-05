@@ -21,6 +21,7 @@ import {
 } from "./message-actions"
 import { EmojiQuickBar } from "./emoji-quick-bar"
 import { SelectionPill } from "./selection-pill"
+import { useWithSettingsUrl } from "@/hooks/use-setting-href"
 
 function isSameRange(a: Range | null, b: Range): boolean {
   return (
@@ -46,8 +47,6 @@ interface MessageActionDrawerProps {
 }
 
 export function MessageActionDrawer({ open, onOpenChange, context, authorName, sentAt }: MessageActionDrawerProps) {
-  const actions = getVisibleActions(context)
-  const groupedActions = useMemo(() => groupVisibleActions(actions), [actions])
   const { emojis, emojiWeights } = useWorkspaceEmoji(context.workspaceId ?? "")
   const { toggleReaction } = useMessageReactions(context.workspaceId ?? "", context.messageId ?? "")
   // Author's active status (users only; expiry-masked) for the preview byline —
@@ -244,7 +243,7 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName, s
     [context, handleOpenChange]
   )
 
-  if (!open && actions.length === 0) return null
+  if (!open && getVisibleActions(context).length === 0) return null
 
   return (
     <Drawer open={open} onOpenChange={handleOpenChange}>
@@ -332,12 +331,7 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName, s
               data-vaul-no-drag
               className="flex-1 min-h-0 overflow-y-auto px-2 pb-[max(12px,env(safe-area-inset-bottom))]"
             >
-              <ActionDrawerList
-                items={groupedActions}
-                context={context}
-                onClose={() => handleOpenChange(false)}
-                onAction={handleAction}
-              />
+              <MessageDrawerActions context={context} onClose={() => handleOpenChange(false)} onAction={handleAction} />
             </div>
           </>
         )}
@@ -363,6 +357,21 @@ interface ExpandedQuoteViewProps {
   onPillInteracting: (interacting: boolean) => void
   onQuote: () => void
   onShare?: () => void
+}
+
+/** Mounted only while the sheet is open, so only an open sheet subscribes to the settings url. */
+function MessageDrawerActions({
+  context,
+  onClose,
+  onAction,
+}: {
+  context: MessageActionContext
+  onClose: () => void
+  onAction: (action: MessageAction) => void
+}) {
+  const menuContext = useWithSettingsUrl(context)
+  const items = groupVisibleActions(getVisibleActions(menuContext))
+  return <ActionDrawerList items={items} context={menuContext} onClose={onClose} onAction={onAction} />
 }
 
 function ExpandedQuoteView({

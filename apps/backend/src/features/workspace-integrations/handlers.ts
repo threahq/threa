@@ -1,6 +1,5 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import type { WorkspaceIntegrationProvider } from "@threahq/types"
 import { WorkspaceIntegrationService } from "./service"
 import { validateRequest } from "../../lib/validation"
 
@@ -33,10 +32,9 @@ interface Dependencies {
 export function buildProviderCallbackRedirectUrl(
   req: Pick<Request, "headers" | "protocol">,
   workspaceId: string,
-  provider: WorkspaceIntegrationProvider,
   allowedFrontendOrigins: string[]
 ): string {
-  const path = `/w/${workspaceId}?ws-settings=integrations&provider=${provider}`
+  const path = `/w/${workspaceId}?settings=integrations`
   const forwardedHost = getFirstHeaderValue(req.headers["x-forwarded-host"])
   if (!forwardedHost) {
     return path
@@ -100,7 +98,7 @@ export function createWorkspaceIntegrationHandlers({
         viewerPermissions: req.authUser?.permissions ?? null,
       })
 
-      res.redirect(buildProviderCallbackRedirectUrl(req, workspaceId, "github", allowedFrontendOrigins))
+      res.redirect(buildProviderCallbackRedirectUrl(req, workspaceId, allowedFrontendOrigins))
     },
 
     async getLinear(req: Request, res: Response) {
@@ -134,7 +132,7 @@ export function createWorkspaceIntegrationHandlers({
         workosUserId,
       })
 
-      res.redirect(buildProviderCallbackRedirectUrl(req, workspaceId, "linear", allowedFrontendOrigins))
+      res.redirect(buildProviderCallbackRedirectUrl(req, workspaceId, allowedFrontendOrigins))
     },
   }
 }

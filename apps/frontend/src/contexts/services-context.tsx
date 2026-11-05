@@ -17,6 +17,7 @@ export interface WorkspaceService {
   list: typeof workspacesApi.list
   listRegions: typeof workspacesApi.listRegions
   get: typeof workspacesApi.get
+  rename: typeof workspacesApi.rename
   bootstrap: typeof workspacesApi.bootstrap
   create: typeof workspacesApi.create
   markAllAsRead: typeof workspacesApi.markAllAsRead

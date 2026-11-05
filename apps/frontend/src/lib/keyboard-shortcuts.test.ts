@@ -271,6 +271,12 @@ describe("resolveShortcutBindingUpdate", () => {
       toggleSidebar: "mod+b",
     })
   })
+
+  it("should store no override when an action is bound back to its default", () => {
+    expect(resolveShortcutBindingUpdate({ toggleSidebar: "mod+b", formatBold: "none" }, "formatBold", "mod+b")).toEqual(
+      { toggleSidebar: "none" }
+    )
+  })
 })
 
 describe("sidebarQuickJump shortcut", () => {

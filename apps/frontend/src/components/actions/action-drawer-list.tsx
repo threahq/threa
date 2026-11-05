@@ -3,7 +3,7 @@ import { ChevronDown } from "lucide-react"
 import { Separator } from "@/components/ui/separator"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
-import { type ActionDefinition, type GroupedAction, resolveActionLabel } from "./action-model"
+import { type ActionDefinition, type GroupedAction, hasSeparatorBefore, resolveActionLabel } from "./action-model"
 
 /**
  * The action list inside a long-press bottom sheet — the rows themselves, not
@@ -57,7 +57,7 @@ function DrawerActionItem<Context>({
     const action = item.action
     return (
       <>
-        {action.separatorBefore && <Divider />}
+        {hasSeparatorBefore(action, context) && <Divider />}
         <DrawerActionPrimary action={action} context={context} onClose={onClose} onAction={onAction} />
       </>
     )
@@ -67,7 +67,7 @@ function DrawerActionItem<Context>({
   const primary = members[0]
   return (
     <>
-      {primary.separatorBefore && <Divider />}
+      {hasSeparatorBefore(primary, context) && <Divider />}
       <DrawerActionSplitRow members={members} context={context} onClose={onClose} onAction={onAction} />
     </>
   )

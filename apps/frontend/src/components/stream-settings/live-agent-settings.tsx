@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import type { CompanionMode, StreamBootstrap, ToolPrivacyPolicy } from "@threahq/types"
+import { StreamTypes, type CompanionMode, type StreamBootstrap, type ToolPrivacyPolicy } from "@threahq/types"
 import { streamKeys } from "@/hooks"
 import { useUpdateCompanionMode, useUpdateToolPolicy } from "@/hooks/use-streams"
 import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
@@ -9,6 +9,7 @@ import { useCurrentWorkspaceUser } from "@/hooks/use-workspaces"
 import { useActiveBotPresence } from "@/hooks/use-active-bot-presence"
 import { AgentSettingsPanel } from "./agent-settings-panel"
 import { resolveCompanionSelection } from "./companion-agent-select"
+import { AgentContextSummary } from "./agent-context-summary"
 
 interface LiveAgentSettingsProps {
   workspaceId: string
@@ -82,6 +83,16 @@ export function LiveAgentSettings({ workspaceId, streamId, companionMode, e2e }:
       onCompanionModeChange={handleCompanion}
       companionBusy={companionBusy}
       externalAgent={externalAgent}
+      contextSummary={
+        <AgentContextSummary
+          workspaceId={workspaceId}
+          personaId={selectedPersonaId}
+          e2e={e2e}
+          stream={{ id: streamId, type: bootstrap?.stream?.type ?? StreamTypes.SCRATCHPAD }}
+          tools={isOwner ? undefined : { policy: bootstrap?.allowedToolCategories ?? null, viewerIsOwner: false }}
+          variant="panel"
+        />
+      }
       personaPicker={
         !e2e
           ? {

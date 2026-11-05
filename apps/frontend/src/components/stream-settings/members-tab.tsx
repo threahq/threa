@@ -1,10 +1,17 @@
-import { useState, useMemo, useCallback } from "react"
+import { useState, useMemo, useCallback, type ReactNode } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
-import { Label } from "@/components/ui/label"
-import { Separator } from "@/components/ui/separator"
+import {
+  SETTING_CONTROL_HEIGHT,
+  SettingAddButton,
+  SettingEmptyNote,
+  SettingRemoveButton,
+  SettingRow,
+  SettingsSection,
+  settingIds,
+  SettingBadge,
+} from "@/components/settings/setting-primitives"
+import { SETTING_MUTED_NOTE_TEXT } from "@/components/settings/setting-text"
 import { SearchableSelect } from "@/components/ui/searchable-select"
 import { ActorAvatar } from "@/components/actor-avatar"
 import {
@@ -17,7 +24,6 @@ import {
   ResponsiveAlertDialogHeader,
   ResponsiveAlertDialogTitle,
 } from "@/components/ui/responsive-alert-dialog"
-import { X, UserPlus, BotIcon } from "lucide-react"
 import { useAddStreamMember, useRemoveStreamMember, streamKeys } from "@/hooks"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useInviteActor, useRevokeActor } from "@/hooks/use-e2e-actors"
@@ -53,7 +59,7 @@ export function MembersTab({ workspaceId, streamId, currentUserId }: MembersTabP
   // staleTime: Infinity so this observer never refetches existing data — useStreamBootstrap's
   // observer (staleTime: 0) will still re-run its queryFn (which includes socket room joining)
   // when the user navigates to the stream.
-  const { data: bootstrap } = useQuery({
+  const { data: bootstrap, isPending: membersLoading } = useQuery({
     queryKey: streamKeys.bootstrap(workspaceId, streamId),
     queryFn: () => streamService.bootstrap(workspaceId, streamId),
     staleTime: Infinity,
@@ -89,10 +95,13 @@ export function MembersTab({ workspaceId, streamId, currentUserId }: MembersTabP
     return enriched.sort((a, b) => (a.name || a.slug).localeCompare(b.name || b.slug))
   }, [streamMembers, workspaceUsers])
 
+  const filtering = search.trim() !== ""
   const filteredMembers = useMemo(
     () => rankMatches(enrichedMembers, search, (m) => ({ labels: [m.name, m.slug] })),
     [enrichedMembers, search]
   )
+  let emptyNote: string | null = null
+  if (!membersLoading && filteredMembers.length === 0) emptyNote = filtering ? "No members match." : "No members yet."
 
   const availableToAdd = useMemo(() => {
     return workspaceUsers
@@ -124,107 +133,106 @@ export function MembersTab({ workspaceId, streamId, currentUserId }: MembersTabP
   }
 
   return (
-    <div className="space-y-6 p-1">
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <Label className="text-sm font-medium">Members ({enrichedMembers.length})</Label>
-        </div>
-
-        <Input
-          placeholder="Filter members..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="h-8"
-        />
-
-        <div role="list" className="space-y-1 max-h-64 overflow-y-auto">
-          {filteredMembers.map((member) => {
-            return (
-              <div
-                key={member.memberId}
-                role="listitem"
-                className="flex items-center justify-between rounded-md border px-3 py-2"
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <ActorAvatar
-                    actorId={member.memberId}
-                    actorType="user"
-                    workspaceId={workspaceId}
-                    size="sm"
-                    alt={member.name || member.slug}
-                  />
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <span className="text-sm font-medium truncate">{member.name || member.slug}</span>
-                    <span className="text-xs text-muted-foreground">@{member.slug}</span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <Badge variant={member.role === "owner" ? "default" : "secondary"} className="text-xs">
-                    {roleDisplayName(member.role)}
-                  </Badge>
-                  {canManageMembers && member.memberId !== currentUserId && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6"
-                      onClick={() => setRemoveMemberId(member.memberId)}
-                      disabled={removeMutation.isPending}
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
-                </div>
-              </div>
+    <div>
+      <SettingsSection section="stream-people">
+        <SettingRow
+          setting="stream-members"
+          labelFor={false}
+          description={
+            membersLoading ? (
+              <DescriptionSkeleton />
+            ) : (
+              `${enrichedMembers.length} ${enrichedMembers.length === 1 ? "member" : "members"}`
             )
-          })}
-          {filteredMembers.length === 0 && <p className="text-sm text-muted-foreground py-2">No members found</p>}
-        </div>
-      </div>
+          }
+          control={
+            canAddUserMembers &&
+            availableToAdd.length > 0 && (
+              <SearchableSelect
+                items={availableToAdd}
+                value={null}
+                onChange={handleAdd}
+                getKey={(u) => u.id}
+                getKeywords={(u) => [u.name, u.slug, `@${u.slug}`]}
+                searchPlaceholder="Search workspace users"
+                emptyMessage="No matching users"
+                align="end"
+                contentClassName="w-72"
+                trigger={<SettingAddButton>Add member</SettingAddButton>}
+                renderItem={(user) => (
+                  <>
+                    <ActorAvatar
+                      actorId={user.id}
+                      actorType="user"
+                      workspaceId={workspaceId}
+                      size="xs"
+                      alt={user.name || user.slug}
+                    />
+                    <span className="truncate text-sm font-medium">{user.name || user.slug}</span>
+                    <span className="ml-auto shrink-0 text-xs text-muted-foreground">@{user.slug}</span>
+                  </>
+                )}
+              />
+            )
+          }
+        >
+          <div className="space-y-2">
+            <Input
+              placeholder="Filter members"
+              aria-label="Filter members"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className={SETTING_CONTROL_HEIGHT}
+            />
 
-      {canAddUserMembers && (
-        <div className="space-y-2">
-          <Label className="text-sm font-medium">Add member</Label>
-          <SearchableSelect
-            items={availableToAdd}
-            value={null}
-            onChange={handleAdd}
-            getKey={(u) => u.id}
-            getKeywords={(u) => [u.name, u.slug, `@${u.slug}`]}
-            placeholder={availableToAdd.length === 0 ? "All workspace users are members" : "Add member..."}
-            searchPlaceholder="Search workspace users..."
-            emptyMessage="No matching users"
-            triggerIcon={UserPlus}
-            disabled={availableToAdd.length === 0}
-            showAvailableCount
-            availableLabel={(n) => `${n} ${n === 1 ? "user" : "users"} available`}
-            renderItem={(user) => (
-              <>
-                <ActorAvatar
-                  actorId={user.id}
-                  actorType="user"
-                  workspaceId={workspaceId}
-                  size="xs"
-                  alt={user.name || user.slug}
-                />
-                <span className="text-sm font-medium truncate">{user.name || user.slug}</span>
-                <span className="ml-auto text-xs text-muted-foreground shrink-0">@{user.slug}</span>
-              </>
+            <ul className="max-h-64 divide-y divide-border overflow-y-auto">
+              {filteredMembers.map((member) => {
+                const name = member.name || member.slug
+                return (
+                  <li key={member.memberId} className={LIST_ITEM}>
+                    <ActorIdentity
+                      avatar={
+                        <ActorAvatar
+                          actorId={member.memberId}
+                          actorType="user"
+                          workspaceId={workspaceId}
+                          size="sm"
+                          alt={name}
+                        />
+                      }
+                      name={name}
+                      slug={member.slug}
+                    />
+                    <div className="flex shrink-0 items-center gap-1">
+                      <SettingBadge>{roleDisplayName(member.role)}</SettingBadge>
+                      {canManageMembers && member.memberId !== currentUserId && (
+                        <SettingRemoveButton
+                          label={`Remove ${name}`}
+                          onClick={() => setRemoveMemberId(member.memberId)}
+                          disabled={removeMutation.isPending}
+                        />
+                      )}
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+            {emptyNote && <SettingEmptyNote>{emptyNote}</SettingEmptyNote>}
+            {canAddUserMembers && availableToAdd.length === 0 && (
+              <SettingEmptyNote>Everyone in the workspace is a member.</SettingEmptyNote>
             )}
-          />
-        </div>
-      )}
+          </div>
+        </SettingRow>
 
-      {canManageBots && (
-        <>
-          <Separator />
+        {canManageBots && (
           <StreamBotsSection
             workspaceId={workspaceId}
             streamId={streamId}
             readOnly={botsReadOnly}
             stream={bootstrap?.stream}
           />
-        </>
-      )}
+        )}
+      </SettingsSection>
 
       <ResponsiveAlertDialog open={removeMemberId !== null} onOpenChange={(open) => !open && setRemoveMemberId(null)}>
         <ResponsiveAlertDialogContent>
@@ -298,6 +306,7 @@ export function StreamBotsSection({
   const revokeMutation = useMutation({
     mutationFn: (botId: string) => botsApi.revokeStreamAccess(workspaceId, botId, streamId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: streamBotsQueryKey }),
+    onError: () => toast.error("Failed to remove bot"),
   })
 
   const handleSelectBot = useCallback(
@@ -358,114 +367,149 @@ export function StreamBotsSection({
     }
   }, [pendingRevokeBot, revoke, revokeMutation])
 
-  return (
-    <div className="space-y-3">
-      <Label className="text-sm font-medium">Bots ({botsWithAccess.length})</Label>
+  const ids = settingIds("stream-bots")
+  const canAdd = !readOnly && availableToGrant.length > 0
+  let inactive: string | undefined
+  if (readOnly) inactive = "Threads use their parent's bots."
+  else if (canAdd && e2eLocked) inactive = "Unlock this scratchpad’s encryption to add a bot."
 
-      {botsWithAccess.length > 0 && (
-        <div className="space-y-1">
-          {botsWithAccess.map((bot) => (
-            <div
-              key={bot.id}
-              className="flex items-center justify-between rounded-md border px-3 py-2 group reveal-host"
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
+  let list: ReactNode
+  if (botsWithAccess.length > 0) {
+    list = (
+      <ul className="divide-y divide-border">
+        {botsWithAccess.map((bot) => (
+          <li key={bot.id} className={LIST_ITEM}>
+            <ActorIdentity
+              avatar={
                 <ActorAvatar actorId={bot.id} actorType="bot" workspaceId={workspaceId} size="sm" alt={bot.name} />
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="text-sm font-medium truncate">{bot.name}</span>
-                  {bot.slug && <span className="text-xs text-muted-foreground">@{bot.slug}</span>}
-                </div>
-              </div>
-              {!readOnly && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="reveal-actions h-6 w-6 shrink-0"
-                  onClick={() => handleRemoveBot(bot)}
-                  disabled={revokeMutation.isPending || isRevoking}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </Button>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+              }
+              name={bot.name}
+              slug={bot.slug}
+            />
+            {!readOnly && (
+              <SettingRemoveButton
+                label={`Remove ${bot.name}`}
+                onClick={() => handleRemoveBot(bot)}
+                disabled={revokeMutation.isPending || isRevoking}
+              />
+            )}
+          </li>
+        ))}
+      </ul>
+    )
+  } else {
+    list = (
+      <SettingEmptyNote>{allBots.length === 0 ? "No bots in this workspace yet." : "No bots yet."}</SettingEmptyNote>
+    )
+  }
 
-      {botsWithAccess.length === 0 && allBots.length > 0 && (
-        <p className="text-xs text-muted-foreground">No bots have been added to this stream.</p>
-      )}
+  return (
+    <SettingRow
+      setting="stream-bots"
+      labelFor={false}
+      inactive={inactive}
+      control={
+        canAdd && (
+          <SearchableSelect
+            items={availableToGrant}
+            value={null}
+            onChange={handleSelectBot}
+            getKey={(b) => b.id}
+            getKeywords={(b) => [b.name, b.slug ?? "", b.slug ? `@${b.slug}` : ""].filter(Boolean)}
+            searchPlaceholder="Search bots"
+            emptyMessage="No matching bots"
+            align="end"
+            contentClassName="w-72"
+            trigger={
+              <SettingAddButton
+                disabled={grantMutation.isPending || isInviting || e2eLocked}
+                aria-describedby={inactive ? ids.reason : undefined}
+              >
+                Add bot
+              </SettingAddButton>
+            }
+            renderItem={(bot) => (
+              <>
+                <ActorAvatar actorId={bot.id} actorType="bot" workspaceId={workspaceId} size="xs" alt={bot.name} />
+                <span className="text-sm font-medium truncate">{bot.name}</span>
+                {bot.slug && <span className="ml-auto text-xs text-muted-foreground shrink-0">@{bot.slug}</span>}
+              </>
+            )}
+          />
+        )
+      }
+    >
+      <div className="space-y-2">
+        {list}
+        {!readOnly && allBots.length > 0 && availableToGrant.length === 0 && (
+          <SettingEmptyNote>Every bot in the workspace has access.</SettingEmptyNote>
+        )}
 
-      {allBots.length === 0 && (
-        <p className="text-xs text-muted-foreground">No bots in this workspace. Create one in workspace settings.</p>
-      )}
+        <ResponsiveAlertDialog
+          open={pendingGrantBot !== null}
+          onOpenChange={(open) => !open && setPendingGrantBot(null)}
+        >
+          <ResponsiveAlertDialogContent>
+            <ResponsiveAlertDialogHeader>
+              <ResponsiveAlertDialogTitle>
+                Add {pendingGrantBot?.name} to this encrypted scratchpad?
+              </ResponsiveAlertDialogTitle>
+              <ResponsiveAlertDialogDescription>
+                This bot will be able to read every message in this end-to-end encrypted scratchpad. Only add bots you
+                trust with this conversation.
+              </ResponsiveAlertDialogDescription>
+            </ResponsiveAlertDialogHeader>
+            <ResponsiveAlertDialogFooter>
+              <ResponsiveAlertDialogCancel>Cancel</ResponsiveAlertDialogCancel>
+              <ResponsiveAlertDialogAction onClick={confirmE2eGrant}>Add bot</ResponsiveAlertDialogAction>
+            </ResponsiveAlertDialogFooter>
+          </ResponsiveAlertDialogContent>
+        </ResponsiveAlertDialog>
 
-      {!readOnly && allBots.length > 0 && (
-        <SearchableSelect
-          items={availableToGrant}
-          value={null}
-          onChange={handleSelectBot}
-          getKey={(b) => b.id}
-          getKeywords={(b) => [b.name, b.slug ?? "", b.slug ? `@${b.slug}` : ""].filter(Boolean)}
-          placeholder={availableToGrant.length === 0 ? "All bots have access" : "Add bot..."}
-          searchPlaceholder="Search bots..."
-          emptyMessage="No matching bots"
-          triggerIcon={BotIcon}
-          disabled={availableToGrant.length === 0 || grantMutation.isPending || isInviting || e2eLocked}
-          showAvailableCount
-          availableLabel={(n) => `${n} ${n === 1 ? "bot" : "bots"} available`}
-          renderItem={(bot) => (
-            <>
-              <ActorAvatar actorId={bot.id} actorType="bot" workspaceId={workspaceId} size="xs" alt={bot.name} />
-              <span className="text-sm font-medium truncate">{bot.name}</span>
-              {bot.slug && <span className="ml-auto text-xs text-muted-foreground shrink-0">@{bot.slug}</span>}
-            </>
-          )}
-        />
-      )}
+        <ResponsiveAlertDialog
+          open={pendingRevokeBot !== null}
+          onOpenChange={(open) => !open && setPendingRevokeBot(null)}
+        >
+          <ResponsiveAlertDialogContent>
+            <ResponsiveAlertDialogHeader>
+              <ResponsiveAlertDialogTitle>
+                Remove {pendingRevokeBot?.name} from this encrypted scratchpad?
+              </ResponsiveAlertDialogTitle>
+              <ResponsiveAlertDialogDescription>
+                It loses access to everything sent from now on, and the copies of the key it was given are deleted.
+                Messages it already downloaded stay readable to it. Adding it back grants it the conversation again.
+              </ResponsiveAlertDialogDescription>
+            </ResponsiveAlertDialogHeader>
+            <ResponsiveAlertDialogFooter>
+              <ResponsiveAlertDialogCancel>Cancel</ResponsiveAlertDialogCancel>
+              <ResponsiveAlertDialogAction onClick={confirmE2eRevoke}>Remove bot</ResponsiveAlertDialogAction>
+            </ResponsiveAlertDialogFooter>
+          </ResponsiveAlertDialogContent>
+        </ResponsiveAlertDialog>
+      </div>
+    </SettingRow>
+  )
+}
 
-      {!readOnly && allBots.length > 0 && e2eLocked && (
-        <p className="text-xs text-muted-foreground">Unlock this scratchpad&rsquo;s encryption to add a bot.</p>
-      )}
+/** Holds the count line's height while the members load, so neither a count nor an empty note is claimed early. */
+function DescriptionSkeleton() {
+  return (
+    <span aria-hidden className="inline-block h-3 w-20 rounded-md bg-muted align-middle motion-safe:animate-pulse" />
+  )
+}
 
-      <ResponsiveAlertDialog open={pendingGrantBot !== null} onOpenChange={(open) => !open && setPendingGrantBot(null)}>
-        <ResponsiveAlertDialogContent>
-          <ResponsiveAlertDialogHeader>
-            <ResponsiveAlertDialogTitle>
-              Add {pendingGrantBot?.name} to this encrypted scratchpad?
-            </ResponsiveAlertDialogTitle>
-            <ResponsiveAlertDialogDescription>
-              This bot will be able to read every message in this end-to-end encrypted scratchpad. Only add bots you
-              trust with this conversation.
-            </ResponsiveAlertDialogDescription>
-          </ResponsiveAlertDialogHeader>
-          <ResponsiveAlertDialogFooter>
-            <ResponsiveAlertDialogCancel>Cancel</ResponsiveAlertDialogCancel>
-            <ResponsiveAlertDialogAction onClick={confirmE2eGrant}>Add bot</ResponsiveAlertDialogAction>
-          </ResponsiveAlertDialogFooter>
-        </ResponsiveAlertDialogContent>
-      </ResponsiveAlertDialog>
+/** A list item: flush to the row's text, one divider between items, a 44px target. */
+const LIST_ITEM = "flex min-h-11 items-center justify-between gap-2 py-2"
 
-      <ResponsiveAlertDialog
-        open={pendingRevokeBot !== null}
-        onOpenChange={(open) => !open && setPendingRevokeBot(null)}
-      >
-        <ResponsiveAlertDialogContent>
-          <ResponsiveAlertDialogHeader>
-            <ResponsiveAlertDialogTitle>
-              Remove {pendingRevokeBot?.name} from this encrypted scratchpad?
-            </ResponsiveAlertDialogTitle>
-            <ResponsiveAlertDialogDescription>
-              It loses access to everything sent from now on, and the copies of the key it was given are deleted.
-              Messages it already downloaded stay readable to it. Adding it back grants it the conversation again.
-            </ResponsiveAlertDialogDescription>
-          </ResponsiveAlertDialogHeader>
-          <ResponsiveAlertDialogFooter>
-            <ResponsiveAlertDialogCancel>Cancel</ResponsiveAlertDialogCancel>
-            <ResponsiveAlertDialogAction onClick={confirmE2eRevoke}>Remove bot</ResponsiveAlertDialogAction>
-          </ResponsiveAlertDialogFooter>
-        </ResponsiveAlertDialogContent>
-      </ResponsiveAlertDialog>
+/** Name then handle, wrapping onto a second line on narrow widths instead of cutting either. */
+function ActorIdentity({ avatar, name, slug }: { avatar: ReactNode; name: string; slug?: string | null }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2.5">
+      {avatar}
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 [overflow-wrap:anywhere]">
+        <span className="text-sm font-medium">{name}</span>
+        {slug && <span className={SETTING_MUTED_NOTE_TEXT}>@{slug}</span>}
+      </div>
     </div>
   )
 }

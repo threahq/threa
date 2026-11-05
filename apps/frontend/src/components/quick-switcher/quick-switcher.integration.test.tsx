@@ -1,7 +1,7 @@
 import type React from "react"
 import { useState } from "react"
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query"
 import { Router } from "react-router-dom"
@@ -176,7 +176,7 @@ function ActiveStreamBootstrap({
     queryKey: streamKeys.bootstrap("workspace_1", streamId),
     queryFn: async () => {
       onFetch()
-      return { stream }
+      return { stream, members: [] }
     },
     staleTime: Infinity,
   })
@@ -562,11 +562,17 @@ describe("QuickSwitcher Integration Tests", () => {
 
       await user.type(screen.getByLabelText("Quick switcher input"), "budget")
 
-      await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(2))
-      expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual([
-        expect.stringContaining("#rebudgeted"),
-        expect.stringContaining("Budgeting the retry window"),
-      ])
+      const rows = () => screen.getAllByRole("option").map((row) => row.textContent ?? "")
+      await waitFor(() =>
+        expect(rows()).toEqual(
+          expect.arrayContaining([
+            expect.stringContaining("#rebudgeted"),
+            expect.stringContaining("Budgeting the retry window"),
+          ])
+        )
+      )
+      const position = (text: string) => rows().findIndex((row) => row.includes(text))
+      expect(position("#rebudgeted")).toBeLessThan(position("Budgeting the retry window"))
     })
 
     it("opens a selected thread as its own page", async () => {
@@ -1074,6 +1080,21 @@ describe("QuickSwitcher Integration Tests", () => {
   })
 
   describe("item selection", () => {
+    it("keeps the top match selected when a row appears under a resting pointer, and follows the pointer once it moves", async () => {
+      const user = userEvent.setup()
+      renderWithProviders(<QuickSwitcher {...defaultProps} />)
+      await waitFor(() => expect(document.querySelector('[data-index="1"]')).not.toBeNull())
+      const row = () => document.querySelector('[data-index="1"]')!
+
+      fireEvent.mouseEnter(row())
+      expect(document.querySelector('[data-index="0"]')).toHaveAttribute("aria-selected", "true")
+
+      fireEvent.pointerMove(row())
+      expect(row()).toHaveAttribute("aria-selected", "true")
+      await user.keyboard("{ArrowUp}")
+      expect(document.querySelector('[data-index="0"]')).toHaveAttribute("aria-selected", "true")
+    })
+
     it("should call onSelect when clicking item", async () => {
       // Disable pointer-events check due to Radix Dialog overlay
       const user = userEvent.setup({ pointerEventsCheck: 0 })
@@ -1454,7 +1475,7 @@ describe("QuickSwitcher Integration Tests", () => {
       })
       await user.click(screen.getByText("Open stream settings"))
 
-      expect(mockOpenStreamSettings).toHaveBeenCalledWith("stream_channel1")
+      expect(mockOpenStreamSettings).toHaveBeenCalledWith("stream_channel1", undefined, undefined)
     })
 
     it("should offer 'Open an aside here' on a host stream and hand the stream to the layout's opener", async () => {
@@ -1545,7 +1566,7 @@ describe("QuickSwitcher Integration Tests", () => {
     it("should preserve the active stream bootstrap when it is invalidated while the palette is mounted", async () => {
       const queryClient = createTestQueryClient()
       const stream = createMockStream({ id: "stream_owner_bootstrap", type: StreamTypes.CHANNEL })
-      const bootstrap = { stream }
+      const bootstrap = { stream, members: [] }
       const fetchBootstrap = vi.fn()
       queryClient.setQueryData(streamKeys.bootstrap("workspace_1", stream.id), bootstrap)
       renderWithProviders(
@@ -1596,6 +1617,7 @@ describe("QuickSwitcher Integration Tests", () => {
           createdBy: "member_1",
           archivedAt: "2026-03-01T00:00:00.000Z",
         }),
+        members: [],
       })
       renderWithProviders(
         <QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_archived_deep_link" />,
@@ -1704,6 +1726,7 @@ describe("QuickSwitcher Integration Tests", () => {
           parentStreamId: "stream_archived_parent",
           rootStreamId: "stream_archived_parent",
         }),
+        members: [],
         archivedAncestor: { streamId: "stream_archived_parent", archivedAt: "2026-03-01T00:00:00.000Z" },
       })
       renderWithProviders(

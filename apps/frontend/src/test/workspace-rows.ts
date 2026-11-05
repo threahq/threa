@@ -1,4 +1,4 @@
-import { db, type CachedStream, type CachedWorkspaceUser } from "@/db"
+import { db, type CachedStream, type CachedStreamMembership, type CachedWorkspaceUser } from "@/db"
 
 /**
  * Shared workspace-row seeding for component tests. `workspaceUsersTable()`
@@ -87,6 +87,28 @@ export async function seedStream(
   overrides: Partial<CachedStream> = {}
 ): Promise<void> {
   await db.streams.put(makeCachedStream(workspaceId, id, overrides))
+}
+
+/** The viewer's membership of a stream, as the bootstrap caches it. */
+export async function seedStreamMembership(
+  workspaceId: string,
+  streamId: string,
+  overrides: Partial<CachedStreamMembership> = {}
+): Promise<void> {
+  await db.streamMemberships.put({
+    id: `${workspaceId}:${streamId}`,
+    workspaceId,
+    streamId,
+    memberId: "member_1",
+    notificationLevel: null,
+    joinedAt: "2026-03-01T10:00:00Z",
+    _cachedAt: 1,
+    ...overrides,
+  })
+}
+
+export async function clearStreamMemberships(): Promise<void> {
+  await db.streamMemberships.clear()
 }
 
 export function withoutWorkspace<T extends { workspaceId: string }>(row: T): Omit<T, "workspaceId"> {

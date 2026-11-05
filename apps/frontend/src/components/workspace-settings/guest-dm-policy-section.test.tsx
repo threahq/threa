@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import {
@@ -32,41 +32,35 @@ describe("GuestDmPolicySection", () => {
     vi.restoreAllMocks()
   })
 
-  it("should save the chosen policy when an admin changes it", async () => {
+  it("should save the chosen policy when an admin picks one", async () => {
     const update = vi
       .spyOn(workspaceSettingsApi, "update")
       .mockResolvedValue({ guestDmPolicy: GUEST_DM_POLICIES.ADMINS } as WorkspaceSettings)
     const user = userEvent.setup()
     renderSection([WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN], GUEST_DM_POLICIES.OFF)
 
-    const select = screen.getByRole("combobox", { name: "Direct messages with guests" })
-    expect(select).toHaveTextContent("Off")
-    await user.click(select)
-    await user.click(await screen.findByRole("option", { name: "Admins only" }))
+    const group = screen.getByRole("radiogroup", { name: "Guest direct messages" })
+    expect(
+      within(group)
+        .getAllByRole("radio")
+        .map((radio) => radio.textContent)
+    ).toEqual(["Off", "Admins only", "Everyone"])
+    await user.click(within(group).getByRole("radio", { name: "Admins only" }))
 
     await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", { guestDmPolicy: GUEST_DM_POLICIES.ADMINS }))
-    await waitFor(() => expect(select).toHaveTextContent("Admins only"))
+    expect(within(group).getByRole("radio", { name: "Admins only" })).toHaveAttribute("aria-checked", "true")
   })
 
-  it("should offer every policy when an admin opens the select", async () => {
-    const user = userEvent.setup()
-    renderSection([WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN], GUEST_DM_POLICIES.OFF)
-
-    await user.click(screen.getByRole("combobox", { name: "Direct messages with guests" }))
-
-    expect((await screen.findAllByRole("option")).map((option) => option.textContent)).toEqual([
-      "Off",
-      "Admins only",
-      "Everyone",
-    ])
-  })
-
-  it("should show the stored policy read-only when the viewer is not an admin", () => {
+  it("should show the stored policy read-only with the reason when the viewer is not an admin", () => {
     renderSection([], GUEST_DM_POLICIES.OPEN)
 
-    expect({ control: screen.queryByRole("combobox"), value: screen.queryByText("Everyone") !== null }).toEqual({
-      control: null,
-      value: true,
-    })
+    const group = screen.getByRole("radiogroup", { name: "Guest direct messages" })
+    expect({
+      checked: within(group).getByRole("radio", { name: "Everyone" }).getAttribute("aria-checked"),
+      disabled: within(group)
+        .getAllByRole("radio")
+        .every((radio) => radio.hasAttribute("disabled")),
+      reason: screen.queryByText("Only workspace admins can change this.") !== null,
+    }).toEqual({ checked: "true", disabled: true, reason: true })
   })
 })

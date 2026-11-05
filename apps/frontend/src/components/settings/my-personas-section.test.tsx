@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, within, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -125,10 +125,10 @@ describe("MyPersonasSection", () => {
     })
     renderSection()
 
-    expect(screen.getByText(/haven't created any personal personas/i)).toBeInTheDocument()
+    expect(screen.getByText("No agents yet.")).toBeInTheDocument()
   })
 
-  it("forks with personal scope and navigates to the new editor from 'New persona'", async () => {
+  it("forks with personal scope and navigates to the new editor from 'New agent'", async () => {
     const fork = vi.spyOn(personasApi, "fork").mockResolvedValue({
       id: "persona_new",
       slug: "new-helper",
@@ -146,7 +146,7 @@ describe("MyPersonasSection", () => {
     const user = userEvent.setup()
     renderSection()
 
-    await user.click(screen.getByRole("button", { name: /New persona/ }))
+    await user.click(screen.getByRole("button", { name: /New agent/ }))
     await user.type(await screen.findByLabelText("Name"), "New helper")
     await user.click(screen.getByRole("button", { name: "Create" }))
 
@@ -170,11 +170,12 @@ describe("MyPersonasSection", () => {
     const user = userEvent.setup()
     renderSection()
 
-    await user.click(screen.getByRole("button", { name: /Archived \(1\)/ }))
-    expect(screen.getByText("Archived mine")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: /^Archived agents\s*1 archived/ }))
+    const archivedList = within(screen.getByRole("list", { name: "Archived agents" }))
+    expect(archivedList.getByText("Archived mine")).toBeInTheDocument()
     expect(screen.queryByText("Archived custom")).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole("button", { name: "Unarchive" }))
+    await user.click(screen.getByRole("button", { name: "Unarchive Archived mine" }))
     expect(unarchiveMutate).toHaveBeenCalledWith("persona_arch_personal", expect.anything())
   })
 })

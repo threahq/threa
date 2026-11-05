@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
+import { SettingsProvider } from "@/contexts"
 import { MessageContextMenu } from "./message-context-menu"
 import type { MessageActionContext } from "./message-actions"
 
@@ -106,5 +107,55 @@ describe("MessageContextMenu", () => {
 
     expect(screen.queryByText("Edit message")).not.toBeInTheDocument()
     expect(screen.queryByText("Delete message")).not.toBeInTheDocument()
+  })
+})
+
+describe("MessageContextMenu — settings shortcuts", () => {
+  function renderInWorkspace(context: MessageActionContext) {
+    return render(
+      <MemoryRouter initialEntries={["/w/ws_1/s/stream_1"]}>
+        <SettingsProvider>
+          <MessageContextMenu context={context} />
+        </SettingsProvider>
+      </MemoryRouter>
+    )
+  }
+
+  it("links a long message with previews to the setting behind each", async () => {
+    const user = userEvent.setup()
+    renderInWorkspace(createContext({ isLongMessage: () => true, hasLinkPreviews: true, hasCodeBlocks: () => true }))
+
+    await user.click(screen.getByRole("button", { name: "Message actions" }))
+
+    expect({
+      long: screen.getByRole("menuitem", { name: "Long message settings" }).getAttribute("href"),
+      previews: screen.getByRole("menuitem", { name: "Link preview settings" }).getAttribute("href"),
+      code: screen.getByRole("menuitem", { name: "Code block settings" }).getAttribute("href"),
+    }).toEqual({
+      long: "/w/ws_1/s/stream_1?settings=messages&setting=message-collapse",
+      previews: "/w/ws_1/s/stream_1?settings=messages&setting=link-preview-count",
+      code: "/w/ws_1/s/stream_1?settings=messages&setting=code-collapse",
+    })
+  })
+
+  it("offers neither shortcut on a short message without previews", async () => {
+    const user = userEvent.setup()
+    renderInWorkspace(createContext({ isLongMessage: () => false, hasLinkPreviews: false, hasCodeBlocks: () => false }))
+
+    await user.click(screen.getByRole("button", { name: "Message actions" }))
+
+    expect(screen.getByText("Reply in thread")).toBeInTheDocument()
+    expect(screen.queryByText("Long message settings")).not.toBeInTheDocument()
+    expect(screen.queryByText("Link preview settings")).not.toBeInTheDocument()
+    expect(screen.queryByText("Code block settings")).not.toBeInTheDocument()
+  })
+
+  it("offers no shortcut outside the workspace shell", async () => {
+    const user = userEvent.setup()
+    renderMenu(<MessageContextMenu context={createContext({ isLongMessage: () => true, hasLinkPreviews: true })} />)
+
+    await user.click(screen.getByRole("button", { name: "Message actions" }))
+
+    expect(screen.queryByText("Link preview settings")).not.toBeInTheDocument()
   })
 })

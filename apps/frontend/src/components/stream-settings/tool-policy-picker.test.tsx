@@ -104,5 +104,8 @@ describe("ToolPolicyPicker", () => {
 
     expect(screen.getByRole("checkbox", { name: /web/i })).not.toBeDisabled()
     expect(screen.getByRole("checkbox", { name: /workspace/i })).toBeDisabled()
+    expect(screen.getByRole("checkbox", { name: /workspace/i })).toHaveAccessibleDescription(
+      /Not available in encrypted scratchpads yet\. Ariadne only has web tools there\./
+    )
   })
 })

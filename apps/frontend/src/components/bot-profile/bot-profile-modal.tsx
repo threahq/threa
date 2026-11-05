@@ -20,7 +20,7 @@ import { RelativeTime } from "@/components/relative-time"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { BotAvatar } from "@/components/workspace-settings/bot-avatar"
 import { BOT_TRAIT_LABELS } from "@/components/workspace-settings/bot-traits-picker"
-import { WS_SETTINGS_BOT_PARAM, WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
+import { SETTINGS_BOT_PARAM, SETTINGS_PARAM } from "@/contexts/settings-context"
 import { streamChipParts, streamLabel } from "@/lib/streams"
 import { cn } from "@/lib/utils"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
@@ -117,8 +117,8 @@ function BotProfileDetails({ workspaceId, profile, onClose, onOpenUserProfile }:
   const ownerName = bot.ownerUserId ? (users.find((u) => u.id === bot.ownerUserId)?.name ?? "its owner") : null
 
   const manageParams = new URLSearchParams(location.search)
-  manageParams.set(WS_SETTINGS_PARAM, "bots")
-  manageParams.set(WS_SETTINGS_BOT_PARAM, bot.id)
+  manageParams.set(SETTINGS_PARAM, bot.type === "personal" ? "developer" : "bots")
+  manageParams.set(SETTINGS_BOT_PARAM, bot.id)
 
   // Only the owner learns a personal bot reads through them; bot settings promise members never see that.
   const showReadAccess = bot.type === "shared" || canManage

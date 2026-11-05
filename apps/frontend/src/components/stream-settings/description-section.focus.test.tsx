@@ -75,4 +75,54 @@ describe("DescriptionSection unlock", () => {
       focusStayed: document.activeElement === elsewhere,
     }).toEqual({ editable: "true", focusStayed: true })
   })
+
+  it("reads as a form field: the editor and no composer toolbar buttons", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ServicesProvider services={{ streams: { update: vi.fn() } as unknown as StreamService }}>
+          <MemoryRouter>
+            <TooltipProvider>
+              <DescriptionSection workspaceId="ws_1" stream={stream} />
+            </TooltipProvider>
+          </MemoryRouter>
+        </ServicesProvider>
+      </QueryClientProvider>
+    )
+    expect({
+      editor: screen.getByRole("textbox", { name: "Stream description editor" }).getAttribute("contenteditable"),
+      buttons: screen.queryAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent),
+    }).toEqual({ editor: "true", buttons: [] })
+  })
+
+  it("ties a failed save's error to the editor", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+    const update = vi.fn().mockRejectedValue(new Error("offline"))
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ServicesProvider services={{ streams: { update } as unknown as StreamService }}>
+          <MemoryRouter>
+            <TooltipProvider>
+              <DescriptionSection workspaceId="ws_1" stream={stream} />
+              <button type="button">elsewhere</button>
+            </TooltipProvider>
+          </MemoryRouter>
+        </ServicesProvider>
+      </QueryClientProvider>
+    )
+    const editor = screen.getByRole("textbox", { name: "Stream description editor" })
+    const tiptap = (editor as HTMLElement & { editor: { commands: { insertContent: (text: string) => void } } }).editor
+    act(() => {
+      editor.focus()
+      tiptap.commands.insertContent(" and more")
+    })
+    act(() => screen.getByRole("button", { name: "elsewhere" }).focus())
+
+    const alert = await screen.findByRole("alert")
+    expect({
+      invalid: editor.getAttribute("aria-invalid"),
+      errorMessage: editor.getAttribute("aria-errormessage"),
+      calls: update.mock.calls.length,
+    }).toEqual({ invalid: "true", errorMessage: alert.id, calls: 1 })
+  })
 })

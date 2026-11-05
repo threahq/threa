@@ -3,6 +3,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { FOOTER_TOUCH_TARGETS } from "./button"
 import { HistoryBackClose, type HistoryEntryProp } from "./history-back-close"
 
 const Dialog = ({
@@ -66,7 +67,8 @@ const DialogContent = React.forwardRef<React.ElementRef<typeof DialogPrimitive.C
         <DialogPrimitive.Content
           ref={ref}
           className={cn(
-            "fixed z-50 w-full max-w-lg gap-4 border bg-background p-6 shadow-lg",
+            // Taller content scrolls inside the window rather than running past the viewport.
+            "fixed z-50 max-h-[calc(100dvh-2rem)] w-full max-w-lg gap-4 overflow-y-auto border bg-background p-6 shadow-lg",
             // Mobile: full-screen, flex layout for proper overflow/scroll
             // NOTE: twMerge does not merge across breakpoint prefixes. Callers that
             // pass `p-0` or `gap-0` must also pass `max-sm:p-0` / `max-sm:gap-0`
@@ -98,7 +100,10 @@ const DialogHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivEleme
 DialogHeader.displayName = "DialogHeader"
 
 const DialogFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2", className)} {...props} />
+  <div
+    className={cn("flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2", FOOTER_TOUCH_TARGETS, className)}
+    {...props}
+  />
 )
 DialogFooter.displayName = "DialogFooter"
 

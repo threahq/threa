@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -63,15 +64,17 @@ function renderSettings(opts: {
   configuredCategories?: ToolPrivacyCategory[]
 }) {
   return render(
-    <TooltipProvider>
-      <DraftAgentSettings
-        workspaceId="ws_1"
-        draftId="draft_1"
-        companionMode={opts.companionMode ?? "on"}
-        allowedToolCategories={opts.allowedToolCategories ?? null}
-        configuredCategories={opts.configuredCategories}
-      />
-    </TooltipProvider>
+    <QueryClientProvider client={new QueryClient()}>
+      <TooltipProvider>
+        <DraftAgentSettings
+          workspaceId="ws_1"
+          draftId="draft_1"
+          companionMode={opts.companionMode ?? "on"}
+          allowedToolCategories={opts.allowedToolCategories ?? null}
+          configuredCategories={opts.configuredCategories}
+        />
+      </TooltipProvider>
+    </QueryClientProvider>
   )
 }
 
@@ -103,10 +106,29 @@ describe("DraftAgentSettings", () => {
   it("writes the picked companion persona to the draft", async () => {
     renderSettings({})
 
-    await userEvent.click(screen.getByRole("combobox", { name: /companion agent/i }))
+    await userEvent.click(screen.getByRole("combobox", { name: "Agent" }))
     await userEvent.click(screen.getByRole("option", { name: /coach/i }))
 
     expect(updateScratchpad).toHaveBeenCalledWith("draft_1", { companionPersonaId: "persona_coach" })
+  })
+
+  it("draws the row following the default like a persona row: the agent, then its tier, named once", async () => {
+    vi.spyOn(defaultCompanionHooks, "useDefaultCompanionPersona").mockReturnValue({
+      effectiveDefault: ROSTER[1],
+      workspaceDefault: ROSTER[0],
+      personalDefault: ROSTER[1],
+    } as unknown as ReturnType<typeof defaultCompanionHooks.useDefaultCompanionPersona>)
+    renderSettings({})
+
+    const trigger = screen.getByRole("combobox", { name: "Agent" })
+    await userEvent.click(trigger)
+    expect({
+      trigger: trigger.textContent,
+      options: screen.getAllByRole("option").map((option) => option.textContent),
+    }).toEqual({
+      trigger: "🏋️CoachYour default",
+      options: ["🏋️CoachYour default", "Ariadne", "🏋️Coach"],
+    })
   })
 
   it("keeps the picker mounted but disabled while the store is still hydrating (empty roster)", () => {
@@ -116,8 +138,8 @@ describe("DraftAgentSettings", () => {
 
     // The section must not pop in and shift the sheet once the roster resolves
     // (INV-21) — the trigger renders at full size, disabled, with no premature
-    // "Default (Ariadne)" value.
-    const trigger = screen.getByRole("combobox", { name: /companion agent/i })
+    // default row as its value.
+    const trigger = screen.getByRole("combobox", { name: "Agent" })
     expect(trigger).toBeDisabled()
     expect(trigger).toHaveTextContent("Loading agents…")
   })

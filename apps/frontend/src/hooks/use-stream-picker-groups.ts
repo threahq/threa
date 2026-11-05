@@ -1,5 +1,5 @@
 import { useMemo } from "react"
-import { StreamTypes, type StreamType, isOpenVisibility, streamTypeCapabilities } from "@threahq/types"
+import { StreamTypes, type StreamType, streamTypeCapabilities } from "@threahq/types"
 import {
   useWorkspaceStreams,
   useWorkspaceStreamMemberships,
@@ -7,7 +7,7 @@ import {
   type CachedStream,
 } from "@/stores/workspace-store"
 import { calculateUrgency } from "@/components/layout/sidebar/utils"
-import { collectSealedStreamIds, isHiddenStreamType } from "@/lib/streams"
+import { canReadThroughRoot, collectSealedStreamIds, isHiddenStreamType } from "@/lib/streams"
 import { scoreStreamMatch, compareStreamEntries, type SortableEntry, type StreamSortMode } from "@/lib/stream-sort"
 
 /** Stable identity for the no-unread-state case so the memo doesn't re-sort every render. */
@@ -63,20 +63,14 @@ export function useStreamPickerGroups(
 
     const matchable = streams.filter((s) => {
       if (sealedStreamIds.has(s.id)) return false
-      let accessStream = s
       if (s.type === StreamTypes.DOC) {
         if (!includeDocHosts) return false
-        if (s.parentStreamId) {
-          const root = s.rootStreamId ? streamsById.get(s.rootStreamId) : undefined
-          if (!root) return false
-          accessStream = root
-        }
+        if (s.parentStreamId && !(s.rootStreamId && streamsById.has(s.rootStreamId))) return false
       } else {
         if (s.rootStreamId || s.type === StreamTypes.THREAD || isHiddenStreamType(s)) return false
         if (streamTypeCapabilities(s.type).messagesReadOnly) return false
       }
-      const accessible = isOpenVisibility(accessStream.visibility) || memberStreamIds.has(accessStream.id)
-      if (!accessible) return false
+      if (!canReadThroughRoot(s, streamsById, memberStreamIds)) return false
       return filter ? filter(s) : true
     })
 

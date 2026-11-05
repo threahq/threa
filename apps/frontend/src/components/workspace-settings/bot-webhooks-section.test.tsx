@@ -42,6 +42,13 @@ function renderSection() {
       },
       { id: "stream_ops", type: StreamTypes.CHANNEL, slug: "ops", displayName: null, archivedAt: null },
       { id: "stream_thread", type: StreamTypes.THREAD, slug: null, displayName: "a thread", archivedAt: null },
+      {
+        id: "stream_archived",
+        type: StreamTypes.CHANNEL,
+        slug: "old-alerts",
+        displayName: null,
+        archivedAt: "2026-10-01T00:00:00.000Z",
+      },
     ],
   })
   return render(
@@ -160,7 +167,8 @@ describe("BotWebhooksSection", () => {
     expect(screen.queryByText(EXPECTED_URL)).toBeNull()
     expect(screen.queryByText(`${EXPECTED_URL}/slack`)).toBeNull()
   })
-  it("should send only the name when a webhook is renamed and its stream is no longer selectable", async () => {
+
+  it("should name the saved stream and send only the name when a webhook is renamed and its stream is no longer selectable", async () => {
     let listed: IncomingWebhook[] = [makeWebhook({ streamId: "stream_archived" })]
     vi.spyOn(botsApi, "listWebhooks").mockImplementation(async () => listed)
     const update = vi.spyOn(botsApi, "updateWebhook").mockImplementation(async (_ws, _bot, _hook, data) => {
@@ -172,6 +180,7 @@ describe("BotWebhooksSection", () => {
     renderSection()
 
     await user.click(await screen.findByRole("button", { name: "Edit alertmanager" }))
+    expect(screen.getByRole("combobox", { name: "Posts to" })).toHaveTextContent("old-alerts")
     const nameInput = screen.getByPlaceholderText("e.g. alertmanager")
     await user.clear(nameInput)
     await user.type(nameInput, "grafana")

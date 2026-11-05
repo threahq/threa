@@ -43,6 +43,11 @@ export function buildDelegationPath(workspaceId: string, delegationId: string): 
   return `/w/${workspaceId}/delegations/${delegationId}`
 }
 
+/** Router path for the workspace's AI usage and budget page. */
+export function buildAIUsagePath(workspaceId: string): string {
+  return `/w/${workspaceId}/admin/ai-usage`
+}
+
 /**
  * Absolute, shareable URL that reopens a conversation in the side panel
  * (Mechanism B). A conversation is not a stream — it spans its root + threads —

@@ -13,8 +13,10 @@ import {
   ClockArrowDown,
   ClockArrowUp,
   List,
+  Settings2,
   type LucideIcon,
 } from "lucide-react"
+import { Link } from "react-router-dom"
 import type { SidebarSectionFilter, SidebarSectionOrder } from "@threahq/types"
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer"
 import {
@@ -24,6 +26,8 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
+import type { SettingId } from "@/components/settings/settings-registry"
+import { useSettingHref } from "@/hooks/use-setting-href"
 import { SidebarDropdownMenu } from "./sidebar-actions"
 
 /** A section's view options and what it offers. */
@@ -36,6 +40,13 @@ export interface SectionViewOptions {
   orderOptions: readonly (SidebarSectionOrder | null)[]
   reverse: boolean
   onChange: (change: SectionViewChange) => void
+  /** The setting that governs how this section behaves, linked at the foot of the options. */
+  settings?: SectionSettingsLink
+}
+
+export interface SectionSettingsLink {
+  label: string
+  setting: SettingId
 }
 
 /** One option change; set fields are the ones that changed. */
@@ -128,8 +139,26 @@ export function SectionViewMenu({ label, options, open, onOpenChange, trigger }:
           </>
         )}
         <MenuGroup title="Sort" rows={sortRows(options)} />
+        {options.settings && <MenuSettingsItem link={options.settings} />}
       </DropdownMenuContent>
     </SidebarDropdownMenu>
+  )
+}
+
+/** Rendered inside the open menu only, so the sidebar never subscribes to the settings url. */
+function MenuSettingsItem({ link }: { link: SectionSettingsLink }) {
+  const href = useSettingHref(link.setting)
+  if (!href) return null
+  return (
+    <>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem asChild>
+        <Link to={href}>
+          <Settings2 className="text-muted-foreground" aria-hidden />
+          <span>{link.label}</span>
+        </Link>
+      </DropdownMenuItem>
+    </>
   )
 }
 
@@ -181,6 +210,7 @@ export function SectionViewDrawer({ label, options, open, onOpenChange }: Sectio
         <div className="min-h-0 overflow-y-auto px-2 pb-[max(12px,env(safe-area-inset-bottom))]">
           {filters.length > 0 && <DrawerGroup title="Show" rows={filters} />}
           <DrawerGroup title="Sort" rows={sortRows(options)} />
+          {options.settings && <DrawerSettingsRow link={options.settings} onNavigate={() => onOpenChange(false)} />}
         </div>
       </DrawerContent>
     </Drawer>
@@ -207,6 +237,23 @@ function DrawerGroup({ title, rows }: { title: string; rows: ViewRow[] }) {
           {row.checked && <Check className="h-[18px] w-[18px] shrink-0 text-primary" aria-hidden />}
         </button>
       ))}
+    </div>
+  )
+}
+
+function DrawerSettingsRow({ link, onNavigate }: { link: SectionSettingsLink; onNavigate: () => void }) {
+  const href = useSettingHref(link.setting)
+  if (!href) return null
+  return (
+    <div className="py-1">
+      <Link
+        to={href}
+        onClick={onNavigate}
+        className="flex h-12 w-full items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors active:bg-muted/80"
+      >
+        <Settings2 className="h-[18px] w-[18px] shrink-0 text-muted-foreground" aria-hidden />
+        <span className="flex-1">{link.label}</span>
+      </Link>
     </div>
   )
 }

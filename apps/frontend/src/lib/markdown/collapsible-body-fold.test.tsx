@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { useCallback, useState } from "react"
+import { MemoryRouter } from "react-router-dom"
+import { SettingsProvider } from "@/contexts"
 import { __resetCollapseCacheForTests } from "./collapse-cache"
 import { CollapsibleBody, type CollapsibleBodyGroup } from "./collapsible-body"
 import { MarkdownBlockProvider, useIsInsideCollapsibleBlock, useMarkdownBlockContext } from "./markdown-block-context"
@@ -353,5 +355,30 @@ describe("CollapsibleBody trailing content", () => {
     rerender(body(undefined))
     expect(screen.getByText("chrome")).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /Collapse|Show more/ })).not.toBeInTheDocument()
+  })
+
+  it("links a folded message, not a folded description, to the long message setting", () => {
+    render(
+      <MemoryRouter initialEntries={["/w/ws_1/s/stream_1"]}>
+        <SettingsProvider>
+          <MarkdownBlockProvider messageId="msg_1">
+            <CollapsibleBody kind="message" content="message" collapseAtHeight={420} collapseToHeight={240}>
+              <span>message</span>
+            </CollapsibleBody>
+            <CollapsibleBody kind="description" content="description" threshold={3}>
+              <span>description</span>
+            </CollapsibleBody>
+          </MarkdownBlockProvider>
+        </SettingsProvider>
+      </MemoryRouter>
+    )
+
+    expect({
+      toggles: screen.getAllByRole("button", { name: "Show more" }).length,
+      links: screen.getAllByRole("link").map((link) => [link.getAttribute("aria-label"), link.getAttribute("href")]),
+    }).toEqual({
+      toggles: 2,
+      links: [["Long message settings", "/w/ws_1/s/stream_1?settings=messages&setting=message-collapse"]],
+    })
   })
 })

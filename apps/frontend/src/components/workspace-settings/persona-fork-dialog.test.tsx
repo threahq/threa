@@ -90,7 +90,7 @@ describe("PersonaForkDialog", () => {
     expect(screen.getByRole("button", { name: "Create" })).toBeDisabled()
   })
 
-  it("forks with personal scope and personal-noun copy when scope is personal", async () => {
+  it("forks with personal scope and says only you can use it when scope is personal", async () => {
     const fork = vi.spyOn(personasApi, "fork").mockResolvedValue({
       id: "persona_personal_new",
       slug: "my-helper",
@@ -107,8 +107,11 @@ describe("PersonaForkDialog", () => {
     const user = userEvent.setup()
     renderDialog("personal")
 
-    await user.click(screen.getByRole("button", { name: /New persona/ }))
-    await user.type(await screen.findByLabelText("Name"), "My helper")
+    await user.click(screen.getByRole("button", { name: /New agent/ }))
+    expect(await screen.findByRole("dialog", { name: "New agent" })).toHaveAccessibleDescription(
+      "Copy another agent's prompt, tools, model and style, or start blank. Only you can use it."
+    )
+    await user.type(screen.getByLabelText("Name"), "My helper")
     await user.click(screen.getByRole("button", { name: "Create" }))
 
     await waitFor(() =>

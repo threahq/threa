@@ -93,7 +93,7 @@ describe("github integration handlers", () => {
   })
 })
 
-describe("buildProviderCallbackRedirectUrl (github)", () => {
+describe("buildProviderCallbackRedirectUrl", () => {
   const allowedOrigins = ["http://localhost:3000", "https://app.threa.io"]
 
   test("returns an absolute frontend URL when the forwarded origin is allowlisted", () => {
@@ -106,11 +106,10 @@ describe("buildProviderCallbackRedirectUrl (github)", () => {
         protocol: "http",
       } as any,
       "ws_123",
-      "github",
       allowedOrigins
     )
 
-    expect(url).toBe("http://localhost:3000/w/ws_123?ws-settings=integrations&provider=github")
+    expect(url).toBe("http://localhost:3000/w/ws_123?settings=integrations")
   })
 
   test("prefers x-forwarded-port over an intermediate proxy port in the host header", () => {
@@ -124,11 +123,10 @@ describe("buildProviderCallbackRedirectUrl (github)", () => {
         protocol: "http",
       } as any,
       "ws_123",
-      "github",
       allowedOrigins
     )
 
-    expect(url).toBe("http://localhost:3000/w/ws_123?ws-settings=integrations&provider=github")
+    expect(url).toBe("http://localhost:3000/w/ws_123?settings=integrations")
   })
 
   test("falls back to a relative workspace path without forwarded headers", () => {
@@ -138,11 +136,10 @@ describe("buildProviderCallbackRedirectUrl (github)", () => {
         protocol: "https",
       } as any,
       "ws_123",
-      "github",
       allowedOrigins
     )
 
-    expect(url).toBe("/w/ws_123?ws-settings=integrations&provider=github")
+    expect(url).toBe("/w/ws_123?settings=integrations")
   })
 
   test("falls back to a relative path when the forwarded origin is not in the allowlist", () => {
@@ -155,11 +152,10 @@ describe("buildProviderCallbackRedirectUrl (github)", () => {
         protocol: "https",
       } as any,
       "ws_123",
-      "github",
       allowedOrigins
     )
 
-    expect(url).toBe("/w/ws_123?ws-settings=integrations&provider=github")
+    expect(url).toBe("/w/ws_123?settings=integrations")
   })
 
   test("falls back to a relative path when the forwarded host is malformed", () => {
@@ -172,62 +168,9 @@ describe("buildProviderCallbackRedirectUrl (github)", () => {
         protocol: "https",
       } as any,
       "ws_123",
-      "github",
       allowedOrigins
     )
 
-    expect(url).toBe("/w/ws_123?ws-settings=integrations&provider=github")
-  })
-})
-
-describe("buildProviderCallbackRedirectUrl (linear)", () => {
-  const allowedOrigins = ["http://localhost:3000", "https://app.threa.io"]
-
-  test("returns an absolute frontend URL with provider=linear when the forwarded origin is allowlisted", () => {
-    const url = buildProviderCallbackRedirectUrl(
-      {
-        headers: {
-          "x-forwarded-host": "app.threa.io",
-          "x-forwarded-proto": "https",
-        },
-        protocol: "https",
-      } as any,
-      "ws_abc",
-      "linear",
-      allowedOrigins
-    )
-
-    expect(url).toBe("https://app.threa.io/w/ws_abc?ws-settings=integrations&provider=linear")
-  })
-
-  test("falls back to a relative workspace path with provider=linear when the forwarded origin is not allowlisted", () => {
-    const url = buildProviderCallbackRedirectUrl(
-      {
-        headers: {
-          "x-forwarded-host": "evil.example",
-          "x-forwarded-proto": "https",
-        },
-        protocol: "https",
-      } as any,
-      "ws_abc",
-      "linear",
-      allowedOrigins
-    )
-
-    expect(url).toBe("/w/ws_abc?ws-settings=integrations&provider=linear")
-  })
-
-  test("falls back to a relative path with provider=linear when no forwarded headers are present", () => {
-    const url = buildProviderCallbackRedirectUrl(
-      {
-        headers: {},
-        protocol: "https",
-      } as any,
-      "ws_abc",
-      "linear",
-      allowedOrigins
-    )
-
-    expect(url).toBe("/w/ws_abc?ws-settings=integrations&provider=linear")
+    expect(url).toBe("/w/ws_123?settings=integrations")
   })
 })

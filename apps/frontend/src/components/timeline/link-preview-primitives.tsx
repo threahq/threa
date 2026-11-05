@@ -1,5 +1,6 @@
 import type { ReactNode } from "react"
 import type { GitHubPrPreviewData } from "@threahq/types"
+import { SettingsGearLink } from "@/components/in-context-settings/settings-gear-link"
 import { cn } from "@/lib/utils"
 
 /**
@@ -112,4 +113,9 @@ export function Field({ label, children }: { label: string; children: ReactNode 
       <div className="mt-0.5 truncate font-medium text-foreground/90">{children}</div>
     </div>
   )
+}
+
+/** Lands on how many previews open per message; absent outside the workspace shell. */
+export function PreviewSettingsLink() {
+  return <SettingsGearLink setting="link-preview-count" label="Link preview settings" />
 }

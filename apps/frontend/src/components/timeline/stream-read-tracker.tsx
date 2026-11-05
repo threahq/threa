@@ -1,10 +1,12 @@
 import { memo } from "react"
-import { ArrowUp, X } from "lucide-react"
+import { Link } from "react-router-dom"
+import { ArrowUp, Settings2, X } from "lucide-react"
 import { RollingNumber } from "@/components/rolling-number"
 import { Button } from "@/components/ui/button"
 import { useAutoMarkAsRead, useLastSeenEvent } from "@/hooks"
 import type { UseLastSeenEventOptions } from "@/hooks/use-last-seen-event"
 import { useStreamUnreadState } from "@/hooks/use-unread-counts"
+import { useSettingHref } from "@/hooks/use-setting-href"
 
 interface StreamReadTrackerProps extends UseLastSeenEventOptions {
   workspaceId: string
@@ -42,6 +44,21 @@ export const StreamReadTracker = memo(function StreamReadTracker({
   const { unreadCount } = useStreamUnreadState(workspaceId, scan.streamId)
 
   if (!unreadAboveViewport || unreadCount === 0 || !bannerAllowed) return null
+  return <UnreadJumpBar unreadCount={unreadCount} onJump={onJumpToFirstUnread} onMarkAllRead={onMarkAllRead} />
+})
+
+interface UnreadJumpBarProps {
+  unreadCount: number
+  onJump: () => void
+  onMarkAllRead: () => void
+}
+
+const COARSE_ICON_BUTTON =
+  "pointer-events-auto h-9 w-9 shadow-lg [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
+
+/** The "N new messages" bar. Mounted only while shown, so the tracker never subscribes to the settings url. */
+export function UnreadJumpBar({ unreadCount, onJump, onMarkAllRead }: UnreadJumpBarProps) {
+  const settingsHref = useSettingHref("unread-landing")
   return (
     <div
       // Sits clearly below the floating date pill (top-2, ~30px tall)
@@ -52,8 +69,8 @@ export const StreamReadTracker = memo(function StreamReadTracker({
       <Button
         variant="secondary"
         size="sm"
-        className="pointer-events-auto shadow-lg gap-1.5"
-        onClick={onJumpToFirstUnread}
+        className="pointer-events-auto gap-1.5 shadow-lg [@media(pointer:coarse)]:h-11"
+        onClick={onJump}
       >
         <ArrowUp className="h-3.5 w-3.5" />
         <span>
@@ -65,12 +82,19 @@ export const StreamReadTracker = memo(function StreamReadTracker({
       <Button
         variant="secondary"
         size="icon"
-        className="pointer-events-auto h-9 w-9 shadow-lg"
+        className={COARSE_ICON_BUTTON}
         onClick={onMarkAllRead}
         aria-label="Mark all read"
       >
         <X className="h-4 w-4" />
       </Button>
+      {settingsHref && (
+        <Button asChild variant="secondary" size="icon" className={COARSE_ICON_BUTTON} title="Unread settings">
+          <Link to={settingsHref} aria-label="Unread settings">
+            <Settings2 className="h-4 w-4" />
+          </Link>
+        </Button>
+      )}
     </div>
   )
-})
+}

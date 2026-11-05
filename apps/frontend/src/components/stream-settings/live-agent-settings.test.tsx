@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createElement, type ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -11,6 +11,9 @@ import * as rosterHooks from "@/hooks/use-companion-roster"
 import * as emojiHooks from "@/hooks/use-workspace-emoji"
 import * as workspacesHooks from "@/hooks/use-workspaces"
 import * as workspaceStore from "@/stores/workspace-store"
+import { MemoryRouter } from "react-router-dom"
+import { SettingsProvider } from "@/contexts"
+import * as briefHooks from "@/hooks/use-stream-brief"
 import { LiveAgentSettings } from "./live-agent-settings"
 
 type WorkspaceBot = ReturnType<typeof workspaceStore.useWorkspaceBots>[number]
@@ -34,6 +37,10 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof workspacesHooks.useCurrentWorkspaceUser>)
   vi.spyOn(workspaceStore, "useWorkspaceBots").mockReturnValue([])
   vi.spyOn(rosterHooks, "useCompanionRoster").mockReturnValue([])
+  vi.spyOn(briefHooks, "useStreamBrief").mockReturnValue({
+    data: null,
+    isLoading: false,
+  } as unknown as ReturnType<typeof briefHooks.useStreamBrief>)
   vi.spyOn(emojiHooks, "useWorkspaceEmoji").mockReturnValue({
     toEmoji: (shortcode: string) => shortcode,
   } as unknown as ReturnType<typeof emojiHooks.useWorkspaceEmoji>)
@@ -74,6 +81,7 @@ function seedAndRender(opts: {
   bots?: WorkspaceBot[]
   personas?: typeof ROSTER
   companionPersonaId?: string | null
+  inWorkspace?: boolean
 }) {
   if (opts.bots) {
     vi.spyOn(workspaceStore, "useWorkspaceBots").mockReturnValue(opts.bots)
@@ -92,7 +100,18 @@ function seedAndRender(opts: {
     botRuntimePresence: opts.botRuntimePresence,
   })
   function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(QueryClientProvider, { client: queryClient }, createElement(TooltipProvider, null, children))
+    const inner = createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      createElement(TooltipProvider, null, children)
+    )
+    return opts.inWorkspace
+      ? createElement(
+          MemoryRouter,
+          { initialEntries: ["/w/ws_1/s/stream_sp"] },
+          createElement(SettingsProvider, null, inner)
+        )
+      : inner
   }
   return render(
     <LiveAgentSettings workspaceId="ws_1" streamId="stream_sp" companionMode="on" e2e={opts.e2e ?? false} />,
@@ -121,7 +140,7 @@ describe("LiveAgentSettings", () => {
     seedAndRender({ createdBy: "someone_else" })
 
     expect(screen.queryByRole("switch", { name: /restrict tool access/i })).not.toBeInTheDocument()
-    expect(screen.getByRole("radio", { name: /companion/i })).toBeInTheDocument()
+    expect(screen.getByRole("radio", { name: "On" })).toBeInTheDocument()
   })
 
   it("surfaces an attached, connected external agent above the mode radios", () => {
@@ -156,7 +175,7 @@ describe("LiveAgentSettings", () => {
   it("offers the companion-agent picker and sends companionPersonaId keeping the current mode", async () => {
     seedAndRender({ personas: ROSTER, companionPersonaId: null })
 
-    await userEvent.click(screen.getByRole("combobox", { name: /companion agent/i }))
+    await userEvent.click(screen.getByRole("combobox", { name: "Agent" }))
     await userEvent.click(screen.getByRole("option", { name: /coach/i }))
 
     expect(companionMutate).toHaveBeenCalledWith({ companionMode: "on", companionPersonaId: "persona_coach" })
@@ -165,7 +184,7 @@ describe("LiveAgentSettings", () => {
   it("offers no inherit row — a created stream is pinned; rows carry default badges", async () => {
     seedAndRender({ personas: ROSTER, companionPersonaId: "persona_coach" })
 
-    await userEvent.click(screen.getByRole("combobox", { name: /companion agent/i }))
+    await userEvent.click(screen.getByRole("combobox", { name: "Agent" }))
 
     expect(screen.queryByRole("option", { name: /Default \(/i })).not.toBeInTheDocument()
     // No workspace/personal default configured → the built-in tier (Ariadne) is
@@ -176,7 +195,7 @@ describe("LiveAgentSettings", () => {
   it("treats re-picking the pinned persona as a no-op", async () => {
     seedAndRender({ personas: ROSTER, companionPersonaId: "persona_coach" })
 
-    await userEvent.click(screen.getByRole("combobox", { name: /companion agent/i }))
+    await userEvent.click(screen.getByRole("combobox", { name: "Agent" }))
     await userEvent.click(screen.getByRole("option", { name: /coach/i }))
 
     expect(companionMutate).not.toHaveBeenCalled()
@@ -185,7 +204,7 @@ describe("LiveAgentSettings", () => {
   it("hides the picker on encrypted scratchpads (enclave runs the built-in Ariadne)", () => {
     seedAndRender({ personas: ROSTER, e2e: true })
 
-    expect(screen.queryByRole("combobox", { name: /companion agent/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole("combobox", { name: "Agent" })).not.toBeInTheDocument()
   })
 
   it("keeps the picker mounted but disabled while the roster is still hydrating (empty store)", () => {
@@ -193,8 +212,23 @@ describe("LiveAgentSettings", () => {
 
     // No pop-in shove once the roster resolves (INV-21): the section renders
     // immediately with a full-size disabled trigger.
-    const trigger = screen.getByRole("combobox", { name: /companion agent/i })
+    const trigger = screen.getByRole("combobox", { name: "Agent" })
     expect(trigger).toBeDisabled()
     expect(trigger).toHaveTextContent("Loading agents…")
+  })
+
+  it("links the default agent beside the picker and lists what the agent sees, tools included for a non-owner", () => {
+    seedAndRender({ personas: ROSTER, createdBy: "someone_else", allowed: ["web"], inWorkspace: true })
+
+    expect(screen.getByRole("link", { name: "Change default" })).toHaveAttribute(
+      "href",
+      "/w/ws_1/s/stream_sp?settings=ai&setting=default-companion"
+    )
+    const summary = screen.getByRole("region", { name: "What shapes replies" })
+    expect(within(summary).getByText("Web")).toBeInTheDocument()
+    expect(within(summary).getByRole("link", { name: /Brief/ })).toHaveAttribute(
+      "href",
+      "/w/ws_1/s/stream_sp?stream-settings=companion&sid=stream_sp&setting=stream-brief"
+    )
   })
 })

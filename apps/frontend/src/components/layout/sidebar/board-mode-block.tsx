@@ -41,6 +41,7 @@ import { DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-
 import { SidebarDropdownMenu } from "./sidebar-actions"
 import { BoardFilterChips } from "./board-filter-chips"
 import { BoardUnreadRow } from "./board-link-row"
+import { SettingsMenuItem } from "@/components/in-context-settings/settings-gear-link"
 
 interface BoardModeBlockProps {
   workspaceId: string
@@ -158,6 +159,7 @@ export function BoardModeBlock({ workspaceId, lensTotals, unreadStreamCount }: B
                       <Pin className={cn("mr-2 h-4 w-4", isHome && "fill-current")} />
                       {isHome ? "Board home" : "Set as board home"}
                     </DropdownMenuItem>
+                    <SettingsMenuItem setting="board-home" label="Board settings" />
                     <DropdownMenuItem onClick={() => setRenaming({ id: view.id, name: view.name })}>
                       <Pencil className="mr-2 h-4 w-4" />
                       Rename
@@ -238,6 +240,7 @@ export function BoardModeBlock({ workspaceId, lensTotals, unreadStreamCount }: B
                     <Pin className={cn("mr-2 h-4 w-4", isHome && "fill-current")} />
                     {isHome ? "Board home" : "Set as board home"}
                   </DropdownMenuItem>
+                  <SettingsMenuItem setting="board-home" label="Board settings" />
                 </DropdownMenuContent>
               </SidebarDropdownMenu>
             </div>

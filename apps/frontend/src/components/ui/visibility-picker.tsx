@@ -3,6 +3,13 @@ import { cn } from "@/lib/utils"
 import { GuestPublicIcon, VISIBILITY_LABELS } from "@/lib/stream-visuals"
 import type { Visibility } from "@threahq/types"
 
+/** What each visibility means, in a few words. */
+export const VISIBILITY_HINTS: Record<Visibility, string> = {
+  public: "Members can find and join.",
+  guest_public: "Members and guests can find and join.",
+  private: "Only invited members can access.",
+}
+
 interface VisibilityPickerProps {
   value: Visibility
   onChange: (value: Visibility) => void
@@ -17,7 +24,7 @@ export function VisibilityPicker({ value, onChange, disabled }: VisibilityPicker
         onSelect={() => onChange("public")}
         icon={Globe}
         label={VISIBILITY_LABELS.public}
-        hint="Members can find and join"
+        hint={VISIBILITY_HINTS.public}
         disabled={disabled}
       />
       <VisibilityOption
@@ -25,7 +32,7 @@ export function VisibilityPicker({ value, onChange, disabled }: VisibilityPicker
         onSelect={() => onChange("guest_public")}
         icon={GuestPublicIcon}
         label={VISIBILITY_LABELS.guest_public}
-        hint="Members and guests can find and join"
+        hint={VISIBILITY_HINTS.guest_public}
         disabled={disabled}
       />
       <VisibilityOption
@@ -33,7 +40,7 @@ export function VisibilityPicker({ value, onChange, disabled }: VisibilityPicker
         onSelect={() => onChange("private")}
         icon={Lock}
         label={VISIBILITY_LABELS.private}
-        hint="Only invited members can access"
+        hint={VISIBILITY_HINTS.private}
         disabled={disabled}
       />
     </div>
@@ -70,7 +77,7 @@ function VisibilityOption({ selected, onSelect, icon: Icon, label, hint, disable
           {label}
         </span>
       </div>
-      <span className="text-[11px] leading-snug text-muted-foreground">{hint}</span>
+      <span className="text-xs leading-snug text-muted-foreground">{hint}</span>
     </button>
   )
 }

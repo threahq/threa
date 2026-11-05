@@ -88,6 +88,13 @@
 @tailwind utilities;
 
 @layer components {
+  /* Options in selects, menus and pickers: 44px tall wherever a finger picks them. */
+  @media (pointer: coarse) {
+    .menu-option {
+      min-height: 2.75rem;
+    }
+  }
+
   /*
    * The effect grid pairs rows into two columns, but only when the CONTAINER is
    * wide enough. A viewport breakpoint gets this wrong on the board: a card sits
@@ -284,8 +291,14 @@ html[data-input="mouse"] .message-hover-wash:hover {
     --border: 35 15% 88%;
     --input: 35 15% 88%;
 
-    /* Ring - gold for focus states (the thread highlighting where you are) */
-    --ring: 38 65% 50%;
+    /* Control - radios, checkboxes, switches and focus. Brand gold by default;
+     * high contrast swaps in a darker shade. */
+    --control: 38 65% 50%;
+    --control-foreground: 40 20% 98%;
+    --ring: var(--control);
+
+    /* Muted text on settings cards, where 11-13px descriptions need more than 4.5:1 */
+    --muted-foreground-strong: 30 8% 38%;
 
     /* Radius - slightly rounded, not too playful */
     --radius: 0.5rem;
@@ -370,8 +383,10 @@ html[data-input="mouse"] .message-hover-wash:hover {
     --border: 30 10% 20%;
     --input: 30 10% 20%;
 
-    /* Ring */
-    --ring: 40 55% 55%;
+    --control: 40 55% 55%;
+    --control-foreground: 30 15% 8%;
+    --ring: var(--control);
+    --muted-foreground-strong: 35 10% 64%;
 
     /* Sidebar */
     --sidebar-background: 30 15% 6%;
@@ -1581,15 +1596,44 @@ html[data-input="mouse"]
   scroll-behavior: auto !important;
 }
 
-/* High Contrast - increase visual distinction */
+/* High contrast: secondary text at 7:1 or more, plus stronger borders, inputs, controls and focus rings */
 .high-contrast {
+  --muted-foreground: 30 10% 26%;
+  --muted-foreground-strong: 30 10% 26%;
+  --secondary-foreground: 30 15% 15%;
   --border: 0 0% 20%;
+  --input: 0 0% 20%;
+  --control: 34 70% 26%;
   --ring: 0 0% 0%;
 }
 
 .dark.high-contrast {
+  --muted-foreground: 35 12% 80%;
+  --muted-foreground-strong: 35 12% 80%;
+  --secondary-foreground: 35 15% 92%;
   --border: 0 0% 80%;
+  --input: 0 0% 80%;
+  --control: 40 60% 65%;
   --ring: 0 0% 100%;
+}
+
+/* Translucent text utilities (text-foreground/70) bypass the tokens above, so
+   high contrast makes them solid; decorative drawings (aria-hidden) keep theirs.
+   Only unprefixed tokens match (placeholder:/group-hover: keep their own scope),
+   /0 stays invisible, and the selector weighs one class so it beats the base
+   utility by source order while hover/group-hover/state variants still win. */
+:where(.high-contrast)
+  :is([class^="text-foreground/"], [class*=" text-foreground/"]):where(
+    :not([aria-hidden="true"], [aria-hidden="true"] *, [class~="text-foreground/0"])
+  ) {
+  color: hsl(var(--foreground));
+}
+
+:where(.high-contrast)
+  :is([class^="text-muted-foreground/"], [class*=" text-muted-foreground/"]):where(
+    :not([aria-hidden="true"], [aria-hidden="true"] *, [class~="text-muted-foreground/0"])
+  ) {
+  color: hsl(var(--muted-foreground));
 }
 
 /* Font Sizes */

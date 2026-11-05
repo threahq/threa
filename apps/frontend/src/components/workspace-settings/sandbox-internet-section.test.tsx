@@ -43,12 +43,14 @@ describe("SandboxInternetSection", () => {
     expect(toggle).toHaveAttribute("aria-checked", "false")
   })
 
-  it("a member sees the stored setting but cannot change it", () => {
+  it("a member sees the stored setting, disabled, with the reason", () => {
     renderSection([], false)
 
-    expect({ toggle: screen.queryByRole("switch"), value: screen.getByText("Off").textContent }).toEqual({
-      toggle: null,
-      value: "Off",
-    })
+    const toggle = screen.getByRole("switch", { name: "Sandbox internet access" })
+    expect({
+      checked: toggle.getAttribute("aria-checked"),
+      disabled: toggle.hasAttribute("disabled"),
+      reason: screen.queryByText("Only workspace admins can change this.") !== null,
+    }).toEqual({ checked: "false", disabled: true, reason: true })
   })
 })

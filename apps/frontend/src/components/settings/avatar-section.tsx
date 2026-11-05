@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button"
 import { useUploadAvatar, useRemoveAvatar } from "@/hooks"
 import { getAvatarUrl } from "@threahq/types"
 import { getInitials } from "@/lib/initials"
+import { cn } from "@/lib/utils"
+import { SETTING_CONTROL_HEIGHT } from "./setting-primitives"
 import { toast } from "sonner"
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB
@@ -55,28 +57,36 @@ export function AvatarSection({ workspaceId, userName, avatarUrl }: AvatarSectio
 
   return (
     <div className="flex items-center gap-4">
-      <div className="relative">
-        <Avatar className="h-20 w-20">
-          {imageUrl && <AvatarImage src={imageUrl} alt={userName} />}
+      <div className="relative shrink-0">
+        <Avatar className="h-16 w-16">
+          {imageUrl && <AvatarImage src={imageUrl} alt="" />}
           <AvatarFallback className="text-lg">{getInitials(userName)}</AvatarFallback>
         </Avatar>
         {uploading && (
           <div className="absolute inset-0 flex items-center justify-center rounded-full bg-background/60">
-            <Loader2 className="h-6 w-6 animate-spin" />
+            <Loader2 className="h-6 w-6 animate-spin motion-reduce:animate-none" aria-hidden />
           </div>
         )}
       </div>
 
-      <div className="flex flex-col gap-2">
+      <div className="flex min-w-0 flex-1 flex-wrap gap-2">
         <input
           ref={fileInputRef}
           type="file"
           accept="image/jpeg,image/png,image/webp"
           className="hidden"
+          tabIndex={-1}
           onChange={handleFileChange}
         />
-        <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-          Change photo
+        <Button
+          variant="outline"
+          size="sm"
+          className={cn("flex-1", SETTING_CONTROL_HEIGHT)}
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading}
+          aria-busy={uploading}
+        >
+          {uploading ? "Uploading…" : "Change photo"}
         </Button>
         {avatarUrl && (
           <Button
@@ -84,7 +94,7 @@ export function AvatarSection({ workspaceId, userName, avatarUrl }: AvatarSectio
             size="sm"
             onClick={handleRemove}
             disabled={uploading || removeAvatar.isPending}
-            className="text-muted-foreground"
+            className={cn("text-muted-foreground", SETTING_CONTROL_HEIGHT)}
           >
             Remove
           </Button>

@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router-dom"
 import { SyncEngineContext } from "@/sync/sync-engine"
+import { SettingsProvider } from "@/contexts"
 import * as relativeTimeModule from "@/components/relative-time"
 import { spyOnExport } from "@/test/spy"
 import { MessageActionDrawer } from "./message-action-drawer"
@@ -18,21 +19,23 @@ function mountDrawer(context: Partial<MessageActionContext>) {
       {/* Reactions read the engine on mount; this drawer test never reacts. */}
       <SyncEngineContext.Provider value={{} as never}>
         <MemoryRouter initialEntries={["/w/ws_1/s/stream_1"]}>
-          <MessageActionDrawer
-            open
-            onOpenChange={() => {}}
-            authorName="Alice"
-            sentAt={SENT_AT}
-            context={{
-              contentMarkdown: BODY,
-              messageId: "msg_1",
-              workspaceId: "ws_1",
-              streamId: "stream_1",
-              actorType: "user",
-              getReplyUrl: () => "/w/ws_1/s/stream_1?m=msg_1",
-              ...context,
-            }}
-          />
+          <SettingsProvider>
+            <MessageActionDrawer
+              open
+              onOpenChange={() => {}}
+              authorName="Alice"
+              sentAt={SENT_AT}
+              context={{
+                contentMarkdown: BODY,
+                messageId: "msg_1",
+                workspaceId: "ws_1",
+                streamId: "stream_1",
+                actorType: "user",
+                getReplyUrl: () => "/w/ws_1/s/stream_1?m=msg_1",
+                ...context,
+              }}
+            />
+          </SettingsProvider>
         </MemoryRouter>
       </SyncEngineContext.Provider>
     </QueryClientProvider>
@@ -87,6 +90,20 @@ describe("MessageActionDrawer — the message preview", () => {
     fireEvent.click(preview)
     expect(screen.getByTestId("expanded-quote-title")).toHaveTextContent("Full message")
     expect(screen.getByText(`at ${SENT_AT}`)).toHaveClass("text-xs", "text-muted-foreground")
+  })
+})
+
+describe("MessageActionDrawer — settings shortcuts", () => {
+  it("links a long message with previews to the setting behind each", () => {
+    mountDrawer({ isLongMessage: () => true, hasLinkPreviews: true })
+
+    expect({
+      long: screen.getByRole("link", { name: "Long message settings" }).getAttribute("href"),
+      previews: screen.getByRole("link", { name: "Link preview settings" }).getAttribute("href"),
+    }).toEqual({
+      long: "/w/ws_1/s/stream_1?settings=messages&setting=message-collapse",
+      previews: "/w/ws_1/s/stream_1?settings=messages&setting=link-preview-count",
+    })
   })
 })
 

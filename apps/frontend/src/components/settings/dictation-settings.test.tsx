@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { DictationSettings } from "./dictation-settings"
 import type { VoicePolishLevel } from "@threahq/types"
 import * as contextsModule from "@/contexts"
+import { renderWorkspaceSettings } from "@/components/workspace-settings/test-harness"
 
 const updatePreferenceMock = vi.fn().mockResolvedValue(undefined)
 
@@ -21,6 +22,10 @@ function mockUsePreferences(preferences: unknown) {
   } as unknown as ReturnType<typeof contextsModule.usePreferences>)
 }
 
+function mount() {
+  renderWorkspaceSettings(<DictationSettings />, { permissions: null, route: "/?settings=voice" })
+}
+
 describe("DictationSettings", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
@@ -33,86 +38,81 @@ describe("DictationSettings", () => {
     mockUsePreferences(mockPreferences)
   })
 
-  it("selects 'Use server default' when no voice model preference is set", () => {
-    render(<DictationSettings />)
+  it("shows Automatic as the model when no voice model preference is set", () => {
+    mount()
 
-    const defaultRadio = screen.getByRole("radio", { name: /Use server default/i }) as HTMLInputElement
-    expect(defaultRadio).toBeChecked()
+    expect(screen.getByRole("combobox")).toHaveTextContent("Automatic")
   })
 
   it("saves the chosen voice transcription model", async () => {
     const user = userEvent.setup()
-    render(<DictationSettings />)
+    mount()
 
-    await user.click(screen.getByRole("radio", { name: /Deepgram Nova-3/i }))
+    await user.click(screen.getByRole("combobox"))
+    await user.click(await screen.findByRole("option", { name: /Deepgram Nova-3/i }))
 
     expect(updatePreferenceMock).toHaveBeenCalledWith("voiceTranscriptionModel", "deepgram:nova-3")
   })
 
-  it("clears the voice transcription override when 'Use server default' is picked", async () => {
+  it("clears the voice transcription override when Automatic is picked", async () => {
     mockPreferences.voiceTranscriptionModel = "deepgram:nova-3"
     const user = userEvent.setup()
-    render(<DictationSettings />)
+    mount()
 
-    await user.click(screen.getByRole("radio", { name: /Use server default/i }))
+    await user.click(screen.getByRole("combobox"))
+    await user.click(await screen.findByRole("option", { name: "Automatic" }))
 
     expect(updatePreferenceMock).toHaveBeenCalledWith("voiceTranscriptionModel", null)
   })
 
-  it("shows the currently saved voice transcription model as selected", () => {
+  it("shows the currently saved voice transcription model and its description", () => {
     mockPreferences.voiceTranscriptionModel = "elevenlabs:scribe-v2-realtime"
-    render(<DictationSettings />)
+    mount()
 
-    const elevenLabsRadio = screen.getByRole("radio", { name: /ElevenLabs Scribe v2/i }) as HTMLInputElement
-    expect(elevenLabsRadio).toBeChecked()
+    const trigger = screen.getByRole("combobox")
+    expect(trigger).toHaveTextContent(/ElevenLabs Scribe v2/i)
+    expect(trigger).toHaveAccessibleDescription(/Higher accuracy across languages/)
   })
 
-  it("shows Opinionated as the selected polish level by default", () => {
-    render(<DictationSettings />)
-    const radio = screen.getByRole("radio", { name: /Opinionated/i }) as HTMLInputElement
+  it("shows Full as the selected polish level by default", () => {
+    mount()
+    const radio = screen.getByRole("radio", { name: /^Full$/i }) as HTMLInputElement
     expect(radio).toBeChecked()
   })
 
   it("saves the chosen polish level", async () => {
     const user = userEvent.setup()
-    render(<DictationSettings />)
+    mount()
 
-    await user.click(screen.getByRole("radio", { name: /^Minor$/i }))
+    await user.click(screen.getByRole("radio", { name: /^Light$/i }))
     expect(updatePreferenceMock).toHaveBeenCalledWith("voicePolishLevel", "minor")
   })
 
   it("turns polish off when the Off level is selected", async () => {
     const user = userEvent.setup()
-    render(<DictationSettings />)
+    mount()
 
     await user.click(screen.getByRole("radio", { name: /^Off$/i }))
     expect(updatePreferenceMock).toHaveBeenCalledWith("voicePolishLevel", "none")
   })
 
-  it("reflects a saved 'minor' preference", () => {
+  it("reflects a saved 'minor' preference as Light", () => {
     mockPreferences.voicePolishLevel = "minor"
-    render(<DictationSettings />)
-    const minorRadio = screen.getByRole("radio", { name: /^Minor$/i }) as HTMLInputElement
+    mount()
+    const minorRadio = screen.getByRole("radio", { name: /^Light$/i }) as HTMLInputElement
     expect(minorRadio).toBeChecked()
   })
 
-  it("defaults to Opinionated when the preference is missing", () => {
+  it("defaults to Full when the preference is missing", () => {
     mockPreferences.voicePolishLevel = undefined as unknown as VoicePolishLevel
-    render(<DictationSettings />)
-    const radio = screen.getByRole("radio", { name: /Opinionated/i }) as HTMLInputElement
+    mount()
+    const radio = screen.getByRole("radio", { name: /^Full$/i }) as HTMLInputElement
     expect(radio).toBeChecked()
-  })
-
-  it("shows the baked-in product terms as always-on, non-removable chips", () => {
-    render(<DictationSettings />)
-    expect(screen.getByText("Threa")).toBeInTheDocument()
-    expect(screen.getByText("Ariadne")).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: /Remove Threa/i })).not.toBeInTheDocument()
   })
 
   it("adds a typed steering word on Enter", async () => {
     const user = userEvent.setup()
-    render(<DictationSettings />)
+    mount()
 
     await user.type(screen.getByLabelText("Add a dictation steering word"), "Langfuse{Enter}")
 
@@ -121,17 +121,20 @@ describe("DictationSettings", () => {
 
   it("ignores a re-add of a baked-in term and explains why instead of silently clearing", async () => {
     const user = userEvent.setup()
-    render(<DictationSettings />)
+    mount()
 
     await user.type(screen.getByLabelText("Add a dictation steering word"), "threa{Enter}")
 
-    expect(updatePreferenceMock).not.toHaveBeenCalled()
-    expect(screen.getByText(/already included/i)).toBeInTheDocument()
+    expect({
+      saved: updatePreferenceMock.mock.calls,
+      announced: screen.getByText(/already included/i).textContent,
+      placeholder: screen.getByLabelText("Add a dictation steering word").getAttribute("placeholder"),
+    }).toEqual({ saved: [], announced: '"threa" is already included.', placeholder: "Already included" })
   })
 
   it("disables the steering-word input until preferences have loaded (no clobber from an empty baseline)", () => {
     mockUsePreferences(null)
-    render(<DictationSettings />)
+    mount()
 
     expect(screen.getByLabelText("Add a dictation steering word")).toBeDisabled()
   })
@@ -139,7 +142,7 @@ describe("DictationSettings", () => {
   it("removes a saved steering word", async () => {
     mockPreferences.voiceSteeringWords = ["Langfuse", "pgvector"]
     const user = userEvent.setup()
-    render(<DictationSettings />)
+    mount()
 
     await user.click(screen.getByRole("button", { name: "Remove Langfuse" }))
 

@@ -9,6 +9,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { SETTING_NOTE_TEXT } from "@/components/settings/setting-text"
+import { cn } from "@/lib/utils"
 
 // Sentinel for the "unpinned / track latest" choice — a radio group needs a
 // string value and null is the wire representation for it.
@@ -28,24 +30,27 @@ export function ApiKeyVersionControl({ apiVersion, onChange, disabled }: ApiKeyV
     <DropdownMenu>
       <DropdownMenuTrigger
         disabled={disabled}
-        className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:text-foreground"
+        className={cn(
+          "inline-flex min-h-11 items-center gap-1 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 motion-reduce:transition-none sm:min-h-0 [@media(pointer:coarse)]:min-h-11",
+          SETTING_NOTE_TEXT
+        )}
       >
         <span>API version:</span>
-        <span className="font-medium text-foreground/80">{label}</span>
-        <ChevronDown className="h-3 w-3" />
+        <span className="text-foreground">{label}</span>
+        <ChevronDown aria-hidden className="h-3 w-3" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-48">
-        <DropdownMenuLabel className="text-xs">Pin this key to an API version</DropdownMenuLabel>
+        <DropdownMenuLabel className="font-normal text-muted-foreground">
+          Pin this key to an API version
+        </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuRadioGroup
           value={apiVersion ?? LATEST_VALUE}
           onValueChange={(value) => onChange(value === LATEST_VALUE ? null : value)}
         >
-          <DropdownMenuRadioItem value={LATEST_VALUE} className="text-xs">
-            Always latest ({CURRENT_API_VERSION})
-          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value={LATEST_VALUE}>Always latest ({CURRENT_API_VERSION})</DropdownMenuRadioItem>
           {API_VERSIONS.map((version) => (
-            <DropdownMenuRadioItem key={version} value={version} className="text-xs font-mono">
+            <DropdownMenuRadioItem key={version} value={version} className="font-mono">
               {version}
             </DropdownMenuRadioItem>
           ))}

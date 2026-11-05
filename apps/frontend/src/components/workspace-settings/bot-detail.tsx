@@ -1,15 +1,10 @@
-import { useRef, useState } from "react"
+import { useId, useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { botsApi } from "@/api/bots"
 import type { BotTrait } from "@threahq/types"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Badge } from "@/components/ui/badge"
-import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Textarea } from "@/components/ui/textarea"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,12 +15,23 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { ArrowLeft, Archive, ArchiveRestore, Upload, X } from "lucide-react"
+import { ArrowLeft, Archive, ArchiveRestore, Upload } from "lucide-react"
+import {
+  SETTING_CONTROL_HEIGHT,
+  SettingActions,
+  SettingFieldError,
+  SettingRow,
+  settingIds,
+  SettingBadge,
+} from "@/components/settings/setting-primitives"
+import { SETTING_ICON_BUTTON, SETTING_MUTED_NOTE_TEXT } from "@/components/settings/setting-text"
+import { cn } from "@/lib/utils"
 import { BotAvatar } from "./bot-avatar"
 import { BotKeysSection } from "./bot-keys-section"
 import { BotChannelsSection } from "./bot-channels-section"
 import { BotWebhooksSection } from "./bot-webhooks-section"
-import { BotTraitsPicker } from "./bot-traits-picker"
+import { BOT_TRAIT_LABELS } from "./bot-traits-picker"
+import { BotProfileDialog } from "./bot-profile-dialog"
 
 interface BotDetailProps {
   workspaceId: string
@@ -35,18 +41,16 @@ interface BotDetailProps {
 
 export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
   const queryClient = useQueryClient()
-  const botQueryKey = ["bots", workspaceId, botId]
-
+  const readsAsOwnerAnchor = useId()
+  const readsAsOwnerIds = settingIds(readsAsOwnerAnchor)
   const { data: bot, isLoading } = useQuery({
-    queryKey: botQueryKey,
+    queryKey: ["bots", workspaceId, botId],
     queryFn: () => botsApi.get(workspaceId, botId),
   })
+  // The prefix covers this bot's own query and every bot list.
+  const invalidateBots = () => void queryClient.invalidateQueries({ queryKey: ["bots", workspaceId] })
 
   const [editing, setEditing] = useState(false)
-  const [editName, setEditName] = useState("")
-  const [editSlug, setEditSlug] = useState("")
-  const [editDescription, setEditDescription] = useState("")
-  const [editTraits, setEditTraits] = useState<Set<BotTrait>>(() => new Set())
   const [archiveTarget, setArchiveTarget] = useState(false)
 
   const updateMutation = useMutation({
@@ -54,78 +58,37 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
       botsApi.update(workspaceId, botId, data),
     onSuccess: () => {
       setEditing(false)
-      queryClient.invalidateQueries({ queryKey: botQueryKey })
-      queryClient.invalidateQueries({ queryKey: ["bots", workspaceId] })
+      invalidateBots()
     },
   })
 
   const readsAsOwnerMutation = useMutation({
     mutationFn: (readsAsOwner: boolean) => botsApi.update(workspaceId, botId, { readsAsOwner }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: botQueryKey })
-      queryClient.invalidateQueries({ queryKey: ["bots", workspaceId] })
-    },
+    onSuccess: invalidateBots,
   })
 
   const archiveMutation = useMutation({
     mutationFn: () => botsApi.archive(workspaceId, botId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["bots", workspaceId] })
+      invalidateBots()
       onBack()
     },
   })
 
   const restoreMutation = useMutation({
     mutationFn: () => botsApi.restore(workspaceId, botId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: botQueryKey })
-      queryClient.invalidateQueries({ queryKey: ["bots", workspaceId] })
-    },
+    onSuccess: invalidateBots,
   })
 
   const avatarInputRef = useRef<HTMLInputElement>(null)
   const uploadAvatarMutation = useMutation({
     mutationFn: (file: File) => botsApi.uploadAvatar(workspaceId, botId, file),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: botQueryKey })
-      queryClient.invalidateQueries({ queryKey: ["bots", workspaceId] })
-    },
+    onSuccess: invalidateBots,
   })
   const removeAvatarMutation = useMutation({
     mutationFn: () => botsApi.removeAvatar(workspaceId, botId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: botQueryKey })
-      queryClient.invalidateQueries({ queryKey: ["bots", workspaceId] })
-    },
+    onSuccess: invalidateBots,
   })
-
-  const startEditing = () => {
-    if (!bot) return
-    setEditName(bot.name)
-    setEditSlug(bot.slug ?? "")
-    setEditDescription(bot.description ?? "")
-    setEditTraits(new Set(bot.traits))
-    setEditing(true)
-  }
-
-  const toggleEditTrait = (trait: BotTrait) => {
-    setEditTraits((current) => {
-      const next = new Set(current)
-      if (next.has(trait)) next.delete(trait)
-      else next.add(trait)
-      return next
-    })
-  }
-
-  const handleSave = () => {
-    if (!editName.trim() || !editSlug.trim()) return
-    updateMutation.mutate({
-      name: editName.trim(),
-      slug: editSlug.trim(),
-      description: editDescription.trim() || null,
-      traits: Array.from(editTraits),
-    })
-  }
 
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -133,225 +96,197 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
     e.target.value = ""
   }
 
+  const backButton = (
+    <Button variant="ghost" size="icon" onClick={onBack} aria-label="Back to bots" className={SETTING_ICON_BUTTON}>
+      <ArrowLeft aria-hidden />
+    </Button>
+  )
+
   if (isLoading) {
     return (
-      <div className="space-y-3 p-1">
-        <Skeleton className="h-8 w-32" />
-        <Skeleton className="h-20 w-full" />
+      <div className="space-y-3 px-4 py-3" aria-hidden>
+        <Skeleton className="h-9 w-40" />
+        <Skeleton className="h-16 w-full" />
       </div>
     )
   }
 
   if (!bot) {
     return (
-      <div className="p-1">
-        <Button variant="ghost" size="sm" onClick={onBack}>
-          <ArrowLeft className="h-3.5 w-3.5 mr-1.5" />
-          Back
-        </Button>
-        <p className="text-sm text-muted-foreground mt-4">Bot not found.</p>
+      <div className="flex items-center gap-2 px-4 py-3">
+        {backButton}
+        <p className={SETTING_MUTED_NOTE_TEXT}>Bot not found.</p>
       </div>
     )
   }
 
   const isArchived = !!bot.archivedAt
+  const errorText = (error: Error | null, fallback: string) => error?.message || fallback
 
   return (
-    <div className="space-y-6 p-1">
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={onBack} className="h-7 px-2">
-          <ArrowLeft className="h-3.5 w-3.5" />
-        </Button>
+    <>
+      <div className="flex min-h-11 items-center gap-2 px-4 py-3 first:rounded-t-lg">
+        {backButton}
         <BotAvatar bot={bot} workspaceId={workspaceId} size={32} />
-        <div>
-          <h3 className="text-sm font-medium">{bot.name}</h3>
-          {bot.slug && <p className="text-xs text-muted-foreground">@{bot.slug}</p>}
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-sm font-medium">{bot.name}</h3>
+          {bot.slug && <p className={SETTING_MUTED_NOTE_TEXT}>@{bot.slug}</p>}
         </div>
-        {isArchived && (
-          <Badge variant="secondary" className="ml-auto text-xs">
-            Archived
-          </Badge>
-        )}
+        {isArchived && <SettingBadge>Archived</SettingBadge>}
       </div>
 
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Profile</h4>
-          {!isArchived && !editing && (
-            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={startEditing}>
+      {!isArchived && (
+        <SettingRow
+          label="Picture"
+          description="JPEG, PNG, or WebP. Max 50MB."
+          control={
+            <SettingActions>
+              <Button
+                variant="outline"
+                size="sm"
+                className={SETTING_CONTROL_HEIGHT}
+                onClick={() => avatarInputRef.current?.click()}
+                disabled={uploadAvatarMutation.isPending}
+              >
+                <Upload className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                {uploadAvatarMutation.isPending ? "Uploading…" : "Upload image"}
+              </Button>
+              {bot.avatarUrl && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={SETTING_CONTROL_HEIGHT}
+                  onClick={() => removeAvatarMutation.mutate()}
+                  disabled={removeAvatarMutation.isPending}
+                >
+                  Remove
+                </Button>
+              )}
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={handleAvatarChange}
+              />
+            </SettingActions>
+          }
+        >
+          {(uploadAvatarMutation.error || removeAvatarMutation.error) && (
+            <SettingFieldError>
+              {uploadAvatarMutation.error
+                ? errorText(uploadAvatarMutation.error, "Upload failed.")
+                : errorText(removeAvatarMutation.error, "Couldn't remove the picture.")}
+            </SettingFieldError>
+          )}
+        </SettingRow>
+      )}
+
+      <SettingRow
+        label="Profile"
+        description={bot.description ?? "No description."}
+        control={
+          !isArchived && (
+            <Button variant="outline" size="sm" className={SETTING_CONTROL_HEIGHT} onClick={() => setEditing(true)}>
               Edit
             </Button>
+          )
+        }
+      >
+        <div className="flex flex-wrap items-center gap-1.5">
+          {bot.traits.length > 0 ? (
+            bot.traits.map((trait) => <SettingBadge key={trait}>{BOT_TRAIT_LABELS[trait]}</SettingBadge>)
+          ) : (
+            <span className={SETTING_MUTED_NOTE_TEXT}>No capabilities.</span>
           )}
         </div>
+      </SettingRow>
 
-        {!isArchived && (
-          <div className="flex items-center gap-3">
-            <BotAvatar bot={bot} workspaceId={workspaceId} size={56} />
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={() => avatarInputRef.current?.click()}
-                  disabled={uploadAvatarMutation.isPending}
-                >
-                  <Upload className="h-3 w-3 mr-1" />
-                  {uploadAvatarMutation.isPending ? "Uploading..." : "Upload image"}
-                </Button>
-                {bot.avatarUrl && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs text-muted-foreground"
-                    onClick={() => removeAvatarMutation.mutate()}
-                    disabled={removeAvatarMutation.isPending}
-                  >
-                    <X className="h-3 w-3 mr-1" />
-                    Remove
-                  </Button>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground">JPEG, PNG, or WebP. Max 50MB.</p>
-              {uploadAvatarMutation.error && (
-                <p className="text-xs text-destructive">
-                  {uploadAvatarMutation.error instanceof Error ? uploadAvatarMutation.error.message : "Upload failed."}
-                </p>
-              )}
-            </div>
-            <input
-              ref={avatarInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              onChange={handleAvatarChange}
-            />
-          </div>
-        )}
-
-        {editing ? (
-          <div className="rounded-lg border bg-card p-4 space-y-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Name</Label>
-              <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Slug</Label>
-              <Input value={editSlug} onChange={(e) => setEditSlug(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Description</Label>
-              <Textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={2} />
-            </div>
-            <BotTraitsPicker traits={editTraits} onToggle={toggleEditTrait} />
-            <div className="flex items-center justify-between pt-1">
-              <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleSave}
-                disabled={!editName.trim() || !editSlug.trim() || updateMutation.isPending}
-              >
-                {updateMutation.isPending ? "Saving..." : "Save"}
-              </Button>
-            </div>
-            {updateMutation.error && (
-              <p className="text-sm text-destructive">
-                {updateMutation.error instanceof Error ? updateMutation.error.message : "Failed to save."}
-              </p>
-            )}
-          </div>
-        ) : (
-          <div className="rounded-md border px-3 py-2.5 space-y-1.5">
-            <div className="flex items-baseline gap-2">
-              <p className="text-sm font-medium">{bot.name}</p>
-              {bot.slug && <span className="text-xs text-muted-foreground font-mono">@{bot.slug}</span>}
-            </div>
-            {bot.description && <p className="text-xs text-muted-foreground">{bot.description}</p>}
-            {!bot.description && <p className="text-xs text-muted-foreground italic">No description</p>}
-            <div className="flex flex-wrap gap-1 pt-1">
-              {bot.traits.length > 0 ? (
-                bot.traits.map((trait) => (
-                  <Badge key={trait} variant="secondary" className="text-[11px] font-normal">
-                    {trait}
-                  </Badge>
-                ))
-              ) : (
-                <Badge variant="outline" className="text-[11px] font-normal text-muted-foreground">
-                  no capabilities
-                </Badge>
-              )}
-            </div>
-          </div>
-        )}
-      </section>
-
-      <Separator />
       <BotKeysSection workspaceId={workspaceId} botId={botId} isArchived={isArchived} />
-      <Separator />
       <BotChannelsSection workspaceId={workspaceId} botId={botId} isArchived={isArchived} />
-      <Separator />
       <BotWebhooksSection
         key={`${workspaceId}:${botId}`}
         workspaceId={workspaceId}
         botId={botId}
         isArchived={isArchived}
       />
-      <Separator />
 
       {bot.type === "personal" && (
-        <>
-          <section className="space-y-3">
-            <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Reading access</h4>
-            <div className="rounded-md border px-3 py-2.5 flex items-start justify-between gap-3">
-              <div className="space-y-1">
-                <Label htmlFor="reads-as-owner" className="text-sm font-medium">
-                  Read everything you can read
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Except end-to-end encrypted streams. The bot can still only post where it has been added, and other
-                  members see which streams it was added to — not that it reads through you.
-                </p>
-                {readsAsOwnerMutation.error && (
-                  <p className="text-xs text-destructive">
-                    {readsAsOwnerMutation.error instanceof Error
-                      ? readsAsOwnerMutation.error.message
-                      : "Failed to update."}
-                  </p>
-                )}
-              </div>
-              <Switch
-                id="reads-as-owner"
-                checked={bot.readsAsOwner}
-                disabled={isArchived || readsAsOwnerMutation.isPending}
-                onCheckedChange={(checked) => readsAsOwnerMutation.mutate(checked)}
-              />
-            </div>
-          </section>
-          <Separator />
-        </>
+        <SettingRow
+          label="Read everything you can read"
+          anchor={readsAsOwnerAnchor}
+          toggle
+          description="Except end-to-end encrypted streams. The bot can still only post where it has been added, and other members see which streams it was added to, not that it reads through you."
+          control={
+            <Switch
+              id={readsAsOwnerIds.control}
+              aria-labelledby={readsAsOwnerIds.label}
+              aria-describedby={readsAsOwnerIds.description}
+              checked={bot.readsAsOwner}
+              disabled={isArchived || readsAsOwnerMutation.isPending}
+              onCheckedChange={(checked) => readsAsOwnerMutation.mutate(checked)}
+            />
+          }
+        >
+          {readsAsOwnerMutation.error && (
+            <SettingFieldError>{errorText(readsAsOwnerMutation.error, "Couldn't update.")}</SettingFieldError>
+          )}
+        </SettingRow>
       )}
 
-      <section className="space-y-3">
-        <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Danger zone</h4>
-        {isArchived ? (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => restoreMutation.mutate()}
-            disabled={restoreMutation.isPending}
-          >
-            <ArchiveRestore className="h-3.5 w-3.5 mr-1.5" />
-            {restoreMutation.isPending ? "Restoring..." : "Restore bot"}
-          </Button>
-        ) : (
-          <Button variant="outline" size="sm" className="text-destructive" onClick={() => setArchiveTarget(true)}>
-            <Archive className="h-3.5 w-3.5 mr-1.5" />
-            Archive bot
-          </Button>
+      <SettingRow
+        label={isArchived ? "Restore bot" : "Archive bot"}
+        description={
+          isArchived
+            ? "Brings the bot back. Its old API keys stay revoked."
+            : "Revokes all its API keys. Its messages stay visible, and you can restore it later."
+        }
+        control={
+          isArchived ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className={SETTING_CONTROL_HEIGHT}
+              onClick={() => restoreMutation.mutate()}
+              disabled={restoreMutation.isPending}
+            >
+              <ArchiveRestore className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              {restoreMutation.isPending ? "Restoring…" : "Restore"}
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn("text-destructive hover:text-destructive", SETTING_CONTROL_HEIGHT)}
+              onClick={() => setArchiveTarget(true)}
+            >
+              <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              Archive
+            </Button>
+          )
+        }
+      >
+        {(archiveMutation.error || restoreMutation.error) && (
+          <SettingFieldError>
+            {archiveMutation.error
+              ? errorText(archiveMutation.error, "Couldn't archive the bot.")
+              : errorText(restoreMutation.error, "Couldn't restore the bot.")}
+          </SettingFieldError>
         )}
-      </section>
+      </SettingRow>
+
+      <BotProfileDialog
+        mode="edit"
+        open={editing}
+        onClose={() => {
+          setEditing(false)
+          updateMutation.reset()
+        }}
+        initial={{ name: bot.name, slug: bot.slug ?? "", description: bot.description, traits: bot.traits }}
+        isPending={updateMutation.isPending}
+        error={updateMutation.error}
+        onSubmit={(values) => updateMutation.mutate(values)}
+      />
 
       <AlertDialog open={archiveTarget} onOpenChange={(open) => !open && setArchiveTarget(false)}>
         <AlertDialogContent>
@@ -368,11 +303,11 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
               onClick={() => archiveMutation.mutate()}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {archiveMutation.isPending ? "Archiving..." : "Archive bot"}
+              {archiveMutation.isPending ? "Archiving…" : "Archive bot"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </>
   )
 }

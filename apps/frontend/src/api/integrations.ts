@@ -11,6 +11,11 @@ export interface LinearIntegrationResponse {
   integration: LinearWorkspaceIntegration | null
 }
 
+export const integrationKeys = {
+  provider: (workspaceId: string, provider: "github" | "linear") =>
+    ["workspace-integrations", workspaceId, provider] as const,
+}
+
 export const integrationsApi = {
   async getGithub(workspaceId: string): Promise<GitHubIntegrationResponse> {
     return api.get<GitHubIntegrationResponse>(`/api/workspaces/${workspaceId}/integrations/github`)

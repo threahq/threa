@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import * as memosModule from "@/hooks/use-memos"
 import { AGENT_SETTABLE_PREFERENCE_KEYS, TOOL_EFFECT_KINDS, type AgentToolEffect } from "@threahq/types"
 import {
-  SETTINGS_TAB_BY_PREFERENCE_KEY,
+  SETTING_BY_PREFERENCE_KEY,
   effectDiff,
   effectLabel,
   kindNoun,
@@ -17,7 +17,7 @@ import {
 
 const ctx = {
   workspaceId: "ws_1",
-  getSettingsUrl: (tab?: string) => `?settings=${tab}`,
+  getSettingsUrl: (tab?: string, setting?: string) => `?settings=${tab}&setting=${setting}`,
 }
 
 function effect(partial: Partial<AgentToolEffect> & Pick<AgentToolEffect, "kind">): AgentToolEffect {
@@ -30,7 +30,7 @@ describe("resolveEffectPath", () => {
       resolveEffectPath(effect({ kind, target: kind === "settings" ? "theme" : "id_1" }), ctx)
     )
     expect(Object.fromEntries(TOOL_EFFECT_KINDS.map((kind, i) => [kind, resolved[i]]))).toEqual({
-      settings: "?settings=appearance",
+      settings: "?settings=appearance&setting=theme",
       delegation: "/w/ws_1/delegations/id_1",
       // Routeless until the subagent card ships.
       subagent: null,
@@ -51,6 +51,12 @@ describe("resolveEffectPath", () => {
     expect(resolveEffectPath(effect({ kind: "delegation", target: "dlg_1" }), { ...ctx, workspaceId: null })).toBeNull()
   })
 
+  it("lands a working-hours change on its row in Time & schedule", () => {
+    expect(resolveEffectPath(effect({ kind: "settings", target: "workSchedule" }), ctx)).toBe(
+      "?settings=datetime&setting=working-hours"
+    )
+  })
+
   it("is inert for a settings key no tab renders", () => {
     expect(resolveEffectPath(effect({ kind: "settings", target: "language" }), ctx)).toBeNull()
   })
@@ -64,9 +70,9 @@ describe("resolveEffectPath", () => {
   })
 })
 
-describe("SETTINGS_TAB_BY_PREFERENCE_KEY", () => {
+describe("SETTING_BY_PREFERENCE_KEY", () => {
   it("covers every agent-settable preference key", () => {
-    expect(Object.keys(SETTINGS_TAB_BY_PREFERENCE_KEY).sort()).toEqual([...AGENT_SETTABLE_PREFERENCE_KEYS].sort())
+    expect(Object.keys(SETTING_BY_PREFERENCE_KEY).sort()).toEqual([...AGENT_SETTABLE_PREFERENCE_KEYS].sort())
   })
 })
 

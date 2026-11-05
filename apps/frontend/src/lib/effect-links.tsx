@@ -5,7 +5,6 @@ import {
   EFFECTS_PER_SESSION_MAX,
   type AgentSettablePreferenceKey,
   type AgentToolEffect,
-  type SettingsTab,
   type ToolEffectKind,
 } from "@threahq/types"
 import {
@@ -19,6 +18,8 @@ import {
   TerminalSquare,
   type LucideIcon,
 } from "lucide-react"
+import { tabOfSetting, type SettingId } from "@/components/settings/settings-registry"
+import type { GetSettingsUrl } from "@/hooks/use-setting-href"
 import { buildDelegationPath } from "@/lib/stream-links"
 import { cn } from "@/lib/utils"
 import { MemoPreviewDialog } from "@/components/memo/memo-preview-dialog"
@@ -64,27 +65,25 @@ export function effectLabel(effect: AgentToolEffect): string {
 }
 
 /**
- * Which settings tab edits a given agent-settable preference. Verified against
- * the tab components themselves, not inferred from the key's name.
- *
- * `language` is null on purpose: no settings tab renders it, so a link would
- * land the user on a screen that cannot show what changed.
+ * Which setting edits a given agent-settable preference, so the link lands on
+ * that row. `language` is null on purpose: no settings page renders it, so a
+ * link would land the user on a screen that cannot show what changed.
  */
-export const SETTINGS_TAB_BY_PREFERENCE_KEY = {
-  theme: "appearance",
-  messageDisplay: "appearance",
-  unreadOpenPosition: "appearance",
-  dateFormat: "datetime",
-  timeFormat: "datetime",
-  timezone: "datetime",
-  notificationLevel: "notifications",
-  workSchedule: "schedule",
+export const SETTING_BY_PREFERENCE_KEY = {
+  theme: "theme",
+  messageDisplay: "density",
+  unreadOpenPosition: "unread-landing",
+  dateFormat: "date-format",
+  timeFormat: "time-format",
+  timezone: "timezone",
+  notificationLevel: "notification-level",
+  workSchedule: "working-hours",
   language: null,
-} as const satisfies Record<AgentSettablePreferenceKey, SettingsTab | null>
+} as const satisfies Record<AgentSettablePreferenceKey, SettingId | null>
 
-function settingsTabFor(target: string): SettingsTab | null {
+function settingFor(target: string): SettingId | null {
   if (!AGENT_SETTABLE_PREFERENCE_KEYS.includes(target as AgentSettablePreferenceKey)) return null
-  return SETTINGS_TAB_BY_PREFERENCE_KEY[target as AgentSettablePreferenceKey]
+  return SETTING_BY_PREFERENCE_KEY[target as AgentSettablePreferenceKey]
 }
 
 export interface EffectRouteContext {
@@ -94,7 +93,7 @@ export interface EffectRouteContext {
    * the viewer's current URL, so the href can only be built where the router is.
    * Absent outside the workspace shell, which makes settings effects inert.
    */
-  getSettingsUrl?: (tab?: SettingsTab) => string
+  getSettingsUrl?: GetSettingsUrl
 }
 
 type EffectResolver = (target: string, workspaceId: string, ctx: EffectRouteContext) => string | null
@@ -111,9 +110,10 @@ const EFFECT_ROUTE_RESOLVERS = {
   memo: () => null,
   delegation: (target, workspaceId) => buildDelegationPath(workspaceId, encodeURIComponent(target)),
   settings: (target, _workspaceId, ctx) => {
-    const tab = settingsTabFor(target)
-    if (!tab || !ctx.getSettingsUrl) return null
-    return ctx.getSettingsUrl(tab)
+    const setting = settingFor(target)
+    const tab = setting && tabOfSetting(setting)
+    if (!setting || !tab || !ctx.getSettingsUrl) return null
+    return ctx.getSettingsUrl(tab, setting)
   },
   follow_up: () => null,
   brief: () => null,
@@ -253,7 +253,7 @@ export function EffectRow({
 }: {
   effect: AgentToolEffect
   workspaceId: string | null | undefined
-  getSettingsUrl?: (tab?: SettingsTab) => string
+  getSettingsUrl?: GetSettingsUrl
   variant: EffectRowVariant
   className?: string
 }) {

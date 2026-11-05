@@ -106,8 +106,7 @@ describe("GeneralTab display-name rename (stream settings surface)", () => {
 
     const view = renderTab(stream, update)
 
-    await userEvent.type(screen.getByPlaceholderText("Scratchpad name"), "Therapy notes")
-    await userEvent.click(screen.getByRole("button", { name: /save/i }))
+    await userEvent.type(screen.getByPlaceholderText("Scratchpad name"), "Therapy notes{Enter}")
 
     await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
     expect(update).toHaveBeenCalledWith(WS, stream.id, {

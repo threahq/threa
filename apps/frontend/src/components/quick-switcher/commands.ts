@@ -2,7 +2,6 @@ import type { NavigateFunction } from "react-router-dom"
 import {
   Bell,
   Bookmark,
-  Bot,
   Brain,
   CalendarClock,
   Compass,
@@ -26,17 +25,12 @@ import {
   X,
 } from "lucide-react"
 import { toast } from "sonner"
-import {
-  SETTINGS_TABS,
-  StreamTypes,
-  type SettingsTab,
-  type StreamType,
-  type WorkspaceSettingsTab,
-} from "@threahq/types"
+import { SETTINGS_TABS, StreamTypes, type SettingsTab, type StreamType } from "@threahq/types"
 import { STREAM_ICONS } from "@/lib/streams"
-import { SETTINGS_TAB_CONFIG } from "@/components/settings/tab-config"
+import { SETTINGS_GROUP_LABELS, SETTINGS_PAGE_CONFIG } from "@/components/settings/settings-registry"
 import type { ExplorerFilters } from "@/components/attachment-explorer"
 import type { OutcomesFilters } from "@/components/agent-outcomes"
+import type { StreamSettingsTab } from "@/contexts/settings-context"
 
 /**
  * Commands can request an input prompt via this interface.
@@ -70,9 +64,7 @@ export interface CommandContext {
   /** Open the workspace search surface (sidebar panel on desktop, /search page on mobile). */
   openSearch: () => void
   requestInput: (request: InputRequest) => void
-  openSettings: (tab?: SettingsTab) => void
-  /** Open the workspace settings dialog at a tab (URL-param driven, like openSettings). */
-  openWorkspaceSettings: (tab: WorkspaceSettingsTab) => void
+  openSettings: (tab?: SettingsTab, setting?: string) => void
   openExplorer: (overrides?: Partial<ExplorerFilters>) => void
   /** Open the outcomes view (follow-ups + delegated tasks) over the current route. */
   openOutcomes: (overrides?: Partial<OutcomesFilters>) => void
@@ -89,7 +81,7 @@ export interface CommandContext {
   /** Archive state of the stream in view, when resolved. */
   currentStreamArchived?: boolean
   /** Open the stream settings dialog for a stream. */
-  openStreamSettings: (streamId: string) => void
+  openStreamSettings: (streamId: string | null, tab?: StreamSettingsTab, setting?: string) => void
   /** Open the Members overlay for a stream; absent when the stream in view has no member list. */
   openStreamMembers?: (streamId: string) => void
   /** Open the destructive confirmation for archiving (or deleting a draft) a stream. */
@@ -377,7 +369,7 @@ export const commands: Command[] = [
   },
   {
     id: "open-settings",
-    label: "Open Settings",
+    label: "Open settings",
     icon: Settings,
     keywords: ["preferences", "config", "options", "theme", "appearance"],
     action: ({ closeDialog, openSettings }) => {
@@ -385,16 +377,15 @@ export const commands: Command[] = [
       openSettings()
     },
   },
-  // One palette entry per user-settings tab, so typing "notifications",
-  // "keyboard", or "timezone" finds the right surface without knowing it
-  // lives inside the Settings dialog.
+  // One palette entry per settings page, so typing "notifications",
+  // "keyboard", or "members" finds the right page without knowing the window.
   ...SETTINGS_TABS.map((tab): Command => {
-    const config = SETTINGS_TAB_CONFIG[tab]
+    const config = SETTINGS_PAGE_CONFIG[tab]
     return {
       id: `settings-${tab}`,
       label: `Settings: ${config.label}`,
-      icon: Settings,
-      keywords: ["preferences", ...config.keywords],
+      icon: config.icon,
+      keywords: ["preferences", SETTINGS_GROUP_LABELS[config.group].toLowerCase(), ...config.keywords],
       action: ({ closeDialog, openSettings }) => {
         closeDialog()
         openSettings(tab)
@@ -402,33 +393,13 @@ export const commands: Command[] = [
     }
   }),
   {
-    id: "open-workspace-settings",
-    label: "Workspace Settings",
-    icon: Settings,
-    keywords: ["admin", "members", "bots", "api keys", "integrations", "statuses"],
-    action: ({ closeDialog, openWorkspaceSettings }) => {
-      closeDialog()
-      openWorkspaceSettings("general")
-    },
-  },
-  {
     id: "invite-people",
-    label: "Invite People",
+    label: "Invite people",
     icon: UserPlus,
     keywords: ["invitation", "add member", "teammate", "team", "share workspace"],
-    action: ({ closeDialog, openWorkspaceSettings }) => {
+    action: ({ closeDialog, openSettings }) => {
       closeDialog()
-      openWorkspaceSettings("users")
-    },
-  },
-  {
-    id: "open-ai-agents",
-    label: "AI Agents settings",
-    icon: Bot,
-    keywords: ["personas", "ariadne", "assistant", "companion", "agent", "prompt", "model", "tools", "follow-up"],
-    action: ({ closeDialog, openWorkspaceSettings }) => {
-      closeDialog()
-      openWorkspaceSettings("ai-agents")
+      openSettings("members", "invites")
     },
   },
 ]

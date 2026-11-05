@@ -1,93 +1,81 @@
-import { Label } from "@/components/ui/label"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { Separator } from "@/components/ui/separator"
-import { TimezonePicker } from "@/components/ui/timezone-picker"
+import { useMemo } from "react"
+import { TimezonePicker, formatTimezoneLabel } from "@/components/ui/timezone-picker"
 import { usePreferences } from "@/contexts"
 import { DATE_FORMAT_OPTIONS, TIME_FORMAT_OPTIONS, type DateFormat, type TimeFormat } from "@threahq/types"
+import {
+  ChoiceSetting,
+  SETTING_CONTROL_CLASS,
+  SettingRow,
+  SettingStateAction,
+  SettingsSection,
+  settingIds,
+  type ChoiceOption,
+} from "./setting-primitives"
+import { settingDef } from "./settings-registry"
 
-const DATE_FORMAT_LABELS: Record<DateFormat, string> = {
-  "YYYY-MM-DD": "2025-01-15 (ISO)",
-  "DD/MM/YYYY": "15/01/2025 (European)",
-  "MM/DD/YYYY": "01/15/2025 (US)",
-}
+const CLOCK_CHOICES: Record<TimeFormat, string> = { "24h": "14:30", "12h": "2:30 PM" }
 
-const TIME_FORMAT_LABELS: Record<TimeFormat, string> = {
-  "24h": "14:30 (24-hour)",
-  "12h": "2:30 PM (12-hour)",
+export const DATE_FORMAT_CHOICES: Record<DateFormat, Omit<ChoiceOption<DateFormat>, "value">> = {
+  "YYYY-MM-DD": { label: "2026-01-31", description: "Year first (ISO 8601)." },
+  "DD/MM/YYYY": { label: "31/01/2026", description: "Day first." },
+  "MM/DD/YYYY": { label: "01/31/2026", description: "Month first." },
 }
 
 export function DateTimeSettings() {
   const { preferences, updatePreference } = usePreferences()
-
-  const dateFormat = preferences?.dateFormat ?? "YYYY-MM-DD"
-  const timeFormat = preferences?.timeFormat ?? "24h"
   const timezone = preferences?.timezone ?? "UTC"
-  const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const deviceTimezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, [])
+  const ids = settingIds("timezone")
+  const deviceNoteId = `${ids.control}-device`
+
+  const adoptDeviceTimezone = () => {
+    void updatePreference("timezone", deviceTimezone)
+    // The button goes away once the zones match; keep focus on the setting.
+    document.getElementById(ids.row)?.focus()
+  }
 
   return (
-    <div className="space-y-6">
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-sm font-medium">Date Format</h3>
-          <p className="text-sm text-muted-foreground">Choose how dates are displayed</p>
-        </div>
-        <RadioGroup
-          value={dateFormat}
-          onValueChange={(value) => updatePreference("dateFormat", value as DateFormat)}
-          className="space-y-3"
-        >
-          {DATE_FORMAT_OPTIONS.map((option) => (
-            <div key={option} className="flex items-center space-x-3">
-              <RadioGroupItem value={option} id={`date-${option}`} />
-              <Label htmlFor={`date-${option}`} className="cursor-pointer font-mono">
-                {DATE_FORMAT_LABELS[option]}
-              </Label>
-            </div>
-          ))}
-        </RadioGroup>
-      </section>
-
-      <Separator />
-
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-sm font-medium">Time Format</h3>
-          <p className="text-sm text-muted-foreground">Choose how times are displayed</p>
-        </div>
-        <RadioGroup
-          value={timeFormat}
-          onValueChange={(value) => updatePreference("timeFormat", value as TimeFormat)}
-          className="space-y-3"
-        >
-          {TIME_FORMAT_OPTIONS.map((option) => (
-            <div key={option} className="flex items-center space-x-3">
-              <RadioGroupItem value={option} id={`time-${option}`} />
-              <Label htmlFor={`time-${option}`} className="cursor-pointer font-mono">
-                {TIME_FORMAT_LABELS[option]}
-              </Label>
-            </div>
-          ))}
-        </RadioGroup>
-      </section>
-
-      <Separator />
-
-      <section className="space-y-4">
-        <div>
-          <h3 className="text-sm font-medium">Home Timezone</h3>
-          <p className="text-sm text-muted-foreground">
-            Your home timezone is shown to colleagues and used for time-aware features. Times in the UI are displayed in
-            your device's local timezone.
-          </p>
-        </div>
-        <div className="space-y-2">
-          <Label>Timezone</Label>
-          <TimezonePicker value={timezone} onChange={(tz) => updatePreference("timezone", tz)} />
-        </div>
-        <p className="text-sm text-muted-foreground">
-          Your device is set to <span className="font-mono">{detectedTimezone}</span>
-        </p>
-      </section>
-    </div>
+    <SettingsSection section="time-format">
+      <SettingRow
+        setting="timezone"
+        labelFor={false}
+        control={
+          <TimezonePicker
+            id={ids.control}
+            value={timezone}
+            onChange={(tz) => updatePreference("timezone", tz)}
+            className={SETTING_CONTROL_CLASS}
+            aria-labelledby={ids.label}
+            aria-describedby={
+              [settingDef("timezone").description && ids.description, deviceTimezone !== timezone && deviceNoteId]
+                .filter(Boolean)
+                .join(" ") || undefined
+            }
+          />
+        }
+      >
+        {deviceTimezone !== timezone && (
+          <SettingStateAction
+            id={deviceNoteId}
+            action={{ onClick: adoptDeviceTimezone, children: "Use this device's time zone" }}
+          >
+            This device is on <span className="text-foreground">{formatTimezoneLabel(deviceTimezone)}</span>.
+          </SettingStateAction>
+        )}
+      </SettingRow>
+      <ChoiceSetting
+        setting="time-format"
+        value={preferences?.timeFormat ?? "24h"}
+        options={TIME_FORMAT_OPTIONS.map((value) => ({ value, label: CLOCK_CHOICES[value] }))}
+        onValueChange={(value) => updatePreference("timeFormat", value)}
+      />
+      <ChoiceSetting
+        setting="date-format"
+        value={preferences?.dateFormat ?? "YYYY-MM-DD"}
+        options={DATE_FORMAT_OPTIONS.map((value) => ({ value, ...DATE_FORMAT_CHOICES[value] }))}
+        variant="select"
+        onValueChange={(value) => updatePreference("dateFormat", value)}
+      />
+    </SettingsSection>
   )
 }

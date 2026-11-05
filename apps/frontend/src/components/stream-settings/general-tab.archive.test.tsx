@@ -125,6 +125,23 @@ describe("GeneralTab archive section (thread archival)", () => {
     view.unmount()
   })
 
+  it("titles the section Archiving and keeps both actions plain outline, since archiving is undoable", () => {
+    const archived = { ...threadA, archivedAt: ARCHIVED_AT }
+    seed([channel, archived])
+    const view = renderTab({ stream: archived, rootStream: channel, currentUserId: BYSTANDER })
+    const unarchive = screen.getByRole("button", { name: "Unarchive" }).className
+    view.unmount()
+    seed([channel, threadA])
+    renderTab({ stream: threadA, rootStream: channel, currentUserId: BYSTANDER })
+    expect({
+      section: screen.queryByRole("heading", { name: /danger/i }),
+      archiveHeading: screen.getAllByRole("heading", { name: "Archiving" }).length > 0,
+      destructive: [unarchive, screen.getByRole("button", { name: "Archive" }).className].map((c) =>
+        /destructive/.test(c)
+      ),
+    }).toEqual({ section: null, archiveHeading: true, destructive: [false, false] })
+  })
+
   it("shows no ancestor note when the chain is live", () => {
     seed([channel, threadA, threadB])
     const view = renderTab({ stream: threadB, rootStream: channel, currentUserId: CREATOR })

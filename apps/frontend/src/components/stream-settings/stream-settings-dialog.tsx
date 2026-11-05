@@ -1,111 +1,67 @@
-import { useEffect, useMemo, useState } from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
-import {
-  ResponsiveDialog,
-  ResponsiveDialogContent,
-  ResponsiveDialogDescription,
-  ResponsiveDialogHeader,
-  ResponsiveDialogTitle,
-} from "@/components/ui/responsive-dialog"
-import { ResponsiveSettingsNav, SETTINGS_DIALOG_LAYOUT_CLASSNAMES } from "@/components/ui/responsive-settings-nav"
-import { Tabs, TabsContent } from "@/components/ui/tabs"
-import { useStreamSettings, STREAM_SETTINGS_TABS, type StreamSettingsTab } from "./use-stream-settings"
-import { streamHasMembers } from "./use-stream-members"
+import { useMemo } from "react"
+import { SettingsPageSkeleton } from "@/components/settings/settings-shell"
+import type { StreamSettingsTab } from "@/contexts/settings-context"
 import { GeneralTab } from "./general-tab"
 import { CompanionTab } from "./companion-tab"
 import { MembersTab } from "./members-tab"
 import { ConnectTab } from "./connect-tab"
-import { streamKeys, useFeatureFlag } from "@/hooks"
-import { useViewerPermissions } from "@/hooks/use-workspaces"
-import { hasPermission } from "@/lib/permissions"
+import { useCachedStreamBootstrap } from "@/hooks/use-cached-stream-bootstrap"
 import {
   useWorkspaceStreams,
   useWorkspaceStreamMemberships,
   useWorkspaceUsers,
   useWorkspaceDmPeers,
 } from "@/stores/workspace-store"
-import {
-  StreamTypes,
-  WORKSPACE_PERMISSION_SCOPES,
-  type Stream,
-  type StreamBootstrap,
-  type NotificationLevel,
-} from "@threahq/types"
-import { resolveDmDisplayName, streamLabel } from "@/lib/streams"
+import { StreamTypes, type Stream, type NotificationLevel } from "@threahq/types"
+import { resolveDmDisplayName } from "@/lib/streams"
 import { useCurrentWorkspaceUserId } from "@/hooks/use-current-workspace-user-id"
 
-const COMPANION_TAB_TYPES: readonly string[] = [
-  StreamTypes.CHANNEL,
-  StreamTypes.SCRATCHPAD,
-  StreamTypes.DM,
-  StreamTypes.THREAD,
-]
-
-const TAB_CONFIG: Record<StreamSettingsTab, { label: string; description: string }> = {
-  general: { label: "General", description: "Notifications and stream details" },
-  companion: { label: "Companion", description: "AI instructions and behavior" },
-  members: { label: "Members", description: "People and bot access" },
-  connect: { label: "Connect", description: "Share with another workspace" },
-}
-
-interface StreamSettingsDialogProps {
+interface StreamSettingsPageProps {
   workspaceId: string
+  streamId: string
+  tab: StreamSettingsTab
+  /** Invite links created this session; they exist only in their create response. */
+  inviteLinks: ReadonlyMap<string, string>
+  onInviteLinkCreated: (connectionId: string, url: string) => void
 }
 
-export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps) {
-  const { isOpen, activeTab, streamId, closeStreamSettings, setTab } = useStreamSettings()
-  // A created invite link exists only in its create response, and the Connect
-  // tab unmounts on a tab switch, so the links live here until the dialog closes.
-  const [inviteLinks, setInviteLinks] = useState<ReadonlyMap<string, string>>(() => new Map())
-  useEffect(() => {
-    if (!isOpen) setInviteLinks(new Map())
-  }, [isOpen])
-
-  const queryClient = useQueryClient()
+/** One of a stream's pages, as the settings window shows it. */
+export function StreamSettingsPage({
+  workspaceId,
+  streamId,
+  tab,
+  inviteLinks,
+  onInviteLinkCreated,
+}: StreamSettingsPageProps) {
   const idbStreams = useWorkspaceStreams(workspaceId)
   const idbStreamMemberships = useWorkspaceStreamMemberships(workspaceId)
 
-  // Cache-only observer for stream bootstrap (stays on TanStack - this is stream-level, not workspace)
-  const { data: bootstrap } = useQuery({
-    queryKey: streamKeys.bootstrap(workspaceId, streamId ?? ""),
-    queryFn: () => queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId ?? "")) ?? null,
-    enabled: false,
-    staleTime: Infinity,
-  })
+  const bootstrap = useCachedStreamBootstrap(workspaceId, streamId)
 
   // Get stream from stream bootstrap cache, fallback to IDB workspace streams
-  const stream = streamId ? (bootstrap?.stream ?? null) : null
-  const streamFromIdb = streamId ? (idbStreams.find((s) => s.id === streamId) ?? null) : null
+  const stream = bootstrap?.stream ?? null
+  const streamFromIdb = idbStreams.find((s) => s.id === streamId) ?? null
   // Bootstrap keeps E2E displayName null by design; the workspace-store row is
-  // the memory-only decrypted overlay. Prefer that title in the dialog without
+  // the memory-only decrypted overlay. Prefer that title in the window without
   // ever persisting it, so encrypted title actions remain reachable while unlocked.
   let resolvedStream: Stream | null = stream ?? (streamFromIdb as Stream | null)
   if (stream?.e2eEnabled && streamFromIdb?.displayName) {
     resolvedStream = { ...stream, displayName: streamFromIdb.displayName }
   }
 
-  const currentMembership = useMemo(() => {
-    if (!streamId) return null
-    return idbStreamMemberships.find((m) => m.streamId === streamId) ?? null
-  }, [idbStreamMemberships, streamId])
-
   // The viewer's identity must not come from the membership row: memberships
-  // aren't bootstrapped for archived streams, so gating the dialog on one left
+  // aren't bootstrapped for archived streams, so gating the window on one left
   // an archived stream (its only unarchive affordance) stuck on the loading
   // state after a reload. Membership is only the notification-level source.
   const currentUserId = useCurrentWorkspaceUserId(workspaceId)
-  const currentNotificationLevel: NotificationLevel | null = currentMembership?.notificationLevel ?? null
-
-  const viewerPermissions = useViewerPermissions(workspaceId)
-  const canConnect =
-    useFeatureFlag(workspaceId, "streamConnections") === "on" &&
-    hasPermission(viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
+  const currentNotificationLevel: NotificationLevel | null =
+    idbStreamMemberships.find((m) => m.streamId === streamId)?.notificationLevel ?? null
 
   const workspaceUsers = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
 
   const dmDisplayName = useMemo(() => {
-    if (!resolvedStream || resolvedStream.type !== StreamTypes.DM || !streamId) return null
+    if (!resolvedStream || resolvedStream.type !== StreamTypes.DM) return null
     return resolveDmDisplayName(streamId, workspaceUsers, dmPeers) ?? resolvedStream.displayName ?? null
   }, [resolvedStream, streamId, workspaceUsers, dmPeers])
 
@@ -114,96 +70,43 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
     return idbStreams.find((s) => s.id === resolvedStream.rootStreamId) ?? null
   }, [resolvedStream, idbStreams])
 
-  const availableTabs: readonly StreamSettingsTab[] = useMemo(() => {
-    if (!resolvedStream) return STREAM_SETTINGS_TABS
-    const tabs: StreamSettingsTab[] = ["general"]
-    if (COMPANION_TAB_TYPES.includes(resolvedStream.type)) tabs.push("companion")
-    if (streamHasMembers(resolvedStream)) tabs.push("members")
-    if (resolvedStream.type === StreamTypes.CHANNEL && canConnect) tabs.push("connect")
-    return tabs
-  }, [resolvedStream, canConnect])
+  if (!resolvedStream || !currentUserId) return <SettingsPageSkeleton />
 
-  const effectiveTab = (availableTabs as readonly string[]).includes(activeTab) ? activeTab : availableTabs[0]
-
-  // DMs carry the viewer-specific peer name in `dmDisplayName`; everything else
-  // resolves through the shared helper so the title matches every other surface.
-  let streamName = "Stream"
-  if (resolvedStream) {
-    streamName = dmDisplayName ?? streamLabel(resolvedStream)
+  switch (tab) {
+    case "general":
+      return (
+        <GeneralTab
+          workspaceId={workspaceId}
+          stream={resolvedStream}
+          currentUserId={currentUserId}
+          notificationLevel={currentNotificationLevel}
+          dmDisplayName={dmDisplayName}
+          rootStream={rootStream}
+        />
+      )
+    case "companion":
+      return (
+        <CompanionTab
+          workspaceId={workspaceId}
+          stream={resolvedStream}
+          allowedToolCategories={bootstrap?.allowedToolCategories ?? null}
+          configuredToolCategories={bootstrap?.configuredToolCategories}
+          canManageToolPolicy={
+            resolvedStream.type === StreamTypes.SCRATCHPAD && resolvedStream.createdBy === currentUserId
+          }
+          rootStream={rootStream}
+        />
+      )
+    case "members":
+      return <MembersTab workspaceId={workspaceId} streamId={streamId} currentUserId={currentUserId} />
+    case "connect":
+      return (
+        <ConnectTab
+          workspaceId={workspaceId}
+          stream={resolvedStream}
+          inviteLinks={inviteLinks}
+          onInviteLinkCreated={onInviteLinkCreated}
+        />
+      )
   }
-
-  return (
-    <ResponsiveDialog open={isOpen} onOpenChange={(open) => !open && closeStreamSettings()}>
-      <ResponsiveDialogContent
-        desktopClassName="w-[min(96vw,980px)] max-w-none h-[min(720px,calc(100vh-2rem))] sm:flex flex-col overflow-hidden p-0 gap-0"
-        drawerClassName="flex flex-col gap-0"
-        hideCloseButton
-      >
-        <ResponsiveDialogHeader className="border-b px-4 py-4 sm:px-6 sm:py-5">
-          <ResponsiveDialogTitle>{streamName} Settings</ResponsiveDialogTitle>
-          <ResponsiveDialogDescription className="sr-only">
-            Manage notifications, members, and companion settings for this stream.
-          </ResponsiveDialogDescription>
-        </ResponsiveDialogHeader>
-
-        {resolvedStream && streamId && currentUserId ? (
-          <Tabs
-            data-slot="settings-tabs"
-            value={effectiveTab}
-            onValueChange={setTab}
-            className={SETTINGS_DIALOG_LAYOUT_CLASSNAMES.tabs}
-          >
-            <div data-slot="settings-panels" className={SETTINGS_DIALOG_LAYOUT_CLASSNAMES.panels}>
-              <ResponsiveSettingsNav
-                tabs={availableTabs}
-                items={TAB_CONFIG}
-                value={effectiveTab}
-                onValueChange={setTab}
-              />
-
-              <div data-slot="settings-content" className={SETTINGS_DIALOG_LAYOUT_CLASSNAMES.content}>
-                <TabsContent value="general" className="mt-0">
-                  <GeneralTab
-                    workspaceId={workspaceId}
-                    stream={resolvedStream}
-                    currentUserId={currentUserId}
-                    notificationLevel={currentNotificationLevel}
-                    dmDisplayName={dmDisplayName}
-                    rootStream={rootStream}
-                  />
-                </TabsContent>
-                <TabsContent value="companion" className="mt-0">
-                  <CompanionTab
-                    workspaceId={workspaceId}
-                    stream={resolvedStream}
-                    allowedToolCategories={bootstrap?.allowedToolCategories ?? null}
-                    configuredToolCategories={bootstrap?.configuredToolCategories}
-                    canManageToolPolicy={
-                      resolvedStream.type === StreamTypes.SCRATCHPAD && resolvedStream.createdBy === currentUserId
-                    }
-                    rootStream={rootStream}
-                  />
-                </TabsContent>
-                <TabsContent value="members" className="mt-0">
-                  <MembersTab workspaceId={workspaceId} streamId={streamId} currentUserId={currentUserId} />
-                </TabsContent>
-                <TabsContent value="connect" className="mt-0">
-                  <ConnectTab
-                    workspaceId={workspaceId}
-                    stream={resolvedStream}
-                    inviteLinks={inviteLinks}
-                    onInviteLinkCreated={(connectionId, url) =>
-                      setInviteLinks((links) => new Map(links).set(connectionId, url))
-                    }
-                  />
-                </TabsContent>
-              </div>
-            </div>
-          </Tabs>
-        ) : (
-          <p className="text-sm text-muted-foreground p-4">Loading stream settings...</p>
-        )}
-      </ResponsiveDialogContent>
-    </ResponsiveDialog>
-  )
 }

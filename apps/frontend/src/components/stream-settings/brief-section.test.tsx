@@ -67,7 +67,7 @@ describe("BriefSection", () => {
     vi.spyOn(streamBriefsApi, "get").mockResolvedValue(null)
     renderSection()
 
-    expect(await screen.findByRole("button", { name: "Add a brief" })).toBeInTheDocument()
+    expect(await screen.findByRole("button", { name: "Add brief" })).toHaveClass("h-11")
   })
 
   it("saves an edit with the version the client read", async () => {
@@ -86,6 +86,16 @@ describe("BriefSection", () => {
     expect(await screen.findByText("New")).toBeInTheDocument()
   })
 
+  it("gives every brief button a 44px phone target", async () => {
+    vi.spyOn(streamBriefsApi, "get").mockResolvedValue(brief())
+    renderSection()
+
+    const edit = await screen.findByRole("button", { name: "Edit" })
+    await userEvent.click(edit)
+    const buttons = [edit, screen.getByRole("button", { name: "Cancel" }), screen.getByRole("button", { name: "Save" })]
+    expect(buttons.map((button) => button.classList.contains("h-11"))).toEqual([true, true, true])
+  })
+
   it("surfaces a concurrent edit inline instead of overwriting silently (INV-63)", async () => {
     vi.spyOn(streamBriefsApi, "get").mockResolvedValue(brief({ content: "Old", version: 3 }))
     vi.spyOn(streamBriefsApi, "put").mockRejectedValue(
@@ -99,7 +109,7 @@ describe("BriefSection", () => {
     await userEvent.type(textarea, "Mine")
     await userEvent.click(screen.getByRole("button", { name: "Save" }))
 
-    expect(await screen.findByText(/Someone else updated this brief/)).toBeInTheDocument()
+    expect(await screen.findByRole("status")).toHaveTextContent(/Someone else updated this brief/)
     // The editor stays open with the user's in-progress text — nothing lost.
     expect(screen.getByRole("textbox", { name: "Stream brief editor" })).toHaveValue("Mine")
   })
@@ -116,6 +126,6 @@ describe("BriefSection", () => {
     vi.spyOn(streamBriefsApi, "get").mockResolvedValue(null)
     renderSection(channel(), true)
 
-    expect(await screen.findByRole("button", { name: "Add a brief" })).toBeDisabled()
+    expect(await screen.findByRole("button", { name: "Add brief" })).toBeDisabled()
   })
 })

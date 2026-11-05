@@ -1,11 +1,10 @@
 import { memo, useCallback, useMemo } from "react"
-import { useNavigate, useSearchParams } from "react-router-dom"
+import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { Bell, Camera, Check, PenLine, Sparkles, UserPlus, X } from "lucide-react"
 import { useSettings, useSidebar, usePreferencesOptional } from "@/contexts"
 import { usePushNotifications } from "@/hooks/use-push-notifications"
 import { useMeetAriadne } from "@/hooks/use-meet-ariadne"
-import { WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
 import { cn } from "@/lib/utils"
 import { StreamTypes, WORKSPACE_ROLE_SLUGS, type Stream, type User } from "@threahq/types"
 
@@ -78,7 +77,6 @@ export function useGettingStarted({
   const preferencesContext = usePreferencesOptional()
   const { openSettings } = useSettings()
   const { collapseOnMobile } = useSidebar()
-  const [, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   // Mounting the hook here also gives the app a persistent auto-resubscribe
   // surface — previously it only ran while the notifications settings tab
@@ -105,15 +103,8 @@ export function useGettingStarted({
 
   const openInvites = useCallback(() => {
     collapseOnMobile()
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        next.set(WS_SETTINGS_PARAM, "users")
-        return next
-      },
-      { replace: true }
-    )
-  }, [collapseOnMobile, setSearchParams])
+    openSettings("members", "invites")
+  }, [collapseOnMobile, openSettings])
 
   const dismiss = useCallback(() => {
     void preferencesContext?.updatePreference("gettingStartedDismissed", true)

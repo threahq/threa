@@ -1,10 +1,19 @@
 import { useEffect, useId, useState } from "react"
-import { Building2, Link as LinkIcon } from "lucide-react"
+import { Building2 } from "lucide-react"
 import { StreamConnectionErrorCodes, StreamConnectionStates, type Stream, type StreamConnection } from "@threahq/types"
 import { ApiError } from "@/api/client"
 import { CopyableLink } from "@/components/copyable-link"
 import { Button } from "@/components/ui/button"
-import { Label } from "@/components/ui/label"
+import {
+  SETTING_CONTROL_HEIGHT,
+  SettingAddButton,
+  SettingFieldError,
+  SettingGroupBand,
+  SettingRow,
+  SettingsSection,
+} from "@/components/settings/setting-primitives"
+import { SETTING_MUTED_NOTE_TEXT } from "@/components/settings/setting-text"
+import { cn } from "@/lib/utils"
 import {
   ResponsiveAlertDialog,
   ResponsiveAlertDialogAction,
@@ -106,27 +115,39 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
 
   if (rows === undefined || (load.status === "loading" && empty)) {
     return (
-      <div className="space-y-3 p-1">
-        <Skeleton className="h-4 w-32" />
-        <Skeleton className="h-16 w-full" />
-      </div>
+      <SettingsSection section="stream-sharing">
+        <div className="space-y-2 px-4 py-3">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-4 w-full" />
+        </div>
+      </SettingsSection>
     )
   }
 
   const refusal = ApiError.isApiError(load.error) && REFUSAL_COPY[load.error.code]
   const loadFailed = load.status === "failed" && (
-    <div className="space-y-3">
-      <p role="alert" className="text-sm text-destructive">
-        {refusal || "Couldn't load this channel's connections."}
-      </p>
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+      <SettingFieldError>{refusal || "Couldn't load this channel's connections."}</SettingFieldError>
       {!refusal && (
-        <Button variant="outline" size="sm" onClick={load.retry}>
+        <Button
+          variant="outline"
+          className={cn("w-full shrink-0 sm:w-auto", SETTING_CONTROL_HEIGHT)}
+          onClick={load.retry}
+        >
           Try again
         </Button>
       )}
     </div>
   )
-  if (loadFailed && (refusal || empty)) return <div className="p-1">{loadFailed}</div>
+  if (loadFailed && (refusal || empty)) {
+    return (
+      <SettingsSection section="stream-sharing">
+        <SettingRow setting="stream-connect" labelFor={false}>
+          {loadFailed}
+        </SettingRow>
+      </SettingsSection>
+    )
+  }
 
   const create = async () => {
     setActionError(null)
@@ -170,73 +191,86 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
   const busy = creating || changingId !== null
   const timePrefs = { timeFormat: preferences?.timeFormat }
 
-  return (
-    <div className="space-y-5 p-1">
+  const bodyAlerts = (loadFailed || actionError?.action === "change") && (
+    <div className="space-y-2">
       {loadFailed}
-      {actionError?.action === "change" && <ActionError message={actionError.message} />}
-      {connected.length > 0 && (
-        <section className="space-y-2">
-          <Label className="text-sm font-medium">Shared with</Label>
-          <ul className="space-y-2">
-            {connected.map((connection) => (
-              <li key={connection.id} className="flex items-center gap-3 rounded-md border px-3 py-3">
-                <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span id={`${nameIdPrefix}-${connection.id}`} className="min-w-0 flex-1 truncate text-sm font-medium">
-                  {connection.remoteWorkspaceName}
-                </span>
-                {connection.role !== "peer" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    aria-describedby={`${nameIdPrefix}-${connection.id}`}
-                    onClick={() => {
-                      setConfirming(connection)
-                      setConfirmOpen(true)
-                    }}
-                    disabled={busy}
+      {actionError?.action === "change" && <SettingFieldError>{actionError.message}</SettingFieldError>}
+    </div>
+  )
+
+  return (
+    <>
+      <SettingsSection section="stream-sharing">
+        <SettingRow
+          setting="stream-connect"
+          labelFor={false}
+          description={
+            blocked ??
+            (empty ? "Each link lets one workspace join. Any admin there who opens it can accept." : undefined)
+          }
+          control={
+            !blocked && (
+              <div className="grid w-full gap-1.5 sm:w-auto sm:max-w-72 sm:justify-items-end">
+                <SettingAddButton className="w-full sm:w-auto" onClick={() => void create()} disabled={busy}>
+                  {creating ? "Creating…" : "Create invite link"}
+                </SettingAddButton>
+                {actionError?.action === "create" && <SettingFieldError>{actionError.message}</SettingFieldError>}
+              </div>
+            )
+          }
+        >
+          {bodyAlerts || undefined}
+        </SettingRow>
+        {connected.length > 0 && (
+          <SettingGroupBand label="Shared with">
+            <ul className="divide-y divide-border">
+              {connected.map((connection) => (
+                <li key={connection.id} className="flex min-h-11 items-center gap-3 px-4 py-2">
+                  <Building2 aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span
+                    id={`${nameIdPrefix}-${connection.id}`}
+                    className="min-w-0 flex-1 text-sm font-medium [overflow-wrap:anywhere]"
                   >
-                    {changingId === connection.id ? "Disconnecting…" : "Disconnect"}
-                  </Button>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-      {pending.length > 0 && (
-        <section className="space-y-2">
-          <Label className="text-sm font-medium">Invite links</Label>
-          <ul className="space-y-4">
-            {pending.map((connection) => (
-              <PendingInvite
-                key={connection.id}
-                expiresAt={Date.parse(connection.expiresAt)}
-                link={inviteLinks.get(connection.id) ?? null}
-                inviterName={users.find((user) => user.id === connection.invitedBy)?.name ?? null}
-                timePrefs={timePrefs}
-                revoking={changingId === connection.id}
-                disabled={busy}
-                onRevoke={() => void revoke(connection.id)}
-              />
-            ))}
-          </ul>
-        </section>
-      )}
-      <section className="space-y-2">
-        {empty && <Label className="text-sm font-medium">Share with another workspace</Label>}
-        {(empty || blocked) && (
-          <p className="text-sm text-muted-foreground">
-            {blocked ?? "Each link lets one workspace join. Any admin there who opens it can accept."}
-          </p>
+                    {connection.remoteWorkspaceName}
+                  </span>
+                  {connection.role !== "peer" && (
+                    <Button
+                      variant="outline"
+                      className={cn("shrink-0", SETTING_CONTROL_HEIGHT)}
+                      aria-describedby={`${nameIdPrefix}-${connection.id}`}
+                      onClick={() => {
+                        setConfirming(connection)
+                        setConfirmOpen(true)
+                      }}
+                      disabled={busy}
+                    >
+                      {changingId === connection.id ? "Disconnecting…" : "Disconnect"}
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </SettingGroupBand>
         )}
-        {!blocked && (
-          <Button variant={empty ? "default" : "outline"} onClick={() => void create()} disabled={busy}>
-            <LinkIcon className="mr-2 h-4 w-4" />
-            {creating ? "Creating…" : "Create invite link"}
-          </Button>
+        {pending.length > 0 && (
+          <SettingGroupBand label="Invite links">
+            <ul className="divide-y divide-border">
+              {pending.map((connection) => (
+                <PendingInvite
+                  key={connection.id}
+                  expiresAt={Date.parse(connection.expiresAt)}
+                  link={inviteLinks.get(connection.id) ?? null}
+                  inviterName={users.find((user) => user.id === connection.invitedBy)?.name ?? null}
+                  timePrefs={timePrefs}
+                  revoking={changingId === connection.id}
+                  disabled={busy}
+                  onRevoke={() => void revoke(connection.id)}
+                />
+              ))}
+            </ul>
+          </SettingGroupBand>
         )}
-        {actionError?.action === "create" && <ActionError message={actionError.message} />}
-      </section>
+      </SettingsSection>
       <ResponsiveAlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <ResponsiveAlertDialogContent>
           <ResponsiveAlertDialogHeader>
@@ -255,15 +289,7 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
           </ResponsiveAlertDialogFooter>
         </ResponsiveAlertDialogContent>
       </ResponsiveAlertDialog>
-    </div>
-  )
-}
-
-function ActionError({ message }: { message: string }) {
-  return (
-    <p role="alert" className="text-sm text-destructive">
-      {message}
-    </p>
+    </>
   )
 }
 
@@ -289,19 +315,23 @@ function PendingInvite({
   const note = [origin, `Expires ${expiryTime(expiresAt, timePrefs)}.`].filter(Boolean).join(" ")
 
   return (
-    <li className="space-y-2">
+    <li className="space-y-2 px-4 py-2">
       {link ? (
         <CopyableLink url={link} label="Invite link" />
       ) : (
-        <div className="rounded-md border px-3 py-3 text-sm text-muted-foreground">
-          Waiting for a workspace to accept.
-        </div>
+        <p className="text-sm">Waiting for a workspace to accept.</p>
       )}
-      <div className="flex items-center justify-between gap-3">
-        <p id={noteId} className="text-xs text-muted-foreground">
+      <div className="flex min-h-11 items-center justify-between gap-3">
+        <p id={noteId} className={SETTING_MUTED_NOTE_TEXT}>
           {note}
         </p>
-        <Button variant="outline" size="sm" onClick={onRevoke} disabled={disabled} aria-describedby={noteId}>
+        <Button
+          variant="outline"
+          className={cn("shrink-0", SETTING_CONTROL_HEIGHT)}
+          onClick={onRevoke}
+          disabled={disabled}
+          aria-describedby={noteId}
+        >
           {revoking ? "Revoking…" : "Revoke"}
         </Button>
       </div>

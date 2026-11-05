@@ -1,39 +1,55 @@
 import { useState, type ReactNode } from "react"
 import { useParams } from "react-router-dom"
-import { Bell, BellOff, CheckCircle2, CircleHelp, Loader2, Moon, ServerCrash, TriangleAlert } from "lucide-react"
-import { Label } from "@/components/ui/label"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { CheckCircle2, CircleHelp, Loader2, TriangleAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
-import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DateTimeField } from "@/components/forms/date-time-field"
-import { CustomDurationPicker } from "@/components/scheduling/custom-duration-picker"
-import { PushActionsSection } from "./push-actions-section"
+import {
+  CustomDurationPicker,
+  customDurationToDate,
+  type CustomDurationUnit,
+} from "@/components/scheduling/custom-duration-picker"
 import { usePreferences } from "@/contexts"
+import { useOptionalSettings } from "@/contexts/settings-context"
+import { SettingsLink } from "@/components/workspace-settings/settings-link"
 import { usePushNotifications } from "@/hooks/use-push-notifications"
-import { usePushTest, type DeviceReport, type TestOutcome, type TestReports, type TestStatus } from "./use-push-test"
+import { resolvePushDeviceState, type PushDeviceState } from "@/hooks/push-device-state"
 import { useNotificationPauseControls } from "@/hooks/use-notification-pause-controls"
 import { toDateInputValue, toTimeInputValue } from "@/lib/dates"
+import { cn } from "@/lib/utils"
 import { NOTIFICATION_PAUSE_OPTIONS, formatNotificationPauseLabel } from "@/lib/status"
 import {
+  NOTIFICATION_CONFIG,
   PREF_NOTIFICATION_LEVEL_OPTIONS,
   type PrefNotificationLevel,
   type PushProviderOutcome,
   type PushTestDeviceResult,
 } from "@threahq/types"
+import { PushActionsSection } from "./push-actions-section"
+import {
+  ChoiceSetting,
+  NOT_SET_UP_ON_SERVER,
+  SETTING_CONTROL_CLASS,
+  SETTING_CONTROL_HEIGHT,
+  SettingBadge,
+  SettingDependents,
+  SettingEmptyNote,
+  SettingFieldError,
+  SettingRow,
+  SettingStateAction,
+  SettingsSection,
+  SwitchSetting,
+  settingIds,
+} from "./setting-primitives"
+import { SETTING_MUTED_NOTE_TEXT, SETTING_NOTE_TEXT } from "./setting-text"
+import { SETTING_CHOICE_LABELS, settingDef } from "./settings-registry"
+import { useRouteStreamId } from "./use-stream-settings-scope"
+import { usePushTest, type DeviceReport, type TestOutcome, type TestReports, type TestStatus } from "./use-push-test"
 
-const NOTIFICATION_LABELS: Record<PrefNotificationLevel, string> = {
-  all: "All messages",
-  mentions: "Mentions only",
-  none: "None",
-}
-
-const NOTIFICATION_DESCRIPTIONS: Record<PrefNotificationLevel, string> = {
-  all: "Get notified for all new messages",
-  mentions: "Get notified for @mentions, DMs, and scratchpad messages",
-  none: "Don't send any notifications",
+export const NOTIFICATION_LEVEL_DESCRIPTIONS: Record<PrefNotificationLevel, string> = {
+  all: "Whatever each stream is set to notify you about.",
+  mentions: "Only @mentions, DMs and scratchpads.",
+  none: "Nothing. Everything still shows in Threa.",
 }
 
 const OUTCOME_TEXT: Record<PushProviderOutcome, string> = {
@@ -66,30 +82,8 @@ function describeUserAgent(userAgent: string | null): string {
   return os ? `${browser} on ${os}` : browser
 }
 
-function TestPushButton({ state, onSend }: { state: TestStatus; onSend: () => void }) {
-  // Fixed label so a long backend message never blows out the button; the
-  // message renders in the result area instead.
-  let buttonLabel: string
-  if (state.kind === "sending") buttonLabel = "Sending…"
-  else if (state.kind === "error") buttonLabel = "Retry test"
-  else buttonLabel = "Send test"
-
-  return (
-    <Button
-      onClick={onSend}
-      variant="outline"
-      size="sm"
-      disabled={state.kind === "sending"}
-      aria-describedby="push-test-reports-disclosure"
-    >
-      {state.kind === "sending" && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
-      {buttonLabel}
-    </Button>
-  )
-}
-
 function TestPushResultView({ state }: { state: TestStatus }) {
-  if (state.kind === "error") return <p className="text-xs text-destructive">{state.message}</p>
+  if (state.kind === "error") return <SettingFieldError>{state.message}</SettingFieldError>
   if (state.kind === "ok") return <TestOutcomeView outcome={state} />
   if (state.kind === "sending" && state.previous) return <TestOutcomeView outcome={state.previous} refreshing />
   return null
@@ -138,13 +132,13 @@ const UNCONFIRMED: ReportLine = { text: "Not confirmed by device", tone: "muted"
 
 const REPORT_TONE_CLASS: Record<ReportTone, string> = {
   pending: "text-muted-foreground",
-  ok: "text-emerald-700 dark:text-emerald-400",
+  ok: "text-foreground",
   failed: "text-destructive",
   muted: "text-muted-foreground",
 }
 
 function ReportIcon({ tone }: { tone: ReportTone }) {
-  const className = "h-3 w-3 shrink-0"
+  const className = "h-3.5 w-3.5 shrink-0"
   if (tone === "pending") return <Loader2 aria-hidden className={`${className} animate-spin`} />
   if (tone === "ok") return <CheckCircle2 aria-hidden className={className} />
   if (tone === "failed") return <TriangleAlert aria-hidden className={className} />
@@ -166,7 +160,7 @@ function reportsNote(reports: TestReports, devices: PushTestDeviceResult[]): str
 
 function TestOutcomeView({ outcome, refreshing = false }: { outcome: TestOutcome; refreshing?: boolean }) {
   const { result, thisDeviceKey, reports } = outcome
-  if (result.attempted === 0) return <p className="text-xs text-muted-foreground">No devices subscribed yet.</p>
+  if (result.attempted === 0) return <SettingEmptyNote>No devices subscribed yet.</SettingEmptyNote>
 
   const accepted = "accepted" in result ? result.accepted : result.delivered
   const devices = "devices" in result ? (result.devices ?? []) : []
@@ -182,11 +176,13 @@ function TestOutcomeView({ outcome, refreshing = false }: { outcome: TestOutcome
       className={refreshing ? "ph-no-capture space-y-2 opacity-60 transition-opacity" : "ph-no-capture space-y-2"}
       aria-busy={refreshing}
     >
-      <p className={accepted === result.attempted ? "text-xs text-muted-foreground" : "text-xs text-destructive"}>
+      <p
+        className={cn(SETTING_NOTE_TEXT, accepted === result.attempted ? "text-muted-foreground" : "text-destructive")}
+      >
         {`Accepted by push service on ${accepted} of ${result.attempted} device${result.attempted === 1 ? "" : "s"}.`}
       </p>
       {devices.length > 0 && (
-        <ul className="divide-y rounded-md border" aria-live="polite">
+        <ul className="divide-y divide-border" aria-live="polite">
           {devices.map((device) => {
             const report =
               reports.phase === "unavailable"
@@ -195,17 +191,13 @@ function TestOutcomeView({ outcome, refreshing = false }: { outcome: TestOutcome
             return (
               <li
                 key={device.subscriptionId}
-                className="flex flex-col gap-0.5 px-3 py-2 text-xs sm:flex-row sm:items-start sm:justify-between sm:gap-3"
+                className="flex min-h-11 flex-col gap-0.5 py-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3"
               >
                 <span className="flex min-w-0 items-center gap-2">
-                  <span className="truncate font-medium">{describeUserAgent(device.userAgent)}</span>
-                  {device.subscriptionId === thisSubscriptionId && (
-                    <Badge variant="secondary" className="shrink-0 font-normal">
-                      This device
-                    </Badge>
-                  )}
+                  <span className="truncate text-sm font-medium">{describeUserAgent(device.userAgent)}</span>
+                  {device.subscriptionId === thisSubscriptionId && <SettingBadge>This device</SettingBadge>}
                 </span>
-                <span className="flex shrink-0 flex-col gap-0.5 sm:items-end">
+                <span className={cn("flex shrink-0 flex-col gap-0.5 sm:items-end", SETTING_NOTE_TEXT)}>
                   <span className={device.outcome === "accepted" ? "text-muted-foreground" : "text-destructive"}>
                     {OUTCOME_TEXT[device.outcome]}
                   </span>
@@ -222,7 +214,7 @@ function TestOutcomeView({ outcome, refreshing = false }: { outcome: TestOutcome
         </ul>
       )}
       {note && (
-        <p role="status" className="text-xs text-muted-foreground">
+        <p role="status" className={SETTING_MUTED_NOTE_TEXT}>
           {note}
         </p>
       )}
@@ -230,271 +222,251 @@ function TestOutcomeView({ outcome, refreshing = false }: { outcome: TestOutcome
   )
 }
 
-interface StatusInfo {
-  label: string
-  variant: "default" | "secondary" | "destructive" | "outline"
-}
-
-function PushStatusBadge({ info }: { info: StatusInfo }) {
-  return (
-    <Badge variant={info.variant} className="font-normal">
-      {info.label}
-    </Badge>
-  )
-}
-
-function SubscribedPushControls({ workspaceId, onUnsubscribe }: { workspaceId: string; onUnsubscribe: () => void }) {
+function TestPushControls({ workspaceId }: { workspaceId: string }) {
   const testPush = usePushTest(workspaceId)
+  const { state } = testPush
+  // Fixed label so a long backend message never blows out the button; the
+  // message renders in the result area instead.
+  let buttonLabel = "Send test"
+  if (state.kind === "sending") buttonLabel = "Sending…"
+  else if (state.kind === "error") buttonLabel = "Retry test"
   return (
-    <div className="space-y-3">
-      <div className="flex items-start gap-2 text-sm">
-        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-        <div className="space-y-1 text-muted-foreground">
-          <p>
-            This device is subscribed. <span className="font-medium text-foreground">Send test</span> pushes a
-            notification to each of your subscribed devices.
-          </p>
-          <p id="push-test-reports-disclosure" className="text-xs">
-            Devices on a current version of Threa report back to Threa whether they created it. Those reports expire
-            after 24 hours and are only shown here.
-          </p>
-        </div>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <TestPushButton state={testPush.state} onSend={testPush.sendTest} />
-        <Button onClick={onUnsubscribe} variant="outline" size="sm">
-          Disable for this device
-        </Button>
-      </div>
-      <TestPushResultView state={testPush.state} />
+    <div className="space-y-2">
+      <SettingStateAction
+        action={{
+          onClick: testPush.sendTest,
+          disabled: state.kind === "sending",
+          "aria-describedby": "push-test-reports-disclosure",
+          children: (
+            <>
+              {state.kind === "sending" && (
+                <Loader2 aria-hidden className="mr-2 h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+              )}
+              {buttonLabel}
+            </>
+          ),
+        }}
+      >
+        Sends to every device with push on.
+      </SettingStateAction>
+      <p id="push-test-reports-disclosure" className={SETTING_MUTED_NOTE_TEXT}>
+        Devices on a current version of Threa report back to Threa whether they created it. Those reports expire after
+        24 hours and are only shown here.
+      </p>
+      <TestPushResultView state={state} />
     </div>
   )
 }
 
-function PushNotificationSection({ workspaceId }: { workspaceId: string }) {
-  const {
-    permission,
-    isSubscribed,
-    status,
-    error,
-    optedOut,
-    pushDisabledOnServer,
-    requestPermission,
-    unsubscribe,
-    retry,
-  } = usePushNotifications(workspaceId)
+const PUSH_DEVICE_REASONS: Partial<Record<PushDeviceState, string>> = {
+  unsupported: "This browser can't receive push notifications.",
+  blocked: "Your browser blocks notifications from Threa. Allow them in the browser's site settings, then reload.",
+  "server-off": NOT_SET_UP_ON_SERVER.push.reason,
+}
 
-  const statusInfo = resolveStatusInfo({ permission, isSubscribed, status, optedOut, pushDisabledOnServer })
+/** Push on this device, with the notification buttons that only show while pushes reach it. */
+function PushDeviceRows({ workspaceId, level }: { workspaceId: string; level: PrefNotificationLevel }) {
+  const push = usePushNotifications(workspaceId)
+  const state = resolvePushDeviceState(push)
 
   return (
-    <section className="space-y-4">
-      <div className="flex items-start gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
-          {isSubscribed ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />}
-        </div>
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex items-center gap-2">
-            <h3 className="text-sm font-medium">Push notifications</h3>
-            <PushStatusBadge info={statusInfo} />
-          </div>
-          <p className="text-sm text-muted-foreground">Get notified on this device even when Threa isn't open.</p>
-        </div>
-      </div>
-
-      <div className="rounded-lg border bg-card p-4">
-        {permission === "unsupported" && (
-          <p className="text-sm text-muted-foreground">Push notifications aren't supported in this browser.</p>
-        )}
-
-        {permission === "denied" && (
-          <p className="text-sm text-muted-foreground">
-            Notifications are blocked at the browser level. Open your browser's site settings and allow notifications
-            for Threa, then reload this page.
-          </p>
-        )}
-
-        {permission === "default" && (
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Allow notifications so messages and mentions can reach you when the app is closed.
-            </p>
-            <Button onClick={requestPermission} variant="default" size="sm">
-              <Bell className="mr-2 h-3.5 w-3.5" />
-              Enable push notifications
-            </Button>
-          </div>
-        )}
-
-        {permission === "granted" && isSubscribed && (
-          // Keyed so results never carry over to another workspace; unmounting on
-          // unsubscribe drops them too.
-          <SubscribedPushControls key={workspaceId} workspaceId={workspaceId} onUnsubscribe={unsubscribe} />
-        )}
-
-        {permission === "granted" && !isSubscribed && optedOut && (
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              You've turned off push for this device. Re-enable to start getting notifications again.
-            </p>
-            <Button onClick={requestPermission} variant="outline" size="sm">
-              <Bell className="mr-2 h-3.5 w-3.5" />
-              Re-enable
-            </Button>
-          </div>
-        )}
-
-        {permission === "granted" && !isSubscribed && !optedOut && pushDisabledOnServer && (
-          <Alert>
-            <ServerCrash className="h-4 w-4" />
-            <AlertTitle>Not available on this server</AlertTitle>
-            <AlertDescription className="mt-1 space-y-3">
-              <p>The Threa server isn't configured to send push notifications.</p>
-              <Button onClick={retry} variant="outline" size="sm">
-                Check again
-              </Button>
-            </AlertDescription>
-          </Alert>
-        )}
-
-        {permission === "granted" && !isSubscribed && !optedOut && !pushDisabledOnServer && status !== "error" && (
-          // Covers both "subscribing" (active flow) and "idle" (fresh mount before
-          // the auto-subscribe effect has set status). Without the "idle" case the
-          // card body was empty whenever a fresh permission grant raced ahead of
-          // the first subscribe() call.
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            <span>Subscribing this device…</span>
-          </div>
-        )}
-
-        {permission === "granted" && !isSubscribed && !optedOut && !pushDisabledOnServer && status === "error" && (
-          <Alert variant="destructive">
-            <TriangleAlert className="h-4 w-4" />
-            <AlertTitle>Couldn't enable push notifications</AlertTitle>
-            <AlertDescription className="mt-1 space-y-3">
-              {error && (
-                <p className="text-xs">
-                  {error.message}
-                  {error.code ? ` (${error.code})` : ""}
-                </p>
-              )}
-              <div className="flex flex-wrap gap-2">
-                <Button onClick={retry} variant="outline" size="sm">
-                  Retry
-                </Button>
-                <Button onClick={unsubscribe} variant="ghost" size="sm">
-                  Stop trying for this device
-                </Button>
-              </div>
-            </AlertDescription>
-          </Alert>
-        )}
-      </div>
-    </section>
+    <>
+      <PushDeviceSetting workspaceId={workspaceId} push={push} state={state} />
+      <SettingDependents parent="push-device">
+        <PushActionsSection workspaceId={workspaceId} level={level} pushDevice={state} />
+      </SettingDependents>
+    </>
   )
 }
 
-function resolveStatusInfo(args: {
-  permission: ReturnType<typeof usePushNotifications>["permission"]
-  isSubscribed: boolean
-  status: ReturnType<typeof usePushNotifications>["status"]
-  optedOut: boolean
-  pushDisabledOnServer: boolean
-}): StatusInfo {
-  const { permission, isSubscribed, status, optedOut, pushDisabledOnServer } = args
-  if (permission === "unsupported") return { label: "Unsupported", variant: "outline" }
-  if (permission === "denied") return { label: "Blocked", variant: "destructive" }
-  if (permission === "default") return { label: "Off", variant: "outline" }
-  if (isSubscribed) return { label: "Enabled", variant: "default" }
-  if (optedOut) return { label: "Off", variant: "outline" }
-  if (pushDisabledOnServer) return { label: "Unavailable", variant: "outline" }
-  if (status === "error") return { label: "Error", variant: "destructive" }
-  // permission=granted, no other flag set → either "subscribing" or "idle"
-  // before the first subscribe() call. Either way we're trying, not Off.
-  return { label: "Subscribing…", variant: "secondary" }
+function PushDeviceSetting({
+  workspaceId,
+  push,
+  state,
+}: {
+  workspaceId: string
+  push: ReturnType<typeof usePushNotifications>
+  state: PushDeviceState
+}) {
+  return (
+    <SwitchSetting
+      setting="push-device"
+      checked={state === "on" || state === "subscribing"}
+      disabled={state === "subscribing"}
+      inactive={PUSH_DEVICE_REASONS[state]}
+      onCheckedChange={(checked) => {
+        if (!checked) push.unsubscribe()
+        else if (state === "error") push.retry()
+        else push.requestPermission()
+      }}
+      description={
+        state === "subscribing" ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+            Turning on for this device…
+          </span>
+        ) : undefined
+      }
+    >
+      {state === "on" && (
+        // Keyed so results never carry over to another workspace; unmounting on
+        // unsubscribe drops them too.
+        <TestPushControls key={workspaceId} workspaceId={workspaceId} />
+      )}
+      {state === "server-off" && (
+        <SettingStateAction action={{ onClick: push.retry, children: "Check again" }}>
+          Turned on since?
+        </SettingStateAction>
+      )}
+      {state === "error" && (
+        <div className="space-y-2">
+          <SettingStateAction action={{ onClick: push.retry, children: "Retry" }}>
+            Couldn't turn on push notifications for this device.
+          </SettingStateAction>
+          {push.error && (
+            <SettingFieldError>
+              {push.error.message}
+              {push.error.code ? ` (${push.error.code})` : ""}
+            </SettingFieldError>
+          )}
+          <div className="flex justify-end">
+            <Button
+              onClick={push.unsubscribe}
+              variant="ghost"
+              size="sm"
+              className={cn("w-full sm:w-auto", SETTING_CONTROL_HEIGHT)}
+            >
+              Stop trying on this device
+            </Button>
+          </div>
+        </div>
+      )}
+    </SwitchSetting>
+  )
 }
 
+const RESUME = "resume"
+const CUSTOM_DURATION = "custom-duration"
+const CUSTOM_TIME = "custom-time"
+
 /**
- * Manually pause notifications (do-not-disturb), independent of status. A
- * status with "pause notifications" set drives the same underlying state, so
- * this section also surfaces a status-driven pause and explains it.
+ * Manually pause notifications (do-not-disturb). A status set to pause
+ * notifications drives the same state, so the row also shows a status-driven
+ * pause and how to end it.
  */
-function PauseNotificationsSection({ workspaceId }: { workspaceId: string }) {
-  // The custom paths reveal inline fields rather than pausing immediately,
-  // mirroring the status picker's custom expiry.
-  const [customOpen, setCustomOpen] = useState(false)
-  const [customDurationOpen, setCustomDurationOpen] = useState(false)
+function PauseSetting({ workspaceId }: { workspaceId: string }) {
+  const [custom, setCustom] = useState<"duration" | "time" | null>(null)
   const [customDate, setCustomDate] = useState("")
   const [customTime, setCustomTime] = useState("")
+  const [customDuration, setCustomDuration] = useState<{ amount: number; unit: CustomDurationUnit }>({
+    amount: 30,
+    unit: "minutes",
+  })
+  const ids = settingIds("pause")
 
   const { active, statusOnly, busy, pauseFor, pauseUntilDate, pauseUntilLocal, resume } = useNotificationPauseControls(
     workspaceId,
-    () => {
-      setCustomOpen(false)
-      setCustomDurationOpen(false)
-    }
+    () => setCustom(null)
   )
 
-  const openCustom = () => {
-    setCustomDurationOpen(false)
+  const openCustomTime = () => {
     const inAnHour = new Date(Date.now() + 60 * 60 * 1000)
     setCustomDate(toDateInputValue(inAnHour))
     setCustomTime(toTimeInputValue(inAnHour))
-    setCustomOpen(true)
+    setCustom("time")
   }
 
-  const openCustomDuration = () => {
-    setCustomOpen(false)
-    setCustomDurationOpen(true)
+  const pick = (choice: string) => {
+    if (choice === RESUME) resume()
+    else if (choice === CUSTOM_DURATION) setCustom("duration")
+    else if (choice === CUSTOM_TIME) openCustomTime()
+    else {
+      const option = NOTIFICATION_PAUSE_OPTIONS.find((candidate) => candidate.id === choice)
+      if (option) pauseFor(option)
+    }
   }
 
-  const handleCustomPause = () => {
-    pauseUntilLocal(customDate, customTime)
-  }
-
-  // The pause-duration choices, shared by the initial "Pause notifications"
-  // trigger and the "Change" trigger on an active pause. Timed options first,
-  // then the custom-time path, then the indefinite option.
-  const pauseMenuContent = (
-    <DropdownMenuContent align="start" className="min-w-[260px]">
-      {NOTIFICATION_PAUSE_OPTIONS.filter((o) => o.duration !== null).map((option) => (
-        <DropdownMenuItem key={option.id} onSelect={() => pauseFor(option)}>
-          {option.label}
-        </DropdownMenuItem>
-      ))}
-      <DropdownMenuItem onSelect={openCustomDuration}>Custom duration…</DropdownMenuItem>
-      <DropdownMenuItem onSelect={openCustom}>Until a specific time…</DropdownMenuItem>
-      {NOTIFICATION_PAUSE_OPTIONS.filter((o) => o.duration === null).map((option) => (
-        <DropdownMenuItem key={option.id} onSelect={() => pauseFor(option)}>
-          {option.label}
-        </DropdownMenuItem>
-      ))}
-    </DropdownMenuContent>
+  // Picking an entry acts once; the field always reads the current state.
+  const control = statusOnly ? null : (
+    <Select value="" disabled={busy} onValueChange={pick}>
+      <SelectTrigger
+        id={ids.control}
+        aria-labelledby={ids.label}
+        aria-describedby={ids.description}
+        className={SETTING_CONTROL_CLASS}
+      >
+        <SelectValue placeholder={active ? "Paused" : "Not paused"} />
+      </SelectTrigger>
+      <SelectContent>
+        {active && <SelectItem value={RESUME}>Resume now</SelectItem>}
+        {NOTIFICATION_PAUSE_OPTIONS.filter((option) => option.duration !== null).map((option) => (
+          <SelectItem key={option.id} value={option.id}>
+            {option.label}
+          </SelectItem>
+        ))}
+        <SelectItem value={CUSTOM_DURATION}>Custom duration…</SelectItem>
+        <SelectItem value={CUSTOM_TIME}>Until a specific time…</SelectItem>
+        {NOTIFICATION_PAUSE_OPTIONS.filter((option) => option.duration === null).map((option) => (
+          <SelectItem key={option.id} value={option.id}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 
-  // One ternary level (INV-47): pick the control via if/else, render it once.
-  let control: ReactNode
-  if (customDurationOpen) {
-    control = (
-      <div className="space-y-3 rounded-lg border bg-card p-4">
+  let description: ReactNode = settingDef("pause").description
+  if (active) {
+    description = (
+      <>
+        {formatNotificationPauseLabel(active)}.{" "}
+        {statusOnly ? "Set by your status. Clear the status to resume." : "Nothing pushes until then."}
+      </>
+    )
+  }
+
+  const customActions = (onPause: () => void, canPause = true) => (
+    <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => setCustom(null)}
+        disabled={busy}
+        className={cn("w-full sm:w-auto", SETTING_CONTROL_HEIGHT)}
+      >
+        Cancel
+      </Button>
+      <Button
+        size="sm"
+        onClick={onPause}
+        disabled={busy || !canPause}
+        className={cn("w-full sm:w-auto", SETTING_CONTROL_HEIGHT)}
+      >
+        Pause
+      </Button>
+    </div>
+  )
+  let customPanel: ReactNode = null
+  if (custom === "duration") {
+    const customUntil = customDurationToDate(customDuration.amount, customDuration.unit)
+    customPanel = (
+      <div className="space-y-3">
         <CustomDurationPicker
           onSubmit={pauseUntilDate}
+          onDurationChange={(amount, unit) => setCustomDuration({ amount, unit })}
+          initialAmount={customDuration.amount}
+          initialUnit={customDuration.unit}
+          showSubmit={false}
           disabled={busy}
-          submitLabel="Pause"
-          className="px-0"
-          controlClassName="h-11"
-          buttonClassName="h-11"
+          className="px-0 py-0"
+          controlClassName={SETTING_CONTROL_HEIGHT}
         />
-        <div className="flex justify-end">
-          <Button variant="ghost" size="sm" onClick={() => setCustomDurationOpen(false)} disabled={busy}>
-            Cancel
-          </Button>
-        </div>
+        {customActions(() => customUntil && pauseUntilDate(customUntil), !!customUntil)}
       </div>
     )
-  } else if (customOpen) {
-    control = (
-      <div className="space-y-3 rounded-lg border bg-card p-4">
+  } else if (custom === "time") {
+    customPanel = (
+      <div className="space-y-3">
         <DateTimeField
           date={customDate}
           time={customTime}
@@ -503,117 +475,61 @@ function PauseNotificationsSection({ workspaceId }: { workspaceId: string }) {
           minDate={toDateInputValue(new Date())}
           density="compact"
         />
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={() => setCustomOpen(false)} disabled={busy}>
-            Cancel
-          </Button>
-          <Button size="sm" onClick={handleCustomPause} disabled={busy}>
-            Pause
-          </Button>
-        </div>
+        {customActions(() => pauseUntilLocal(customDate, customTime))}
       </div>
-    )
-  } else if (active) {
-    control = (
-      <div className="flex items-center justify-between gap-3 rounded-lg border bg-card p-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <Moon className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium">{formatNotificationPauseLabel(active)}</p>
-            {statusOnly ? (
-              <p className="text-xs text-muted-foreground">Set by your status — clear your status to resume.</p>
-            ) : (
-              <p className="text-xs text-muted-foreground">Overrides your notification level while paused.</p>
-            )}
-          </div>
-        </div>
-        {!statusOnly && (
-          <div className="flex shrink-0 items-center gap-2">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" disabled={busy}>
-                  Change
-                </Button>
-              </DropdownMenuTrigger>
-              {pauseMenuContent}
-            </DropdownMenu>
-            <Button onClick={resume} variant="outline" size="sm" disabled={busy}>
-              Resume
-            </Button>
-          </div>
-        )}
-      </div>
-    )
-  } else {
-    control = (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" disabled={busy}>
-            <BellOff className="mr-2 h-3.5 w-3.5" />
-            Pause notifications
-          </Button>
-        </DropdownMenuTrigger>
-        {pauseMenuContent}
-      </DropdownMenu>
     )
   }
 
   return (
-    <section className="space-y-3">
-      <div>
-        <h3 className="text-sm font-medium">Pause notifications</h3>
-        <p className="text-sm text-muted-foreground">
-          Snooze notifications on all your devices for a while. Your activity still lands in Threa — only the push is
-          held back.
-        </p>
-      </div>
+    <SettingRow setting="pause" labelFor={false} control={control} description={description}>
+      {customPanel}
+    </SettingRow>
+  )
+}
 
-      {control}
-    </section>
+/** The account level sits above each stream's own: where to change one stream. */
+function NotificationLevelDescription() {
+  const settings = useOptionalSettings()
+  const streamId = useRouteStreamId()
+  return (
+    <>
+      {settingDef("notification-level").description} Each stream can push less; channels default to{" "}
+      {SETTING_CHOICE_LABELS["stream-notifications"][NOTIFICATION_CONFIG.channel.defaultLevel].toLowerCase()}.{" "}
+      {settings && (
+        <SettingsLink to={settings.getStreamSettingsUrl(streamId, "general", "stream-notifications")}>
+          {streamId ? "This stream's notifications" : "Pick a stream"}
+        </SettingsLink>
+      )}
+    </>
   )
 }
 
 export function NotificationsSettings() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const { preferences, updatePreference } = usePreferences()
-
-  const notificationLevel = preferences?.notificationLevel ?? "all"
+  const level = preferences?.notificationLevel ?? "all"
 
   return (
-    <div className="space-y-6">
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-sm font-medium">Notification level</h3>
-          <p className="text-sm text-muted-foreground">Choose when you want to be notified</p>
-        </div>
-        <RadioGroup
-          value={notificationLevel}
-          onValueChange={(value) => updatePreference("notificationLevel", value as PrefNotificationLevel)}
-          className="space-y-4"
-        >
-          {PREF_NOTIFICATION_LEVEL_OPTIONS.map((option) => (
-            <div key={option} className="flex items-start space-x-3">
-              <RadioGroupItem value={option} id={`notify-${option}`} className="mt-1" />
-              <div className="grid gap-1">
-                <Label htmlFor={`notify-${option}`} className="cursor-pointer">
-                  {NOTIFICATION_LABELS[option]}
-                </Label>
-                <p className="text-sm text-muted-foreground">{NOTIFICATION_DESCRIPTIONS[option]}</p>
-              </div>
-            </div>
-          ))}
-        </RadioGroup>
-      </section>
+    <div className="space-y-8">
+      <SettingsSection section="notify-when">
+        <ChoiceSetting
+          setting="notification-level"
+          value={level}
+          options={PREF_NOTIFICATION_LEVEL_OPTIONS.map((value) => ({
+            value,
+            label: SETTING_CHOICE_LABELS["notification-level"][value],
+            description: NOTIFICATION_LEVEL_DESCRIPTIONS[value],
+          }))}
+          description={<NotificationLevelDescription />}
+          onValueChange={(value) => void updatePreference("notificationLevel", value)}
+        />
+        {workspaceId && <PauseSetting workspaceId={workspaceId} />}
+      </SettingsSection>
 
       {workspaceId && (
-        <>
-          <Separator />
-          <PauseNotificationsSection workspaceId={workspaceId} />
-          <Separator />
-          <PushNotificationSection workspaceId={workspaceId} />
-          <Separator />
-          <PushActionsSection workspaceId={workspaceId} />
-        </>
+        <SettingsSection section="notify-device">
+          <PushDeviceRows workspaceId={workspaceId} level={level} />
+        </SettingsSection>
       )}
     </div>
   )

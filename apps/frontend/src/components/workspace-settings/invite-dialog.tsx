@@ -88,7 +88,7 @@ export function InviteDialog({ workspaceId, open, onOpenChange, onSuccess }: Inv
             )}
 
             <ResponsiveDialogFooter>
-              <Button onClick={handleClose} className="sm:w-auto w-full">
+              <Button onClick={handleClose} className="w-full sm:w-auto">
                 Done
               </Button>
             </ResponsiveDialogFooter>

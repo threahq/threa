@@ -325,7 +325,9 @@ function ItemRow({
         aria-selected={isHighlighted}
         data-index={index}
         className={className}
-        onMouseEnter={() => onSelectIndex(index)}
+        // Moving the pointer selects, not entering: a row that appears under a resting
+        // pointer as results change must not take Enter from the top match.
+        onPointerMove={() => onSelectIndex(index)}
         onClick={(e) => {
           if (suppressClicksUntilRef.current > Date.now()) {
             e.preventDefault()
@@ -358,7 +360,7 @@ function ItemRow({
       // In selection mode the roving anchor follows focus, not hover, so the
       // sole tab stop can't drift out from under the focused row (hover
       // highlight is CSS-only via focus:/hover:bg-muted).
-      onMouseEnter={selectionEnabled ? undefined : () => onSelectIndex(index)}
+      onPointerMove={selectionEnabled ? undefined : () => onSelectIndex(index)}
       onFocus={selectionEnabled ? () => onSelectIndex(index) : undefined}
       onClick={(e) => onClick(e, item)}
       onKeyDown={selectionEnabled ? (e) => onSelectionKeyDown(e, index, item.id) : undefined}

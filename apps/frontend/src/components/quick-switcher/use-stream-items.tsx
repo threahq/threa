@@ -70,7 +70,15 @@ function getStreamTypeLabel(type: StreamType): string {
   }
 }
 
-export function useStreamItems(context: ModeContext): ModeResult {
+export interface StreamModeResult extends ModeResult {
+  /** The query without its filters. */
+  searchText: string
+  hasFilters: boolean
+  /** Some stream or user matches outright, not only within a typo. */
+  hasRealMatch: boolean
+}
+
+export function useStreamItems(context: ModeContext): StreamModeResult {
   const {
     streams: activeStreams,
     streamMemberships,
@@ -148,7 +156,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
     return filterType?.icon ?? null
   }
 
-  const items = useMemo(() => {
+  const { items, hasRealMatch } = useMemo(() => {
     const lowerQuery = searchText.toLowerCase()
     const usersById = new Map((users ?? []).map((workspaceUser) => [workspaceUser.id, workspaceUser]))
     const dmPeerByStreamId = new Map((dmPeers ?? []).map((peer) => [peer.streamId, peer.userId]))
@@ -283,7 +291,10 @@ export function useStreamItems(context: ModeContext): ModeResult {
       (typeFilters.length === 0 || typeFilters.includes(StreamTypes.DM))
 
     if (!canShowVirtualDms) {
-      return sortedStreams.map(toStreamItem)
+      return {
+        items: sortedStreams.map(toStreamItem),
+        hasRealMatch: sortedStreams.some(({ score }) => !isToleranceMatch(score)),
+      }
     }
 
     const existingDmPeerIds = new Set((dmPeers ?? []).map((peer) => peer.userId))
@@ -328,7 +339,10 @@ export function useStreamItems(context: ModeContext): ModeResult {
         })
       )
 
-    return [...sortedStreams.filter(({ score }) => keep(score)).map(toStreamItem), ...virtualDmItems]
+    return {
+      items: [...sortedStreams.filter(({ score }) => keep(score)).map(toStreamItem), ...virtualDmItems],
+      hasRealMatch,
+    }
   }, [
     activeStreams,
     archivedStreams,
@@ -411,5 +425,8 @@ export function useStreamItems(context: ModeContext): ModeResult {
     header,
     isFilterSelectActive: addingFilter !== null,
     closeFilterSelect,
+    searchText,
+    hasFilters: parsedFilters.length > 0,
+    hasRealMatch,
   }
 }

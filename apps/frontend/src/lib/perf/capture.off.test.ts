@@ -1,14 +1,20 @@
 import { renderHook } from "@testing-library/react"
 import { createElement, type ReactNode } from "react"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { stageDraftContent } from "@/lib/drafts/draft-staging"
-import { NO_CAPTURE, getPerfCapture } from "./capture"
+import { NO_CAPTURE, armPerfCapture, getPerfCapture, resetPerfArming } from "./capture"
 import { PerfCaptureProvider, usePerfCapture } from "./context"
 import { startObservers } from "./observers"
 
 function wrapper({ children }: { children: ReactNode }) {
   return createElement(PerfCaptureProvider, null, children)
 }
+
+// The runner shares module state across files, so start from the unarmed state explicitly.
+beforeEach(() => {
+  resetPerfArming()
+  armPerfCapture(NO_CAPTURE)
+})
 
 afterEach(() => {
   localStorage.clear()

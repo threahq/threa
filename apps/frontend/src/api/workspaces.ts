@@ -23,6 +23,10 @@ export interface WorkspaceListResult {
   canCreateWorkspace: boolean
 }
 
+export const userApiKeyKeys = {
+  list: (workspaceId: string) => ["user-api-keys", workspaceId] as const,
+}
+
 export const workspacesApi = {
   async list(): Promise<WorkspaceListResult> {
     return api.get<WorkspaceListResult>("/api/workspaces")
@@ -39,6 +43,11 @@ export const workspacesApi = {
 
   async get(workspaceId: string): Promise<Workspace> {
     const res = await api.get<{ workspace: Workspace }>(`/api/workspaces/${workspaceId}`)
+    return res.workspace
+  },
+
+  async rename(workspaceId: string, name: string): Promise<Workspace> {
+    const res = await api.patch<{ workspace: Workspace }>(`/api/workspaces/${workspaceId}`, { name })
     return res.workspace
   },
 

@@ -7,12 +7,12 @@ import { FallbackLoader } from "@/components/fallback-loader"
 import { attachOverlayHistoryRouter } from "@/components/ui/history-back-close"
 import { ApiError, delegationsApi } from "@/api"
 import { useSidebar } from "@/contexts"
+import { SETTINGS_PARAM } from "@/contexts/settings-context"
 import { useLastLocation } from "@/hooks"
 import { useAccountScope } from "@/auth"
 import { accountHomePath, getLastWorkspaceId } from "@/lib/last-workspace"
 import { keepPanelParamReadable } from "@/lib/panel-tabs"
 import { PAGE_PANES } from "@/lib/page-panes"
-import { WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
 import { APP_LINK_GO_ROUTE, APP_LINK_SCHEME, parseAppLinkHref } from "@threahq/types"
 
 const panesPage = async () => ({ Component: (await import("@/pages/panes")).PanesPage })
@@ -197,8 +197,7 @@ export function GoRedirect() {
   if (!workspaceId || !destination) return <Navigate to="/" replace />
   const home = `/w/${workspaceId}`
   if (destination.kind === "page") return <Navigate to={`${home}/${destination.page}`} replace />
-  const param = destination.kind === "settings" ? "settings" : WS_SETTINGS_PARAM
-  return <Navigate to={`${home}?${new URLSearchParams({ [param]: destination.tab })}`} replace />
+  return <Navigate to={`${home}?${new URLSearchParams({ [SETTINGS_PARAM]: destination.tab })}`} replace />
 }
 
 /** Workspace index route — redirects to a stream or opens the sidebar. */
@@ -217,7 +216,7 @@ export function WorkspaceHome() {
   }, [shouldOpenSidebar, state, togglePinned])
 
   // Verbatim restore after a crash/kill relaunch. Only when the index carries
-  // no search of its own — params like `?ws-settings=` must reach the stream
+  // no search of its own — params like `?settings=` must reach the stream
   // redirect below, not be silently swallowed by the exact record. The history
   // beneath the restored page is rebuilt by `useRebuildLaunchAncestors`.
   if (exactPath && workspaceId && !location.search) {

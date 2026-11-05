@@ -1871,6 +1871,45 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
     expect(merged.mutedStreamIds).toContain("stream_muted")
   })
 
+  it("derives a thread's mute from its parent's level, and keeps the server's when the parent is uncached", () => {
+    const member = (streamId: string, notificationLevel: StreamMember["notificationLevel"]): StreamMember => ({
+      streamId,
+      memberId: "user_1",
+      notificationLevel,
+      joinedAt: new Date().toISOString(),
+    })
+    const sidebar = (stream: Stream): StreamWithPreview => ({ ...stream, lastMessagePreview: null })
+    const channel = makeStream("stream_channel")
+    const thread = makeStream("stream_thread", { type: "thread", parentStreamId: "stream_channel" })
+    const orphan = makeStream("stream_orphan", { type: "thread", parentStreamId: "stream_archived_root" })
+
+    const merged = mergeReconnectWorkspaceBootstrap({
+      workspaceBootstrap: makeBootstrap({
+        streams: [sidebar(channel), sidebar(thread), sidebar(orphan)],
+        streamMemberships: [
+          member("stream_channel", null),
+          member("stream_thread", null),
+          member("stream_orphan", null),
+        ],
+        mutedStreamIds: ["stream_orphan"],
+      }),
+      successfulStreamBootstraps: new Map([
+        ["stream_channel", makeStreamBootstrap("stream_channel", { membership: member("stream_channel", "muted") })],
+        [
+          "stream_orphan",
+          makeStreamBootstrap("stream_orphan", { stream: orphan, membership: member("stream_orphan", null) }),
+        ],
+      ]),
+      staleStreamIds: new Set(),
+      terminalStreamIds: new Set(),
+      localStreams: [],
+      localMemberships: [],
+      localReadStates: [],
+    })
+
+    expect(new Set(merged.mutedStreamIds)).toEqual(new Set(["stream_channel", "stream_thread", "stream_orphan"]))
+  })
+
   it("keeps a locally-fresh standalone read-state row over the server snapshot and drops terminal streams", () => {
     const fetchStartedAt = Date.now() - 500
     const workspaceBootstrap = makeBootstrap({
@@ -2865,6 +2904,143 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     cleanup()
     gate.dispose()
+  })
+
+  it("moves a parent's mute onto the threads that inherit it, in IDB and the bootstrap cache", async () => {
+    const queryClient = new QueryClient()
+    const gate = new SocketEventGate("ws_1")
+    const cleanup = registerWorkspaceSocketHandlers(gate, "ws_1", queryClient, handlerRefs)
+
+    const channel = makeStream("stream_channel")
+    const inheriting = makeStream("stream_inheriting", { type: "thread", parentStreamId: "stream_channel" })
+    const ownLevel = makeStream("stream_own_level", { type: "thread", parentStreamId: "stream_channel" })
+    const memberships: StreamMember[] = [
+      { streamId: "stream_channel", memberId: "member_1", notificationLevel: null, joinedAt: new Date().toISOString() },
+      {
+        streamId: "stream_inheriting",
+        memberId: "member_1",
+        notificationLevel: null,
+        joinedAt: new Date().toISOString(),
+      },
+      {
+        streamId: "stream_own_level",
+        memberId: "member_1",
+        notificationLevel: "activity",
+        joinedAt: new Date().toISOString(),
+      },
+    ]
+    await db.streams.bulkPut([channel, inheriting, ownLevel].map((s) => ({ ...s, _cachedAt: Date.now() })))
+    await db.streamMemberships.bulkPut(
+      memberships.map((m) => ({ ...m, id: `ws_1:${m.streamId}`, workspaceId: "ws_1", _cachedAt: Date.now() }))
+    )
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { stream_inheriting: 2, stream_own_level: 1 },
+      mentionCounts: {},
+      activityCounts: {},
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      mutedStreamIds: [],
+      _cachedAt: Date.now(),
+    })
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({
+        streams: [channel, inheriting, ownLevel].map((s) => ({ ...s, lastMessagePreview: null })),
+        streamMemberships: memberships,
+        mutedStreamIds: [],
+      })
+    )
+
+    const mutedSets = async () => ({
+      idb: new Set((await db.unreadState.get("ws_1"))?.mutedStreamIds),
+      cache: new Set(queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.mutedStreamIds),
+    })
+
+    await gate.dispatch("stream:notification_level_updated", {
+      workspaceId: "ws_1",
+      authorId: "member_1",
+      streamId: "stream_channel",
+      notificationLevel: "muted",
+    })
+    await vi.waitFor(async () => {
+      const muted = new Set(["stream_channel", "stream_inheriting"])
+      expect(await mutedSets()).toEqual({ idb: muted, cache: muted })
+    })
+
+    await gate.dispatch("stream:notification_level_updated", {
+      workspaceId: "ws_1",
+      authorId: "member_1",
+      streamId: "stream_channel",
+      notificationLevel: null,
+    })
+    await vi.waitFor(async () => {
+      expect(await mutedSets()).toEqual({ idb: new Set(), cache: new Set() })
+    })
+
+    cleanup()
+    gate.dispose()
+  })
+
+  it("mutes a thread the viewer joins under a channel they muted", async () => {
+    const queryClient = new QueryClient()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    const channel = makeStream("stream_channel")
+    const thread = makeStream("stream_thread", { type: "thread", parentStreamId: "stream_channel" })
+    const channelMembership: StreamMember = {
+      streamId: "stream_channel",
+      memberId: "member_1",
+      notificationLevel: "muted",
+      joinedAt: new Date().toISOString(),
+    }
+    await db.streams.bulkPut([channel, thread].map((s) => ({ ...s, _cachedAt: Date.now() })))
+    await db.streamMemberships.put({
+      ...channelMembership,
+      id: "ws_1:stream_channel",
+      workspaceId: "ws_1",
+      _cachedAt: Date.now(),
+    })
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: {},
+      mentionCounts: {},
+      activityCounts: {},
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      mutedStreamIds: ["stream_channel"],
+      _cachedAt: Date.now(),
+    })
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({
+        users: [makeWorkspaceUser()],
+        streams: [channel, thread].map((s) => ({ ...s, lastMessagePreview: null })),
+        streamMemberships: [channelMembership],
+        mutedStreamIds: ["stream_channel"],
+      })
+    )
+
+    emit("stream:member_added", {
+      workspaceId: "ws_1",
+      streamId: "stream_thread",
+      memberId: "member_1",
+      stream: thread,
+      event: { id: "evt_1", streamId: "stream_thread", eventType: "member_added" },
+    })
+
+    await vi.waitFor(async () => {
+      const muted = new Set(["stream_channel", "stream_thread"])
+      expect({
+        idb: new Set((await db.unreadState.get("ws_1"))?.mutedStreamIds),
+        cache: new Set(queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.mutedStreamIds),
+      }).toEqual({ idb: muted, cache: muted })
+    })
+
+    cleanup()
   })
 
   it("applies a gate-dispatched notification-level replay to the in-memory bootstrap caches", async () => {

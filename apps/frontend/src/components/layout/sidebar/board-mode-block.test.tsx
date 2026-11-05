@@ -338,4 +338,26 @@ describe("BoardModeBlock", () => {
 
     expect(remove.mutate).toHaveBeenCalledWith("boardview_1")
   })
+  it("links each lens and saved view menu to the board home setting", async () => {
+    const user = userEvent.setup()
+    stub({ views: [view()], boardDefaultLens: "all" })
+    render(
+      <MemoryRouter initialEntries={[`/w/${WS}/board`]}>
+        <Contexts.SettingsProvider>
+          <BoardModeBlock workspaceId={WS} unreadStreamCount={0} />
+        </Contexts.SettingsProvider>
+      </MemoryRouter>
+    )
+
+    await user.click(screen.getByRole("button", { name: "Actions for Mine" }))
+    const lensHref = (await screen.findByRole("menuitem", { name: "Board settings" })).getAttribute("href")
+    await user.keyboard("{Escape}")
+    await user.click(screen.getByRole("button", { name: "Actions for Design work" }))
+    const viewHref = (await screen.findByRole("menuitem", { name: "Board settings" })).getAttribute("href")
+
+    expect({ lensHref, viewHref }).toEqual({
+      lensHref: `/w/${WS}/board?settings=inbox&setting=board-home`,
+      viewHref: `/w/${WS}/board?settings=inbox&setting=board-home`,
+    })
+  })
 })

@@ -12,12 +12,7 @@ import {
   ResponsiveAlertDialogTitle,
 } from "@/components/ui/responsive-alert-dialog"
 import { cn } from "@/lib/utils"
-import {
-  useInviteActor,
-  useRevokeActor,
-  canInviteActor,
-  E2E_ACTOR_LABELS,
-} from "@/hooks/use-e2e-actors"
+import { useInviteActor, useRevokeActor, canInviteActor, E2E_ACTOR_LABELS } from "@/hooks/use-e2e-actors"
 import type { E2eActorKind } from "@threahq/types"
 import type { VirtualStream } from "@/hooks/use-stream-or-draft"
 
@@ -76,8 +71,8 @@ export function InviteActorButton({ workspaceId, stream, kind }: InviteActorButt
             <ResponsiveAlertDialogHeader>
               <ResponsiveAlertDialogTitle>Remove {label} from this scratchpad?</ResponsiveAlertDialogTitle>
               <ResponsiveAlertDialogDescription>
-                {label} loses access to everything sent from now on, and the copies of the key it was given are
-                deleted. Messages it already read stay readable to it.
+                {label} loses access to everything sent from now on, and the copies of the key it was given are deleted.
+                Messages it already read stay readable to it.
               </ResponsiveAlertDialogDescription>
             </ResponsiveAlertDialogHeader>
             <ResponsiveAlertDialogFooter>

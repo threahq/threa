@@ -1,6 +1,7 @@
+import { useSyncExternalStore } from "react"
 import { describe, expect, it, beforeEach, vi } from "vitest"
 import { MemoryRouter } from "react-router-dom"
-import { render, screen, userEvent } from "@/test"
+import { act, render, screen, userEvent } from "@/test"
 import { SidebarHeader } from "./sidebar-header"
 import * as contextsModule from "@/contexts"
 import * as searchPanelModule from "@/components/search/search-panel-context"
@@ -37,6 +38,9 @@ describe("SidebarHeader", () => {
       collapseOnMobile,
       registerOpenMenu: vi.fn(() => () => {}),
     } as unknown as ReturnType<typeof contextsModule.useSidebar>)
+    vi.spyOn(contextsModule, "useSettings").mockReturnValue({
+      getSettingsUrl: () => "?settings=",
+    } as unknown as ReturnType<typeof contextsModule.useSettings>)
     vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
       preferences: { keyboardShortcuts: {} },
     } as unknown as ReturnType<typeof contextsModule.usePreferences>)
@@ -61,6 +65,46 @@ describe("SidebarHeader", () => {
     await user.click(screen.getByRole("button", { name: /Search messages/i }))
 
     expect(openSearch).toHaveBeenCalled()
+  })
+
+  it("links the settings window from the header's gear", async () => {
+    const user = userEvent.setup()
+    renderHeader()
+
+    const gear = screen.getByRole("link", { name: "Settings" })
+    expect(gear).toHaveAttribute("href", "/?settings=")
+    await user.hover(gear)
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Settings")
+    await user.click(gear)
+
+    expect(collapseOnMobile).toHaveBeenCalled()
+  })
+
+  it("should re-render only the gear, not the header, when the settings url changes", () => {
+    let settingsUrl = "?settings="
+    const listeners = new Set<() => void>()
+    vi.spyOn(contextsModule, "useSettings").mockImplementation(() => {
+      const url = useSyncExternalStore(
+        (listener) => {
+          listeners.add(listener)
+          return () => listeners.delete(listener)
+        },
+        () => settingsUrl
+      )
+      return { getSettingsUrl: () => url } as unknown as ReturnType<typeof contextsModule.useSettings>
+    })
+    renderHeader()
+    const headerRenders = vi.mocked(inputModeModule.useInputMode).mock.calls.length
+
+    act(() => {
+      settingsUrl = "?settings=&from=elsewhere"
+      listeners.forEach((listener) => listener())
+    })
+
+    expect({
+      href: screen.getByRole("link", { name: "Settings" }).getAttribute("href"),
+      headerRenders: vi.mocked(inputModeModule.useInputMode).mock.calls.length,
+    }).toEqual({ href: "/?settings=&from=elsewhere", headerRenders })
   })
 
   it("offers both quick-switch modes from the command menu on mouse input", async () => {

@@ -23,10 +23,13 @@ import {
   Check,
   MessageSquareDashed,
   TextCursorInput,
+  Settings2,
 } from "lucide-react"
 import { toast } from "sonner"
+import type { JSONContent } from "@threahq/types"
 import type { QuoteSelection } from "@/lib/quote-selection"
 import { buildMessageLink, buildConversationLink } from "@/lib/stream-links"
+import { settingHref, type GetSettingsUrl } from "@/hooks/use-setting-href"
 import {
   type ActionDefinition,
   type GroupedAction,
@@ -248,6 +251,21 @@ export interface MessageActionContext {
    * unread (Slack's "mark as unread").
    */
   onMarkUnread?: () => void
+  /** The body is tall enough to fold behind Show more, read when the menu opens. */
+  isLongMessage?: () => boolean
+  hasLinkPreviews?: boolean
+  /** The body holds a code block, read when the menu opens. */
+  hasCodeBlocks?: () => boolean
+  /**
+   * Set by the open menu itself (`useWithSettingsUrl`), never by the row: it
+   * changes on every navigation, and rows must not re-render for it.
+   */
+  getSettingsUrl?: GetSettingsUrl
+}
+
+export function containsCodeBlock(node: JSONContent | undefined): boolean {
+  if (!node) return false
+  return node.type === "codeBlock" || (node.content?.some(containsCodeBlock) ?? false)
 }
 
 /** A top-level action in the message context menu. */
@@ -528,6 +546,30 @@ export const messageActions: MessageAction[] = [
         toast.error("Failed to copy link")
       }
     },
+  },
+  {
+    id: "long-message-settings",
+    label: "Long message settings",
+    icon: Settings2,
+    separatorBefore: true,
+    when: (ctx) => !!ctx.getSettingsUrl && !!ctx.isLongMessage?.(),
+    getHref: (ctx) => ctx.getSettingsUrl && settingHref(ctx.getSettingsUrl, "message-collapse"),
+  },
+  {
+    id: "link-preview-settings",
+    label: "Link preview settings",
+    icon: Settings2,
+    separatorBefore: (ctx) => !ctx.isLongMessage?.(),
+    when: (ctx) => !!ctx.getSettingsUrl && !!ctx.hasLinkPreviews,
+    getHref: (ctx) => ctx.getSettingsUrl && settingHref(ctx.getSettingsUrl, "link-preview-count"),
+  },
+  {
+    id: "code-block-settings",
+    label: "Code block settings",
+    icon: Settings2,
+    separatorBefore: (ctx) => !ctx.isLongMessage?.() && !ctx.hasLinkPreviews,
+    when: (ctx) => !!ctx.getSettingsUrl && !!ctx.hasCodeBlocks?.(),
+    getHref: (ctx) => ctx.getSettingsUrl && settingHref(ctx.getSettingsUrl, "code-collapse"),
   },
   {
     id: "delete-message",

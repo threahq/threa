@@ -1,9 +1,11 @@
+import { useId } from "react"
 import { toast } from "sonner"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { cn } from "@/lib/utils"
+import { SwitchSetting, settingIds } from "@/components/settings/setting-primitives"
+import { SettingCheckboxList, type SettingCheckboxBleed } from "@/components/settings/setting-lists"
+import { SETTING_MUTED_NOTE_TEXT } from "@/components/settings/setting-text"
+import { settingDef } from "@/components/settings/settings-registry"
 import { useUpdateToolPolicy } from "@/hooks/use-streams"
 import { TOOL_PRIVACY_CATEGORY_LABELS, type ToolPrivacyCategory, type ToolPrivacyPolicy } from "@threahq/types"
 
@@ -31,8 +33,7 @@ const ALL_GATEABLE: ToolPrivacyCategory[] = CATEGORY_OPTIONS.map((option) => opt
 // Inside the enclave Ariadne only builds web tools, so on an encrypted
 // scratchpad the other categories exist as toggles but aren't wired yet.
 const ENCLAVE_TOOL_CATEGORIES = new Set<ToolPrivacyCategory>(["web"])
-const NOT_IN_ENCLAVE_REASON =
-  "Not yet available in encrypted scratchpads — inside the enclave Ariadne only has web tools today."
+const NOT_IN_ENCLAVE_REASON = "Not available in encrypted scratchpads yet. Ariadne only has web tools there."
 
 interface ToolPolicyControlProps {
   /** Current policy: `null` = unrestricted; an array (incl. `[]`) = restricted to those categories. */
@@ -57,8 +58,57 @@ interface ToolPolicyControlProps {
  * state to drift.
  */
 export function ToolPolicyControl({ value, onChange, configuredCategories, e2e, disabled }: ToolPolicyControlProps) {
-  const restricted = value !== null
-  const allowed = new Set(value ?? [])
+  const def = settingDef("stream-tools")
+  const switchId = useId()
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-4">
+        <Label
+          htmlFor={switchId}
+          className="flex min-h-11 min-w-0 flex-1 cursor-pointer flex-col justify-center gap-1 font-normal sm:min-h-0 [@media(pointer:coarse)]:min-h-11"
+        >
+          <span id={`${switchId}-label`} className="text-sm font-medium leading-snug">
+            {def.label}
+          </span>
+          <span id={`${switchId}-description`} className={SETTING_MUTED_NOTE_TEXT}>
+            {def.description}
+          </span>
+        </Label>
+        <Switch
+          id={switchId}
+          checked={value !== null}
+          onCheckedChange={(on) => onChange(on ? [] : null)}
+          disabled={disabled}
+          aria-labelledby={`${switchId}-label`}
+          aria-describedby={`${switchId}-description`}
+        />
+      </div>
+      <ToolCategories
+        value={value}
+        onChange={onChange}
+        configuredCategories={configuredCategories}
+        e2e={e2e}
+        disabled={disabled}
+        labelledBy={`${switchId}-label`}
+        bleed="inset"
+      />
+    </div>
+  )
+}
+
+/** The tool groups a restricted policy allows; nothing while unrestricted. */
+function ToolCategories({
+  value,
+  onChange,
+  configuredCategories,
+  e2e,
+  disabled,
+  labelledBy,
+  bleed,
+}: ToolPolicyControlProps & { labelledBy: string; bleed: SettingCheckboxBleed }) {
+  const emptyId = useId()
+  if (value === null) return null
+  const allowed = new Set(value)
   // Show the configured categories *plus* anything already granted — a category
   // can be stored (e.g. GitHub) and later un-configured (the integration is
   // disconnected). Dropping it from the picker would strand the grant on,
@@ -66,54 +116,30 @@ export function ToolPolicyControl({ value, onChange, configuredCategories, e2e, 
   // it off. (The stored grant is already inert — no tools are built for it — so
   // this is display-only, not an enforcement change.)
   const shown = new Set<ToolPrivacyCategory>([...(configuredCategories ?? ALL_GATEABLE), ...allowed])
-  const options = CATEGORY_OPTIONS.filter((option) => shown.has(option.value))
-
-  const handleRestrictToggle = (on: boolean) => onChange(on ? [] : null)
-
-  const handleCategoryToggle = (category: ToolPrivacyCategory) => {
-    const next = new Set(allowed)
-    if (next.has(category)) next.delete(category)
-    else next.add(category)
-    onChange([...next])
-  }
+  const items = CATEGORY_OPTIONS.filter((option) => shown.has(option.value)).map((option) => ({
+    ...option,
+    reason: e2e && !ENCLAVE_TOOL_CATEGORIES.has(option.value) ? NOT_IN_ENCLAVE_REASON : undefined,
+  }))
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <Label className="text-sm font-medium">Restrict tool access</Label>
-          <p className="text-xs text-muted-foreground">
-            By default Ariadne can use every tool she has. Restrict her to only the tool groups you choose. She can
-            always reply.
-          </p>
-        </div>
-        <Switch
-          checked={restricted}
-          onCheckedChange={handleRestrictToggle}
-          disabled={disabled}
-          aria-label="Restrict tool access"
-        />
-      </div>
-
-      {restricted && (
-        <div className="grid gap-2 sm:grid-cols-2">
-          {options.map((option) => (
-            <ToolCategoryRow
-              key={option.value}
-              label={option.label}
-              description={option.description}
-              checked={allowed.has(option.value)}
-              notImplementedReason={e2e && !ENCLAVE_TOOL_CATEGORIES.has(option.value) ? NOT_IN_ENCLAVE_REASON : null}
-              disabled={disabled ?? false}
-              onToggle={() => handleCategoryToggle(option.value)}
-            />
-          ))}
-        </div>
-      )}
-
-      {restricted && allowed.size === 0 && (
-        <p className="text-xs text-muted-foreground">
-          No tool groups selected — Ariadne can only read this scratchpad and reply.
+    <div className="space-y-2">
+      <SettingCheckboxList
+        items={items}
+        bleed={bleed}
+        selected={allowed}
+        disabled={disabled}
+        onCheckedChange={(category, checked) => {
+          const next = new Set(allowed)
+          if (checked) next.add(category)
+          else next.delete(category)
+          onChange([...next])
+        }}
+        aria-labelledby={labelledBy}
+        aria-describedby={allowed.size === 0 ? emptyId : undefined}
+      />
+      {allowed.size === 0 && (
+        <p id={emptyId} className={SETTING_MUTED_NOTE_TEXT}>
+          No tool groups picked. The agent can only read and reply.
         </p>
       )}
     </div>
@@ -129,10 +155,7 @@ interface ToolPolicyPickerProps {
   e2e: boolean
 }
 
-/**
- * Settings wrapper: binds the controlled `ToolPolicyControl` to the live
- * `useUpdateToolPolicy` mutation for an existing stream.
- */
+/** The settings-window row, bound to the live `useUpdateToolPolicy` mutation. */
 export function ToolPolicyPicker({ workspaceId, streamId, value, configuredCategories, e2e }: ToolPolicyPickerProps) {
   const { mutateAsync, isPending } = useUpdateToolPolicy(workspaceId, streamId)
 
@@ -145,58 +168,21 @@ export function ToolPolicyPicker({ workspaceId, streamId, value, configuredCateg
   }
 
   return (
-    <div className="border-t pt-6">
-      <ToolPolicyControl
+    <SwitchSetting
+      setting="stream-tools"
+      checked={value !== null}
+      onCheckedChange={(on) => void handleChange(on ? [] : null)}
+      disabled={isPending}
+    >
+      <ToolCategories
         value={value}
-        onChange={handleChange}
+        onChange={(next) => void handleChange(next)}
         configuredCategories={configuredCategories}
         e2e={e2e}
         disabled={isPending}
+        labelledBy={settingIds("stream-tools").label}
+        bleed="card"
       />
-    </div>
-  )
-}
-
-interface ToolCategoryRowProps {
-  label: string
-  description: string
-  checked: boolean
-  /** When set, the category isn't wired in this runtime: render disabled with this hover reason. */
-  notImplementedReason: string | null
-  disabled: boolean
-  onToggle: () => void
-}
-
-function ToolCategoryRow({
-  label,
-  description,
-  checked,
-  notImplementedReason,
-  disabled,
-  onToggle,
-}: ToolCategoryRowProps) {
-  const notImplemented = notImplementedReason !== null
-  const row = (
-    <label
-      className={cn("flex items-start gap-2 rounded-md border px-2.5 py-2 text-sm", notImplemented && "opacity-60")}
-    >
-      <Checkbox checked={checked} onCheckedChange={onToggle} disabled={disabled || notImplemented} />
-      <span>
-        <span className="flex items-center gap-1.5 font-medium">
-          {label}
-          {notImplemented && <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Soon</span>}
-        </span>
-        <span className="block text-xs text-muted-foreground">{description}</span>
-      </span>
-    </label>
-  )
-
-  if (!notImplemented) return row
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>{row}</TooltipTrigger>
-      <TooltipContent>{notImplementedReason}</TooltipContent>
-    </Tooltip>
+    </SwitchSetting>
   )
 }

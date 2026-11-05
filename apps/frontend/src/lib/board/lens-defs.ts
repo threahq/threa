@@ -16,11 +16,11 @@ export interface BoardLensDef {
  * "Board home" control both read from here. Order follows `BOARD_LENSES`.
  */
 export const BOARD_LENS_DEFS: Record<BoardLens, BoardLensDef> = {
-  all: { value: "all", label: "All", description: "Everything, newest activity first", icon: LayoutGrid },
+  all: { value: "all", label: "All", description: "Everything, newest activity first.", icon: LayoutGrid },
   mine: {
     value: "mine",
     label: "Mine",
-    description: "Conversations you're in or mentioned in",
+    description: "Conversations you're in or mentioned in.",
     icon: User,
   },
 }

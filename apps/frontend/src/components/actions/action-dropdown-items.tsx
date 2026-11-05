@@ -9,7 +9,7 @@ import {
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
-import { type ActionDefinition, type GroupedAction, resolveActionLabel } from "./action-model"
+import { type ActionDefinition, type GroupedAction, hasSeparatorBefore, resolveActionLabel } from "./action-model"
 
 /**
  * The body of a row context menu: grouped actions rendered as dropdown items.
@@ -80,7 +80,7 @@ function GroupedItem<Context>({
 
   return (
     <>
-      {primary.separatorBefore && <DropdownMenuSeparator />}
+      {hasSeparatorBefore(primary, context) && <DropdownMenuSeparator />}
       <div className="flex items-stretch group/split">
         <DropdownMenuItem
           className={cn(
@@ -144,7 +144,7 @@ function SingleAction<Context>({
 }) {
   const Icon = action.icon
   const href = action.getHref?.(context)
-  const separator = showSeparatorBefore && action.separatorBefore ? <DropdownMenuSeparator /> : null
+  const separator = showSeparatorBefore && hasSeparatorBefore(action, context) ? <DropdownMenuSeparator /> : null
   const submenu = renderSubmenu?.(action)
   if (submenu)
     return (

@@ -28,6 +28,7 @@ import {
 } from "@/stores/call-prefs-store"
 import { CallControls, DevicePickerMenu } from "./call-controls"
 import { CallManagerProvider } from "./call-manager-context"
+import { SettingsProvider } from "@/contexts"
 
 // The store's own row type, reached through the hook so this component test does
 // not import `@/db` (INV-15).
@@ -151,6 +152,36 @@ describe("DevicePickerMenu — camera group", () => {
     await userEvent.click(screen.getByLabelText("Devices"))
     expect(await screen.findByText("Microphone")).toBeInTheDocument()
     expect(screen.queryByText("Camera")).toBeNull()
+  })
+})
+
+describe("DevicePickerMenu — settings link", () => {
+  it("links to the call settings inside the workspace shell", async () => {
+    render(
+      <MemoryRouter initialEntries={["/w/ws_1/s/stream_1"]}>
+        <SettingsProvider>
+          <CallManagerProvider manager={makeManager()}>
+            <DevicePickerMenu devices={makeDevices({ inputs: [device("m1", "Mic 1", "audioinput")] })} />
+          </CallManagerProvider>
+        </SettingsProvider>
+      </MemoryRouter>
+    )
+
+    await userEvent.click(screen.getByLabelText("Devices"))
+
+    expect(await screen.findByRole("menuitem", { name: "Call settings" })).toHaveAttribute(
+      "href",
+      "/w/ws_1/s/stream_1?settings=voice&setting=call-mirror"
+    )
+  })
+
+  it("offers no settings link outside the workspace shell", async () => {
+    renderPicker(makeManager(), makeDevices({ inputs: [device("m1", "Mic 1", "audioinput")] }))
+
+    await userEvent.click(screen.getByLabelText("Devices"))
+
+    expect(await screen.findByText("Microphone")).toBeInTheDocument()
+    expect(screen.queryByText("Call settings")).toBeNull()
   })
 })
 

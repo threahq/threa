@@ -1,29 +1,22 @@
-import {
-  DEFAULT_WORKSPACE_SETTINGS,
-  GUEST_DM_POLICIES,
-  WORKSPACE_PERMISSION_SCOPES,
-  type GuestDmPolicy,
-} from "@threahq/types"
+import { DEFAULT_WORKSPACE_SETTINGS, GUEST_DM_POLICIES, type GuestDmPolicy } from "@threahq/types"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useWorkspaceSettingMutation } from "@/hooks/use-workspace-setting-mutation"
-import { hasPermission } from "@/lib/permissions"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { ChoiceSetting, type ChoiceOption } from "@/components/settings/setting-primitives"
+import { accessDescription, useWorkspaceAccess } from "./workspace-permission"
 
 interface GuestDmPolicySectionProps {
   workspaceId: string
 }
 
-const POLICY_LABELS: Record<GuestDmPolicy, string> = {
-  [GUEST_DM_POLICIES.OFF]: "Off",
-  [GUEST_DM_POLICIES.ADMINS]: "Admins only",
-  [GUEST_DM_POLICIES.OPEN]: "Everyone",
-}
+const POLICY_OPTIONS: readonly ChoiceOption<GuestDmPolicy>[] = [
+  { value: GUEST_DM_POLICIES.OFF, label: "Off" },
+  { value: GUEST_DM_POLICIES.ADMINS, label: "Admins only" },
+  { value: GUEST_DM_POLICIES.OPEN, label: "Everyone" },
+]
 
 export function GuestDmPolicySection({ workspaceId }: GuestDmPolicySectionProps) {
-  const bootstrap = useCachedWorkspaceBootstrap(workspaceId)
-  const canManage = hasPermission(bootstrap?.viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
-  const settings = bootstrap?.workspaceSettings ?? null
+  const access = useWorkspaceAccess(workspaceId)
+  const settings = useCachedWorkspaceBootstrap(workspaceId)?.workspaceSettings ?? null
   const policy = settings?.guestDmPolicy ?? DEFAULT_WORKSPACE_SETTINGS.guestDmPolicy
   const mutation = useWorkspaceSettingMutation(
     workspaceId,
@@ -32,35 +25,15 @@ export function GuestDmPolicySection({ workspaceId }: GuestDmPolicySectionProps)
   )
 
   return (
-    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-      <div>
-        <Label htmlFor="guest-dm-policy" className="text-sm font-medium">
-          Direct messages with guests
-        </Label>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          Who guests can message directly. Applies to existing DMs too: a DM this no longer allows becomes read-only.
-        </p>
-      </div>
-      {canManage ? (
-        <Select
-          value={policy}
-          disabled={settings == null || mutation.isPending}
-          onValueChange={(value) => mutation.mutate(value as GuestDmPolicy)}
-        >
-          <SelectTrigger id="guest-dm-policy" className="h-8 w-full shrink-0 sm:w-[140px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {Object.entries(POLICY_LABELS).map(([value, label]) => (
-              <SelectItem key={value} value={value}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      ) : (
-        <p className="text-sm text-muted-foreground">{POLICY_LABELS[policy]}</p>
-      )}
-    </div>
+    <ChoiceSetting
+      setting="guest-dms"
+      variant="segmented"
+      value={policy}
+      options={POLICY_OPTIONS}
+      loading={!access.known}
+      disabled={!access.allowed || settings == null || mutation.isPending}
+      description={accessDescription("guest-dms", access)}
+      onValueChange={(value) => mutation.mutate(value)}
+    />
   )
 }

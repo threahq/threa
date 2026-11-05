@@ -45,28 +45,32 @@ describe("FollowUpLimitSection", () => {
     const user = userEvent.setup()
 
     renderSection(queryClient)
-    const input = screen.getByLabelText("Assistant follow-ups")
+    const input = screen.getByLabelText("Follow-up limit")
     await user.clear(input)
     await user.type(input, "25")
     await user.tab()
 
     await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", { maxPendingFollowUps: 25 }))
+    expect(input).toHaveAccessibleDescription(expect.stringContaining("follow-ups"))
   })
 
-  it("reverts an out-of-range value to the saved value without saving", async () => {
+  it("keeps an out-of-range value in the field with the range it must be in, without saving", async () => {
     const queryClient = new QueryClient()
     seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN], 10)
     const update = vi.spyOn(workspaceSettingsApi, "update")
     const user = userEvent.setup()
 
     renderSection(queryClient)
-    const input = screen.getByLabelText("Assistant follow-ups")
+    const input = screen.getByLabelText("Follow-up limit")
     await user.clear(input)
     await user.type(input, "9999")
     await user.tab()
 
-    expect(update).not.toHaveBeenCalled()
-    expect(input).toHaveValue(10)
+    expect({
+      saved: update.mock.calls.length,
+      value: (input as HTMLInputElement).value,
+      error: screen.getByRole("alert").textContent,
+    }).toEqual({ saved: 0, value: "9999", error: "Enter a whole number from 1 to 100." })
   })
 
   it("does not clobber an in-progress edit when a settings broadcast lands", async () => {
@@ -78,7 +82,7 @@ describe("FollowUpLimitSection", () => {
     const user = userEvent.setup()
 
     renderSection(queryClient)
-    const input = screen.getByLabelText("Assistant follow-ups")
+    const input = screen.getByLabelText("Follow-up limit")
     await user.clear(input)
     await user.type(input, "25")
 
@@ -99,7 +103,7 @@ describe("FollowUpLimitSection", () => {
     const user = userEvent.setup()
 
     renderSection(queryClient)
-    const input = screen.getByLabelText("Assistant follow-ups")
+    const input = screen.getByLabelText("Follow-up limit")
     await user.click(input) // focus, no keystrokes
 
     // Another admin's save lands while the field is merely focused. An unedited
@@ -120,7 +124,7 @@ describe("FollowUpLimitSection", () => {
     const user = userEvent.setup()
 
     renderSection(queryClient)
-    const input = screen.getByLabelText("Assistant follow-ups")
+    const input = screen.getByLabelText("Follow-up limit")
     await user.click(input)
     await user.tab()
 
@@ -133,7 +137,10 @@ describe("FollowUpLimitSection", () => {
 
     renderSection(queryClient)
 
-    expect(screen.getByText("15")).toBeInTheDocument()
-    expect(screen.queryByLabelText("Assistant follow-ups")).not.toBeInTheDocument()
+    expect({
+      value: screen.queryByText("15 follow-ups") !== null,
+      input: screen.queryByRole("spinbutton"),
+      reason: screen.queryByText("Only workspace admins can change this.") !== null,
+    }).toEqual({ value: true, input: null, reason: true })
   })
 })

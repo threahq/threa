@@ -1,16 +1,17 @@
 import { useMemo } from "react"
-import { StreamTypes, WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
-import { isDraftId, useFeatureFlag } from "@/hooks"
-import { useViewerPermissions } from "@/hooks/use-workspaces"
-import { hasPermission } from "@/lib/permissions"
+import { StreamTypes } from "@threahq/types"
+import { isDraftId } from "@/hooks"
 import { useCanManageChannels } from "@/lib/use-can-manage-channels"
-import { isToleranceMatch, rankMatchesScored } from "@/lib/match-score"
+import { isToleranceMatch, rankMatchesScored, scoreMatch } from "@/lib/match-score"
+import { useSettingsVisibility } from "@/components/settings/use-settings-visibility"
 import { commands, paneCommands, type Command, type CommandContext } from "./commands"
 import { draftStreamCommands, streamCommands } from "./stream-commands"
 import type { ModeResult, QuickSwitcherItem } from "./types"
+import { useSettingItems } from "./use-setting-items"
 
 /** A doc's body is its editor: no composer for a snippet, no settings or agent agenda of its own. */
 const TIMELINE_STREAM_COMMAND_IDS = new Set(["stream-create-snippet", "stream-settings", "stream-agenda"])
+const MAX_SETTING_ITEMS = 5
 
 interface UseCommandItemsParams {
   query: string
@@ -46,15 +47,37 @@ export function rankGroups(query: string, groups: readonly Command[][]): Command
   return scored.map((group) => group.filter((entry) => !isToleranceMatch(entry.score)).map((entry) => entry.item))
 }
 
+function labelMatches(query: string, label: string): boolean {
+  const score = scoreMatch(query, [label])
+  return score !== Infinity && !isToleranceMatch(score)
+}
+
+/**
+ * Settings follow the commands, unless a setting's own name matches and no
+ * command's does: then the commands only matched an alias, and `> theme`
+ * opens Theme rather than a page that lists "theme" among its keywords.
+ */
+function settingsLead(query: string, commandLabels: readonly string[], settingLabels: readonly string[]) {
+  return (
+    settingLabels.some((label) => labelMatches(query, label)) &&
+    !commandLabels.some((label) => labelMatches(query, label))
+  )
+}
+
 export function useCommandItems({ query, commandContext }: UseCommandItemsParams): ModeResult {
-  // AI Agents settings is admin-only (the tab itself is admin-gated), so the
-  // command hides for non-admins rather than opening settings to a fallback tab.
-  const viewerPermissions = useViewerPermissions(commandContext.workspaceId)
-  const isAdmin = hasPermission(viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
   const canManageChannels = useCanManageChannels(commandContext.workspaceId)
-  // The Diagnostics settings tab is rollout-gated; without the same gate here
-  // the command opens Settings to a tab that isn't there.
-  const perfDiagnostics = useFeatureFlag(commandContext.workspaceId, "perfDiagnostics")
+  // Settings pages this viewer can't see (admin-only) stay out of the palette
+  // rather than opening the window on a fallback.
+  const settingsVisibility = useSettingsVisibility(commandContext.workspaceId)
+  const settingItems = useSettingItems({
+    workspaceId: commandContext.workspaceId,
+    query,
+    currentStreamId: commandContext.currentStreamId,
+    limit: MAX_SETTING_ITEMS,
+    closeDialog: commandContext.closeDialog,
+    openSettings: commandContext.openSettings,
+    openStreamSettings: commandContext.openStreamSettings,
+  })
   const items = useMemo(() => {
     const { currentStreamId, currentStreamName } = commandContext
 
@@ -99,10 +122,9 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
     // together (see rankGroups) and only ordered within a section afterwards.
     const globalCommands = commands.filter(
       (c) =>
-        (c.id !== "open-ai-agents" || isAdmin) &&
+        (!c.id.startsWith("settings-") || settingsVisibility.tabs.some((tab) => c.id === `settings-${tab}`)) &&
         (c.id !== "new-channel" || canManageChannels) &&
-        (c.id !== "new-doc" || !!commandContext.createTopLevelDoc) &&
-        (c.id !== "settings-diagnostics" || perfDiagnostics === "available")
+        (c.id !== "new-doc" || !!commandContext.createTopLevelDoc)
     )
     const [rankedContextual, rankedPanes, rankedGlobal] = rankGroups(query, [
       contextualCommands,
@@ -114,8 +136,14 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
 
     const globalItems = rankedGlobal.map((c) => toItem(c, "Commands"))
 
-    return [...contextualItems, ...paneItems, ...globalItems]
-  }, [query, commandContext, isAdmin, canManageChannels, perfDiagnostics])
+    const commandItems = [...contextualItems, ...paneItems, ...globalItems]
+    const lead = settingsLead(
+      query,
+      commandItems.map((item) => item.label),
+      settingItems.map((item) => item.label)
+    )
+    return lead ? [...settingItems, ...commandItems] : [...commandItems, ...settingItems]
+  }, [query, commandContext, canManageChannels, settingsVisibility, settingItems])
 
   return {
     items,

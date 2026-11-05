@@ -64,6 +64,7 @@ import { usePersonaKnowledgeUploads } from "./use-persona-knowledge-uploads"
 import { PersonaConflictBanner } from "./persona-conflict-banner"
 import { PersonaEditorFooter } from "./persona-editor-footer"
 import { ToolChecklist } from "./tool-checklist"
+import { hasHistoryBeneath } from "@/hooks/use-launch-ancestors"
 
 const ESCALATION_NONE = "__none__"
 
@@ -107,7 +108,7 @@ interface CustomPersonaEditorProps {
   config: PersonaConfigResponse
   onSyncStateChange?: (sync: SyncState) => void
   /** Where to navigate after archiving. A workspace custom returns to the admin
-   *  roster (`?ws-settings=ai-agents`); a personal persona returns to its owner's
+   *  roster (`?settings=workspace-ai`); a personal persona returns to its owner's
    *  personal settings AI tab (`?settings=ai`), which a non-admin can actually
    *  open. Defaults to the admin roster. */
   returnTo?: string
@@ -127,7 +128,7 @@ export function CustomPersonaEditor({
   personaId,
   config,
   onSyncStateChange,
-  returnTo = `/w/${workspaceId}?ws-settings=ai-agents`,
+  returnTo = `/w/${workspaceId}?settings=workspace-ai`,
 }: CustomPersonaEditorProps) {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
@@ -270,7 +271,7 @@ export function CustomPersonaEditor({
   const handleArchive = () => {
     if (archive.isPending) return
     archive.mutate(personaId, {
-      onSuccess: () => navigate(returnTo),
+      onSuccess: () => (hasHistoryBeneath() ? navigate(-1) : navigate(returnTo, { replace: true })),
       onError: () => toast.error("Failed to archive persona"),
     })
   }

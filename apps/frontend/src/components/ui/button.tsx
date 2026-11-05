@@ -30,6 +30,9 @@ const buttonVariants = cva(
   }
 )
 
+/** Dialog and drawer footers: their buttons reach the 44px touch target on a coarse pointer. */
+export const FOOTER_TOUCH_TARGETS = "[@media(pointer:coarse)]:[&_button]:min-h-11"
+
 export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> {
   asChild?: boolean

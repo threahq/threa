@@ -19,7 +19,7 @@ export interface ShortcutAction {
 export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   {
     id: "openQuickSwitcher",
-    label: "Quick Switcher",
+    label: "Quick switcher",
     description: "Open stream picker",
     defaultKey: "mod+k",
     category: "navigation",
@@ -27,7 +27,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   {
     id: "sidebarQuickJump",
-    label: "Sidebar Quick Jump",
+    label: "Sidebar quick jump",
     description: "Hold the modifier to number the first nine sidebar streams, then press a digit to open one",
     defaultKey: "mod+1",
     category: "navigation",
@@ -38,7 +38,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   {
     id: "sidebarNextStream",
-    label: "Next Stream",
+    label: "Next stream",
     description: "Open the stream below the current one in the sidebar",
     defaultKey: "alt+shift+arrowdown",
     category: "navigation",
@@ -46,7 +46,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   {
     id: "sidebarPreviousStream",
-    label: "Previous Stream",
+    label: "Previous stream",
     description: "Open the stream above the current one in the sidebar",
     defaultKey: "alt+shift+arrowup",
     category: "navigation",
@@ -70,8 +70,8 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   {
     id: "searchInStream",
-    label: "Search in Stream",
-    description: "Search messages in the current stream",
+    label: "Search in stream",
+    description: "Search messages in the current stream, or settings while they're open",
     defaultKey: "mod+f",
     category: "navigation",
     global: true,
@@ -102,7 +102,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   {
     id: "toggleSidebar",
-    label: "Toggle Sidebar",
+    label: "Toggle sidebar",
     description: "Show or hide the sidebar",
     defaultKey: "mod+§",
     category: "view",
@@ -110,7 +110,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   {
     id: "openAttachmentExplorer",
-    label: "Browse Files",
+    label: "Browse files",
     description: "Open the attachment explorer",
     defaultKey: "mod+shift+a",
     category: "navigation",
@@ -118,7 +118,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   {
     id: "openAgentAgenda",
-    label: "Agent Agenda",
+    label: "Agent agenda",
     description: "Open follow-ups and delegated tasks",
     defaultKey: "mod+shift+o",
     category: "navigation",
@@ -126,7 +126,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   {
     id: "copyStreamLink",
-    label: "Copy Link",
+    label: "Copy link",
     // Default avoids plain mod+L — browsers reserve that to focus the address
     // bar and won't surrender it. Rebindable in keyboard settings like the rest.
     description: "Copy a link to the focused stream or thread",
@@ -136,7 +136,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   {
     id: "closePane",
-    label: "Close Pane",
+    label: "Close pane",
     description: "Close the pane you're working in",
     defaultKey: "alt+w",
     installedKey: "mod+w",
@@ -145,7 +145,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   {
     id: "reopenPane",
-    label: "Reopen Closed Pane",
+    label: "Reopen closed pane",
     description: "Reopen the pane closed last",
     defaultKey: "alt+shift+t",
     installedKey: "mod+shift+t",
@@ -154,7 +154,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   {
     id: "nextPaneTab",
-    label: "Next Tab",
+    label: "Next tab",
     description: "Show the next tab in the pane you're working in",
     defaultKey: "alt+]",
     installedKey: "ctrl+tab",
@@ -163,7 +163,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   {
     id: "previousPaneTab",
-    label: "Previous Tab",
+    label: "Previous tab",
     description: "Show the previous tab in the pane you're working in",
     defaultKey: "alt+[",
     installedKey: "ctrl+shift+tab",
@@ -172,7 +172,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   {
     id: "nextPane",
-    label: "Next Pane",
+    label: "Next pane",
     description: "Move to the pane to the right of or below the one you're working in",
     defaultKey: "alt+.",
     category: "view",
@@ -180,7 +180,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   {
     id: "previousPane",
-    label: "Previous Pane",
+    label: "Previous pane",
     description: "Move to the pane to the left of or above the one you're working in",
     defaultKey: "alt+,",
     category: "view",
@@ -188,7 +188,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   {
     id: "togglePaneFocus",
-    label: "Focus Pane",
+    label: "Focus pane",
     description: "Float the pane you're working in over the rest, or put it back",
     defaultKey: "alt+enter",
     category: "view",
@@ -218,7 +218,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   {
     id: "formatCode",
-    label: "Inline Code",
+    label: "Inline code",
     // No default: mod+e would take Ctrl+E, which moves to the end of the line in
     // macOS text fields. Rebindable in keyboard settings like the rest.
     description: "Toggle inline code formatting",
@@ -226,14 +226,14 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   {
     id: "formatCodeBlock",
-    label: "Code Block",
+    label: "Code block",
     description: "Toggle code block",
     defaultKey: "mod+shift+c",
     category: "editing",
   },
   {
     id: "draftStash",
-    label: "Save Draft",
+    label: "Save draft",
     description: "Stash the current composer content into the saved-drafts pile and clear the editor",
     defaultKey: "mod+s",
     category: "editing",
@@ -712,6 +712,12 @@ export function conflictingActions(
   return [...new Set(ids)].filter((id) => id !== actionId)
 }
 
+/** Whether `customBindings` moves `action` off its default where Threa runs now. */
+export function isCustomBinding(action: ShortcutAction, customBindings: Record<string, string>): boolean {
+  return action.id in customBindings && customBindings[action.id] !== defaultKeyOf(action)
+}
+
+/** Binding an action back to its default stores no override, so it reads as unchanged. */
 export function resolveShortcutBindingUpdate(
   customBindings: Record<string, string> = {},
   actionId: string,
@@ -722,6 +728,8 @@ export function resolveShortcutBindingUpdate(
     nextBindings[conflictId] = "none"
   }
 
-  nextBindings[actionId] = binding
+  const action = getShortcutAction(actionId)
+  if (action && binding === defaultKeyOf(action)) delete nextBindings[actionId]
+  else nextBindings[actionId] = binding
   return nextBindings
 }

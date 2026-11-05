@@ -55,7 +55,9 @@ import type { QueryClient } from "@tanstack/react-query"
 import { postClearNotifications } from "@/lib/sw-messages"
 import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
+import type { WorkspaceListResult } from "@/api/workspaces"
 import type {
+  WorkspaceNameUpdatedPayload,
   ActorCopy,
   Stream,
   StreamWithPreview,
@@ -125,8 +127,6 @@ import { persistScheduledRows, removeScheduledRow, scheduledKeys } from "@/hooks
 import { unsharedReferenceKeys } from "@/hooks/use-unshared-references"
 import { assignmentToCached, assignmentId } from "@/hooks/use-labels"
 import {
-  NOTIFICATION_CONFIG,
-  NotificationLevels,
   SHAREABLE_SAFETY_STATUSES,
   StreamTypes,
   StreamPurposes,
@@ -142,6 +142,7 @@ import { hasPermission } from "@/lib/permissions"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
 import { deleteStreamSlots, deleteSlotsForStreams } from "@/stores/slot-store"
 import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
+import { muteSources, refreshMutedStreams } from "./muted-streams"
 import {
   applyInboxHeld,
   applyStreamActivityOrdinal,
@@ -395,6 +396,28 @@ function updateBootstrapOrInvalidate(
   return true
 }
 
+/**
+ * A workspace's new name, written everywhere the client keeps it: the store row the in-workspace UI
+ * reads, the bootstrap cache, and the workspace list. Shared by the rename response and the
+ * `workspace:name_updated` broadcast.
+ */
+export async function applyWorkspaceName(queryClient: QueryClient, workspaceId: string, name: string): Promise<void> {
+  queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) =>
+    old ? { ...old, workspace: { ...old.workspace, name } } : old
+  )
+  queryClient.setQueryData<WorkspaceListResult>(workspaceKeys.list(), (old) =>
+    old
+      ? {
+          ...old,
+          workspaces: old.workspaces.map((workspace) =>
+            workspace.id === workspaceId ? { ...workspace, name } : workspace
+          ),
+        }
+      : old
+  )
+  await db.workspaces.update(workspaceId, { name })
+}
+
 function getWorkspaceUsers(bootstrap: WorkspaceBootstrap): User[] {
   return bootstrap.users
 }
@@ -496,18 +519,42 @@ function mergeSidebarStream(
   }
 }
 
-function setMutedState(
-  mutedStreamIds: Set<string>,
-  streamId: string,
-  streamType: Stream["type"],
-  notificationLevel: StreamMember["notificationLevel"] | null | undefined
-): void {
-  const effectiveLevel = notificationLevel ?? NOTIFICATION_CONFIG[streamType].defaultLevel
-  if (effectiveLevel === NotificationLevels.MUTED) {
-    mutedStreamIds.add(streamId)
-    return
-  }
-  mutedStreamIds.delete(streamId)
+/** The bootstrap with `mutedStreamIds` re-derived for `changedStreamIds` and the streams inheriting through them. */
+function withRefreshedMutes(bootstrap: WorkspaceBootstrap, changedStreamIds: string[]): WorkspaceBootstrap {
+  const mutedStreamIds = new Set(bootstrap.mutedStreamIds)
+  const refreshed = refreshMutedStreams(
+    mutedStreamIds,
+    changedStreamIds,
+    muteSources(bootstrap.streams, bootstrap.streamMemberships)
+  )
+  return refreshed.length > 0 ? { ...bootstrap, mutedStreamIds: Array.from(mutedStreamIds) } : bootstrap
+}
+
+/**
+ * The IDB counterpart of {@link withRefreshedMutes}: `db.unreadState` is the
+ * live source the Inbox and badge hooks read. Stamps `mutedTouchedAt` so an
+ * in-flight bootstrap's merge keeps these streams' local mute membership
+ * without freezing their counter triple.
+ */
+async function persistRefreshedMutes(workspaceId: string, changedStreamIds: string[]): Promise<void> {
+  await db.transaction("rw", [db.streams, db.streamMemberships, db.unreadState], async () => {
+    const unread = await db.unreadState.get(workspaceId)
+    if (!unread) return
+    const [streams, memberships] = await Promise.all([
+      db.streams.where("workspaceId").equals(workspaceId).toArray(),
+      db.streamMemberships.where("workspaceId").equals(workspaceId).toArray(),
+    ])
+    const mutedStreamIds = new Set(unread.mutedStreamIds)
+    const refreshed = refreshMutedStreams(mutedStreamIds, changedStreamIds, muteSources(streams, memberships))
+    if (refreshed.length === 0) return
+    const now = Date.now()
+    await db.unreadState.put({
+      ...unread,
+      mutedStreamIds: Array.from(mutedStreamIds),
+      mutedTouchedAt: { ...unread.mutedTouchedAt, ...Object.fromEntries(refreshed.map((id) => [id, now])) },
+      _cachedAt: now,
+    })
+  })
 }
 
 interface ReconnectWorkspaceMergeParams {
@@ -715,8 +762,12 @@ export function mergeReconnectWorkspaceBootstrap({
     }
 
     unreadCounts[streamId] = bootstrap.unreadCount
-    setMutedState(mutedStreamIds, streamId, bootstrap.stream.type, bootstrap.membership?.notificationLevel)
   }
+  refreshMutedStreams(
+    mutedStreamIds,
+    successfulStreamIds,
+    muteSources(streamsById.values(), membershipsByStreamId.values())
+  )
 
   for (const streamId of terminalStreamIds) {
     streamsById.delete(streamId)
@@ -900,7 +951,7 @@ export function registerWorkspaceSocketHandlers(
       shouldCacheStream =
         payload.stream.type === StreamTypes.DM ? isDmParticipant : !isPrivate || isCreator || hostCached
 
-      return {
+      const next: WorkspaceBootstrap = {
         ...old,
         streams: shouldAddStream
           ? [...old.streams, { ...cachedStream, lastMessagePreview: null }]
@@ -921,6 +972,7 @@ export function registerWorkspaceSocketHandlers(
             ? [...old.dmPeers, { userId: dmPeerUserId, streamId: payload.stream.id }]
             : old.dmPeers,
       }
+      return shouldAddMembership ? withRefreshedMutes(next, [payload.stream.id]) : next
     })
 
     if (applied && shouldJoinStreamRoom) {
@@ -965,6 +1017,7 @@ export function registerWorkspaceSocketHandlers(
         })
       }
     })
+    if (shouldAddMembership) await persistRefreshedMutes(workspaceId, [payload.stream.id])
   }
 
   const handleStreamUpdated = async (payload: StreamPayload) => {
@@ -1474,31 +1527,28 @@ export function registerWorkspaceSocketHandlers(
   }
 
   // Handle a notification-level change made in another session of this user.
-  // Keeps the mute/notify badge live across tabs/devices (the reconnect merge
-  // in setMutedState otherwise leaves it stale until the next reconnect).
+  // Keeps the mute/notify badge live across tabs/devices (otherwise it stays
+  // stale until the next reconnect merge).
   const handleStreamNotificationLevelUpdated = async (payload: StreamNotificationLevelUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
-    // The sidebar / quick-switcher / share mute badges render from
-    // `unreadState.mutedStreamIds`, a derived set — NOT from the membership
-    // row's notificationLevel — so the muted set has to move alongside the
-    // membership caches. `setMutedState` centralizes the level→muted rule.
+    // The Inbox, unread and mute badges read `unreadState.mutedStreamIds`, a
+    // derived set — NOT the membership row's notificationLevel — so the muted
+    // set moves alongside the membership caches, for this stream and the
+    // threads inheriting its level.
     queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
       if (!old) return old
-      const streamType = old.streams.find((s) => s.id === payload.streamId)?.type
-      const mutedStreamIds = new Set(old.mutedStreamIds)
-      if (streamType) {
-        setMutedState(mutedStreamIds, payload.streamId, streamType, payload.notificationLevel)
-      }
-      return {
-        ...old,
-        streamMemberships: old.streamMemberships.map((membership) =>
-          membership.streamId === payload.streamId
-            ? { ...membership, notificationLevel: payload.notificationLevel }
-            : membership
-        ),
-        mutedStreamIds: streamType ? Array.from(mutedStreamIds) : old.mutedStreamIds,
-      }
+      return withRefreshedMutes(
+        {
+          ...old,
+          streamMemberships: old.streamMemberships.map((membership) =>
+            membership.streamId === payload.streamId
+              ? { ...membership, notificationLevel: payload.notificationLevel }
+              : membership
+          ),
+        },
+        [payload.streamId]
+      )
     })
 
     // Stream bootstrap membership mirror — drives the settings dialog's level.
@@ -1514,36 +1564,18 @@ export function registerWorkspaceSocketHandlers(
     )
 
     // Persist to IDB so both the membership and the muted set survive a remount
-    // without a re-bootstrap. `db.unreadState` is the live source the badge
-    // hooks observe; `db.streamMemberships` backs the settings dialog.
+    // without a re-bootstrap; `db.streamMemberships` backs the settings dialog.
     await db.transaction("rw", [db.streamMemberships, db.streams, db.unreadState], async () => {
-      const now = Date.now()
       const membershipId = `${workspaceId}:${payload.streamId}`
       const membership = await db.streamMemberships.get(membershipId)
       if (membership) {
         await db.streamMemberships.put({
           ...membership,
           notificationLevel: payload.notificationLevel,
-          _cachedAt: now,
+          _cachedAt: Date.now(),
         })
       }
-
-      const stream = await db.streams.get([workspaceId, payload.streamId])
-      const unread = await db.unreadState.get(workspaceId)
-      if (stream && unread) {
-        const mutedStreamIds = new Set(unread.mutedStreamIds)
-        setMutedState(mutedStreamIds, payload.streamId, stream.type, payload.notificationLevel)
-        await db.unreadState.put({
-          ...unread,
-          mutedStreamIds: Array.from(mutedStreamIds),
-          // Mute-specific stamp so an in-flight bootstrap's merge keeps this
-          // stream's local mute membership WITHOUT freezing its counter triple
-          // (counterTouchedAt would make the merge prefer possibly-stale local
-          // counts for an unrelated mute toggle).
-          mutedTouchedAt: { ...unread.mutedTouchedAt, [payload.streamId]: now },
-          _cachedAt: now,
-        })
-      }
+      await persistRefreshedMutes(workspaceId, [payload.streamId])
     })
   }
 
@@ -1786,6 +1818,7 @@ export function registerWorkspaceSocketHandlers(
     if (payload.stream.purpose === StreamPurposes.PERSONA_TEST) return
     let shouldSubscribeStream = false
     let hostArrived = false
+    let addedOwnMembership = false
 
     const guestRoster = getGuestRoster()
     if (guestRoster) {
@@ -1854,6 +1887,7 @@ export function registerWorkspaceSocketHandlers(
       hostArrived = !streamExists
 
       if (!membershipExists) {
+        addedOwnMembership = true
         const now = Date.now()
         writes.push(
           db.streamMemberships.put({
@@ -1871,7 +1905,7 @@ export function registerWorkspaceSocketHandlers(
         writes.push(db.streams.put({ ...payload.stream, _cachedAt: Date.now() }))
       }
 
-      return {
+      const next: WorkspaceBootstrap = {
         ...old,
         streamMemberships: membershipExists
           ? old.streamMemberships
@@ -1886,6 +1920,7 @@ export function registerWorkspaceSocketHandlers(
             ],
         streams: streamExists ? old.streams : [...(old.streams ?? []), { ...payload.stream, lastMessagePreview: null }],
       }
+      return addedOwnMembership ? withRefreshedMutes(next, [payload.streamId]) : next
     })
 
     if (shouldSubscribeStream) {
@@ -1898,6 +1933,7 @@ export function registerWorkspaceSocketHandlers(
       invalidateActivityFeed(true)
     }
     await Promise.all(writes)
+    if (addedOwnMembership) await persistRefreshedMutes(workspaceId, [payload.streamId])
   }
 
   const handleStreamMemberJoined = (payload: { workspaceId: string; streamId: string; event: StreamEvent }) => {
@@ -2076,6 +2112,11 @@ export function registerWorkspaceSocketHandlers(
     // Invalidate (forcing a refetch) when the bootstrap isn't cached yet so the
     // event isn't dropped if it lands before the bootstrap fetch settles (INV-53).
     updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({ ...old, workspaceSettings: payload.settings }))
+  }
+
+  const handleWorkspaceNameUpdated = async (payload: WorkspaceNameUpdatedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    await applyWorkspaceName(queryClient, workspaceId, payload.name)
   }
 
   // Handle feature flags updated (a platform admin toggled a flag from the
@@ -2740,6 +2781,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("user_preferences:updated", handleUserPreferencesUpdated)
   socket.on("sidebar_config:updated", handleSidebarConfigUpdated)
   socket.on("workspace_settings:updated", handleWorkspaceSettingsUpdated)
+  socket.on("workspace:name_updated", handleWorkspaceNameUpdated)
   socket.on("feature_flags:updated", handleFeatureFlagsUpdated)
   socket.on("feature_flags:workspace_updated", handleFeatureFlagsWorkspaceUpdated)
   socket.on("bot:created", handleBotCreated)
@@ -2817,6 +2859,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("user_preferences:updated", handleUserPreferencesUpdated)
     socket.off("sidebar_config:updated", handleSidebarConfigUpdated)
     socket.off("workspace_settings:updated", handleWorkspaceSettingsUpdated)
+    socket.off("workspace:name_updated", handleWorkspaceNameUpdated)
     socket.off("feature_flags:updated", handleFeatureFlagsUpdated)
     socket.off("feature_flags:workspace_updated", handleFeatureFlagsWorkspaceUpdated)
     socket.off("bot:created", handleBotCreated)

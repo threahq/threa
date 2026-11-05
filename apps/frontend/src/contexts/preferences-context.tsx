@@ -43,13 +43,19 @@ function cacheAppearanceToLocalStorage(prefs: UserPreferences, accountId: string
   }
 }
 
+interface SaveOptions {
+  /** The caller shows a failure beside the field, so no toast repeats it. */
+  errorShownInPlace?: boolean
+}
+
 interface PreferencesContextValue {
   preferences: UserPreferences | null
   resolvedTheme: "light" | "dark"
   isLoading: boolean
   updatePreference: <K extends keyof UpdateUserPreferencesInput>(
     key: K,
-    value: UpdateUserPreferencesInput[K]
+    value: UpdateUserPreferencesInput[K],
+    options?: SaveOptions
   ) => Promise<void>
   /** Write several keys in one request — use when two fields must move together
    *  (e.g. setting the board home lens must also clear `boardDefaultViewId`). */
@@ -155,7 +161,6 @@ export function PreferencesProvider({ workspaceId, children }: PreferencesProvid
           })
         }
       }
-      toast.error("Failed to save settings")
     },
     onSuccess: (newPreferences) => {
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
@@ -167,48 +172,64 @@ export function PreferencesProvider({ workspaceId, children }: PreferencesProvid
 
   const { mutateAsync } = mutation
 
-  const updatePreference = useCallback(
-    async <K extends keyof UpdateUserPreferencesInput>(key: K, value: UpdateUserPreferencesInput[K]) => {
-      await mutateAsync({ [key]: value } as UpdateUserPreferencesInput)
+  const save = useCallback(
+    async (input: UpdateUserPreferencesInput, options?: SaveOptions) => {
+      try {
+        await mutateAsync(input)
+      } catch (error) {
+        if (!options?.errorShownInPlace) toast.error("Failed to save settings")
+        throw error
+      }
     },
     [mutateAsync]
+  )
+
+  const updatePreference = useCallback(
+    async <K extends keyof UpdateUserPreferencesInput>(
+      key: K,
+      value: UpdateUserPreferencesInput[K],
+      options?: SaveOptions
+    ) => {
+      await save({ [key]: value } as UpdateUserPreferencesInput, options)
+    },
+    [save]
   )
 
   const updatePreferences = useCallback(
     async (input: UpdateUserPreferencesInput) => {
-      await mutateAsync(input)
+      await save(input)
     },
-    [mutateAsync]
+    [save]
   )
 
   const updateAccessibility = useCallback(
     async (updates: Partial<AccessibilityPreferences>) => {
-      await mutateAsync({ accessibility: updates })
+      await save({ accessibility: updates })
     },
-    [mutateAsync]
+    [save]
   )
 
   const updateKeyboardShortcut = useCallback(
     async (actionId: string, keyBinding: string) => {
       const currentShortcuts = { ...(preferences?.keyboardShortcuts ?? {}) }
       currentShortcuts[actionId] = keyBinding
-      await mutateAsync({ keyboardShortcuts: currentShortcuts })
+      await save({ keyboardShortcuts: currentShortcuts })
     },
-    [mutateAsync, preferences?.keyboardShortcuts]
+    [save, preferences?.keyboardShortcuts]
   )
 
   const resetKeyboardShortcut = useCallback(
     async (actionId: string) => {
       const currentShortcuts = { ...(preferences?.keyboardShortcuts ?? {}) }
       delete currentShortcuts[actionId]
-      await mutateAsync({ keyboardShortcuts: currentShortcuts })
+      await save({ keyboardShortcuts: currentShortcuts })
     },
-    [mutateAsync, preferences?.keyboardShortcuts]
+    [save, preferences?.keyboardShortcuts]
   )
 
   const resetAllKeyboardShortcuts = useCallback(async () => {
-    await mutateAsync({ keyboardShortcuts: {} })
-  }, [mutateAsync])
+    await save({ keyboardShortcuts: {} })
+  }, [save])
 
   const value = useMemo<PreferencesContextValue>(
     () => ({

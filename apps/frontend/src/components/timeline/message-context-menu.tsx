@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef, useState } from "react"
+import { memo, useRef, useState, type ReactNode } from "react"
 import type { SavedMessageView } from "@threahq/types"
 import { EllipsisVertical } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -18,6 +18,7 @@ import {
   resolveActionLabel,
 } from "./message-actions"
 import { ReminderPopoverContent } from "./reminder-popover-content"
+import { useWithSettingsUrl } from "@/hooks/use-setting-href"
 
 interface MessageContextMenuProps {
   context: MessageActionContext
@@ -47,16 +48,7 @@ export const MessageContextMenu = memo(function MessageContextMenu({
     setUncontrolledOpen(next)
     onOpenChange?.(next)
   }
-  const actions = getVisibleActions(context)
-  const groupedActions = useMemo(
-    () =>
-      groupVisibleActions(
-        actions.map((action) => (action.groupId === "save" ? { ...action, groupId: undefined } : action))
-      ),
-    [actions]
-  )
-
-  if (actions.length === 0) return null
+  if (getVisibleActions(context).length === 0) return null
 
   return (
     <LazyDropdownMenu
@@ -90,8 +82,7 @@ export const MessageContextMenu = memo(function MessageContextMenu({
           }
         }}
       >
-        <ActionDropdownItems
-          items={groupedActions}
+        <MessageMenuItems
           context={context}
           onClose={() => setOpen(false)}
           renderSubmenu={(action) => {
@@ -119,6 +110,25 @@ export const MessageContextMenu = memo(function MessageContextMenu({
     </LazyDropdownMenu>
   )
 })
+
+/** Rendered only while the menu is open, so only an open menu subscribes to the settings url. */
+function MessageMenuItems({
+  context,
+  onClose,
+  renderSubmenu,
+}: {
+  context: MessageActionContext
+  onClose: () => void
+  renderSubmenu: (action: MessageAction) => ReactNode
+}) {
+  const menuContext = useWithSettingsUrl(context)
+  const items = groupVisibleActions(
+    getVisibleActions(menuContext).map((action) =>
+      action.groupId === "save" ? { ...action, groupId: undefined } : action
+    )
+  )
+  return <ActionDropdownItems items={items} context={menuContext} onClose={onClose} renderSubmenu={renderSubmenu} />
+}
 
 function ReminderActionSubmenu({
   action,

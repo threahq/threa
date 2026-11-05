@@ -44,7 +44,7 @@ describe("BotChannelsSection", () => {
         <BotChannelsSection workspaceId="ws_1" botId="bot_1" isArchived={false} />
       </QueryClientProvider>
     )
-    await userEvent.click(screen.getByRole("combobox"))
+    await userEvent.click(screen.getByRole("button", { name: "Grant channel access" }))
 
     expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
       "a-publicPublic",

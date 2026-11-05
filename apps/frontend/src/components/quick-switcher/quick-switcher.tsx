@@ -4,18 +4,15 @@ import {
   useMemo,
   useCallback,
   useRef,
-  useSyncExternalStore,
   useImperativeHandle,
   type MutableRefObject,
   type RefObject,
 } from "react"
-import { hashKey, useQueryClient } from "@tanstack/react-query"
-import type { StreamBootstrap, WorkspaceSettingsTab } from "@threahq/types"
-import { streamKeys } from "@/hooks/use-streams"
+import { useCachedStreamBootstrap } from "@/hooks/use-cached-stream-bootstrap"
 import { useEffectiveArchived } from "@/hooks/use-effective-archived"
 import { isUtilityStream, offersArchiveToggle } from "@/lib/streams"
 import { isAsideHostType, streamTypeCapabilities } from "@threahq/types"
-import { useNavigate, useSearchParams } from "react-router-dom"
+import { useNavigate } from "react-router-dom"
 import { Terminal, FileText } from "lucide-react"
 import { toast } from "sonner"
 import { LabelableResourceTypes } from "@threahq/types"
@@ -57,12 +54,13 @@ import { useCreateChannel } from "@/components/create-channel"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
 import { useOutcomesUrlState } from "@/components/agent-outcomes"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
+import type { StreamSettingsTab } from "@/contexts/settings-context"
 import { streamHasMembers, useStreamMembers } from "@/components/stream-settings/use-stream-members"
-import { WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { useSearchPanel } from "@/components/search/search-panel-context"
 import { useStreamItems } from "./use-stream-items"
 import { useCommandItems } from "./use-command-items"
+import { useSettingItems } from "./use-setting-items"
 import { ItemList } from "./item-list"
 import { ModeTabs } from "./mode-tabs"
 import { STREAM_FILTER_TYPE_OPTIONS } from "@/components/editor/triggers/filter-type-extension"
@@ -311,8 +309,6 @@ function QuickSwitcherBody({
   closeFocusRef,
 }: QuickSwitcherBodyProps) {
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
-  const [, setSearchParams] = useSearchParams()
   const user = useUser()
   const { openSettings } = useSettings()
   const { openCreateChannel } = useCreateChannel()
@@ -329,20 +325,7 @@ function QuickSwitcherBody({
   // The palette's "Open an aside here" follows the host rules the server
   // enforces (host type, no E2E), so it never offers an aside that would fail.
   const cachedStream = currentStreamId ? allStreams.find((s) => s.id === currentStreamId) : undefined
-  const bootstrapKey = streamKeys.bootstrap(workspaceId, currentStreamId ?? "")
-  const bootstrapQueryHash = hashKey(bootstrapKey)
-  const subscribeToQueryCache = useCallback(
-    (notify: () => void) =>
-      queryClient.getQueryCache().subscribe((event) => {
-        if (event?.query.queryHash === bootstrapQueryHash) notify()
-      }),
-    [queryClient, bootstrapQueryHash]
-  )
-  const streamBootstrap = useSyncExternalStore(subscribeToQueryCache, () => {
-    // A disabled useQuery observer replaces the active route's bootstrap queryFn during invalidation.
-    // eslint-disable-next-line threa/no-queryclient-getquerydata-in-render
-    return queryClient.getQueryData<StreamBootstrap>(bootstrapKey)
-  })
+  const streamBootstrap = useCachedStreamBootstrap(workspaceId, currentStreamId)
   const currentStream = cachedStream ?? streamBootstrap?.stream
   const currentRoot = currentStream?.rootStreamId
     ? allStreams.find((s) => s.id === currentStream.rootStreamId)
@@ -509,9 +492,9 @@ function QuickSwitcherBody({
   // surface (settings dialog, confirm modal, label picker), which render as
   // siblings so they survive the palette unmounting its content.
   const handleOpenStreamSettings = useCallback(
-    (streamId: string) => {
+    (streamId: string | null, tab?: StreamSettingsTab, setting?: string) => {
       handleClose()
-      openStreamSettings(streamId)
+      openStreamSettings(streamId, tab, setting)
     },
     [handleClose, openStreamSettings]
   )
@@ -562,23 +545,6 @@ function QuickSwitcherBody({
     [handleClose, clearInbox]
   )
 
-  // Workspace settings is URL-param driven like the user settings dialog, but
-  // has no context of its own — set the param directly.
-  const openWorkspaceSettings = useCallback(
-    (tab: WorkspaceSettingsTab) => {
-      handleClose()
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev)
-          next.set(WS_SETTINGS_PARAM, tab)
-          return next
-        },
-        { replace: true }
-      )
-    },
-    [handleClose, setSearchParams]
-  )
-
   // Message search was split out of the palette into its own surface (sidebar
   // panel on desktop, full page on mobile). The "Search messages" command is
   // the palette's entry point to it.
@@ -600,7 +566,6 @@ function QuickSwitcherBody({
       openSearch: handleOpenSearch,
       requestInput,
       openSettings,
-      openWorkspaceSettings,
       openExplorer,
       openOutcomes,
       currentStreamId,
@@ -645,7 +610,6 @@ function QuickSwitcherBody({
       handleOpenSearch,
       requestInput,
       openSettings,
-      openWorkspaceSettings,
       openExplorer,
       openOutcomes,
       currentStreamId,
@@ -681,7 +645,27 @@ function QuickSwitcherBody({
     commandContext,
   })
 
-  const resultByMode = { stream: streamResult, command: commandResult }
+  // Settings also answer a plain search, below the streams and people it
+  // finds, or above them when none of those match outright (Enter fires the
+  // first row).
+  const streamSettingItems = useSettingItems({
+    workspaceId,
+    query: streamResult.searchText,
+    currentStreamId,
+    limit: mode === "stream" && !streamResult.hasFilters && streamResult.searchText.trim().length >= 2 ? 3 : 0,
+    closeDialog: handleClose,
+    openSettings,
+    openStreamSettings: handleOpenStreamSettings,
+  })
+  const streamModeItems = useMemo(
+    () =>
+      streamResult.hasRealMatch
+        ? [...streamResult.items, ...streamSettingItems]
+        : [...streamSettingItems, ...streamResult.items],
+    [streamResult.items, streamResult.hasRealMatch, streamSettingItems]
+  )
+
+  const resultByMode = { stream: { ...streamResult, items: streamModeItems }, command: commandResult }
   const currentResult = resultByMode[mode]
   const items = currentResult.items
 
@@ -925,7 +909,7 @@ function QuickSwitcherBody({
       {/* Keyboard hints footer — shown whenever the active input is a mouse
           (not a finger), so a mouse on any width sees the hints. */}
       {!inputRequest && !isTouchInput && (
-        <div className="flex items-center justify-between border-t border-border px-4 py-3 text-[11px] text-muted-foreground">
+        <div className="flex items-center justify-between border-t border-border px-4 py-3 text-[0.6875rem] text-muted-foreground">
           <div className="flex gap-4">
             <span>
               <kbd className="kbd-hint">↑↓</kbd> Navigate
@@ -952,7 +936,7 @@ function QuickSwitcherBody({
       {/* Uses absolute positioning to avoid layout shift (INV-21) */}
       {showEscapeHint && (
         <div className="absolute -bottom-8 left-0 right-0 text-xs text-muted-foreground/80 text-center animate-in fade-in duration-500">
-          Tip: Use <kbd className="px-1 py-0.5 bg-muted rounded text-[10px]">Ctrl+[</kbd> or click outside to close
+          Tip: Use <kbd className="px-1 py-0.5 bg-muted rounded text-[0.625rem]">Ctrl+[</kbd> or click outside to close
         </div>
       )}
     </>

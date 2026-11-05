@@ -1,15 +1,12 @@
-import {
-  DEFAULT_SUBAGENT_MODELS,
-  SUBAGENT_MODEL_CATALOG,
-  WORKSPACE_PERMISSION_SCOPES,
-  type SubagentModelCatalogEntry,
-} from "@threahq/types"
+import { DEFAULT_SUBAGENT_MODELS, SUBAGENT_MODEL_CATALOG, type SubagentModelCatalogEntry } from "@threahq/types"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useWorkspaceSettingMutation } from "@/hooks/use-workspace-setting-mutation"
-import { hasPermission } from "@/lib/permissions"
 import { modelDisplayName } from "@/lib/model-display"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Label } from "@/components/ui/label"
+import { badgeVariants } from "@/components/ui/badge"
+import { cn } from "@/lib/utils"
+import { SettingsDisclosure, settingIds } from "@/components/settings/setting-primitives"
+import { SettingCheckboxList } from "@/components/settings/setting-lists"
+import { accessDescription, useWorkspaceAccess } from "./workspace-permission"
 
 /** "$2.50 in · $15.00 out per 1M tokens" — the two rates a delegation is billed at. */
 function formatPrice(entry: SubagentModelCatalogEntry): string {
@@ -39,9 +36,8 @@ function pickerRows(selected: string[]): Array<{ id: string; label: string; entr
  * asked for was refused.
  */
 export function SubagentModelsSection({ workspaceId }: { workspaceId: string }) {
-  const bootstrap = useCachedWorkspaceBootstrap(workspaceId)
-  const canManage = hasPermission(bootstrap?.viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
-  const settings = bootstrap?.workspaceSettings ?? null
+  const access = useWorkspaceAccess(workspaceId)
+  const settings = useCachedWorkspaceBootstrap(workspaceId)?.workspaceSettings ?? null
   // Show the shipped default until the bootstrap resolves — an unresolved
   // bootstrap is not the same claim as "this workspace allows nothing", and the
   // rows below say exactly that when the set is empty. Same `?? DEFAULT` shape
@@ -62,47 +58,36 @@ export function SubagentModelsSection({ workspaceId }: { workspaceId: string }) 
     mutation.mutate(rows.map((row) => row.id).filter((id) => updated.has(id)))
   }
 
+  const allowedCount = rows.filter((row) => selected.includes(row.id)).length
+  const summary =
+    settings != null && allowedCount === 0
+      ? "None allowed, so agents can't delegate to another model"
+      : `${allowedCount} of ${rows.length} models allowed`
+
   return (
-    <div>
-      <h3 className="text-sm font-medium">Subagent models</h3>
-      <p className="text-xs text-muted-foreground mt-0.5">
-        The models an assistant may hand a task to as a subagent, and the models a built-in persona may escalate to.
-        Delegating spends the workspace&apos;s AI budget at the rates below.
-      </p>
-      <ul className="mt-3 space-y-2">
-        {rows.map(({ id, label, entry }) => {
-          const checked = selected.includes(id)
-          return (
-            <li key={id} className="flex items-start gap-2.5">
-              <Checkbox
-                id={`subagent-model-${id}`}
-                className="mt-0.5"
-                checked={checked}
-                disabled={!canManage || settings == null || mutation.isPending}
-                onCheckedChange={(value) => toggle(id, value === true)}
-              />
-              <div className="min-w-0">
-                <Label htmlFor={`subagent-model-${id}`} className="text-sm font-normal">
-                  {label}
-                  {entry?.tier === "premium" && (
-                    <span className="ml-2 rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
-                      Premium
-                    </span>
-                  )}
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  {entry ? formatPrice(entry) : "No longer offered — untick to drop it"}
-                </p>
-              </div>
-            </li>
-          )
-        })}
-      </ul>
-      {settings != null && selected.length === 0 && (
-        <p className="mt-2 text-xs text-muted-foreground">
-          With nothing ticked, assistants cannot delegate to another model at all.
-        </p>
-      )}
-    </div>
+    <SettingsDisclosure
+      setting="workspace-subagent-models"
+      summary={summary}
+      description={accessDescription("workspace-subagent-models", access)}
+    >
+      <SettingCheckboxList
+        aria-labelledby={settingIds("workspace-subagent-models").label}
+        disabled={!access.allowed || settings == null || mutation.isPending}
+        selected={selected}
+        onCheckedChange={toggle}
+        items={rows.map(({ id, label, entry }) => ({
+          value: id,
+          label: (
+            <>
+              {label}
+              {entry?.tier === "premium" && (
+                <span className={cn(badgeVariants({ variant: "outline" }), "ml-2 align-middle")}>Premium</span>
+              )}
+            </>
+          ),
+          description: entry ? formatPrice(entry) : "No longer offered. Untick to drop it.",
+        }))}
+      />
+    </SettingsDisclosure>
   )
 }
