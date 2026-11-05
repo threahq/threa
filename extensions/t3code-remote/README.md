@@ -47,15 +47,15 @@ and `t3AutoLogin`. Environment variables win.
 ## Running it as a service
 
 On Linux, `threa-t3code-install --start` writes two systemd user units, the connector and its waker, then enables
-and starts both. The unit runs the
-installed package with the node that installed it, so `npm update -g @threahq/t3code-remote` and a
-`systemctl --user restart threa-t3code-remote` upgrade it. The installer refuses to run from `npx`, whose cache npm
-clears under a running unit. From a checkout, `bun run install-service --start` writes a unit that runs the source
-with bun.
+and starts both. Both run the installed package with the node that installed it, so `npm update -g
+@threahq/t3code-remote` and a `systemctl --user restart threa-t3code-remote threa-t3code-wake` upgrade them. An install
+from before the waker existed gets it, and the connector unit's `THREA_T3CODE_UNIT` pin, from
+`threa-t3code-install --force --start`. The installer refuses to run from `npx`, whose cache npm clears under a running
+unit. From a checkout, `bun run install-service --start` writes units that run the source with bun.
 
 It writes `~/.config/systemd/user/threa-t3code-remote.service` and `threa-t3code-wake.service` (refusing to overwrite
-either without `--force`) and creates `~/.threa/t3code-remote/log/`, where the output of both lands. `--dry-run` prints the
-plan and touches nothing. The unit reads its environment from `~/.config/threa/t3code-remote.env`, one `KEY=value`
+either without `--force`) and creates `~/.threa/t3code-remote/log/`, where the output of both lands. `--dry-run`
+prints the plan and touches nothing. Both units read its environment from `~/.config/threa/t3code-remote.env`, one `KEY=value`
 per line. With auto-login on, the connector runs `t3`, so put a `PATH` that reaches it in that file: a `PATH` there
 replaces the unit's own, so include the directory of the node or bun the unit runs too.
 
@@ -114,13 +114,15 @@ shut down".
 
 Archiving the scratchpad ends the connector's Threa session. Run as a unit (`THREA_T3CODE_UNIT` names it, which the
 installer's unit does with `%n`), the connector then hibernates: it records the unit under
-`~/.threa/t3code-remote/hibernating/`, disables and stops it, so nothing runs for the scratchpad and a reboot leaves it
-down. `threa-t3code wake`, the waker's unit, is the one process left: it listens for every restore and message for the
-bot's sessions and starts the recorded unit, which links the scratchpad again and enables itself. After a reconnect it
-also starts any recorded unit whose scratchpad was restored while it was down. Run by hand, the connector instead
-stays up and links the scratchpad again once it is restored. After 90 minutes with no turn running it ends the session too, and keeps posting the bot's last presence so
+`~/.threa/t3code-remote/hibernating/`, then disables and stops it, so nothing runs for the scratchpad and a reboot
+leaves it down. The waker (`threa-t3code wake`) is the one process left. It listens for every restore and message for
+the bot's sessions and starts the recorded unit, which links the scratchpad again and enables itself. It also checks
+the recorded scratchpads after every reconnect and every 10 minutes, for restores it missed. Run by hand, the connector
+stays up instead and links the scratchpad again once it is restored.
+
+After 90 minutes with no turn running the connector ends the session too, and keeps posting the bot's last presence so
 the scratchpad still shows it available with its commands. The next message or command for it links the session again
-and runs. T3 keeps running either way.
+and runs. An idle scratchpad that is then archived hibernates the same way. T3 keeps running either way.
 
 Attachments on a message are downloaded and listed by path in the text T3 receives. PNG, JPEG, GIF and WebP images up
 to 10 MiB, at most 8 per message, are also uploaded to T3 and sent as images, so the model sees them without reading

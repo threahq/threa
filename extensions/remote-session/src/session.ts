@@ -283,11 +283,12 @@ export interface RemoteSessionDelegate {
    */
   onArchived?: (payload: { rootStreamId: string }) => Promise<void> | void
   /**
-   * A cold start's session create was refused because this identity's
-   * scratchpad is archived (`coldStartIfArchived: "wait"`). Nothing is linked;
-   * the SDK retries on every poll tick until the connector stops it.
+   * A session create was refused because this identity's scratchpad is
+   * archived. `rootStreamId` is the root the link was pinned to
+   * (`expectedRootStreamId`), when it was. Nothing is linked; the SDK retries
+   * on every poll tick until the connector stops it.
    */
-  onLinkRefusedArchived?: () => Promise<void> | void
+  onLinkRefusedArchived?: (payload: { rootStreamId?: string }) => Promise<void> | void
 }
 
 export interface ShutdownOptions {
@@ -849,7 +850,7 @@ export class RemoteSession {
       this.log(`could not link to Threa (will retry): ${this.summarize(error)}${this.linkErrorHint(error)}`)
       if (error instanceof ThreaApiError && error.code === "SCRATCHPAD_ARCHIVED") {
         try {
-          await this.delegate.onLinkRefusedArchived?.()
+          await this.delegate.onLinkRefusedArchived?.({ rootStreamId: this.config.expectedRootStreamId })
         } catch (hookError) {
           this.log(`onLinkRefusedArchived failed: ${this.summarize(hookError)}`)
         }

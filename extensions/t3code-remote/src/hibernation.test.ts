@@ -1,26 +1,40 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { loadT3Config, t3Install } from "./config"
 import { createT3Connector, type T3Connector } from "./connector"
 import { Hibernation } from "./hibernation"
 import { until } from "./t3.test-support"
-import { createWaker } from "./waker"
 
 const UNIT = "threa-t3-demo.service"
+
+const quietHibernation = (dir: string) =>
+  new Hibernation(
+    dir,
+    () => {},
+    () => {}
+  )
 
 function recordingSystemctl() {
   const calls: string[][] = []
   return { calls, systemctl: (args: string[]) => void calls.push(args) }
 }
 
-/** A Threa that answers a session create with `link`, or refuses it as archived when `link` is undefined. */
-function fakeThrea(link: () => Record<string, unknown> | undefined, creates: unknown[]) {
+/**
+ * A Threa that answers a session create with `link`, or refuses it as archived when `link` is undefined, and reports
+ * every stream archived once `archived()` says so.
+ */
+function fakeThrea(link: () => Record<string, unknown> | undefined, archived: () => boolean, creates: unknown[]) {
   return Bun.serve({
     port: 0,
     fetch: async (request) => {
       const url = new URL(request.url)
+      if (request.method === "GET" && /\/streams\/[^/]+$/.test(url.pathname)) {
+        return Response.json({
+          data: { archivedAt: archived() ? "2026-01-01T00:00:00.000Z" : null, e2eEnabled: false },
+        })
+      }
       if (request.method === "POST" && url.pathname.endsWith("/bot-runtime/sessions")) {
         creates.push(await request.json())
         const data = link()
@@ -47,6 +61,7 @@ afterEach(async () => {
 function startConnector(options: {
   unit?: string
   link: () => Record<string, unknown> | undefined
+  archived?: () => boolean
   /** The root an earlier hibernation of this unit recorded. */
   hibernatedRoot?: string
 }) {
@@ -54,12 +69,13 @@ function startConnector(options: {
   const install = t3Install(home)
   mkdirSync(install.workDir, { recursive: true })
   const creates: Array<Record<string, unknown>> = []
-  const server = fakeThrea(options.link, creates)
+  const server = fakeThrea(options.link, options.archived ?? (() => false), creates)
   const loaded = loadT3Config({
     env: {
       THREA_WORKSPACE_ID: "ws_test",
       THREA_API_KEY: "threa_bk_test",
       THREA_BASE_URL: `http://127.0.0.1:${server.port}`,
+      THREA_POLL_MS: "1000",
       ...(options.unit ? { THREA_T3CODE_UNIT: options.unit } : {}),
     },
     cwd: install.workDir,
@@ -74,11 +90,7 @@ function startConnector(options: {
   const dir = join(home, "hibernating")
   const { calls, systemctl } = recordingSystemctl()
   if (options.hibernatedRoot) {
-    new Hibernation(
-      dir,
-      () => {},
-      () => {}
-    ).sleep({
+    quietHibernation(dir).hibernate({
       unit: UNIT,
       runtimeSessionId: loaded.config.runtimeSessionId,
       rootStreamId: options.hibernatedRoot,
@@ -88,6 +100,7 @@ function startConnector(options: {
   const logs: string[] = []
   const connector = createT3Connector(loaded.config, {
     hibernation,
+    archiveGraceMs: 200,
     fetch: async () => new Response("", { status: 503 }),
     log: (message) => logs.push(message),
   })
@@ -137,6 +150,36 @@ describe("a connector run as a unit", () => {
     }).toEqual({ records: [], calls: [["enable", UNIT]], link: { ifArchived: "wait", ifMissing: "error" } })
   })
 
+  test("archived while linked, it hibernates on the linked root once the grace runs out", async () => {
+    let archived = false
+    const { connector, hibernation, calls, runtimeSessionId } = startConnector({
+      unit: UNIT,
+      archived: () => archived,
+      link: () =>
+        archived
+          ? undefined
+          : {
+              linkId: "brsl_1",
+              rootStreamId: "stream_live",
+              activeStreamId: "stream_live",
+              runtimeSessionId: "ignored",
+              streamUrlPath: "/w/ws_test/s/stream_live",
+            },
+    })
+
+    await connector.start()
+    archived = true
+    await until(() => calls.length > 1)
+
+    expect({ records: hibernation.list(), calls }).toEqual({
+      records: [{ unit: UNIT, runtimeSessionId, rootStreamId: "stream_live" }],
+      calls: [
+        ["disable", UNIT],
+        ["stop", "--no-block", UNIT],
+      ],
+    })
+  })
+
   test("without a unit, an archived scratchpad at start touches no systemd state", async () => {
     const { connector, hibernation, calls, logs } = startConnector({ link: () => undefined })
 
@@ -150,55 +193,6 @@ describe("a connector run as a unit", () => {
       records: [],
       calls: [],
       refused: true,
-    })
-  })
-})
-
-describe("createWaker", () => {
-  function setup(archived: Record<string, boolean | Error>) {
-    const dir = mkdtempSync(join(tmpdir(), "t3wake-"))
-    const hibernation = new Hibernation(
-      dir,
-      () => {},
-      () => {}
-    )
-    hibernation.sleep({ unit: "threa-t3-a.service", runtimeSessionId: "t3s_a", rootStreamId: "stream_a" })
-    hibernation.sleep({ unit: "threa-t3-b.service", runtimeSessionId: "t3s_b", rootStreamId: "stream_b" })
-    hibernation.sleep({ unit: "threa-t3-c.service", runtimeSessionId: "t3s_c" })
-    hibernation.sleep({ unit: "threa-t3-d.service", runtimeSessionId: "t3s_d", rootStreamId: "stream_d" })
-    writeFileSync(join(dir, "notes.txt"), "not a record")
-    writeFileSync(join(dir, "threa-t3-e.service.json"), '{"unit": "threa-t3-e.serv')
-    const started: string[] = []
-    const waker = createWaker({
-      hibernating: () => hibernation.list(),
-      isArchived: async (rootStreamId) => {
-        const verdict = archived[rootStreamId]
-        if (verdict instanceof Error) throw verdict
-        return verdict ?? true
-      },
-      start: (unit) => void started.push(unit),
-      log: () => {},
-    })
-    return { waker, started, dir }
-  }
-
-  test("a push starts only the unit of the session it names", () => {
-    const { waker, started } = setup({})
-
-    waker.nudge("t3s_c")
-    waker.nudge("t3s_live")
-
-    expect(started).toEqual(["threa-t3-c.service"])
-  })
-
-  test("a reconnect starts restored units, leaves archived and rootless ones, and survives a failed check", async () => {
-    const { waker, started, dir } = setup({ stream_a: false, stream_b: true, stream_d: new Error("offline") })
-
-    await waker.sweep()
-
-    expect({ started, kept: existsSync(join(dir, "threa-t3-a.service.json")) }).toEqual({
-      started: ["threa-t3-a.service"],
-      kept: true,
     })
   })
 })

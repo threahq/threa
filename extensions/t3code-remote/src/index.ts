@@ -1,12 +1,10 @@
 import { mkdirSync } from "node:fs"
 import { hostname } from "node:os"
-import { BotSupervisorTransport } from "@threahq/harness-client"
-import { readConfigFile, ThreaClient, wireLifecycle } from "@threahq/remote-session"
+import { readConfigFile, wireLifecycle } from "@threahq/remote-session"
 import { T3Auth } from "./auth"
 import { loadT3Config, loadT3Settings, t3Install, type T3RawConfig, type T3RemoteConfig } from "./config"
 import { createT3Connector } from "./connector"
-import { Hibernation, hibernationDir, systemctlUser } from "./hibernation"
-import { createWaker } from "./waker"
+import { createWakeService } from "./waker"
 
 const LOG_PREFIX = "[threa-t3code]"
 
@@ -27,48 +25,6 @@ async function login(code: string | undefined, file: T3RawConfig): Promise<void>
   )
 }
 
-const WAKE_RECONNECT_MS = 60_000
-/** A restore that lands while a connector is still stopping finds its unit active, so the start is a no-op. */
-const WAKE_SWEEP_MS = 10 * 60_000
-
-/** `threa-t3code wake`: the one resident process while connectors hibernate, starting each again when it is wanted. */
-function wake(config: T3RemoteConfig): void {
-  const log = (message: string) => process.stderr.write(`${LOG_PREFIX} ${message}\n`)
-  const client = new ThreaClient(config)
-  const hibernation = new Hibernation(hibernationDir(), systemctlUser, log)
-  const waker = createWaker({
-    hibernating: () => hibernation.list(),
-    isArchived: async (rootStreamId) => Boolean(await client.getStreamArchivedAt(rootStreamId)),
-    start: (unit) => systemctlUser(["start", unit]),
-    log,
-  })
-  const transport = new BotSupervisorTransport({
-    baseUrl: config.baseUrl,
-    workspaceId: config.workspaceId,
-    apiKey: config.apiKey,
-    onReady: () => void waker.sweep(),
-    onSessionRestored: (payload) => waker.nudge(payload.runtimeSessionId),
-    onInvocationAvailable: (payload) => waker.nudge(payload.runtimeSessionId),
-    log,
-  })
-  // A refused or failed connect drops the socket; connecting again is a no-op while one is up.
-  const reconnect = setInterval(() => void transport.connect(), WAKE_RECONNECT_MS)
-  const sweep = setInterval(() => void waker.sweep(), WAKE_SWEEP_MS)
-  wireLifecycle(
-    {
-      shutdown: async () => {
-        clearInterval(reconnect)
-        clearInterval(sweep)
-        transport.disconnect()
-      },
-    },
-    process,
-    { logPrefix: LOG_PREFIX }
-  )
-  log(`waking hibernating connectors (${hibernation.list().length} now) from ${hibernationDir()}`)
-  void transport.connect()
-}
-
 async function main(): Promise<void> {
   const install = t3Install()
   const file: T3RawConfig =
@@ -84,12 +40,11 @@ async function main(): Promise<void> {
   process.chdir(install.workDir)
   const result = loadT3Config({ env: process.env, cwd: install.workDir, hostname: hostname(), install, file })
   if ("error" in result) fail(result.error)
-  if (command === "wake") return wake(result.config)
-  const connector = createT3Connector(result.config, {
-    log: (message) => process.stderr.write(`${LOG_PREFIX} ${message}\n`),
-  })
-  wireLifecycle(connector, process, { logPrefix: LOG_PREFIX })
-  await connector.start()
+  const log = (message: string) => process.stderr.write(`${LOG_PREFIX} ${message}\n`)
+  const service =
+    command === "wake" ? createWakeService(result.config, { log }) : createT3Connector(result.config, { log })
+  wireLifecycle(service, process, { logPrefix: LOG_PREFIX })
+  await service.start()
 }
 
 if (import.meta.main) {

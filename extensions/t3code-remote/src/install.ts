@@ -28,9 +28,9 @@ export function runInstall(options: InstallOptions): void {
   }
   const units = [
     {
+      serviceName: install.serviceName,
       path: install.unitPath,
-      // Pinned, not left to the env file: each connector's unit name is its own, and naming it is what lets an
-      // archived scratchpad hibernate the unit for the waker to start again.
+      // Pinned so a shared env file cannot rename the unit this connector hibernates.
       content: renderUserUnit({
         ...common,
         description: "Threa T3 Code connector",
@@ -38,6 +38,7 @@ export function runInstall(options: InstallOptions): void {
       }),
     },
     {
+      serviceName: install.wakeServiceName,
       path: install.wakeUnitPath,
       content: renderUserUnit({
         ...common,
@@ -60,10 +61,8 @@ export function runInstall(options: InstallOptions): void {
     if (!options.dryRun) writeFileSync(unit.path, unit.content, { mode: 0o600 })
   }
   const run = options.run ?? ((command, args) => spawnSync(command, args, { stdio: "inherit" }))
-  for (const [command, ...args] of userUnitCommands(
-    [install.serviceName, install.wakeServiceName],
-    options.start ?? false
-  )) {
+  const serviceNames = units.map((unit) => unit.serviceName)
+  for (const [command, ...args] of userUnitCommands(serviceNames, options.start ?? false)) {
     const line = [command, ...args].join(" ")
     log(`${verb("running", "would run")} ${line}`)
     if (options.dryRun) continue

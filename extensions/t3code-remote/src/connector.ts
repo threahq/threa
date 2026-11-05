@@ -10,7 +10,7 @@ import {
 import { T3Auth, type FetchLike } from "./auth"
 import { readJsonFile, type T3RemoteConfig } from "./config"
 import { DormantLink } from "./dormant-link"
-import { Hibernation, hibernationDir, systemctlUser } from "./hibernation"
+import { Hibernation, hibernationDir, systemctlUser, unitHibernation } from "./hibernation"
 import { T3CODE_RUNTIME, T3TurnRunner, type PendingSpawn, type ThreadStore } from "./run-bridge"
 import { createT3SessionControl } from "./session-control"
 import { T3Client, type ModelOption, type ModelSelection } from "./t3-client"
@@ -92,6 +92,8 @@ export interface T3ConnectorOptions {
   fetch?: FetchLike
   log?: (message: string) => void
   hibernation?: Hibernation
+  /** Override the archive→restore grace window (tests). */
+  archiveGraceMs?: number
 }
 
 const IDLE_WIND_DOWN_AFTER_MS = 90 * 60_000
@@ -153,20 +155,24 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
   })
   let presence: RuntimePresenceReport | undefined
 
-  const unit = config.systemdUnit
-  const hibernation = unit ? (options.hibernation ?? new Hibernation(hibernationDir(), systemctlUser, log)) : undefined
-  let hibernating = false
   // Run as a unit, an archived scratchpad stops it: the waker starts it again, and nothing stays resident meanwhile.
-  const hibernate = (rootStreamId?: string): boolean => {
-    if (!unit || !hibernation || hibernating) return hibernating
-    try {
-      hibernation.sleep({ unit, runtimeSessionId: config.runtimeSessionId, ...(rootStreamId ? { rootStreamId } : {}) })
-      hibernating = true
-      log(`scratchpad ${rootStreamId ?? "for this session"} archived; hibernating ${unit} until it is restored`)
-    } catch (error) {
-      log(`hibernating ${unit} failed: ${error instanceof Error ? error.message : String(error)}`)
-    }
-    return hibernating
+  const hibernation = config.systemdUnit
+    ? unitHibernation(
+        options.hibernation ?? new Hibernation(hibernationDir(), systemctlUser, log),
+        config.systemdUnit,
+        config.runtimeSessionId,
+        log
+      )
+    : undefined
+  // Wait rather than replace: an archive landing before the link must not mint a new scratchpad.
+  const linkOnly = (rootStreamId: string) => ({
+    coldStartIfArchived: "wait" as const,
+    expectedRootStreamId: rootStreamId,
+  })
+  const archived = (rootStreamId: string) => {
+    if (hibernation?.hibernate(rootStreamId)) return
+    log(`scratchpad ${rootStreamId} archived; waiting for it to be restored`)
+    dormant.sleep(rootStreamId)
   }
 
   // An archived scratchpad that could not hibernate, or 90 minutes without a turn, ends the session. The process stays
@@ -189,8 +195,7 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
     },
     isArchived: async (rootStreamId) => Boolean(await client.getStreamArchivedAt(rootStreamId)),
     revive: async (rootStreamId) => {
-      // Wait rather than replace: an archive landing between the check and the link must not mint a new scratchpad.
-      session = createSession({ coldStartIfArchived: "wait", expectedRootStreamId: rootStreamId })
+      session = createSession(linkOnly(rootStreamId))
       try {
         await session.start()
         if (!session.rootStreamId) throw new Error("the session did not link")
@@ -209,9 +214,7 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
     holdPresence: async () => {
       if (presence) await client.updatePresence(heldPresenceBody(presence))
     },
-    archivedWhileIdle: (rootStreamId) => {
-      if (!hibernate(rootStreamId)) dormant.sleep(rootStreamId)
-    },
+    archivedWhileIdle: archived,
     idleAfterMs: IDLE_WIND_DOWN_AFTER_MS,
     log,
   })
@@ -231,31 +234,22 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
           return runner.deliverTurn(turn)
         },
         sessionControl,
-        onLinked: () => {
-          if (!unit || !hibernation) return
-          try {
-            if (hibernation.wake(unit)) log(`linked again; ${unit} enabled`)
-          } catch (error) {
-            log(`re-enabling ${unit} failed: ${error instanceof Error ? error.message : String(error)}`)
-          }
-        },
+        onLinked: () => hibernation?.linked(),
         onArchived: ({ rootStreamId }) => {
           runner.shutdown()
-          if (hibernate(rootStreamId)) return
-          log(`scratchpad ${rootStreamId} archived; waiting for it to be restored`)
-          dormant.sleep(rootStreamId)
+          archived(rootStreamId)
         },
-        onLinkRefusedArchived: () => void hibernate(),
+        onLinkRefusedArchived: ({ rootStreamId }) => void hibernation?.hibernate(rootStreamId),
       },
       runtime: T3CODE_RUNTIME,
       onPresence: (report) => {
         if (report.status !== "offline") presence = report
       },
       log,
+      ...(options.archiveGraceMs === undefined ? {} : { archiveGraceMs: options.archiveGraceMs }),
     })
-  // A woken unit links only the scratchpad it hibernated on, never a fresh one minted over a re-archive.
-  const hibernatedRoot = unit ? hibernation?.find(unit)?.rootStreamId : undefined
-  session = createSession(hibernatedRoot ? { coldStartIfArchived: "wait", expectedRootStreamId: hibernatedRoot } : {})
+  // A woken unit links only the scratchpad it hibernated on.
+  session = createSession(hibernation?.root ? linkOnly(hibernation.root) : {})
 
   return {
     start: async () => {

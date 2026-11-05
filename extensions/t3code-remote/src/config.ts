@@ -68,7 +68,7 @@ export interface T3Settings {
 export interface T3RemoteConfig extends RemoteSessionConfig {
   t3: T3Settings
   install: T3Install
-  /** The systemd unit running this connector (`THREA_T3CODE_UNIT`). Set, an archived scratchpad hibernates the unit. */
+  /** The systemd unit running this connector (`THREA_T3CODE_UNIT`). When set, an archived scratchpad stops and disables it. */
   systemdUnit?: string
 }
 

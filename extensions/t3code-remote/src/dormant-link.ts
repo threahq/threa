@@ -74,7 +74,7 @@ export class DormantLink {
     if (this.stopped) return
     if (this.rootStreamId) {
       if (this.wanted && !this.waking) void this.wake()
-      if (this.mode === "idle" && !this.waking && !(await this.idleArchived(this.rootStreamId))) await this.hold()
+      if (this.mode === "idle" && !this.waking) await this.holdUnlessArchived(this.rootStreamId)
       return
     }
     if (this.options.isBusy()) return this.touch()
@@ -144,17 +144,18 @@ export class DormantLink {
     this.wanted = false
   }
 
-  private async idleArchived(rootStreamId: string): Promise<boolean> {
+  private async holdUnlessArchived(rootStreamId: string): Promise<void> {
+    let archived = false
     try {
-      if (!(await this.options.isArchived(rootStreamId))) return false
+      archived = await this.options.isArchived(rootStreamId)
     } catch (error) {
       this.options.log(`could not check whether idle scratchpad ${rootStreamId} is archived: ${messageOf(error)}`)
-      return false
     }
-    if (this.mode !== "idle" || this.stopped || this.rootStreamId !== rootStreamId) return false
+    // A wake that started during the check owns the session now, and re-checks the archive itself.
+    if (this.mode !== "idle" || this.stopped || this.waking || this.rootStreamId !== rootStreamId) return
+    if (!archived) return this.hold()
     this.options.log(`scratchpad ${rootStreamId} archived while idle`)
     this.options.archivedWhileIdle(rootStreamId)
-    return true
   }
 
   private hold(): Promise<void> {

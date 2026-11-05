@@ -24,7 +24,7 @@ export interface UserUnitInput {
 
 /** A connector's systemd user unit: absolute paths, restart always, logs appended under `logDir`. */
 export function renderUserUnit(input: UserUnitInput): string {
-  for (const path of [
+  for (const value of [
     input.runtimePath,
     input.entryPath,
     input.workingDirectory,
@@ -33,9 +33,9 @@ export function renderUserUnit(input: UserUnitInput): string {
     ...Object.values(input.pinnedEnvironment ?? {}),
     ...(input.args ?? []),
   ]) {
-    if (/[\s\\\0]/.test(path)) {
+    if (/[\s\\\0]/.test(value)) {
       throw new Error(
-        `Cannot write a systemd unit for ${JSON.stringify(path)}: whitespace and backslashes need escaping systemd does not apply to every directive.`
+        `Cannot write a systemd unit for ${JSON.stringify(value)}: whitespace and backslashes need escaping systemd does not apply to every directive.`
       )
     }
   }
@@ -66,6 +66,7 @@ export function renderUserUnit(input: UserUnitInput): string {
   ].join("\n")
 }
 
+/** A single name stays accepted: published connectors on `^0.3` still pass one. */
 export function userUnitCommands(serviceNames: string | string[], start: boolean): string[][] {
   const names = typeof serviceNames === "string" ? [serviceNames] : serviceNames
   return [

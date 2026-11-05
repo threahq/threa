@@ -2141,12 +2141,12 @@ describe("RemoteSession session-archived handling (grace window)", () => {
       },
     } as unknown as ThreaClient
     const logs: string[] = []
-    let told = 0
+    const told: Array<{ rootStreamId?: string }> = []
     const { transport } = makeFakeTransport()
     const session = new RemoteSession({
-      config: makeConfig({ coldStartIfArchived: "wait" }),
+      config: makeConfig({ coldStartIfArchived: "wait", expectedRootStreamId: "stream_root" }),
       client,
-      delegate: { deliverTurn: async () => {}, onLinkRefusedArchived: () => void told++ },
+      delegate: { deliverTurn: async () => {}, onLinkRefusedArchived: (payload) => void told.push(payload) },
       runtime: RUNTIME,
       transport,
       log: (message) => logs.push(message),
@@ -2157,7 +2157,7 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     await ensureLink()
 
     expect({ told, logs }).toEqual({
-      told: 1,
+      told: [{ rootStreamId: "stream_root" }],
       logs: [
         "could not link to Threa (will retry): The linked scratchpad is archived — waiting for the scratchpad to be unarchived",
         "could not link to Threa (will retry): unavailable",
