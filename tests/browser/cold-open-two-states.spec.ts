@@ -11,6 +11,7 @@ import {
   expectApiOk,
   hasCachedBootstrapForAccount,
   loginAndCreateWorkspace,
+  runOnIndexedDb,
   sendApiOk,
   sendPanelReply,
   waitForRealThreadPanel,
@@ -545,6 +546,8 @@ function expectTwoStates(f: Fixture, { records, analysis }: Reopened, expectChan
 test.describe("Cold open lands in two states", () => {
   // Keep the watched sidebar rows inside its scroll viewport.
   test.use({ viewport: { width: 1280, height: 1200 } })
+  // Waits for IndexedDB to hold the live seed before closing the page.
+  test.beforeEach(({ context }) => runOnIndexedDb(context))
 
   test("no gap: the cached state paints once and nothing moves", async ({ page, context }) => {
     const f = await arrange(page, context)

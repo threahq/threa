@@ -4,6 +4,7 @@ import {
   expandCollapsedSidebarSections,
   loginAndCreateWorkspace,
   openPhoneSidebar,
+  runOnIndexedDb,
 } from "./helpers"
 import { seedStream } from "./perf-fixtures"
 
@@ -93,6 +94,8 @@ test("should delay the skeleton on cached phone switches and still show it for a
   context,
 }) => {
   test.setTimeout(120_000)
+  // The blocked read is an IndexedDB write transaction held open.
+  await runOnIndexedDb(context)
   await loginAndCreateWorkspace(page, "skeleton-delay")
   const workspaceId = page.url().match(/\/w\/([^/]+)/)![1]
   const streams: string[] = []
