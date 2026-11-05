@@ -192,17 +192,20 @@ export async function setAllSidebarPreset(page: Page, workspaceId: string): Prom
  * test runtime); the backend Zod schema rejects drift loudly.
  */
 export async function setSmartSidebarPreset(page: Page): Promise<void> {
-  const response = await page.request.patch(`/api/workspaces/${workspaceIdFromUrl(page)}/sidebar-config`, {
-    data: {
-      basePreset: "smart",
-      sections: [
-        { id: "important", spec: { kind: "smart", bucket: "important" } },
-        { id: "recent", spec: { kind: "smart", bucket: "recent" } },
-        { id: "other", spec: { kind: "smart", bucket: "other" } },
-      ],
-    },
-  })
-  await expectApiOk(response, "Set Smart sidebar preset")
+  await sendApiOk(
+    () =>
+      page.request.patch(`/api/workspaces/${workspaceIdFromUrl(page)}/sidebar-config`, {
+        data: {
+          basePreset: "smart",
+          sections: [
+            { id: "important", spec: { kind: "smart", bucket: "important" } },
+            { id: "recent", spec: { kind: "smart", bucket: "recent" } },
+            { id: "other", spec: { kind: "smart", bucket: "other" } },
+          ],
+        },
+      }),
+    "Set Smart sidebar preset"
+  )
   await page.reload()
 }
 
