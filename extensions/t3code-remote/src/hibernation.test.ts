@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { loadT3Config, t3Install } from "./config"
 import { createT3Connector, type T3Connector } from "./connector"
-import { Hibernation } from "./hibernation"
+import { Hibernation, unitHibernation } from "./hibernation"
 import { until } from "./t3.test-support"
 
 const UNIT = "threa-t3-demo.service"
@@ -193,6 +193,26 @@ describe("a connector run as a unit", () => {
       records: [],
       calls: [],
       refused: true,
+    })
+  })
+})
+
+describe("unitHibernation", () => {
+  test("a link landing after the unit hibernated leaves it disabled and recorded for the waker", () => {
+    const dir = mkdtempSync(join(tmpdir(), "t3unit-"))
+    const { calls, systemctl } = recordingSystemctl()
+    const store = new Hibernation(dir, systemctl, () => {})
+    const unit = unitHibernation(store, UNIT, "t3s_demo", () => {})
+
+    unit.hibernate("stream_root")
+    unit.linked()
+
+    expect({ records: store.list(), calls }).toEqual({
+      records: [{ unit: UNIT, runtimeSessionId: "t3s_demo", rootStreamId: "stream_root" }],
+      calls: [
+        ["disable", UNIT],
+        ["stop", "--no-block", UNIT],
+      ],
     })
   })
 })

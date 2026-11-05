@@ -55,7 +55,7 @@ unit. From a checkout, `bun run install-service --start` writes units that run t
 
 It writes `~/.config/systemd/user/threa-t3code-remote.service` and `threa-t3code-wake.service` (refusing to overwrite
 either without `--force`) and creates `~/.threa/t3code-remote/log/`, where the output of both lands. `--dry-run`
-prints the plan and touches nothing. Both units read its environment from `~/.config/threa/t3code-remote.env`, one `KEY=value`
+prints the plan and touches nothing. Both units read their environment from `~/.config/threa/t3code-remote.env`, one `KEY=value`
 per line. With auto-login on, the connector runs `t3`, so put a `PATH` that reaches it in that file: a `PATH` there
 replaces the unit's own, so include the directory of the node or bun the unit runs too.
 
