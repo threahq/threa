@@ -17,6 +17,7 @@ import {
   findTimelineTargetIndex,
   getTimelineItemKey,
   groupTimelineItems,
+  mergeAgentRunGroups,
   mergeDocActivityRuns,
   injectGapItems,
   injectDayDividers,
@@ -1670,5 +1671,133 @@ describe("groupTimelineItems doc activity", () => {
       second: findEventItemIndex(items, "a2"),
       dividers: [...collectDividerAnchorIds(items)],
     }).toEqual({ first: 0, second: 0, dividers: ["a1", "a2"] })
+  })
+})
+
+describe("mergeAgentRunGroups", () => {
+  const at = (event: StreamEvent, createdAt: string): StreamEvent => ({ ...event, createdAt })
+  const done = (n: number, createdAt = "2026-02-19T10:00:00.000Z") => [
+    at(createSessionStartedEvent(`s${n}`, `${n * 10}`, `sess_${n}`, null), createdAt),
+    at(createSessionCompletedEvent(`c${n}`, `${n * 10 + 1}`, `sess_${n}`), createdAt),
+  ]
+  const live = (n: number) => [createSessionStartedEvent(`s${n}`, `${n * 10}`, `sess_${n}`, null)]
+  const message = (id: string, sequence: string) =>
+    createEvent({ id, sequence, eventType: "message_created", payload: { messageId: `msg_${id}` } })
+  const merge = (events: StreamEvent[], frontierSequence: bigint | null | undefined = undefined) =>
+    mergeAgentRunGroups(groupTimelineItems(events, "usr_1"), { frontierSequence })
+  const shape = (items: TimelineItem[]) =>
+    items.map((item) => {
+      if (item.type === "agent_run_group") return { group: item.sessions.map((session) => session.sessionId) }
+      if (item.type === "session_group") return { session: item.sessionId }
+      return { type: item.type }
+    })
+
+  it("merges adjacent finished sessions into one group keyed like the head's lone card", () => {
+    const items = merge([...done(1), ...done(2), ...done(3)])
+    expect(shape(items)).toEqual([{ group: ["sess_1", "sess_2", "sess_3"] }])
+    const [group] = items as Extract<TimelineItem, { type: "agent_run_group" }>[]
+    expect(group!.events.map((e) => e.id)).toEqual(["s1", "c1", "s2", "c2", "s3", "c3"])
+    expect(getTimelineItemKey(group!)).toBe(getTimelineItemKey(merge(done(1))[0]!))
+  })
+
+  it("keeps a lone finished session as its own card", () => {
+    expect(shape(merge(done(1)))).toEqual([{ session: "sess_1" }])
+  })
+
+  it("splits at a message between runs", () => {
+    expect(shape(merge([...done(1), message("m1", "25"), ...done(3)]))).toEqual([
+      { session: "sess_1" },
+      { type: "event" },
+      { session: "sess_3" },
+    ])
+  })
+
+  it("never groups a live session and lets it separate the runs around it", () => {
+    expect(shape(merge([...done(1), ...live(2), ...done(3)]))).toEqual([
+      { session: "sess_1" },
+      { session: "sess_2" },
+      { session: "sess_3" },
+    ])
+    expect(shape(merge([...done(1), ...done(2), ...live(3), ...done(4), ...done(5)]))).toEqual([
+      { group: ["sess_1", "sess_2"] },
+      { session: "sess_3" },
+      { group: ["sess_4", "sess_5"] },
+    ])
+  })
+
+  it("joins failed runs", () => {
+    const failed = createSessionFailedEvent("f2", "21", "sess_2")
+    expect(shape(merge([...done(1), createSessionStartedEvent("s2", "20", "sess_2", null), failed]))).toEqual([
+      { group: ["sess_1", "sess_2"] },
+    ])
+  })
+
+  it("splits at a day boundary", () => {
+    expect(shape(merge([...done(1), ...done(2, "2026-02-20T10:00:00.000Z")]))).toEqual([
+      { session: "sess_1" },
+      { session: "sess_2" },
+    ])
+  })
+
+  it("splits at a gap placeholder", () => {
+    const items = injectGapItems(groupTimelineItems([...done(1), ...done(2)], "usr_1"), [
+      { afterEventId: "c1", missingCount: 1 },
+    ])
+    expect(shape(mergeAgentRunGroups(items, { frontierSequence: undefined }))).toEqual([
+      { session: "sess_1" },
+      { type: "gap" },
+      { session: "sess_2" },
+    ])
+  })
+
+  it("splits when the earlier member carries aside anchors and moves the later member's onto the group", () => {
+    const [a, b, c] = groupTimelineItems([...done(1), ...done(2), ...done(3)], "usr_1") as Extract<
+      TimelineItem,
+      { type: "session_group" }
+    >[]
+    const aside = message("aside", "99")
+    expect(shape(mergeAgentRunGroups([{ ...a!, asideAnchors: [aside] }, b!], { frontierSequence: undefined }))).toEqual(
+      [{ session: "sess_1" }, { session: "sess_2" }]
+    )
+    const merged = mergeAgentRunGroups([a!, { ...b!, asideAnchors: [aside] }, c!], { frontierSequence: undefined })
+    expect(shape(merged)).toEqual([{ group: ["sess_1", "sess_2"] }, { session: "sess_3" }])
+    expect(merged[0]).toMatchObject({ asideAnchors: [aside] })
+  })
+
+  it("does not split on a zero-height event between runs and leaves it in place", () => {
+    const reaction = createEvent({ id: "r1", sequence: "15", eventType: "reaction_added", payload: {} })
+    const [a, b] = groupTimelineItems([...done(1), ...done(2)], "usr_1")
+    const items = mergeAgentRunGroups([a!, { type: "event", event: reaction }, b!], { frontierSequence: undefined })
+    expect(shape(items)).toEqual([{ group: ["sess_1", "sess_2"] }, { type: "event" }])
+  })
+
+  it("does not mutate its input items", () => {
+    const input = groupTimelineItems([...done(1), ...done(2)], "usr_1")
+    const snapshot = structuredClone(input)
+    mergeAgentRunGroups(input, { frontierSequence: undefined })
+    expect(input).toEqual(snapshot)
+  })
+
+  it("resolves every member's first event to the group, hides it in channels, and anchors the divider", () => {
+    const items = merge([...done(1), ...done(2)])
+    expect(findEventItemIndex(items, "s1")).toBe(0)
+    expect(findEventItemIndex(items, "s2")).toBe(0)
+    expect(findEventItemIndex(items, "c2")).toBe(-1)
+    expect(collectDividerAnchorIds(items)).toEqual(new Set(["s1", "s2"]))
+    expect(filterVisibleItems(items, true)).toEqual([])
+  })
+
+  it("counts members whose first event is past the frontier", () => {
+    const events = [...done(1), ...done(2), ...done(3)]
+    const unread = (frontier: bigint | null | undefined) =>
+      (merge(events, frontier)[0] as { unreadCount: number }).unreadCount
+    expect([unread(undefined), unread(null), unread(15n), unread(100n)]).toEqual([0, 3, 2, 0])
+  })
+
+  it("timelineItemEqual compares members and unread count", () => {
+    const events = [...done(1), ...done(2)]
+    expect(timelineItemEqual(merge(events, 0n)[0]!, merge(events, 0n)[0]!)).toBe(true)
+    expect(timelineItemEqual(merge(events, 0n)[0]!, merge(events, 100n)[0]!)).toBe(false)
+    expect(timelineItemEqual(merge(events)[0]!, merge([...events, ...done(3)])[0]!)).toBe(false)
   })
 })

@@ -21,6 +21,9 @@ import type { RunFold, RunFoldStore } from "./run-fold"
 import { RunFoldProvider } from "./run-fold-context"
 import { AsideAnchorEvent } from "./aside-anchor-event"
 import { AgentSessionEvent } from "./agent-session-event"
+import { AgentRunGroupEvent } from "./agent-run-group-event"
+import { deriveSessionStatus, isLiveSessionStatus } from "./agent-session-status"
+import { isPastFrontier } from "@/lib/read-frontier"
 import { CommandEvent } from "./command-event"
 import { DocActivityEvent } from "./doc-activity-event"
 import { UnreadDivider } from "./unread-divider"
@@ -136,6 +139,14 @@ export type TimelineItem =
       sessionId: string
       sessionVersion: number
       events: StreamEvent[]
+      asideAnchors?: StreamEvent[]
+    }
+  /** Adjacent finished session cards, rendered as one row (`mergeAgentRunGroups`). `events` flattens every member's. */
+  | {
+      type: "agent_run_group"
+      sessions: SessionGroupItem[]
+      events: StreamEvent[]
+      unreadCount: number
       asideAnchors?: StreamEvent[]
     }
   /**
@@ -362,11 +373,21 @@ export function annotateConversationRevivals(
   })
 }
 
-type EventGroupItem = Extract<TimelineItem, { type: "command_group" | "session_group" | "doc_activity_group" }>
+type SessionGroupItem = Extract<TimelineItem, { type: "session_group" }>
+
+type EventGroupItem = Extract<
+  TimelineItem,
+  { type: "command_group" | "session_group" | "doc_activity_group" | "agent_run_group" }
+>
 
 /** Items that render several events as one row; `groupAnchorIds` says which event ids address them. */
 function isEventGroup(item: TimelineItem): item is EventGroupItem {
-  return item.type === "command_group" || item.type === "session_group" || item.type === "doc_activity_group"
+  return (
+    item.type === "command_group" ||
+    item.type === "session_group" ||
+    item.type === "doc_activity_group" ||
+    item.type === "agent_run_group"
+  )
 }
 
 /**
@@ -374,17 +395,18 @@ function isEventGroup(item: TimelineItem): item is EventGroupItem {
  * doc group, whose later roll-ups merge into a row the viewer may already have read.
  */
 function groupAnchorIds(item: EventGroupItem): string[] {
+  if (item.type === "agent_run_group") return item.sessions.flatMap(groupAnchorIds)
   const ids = item.events.map((event) => event.id)
   return item.type === "doc_activity_group" ? ids : ids.slice(0, 1)
 }
 
-/** The last item that renders a row; zero-height events between two rows do not separate them. */
-function lastRenderedItem(items: TimelineItem[]): TimelineItem | undefined {
+/** Index of the last item that renders a row (-1 if none); zero-height events between two rows do not separate them. */
+function lastRenderedIndex(items: TimelineItem[]): number {
   for (let i = items.length - 1; i >= 0; i--) {
     const item = items[i]!
-    if (item.type !== "event" || !ZERO_HEIGHT_EVENT_TYPES.has(item.event.eventType)) return item
+    if (item.type !== "event" || !ZERO_HEIGHT_EVENT_TYPES.has(item.event.eventType)) return i
   }
-  return undefined
+  return -1
 }
 
 /**
@@ -400,9 +422,54 @@ export function mergeDocActivityRuns(items: TimelineItem[]): TimelineItem[] {
       continue
     }
     const docId = (item.event.payload as DocActivityEventPayload).docId
-    const last = lastRenderedItem(result)
+    const last = result[lastRenderedIndex(result)]
     if (last?.type === "doc_activity_group" && last.docId === docId) last.events.push(item.event)
     else result.push({ type: "doc_activity_group", docId, events: [item.event] })
+  }
+  return result
+}
+
+function isTerminalSession(item: TimelineItem | undefined): item is SessionGroupItem {
+  return item?.type === "session_group" && !isLiveSessionStatus(deriveSessionStatus(item.events).status)
+}
+
+/**
+ * Merge adjacent finished session cards into an `agent_run_group`. A running or retrying
+ * session keeps its own card and, being rendered, separates the runs on either side of it.
+ * Replaces the earlier row in place and builds new objects: inputs are memoized upstream.
+ * Unread members are those whose first event is past `frontierSequence` (null counts all).
+ */
+export function mergeAgentRunGroups(
+  items: TimelineItem[],
+  { frontierSequence }: { frontierSequence: bigint | null | undefined }
+): TimelineItem[] {
+  const unreadCount = (sessions: SessionGroupItem[]) =>
+    sessions.filter((session) => {
+      const first = session.events[0]
+      return first !== undefined && isPastFrontier(BigInt(first.sequence), frontierSequence)
+    }).length
+
+  const result: TimelineItem[] = []
+  for (const item of items) {
+    const lastIndex = lastRenderedIndex(result)
+    const last = result[lastIndex]
+    const mergeable =
+      isTerminalSession(item) &&
+      (isTerminalSession(last) || last?.type === "agent_run_group") &&
+      !last.asideAnchors &&
+      itemDayStartMs(last) === itemDayStartMs(item)
+    if (!mergeable) {
+      result.push(item)
+      continue
+    }
+    const sessions = last.type === "agent_run_group" ? [...last.sessions, item] : [last, item]
+    result[lastIndex] = {
+      type: "agent_run_group",
+      sessions,
+      events: sessions.flatMap((session) => session.events),
+      unreadCount: unreadCount(sessions),
+      ...(item.asideAnchors && { asideAnchors: item.asideAnchors }),
+    }
   }
   return result
 }
@@ -466,7 +533,7 @@ export function collectDividerAnchorIds(items: TimelineItem[]): Set<string> {
  */
 export function filterVisibleItems(items: TimelineItem[], hideSessionCards?: boolean): TimelineItem[] {
   return items.filter((item) => {
-    if (item.type === "session_group" && hideSessionCards) return false
+    if ((item.type === "session_group" || item.type === "agent_run_group") && hideSessionCards) return false
     if (item.type === "event" && ZERO_HEIGHT_EVENT_TYPES.has(item.event.eventType)) return false
     return true
   })
@@ -652,6 +719,8 @@ export function getTimelineItemKey(item: TimelineItem): string {
       return item.commandId
     case "session_group":
       return item.sessionId
+    case "agent_run_group":
+      return item.sessions[0]!.sessionId
     case "doc_activity_group":
       return `doc_activity:${item.events[0]?.id}`
     case "gap":
@@ -690,6 +759,7 @@ function itemContainsEvent(item: TimelineItem, eventId: string): boolean {
     case "command_group":
     case "session_group":
     case "doc_activity_group":
+    case "agent_run_group":
       return item.events.some((event) => event.id === eventId)
     case "gap":
     case "skeleton":
@@ -743,7 +813,8 @@ export function itemDayStartMs(item: TimelineItem): number | null {
       return localStartOfDayMs(new Date(item.event.createdAt))
     case "command_group":
     case "session_group":
-    case "doc_activity_group": {
+    case "doc_activity_group":
+    case "agent_run_group": {
       const first = item.events[0]
       return first ? localStartOfDayMs(new Date(first.createdAt)) : null
     }
@@ -1113,6 +1184,21 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
           />
         </div>
       )}
+      {item.type === "agent_run_group" && !ctx.hideSessionCards && (
+        <div className="relative px-3 sm:px-6" data-event-id={item.events[0]?.id}>
+          {/* Each member's start event answers to this row: the read scan, the
+              unread divider and scroll-to-event all find rows by data-event-id. */}
+          {item.sessions.slice(1).map((session) => (
+            <div
+              key={session.sessionId}
+              aria-hidden
+              className="pointer-events-none absolute inset-0"
+              data-event-id={session.events[0]?.id}
+            />
+          ))}
+          <AgentRunGroupEvent sessions={item.sessions} unreadCount={item.unreadCount} />
+        </div>
+      )}
       {eventNode}
       {"asideAnchors" in item &&
         item.asideAnchors?.map((anchor) => (
@@ -1200,6 +1286,20 @@ export function timelineItemEqual(a: TimelineItem, b: TimelineItem): boolean {
         a.sessionId === other.sessionId &&
         a.sessionVersion === other.sessionVersion &&
         eventsArrayEqual(a.events, other.events) &&
+        eventsArrayEqual(a.asideAnchors ?? NO_EVENTS, other.asideAnchors ?? NO_EVENTS)
+      )
+    }
+    case "agent_run_group": {
+      const other = b as Extract<TimelineItem, { type: "agent_run_group" }>
+      return (
+        a.unreadCount === other.unreadCount &&
+        a.sessions.length === other.sessions.length &&
+        a.sessions.every(
+          (session, i) =>
+            session.sessionId === other.sessions[i]!.sessionId &&
+            session.sessionVersion === other.sessions[i]!.sessionVersion &&
+            eventsArrayEqual(session.events, other.sessions[i]!.events)
+        ) &&
         eventsArrayEqual(a.asideAnchors ?? NO_EVENTS, other.asideAnchors ?? NO_EVENTS)
       )
     }

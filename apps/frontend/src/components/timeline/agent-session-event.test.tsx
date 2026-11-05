@@ -271,6 +271,20 @@ describe("AgentSessionEvent", () => {
       expect(screen.getByText("Session failed")).toBeInTheDocument()
       expect(screen.queryByText("Interrupted, retrying…")).not.toBeInTheDocument()
     })
+
+    it("shows how long a failed session ran", () => {
+      const failedEvent = createSessionEvent("agent_session:failed", {
+        sessionId: "session_int",
+        stepCount: 2,
+        error: "Error: boom",
+        traceId: "session_int",
+        failedAt: "2026-02-19T18:00:09.000Z",
+      })
+
+      renderEvent(<AgentSessionEvent workspaceId={WS} events={[startedEvent, failedEvent]} />)
+
+      expect(screen.getByText(/2 steps • 9.0s • Error during execution/)).toBeInTheDocument()
+    })
   })
 
   describe("Spend-denied failure", () => {
@@ -294,7 +308,7 @@ describe("AgentSessionEvent", () => {
       renderEvent(<AgentSessionEvent workspaceId={WS} events={[startedEvent, failedEvent]} />)
 
       expect(screen.getByText("Session stopped")).toBeInTheDocument()
-      expect(screen.getByText("1 step • Agent allowance used up")).toBeInTheDocument()
+      expect(screen.getByText("1 step • 2.0s • Agent allowance used up")).toBeInTheDocument()
       expect(screen.queryByText("Session failed")).not.toBeInTheDocument()
       expect(screen.queryByText(/Error during execution/)).not.toBeInTheDocument()
     })

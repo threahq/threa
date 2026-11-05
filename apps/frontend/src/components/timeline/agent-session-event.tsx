@@ -1,27 +1,14 @@
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
-import { Check, X, Loader2 } from "lucide-react"
-import type {
-  ActiveAgentSession,
-  AgentToolEffect,
-  StreamEvent,
-  AgentSessionRerunContext,
-  AgentSessionStartedPayload,
-  AgentSessionCompletedPayload,
-  AgentSessionFailedPayload,
-  AgentSessionInterruptedPayload,
-  AgentSessionDeletedPayload,
-} from "@threahq/types"
+import type { StreamEvent } from "@threahq/types"
 import { useTrace } from "@/contexts"
 import { RelativeTime } from "@/components/relative-time"
-import { formatDuration } from "@/lib/dates"
 import { findVisibleZoneEditor, focusAtEnd } from "@/hooks"
 import { StopSessionButton, RedirectSessionButton } from "@/components/trace/session-action-buttons"
 import { SessionEffectGrid } from "./session-effect-grid"
 import { LiveSessionEffectGrid } from "./live-session-effect-grid"
-import { isDescribedEffect, unionSessionEffects } from "@/lib/effect-links"
 import { useAgentSessionActivity } from "@/stores/agent-activity-store"
-import { SPEND_DENIAL_COPY } from "@/lib/ai-spend-denial"
+import { deriveSessionStatus, buildSessionStatusConfig, sessionEffectsFor } from "./agent-session-status"
 
 /** How long the Redirect hint replaces the subtitle line after a click. */
 const REDIRECT_HINT_MS = 5000
@@ -41,296 +28,6 @@ interface AgentSessionEventProps {
   onRedirect?: () => void
 }
 
-type SessionStatus = "running" | "retrying" | "completed" | "failed" | "deleted"
-
-interface StatusConfig {
-  title: string
-  subtitle: string
-  icon: React.ReactNode
-  borderColor: string
-  bgColor: string
-  hoverBgColor: string
-  titleColor?: string
-  timestamp: string | null
-}
-
-function deriveStatus(events: StreamEvent[]): {
-  status: SessionStatus
-  sessionId: string
-  startedPayload: AgentSessionStartedPayload | null
-  completedPayload: AgentSessionCompletedPayload | null
-  failedPayload: AgentSessionFailedPayload | null
-  interruptedPayload: AgentSessionInterruptedPayload | null
-  /**
-   * EVERY interrupted payload, oldest first. The status line only needs the
-   * latest, but a retry resets its step rows' effects, so each attempt's
-   * interrupted event is the only surviving record of what THAT attempt wrote.
-   * Keeping just the last one loses every write before the final retry.
-   */
-  interruptedPayloads: AgentSessionInterruptedPayload[]
-  deletedPayload: AgentSessionDeletedPayload | null
-} {
-  let startedPayload: AgentSessionStartedPayload | null = null
-  let completedPayload: AgentSessionCompletedPayload | null = null
-  let failedPayload: AgentSessionFailedPayload | null = null
-  let interruptedPayload: AgentSessionInterruptedPayload | null = null
-  const interruptedPayloads: AgentSessionInterruptedPayload[] = []
-  let deletedPayload: AgentSessionDeletedPayload | null = null
-  let sessionId = ""
-
-  for (const event of events) {
-    const payload = event.payload as { sessionId?: string }
-    if (payload.sessionId) sessionId = payload.sessionId
-
-    switch (event.eventType) {
-      case "agent_session:started":
-        startedPayload = event.payload as AgentSessionStartedPayload
-        break
-      case "agent_session:completed":
-        completedPayload = event.payload as AgentSessionCompletedPayload
-        break
-      case "agent_session:failed":
-        failedPayload = event.payload as AgentSessionFailedPayload
-        break
-      case "agent_session:interrupted":
-        // Last one wins — a later attempt's interrupt supersedes the prior.
-        interruptedPayload = event.payload as AgentSessionInterruptedPayload
-        interruptedPayloads.push(interruptedPayload)
-        break
-      case "agent_session:deleted":
-        deletedPayload = event.payload as AgentSessionDeletedPayload
-        break
-    }
-  }
-
-  // Precedence, terminal first: deleted (superseding) › completed › failed. A
-  // terminal event always wins over `interrupted`, which is non-terminal — a
-  // retryable attempt emits it, then the retry's own completed/failed supersedes
-  // it. With only started + interrupted present (mid-retry, incl. after a refresh)
-  // the session reads as "retrying"; a bare started with none of these is "running".
-  let status: SessionStatus
-  if (deletedPayload) {
-    status = "deleted"
-  } else if (completedPayload) {
-    status = "completed"
-  } else if (failedPayload) {
-    status = "failed"
-  } else if (interruptedPayload) {
-    status = "retrying"
-  } else {
-    status = "running"
-  }
-
-  return {
-    status,
-    sessionId,
-    startedPayload,
-    completedPayload,
-    failedPayload,
-    interruptedPayload,
-    interruptedPayloads,
-    deletedPayload,
-  }
-}
-
-function buildStatusConfig(
-  status: SessionStatus,
-  startedPayload: AgentSessionStartedPayload | null,
-  completedPayload: AgentSessionCompletedPayload | null,
-  failedPayload: AgentSessionFailedPayload | null,
-  interruptedPayload: AgentSessionInterruptedPayload | null,
-  deletedPayload: AgentSessionDeletedPayload | null,
-  live: ActiveAgentSession | undefined,
-  /**
-   * Layer-0 markers: a mutating tool declared nothing, so the effect is a bare
-   * `{ kind }` with nothing to name, diff or link. They ride the meta line as a
-   * count rather than the grid, and the meta line is a single truncating line,
-   * so this costs no height (INV-21).
-   */
-  markerEffectCount: number
-): StatusConfig {
-  const rerunReasonLabel = formatRerunReasonLabel(startedPayload?.rerunContext)
-  const rerunReasonDetail = formatRerunReasonDetail(startedPayload?.rerunContext)
-
-  switch (status) {
-    case "deleted":
-      return {
-        title: "Session deleted",
-        subtitle: "This session was removed because its invoking message was deleted.",
-        icon: (
-          <div className="w-5 h-5 rounded-full flex items-center justify-center bg-[hsl(210_15%_55%/0.15)]">
-            <X className="w-3.5 h-3.5 text-muted-foreground" />
-          </div>
-        ),
-        borderColor: "hsl(var(--border))",
-        bgColor: "hsl(var(--muted) / 0.4)",
-        hoverBgColor: "hsl(var(--muted) / 0.6)",
-        timestamp: deletedPayload?.deletedAt ?? startedPayload?.startedAt ?? null,
-      }
-
-    case "completed": {
-      const parts: string[] = []
-      if (rerunReasonLabel) {
-        parts.push(rerunReasonLabel)
-      }
-      if (rerunReasonDetail) {
-        parts.push(rerunReasonDetail)
-      }
-      if (completedPayload) {
-        parts.push(`${completedPayload.stepCount} ${completedPayload.stepCount === 1 ? "step" : "steps"}`)
-        parts.push(formatDuration(completedPayload.duration))
-        parts.push(
-          `${completedPayload.messageCount} ${completedPayload.messageCount === 1 ? "message" : "messages"} sent`
-        )
-      }
-      const completedChanges = formatMarkerEffectCount(markerEffectCount)
-      if (completedChanges) {
-        parts.push(completedChanges)
-      }
-      return {
-        title: "Session complete",
-        subtitle: parts.join(" • "),
-        icon: (
-          <div className="w-5 h-5 rounded-full flex items-center justify-center bg-[hsl(142_76%_36%/0.15)]">
-            <Check className="w-3.5 h-3.5 text-[hsl(142,76%,36%)]" />
-          </div>
-        ),
-        borderColor: "hsl(var(--border))",
-        bgColor: "hsl(var(--muted) / 0.5)",
-        hoverBgColor: "hsl(var(--muted) / 0.7)",
-        timestamp: completedPayload?.completedAt ?? startedPayload?.startedAt ?? null,
-      }
-    }
-    case "failed": {
-      const parts: string[] = []
-      if (rerunReasonLabel) {
-        parts.push(rerunReasonLabel)
-      }
-      if (rerunReasonDetail) {
-        parts.push(rerunReasonDetail)
-      }
-      if (failedPayload) {
-        parts.push(`${failedPayload.stepCount} ${failedPayload.stepCount === 1 ? "step" : "steps"}`)
-      }
-      const spendDenial = failedPayload?.spendDenial
-      parts.push(spendDenial ? SPEND_DENIAL_COPY[spendDenial] : "Error during execution")
-      const failedChanges = formatMarkerEffectCount(markerEffectCount)
-      if (failedChanges) {
-        parts.push(failedChanges)
-      }
-      return {
-        title: spendDenial ? "Session stopped" : "Session failed",
-        subtitle: parts.join(" • "),
-        icon: (
-          <div className="w-5 h-5 rounded-full flex items-center justify-center bg-[hsl(0_84%_60%/0.15)]">
-            <X className="w-3.5 h-3.5 text-[hsl(0,84%,60%)]" />
-          </div>
-        ),
-        borderColor: "hsl(0 84% 60% / 0.3)",
-        bgColor: "hsl(0 84% 60% / 0.05)",
-        hoverBgColor: "hsl(0 84% 60% / 0.08)",
-        titleColor: "hsl(0 84% 60%)",
-        timestamp: failedPayload?.failedAt ?? startedPayload?.startedAt ?? null,
-      }
-    }
-    case "retrying": {
-      // Non-terminal: a turn attempt failed and the queue is retrying the same
-      // session. Amber (not the red terminal-fail) and a spinner, so it reads as
-      // "in progress, hang on" rather than "done, broken". A retry restarts its
-      // step counter from 1 (SessionTrace is fresh per attempt), so once it's
-      // actively progressing (live > 0) we follow the live count — it moves every
-      // step and never reads as a hang, even for a retry that re-walks many steps.
-      // During backoff the live rail reports 0 (the synthetic started-event entry),
-      // so we fall back to the interrupted payload's snapshot (steps reached before
-      // the failure) rather than showing 0.
-      const liveSteps = live?.stepCount ?? 0
-      const steps = liveSteps > 0 ? liveSteps : (interruptedPayload?.stepCount ?? 0)
-      const parts: string[] = []
-      if (rerunReasonLabel) {
-        parts.push(rerunReasonLabel)
-      }
-      if (rerunReasonDetail) {
-        parts.push(rerunReasonDetail)
-      }
-      parts.push(`${steps} ${steps === 1 ? "step" : "steps"}`)
-      const retryingChanges = formatMarkerEffectCount(markerEffectCount)
-      if (retryingChanges) {
-        parts.push(retryingChanges)
-      }
-      return {
-        title: "Interrupted, retrying…",
-        subtitle: parts.join(" • "),
-        icon: (
-          <div className="w-5 h-5 rounded-full flex items-center justify-center bg-[hsl(38_92%_50%/0.15)]">
-            <Loader2 className="w-3.5 h-3.5 text-[hsl(38,92%,50%)] animate-spin" />
-          </div>
-        ),
-        borderColor: "hsl(38 92% 50% / 0.3)",
-        bgColor: "hsl(38 92% 50% / 0.05)",
-        hoverBgColor: "hsl(38 92% 50% / 0.08)",
-        titleColor: "hsl(38 92% 50%)",
-        timestamp: interruptedPayload?.interruptedAt ?? startedPayload?.startedAt ?? null,
-      }
-    }
-    case "running": {
-      const personaName = startedPayload?.personaName ?? "Agent"
-      const stepCount = live?.stepCount ?? 0
-      const messageCount = live?.messageCount ?? 0
-      // Note: liveSubstep is intentionally NOT joined into the meta string — the
-      // render function promotes it into its own row with a live-pulse dot and
-      // italic foreground weight, so it stands out as "what is happening right now"
-      // instead of being buried among static counts.
-      const parts: string[] = []
-      if (rerunReasonLabel) {
-        parts.push(rerunReasonLabel)
-      }
-      if (rerunReasonDetail) {
-        parts.push(rerunReasonDetail)
-      }
-      parts.push(`${stepCount} ${stepCount === 1 ? "step" : "steps"}`)
-      parts.push(`${messageCount} ${messageCount === 1 ? "message" : "messages"} sent`)
-      return {
-        title: `${personaName} is working…`,
-        subtitle: parts.join(" • "),
-        icon: (
-          <div className="w-5 h-5 rounded-full flex items-center justify-center bg-[hsl(var(--primary)/0.15)]">
-            <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
-          </div>
-        ),
-        borderColor: "hsl(var(--border))",
-        bgColor: "hsl(var(--muted) / 0.5)",
-        hoverBgColor: "hsl(var(--muted) / 0.7)",
-        timestamp: startedPayload?.startedAt ?? null,
-      }
-    }
-  }
-}
-
-function formatMarkerEffectCount(count: number): string | null {
-  if (count <= 0) return null
-  return `${count} ${count === 1 ? "change" : "changes"}`
-}
-
-function formatRerunReasonLabel(rerunContext?: AgentSessionRerunContext | null): string | null {
-  if (!rerunContext) return null
-  switch (rerunContext.cause) {
-    case "invoking_message_edited":
-      return "Rerun after invoking message edit"
-    case "referenced_message_edited":
-      return "Rerun after follow-up message edit"
-    default:
-      return null
-  }
-}
-
-function formatRerunReasonDetail(rerunContext?: AgentSessionRerunContext | null): string | null {
-  if (!rerunContext) return null
-  const after = rerunContext.editedMessageAfter?.trim()
-  if (!after) return null
-  const compact = after.length > 80 ? `${after.slice(0, 77)}...` : after
-  return `Edited: "${compact}"`
-}
-
 export function AgentSessionEvent({
   events,
   workspaceId,
@@ -339,16 +36,8 @@ export function AgentSessionEvent({
   onRedirect,
 }: AgentSessionEventProps) {
   const { getTraceUrl } = useTrace()
-  const {
-    status,
-    sessionId,
-    startedPayload,
-    completedPayload,
-    failedPayload,
-    interruptedPayload,
-    interruptedPayloads,
-    deletedPayload,
-  } = deriveStatus(events)
+  const derived = deriveSessionStatus(events)
+  const { status, sessionId, startedPayload } = derived
 
   // Live counts and phase text arrive as ephemeral `agent_session:*` socket ticks
   // that never reach `events`. Subscribed here, not passed in: a tick then repaints
@@ -356,38 +45,11 @@ export function AgentSessionEvent({
   const live = useAgentSessionActivity(workspaceId, sessionId)
   const liveSubstep = live?.substep ?? null
 
-  // A running turn streams its writes onto the card as each tool returns
-  // (`LiveSessionEffectGrid` below) — rows only ever append, so nothing already
-  // on screen moves (INV-21).
-  //
-  // Once the session is terminal — and while `retrying`, which is not — the
-  // lifecycle payloads take over as the authority: they survive a reload, and
-  // they carry each retry attempt's writes, which the step rows do not
-  // (`upsertStep`'s ON CONFLICT resets `effects` on a retry).
-  const sessionEffects: AgentToolEffect[] =
-    status === "completed" || status === "failed" || status === "retrying"
-      ? unionSessionEffects(...interruptedPayloads, completedPayload, failedPayload)
-      : []
-  // What goes in the grid is decided by shape, not by whether a label happens
-  // to be set. A layer-0 marker is a bare `{ kind }` — a tool declared nothing,
-  // so there is nothing to name, diff or link and it only earns a counter.
-  // Anything carrying a target or a diff is a real declaration and renders as a
-  // row, named from its kind when the tool gave no label: `update_user_settings`,
-  // `update_stream_brief` and `cancel_follow_up` all describe themselves through
-  // `target`/`before`/`after` and set no label at all, and the settings write is
-  // the case this whole feature exists for.
-  const describedEffects = sessionEffects.filter(isDescribedEffect)
+  // A running turn's writes stream onto the card (`LiveSessionEffectGrid`); the
+  // lifecycle payloads take over once it settles or retries.
+  const { described: describedEffects, markerCount } = sessionEffectsFor(derived)
 
-  const config = buildStatusConfig(
-    status,
-    startedPayload,
-    completedPayload,
-    failedPayload,
-    interruptedPayload,
-    deletedPayload,
-    live,
-    sessionEffects.length - describedEffects.length
-  )
+  const config = buildSessionStatusConfig(derived, { live, markerEffectCount: markerCount })
 
   const [redirectHintVisible, setRedirectHintVisible] = useState(false)
   const redirectHintTimer = useRef<number | null>(null)

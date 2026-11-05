@@ -1,6 +1,14 @@
 import { createContext, useContext, type ReactNode } from "react"
 
-export type MarkdownBlockKind = "code" | "blockquote" | "quote-reply" | "description" | "message" | "board-card" | "run"
+export type MarkdownBlockKind =
+  | "code"
+  | "blockquote"
+  | "quote-reply"
+  | "description"
+  | "message"
+  | "board-card"
+  | "run"
+  | "agent-runs"
 
 /**
  * Scopes collapsible markdown blocks to the surrounding message so per-block
