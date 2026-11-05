@@ -19,6 +19,7 @@ import {
   SettingEmptyNote,
   SettingRow,
   SettingsSection,
+  SETTING_ITEM_DIVIDERS,
 } from "@/components/settings/setting-primitives"
 import { settingDef } from "@/components/settings/settings-registry"
 import { SETTING_MUTED_NOTE_TEXT, SETTING_NOTE_TEXT } from "@/components/settings/setting-text"
@@ -201,7 +202,7 @@ function BotListItems({
 }) {
   const { linkHistory } = useSettings()
   return (
-    <ul className="divide-y divide-border">
+    <ul className={SETTING_ITEM_DIVIDERS}>
       {bots.map((bot) => (
         <li key={bot.id}>
           <Link

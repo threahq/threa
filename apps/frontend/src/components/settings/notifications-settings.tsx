@@ -40,6 +40,7 @@ import {
   SettingsSection,
   SwitchSetting,
   settingIds,
+  SETTING_ITEM_DIVIDERS,
 } from "./setting-primitives"
 import { SETTING_MUTED_NOTE_TEXT, SETTING_NOTE_TEXT } from "./setting-text"
 import { SETTING_CHOICE_LABELS, settingDef } from "./settings-registry"
@@ -182,7 +183,7 @@ function TestOutcomeView({ outcome, refreshing = false }: { outcome: TestOutcome
         {`Accepted by push service on ${accepted} of ${result.attempted} device${result.attempted === 1 ? "" : "s"}.`}
       </p>
       {devices.length > 0 && (
-        <ul className="divide-y divide-border" aria-live="polite">
+        <ul className={SETTING_ITEM_DIVIDERS} aria-live="polite">
           {devices.map((device) => {
             const report =
               reports.phase === "unavailable"

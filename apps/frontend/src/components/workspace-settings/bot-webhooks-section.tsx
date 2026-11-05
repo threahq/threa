@@ -33,6 +33,7 @@ import {
   SettingRemoveButton,
   SettingRow,
   SettingStateAction,
+  SETTING_ITEM_DIVIDERS,
 } from "@/components/settings/setting-primitives"
 import { SETTING_ICON_BUTTON, SETTING_MUTED_NOTE_TEXT, SETTING_NOTE_TEXT } from "@/components/settings/setting-text"
 import { cn } from "@/lib/utils"
@@ -312,7 +313,7 @@ export function BotWebhooksSection({ workspaceId, botId, isArchived }: BotWebhoo
         )}
 
         {!isLoading && activeWebhooks.length > 0 && (
-          <ul className="divide-y divide-border">
+          <ul className={SETTING_ITEM_DIVIDERS}>
             {activeWebhooks.map((hook: IncomingWebhook) =>
               editingHookId === hook.id ? (
                 <li key={hook.id}>

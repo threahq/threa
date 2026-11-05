@@ -11,6 +11,7 @@ import {
   SettingRemoveButton,
   SettingRow,
   SettingBadge,
+  SETTING_ITEM_DIVIDERS,
 } from "@/components/settings/setting-primitives"
 import { VISIBILITY_LABELS } from "@/lib/stream-visuals"
 import { Hash } from "lucide-react"
@@ -103,7 +104,7 @@ export function BotChannelsSection({ workspaceId, botId, isArchived }: BotChanne
       }
     >
       {grantedStreams.length > 0 ? (
-        <ul className="divide-y divide-border">
+        <ul className={SETTING_ITEM_DIVIDERS}>
           {grantedStreams.map((grant) => (
             <li key={grant.streamId} className="flex min-h-11 items-center justify-between gap-2 py-2">
               <span className="flex min-w-0 items-center gap-2">

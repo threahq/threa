@@ -2,7 +2,12 @@ import { Smile } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { ReactionEmojiPicker } from "@/components/timeline/reaction-emoji-picker"
-import { SETTING_CONTROL_HEIGHT, SettingsDisclosure, type SettingUnavailable } from "./setting-primitives"
+import {
+  SETTING_CONTROL_HEIGHT,
+  SettingsDisclosure,
+  type SettingUnavailable,
+  SETTING_ITEM_DIVIDERS,
+} from "./setting-primitives"
 import { SETTING_CHOICE_LABELS, settingDef } from "./settings-registry"
 import { SettingListItem } from "./setting-lists"
 import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
@@ -173,7 +178,7 @@ export function PushActionsSection({
       description={deviceOff ? `${settingDef("push-buttons").description} ${SHOWN_ONCE_DEVICE_ON}` : undefined}
     >
       <div className="space-y-3">
-        <ul className="divide-y divide-border">
+        <ul className={SETTING_ITEM_DIVIDERS}>
           {SLOT_LABELS.map((label, index) => (
             <SettingListItem key={label} label={label}>
               <Select

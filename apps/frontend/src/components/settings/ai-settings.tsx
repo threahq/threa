@@ -21,6 +21,7 @@ import {
   settingIds,
   SaveError,
   SaveIndicator,
+  SETTING_ITEM_DIVIDERS,
 } from "./setting-primitives"
 import { SETTING_INPUT_FRAME, SETTING_NOTE_TEXT } from "./setting-text"
 import { settingDef } from "./settings-registry"
@@ -161,7 +162,7 @@ export function MyPersonasSection({ workspaceId }: { workspaceId: string }) {
         control={<PersonaForkDialog workspaceId={workspaceId} sources={forkSources} scope="personal" />}
       >
         {personal.length > 0 ? (
-          <ul aria-labelledby={settingIds("my-personas").label} className="-my-2 divide-y divide-border">
+          <ul aria-labelledby={settingIds("my-personas").label} className={cn("-my-2", SETTING_ITEM_DIVIDERS)}>
             {personal.map((persona) => (
               <li key={persona.id} className="flex min-h-11 items-center gap-3 py-2">
                 <PersonaListAvatar workspaceId={workspaceId} persona={persona} size="lg" />
@@ -188,7 +189,7 @@ export function MyPersonasSection({ workspaceId }: { workspaceId: string }) {
       </SettingRow>
       {archived && archived.length > 0 && (
         <SettingsDisclosure label="Archived agents" settings={[]} summary={`${archived.length} archived`}>
-          <ul aria-label="Archived agents" className="divide-y divide-border">
+          <ul aria-label="Archived agents" className={SETTING_ITEM_DIVIDERS}>
             {archived.map((persona) => (
               <li key={persona.id} className="flex min-h-11 items-center gap-3 px-4 py-2">
                 <PersonaListAvatar workspaceId={workspaceId} persona={persona} size="lg" />

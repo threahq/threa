@@ -51,6 +51,7 @@ import {
   SettingsSection,
   settingIds,
   useSettingDescribedBy,
+  SETTING_ITEM_DIVIDERS,
 } from "@/components/settings/setting-primitives"
 import { SETTING_MUTED_NOTE_TEXT, SETTING_NOTE_TEXT } from "@/components/settings/setting-text"
 import {
@@ -189,7 +190,7 @@ export function StatusesTab({ workspaceId }: StatusesTabProps) {
             )
           }
         >
-          <ul aria-labelledby={settingIds("status-presets").label} className="divide-y divide-border">
+          <ul aria-labelledby={settingIds("status-presets").label} className={SETTING_ITEM_DIVIDERS}>
             {saved.map((preset, index) =>
               access.known ? (
                 <StatusPresetItem

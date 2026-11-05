@@ -23,6 +23,7 @@ import {
   INACTIVE_CONTROL_CLASS,
   SETTING_CONTROL_HEIGHT,
   SettingRemoveButton,
+  SETTING_ITEM_DIVIDERS,
 } from "./setting-primitives"
 import { FOCUS_FALLBACK, FOCUS_ITEM, FOCUS_SCOPE, useFocusAfterRemoval } from "./use-focus-after-removal"
 
@@ -109,7 +110,7 @@ export function WorkScheduleEditor({ value, onChange, disabled }: WorkScheduleEd
   }
 
   return (
-    <div className="divide-y divide-border">
+    <div className={SETTING_ITEM_DIVIDERS}>
       {WEEKDAYS_MONDAY_FIRST.map((day) => {
         const shifts = getDayShifts(value, day)
         const working = shifts.length > 0

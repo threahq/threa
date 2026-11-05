@@ -11,6 +11,7 @@ import {
   SettingGroupBand,
   SettingRow,
   SettingsSection,
+  SETTING_ITEM_DIVIDERS,
 } from "@/components/settings/setting-primitives"
 import { SETTING_MUTED_NOTE_TEXT } from "@/components/settings/setting-text"
 import { cn } from "@/lib/utils"
@@ -223,7 +224,7 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
         </SettingRow>
         {connected.length > 0 && (
           <SettingGroupBand label="Shared with">
-            <ul className="divide-y divide-border">
+            <ul className={SETTING_ITEM_DIVIDERS}>
               {connected.map((connection) => (
                 <li key={connection.id} className="flex min-h-11 items-center gap-3 px-4 py-2">
                   <Building2 aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -254,7 +255,7 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
         )}
         {pending.length > 0 && (
           <SettingGroupBand label="Invite links">
-            <ul className="divide-y divide-border">
+            <ul className={SETTING_ITEM_DIVIDERS}>
               {pending.map((connection) => (
                 <PendingInvite
                   key={connection.id}

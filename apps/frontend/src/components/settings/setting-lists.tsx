@@ -2,7 +2,12 @@ import { useId, type ReactNode } from "react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
-import { DisabledReason, SETTING_CONTROL_HEIGHT, SettingRemoveButton } from "./setting-primitives"
+import {
+  DisabledReason,
+  SETTING_CONTROL_HEIGHT,
+  SettingRemoveButton,
+  SETTING_ITEM_DIVIDERS,
+} from "./setting-primitives"
 import { SETTING_MUTED_NOTE_TEXT } from "./setting-text"
 import { FOCUS_FALLBACK, FOCUS_ITEM, FOCUS_SCOPE, useFocusAfterRemoval } from "./use-focus-after-removal"
 
@@ -102,7 +107,7 @@ export function SettingCheckboxList<T extends string>({
 /**
  * One item of a fixed list of fields in a row or disclosure body: its name
  * left, its controls right, such as a `w-40` select. Goes in a `ul` with
- * `divide-y divide-border`; name each control with `aria-label`.
+ * `SETTING_ITEM_DIVIDERS`; name each control with `aria-label`.
  */
 export function SettingListItem({
   label,
@@ -163,7 +168,7 @@ export function SettingOverrideList<V extends string>({
   return (
     <div className="space-y-3" {...FOCUS_SCOPE}>
       {items.length > 0 && (
-        <ul aria-labelledby={labelledBy} className="divide-y divide-border">
+        <ul aria-labelledby={labelledBy} className={SETTING_ITEM_DIVIDERS}>
           {items.map((item) => (
             <SettingListItem key={item.key} label={item.label} error={item.error}>
               <Select value={item.value} disabled={disabled} onValueChange={(next) => item.onValueChange(next as V)}>

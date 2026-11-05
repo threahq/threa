@@ -40,6 +40,7 @@ import { cn } from "@/lib/utils"
 import { useOptionalSettings } from "@/contexts/settings-context"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useScrollEdges } from "@/hooks/use-scroll-edges"
 import {
   sectionTitle,
   settingAnchorId,
@@ -86,6 +87,53 @@ export const SETTING_CONTROL_WIDTH = "w-full sm:w-72"
  * 36px under a mouse from `sm` up.
  */
 export const SETTING_CONTROL_HEIGHT = "h-11 sm:h-9 [@media(pointer:coarse)]:min-h-11"
+
+/** Dividers between the items of a list inside a row: lighter than the card's own row dividers. */
+export const SETTING_ITEM_DIVIDERS = "divide-y divide-border/50"
+
+const PEOPLE_LIST_EDGE = "pointer-events-none absolute inset-x-0 h-3 border-border/50 transition-opacity duration-150"
+
+/**
+ * A scrolling list of people in a setting row, about eight and a half rows
+ * tall. It runs to the card's edges, its scrollbar on the card's border, and
+ * casts a soft shadow at an edge rows continue past; rows stay crisp and
+ * clickable beneath it. As the row's last element it runs into the bottom
+ * padding, so a clipped row meets the card's edge.
+ */
+export function SettingPeopleList({ className, ...props }: ComponentPropsWithoutRef<"ul">) {
+  const [list, setList] = useState<HTMLUListElement | null>(null)
+  const { above, below } = useScrollEdges(list)
+  return (
+    // `!` outranks a parent `space-y-*`, whose sibling selector resets this margin.
+    <div className="group/people relative -mx-4 overflow-hidden last:!-mb-3 last:rounded-b-[calc(var(--radius)-1px)]">
+      <ul
+        ref={setList}
+        className={cn(
+          "max-h-[28rem] overflow-y-auto px-4 scrollbar-thin group-last/people:pb-3",
+          SETTING_ITEM_DIVIDERS,
+          className
+        )}
+        {...props}
+      />
+      <div
+        aria-hidden
+        className={cn(
+          PEOPLE_LIST_EDGE,
+          "top-0 border-t bg-gradient-to-b from-foreground/[0.06] to-transparent",
+          above ? "opacity-100" : "opacity-0"
+        )}
+      />
+      <div
+        aria-hidden
+        className={cn(
+          PEOPLE_LIST_EDGE,
+          "bottom-0 border-b bg-gradient-to-t from-foreground/[0.06] to-transparent group-last/people:border-b-0",
+          below ? "opacity-100" : "opacity-0"
+        )}
+      />
+    </div>
+  )
+}
 
 /** A single-line control (select, input, picker trigger) in a row's right-hand column. */
 export const SETTING_CONTROL_CLASS = `${SETTING_CONTROL_HEIGHT} ${SETTING_CONTROL_WIDTH}`
