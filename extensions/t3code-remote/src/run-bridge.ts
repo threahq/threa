@@ -1643,8 +1643,9 @@ export class T3TurnRunner {
     if (!notice) return this.replyText(threadId, item)
     const detail = (await this.fullText(threadId, item)).trim()
     if (!detail) return notice
-    // Threa ends a code block at any line opening with ``` and reads a `THREA_ATTACH:` line anywhere as an upload.
-    return `${notice}\n\n\`\`\`\n${detail.replace(/^(?=```|THREA_ATTACH:)/gm, " ")}\n\`\`\``
+    // A ``` line indented under four spaces would close the block, and a `THREA_ATTACH:` line anywhere reads as an
+    // upload; indented four spaces, each stays code.
+    return `${notice}\n\n\`\`\`\n${detail.replace(/^(?= {0,3}```|THREA_ATTACH:)/gm, "    ")}\n\`\`\``
   }
 
   private async postUpdates(
