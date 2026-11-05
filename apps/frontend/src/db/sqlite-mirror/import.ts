@@ -73,6 +73,8 @@ export async function importIndexedDb(
         await yieldToEventLoop()
       }
     }
+    // Commits are not flushed one by one, and IndexedDB is cleared once SQLite is the primary copy.
+    await ask({ type: "checkpoint" })
     await record()
     getPerfCapture().mark("sqlite.import", performance.now() - startedAt)
   } catch (error) {

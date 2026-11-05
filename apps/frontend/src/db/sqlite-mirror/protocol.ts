@@ -21,6 +21,8 @@ export type MirrorRequest =
   | { type: "open"; idbName: string; schema: MirrorStoreSchema[] }
   | { type: "backfillBegin"; stores: readonly string[] }
   | { type: "backfillChunk"; store: string; entries: MirrorEntry[] }
+  /** Copies every commit into the database file and flushes it, so a power loss cannot roll them back. */
+  | { type: "checkpoint" }
   /** Holds every request of other transactions, and outside any, until this one commits or rolls back. */
   | { type: "begin"; tx: number; readonly: boolean; stores: readonly string[] }
   | { type: "write"; tx: number; write: MirrorWrite }
