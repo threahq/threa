@@ -186,3 +186,70 @@ test("a sent message is on the timeline in the frame the composer clears", async
     "frames with the composer cleared and the sent row not on screen"
   ).toEqual([])
 })
+
+/**
+ * A message that lands while your own send is in flight sorts above it, so the
+ * window grows in the middle with its first and last rows unchanged. Every row
+ * above the arrival keeps its index; if virtua is told to shift there, it moves
+ * its whole size cache down one slot and those rows keep their predecessor's
+ * height, so the arrival is drawn on top of the tall row above it.
+ */
+test("a message arriving above an in-flight send does not overlap the row above it", async ({ page }) => {
+  await loginAndCreateWorkspace(page)
+  await createChannel(page, `overlap-${generateTestId()}`, { switchToAll: false })
+  const workspaceId = page.url().match(/\/w\/([^/]+)/)![1]
+  const streamId = page.url().match(/\/s\/([^/?]+)/)![1]
+  await seedMessages(page, workspaceId, streamId, 15)
+  const tall = [
+    "Tall row opens with a paragraph.",
+    "",
+    "- first bullet with a sentence of filler",
+    "- second bullet with a sentence of filler",
+    "- third bullet with a sentence of filler",
+    "",
+    "Tall row closes with a paragraph.",
+  ].join("\n")
+  await expectApiOk(
+    await page.request.post(`/api/workspaces/${workspaceId}/messages`, { data: { streamId, content: tall } }),
+    "post tall row"
+  )
+
+  await page.reload()
+  const rows = page.getByRole("main").locator(".message-item")
+  const tallRow = rows.filter({ hasText: "Tall row closes" })
+  await expect(tallRow).toBeVisible({ timeout: 30000 })
+  await page.waitForTimeout(2000)
+
+  let releaseSend!: () => void
+  const sendHeld = new Promise<void>((resolve) => (releaseSend = resolve))
+  await page.route(/\/api\/workspaces\/[^/]+\/messages$/, async (route) => {
+    if (route.request().method() === "POST") await sendHeld
+    await route.continue()
+  })
+  const editor = page.locator("[contenteditable='true']").first()
+  await editor.click()
+  await editor.pressSequentially("Own send held in flight")
+  await page.keyboard.press("Enter")
+  await expect(rows.filter({ hasText: "Own send held in flight" })).toBeVisible()
+
+  await expectApiOk(
+    await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
+      data: { streamId, content: "Arrival above the in-flight send" },
+    }),
+    "post arrival"
+  )
+  const arrival = rows.filter({ hasText: "Arrival above the in-flight send" })
+  await expect(arrival).toBeVisible()
+  releaseSend()
+
+  await expect
+    .poll(async () => {
+      const [tallBox, arrivalBox] = await Promise.all([tallRow.boundingBox(), arrival.boundingBox()])
+      return tallBox && arrivalBox ? Math.round(arrivalBox.y - (tallBox.y + tallBox.height)) : null
+    })
+    .toBeGreaterThanOrEqual(0)
+  // Hold it: a size cache that is merely late would converge, a stale one never does.
+  await page.waitForTimeout(1000)
+  const [tallBox, arrivalBox] = await Promise.all([tallRow.boundingBox(), arrival.boundingBox()])
+  expect(arrivalBox!.y).toBeGreaterThanOrEqual(tallBox!.y + tallBox!.height - 1)
+})

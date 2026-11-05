@@ -135,10 +135,9 @@ interface UseTimelineScrollReturn {
   /** Ref for the inner content wrapper (sized to the full scroll height). */
   contentRef: React.RefObject<HTMLDivElement | null>
   /**
-   * virtua `shift` value for the current render. True when rows landed above an
-   * unchanged edge — the first row while reading history, the last row while
-   * following — so virtua maintains position from the end and the viewport does
-   * not move, including mid-scroll.
+   * virtua `shift` value for the current render. True when rows landed above
+   * the first row (an older page prepended), so virtua maintains position from
+   * the end and the viewport does not move, including mid-scroll.
    */
   shift: boolean
   /** True when scrolled far enough from the bottom to show "Jump to latest". */
@@ -339,20 +338,20 @@ export function useTimelineScroll({
   }
 
   // Compute `shift` for this render: true tells virtua to maintain from the end.
-  // While reading history, that is when the first row's identity changed (an
-  // older page prepended); appends leave the first key untouched, and virtua
-  // wants end-side growth unshifted. While following, it is rows landing above
-  // an unchanged last row: unshifted, virtua lays out from the old offset,
-  // unmounts the tail, and the pin remounts it hidden-until-measured for a frame.
+  // A shifted update moves virtua's whole size cache by the count change from
+  // the start, and virtua re-measures a row only when its index or box changes.
+  // A row that keeps its index across one (an arrival sorted above your own
+  // in-flight send, a hole filled mid-window) keeps its predecessor's height
+  // for good and the rows below draw over it. So shift only when the first row
+  // changed, and while following only when the last row held too.
   const firstKey = itemCount > 0 ? getFirstKey() : null
   const lastKey = itemCount > 0 ? getLastKey() : null
   let shift = false
   if (itemCount > 0 && prevCountRef.current > 0) {
-    if (!isFollowingTailRef.current) {
-      shift = prevFirstKeyRef.current !== null && firstKey !== prevFirstKeyRef.current
-    } else {
-      shift = itemCount > prevCountRef.current && prevLastKeyRef.current !== null && lastKey === prevLastKeyRef.current
-    }
+    const startChanged = prevFirstKeyRef.current !== null && firstKey !== prevFirstKeyRef.current
+    shift = isFollowingTailRef.current
+      ? startChanged && itemCount > prevCountRef.current && lastKey === prevLastKeyRef.current
+      : startChanged
   }
   // While following the tail, a window whose row count or last row changed —
   // and that is not a single live append (a sweep landing a gap, a window
