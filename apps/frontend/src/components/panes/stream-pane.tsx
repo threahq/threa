@@ -668,7 +668,10 @@ export function StreamPane({
   const offersSearch = !isDraft && hasTimeline
   const offersContextIcon = !!stream && !isDraft && hasTimeline && offersContext
   const offersOverlay = (isChannel || isDm) && ownsConversationOverlay
+  const offersGear = !!stream && !isDraft && offersStreamActions && offersSettings
+  // The gear folds first: the stream menu always holds Settings too.
   const foldable = [
+    ...(offersGear ? [{ id: "settings", width: icon }] : []),
     ...(offersAside ? [{ id: "aside-label", width: 60 }] : []),
     ...(offersOverlay ? [{ id: "overlay", width: 52 + iconGap }] : []),
     ...(offersContextIcon ? [{ id: "context", width: icon }] : []),
@@ -928,18 +931,6 @@ export function StreamPane({
         }
         menu={
           <>
-            {stream && !isDraft && offersStreamActions && offersSettings && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="relative h-8 w-8 [@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:-inset-1.5 [@media(pointer:coarse)]:after:content-['']"
-                title="Stream settings"
-                aria-label="Stream settings"
-                onClick={() => openStreamSettings(streamId, "general")}
-              >
-                <SlidersHorizontal className="h-4 w-4" aria-hidden />
-              </Button>
-            )}
             {stream && isMobile && canOpenSheet && (
               <>
                 <Button
@@ -1065,6 +1056,18 @@ export function StreamPane({
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
+          )}
+          {offersGear && !folded.has("settings") && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="relative h-8 w-8 [@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:-inset-1.5 [@media(pointer:coarse)]:after:content-['']"
+              title="Stream settings"
+              aria-label="Stream settings"
+              onClick={() => openStreamSettings(streamId, "general")}
+            >
+              <SlidersHorizontal className="h-4 w-4" aria-hidden />
+            </Button>
           )}
         </div>
       </PaneHeader>

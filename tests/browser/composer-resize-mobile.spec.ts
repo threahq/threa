@@ -85,13 +85,22 @@ test("mobile composer resizes from its top edge without losing the editor bottom
 
   const cdp = await page.context().newCDPSession(page)
   expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0)
+  // Pull from a bare spot in the header: a touch on one of its menu triggers opens that menu instead.
+  const pullX = await page.evaluate(() => {
+    for (let x = 8; x < window.innerWidth; x += 4) {
+      const el = document.elementFromPoint(x, 24)
+      if (el && !el.closest("button, a, [role='button'], input")) return x
+    }
+    return null
+  })
+  expect(pullX).not.toBeNull()
   await cdp.send("Input.dispatchTouchEvent", {
     type: "touchStart",
-    touchPoints: [{ x: PHONE.width / 2, y: 24, id: 1 }],
+    touchPoints: [{ x: pullX!, y: 24, id: 1 }],
   })
   await cdp.send("Input.dispatchTouchEvent", {
     type: "touchMove",
-    touchPoints: [{ x: PHONE.width / 2, y: 54, id: 1 }],
+    touchPoints: [{ x: pullX!, y: 54, id: 1 }],
   })
   await expect(page.getByText("Pull to refresh")).toBeVisible()
   await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })

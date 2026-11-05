@@ -75,7 +75,8 @@ describe("DateTimeSettings", () => {
     const saved = deviceTimezone === "Pacific/Auckland" ? "Europe/Stockholm" : "Pacific/Auckland"
     mount(<DateTimeSettings />, { timezone: saved })
 
-    expect(screen.getByText(new RegExp(deviceTimezone.replace(/_/g, " ")))).toBeInTheDocument()
+    const deviceLabel = deviceTimezone.replace(/_/g, " ").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    expect(screen.getByText(new RegExp(`^${deviceLabel} \\(`))).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Use this device's time zone" }))
 
     expect(updatePreference).toHaveBeenCalledWith("timezone", deviceTimezone)

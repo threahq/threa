@@ -1,7 +1,7 @@
 import type React from "react"
 import { useState } from "react"
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query"
 import { Router } from "react-router-dom"
@@ -1080,6 +1080,21 @@ describe("QuickSwitcher Integration Tests", () => {
   })
 
   describe("item selection", () => {
+    it("keeps the top match selected when a row appears under a resting pointer, and follows the pointer once it moves", async () => {
+      const user = userEvent.setup()
+      renderWithProviders(<QuickSwitcher {...defaultProps} />)
+      await waitFor(() => expect(document.querySelector('[data-index="1"]')).not.toBeNull())
+      const row = () => document.querySelector('[data-index="1"]')!
+
+      fireEvent.mouseEnter(row())
+      expect(document.querySelector('[data-index="0"]')).toHaveAttribute("aria-selected", "true")
+
+      fireEvent.pointerMove(row())
+      expect(row()).toHaveAttribute("aria-selected", "true")
+      await user.keyboard("{ArrowUp}")
+      expect(document.querySelector('[data-index="0"]')).toHaveAttribute("aria-selected", "true")
+    })
+
     it("should call onSelect when clicking item", async () => {
       // Disable pointer-events check due to Radix Dialog overlay
       const user = userEvent.setup({ pointerEventsCheck: 0 })
