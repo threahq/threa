@@ -78,8 +78,8 @@ Without auto-login the connector refuses to start with no token, and a rejected 
 hint.
 
 `t3Access` is the permission ceiling the token asks for and every launched thread runs at. Keep it at
-`full-access`: Threa can't answer T3's approval prompts yet, so a run that stops on one is interrupted and its turn
-fails with a message saying why.
+`full-access`: Threa can't answer T3's approval prompts, so a run that stops on one posts what it asks and waits until
+you approve or decline it in T3 Code.
 
 ## Questions
 

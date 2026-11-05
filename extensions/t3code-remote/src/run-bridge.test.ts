@@ -553,19 +553,38 @@ describe("T3TurnRunner", () => {
     expect(session.fails).toEqual([{ invocationId: "binv_1", errorMessage: "The T3 Code run was rolled back." }])
   })
 
-  test("stops a run that waits on an approval and fails the turn", async () => {
+  test("says where to answer an approval T3 waits on, and replies once it is approved in T3", async () => {
     const { t3, session, runner } = setup()
-    t3.script("run_1", [{ status: "waiting", items: [item(1, "approval_request", { status: "pending" })] }])
+    const approval = item(1, "approval_request", { status: "pending", text: "rm -rf dist\nbun run build" })
+    t3.script("run_1", [{ status: "waiting", items: [approval] }])
+    const delivered = runner.deliverTurn(turn())
+    await until(() => session.interims.length > 0)
 
-    await runner.deliverTurn(turn())
+    t3.script("run_1", [
+      {
+        status: "completed",
+        items: [{ ...approval, status: "completed" }, item(2, "assistant_message", { text: "Rebuilt." })],
+      },
+    ])
+    await delivered
     await session.settled()
 
-    expect(t3.callsOf("t3_thread_interrupt")).toEqual([
-      { threadId: "thread_1", runId: "run_1", reason: "Stopped from Threa" },
-    ])
-    expect(session.fails).toEqual([
-      { invocationId: "binv_1", errorMessage: expect.stringContaining("to ask for an approval") },
-    ])
+    expect({
+      interims: session.interims,
+      replies: session.replies,
+      fails: session.fails,
+      interrupts: t3.callsOf("t3_thread_interrupt"),
+    }).toEqual({
+      interims: [
+        {
+          invocationId: "binv_1",
+          text: "T3 Code is waiting for an approval. Threa can't approve T3 Code requests, so approve or decline it in T3 Code and this turn carries on.\n\n> rm -rf dist\n> bun run build",
+        },
+      ],
+      replies: [{ invocationId: "binv_1", text: "Rebuilt." }],
+      fails: [],
+      interrupts: [],
+    })
   })
 
   test("puts each question of a request on a card and sends the answers back to T3", async () => {
