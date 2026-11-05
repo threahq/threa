@@ -26,7 +26,7 @@ Before you connect, Threa asks the browser for your microphone and, for video, y
 
 A card at the bottom right reads "`<name>` is calling…", with **Video call** or **Voice call** below. It has three buttons: **Silence ring**, **Decline call** and **Accept call**. It does not take keyboard focus from what you are typing.
 
-The ring sound stays off when your overall **Notification level** is **None** or you have paused notifications, but the card still shows. A stream's own level does not change this. See [Notification levels per stream](/guide/notification-levels) and [Pausing notifications and setting a status](/guide/pause-and-status). If the page cannot play sound, Threa sends a system notification with the same text, and selecting it accepts the call.
+The ring sound stays off when your overall **Push notifications** level is **No push** or you have paused notifications, but the card still shows. A stream's own level does not change this. See [Notification levels per stream](/guide/notification-levels) and [Pausing notifications and setting a status](/guide/pause-and-status). If the page cannot play sound, Threa sends a system notification with the same text, and selecting it accepts the call.
 
 ## The call card
 
@@ -42,4 +42,4 @@ Joining a call you are already in on another device asks you to confirm: "Joinin
 
 The device you moved away from shows "Call moved to another device". Two other notices come with **Rejoin here** too: "Call ended while your phone was locked" and "Call ended — this device lost its connection". On iPhone and iPad, locking the screen ends the call, and Threa warns you with "Locking your phone ends this call."
 
-For the call surface, layouts and devices, see [Call layouts and devices](/guide/call-layouts-and-devices). Call preferences are under [Settings](app:settings/calls).
+For the call surface, layouts and devices, see [Call layouts and devices](/guide/call-layouts-and-devices). Call preferences are on the [Voice & calls](app:settings/voice) settings page.

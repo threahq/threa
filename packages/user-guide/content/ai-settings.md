@@ -1,30 +1,28 @@
 ---
 title: AI settings
-summary: What the AI tab of your settings controls: scratchpad instructions, your default companion, subagent models, personal personas and encryption.
+summary: What the Your AI page of your settings controls: your default agent, your agents, subagent models and scratchpad instructions.
 section: settings
 order: 6
 ---
 
 # AI settings
 
-The **AI** tab of your [settings](app:settings/ai) shapes how agents behave for you. It has these sections, from the top.
+The [Your AI](app:settings/ai) page of your settings shapes how agents behave for you. It has these settings, from the top.
 
-## Scratchpad Instructions
+## Your default agent
 
-Standing guidance for the companion that answers in your personal scratchpads, Ariadne unless you pick another. It is added after that agent's base system prompt, and applies to scratchpads and to threads started in a scratchpad. It does not apply in channels, DMs or threads under them. Write it in the box and click **Save**. **Reset** discards your edits. To remove the instructions, delete everything and save. Ctrl+Enter (⌘Enter on Mac) also saves.
+The agent new scratchpads start with. The first option follows the agent your workspace sets as its default. Existing scratchpads keep their agent; change one on that scratchpad's **Agent** settings page. See [Companion and Quiet mode](/guide/companion-modes).
 
-## Default companion
+## Your agents
 
-The agent that answers in your scratchpads unless a scratchpad has its own pick. **Workspace default** follows whatever your workspace sets. The section is hidden if no agents are available. See [Companion and Quiet mode](/guide/companion-modes).
+Agents that only you can see and use in your scratchpads. **New agent** forks an existing agent or starts from a blank one, then opens the editor. Each row has **Edit**. Archived agents are under **Archived agents** (shown only when you have some), with **Unarchive**. See [Creating your own persona](/guide/custom-personas).
 
-## Subagent models
+## Your subagent models
 
-Which of your workspace's models an assistant may hand your work to as a subagent. Untick a model to keep it out of your conversations. Your workspace admin decides the list itself. A note tells you when you follow the workspace's set, and a warning appears if none of your picks are in the workspace set anymore. The section appears only when the workspace offers at least two models. See [Delegations and subagents](/guide/delegations-and-subagents).
+Which of your workspace's models your agents may start helpers on. The agent that replies keeps its own model. Untick a model to keep it out of your conversations, and keep at least one. Your workspace admin decides the list itself, and the row reads "Same as the workspace" until you narrow it. A warning appears if none of your picks are in the workspace set anymore. The setting appears only when the workspace offers at least two models. See [Delegations and subagents](/guide/delegations-and-subagents).
 
-## My personas
+## Instructions for your scratchpads
 
-Personal companions that only you can see and use in your scratchpads. **New persona** forks an existing persona or starts from a blank one, then opens the editor. Each row has **Edit**. Archived personas are under **Archived** (shown only when you have some), with **Unarchive**. See [Creating your own persona](/guide/custom-personas).
+Standing guidance that every agent follows in your scratchpads and the threads under them. It is added after the agent's base system prompt. It does not apply in channels, DMs or threads under them, which set their own agent and brief. Write it in the box; it saves when you leave the box, or with Ctrl+Enter (⌘Enter on Mac). To remove the instructions, delete everything.
 
-## Encrypted scratchpads
-
-This is where you set up encryption, and where you unlock, lock (**Lock now**, while unlocked) or **Revoke key**, and choose how this device unlocks. See [Encrypted scratchpads](/guide/encrypted-scratchpads).
+Encrypted scratchpads are set up on the **Privacy & security** page. See [Encrypted scratchpads](/guide/encrypted-scratchpads).

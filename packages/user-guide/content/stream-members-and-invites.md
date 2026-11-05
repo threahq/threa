@@ -1,6 +1,6 @@
 ---
 title: Adding people and bots to a stream
-summary: Add people from the Members tab or with /invite, and add bots if you can manage them.
+summary: Add people from the Stream members page or with /invite, and add bots if you can manage them.
 section: conversations
 order: 5
 ---
@@ -9,11 +9,11 @@ order: 5
 
 Channels and threads can have people added to them. Scratchpads, DMs and asides can't. Bots can also be added to scratchpads and DMs (see Bots below).
 
-## The Members tab
+## The Stream members page
 
-Open **Settings** on a stream and go to **Members**. The tab lists everyone in the stream with their @handle and role (member, admin or owner), and a filter box.
+Open **Settings** on a stream and go to **Stream members**. The page lists everyone in the stream with their @handle and role (member, admin or owner), and a filter box.
 
-Two actions in this tab need the member-management permission, which workspace admins and owners have:
+Two actions on this page need the member-management permission, which workspace admins and owners have:
 
 - **Add member**: a searchable list of workspace users who aren't in the channel yet. It appears on channels.
 - Removing someone: the X on their row, then confirm "Remove member?". Your own row has no X.
@@ -34,7 +34,7 @@ You can name people and bots. The command appears in the timeline as a chip that
 
 ## Bots
 
-The **Bots** section of the Members tab shows to people who can manage members. It lists the bots with access, an **Add bot...** picker and an X to remove one. Threads show it read-only, because they inherit bot access from their root. If the workspace has no bots, create one in workspace settings. See [Bots overview](/guide/bots-overview).
+The **Bots** row of the Stream members page shows to people who can manage members. It lists the bots with access, an **Add bot** picker and an X to remove one. Threads show it read-only, because they inherit bot access from their root. If the workspace has no bots, create one under **API keys & bots** or **Shared bots** in your settings. See [Bots overview](/guide/bots-overview).
 
 Adding a bot gives it access to that stream. On an encrypted scratchpad, adding a bot asks you to confirm, because the bot can then read every message in it. Removing one also asks. While the scratchpad is locked, adding a bot is disabled until you unlock it.
 

@@ -24,16 +24,16 @@ Select **Complete Setup** to finish. You land on the workspace home.
 
 ## Edit your profile later
 
-Open the user menu in the sidebar and select **Settings**, which opens the **Profile** tab. It has:
+Open the user menu in the sidebar and select **Profile**, which opens the Profile settings page. It has:
 
 - **Change photo**, plus **Remove** once you have one. Photos can be JPEG, PNG or WebP, up to 50 MB.
 - **Status**, with a **Set a status** button.
-- **Display name**, up to 100 characters. A **Save** button appears once you change it.
+- **Display name**, up to 100 characters. It saves when you leave the field or press Enter.
 - **Email**, which is read-only. Your email is your identity in the workspace, so it changes only when you change your account email.
 - **Pronouns**: None, he/him, she/her, they/them, xe/xem, or Custom.
 - **Description**, up to 500 characters.
-- **Phone** and **GitHub**.
+- **Phone** and **GitHub username**.
 
-The display slug isn't editable on this tab.
+The display slug isn't editable on this page.
 
-The sidebar's **Getting started** checklist has an **Add a profile photo** item that opens this tab. See [A tour of the sidebar](/guide/sidebar-tour). Settings for appearance, notifications and the rest are covered in [Settings overview](/guide/settings-overview).
+The sidebar's **Getting started** checklist has an **Add a profile photo** item that opens this page. See [A tour of the sidebar](/guide/sidebar-tour). Settings for appearance, notifications and the rest are covered in [Settings overview](/guide/settings-overview).

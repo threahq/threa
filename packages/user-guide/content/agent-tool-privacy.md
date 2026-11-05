@@ -11,7 +11,7 @@ By default Ariadne can use every tool she has in a scratchpad. The owner of a sc
 
 ## Restrict tool access
 
-Open the scratchpad's settings and go to the **Companion** tab (see [Stream settings](/guide/stream-settings)). Only the person who owns the scratchpad sees the tool access control. Turn on **Restrict tool access**, then tick the groups to allow:
+Open the scratchpad's settings and go to the **Agent** page (see [Stream settings](/guide/stream-settings)). Only the person who owns the scratchpad sees the tool access control. Turn on **Restrict tool access**, then tick the groups to allow:
 
 - **Web**: web search, fetching public URLs, and internet access in the sandbox.
 - **Workspace**: search the workspace's messages, streams and memos, read files, run commands in a sandbox, save memos and change your settings.

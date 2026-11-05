@@ -18,6 +18,8 @@ The default mode, **Stream search**, finds scratchpads, channels and direct mess
 - Your own asides appear here too. Selecting one opens its host stream with the aside open.
 - **Add filter** narrows results by **Stream type** or **Status** (Active or Archived), so you can find archived streams.
 
+Once you type two or more characters, up to three matching settings are listed too, under **Settings**.
+
 When nothing matches, the list says "No streams found."
 
 ## Command palette
@@ -46,8 +48,9 @@ The **Commands** group holds the rest:
 
 - Create: **New Post**, **New Scratchpad**, **New Quick Note**, **New Encrypted Scratchpad**, **New Encrypted Quick Note**, **Add To-do** and **New Channel**. **Add To-do** asks for a title and saves it to [Saved](app:saved).
 - Go to: **Search messages**, **View Board**, **View Drafts**, **View Saved**, **Browse Streams**, **Browse files**, **View Agent Agenda**, **View Scheduled**, **Open Memory**, **View Labels** and **View Activity**.
-- Settings: **Open Settings**, one **Settings:** entry per settings tab (Diagnostics only where it's available to you), **Workspace Settings** and **Invite People**, which opens the Users tab of workspace settings.
-- **AI Agents settings**, shown to workspace admins only.
+- Settings: **Open settings**, one **Settings:** entry per settings page you can see, such as **Settings: Notifications** or **Settings: Members**, and **Invite people**, which opens the invitations on the Members page.
+
+Typing also finds individual settings by name, listed under **Settings**. Selecting one opens the settings window at that setting.
 
 Typing narrows the list, and it matches more than the label. "bookmark" finds **View Saved**, for example.
 

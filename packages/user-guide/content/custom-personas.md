@@ -11,9 +11,9 @@ A persona is an agent with its own instructions, tools and model. You can make p
 
 ## Create one
 
-Go to the **My personas** section in your [AI settings](app:settings/ai) and click **New persona**. In the dialog, pick a persona under **Copy from** to fork it, with its prompt, tools, model and style carried over, or pick **Blank persona**. Enter a **Name** and click **Create**. This opens the editor.
+Go to **Your agents** on the [Your AI](app:settings/ai) settings page and click **New agent**. In the dialog, pick an agent under **Copy from** to fork it, with its prompt, tools, model and style carried over, or pick **Blank agent**. Enter a **Name** and click **Create**. This opens the editor.
 
-Workspace admins can also manage workspace-wide agents from the AI Agents tab of Workspace Settings (see [Workspace AI agents](/guide/workspace-ai-agents)). The editor is the same page. You can open it if you own the persona or if you are a workspace admin.
+Workspace admins can also manage workspace-wide agents from the Workspace AI settings page (see [Workspace AI agents](/guide/workspace-ai-agents)). The editor is the same page. You can open it if you own the persona or if you are a workspace admin.
 
 ## The editor
 

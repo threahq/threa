@@ -31,7 +31,7 @@ A scratchpad is named from what you write first. To change the name, click the t
 
 The pill in the header shows how Ariadne is set up in this scratchpad: **Companion**, **Quiet**, **External** when an outside agent is attached, or just a lock icon for an encrypted scratchpad. Select it to open a popover with the companion mode. As the scratchpad's owner you can also restrict which tool groups Ariadne may use. On mobile the same controls are in the stream sheet.
 
-The full set of options is on the Companion tab, described in [Stream settings](/guide/stream-settings).
+The full set of options is on the Agent page of the scratchpad's settings, described in [Stream settings](/guide/stream-settings).
 
 ## Add To-do
 

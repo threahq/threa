@@ -13,7 +13,7 @@ The composer is the box at the bottom of every stream. It is a rich text editor:
 
 With a mouse and a wide window, **Enter** sends the message and **Shift+Enter** starts a new line. **Ctrl+Enter** (⌘Enter on Mac) always sends.
 
-You can change this in the **Composer** tab of your settings. Under **Send Messages**, choose **Enter to send** or **⌘/Ctrl + Enter to send**. With the second option, Enter starts a new line and only the modifier combination sends.
+You can change this on the **Keyboard & composer** page of your settings. Under **Enter key**, choose **Send message** or **Start a new line**. With the second option, Enter starts a new line and only the modifier combination sends.
 
 The send mode is fixed in two places:
 
@@ -43,9 +43,9 @@ When the composer is narrow, such as in a side panel, some of these buttons move
 
 ## Composer settings
 
-The **Composer** tab in your [settings](app:settings/keyboard) also holds:
+The [Keyboard & composer](app:settings/keyboard) page of your settings also holds:
 
 - **Insert files at the cursor**, for the mobile composer: a picked file appears as a chip inside the message. Removing the chip keeps the file attached.
 - Keyboard shortcuts for navigation, view and formatting, which you can rebind. See [Keyboard shortcuts](/guide/keyboard-shortcuts).
 
-To move the Send button to the left end of the composer, use the **Composer actions** setting in the **Accessibility** tab.
+To move the Send button to the left end of the composer, use **Send button side** on the same page.

@@ -32,9 +32,7 @@ describe("user guide pages", () => {
 
   test("renders app: links as chips into the app and leaves no raw app: href behind", () => {
     const html = read("guide/meet-ariadne/index.html")
-    expect(html).toMatch(
-      /<a href="https:\/\/[^"]+" class="app-link" title="Opens your Threa workspace">AI settings<\/a>/
-    )
+    expect(html).toMatch(/<a href="https:\/\/[^"]+" class="app-link" title="Opens your Threa workspace">Your AI<\/a>/)
     expect(html).not.toContain('href="app:')
   })
 

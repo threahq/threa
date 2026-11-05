@@ -11,21 +11,21 @@ Two settings decide what notifies you. One is your overall level for the whole w
 
 ## Your overall level
 
-In your [notification settings](app:settings/notifications), the **Notification level** section sets when you want to be notified:
+On the [Notifications](app:settings/notifications) settings page, **Push notifications** sets which notifications from your streams also reach your devices as a push:
 
-- **All messages**: get notified for all new messages. This is the default.
-- **Mentions only**: get notified for @mentions, DMs and scratchpad messages.
-- **None**: don't send any notifications.
+- **Push all**: whatever each stream is set to notify you about. This is the default.
+- **Push mentions**: only @mentions, DMs and scratchpads.
+- **No push**: nothing. Everything still shows in Threa.
 
-Push notifications are held back entirely while the level is **None**. With **Mentions only**, a push is sent for a mention, for a message or reaction in a DM or scratchpad, or for a missed call. See [Push notifications](/guide/push-notifications).
+Push notifications are held back entirely with **No push**. With **Push mentions**, a push is sent for a mention, for a message or reaction in a DM or scratchpad, or for a missed call. See [Push notifications](/guide/push-notifications).
 
-Incoming-call ringing follows this overall level too, not a stream's own level. Both the ring sound and the ring push stay off while the level is **None** or notifications are paused. See [Starting and joining calls](/guide/calls-basics).
+Incoming-call ringing follows this overall level too, not a stream's own level. Both the ring sound and the ring push stay off with **No push** or while notifications are paused. See [Starting and joining calls](/guide/calls-basics).
 
 ## A stream's level
 
-Each stream has its own level. Open the stream's settings (see [Stream settings](/guide/stream-settings)) and use the **Notifications** select on the **General** tab:
+Each stream has its own level. Open the stream's settings (see [Stream settings](/guide/stream-settings)) and use **Notify me about** on the **General** page:
 
-- **Default**: use the stream's default level, which the option shows in parentheses.
+- The default option, such as **Channel default** or **Thread default**: follow the default, which the option describes, such as "Follows the default for channels, now mentions only."
 - **Everything**: all messages and activity.
 - **Activity**: mentions, reactions and thread replies.
 - **Mentions only**: only when you are @mentioned.
@@ -43,7 +43,7 @@ Which levels a stream offers depends on its type:
 
 ## How the two levels combine
 
-The stream's level decides which messages are recorded in your activity and can notify you. Your overall level can only hold back push notifications on top of that. It never adds any. A channel left on its default, Mentions only, notifies you only when you are mentioned, even when your overall level is **All messages**.
+The stream's level decides which messages are recorded in your activity and can notify you. Your overall level can only hold back push notifications on top of that. It never adds any. A channel left on its default, Mentions only, notifies you only when you are mentioned, even when your overall level is **Push all**.
 
 A thread with no level of its own takes one from the stream it sits under:
 

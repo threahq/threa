@@ -7,7 +7,7 @@ order: 8
 
 # Keyboard shortcuts
 
-These are the default shortcuts. Each is shown as Ctrl on Windows and Linux with the Mac key in parentheses. You can rebind any of them in the **Composer** tab of your settings (see [Composer and keyboard settings](/guide/composer-settings)).
+These are the default shortcuts. Each is shown as Ctrl on Windows and Linux with the Mac key in parentheses. You can rebind any of them on the **Keyboard & composer** page of your settings (see [Composer and keyboard settings](/guide/composer-settings)).
 
 ## Navigation
 
@@ -44,8 +44,8 @@ These are the default shortcuts. Each is shown as Ctrl on Windows and Linux with
 | Code Block    | Ctrl+Shift+C (⌘⇧C on Mac) | Insert a code block.                                                                                                                                       |
 | Save Draft    | Ctrl+S (⌘S on Mac)        | Stash the current composer content into your saved drafts and clear the editor. See [Drafts and scheduled messages](/guide/drafts-and-scheduled-messages). |
 
-Editing shortcuts apply when the composer is focused. Inline Code has no default shortcut. You can set one in the **Composer** tab. For formatting, see [Formatting](/guide/formatting).
+Editing shortcuts apply when the composer is focused. Inline Code has no default shortcut. You can set one on the **Keyboard & composer** page. For formatting, see [Formatting](/guide/formatting).
 
 ## Change a shortcut
 
-Click the key badge for an action in the **Composer** tab and press the new combination. A changed shortcut shows a reset button that restores its default, and **Reset all shortcuts** appears once you have changed any. If the combination is already taken, you can move it to the new action.
+Click the key badge for an action on the **Keyboard & composer** page and press the new combination. A changed shortcut shows a reset button that restores its default, and **Reset to defaults** appears once you have changed any. If the combination is already taken, you can move it to the new action.

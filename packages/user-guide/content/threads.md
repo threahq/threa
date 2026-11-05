@@ -34,7 +34,7 @@ In a thread, a message's menu has a share entry for the stream the thread sits i
 - The **Threads** tab on the [Streams](app:streams) page lists threads. From a sidebar row's menu, **Threads** opens that tab narrowed to one stream's threads.
 - A thread shows in the sidebar, nested under its stream, while it has unread activity, an agent is working in it, or you have it open. Other threads are reached from their stream or from the Streams page.
 
-Settings for a thread have the same three tabs as other streams, including a Companion tab where the brief is shared with the stream the thread sits under. See [Stream settings](/guide/stream-settings).
+Settings for a thread have the same three pages as other streams, including an Agent page where the brief is shared with the stream the thread sits under. See [Stream settings](/guide/stream-settings).
 
 ## Coding sessions in a scratchpad thread
 
