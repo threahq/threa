@@ -112,6 +112,7 @@ test.each([
         sendInterim: (id, text) => session.sendInterim(id, text),
         failTurn: (id, error) => session.failTurn(id, error),
         requestDecision: (input, options) => session.requestDecision(input, options),
+        keepAlive: (streamId) => session.keepAlive(streamId),
         isEncrypted: async () => false,
       },
       access: "full-access",

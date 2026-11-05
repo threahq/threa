@@ -47,6 +47,8 @@ export interface BridgeSession {
   isEncrypted(streamId: string): Promise<boolean>
   failTurn(invocationId: string, errorMessage: string): Promise<boolean>
   requestDecision(input: DecisionRequestInput, opts?: { signal?: AbortSignal }): Promise<DecisionOutcome>
+  /** Hold the stream's open turns past their idle timeout. */
+  keepAlive(streamId: string): void
 }
 
 /** A `/spawn`'s fresh thread, waiting for its Threa thread's first turn. */
@@ -230,6 +232,8 @@ export class RunTrace {
   readonly updates: ThreadItem[] = []
   /** The item ids of questions still waiting on an answer. */
   readonly questions = new Set<string>()
+  /** The item ids of requests still waiting on an answer given in T3 Code. */
+  readonly waits = new Set<string>()
   lastError?: string
   /** The chips of tools still running, by item id, in the order they started. */
   private readonly runningTools = new Map<string, string>()
@@ -273,10 +277,11 @@ export class RunTrace {
     if (item.type === "assistant_message") {
       this.held = item
     } else if (item.type in WAIT_NOTICES) {
-      if (open && !this.emitted.has(item.itemId)) {
+      if (!open) this.waits.delete(item.itemId)
+      else if (!this.waits.has(item.itemId)) {
+        this.waits.add(item.itemId)
         // What T3 asks is as revealing as the command it would run.
-        this.updates.push(this.mode === "headline" ? { ...item, text: null } : item)
-        this.emitted.set(item.itemId, "final")
+        this.updates.push(this.mode === "headline" ? { ...item, text: null, nextTextOffset: null } : item)
       }
     } else if (item.type === "user_input_request") {
       if (open) this.questions.add(item.itemId)
@@ -1330,6 +1335,8 @@ export class T3TurnRunner {
             if (result.retryable) throw new Error(`update not posted: ${result.message}`)
             this.log(`run ${run.runId} update not posted: ${result.message}`)
           })
+          // Like an open card, a request waiting on T3 Code keeps the turn from timing out under it.
+          if (trace.waits.size > 0) this.session.keepAlive(run.streamId)
           await this.withdrawAnsweredCard(run)
           if ((trace.questions.size > 0 || (run.runtimeOrigin && waited.status === "waiting")) && !run.asking)
             this.askQuestions(invocationId, run)
@@ -1630,11 +1637,11 @@ export class T3TurnRunner {
     return withoutUpdatePrefix(await this.fullText(threadId, item))
   }
 
-  /** A wait notice quotes what T3 asks, as its prompt or command. */
+  /** A wait notice quotes what T3 asks, as its prompt or command, with nothing in it to upload. */
   private async updateText(threadId: string, item: ThreadItem): Promise<string> {
     const notice = WAIT_NOTICES[item.type]
     if (!notice) return this.replyText(threadId, item)
-    const detail = item.text?.trim()
+    const detail = redactAttachDirectives(await this.fullText(threadId, item)).trim()
     return detail ? `${notice}\n\n${detail.replace(/^/gm, "> ")}` : notice
   }
 
