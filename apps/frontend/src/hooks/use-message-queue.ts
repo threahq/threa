@@ -539,31 +539,35 @@ export function useMessageQueue(workspaceId: string): void {
       // current message to settle before the credential and the active database
       // move. The database is captured with the fence, so every write belongs
       // to the account that queued the message (see sync/account-fence).
-      await runAccountOwnedWork(async (fence) => {
-        const database = getActiveDb()
-        // Cross-tab safety: only one tab processes the outbox at a time.
-        // If another tab holds the lock, we skip — it's already processing.
-        if (navigator.locks) {
-          await navigator.locks.request("threa-outbox", { ifAvailable: true }, async (lock) => {
-            if (workspaceGenerationRef.current !== workspaceGeneration) return
-            if (!lock) {
-              if (!wasLockBlockedRef.current) {
-                wasLockBlockedRef.current = true
-                recordQueueTransition(workspaceGeneration, "message_queue_blocked", "lock")
-              }
-              return
-            }
-            if (wasLockBlockedRef.current) {
-              wasLockBlockedRef.current = false
-              recordQueueTransition(workspaceGeneration, "message_queue_unblocked", "lock")
-            }
-            await drainQueue(fence, database)
-          })
-        } else {
-          // Fallback for browsers without Web Locks API
-          await drainQueue(fence, database)
+      const drain = () =>
+        runAccountOwnedWork(async (fence) => {
+          if (workspaceGenerationRef.current !== workspaceGeneration) return
+          await drainQueue(fence, getActiveDb())
+        })
+      // Cross-tab safety: only one tab processes the outbox at a time. A tab
+      // that finds it held waits its turn rather than skipping: the holder's
+      // last read may predate this tab's message, which would then never send.
+      // The wait stays outside account-owned work, so a switch never waits on it.
+      if (navigator.locks) {
+        const drainHolding = async () => {
+          if (wasLockBlockedRef.current && workspaceGenerationRef.current === workspaceGeneration) {
+            wasLockBlockedRef.current = false
+            recordQueueTransition(workspaceGeneration, "message_queue_unblocked", "lock")
+          }
+          await drain()
         }
-      })
+        await navigator.locks.request("threa-outbox", { ifAvailable: true }, async (lock) => {
+          if (lock) return drainHolding()
+          if (!wasLockBlockedRef.current) {
+            wasLockBlockedRef.current = true
+            recordQueueTransition(workspaceGeneration, "message_queue_blocked", "lock")
+          }
+          await navigator.locks.request("threa-outbox", drainHolding)
+        })
+      } else {
+        // Fallback for browsers without Web Locks API
+        await drain()
+      }
     } finally {
       const ownsProcess = isProcessingGenerationRef.current === workspaceGeneration
       if (ownsProcess) isProcessingGenerationRef.current = null

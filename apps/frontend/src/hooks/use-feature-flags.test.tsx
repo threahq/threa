@@ -12,7 +12,7 @@ import {
 import { db } from "@/db"
 import { resetWorkspaceStoreCache } from "@/stores/workspace-store"
 import { workspaceKeys } from "./use-workspaces"
-import { useDeliveredFeatureFlag, useFeatureFlag, useOverriddenFeatureFlags } from "./use-feature-flags"
+import { useFeatureFlag, useOverriddenFeatureFlags } from "./use-feature-flags"
 
 function createWrapper(queryClient: QueryClient) {
   return function Wrapper({ children }: { children: ReactNode }) {
@@ -192,27 +192,6 @@ describe("feature flags — first render off persisted layers", () => {
     })
 
     await waitFor(() => expect(result.current).toBe("on"))
-  })
-})
-
-describe("useDeliveredFeatureFlag", () => {
-  afterEach(async () => {
-    cleanup()
-    await db.workspaceMetadata.clear()
-    resetWorkspaceStoreCache()
-  })
-
-  it("ignores the layers persisted from an earlier session until the server's bootstrap lands", async () => {
-    const queryClient = new QueryClient()
-    await persistMetadataLayers("ws_delivered", { workspace: {}, user: { sqliteStorage: "read-write" } })
-    const { result } = renderHook(() => useDeliveredFeatureFlag("ws_delivered", "sqliteStorage"), {
-      wrapper: createWrapper(queryClient),
-    })
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    const beforeBootstrap = result.current
-    cacheBootstrapLayers(queryClient, "ws_delivered", { workspace: {}, user: {} })
-    await waitFor(() => expect(result.current).not.toBeNull())
-    expect({ beforeBootstrap, delivered: result.current }).toEqual({ beforeBootstrap: null, delivered: "off" })
   })
 })
 

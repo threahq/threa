@@ -72,15 +72,13 @@ export type RouteCategory =
 export type RoomCategory = "workspace" | "stream" | "agent_session" | "other"
 export type ReasonClass = "network" | "timeout" | "abort" | "server" | "transport" | "unknown"
 
-const STORAGE_MODES = ["off", "shadow", "read-only", "read-write"] as const
+const STORAGE_MODES = ["off", "read-write"] as const
 const STORAGE_FAILURE_KINDS = [
   "worker_failed",
   "owner_lost",
   "outcome_unknown",
-  "drain_refused",
   "mode_unreadable",
-  "apply_failed",
-  "upgrade_unfinished",
+  "import_failed",
 ] as const
 
 export interface DiagnosticFields {
@@ -106,14 +104,11 @@ export interface DiagnosticFields {
   p95Ms?: number
   maxMs?: number
   storageMode?: (typeof STORAGE_MODES)[number]
-  requestedMode?: (typeof STORAGE_MODES)[number]
   role?: "owner" | "follower"
   kind?: (typeof STORAGE_FAILURE_KINDS)[number]
-  restartPending?: boolean
   openMs?: number
   rangeP50Ms?: number
   rangeP95Ms?: number
-  fallbacks?: number
 }
 
 interface DiagnosticRow extends DiagnosticFields {
@@ -764,14 +759,12 @@ function projectFields(fields: DiagnosticFields): DiagnosticFields {
   for (const key of ["elapsedMs", "p50Ms", "p95Ms", "maxMs", "openMs", "rangeP50Ms", "rangeP95Ms"] as const) {
     if (boundedInteger(fields[key], 86_400_000)) result[key] = fields[key]
   }
-  for (const key of ["count", "failed", "interrupted", "fallbacks"] as const) {
+  for (const key of ["count", "failed", "interrupted"] as const) {
     if (boundedInteger(fields[key], 100_000)) result[key] = fields[key]
   }
   if (oneOf(fields.storageMode, STORAGE_MODES)) result.storageMode = fields.storageMode
-  if (oneOf(fields.requestedMode, STORAGE_MODES)) result.requestedMode = fields.requestedMode
   if (oneOf(fields.role, ["owner", "follower"])) result.role = fields.role
   if (oneOf(fields.kind, STORAGE_FAILURE_KINDS)) result.kind = fields.kind
-  if (typeof fields.restartPending === "boolean") result.restartPending = fields.restartPending
   return result
 }
 

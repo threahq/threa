@@ -1,9 +1,8 @@
 import type { Database } from "@sqlite.org/sqlite-wasm"
 import type sqlite3InitModule from "@sqlite.org/sqlite-wasm"
 import { ThreaDatabase, type CachedEvent } from "../database"
-import { SqliteMirror, type MirrorCoordination, type MirrorDeadlines, type SqliteMirrorMode } from "./client"
+import { SqliteMirror, type MirrorCoordination, type MirrorDeadlines } from "./client"
 import type { MirrorReply, MirrorRequest, MirrorTransport } from "./protocol"
-import { isMirroredStore } from "./stores"
 import { createBus, inProcessTransport } from "./test-harness"
 
 type Sqlite3 = Awaited<ReturnType<typeof sqlite3InitModule>>
@@ -12,14 +11,8 @@ export const WS = "ws_1"
 export const READS: ReadonlySet<string> = new Set(["get", "getMany", "query", "count"])
 
 export interface MirroredOptions {
-  mode?: SqliteMirrorMode
-  /** This boot holds every other tab out, so read-write may make SQLite the primary copy. */
-  entering?: boolean
-  requestRestart?: () => void
-  /** The user restarted for this entering boot, so it may hold the app behind the upgrade lock. */
-  upgrade?: boolean
-  /** Stands in for reloading every tab once an upgrade copied every store; a no-op by default. */
-  restartEveryTab?: () => void
+  /** SQLite already holds the primary copy; `false` boots a device that imports IndexedDB first. Defaults to `true`. */
+  primary?: boolean
   bus?: ReturnType<typeof createBus>
   name?: string
   sqlite?: Database
@@ -68,10 +61,6 @@ export async function until(condition: () => boolean, what: string): Promise<voi
   throw new Error(`Timed out waiting for ${what}`)
 }
 
-export function mirroredStores(database: ThreaDatabase): string[] {
-  return database.tables.map((table) => table.name).filter(isMirroredStore)
-}
-
 function withDelayedClaim(coordination: MirrorCoordination, answered: Promise<void>): MirrorCoordination {
   return { ...coordination, claim: (onChange) => void answered.then(() => coordination.claim(onChange)) }
 }
@@ -112,14 +101,10 @@ export function mirroredDatabases(sqlite3: Sqlite3, owned: Array<() => void>) {
     const coordination = bus.coordination()
     const mirror = new SqliteMirror({
       database,
-      mode: options.mode ?? "read-only",
       coordination: options.claimAnswered ? withDelayedClaim(coordination, options.claimAnswered) : coordination,
       createTransport: transport,
       deadlines: options.deadlines,
-      entering: options.entering,
-      requestRestart: options.requestRestart,
-      upgrade: options.upgrade,
-      restartEveryTab: options.restartEveryTab ?? (() => {}),
+      primary: options.primary ?? true,
     })
     database.sqliteMirror = mirror
     database.sqliteBoot = mirror.beforeIdbOpen()
@@ -134,17 +119,5 @@ export function mirroredDatabases(sqlite3: Sqlite3, owned: Array<() => void>) {
     return database
   }
 
-  /** A first boot that copies every store into SQLite, then closes as a tab would. */
-  async function copiedSession(options: MirroredOptions = {}, seed?: (database: ThreaDatabase) => Promise<unknown>) {
-    const first = openMirrored(options)
-    await first.database.open()
-    await seed?.(first.database)
-    await until(() => mirroredStores(first.database).every((store) => first.mirror.trusts(store)), "a full backfill")
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    first.database.close()
-    first.coordination.die()
-    return { name: first.name, sqlite: first.sqlite }
-  }
-
-  return { openMirrored, plainDatabase, copiedSession }
+  return { openMirrored, plainDatabase }
 }

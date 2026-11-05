@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { act, render, screen, userEvent } from "@/test"
 // eslint-disable-next-line no-restricted-imports -- test drives the store the lock's hook reads
-import { reportStorageUpgrade, resetStorageRestartForTests } from "@/db/sqlite-mirror/storage-mode"
+import { reportStorageUpgrade, resetStorageUpgradeForTests } from "@/db/sqlite-mirror/storage-mode"
 import { StorageUpgradeLock } from "./storage-upgrade-lock"
 
 describe("StorageUpgradeLock", () => {
-  afterEach(() => resetStorageRestartForTests())
+  afterEach(() => resetStorageUpgradeForTests())
 
   it("holds the app and its focus with the copy's progress until the upgrade ends, and Escape does not dismiss it", async () => {
     render(
@@ -19,6 +19,7 @@ describe("StorageUpgradeLock", () => {
     expect(screen.getByRole("button", { name: "Behind" })).toHaveFocus()
 
     act(() => reportStorageUpgrade({ copied: 0, total: null }))
+    act(() => reportStorageUpgrade({ copied: 0, total: 100 }))
     const lock = await screen.findByRole("alertdialog", { name: "Upgrading storage" })
     await vi.waitFor(() => expect(lock).toHaveFocus())
     act(() => reportStorageUpgrade({ copied: 25, total: 100 }))
@@ -33,5 +34,12 @@ describe("StorageUpgradeLock", () => {
       expect(screen.queryByRole("alertdialog")).toBeNull()
       expect(screen.getByRole("button", { name: "Behind" })).toHaveFocus()
     })
+  })
+
+  it("stays closed while rows are counted and when there are none to copy", () => {
+    render(<StorageUpgradeLock />)
+    act(() => reportStorageUpgrade({ copied: 0, total: null }))
+    act(() => reportStorageUpgrade({ copied: 0, total: 0 }))
+    expect(screen.queryByRole("alertdialog")).toBeNull()
   })
 })

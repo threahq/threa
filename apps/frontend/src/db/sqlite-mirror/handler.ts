@@ -1,5 +1,5 @@
 import type { Database } from "@sqlite.org/sqlite-wasm"
-import { MirrorStore, backlogSize, type MirrorMutation } from "./mirror-store"
+import { MirrorStore, backlogSize } from "./mirror-store"
 import type { MirrorReply, MirrorRequest } from "./protocol"
 import { txOf } from "./protocol"
 
@@ -20,7 +20,6 @@ type ReplyData = Omit<Extract<MirrorReply, { ok: true }>, "ok" | "ms">
 interface Transaction {
   id: number
   readonly: boolean
-  writes: MirrorMutation[]
   /** Set once a write failed: SQLite may have rolled the transaction back, so nothing after may write or commit. */
   failed: DOMException | null
   idle?: ReturnType<typeof setTimeout>
@@ -106,7 +105,7 @@ export function createMirrorHandler(
   }
 
   function admit(begin: Begin): void {
-    admitted.set(begin.tx, { id: begin.tx, readonly: begin.readonly, writes: [], failed: null })
+    admitted.set(begin.tx, { id: begin.tx, readonly: begin.readonly, failed: null })
     if (!begin.readonly) writer = begin.tx
   }
 
@@ -167,9 +166,7 @@ export function createMirrorHandler(
         if (tx.readonly) throw new DOMException("The transaction is read-only", "ReadOnlyError")
         if (tx.failed) throw tx.failed
         try {
-          const { failures, applied } = store.write(request.write)
-          tx.writes.push(applied)
-          return { failures }
+          return { failures: store.write(request.write).failures }
         } catch (error) {
           tx.failed = new DOMException(
             `Transaction ${tx.id} was rolled back after a failed write: ${error}`,
@@ -185,7 +182,6 @@ export function createMirrorHandler(
         if (tx.failed) throw tx.failed
         if (!tx.readonly) {
           try {
-            if (tx.writes.length > 0) store.appendBacklog(tx.writes)
             store.recordCommit(request.ledger)
             database.db.exec("COMMIT")
           } catch (error) {

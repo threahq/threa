@@ -8,19 +8,19 @@ import {
   PREFETCH_INBOX_MAX_ENTRIES,
   appendPrefetch,
   deletePrefetches,
-  hasPrefetches,
   queuedPrefetches,
   type PrefetchPayload,
 } from "@/db/prefetch-inbox"
-import { SqliteMirror } from "@/db/sqlite-mirror/client"
-import { resumeSqliteMirror } from "@/db/sqlite-mirror/lifecycle"
 import { mirroredDatabases } from "@/db/sqlite-mirror/mirrored-databases"
-import { readRecordedMode } from "@/db/sqlite-mirror/storage-mode"
-import { createBus, inProcessTransport } from "@/db/sqlite-mirror/test-harness"
+import { createBus } from "@/db/sqlite-mirror/test-harness"
 import { browserPrefetchStore, storePrefetch } from "./sw-bootstrap-prefetch"
 import { applyPrefetch, drainPrefetchInbox, drainPrefetchesOnOpen, watchPrefetchInbox } from "./sw-prefetch-inbox"
 
 const WS = "ws_1"
+
+async function hasPrefetches(dbName: string): Promise<boolean> {
+  return (await queuedPrefetches(dbName)).length > 0
+}
 const FETCHED_AT = Date.now()
 let streams = 0
 
@@ -292,33 +292,18 @@ describe("drainPrefetchInbox", () => {
   })
 })
 
-describe("service-worker prefetch under read-write storage", () => {
+describe("service-worker prefetch under SQLite storage", () => {
   let openMirrored: ReturnType<typeof mirroredDatabases>["openMirrored"]
-  let copiedSession: ReturnType<typeof mirroredDatabases>["copiedSession"]
-  let plainDatabase: ReturnType<typeof mirroredDatabases>["plainDatabase"]
   beforeAll(async () => {
-    ;({ openMirrored, copiedSession, plainDatabase } = mirroredDatabases(await sqlite3InitModule(), owned))
+    ;({ openMirrored } = mirroredDatabases(await sqlite3InitModule(), owned))
   })
-  afterEach(() => {
-    for (const key of Object.keys(localStorage)) if (key.startsWith("threa:sqlite")) localStorage.removeItem(key)
-  })
-
-  /** A second boot of a database whose first boot copied every store into SQLite and recorded read-write. */
-  async function readWriteTab(name: string, bus = createBus()) {
-    const copied = await copiedSession({ name, mode: "read-write", entering: true })
-    return openMirrored({ ...copied, bus, mode: "read-write", entering: true })
-  }
 
   it("never writes the account's IndexedDB, and reaches SQLite once the app drains the inbox", async () => {
     const workosUserId = `user_rw_${++streams}`
     const name = accountDbName(workosUserId)
-    const bus = createBus()
-    const tab = await readWriteTab(name, bus)
+    const tab = openMirrored({ name, bus: createBus() })
     await tab.database.open()
-    expect({ serving: tab.mirror.readWrite, recorded: await readRecordedMode(name) }).toEqual({
-      serving: true,
-      recorded: "read-write",
-    })
+    expect(tab.mirror.readWrite).toBe(true)
 
     const browser = browserPrefetchStore()
     const writeNative = vi.fn(browser.writeNative)
@@ -326,7 +311,7 @@ describe("service-worker prefetch under read-write storage", () => {
     const streamId = nextStream()
     const [payload] = twoPrefetches(streamId)
     const opens = vi.spyOn(indexedDB, "open")
-    await storePrefetch(workosUserId, payload, { ...browser, modeLock: () => bus.modeLock(), writeNative, announce })
+    await storePrefetch(workosUserId, payload, { ...browser, sqliteCapable: true, writeNative, announce })
     const opened = opens.mock.calls.map(([opening]) => opening)
     opens.mockRestore()
 
@@ -337,7 +322,7 @@ describe("service-worker prefetch under read-write storage", () => {
       queued: (await queuedPrefetches(name)).map((entry) => entry.payload),
       sqlite: (await streamState(tab.database, streamId)).events,
     }).toEqual({
-      opened: ["threa-sqlite-mode", "threa-sw-inbox"],
+      opened: ["threa-sw-inbox"],
       native: 0,
       announced: [[name]],
       queued: [payload],
@@ -353,12 +338,11 @@ describe("service-worker prefetch under read-write storage", () => {
     }).toEqual({ serving: true, events: [`${streamId}_1`, `${streamId}_2`], queued: false })
   })
 
-  it("lands what was queued before a read-write boot in SQLite ahead of the app's first transaction", async () => {
+  it("lands what was queued before a boot in SQLite ahead of the app's first transaction", async () => {
     const name = `inbox_rw_open_${++streams}`
     const streamId = nextStream()
-    const copied = await copiedSession({ name, mode: "read-write", entering: true })
     for (const payload of twoPrefetches(streamId)) await appendPrefetch(name, payload)
-    const tab = openMirrored({ ...copied, mode: "read-write", entering: true })
+    const tab = openMirrored({ name })
     drainPrefetchesOnOpen(tab.database)
 
     const firstRead = await streamState(tab.database, streamId)
@@ -368,35 +352,5 @@ describe("service-worker prefetch under read-write storage", () => {
       events: firstRead.events.map((e) => e.id),
       queued: await hasPrefetches(name),
     }).toEqual({ serving: true, events: [`${streamId}_1`, `${streamId}_2`, `${streamId}_3`], queued: false })
-  })
-
-  it("discards what is queued when a boot leaves read-write, before SQLite's backlog lands", async () => {
-    const name = `inbox_rw_leave_${++streams}`
-    const established = await readWriteTab(name)
-    await established.database.open()
-    established.database.close()
-    established.coordination.die()
-    const streamId = nextStream()
-    for (const payload of twoPrefetches(streamId)) await appendPrefetch(name, payload)
-
-    const bus = createBus()
-    const database = plainDatabase(name)
-    const lock = bus.modeLock()
-    const coordination = bus.coordination(database.sqliteWriter.id, lock)
-    const createTransport = () => inProcessTransport(established.sqlite)
-    resumeSqliteMirror(database, {
-      lock,
-      switchWaitMs: 20,
-      createTransport,
-      createMirror: (target, mode, entering) =>
-        new SqliteMirror({ database: target, mode, entering, coordination, createTransport }),
-    })
-    drainPrefetchesOnOpen(database)
-
-    expect({
-      events: (await streamState(database, streamId)).events,
-      recorded: await readRecordedMode(name),
-      queued: await hasPrefetches(name),
-    }).toEqual({ events: [], recorded: "off", queued: false })
   })
 })

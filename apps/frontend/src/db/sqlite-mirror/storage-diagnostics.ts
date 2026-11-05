@@ -1,34 +1,36 @@
 import { recordConnectivityEvent, type DiagnosticFields } from "@/lib/connectivity-diagnostics/facade"
-import { isStorageRestartPending, type SqliteStorageMode } from "./storage-mode"
+import type { SqliteStorageMode } from "./storage-mode"
 
 export type StorageFailureKind = NonNullable<DiagnosticFields["kind"]>
 
 const SUMMARY_INTERVAL_MS = 5 * 60_000
 const MAX_SAMPLES = 10_000
 
+/** `read-write` runs on SQLite, `off` on IndexedDB. */
+type StorageEngine = Extract<SqliteStorageMode, "off" | "read-write">
+
 interface StorageContext {
-  storageMode: SqliteStorageMode
-  requestedMode: SqliteStorageMode
+  storageMode: StorageEngine
   role?: "owner" | "follower"
 }
 
-let context: StorageContext = { storageMode: "off", requestedMode: "off" }
+let context: StorageContext = { storageMode: "off" }
 let sqliteReadMs: number[] = []
 let rangeReadMs: number[] = []
-let fallbacks = 0
 let summarizedAt = Date.now()
 
 function common(): DiagnosticFields {
-  return { ...context, restartPending: isStorageRestartPending() }
+  return { ...context }
 }
 
-/** The mode this boot runs and the one the flag asks for; every later storage event carries both. */
-export function setStorageContext(storageMode: SqliteStorageMode, requestedMode: SqliteStorageMode): void {
-  context = { storageMode, requestedMode }
+/** The engine this session runs on; every later storage event carries it. */
+export function setStorageContext(storageMode: StorageEngine): void {
+  context = { storageMode }
 }
 
-export function reportStorageBoot(role: "owner" | "follower", fields: DiagnosticFields = {}): void {
-  context = { ...context, role }
+/** Every boot reports once: on IndexedDB with no role, on SQLite as the file's owner or a follower of it. */
+export function reportStorageBoot(role: "owner" | "follower" | null, fields: DiagnosticFields = {}): void {
+  if (role) context = { ...context, role }
   recordConnectivityEvent("storage_boot", { ...common(), ...fields })
 }
 
@@ -42,11 +44,6 @@ export function reportStorageRecovered(fields: DiagnosticFields = {}): void {
 
 export function observeSqliteRead(ms: number): void {
   if (sqliteReadMs.length < MAX_SAMPLES) sqliteReadMs.push(ms)
-  summarizeWhenDue()
-}
-
-export function observeReadFallback(): void {
-  fallbacks++
   summarizeWhenDue()
 }
 
@@ -70,7 +67,7 @@ function percentiles(samples: number[]): { p50?: number; p95?: number } {
 
 export function flushStorageSummary(): void {
   summarizedAt = Date.now()
-  if (sqliteReadMs.length === 0 && rangeReadMs.length === 0 && fallbacks === 0) return
+  if (sqliteReadMs.length === 0 && rangeReadMs.length === 0) return
   const sqlite = percentiles(sqliteReadMs)
   const range = percentiles(rangeReadMs)
   recordConnectivityEvent("storage_summary", {
@@ -80,17 +77,14 @@ export function flushStorageSummary(): void {
     p95Ms: sqlite.p95,
     rangeP50Ms: range.p50,
     rangeP95Ms: range.p95,
-    fallbacks,
   })
   sqliteReadMs = []
   rangeReadMs = []
-  fallbacks = 0
 }
 
 export function resetStorageDiagnosticsForTests(): void {
-  context = { storageMode: "off", requestedMode: "off" }
+  context = { storageMode: "off" }
   sqliteReadMs = []
   rangeReadMs = []
-  fallbacks = 0
   summarizedAt = Date.now()
 }

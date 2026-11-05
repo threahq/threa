@@ -7,10 +7,9 @@ import { mirroredDatabases } from "./mirrored-databases"
 // Never closed: like the IndexedDB setup.ts abandons per file, it takes the late writes of this file's work
 // instead of failing them on a closed database.
 beforeAll(async () => {
-  const { copiedSession, openMirrored } = mirroredDatabases(await sqlite3InitModule(), [])
-  const { name, sqlite } = await copiedSession({ mode: "read-write", entering: true })
-  const { database, mirror } = openMirrored({ name, sqlite, mode: "read-write", entering: true })
+  const { openMirrored } = mirroredDatabases(await sqlite3InitModule(), [])
+  const { database, mirror } = openMirrored()
   await database.open()
-  if (!mirror.readWrite) throw new Error("The read-write suite's database did not enter read-write")
+  if (!mirror.readWrite) throw new Error("The read-write suite's database is not served by SQLite")
   setActiveDb(database)
 })

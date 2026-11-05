@@ -4,11 +4,9 @@ import {
   connectivityDiagnosticsTestApi,
   suspendConnectivityDiagnostics,
 } from "@/lib/connectivity-diagnostics/index"
-import { requestStorageRestart, resetStorageRestartForTests } from "./storage-mode"
 import {
   flushStorageSummary,
   observeRangeRead,
-  observeReadFallback,
   observeSqliteRead,
   reportStorageBoot,
   reportStorageFailure,
@@ -52,24 +50,20 @@ describe("storage diagnostics", () => {
     await connectivityDiagnosticsTestApi.db.events.clear()
     await connectivityDiagnosticsTestApi.db.consent.clear()
     resetStorageDiagnosticsForTests()
-    resetStorageRestartForTests()
     authorizeConnectivityDiagnostics("workos_1", scope, "preferences_v1")
   })
 
   afterEach(() => {
     suspendConnectivityDiagnostics()
     resetStorageDiagnosticsForTests()
-    resetStorageRestartForTests()
   })
 
-  it("records boots, failures and a read summary under the running and requested modes", async () => {
-    setStorageContext("read-write", "read-write")
+  it("records boots, failures and a read summary under the running engine", async () => {
+    setStorageContext("read-write")
     reportStorageBoot("owner", { openMs: 42 })
     reportStorageFailure("worker_failed", { attempt: 2 })
-    requestStorageRestart("threa-account-a")
     for (const ms of [5, 10, 20, 400]) observeSqliteRead(ms)
     for (const ms of [8, 30]) observeRangeRead(ms)
-    observeReadFallback()
     flushStorageSummary()
     flushStorageSummary()
 
@@ -78,32 +72,25 @@ describe("storage diagnostics", () => {
       {
         event: "storage_boot",
         storageMode: "read-write",
-        requestedMode: "read-write",
         role: "owner",
-        restartPending: false,
         openMs: 42,
       },
       {
         event: "storage_failure",
         storageMode: "read-write",
-        requestedMode: "read-write",
         role: "owner",
-        restartPending: false,
         kind: "worker_failed",
         attempt: 2,
       },
       {
         event: "storage_summary",
         storageMode: "read-write",
-        requestedMode: "read-write",
         role: "owner",
-        restartPending: true,
         count: 4,
         p50Ms: 10,
         p95Ms: 400,
         rangeP50Ms: 8,
         rangeP95Ms: 30,
-        fallbacks: 1,
       },
     ])
   })

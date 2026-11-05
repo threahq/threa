@@ -1,13 +1,7 @@
 import { ACCOUNT_ASSERTION_HEADER } from "@threahq/types"
 import type { ThreaDatabase } from "../db/database"
-import {
-  browserModeLock,
-  readRecordedMode,
-  type ModeLock,
-  type SqliteStorageMode,
-} from "../db/sqlite-mirror/storage-mode"
 import { SW_MSG_PREFETCH_INBOX } from "./sw-messages"
-import { appendPrefetch, hasPrefetches, type PrefetchPayload } from "../db/prefetch-inbox"
+import { appendPrefetch, type PrefetchPayload } from "../db/prefetch-inbox"
 import { applyPrefetch } from "./sw-prefetch-inbox"
 
 // Push bootstrap pre-fetch — warm stream data so it's instant on notification tap
@@ -156,12 +150,10 @@ function prefetchInit(workosUserId: string): RequestInit {
   return { credentials: "include", headers: { [ACCOUNT_ASSERTION_HEADER]: workosUserId } }
 }
 
-/** Where a prefetch lands, split out so tests can stand in for Web Locks, the recorded mode and the window clients. */
+/** Where a prefetch lands, split out so tests can stand in for Web Locks and the window clients. */
 export interface PrefetchStore {
-  /** `null` without Web Locks: then no tab can run a mirror, so none can have made SQLite the primary copy. */
-  modeLock(dbName: string): Pick<ModeLock, "ifShared"> | null
-  readMode(dbName: string): Promise<SqliteStorageMode>
-  hasPrefetches(dbName: string): Promise<boolean>
+  /** Without Web Locks no tab can run SQLite storage, so IndexedDB is the primary copy. */
+  sqliteCapable: boolean
   appendPrefetch(dbName: string, payload: PrefetchPayload): Promise<void>
   writeNative(workosUserId: string, payload: PrefetchPayload): Promise<void>
   announce(dbName: string): Promise<void>
@@ -178,9 +170,7 @@ interface WindowClients {
 
 export function browserPrefetchStore(): PrefetchStore {
   return {
-    modeLock: (dbName) => (typeof navigator !== "undefined" && navigator.locks ? browserModeLock(dbName) : null),
-    readMode: readRecordedMode,
-    hasPrefetches,
+    sqliteCapable: typeof navigator !== "undefined" && navigator.locks !== undefined,
     appendPrefetch,
     writeNative: async (workosUserId, payload) => applyPrefetch(await openAccountDb(workosUserId), payload),
     announce: async (dbName) => {
@@ -194,30 +184,20 @@ export function browserPrefetchStore(): PrefetchStore {
 }
 
 /**
- * Writes the account database itself only holding the shared mode lock, so no
- * boot changes the mode meanwhile, and only while IndexedDB is the primary copy
- * (its marks then tell a mirror what changed) and the inbox holds nothing older.
- * Otherwise, read-write storage or a switch underway, it queues the prefetch in
- * the inbox for the app to apply through SQLite or IndexedDB, whichever is primary.
+ * Queues the prefetch for the app to apply through its own write path, onto
+ * SQLite or IndexedDB, whichever holds the database; this worker writes the
+ * database itself only where no tab can run SQLite storage.
  */
 export async function storePrefetch(
   workosUserId: string,
   payload: PrefetchPayload,
   store: PrefetchStore
 ): Promise<void> {
+  if (!store.sqliteCapable) return store.writeNative(workosUserId, payload)
   const { accountDbName } = await import("../db/database")
   const dbName = accountDbName(workosUserId)
-  const lock = store.modeLock(dbName)
-  if (!lock) return store.writeNative(workosUserId, payload)
-  const queued = await lock.ifShared(async (held) => {
-    if (held && (await store.readMode(dbName)) !== "read-write" && !(await store.hasPrefetches(dbName))) {
-      await store.writeNative(workosUserId, payload)
-      return false
-    }
-    await store.appendPrefetch(dbName, payload)
-    return true
-  })
-  if (queued) await store.announce(dbName)
+  await store.appendPrefetch(dbName, payload)
+  await store.announce(dbName)
 }
 
 /**

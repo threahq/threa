@@ -1,24 +1,15 @@
-import type { SqliteMirrorMode } from "./client"
 import { transactionDone } from "./idb-reads"
 
-export type SqliteStorageMode = "off" | SqliteMirrorMode
+/** Recorded per database by every build that ran SQLite storage; this build records only read-write. */
+export type SqliteStorageMode = "off" | "shadow" | "read-only" | "read-write"
 
 const MODE_DATABASE = "threa-sqlite-mode"
 const MODE_STORE = "mode"
-const RELOAD_CHANNEL = "threa-sqlite-storage-reload"
-const SWITCH_RELOAD_KEY = "threa:sqliteSwitchReload"
-const MAY_BE_READ_WRITE_PREFIX = "threa:sqliteMayBeReadWrite:"
-export const REQUESTED_PREFIX = "threa:sqliteStorage:"
-
-export function parseMode(stored: string | null): SqliteStorageMode {
-  return stored === "shadow" || stored === "read-only" || stored === "read-write" ? stored : "off"
-}
-
-/** The mode the flag asked for this database; anything unrecognised reads as off. */
-export function readSqliteStorageMode(idbName: string): SqliteStorageMode {
-  if (typeof localStorage === "undefined") return "off"
-  return parseMode(localStorage.getItem(`${REQUESTED_PREFIX}${idbName}`))
-}
+const PRIMARY_PREFIX = "threa:sqlitePrimary:"
+/** Builds that ran SQLite behind the flag read it when their recorded mode is unreadable. */
+const FLAG_BUILD_PRIMARY_PREFIX = "threa:sqliteMayBeReadWrite:"
+/** The mode builds that ran it behind the `sqliteStorage` flag ask for; read-write keeps one of them from leaving it. */
+const REQUESTED_PREFIX = "threa:sqliteStorage:"
 
 function openModes(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -29,11 +20,7 @@ function openModes(): Promise<IDBDatabase> {
   })
 }
 
-/**
- * The mode every tab of a database runs, durable across a browser kill: a tab
- * never runs another, so read-write's SQLite is the primary copy exactly while
- * this says so. Changes only at a boot holding every other tab out.
- */
+/** Durable across a browser kill; SQLite holds a database's primary copy once this says read-write. */
 export async function readRecordedMode(idbName: string): Promise<SqliteStorageMode> {
   const modes = await openModes()
   try {
@@ -47,47 +34,58 @@ export async function readRecordedMode(idbName: string): Promise<SqliteStorageMo
   }
 }
 
-/** Set before read-write is recorded and cleared only once another mode is, so a boot that cannot read the mode knows whether it may be read-write. */
-export function mayBeReadWrite(idbName: string): boolean {
-  return localStorage.getItem(`${MAY_BE_READ_WRITE_PREFIX}${idbName}`) !== null
+/**
+ * Set only once read-write is recorded, and never cleared, so a boot knows without reading IndexedDB that SQLite is
+ * the primary copy. Builds that ran SQLite behind the flag set `threa:sqliteMayBeReadWrite:` before recording a mode,
+ * so theirs proves nothing; their recorded mode decides instead.
+ */
+export function isSqlitePrimary(idbName: string): boolean {
+  return localStorage.getItem(`${PRIMARY_PREFIX}${idbName}`) !== null
 }
 
-export async function recordMode(idbName: string, mode: SqliteStorageMode): Promise<void> {
-  const marker = `${MAY_BE_READ_WRITE_PREFIX}${idbName}`
-  if (mode === "read-write") localStorage.setItem(marker, "1")
+/** The recorded mode stays the durable truth: a marker this fails to set is set again by the boot that reads it. */
+export function markSqlitePrimary(idbName: string): void {
+  try {
+    localStorage.setItem(`${PRIMARY_PREFIX}${idbName}`, "1")
+    localStorage.setItem(`${FLAG_BUILD_PRIMARY_PREFIX}${idbName}`, "1")
+    localStorage.setItem(`${REQUESTED_PREFIX}${idbName}`, "read-write")
+  } catch (error) {
+    console.error(`Could not mark SQLite as the primary copy of ${idbName}`, error)
+  }
+}
+
+/** SQLite becomes the primary copy of `idbName`, for this build and every older one. */
+export async function recordReadWrite(idbName: string): Promise<void> {
   const modes = await openModes()
   try {
     const tx = modes.transaction(MODE_STORE, "readwrite", { durability: "strict" })
-    if (mode === "off") tx.objectStore(MODE_STORE).delete(idbName)
-    else tx.objectStore(MODE_STORE).put(mode, idbName)
+    tx.objectStore(MODE_STORE).put("read-write", idbName)
     await transactionDone(tx)
   } finally {
     modes.close()
   }
-  if (mode !== "read-write") localStorage.removeItem(marker)
+  markSqlitePrimary(idbName)
 }
 
-/** Every tab of a database holds the shared side for its life; a boot changing the mode holds the exclusive side, so no other tab runs meanwhile. */
+/** Every tab of a database holds the shared side for its life; the boot copying IndexedDB into SQLite holds the exclusive side. */
 export interface ModeLock {
-  /** The exclusive side, resolving to its release, or `null` when another tab still runs after `waitMs`, or at once for 0. */
-  exclusive(waitMs: number): Promise<(() => void) | null>
+  /** The exclusive side, resolving to its release, or `null` at once when another tab holds either side. */
+  exclusive(): Promise<(() => void) | null>
   /** The shared side, held for the rest of this tab's life. */
   shared(): Promise<void>
-  /** Runs `run` holding the shared side if no tab holds or awaits the exclusive one, else without it; never waits. */
-  ifShared<T>(run: (held: boolean) => Promise<T>): Promise<T>
 }
 
 export function browserModeLock(idbName: string): ModeLock {
   const name = `threa-sqlite-mode:${idbName}`
   return {
-    exclusive: (waitMs) =>
+    exclusive: () =>
       new Promise((resolve) => {
-        const hold = (lock: Lock | null) => {
-          if (!lock) return resolve(null)
-          return new Promise<void>((release) => resolve(release))
-        }
-        const options = waitMs > 0 ? { signal: AbortSignal.timeout(waitMs) } : { ifAvailable: true }
-        navigator.locks.request(name, options, hold).catch(() => resolve(null))
+        navigator.locks
+          .request(name, { ifAvailable: true }, (lock) => {
+            if (!lock) return resolve(null)
+            return new Promise<void>((release) => resolve(release))
+          })
+          .catch(() => resolve(null))
       }),
     shared: () =>
       new Promise((resolve) => {
@@ -96,46 +94,7 @@ export function browserModeLock(idbName: string): ModeLock {
           return new Promise<never>(() => {})
         })
       }),
-    // `await` flattens the callback's promise: TypeScript 5.9's DOM typings, which the deploy build uses, return Promise<Promise<T>>.
-    ifShared: async (run) =>
-      await navigator.locks.request(name, { mode: "shared", ifAvailable: true }, (lock) => run(lock !== null)),
   }
-}
-
-const restartPending = new Set<string>()
-let restartDismissed = false
-const restartListeners = new Set<() => void>()
-
-/**
- * The flag asks for a mode this session cannot switch to while other tabs run
- * it, or while it holds no worker: the user restarts every tab to switch, as
- * for an app update. Nothing reloads on its own.
- */
-export function requestStorageRestart(idbName: string): void {
-  if (restartPending.has(idbName)) return
-  restartPending.add(idbName)
-  for (const listener of restartListeners) listener()
-}
-
-/** Whether any database of this page waits for a restart the user has not waved off this session. */
-export function isStorageRestartPending(): boolean {
-  return restartPending.size > 0 && !restartDismissed
-}
-
-export function dismissStorageRestart(): void {
-  restartDismissed = true
-  for (const listener of restartListeners) listener()
-}
-
-export function onStorageRestartPending(listener: () => void): () => void {
-  restartListeners.add(listener)
-  return () => restartListeners.delete(listener)
-}
-
-export function resetStorageRestartForTests(): void {
-  restartPending.clear()
-  restartDismissed = false
-  upgrade = null
 }
 
 /** Rows copied into SQLite so far, of `total`; `null` until the rows are counted. */
@@ -147,7 +106,7 @@ export interface StorageUpgradeProgress {
 let upgrade: StorageUpgradeProgress | null = null
 const upgradeListeners = new Set<() => void>()
 
-/** SQLite storage copies every store before it switches to read-write; the app waits behind a lock meanwhile. */
+/** A device's first boot on SQLite storage copies IndexedDB into it; the app waits behind a lock meanwhile. */
 export function storageUpgrade(): StorageUpgradeProgress | null {
   return upgrade
 }
@@ -162,37 +121,6 @@ export function onStorageUpgrade(listener: () => void): () => void {
   return () => upgradeListeners.delete(listener)
 }
 
-/** Who restarted every tab: the user, or an upgrade that finished its copy. */
-export type SwitchReload = "user" | "upgrade"
-
-/** Every tab of this origin boots again, under the modes recorded meanwhile; only the user asks for it, or an upgrade it waits for. */
-export function reloadEveryTab(cause: SwitchReload): void {
-  const channel = new BroadcastChannel(RELOAD_CHANNEL)
-  channel.postMessage(cause)
-  channel.close()
-  reloadToSwitch(cause)
-}
-
-/** Marks the next boot as one that may wait for the other tabs, all reloading too, to close. */
-function reloadToSwitch(cause: SwitchReload): void {
-  sessionStorage.setItem(SWITCH_RELOAD_KEY, cause)
-  window.location.reload()
-}
-
-/** Why this tab reloaded for a mode switch, if it did; only the first boot after it asks. */
-export function takeSwitchReload(): SwitchReload | null {
-  if (typeof sessionStorage === "undefined") return null
-  const cause = sessionStorage.getItem(SWITCH_RELOAD_KEY)
-  sessionStorage.removeItem(SWITCH_RELOAD_KEY)
-  if (cause === null) return null
-  return cause === "upgrade" ? "upgrade" : "user"
-}
-
-let listening = false
-
-export function reloadWhenAsked(): void {
-  if (listening) return
-  listening = true
-  new BroadcastChannel(RELOAD_CHANNEL).onmessage = (event: MessageEvent<unknown>) =>
-    reloadToSwitch(event.data === "upgrade" ? "upgrade" : "user")
+export function resetStorageUpgradeForTests(): void {
+  upgrade = null
 }
