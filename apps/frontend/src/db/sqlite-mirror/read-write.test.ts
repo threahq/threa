@@ -802,7 +802,7 @@ describe("SQLite storage", () => {
         await owner.database.syncCursors.put(cursor("k", "0"))
         const heir = await follower(owner)
         const reader = await follower(owner)
-        const tx = reader.mirror.beginTransaction("readwrite")
+        const tx = reader.mirror.beginTransaction("readwrite", ["syncCursors"])
         await reader.mirror.read({ type: "get", tx, store: "syncCursors", key: encodeKey("k") })
         await reader.mirror.write(tx, {
           store: "syncCursors",

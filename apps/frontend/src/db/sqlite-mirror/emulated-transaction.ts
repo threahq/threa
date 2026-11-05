@@ -49,7 +49,7 @@ export class EmulatedTransaction extends EventTarget {
   ) {
     super()
     this.abortedWhilePending.catch(() => {})
-    this.id = mirror.beginTransaction(mode)
+    this.id = mirror.beginTransaction(mode, storeNames)
     this.scheduleCompletion()
   }
 

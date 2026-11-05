@@ -58,7 +58,7 @@ export type MirrorRequest =
   | { type: "forgetWriters"; writers: string[] }
   | { type: "destroy"; idbName: string }
   /** Holds every request of other transactions, and outside any, until this one commits or rolls back. */
-  | { type: "begin"; tx: number; readonly: boolean }
+  | { type: "begin"; tx: number; readonly: boolean; stores: readonly string[] }
   | { type: "write"; tx: number; write: MirrorWrite }
   /** `ledger` names it among commits, recorded with its writes so a tab that lost the owner meanwhile can ask whether it landed. */
   | { type: "commit"; tx: number; ledger: CommitLedger }

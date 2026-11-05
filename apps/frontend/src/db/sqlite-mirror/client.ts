@@ -38,7 +38,7 @@ export const DEFAULT_DEADLINES: MirrorDeadlines = {
 /** A tab claims ownership again after every worker failure; the wait between claims grows to this. */
 const MAX_RECOVER_WAIT_MS = 60_000
 /** Tabs of builds speaking another protocol never follow each other. */
-const READ_WRITE_PROTOCOL = 1
+const READ_WRITE_PROTOCOL = 2
 
 class DeadlineError extends Error {
   override readonly name = "DeadlineError"
@@ -377,9 +377,9 @@ export class SqliteMirror {
   }
 
   /** Queues a transaction in creation order, as IndexedDB orders them; one that fails to begin fails its requests and commit. */
-  beginTransaction(mode: "readonly" | "readwrite"): number {
+  beginTransaction(mode: "readonly" | "readwrite", stores: readonly string[]): number {
     const tx = ++this.nextTx
-    this.askInTx(tx, { type: "begin", tx, readonly: mode === "readonly" }).catch(() => {})
+    this.askInTx(tx, { type: "begin", tx, readonly: mode === "readonly", stores }).catch(() => {})
     return tx
   }
 
