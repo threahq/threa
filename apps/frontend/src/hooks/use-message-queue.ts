@@ -3,7 +3,7 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { useSocketConnected, useMessageService, useStreamService, usePendingMessages } from "@/contexts"
 import { useSyncEngine } from "@/sync/sync-engine"
 import { getActiveDb, sequenceToNum, type ThreaDatabase } from "@/db"
-import { runAccountOwnedWork, type AccountWorkFence } from "@/sync/account-fence"
+import { currentAccountFence, runAccountOwnedWork, type AccountWorkFence } from "@/sync/account-fence"
 import { parseMarkdown } from "@threahq/prosemirror"
 import { emitDraftPromoted } from "@/lib/draft-promotions"
 import { setParentThreadId } from "@/sync/stream-sync"
@@ -549,7 +549,9 @@ export function useMessageQueue(workspaceId: string): void {
       // last read may predate this tab's message, which would then never send.
       // The wait stays outside account-owned work, so a switch never waits on it.
       if (navigator.locks) {
+        const waitedFor = currentAccountFence()
         const drainHolding = async () => {
+          if (waitedFor.isRetired()) return
           if (wasLockBlockedRef.current && workspaceGenerationRef.current === workspaceGeneration) {
             wasLockBlockedRef.current = false
             recordQueueTransition(workspaceGeneration, "message_queue_unblocked", "lock")

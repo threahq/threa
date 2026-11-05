@@ -619,6 +619,33 @@ describe("SQLite storage", () => {
       }).toEqual({ mirror: null, cursors: [cursor("a", "1")], kinds: ["mode_unreadable"] })
     })
 
+    it("runs on SQLite without importing when it cannot read the mode of a database an earlier build marked as maybe read-write", async () => {
+      silenceErrors()
+      const failures = vi.spyOn(storageDiagnostics, "reportStorageFailure")
+      owned.push(() => failures.mockRestore())
+      const name = await seeded([cursor("a", "1")])
+      const sqlite = freshSqlite()
+      const bus = createBus()
+      const first = bootTab(name, sqlite, bus)
+      await first.database.open()
+      for (const key of Object.keys(localStorage)) if (key.startsWith("threa:sqlite")) localStorage.removeItem(key)
+      localStorage.setItem(`threa:sqliteMayBeReadWrite:${name}`, "1")
+      const open = indexedDB.open.bind(indexedDB)
+      const spy = vi.spyOn(indexedDB, "open").mockImplementation((database, version) => {
+        if (database === "threa-sqlite-mode") throw new DOMException("The disk is unreadable", "UnknownError")
+        return open(database, version)
+      })
+      owned.push(() => spy.mockRestore())
+      const unreadable = bootTab(name, sqlite, bus)
+      await unreadable.database.open()
+      expect({
+        readWrite: unreadable.database.sqliteMirror?.readWrite,
+        cursors: await cursorsIn(unreadable.database),
+        imports: unreadable.log.filter((type) => type === "backfillBegin"),
+        kinds: failures.mock.calls.map(([kind]) => kind),
+      }).toEqual({ readWrite: true, cursors: [cursor("a", "1")], imports: [], kinds: ["mode_unreadable"] })
+    })
+
     it("fails to open a database SQLite holds when its mirror cannot start, or the browser cannot run one", async () => {
       silenceErrors()
       const name = `unstartable_${Date.now()}`

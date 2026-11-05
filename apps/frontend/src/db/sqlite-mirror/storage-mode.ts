@@ -43,6 +43,11 @@ export function isSqlitePrimary(idbName: string): boolean {
   return localStorage.getItem(`${PRIMARY_PREFIX}${idbName}`) !== null
 }
 
+/** Earlier builds set this before recording read-write, so it holds only when the recorded mode cannot be read. */
+export function mayBeSqlitePrimary(idbName: string): boolean {
+  return localStorage.getItem(`${FLAG_BUILD_PRIMARY_PREFIX}${idbName}`) !== null
+}
+
 /** The recorded mode stays the durable truth: a marker this fails to set is set again by the boot that reads it. */
 export function markSqlitePrimary(idbName: string): void {
   try {

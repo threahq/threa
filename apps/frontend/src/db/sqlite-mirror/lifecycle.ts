@@ -1,7 +1,14 @@
 import { ThreaDatabase } from "../database"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { createBrowserMirror, type SqliteMirror } from "./client"
-import { browserModeLock, isSqlitePrimary, markSqlitePrimary, readRecordedMode, type ModeLock } from "./storage-mode"
+import {
+  browserModeLock,
+  isSqlitePrimary,
+  markSqlitePrimary,
+  mayBeSqlitePrimary,
+  readRecordedMode,
+  type ModeLock,
+} from "./storage-mode"
 import { reportStorageBoot, reportStorageFailure, setStorageContext } from "./storage-diagnostics"
 
 type CreateMirror = (database: ThreaDatabase, primary: boolean) => SqliteMirror
@@ -95,7 +102,10 @@ async function upgradeInstalled(name: string): Promise<boolean> {
   }
 }
 
-/** A database recorded read-write whose marker was lost; `null` when the recorded mode cannot be read. */
+/**
+ * A database recorded read-write whose marker was lost. When the recorded mode cannot be read, an earlier build's
+ * marker decides for this session alone, since IndexedDB may hold only that build's stale copy; `null` without one.
+ */
 async function recordedReadWrite(name: string): Promise<boolean | null> {
   try {
     if ((await readRecordedMode(name)) !== "read-write") return false
@@ -103,6 +113,13 @@ async function recordedReadWrite(name: string): Promise<boolean | null> {
     return true
   } catch (error) {
     reportStorageFailure("mode_unreadable")
+    if (mayBeSqlitePrimary(name)) {
+      console.error(
+        `Cannot read ${name}'s recorded mode; an earlier build may have made SQLite primary, so this session runs on it`,
+        error
+      )
+      return true
+    }
     console.error(`Cannot tell whether SQLite holds ${name}; this session runs on IndexedDB`, error)
     return null
   }
