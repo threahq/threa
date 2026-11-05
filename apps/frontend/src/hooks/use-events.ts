@@ -670,7 +670,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
   }, [jumpState, hasNewerPage, newerData?.pages.length])
 
   const fetchOlderEvents = useCallback(() => {
-    if (isFetchingOlder) return false
+    if (isFetchingOlder || (olderPagesFetched && !hasOlderPage)) return false
 
     if (hasOlderPage) {
       void fetchOlderPage()
@@ -686,7 +686,17 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     })
     void fetchOlderPage()
     return true
-  }, [isFetchingOlder, hasOlderPage, jumpState, persistedEvents, queryClient, workspaceId, streamId, fetchOlderPage])
+  }, [
+    isFetchingOlder,
+    olderPagesFetched,
+    hasOlderPage,
+    jumpState,
+    persistedEvents,
+    queryClient,
+    workspaceId,
+    streamId,
+    fetchOlderPage,
+  ])
 
   // Auto-load all older events on mount when loadAll is true (e.g. thread panels)
   const loadAll = options?.loadAll ?? false
