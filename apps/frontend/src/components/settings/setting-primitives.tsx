@@ -91,36 +91,47 @@ export const SETTING_CONTROL_HEIGHT = "h-11 sm:h-9 [@media(pointer:coarse)]:min-
 /** Dividers between the items of a list inside a row: lighter than the card's own row dividers. */
 export const SETTING_ITEM_DIVIDERS = "divide-y divide-border/50"
 
-const PEOPLE_LIST_FADE = {
-  above: "[mask-image:linear-gradient(to_top,#000_calc(100%_-_2rem),transparent)]",
-  below: "[mask-image:linear-gradient(to_bottom,#000_calc(100%_-_2rem),transparent)]",
-  both: "[mask-image:linear-gradient(to_bottom,transparent,#000_2rem,#000_calc(100%_-_2rem),transparent)]",
-} as const
+const PEOPLE_LIST_EDGE = "pointer-events-none absolute inset-x-0 h-3 border-border/50 transition-opacity duration-150"
 
 /**
  * A scrolling list of people in a setting row, about eight and a half rows
  * tall. It runs to the card's edges, its scrollbar on the card's border, and
- * fades at an edge rows continue past. As the row's last element it also runs
- * into the bottom padding, so a clipped row meets the card's edge.
+ * casts a soft shadow at an edge rows continue past; rows stay crisp and
+ * clickable beneath it. As the row's last element it runs into the bottom
+ * padding, so a clipped row meets the card's edge.
  */
 export function SettingPeopleList({ className, ...props }: ComponentPropsWithoutRef<"ul">) {
   const [list, setList] = useState<HTMLUListElement | null>(null)
   const { above, below } = useScrollEdges(list)
-  let fade: string | undefined
-  if (above && below) fade = PEOPLE_LIST_FADE.both
-  else if (above) fade = PEOPLE_LIST_FADE.above
-  else if (below) fade = PEOPLE_LIST_FADE.below
   return (
-    <ul
-      ref={setList}
-      className={cn(
-        "-mx-4 max-h-[28rem] overflow-y-auto px-4 scrollbar-thin last:-mb-3 last:pb-3",
-        SETTING_ITEM_DIVIDERS,
-        fade,
-        className
-      )}
-      {...props}
-    />
+    // `!` outranks a parent `space-y-*`, whose sibling selector resets this margin.
+    <div className="group/people relative -mx-4 overflow-hidden last:!-mb-3 last:rounded-b-[calc(var(--radius)-1px)]">
+      <ul
+        ref={setList}
+        className={cn(
+          "max-h-[28rem] overflow-y-auto px-4 scrollbar-thin group-last/people:pb-3",
+          SETTING_ITEM_DIVIDERS,
+          className
+        )}
+        {...props}
+      />
+      <div
+        aria-hidden
+        className={cn(
+          PEOPLE_LIST_EDGE,
+          "top-0 border-t bg-gradient-to-b from-foreground/[0.06] to-transparent",
+          above ? "opacity-100" : "opacity-0"
+        )}
+      />
+      <div
+        aria-hidden
+        className={cn(
+          PEOPLE_LIST_EDGE,
+          "bottom-0 border-b bg-gradient-to-t from-foreground/[0.06] to-transparent group-last/people:border-b-0",
+          below ? "opacity-100" : "opacity-0"
+        )}
+      />
+    </div>
   )
 }
 
