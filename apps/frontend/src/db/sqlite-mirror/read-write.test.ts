@@ -246,7 +246,7 @@ describe("SQLite storage", () => {
   })
 
   it("serves every request on mirrored stores without opening an IndexedDB transaction", async () => {
-    const { database, log } = await readWriteSession()
+    const { database } = await readWriteSession()
     const nativeTransactions = spyNativeTransactions()
     await database.syncCursors.bulkPut([cursor("a", "1"), cursor("b", "2")])
     await database.transaction("rw", database.syncCursors, database.drafts, async () => {
@@ -256,11 +256,9 @@ describe("SQLite storage", () => {
     expect({
       cursors: await cursorsIn(database),
       nativeTransactions: nativeTransactions(),
-      backlogged: log.filter((type) => type === "backlog" || type === "apply"),
     }).toEqual({
       cursors: [cursor("a", "3"), cursor("b", "2")],
       nativeTransactions: 0,
-      backlogged: [],
     })
   })
 

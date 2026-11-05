@@ -521,7 +521,7 @@ export class SqliteMirror {
       const transport = createTransport()
       this.transport = transport
       const ask = (request: MirrorRequest) => this.askWorker(transport, request)
-      await ask({ type: "open", idbName: database.name, schema, idbVersion: database.verno })
+      await ask({ type: "open", idbName: database.name, schema })
       const openMs = performance.now() - openedAt
       getPerfCapture().mark("sqlite.open", openMs)
       this.role = "owner"

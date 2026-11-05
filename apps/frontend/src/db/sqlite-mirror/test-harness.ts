@@ -133,7 +133,7 @@ function asWorkerReply(reply: MirrorReply): Promise<MirrorReply> {
 }
 
 export function inProcessTransport(sqlite: Database, log: MirrorRequest["type"][] = []): MirrorTransport {
-  const handler = createMirrorHandler(async () => ({ db: sqlite, close: () => {}, destroy: async () => {} }))
+  const handler = createMirrorHandler(async () => ({ db: sqlite, close: () => {} }))
   let heardAt = 0
   return {
     request: (request) => {

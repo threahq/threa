@@ -1,7 +1,6 @@
 import type { Database, PreparedStatement, SqlValue } from "@sqlite.org/sqlite-wasm"
 import { indexKeys } from "./index-keys"
 import { isKeyInRange, keyId, type EncodedRange } from "./key-codec"
-import type { HeldCommits, WriterCommit } from "./protocol"
 import { decodeValue } from "./value-codec"
 
 export interface MirrorEntry {
@@ -66,19 +65,13 @@ interface BackfillState {
 }
 
 const META_TABLE = "_mirror_meta"
-const BACKLOG_TABLE = "_idb_backlog"
-const WRITERS_TABLE = "_mirror_writers"
 const COMMITS_TABLE = "_mirror_commits"
 const COMMIT_FLOORS_TABLE = "_mirror_commit_floors"
-const VERSION_KEY = "idbVersion"
 const SCHEMA_KEY = "schema"
-const INCARNATION_KEY = "incarnation"
-/** Rows per progress report of a long request, and per backlog batch of a reseed. */
+/** Rows per progress report of a long request. */
 const ROWS_PER_STEP = 500
 /** Ledger rows kept; a pruned row's tab keeps its highest pruned transaction, so asking about it answers unknown. */
 const KEPT_COMMITS = 1000
-/** Per writer and store: commits applied before the one they follow, which may never arrive. */
-const MAX_UNCHAINED_COMMITS = 1024
 const STORE_NAME_PATTERN = /^[A-Za-z0-9_]+$/
 
 function quote(name: string): string {
@@ -114,82 +107,32 @@ function where(conditions: readonly string[]): string {
   return conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : ""
 }
 
-function writerStore(writer: string, store: string): string {
-  return `${store}\u0000${writer}`
-}
-
-function splitWriterStore(id: string): { writer: string; store: string } {
-  const at = id.indexOf("\u0000")
-  return { store: id.slice(0, at), writer: id.slice(at + 1) }
-}
-
-function serializeBatch(batch: readonly MirrorMutation[]): string {
-  return JSON.stringify(batch, (_, value: unknown) =>
-    value instanceof Uint8Array
-      ? { $bytes: Array.from(value, (byte) => byte.toString(16).padStart(2, "0")).join("") }
-      : value
-  )
-}
-
-function parseBatch(text: string): MirrorMutation[] {
-  return JSON.parse(text, (_, value: unknown) => {
-    if (value === null || typeof value !== "object" || !("$bytes" in value)) return value
-    const hex = String(value.$bytes)
-    const bytes = new Uint8Array(hex.length / 2)
-    for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-    return bytes
-  }) as MirrorMutation[]
-}
-
-/** Rows a committed read-write transaction left for IndexedDB; none when the database never ran read-write. */
-export function backlogSize(db: Database): number {
-  const exists = db.selectValue(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`, [BACKLOG_TABLE])
-  return exists === undefined ? 0 : Number(db.selectValue(`SELECT COUNT(*) FROM ${BACKLOG_TABLE}`))
-}
-
-export interface MirrorStatus {
-  backfilled: string[]
-  writers: HeldCommits
-  /** The IndexedDB incarnation these tables copy; `null` before the first reset. */
-  incarnation: string | null
-}
-
 export class MirrorStore {
   private readonly schema = new Map<string, MirrorStoreSchema>()
-  private readonly backfilled = new Set<string>()
   private readonly backfilling = new Map<string, BackfillState>()
   private readonly statements = new Map<string, PreparedStatement>()
-  /** By `writerStore`: the seq through which every commit of the writer to the store is held. */
-  private readonly held = new Map<string, number>()
-  /** By `writerStore`: applied commits by the seq they follow. */
-  private readonly unchained = new Map<string, Map<number, number>>()
 
   constructor(private readonly db: Database) {}
 
   /**
    * Brings the tables in line with the schema: removed stores and indexes are
    * dropped, new or redefined indexes are rebuilt from the stored values.
-   * Data survives an IndexedDB version change, but no store stays trusted:
-   * upgrade functions rewrite rows inside the versionchange transaction,
-   * which the mirror never sees.
    */
-  ensureSchema(schema: MirrorStoreSchema[], idbVersion: number, progress: () => void = () => {}): void {
+  ensureSchema(schema: MirrorStoreSchema[], progress: () => void = () => {}): void {
     for (const { name } of schema) {
       if (!STORE_NAME_PATTERN.test(name)) throw new Error(`Invalid store name for mirroring: ${name}`)
     }
     this.closeStatements()
     this.db.exec(`CREATE TABLE IF NOT EXISTS ${META_TABLE} (key TEXT PRIMARY KEY, value TEXT)`)
-    this.db.exec(`CREATE TABLE IF NOT EXISTS ${BACKLOG_TABLE} (seq INTEGER PRIMARY KEY, batch TEXT NOT NULL)`)
-    this.db.exec(
-      `CREATE TABLE IF NOT EXISTS ${WRITERS_TABLE} (writer TEXT NOT NULL, store TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY (writer, store)) WITHOUT ROWID`
-    )
+    // Left by the removed copy-back into IndexedDB.
+    this.db.exec(`DROP TABLE IF EXISTS _idb_backlog`)
+    this.db.exec(`DROP TABLE IF EXISTS _mirror_writers`)
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS ${COMMITS_TABLE} (seq INTEGER PRIMARY KEY, tab TEXT NOT NULL, tx INTEGER NOT NULL, UNIQUE (tab, tx))`
     )
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS ${COMMIT_FLOORS_TABLE} (tab TEXT PRIMARY KEY, tx INTEGER NOT NULL) WITHOUT ROWID`
     )
-    const storedVersion = this.db.selectValue(`SELECT value FROM ${META_TABLE} WHERE key = ?`, [VERSION_KEY])
     const storedSchema = this.db.selectValue(`SELECT value FROM ${META_TABLE} WHERE key = ?`, [SCHEMA_KEY])
     const previous = new Map(
       (storedSchema === undefined ? [] : (JSON.parse(String(storedSchema)) as MirrorStoreSchema[])).map((store) => [
@@ -203,124 +146,35 @@ export class MirrorStore {
         if (!next.has(old.name)) this.dropStore(old)
       }
       for (const store of schema) this.reconcileStore(store, previous.get(store.name), progress)
-      if (storedVersion !== undefined && storedVersion !== String(idbVersion)) {
-        this.db.exec(`DELETE FROM ${META_TABLE} WHERE key LIKE 'backfilled:%'`)
-        this.db.exec(`DELETE FROM ${WRITERS_TABLE}`)
-      }
       this.db.exec({
-        sql: `INSERT OR REPLACE INTO ${META_TABLE} (key, value) VALUES (?, ?), (?, ?)`,
-        bind: [VERSION_KEY, String(idbVersion), SCHEMA_KEY, JSON.stringify(schema)],
+        sql: `INSERT OR REPLACE INTO ${META_TABLE} (key, value) VALUES (?, ?)`,
+        bind: [SCHEMA_KEY, JSON.stringify(schema)],
       })
     })
     this.schema.clear()
     for (const store of schema) this.schema.set(store.name, store)
-    this.loadState()
-  }
-
-  /** Empties every mirrored table and forgets all it knew, to copy the IndexedDB incarnation named. */
-  reset(incarnation: string): void {
-    this.db.transaction(() => {
-      for (const { name, indexes } of this.schema.values()) {
-        this.run(`DELETE FROM ${storeTable(name)}`)
-        for (const index of indexes) this.run(`DELETE FROM ${indexTable(name, index.name)}`)
-      }
-      this.run(`DELETE FROM ${META_TABLE} WHERE key LIKE 'backfilled:%'`)
-      this.run(`DELETE FROM ${WRITERS_TABLE}`)
-      this.run(`INSERT OR REPLACE INTO ${META_TABLE} (key, value) VALUES (?, ?)`, [INCARNATION_KEY, incarnation])
-    })
-    this.loadState()
-  }
-
-  /**
-   * Under read-write storage SQLite is the primary copy, so a recreated
-   * IndexedDB, its backup, gets every row again through the backlog, after
-   * what the backlog already holds; nothing SQLite holds is dropped.
-   */
-  reseed(incarnation: string, progress: () => void): void {
-    this.db.transaction(() => {
-      for (const { name } of this.schema.values()) {
-        let entries: MirrorEntry[] = []
-        const flush = () => {
-          if (entries.length > 0) this.appendBacklog([{ store: name, op: "put", entries }])
-          entries = []
-          progress()
-        }
-        this.db.exec({
-          sql: `SELECT k, v FROM ${storeTable(name)} ORDER BY k`,
-          rowMode: "array",
-          callback: (row) => {
-            const [key, value] = row as [Uint8Array, string]
-            entries.push({ key, value })
-            if (entries.length === ROWS_PER_STEP) flush()
-          },
-        })
-        flush()
-      }
-      this.run(`INSERT OR REPLACE INTO ${META_TABLE} (key, value) VALUES (?, ?)`, [INCARNATION_KEY, incarnation])
-    })
-  }
-
-  status(): MirrorStatus {
-    const [row] = this.all(`SELECT value FROM ${META_TABLE} WHERE key = ?`, [INCARNATION_KEY])
-    const writers: HeldCommits = {}
-    for (const [id, seq] of this.held) {
-      const { writer, store } = splitWriterStore(id)
-      ;(writers[writer] ??= {})[store] = seq
-    }
-    return {
-      backfilled: [...this.backfilled],
-      writers,
-      incarnation: row === undefined ? null : String(row[0]),
-    }
-  }
-
-  forgetWriters(writers: readonly string[]): void {
-    this.db.transaction(() => {
-      for (const writer of writers) this.run(`DELETE FROM ${WRITERS_TABLE} WHERE writer = ?`, [writer])
-    })
-    const forgotten = new Set(writers)
-    for (const map of [this.held, this.unchained]) {
-      for (const id of map.keys()) if (forgotten.has(splitWriterStore(id).writer)) map.delete(id)
-    }
-  }
-
-  /** `commit` is given only when the batch holds every write of that commit, so SQLite holds it once applied. */
-  apply(batch: MirrorMutation[], commit?: WriterCommit): void {
-    const advanced = commit
-      ? Object.entries(commit.prev).map(([store, prev]) => this.advance(commit.writer, store, prev, commit.seq))
-      : []
-    this.db.transaction(() => {
-      for (const mutation of batch) this.applyMutation(mutation)
-      for (const step of advanced) step.write()
-    })
-    for (const step of advanced) step.keep()
+    this.backfilling.clear()
   }
 
   /**
    * Applies one write inside the caller's transaction. An `add` entry whose key
    * the store holds, or an earlier entry of the same write added, is skipped
-   * and reported. What was applied comes back for the IndexedDB backlog.
+   * and reported.
    */
-  write(write: MirrorWrite): { failures: number[]; applied: MirrorMutation } {
+  write(write: MirrorWrite): { failures: number[] } {
     if (write.op !== "add") {
       this.applyMutation(write)
-      return { failures: [], applied: write }
+      return { failures: [] }
     }
     const failures: number[] = []
-    const entries: MirrorEntry[] = []
     write.entries.forEach((entry, index) => {
       if (this.all(`SELECT 1 FROM ${storeTable(write.store)} WHERE k = ?`, [entry.key]).length > 0) {
         failures.push(index)
         return
       }
       this.putRow(write.store, entry)
-      entries.push(entry)
     })
-    return { failures, applied: { store: write.store, op: "put", entries } }
-  }
-
-  appendBacklog(batch: readonly MirrorMutation[]): void {
-    this.run(`INSERT INTO ${BACKLOG_TABLE} (batch) VALUES (?)`, [serializeBatch(batch)])
+    return { failures }
   }
 
   /** Inside the committing transaction, so the ledger row lands exactly when its writes do. */
@@ -342,25 +196,12 @@ export class MirrorStore {
     return floor !== undefined && Number(floor) >= tx ? null : false
   }
 
-  readBacklog(limit: number): Array<{ seq: number; batch: MirrorMutation[] }> {
-    return this.all(`SELECT seq, batch FROM ${BACKLOG_TABLE} ORDER BY seq LIMIT ?`, [limit]).map((row) => ({
-      seq: Number(row[0]),
-      batch: parseBatch(String(row[1])),
-    }))
-  }
-
-  dropBacklog(through: number): void {
-    this.run(`DELETE FROM ${BACKLOG_TABLE} WHERE seq <= ?`, [through])
-  }
-
   beginBackfill(store: string): void {
     const { indexes } = this.storeSchema(store)
     this.db.transaction(() => {
       this.run(`DELETE FROM ${storeTable(store)}`)
       for (const index of indexes) this.run(`DELETE FROM ${indexTable(store, index.name)}`)
-      this.run(`DELETE FROM ${META_TABLE} WHERE key = ?`, [`backfilled:${store}`])
     })
-    this.backfilled.delete(store)
     this.backfilling.set(store, { touchedKeys: new Set(), touchedRanges: [] })
   }
 
@@ -376,66 +217,9 @@ export class MirrorStore {
     })
   }
 
-  /** `covered`: per writer, the mark it had on the store before the backfill read it, so the backfill holds its writes through it. */
-  finishBackfill(store: string, covered: Record<string, number> = {}): void {
+  finishBackfill(store: string): void {
     if (!this.backfilling.has(store)) throw new Error(`Store ${store} is not backfilling`)
-    const advanced = Object.entries(covered).map(([writer, seq]) => this.advance(writer, store, 0, seq, true))
-    this.db.transaction(() => {
-      this.run(`INSERT OR REPLACE INTO ${META_TABLE} (key, value) VALUES (?, '1')`, [`backfilled:${store}`])
-      for (const step of advanced) step.write()
-    })
-    for (const step of advanced) step.keep()
     this.backfilling.delete(store)
-    this.backfilled.add(store)
-  }
-
-  /**
-   * Holds commit `seq` of `writer` to `store`, which follows `prev`; with
-   * `through`, every commit up to `seq` instead. Computed before the SQLite
-   * transaction, written in it, and kept only once it commits.
-   */
-  private advance(writer: string, store: string, prev: number, seq: number, through = false) {
-    const id = writerStore(writer, store)
-    const before = this.held.get(id) ?? 0
-    const links = new Map(this.unchained.get(id))
-    const from = through ? before : prev
-    if (seq > before && from < seq) links.set(from, Math.max(seq, links.get(from) ?? 0))
-    let after = before
-    for (let next = links.get(after); next !== undefined && next > after; next = links.get(after)) {
-      links.delete(after)
-      after = next
-    }
-    for (const link of links.keys()) if (link < after) links.delete(link)
-    while (links.size > MAX_UNCHAINED_COMMITS) links.delete(links.keys().next().value!)
-    return {
-      write: () => {
-        if (after !== before)
-          this.run(`INSERT OR REPLACE INTO ${WRITERS_TABLE} (writer, store, seq) VALUES (?, ?, ?)`, [
-            writer,
-            store,
-            after,
-          ])
-      },
-      keep: () => {
-        if (after !== before) this.held.set(id, after)
-        if (links.size > 0) this.unchained.set(id, links)
-        else this.unchained.delete(id)
-      },
-    }
-  }
-
-  private loadState(): void {
-    this.backfilled.clear()
-    this.backfilling.clear()
-    this.held.clear()
-    this.unchained.clear()
-    for (const [key] of this.all(`SELECT key FROM ${META_TABLE} WHERE key LIKE 'backfilled:%'`)) {
-      const store = String(key).slice("backfilled:".length)
-      if (this.schema.has(store)) this.backfilled.add(store)
-    }
-    for (const [writer, store, seq] of this.all(`SELECT writer, store, seq FROM ${WRITERS_TABLE}`)) {
-      this.held.set(writerStore(String(writer), String(store)), Number(seq))
-    }
   }
 
   get(store: string, key: Uint8Array): string | undefined {
@@ -517,7 +301,6 @@ export class MirrorStore {
   private dropStore(store: MirrorStoreSchema): void {
     this.db.exec(`DROP TABLE IF EXISTS ${storeTable(store.name)}`)
     for (const index of store.indexes) this.db.exec(`DROP TABLE IF EXISTS ${indexTable(store.name, index.name)}`)
-    this.db.exec({ sql: `DELETE FROM ${META_TABLE} WHERE key = ?`, bind: [`backfilled:${store.name}`] })
   }
 
   private reconcileStore(

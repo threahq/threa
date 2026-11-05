@@ -41,10 +41,6 @@ const handler = createMirrorHandler(async (idbName) => {
   return {
     db,
     close: () => db.close(),
-    destroy: async () => {
-      db.close()
-      await pool.removeVfs()
-    },
   }
 })
 

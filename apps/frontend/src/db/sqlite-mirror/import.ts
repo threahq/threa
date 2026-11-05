@@ -72,7 +72,7 @@ export async function importIndexedDb(
         last = rows.keys[rows.keys.length - 1]
         await yieldToEventLoop()
       }
-      await ask({ type: "backfillFinish", store, covered: {} })
+      await ask({ type: "backfillFinish", store })
     }
     await record()
     getPerfCapture().mark("sqlite.import", performance.now() - startedAt)

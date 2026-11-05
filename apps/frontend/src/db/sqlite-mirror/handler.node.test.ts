@@ -22,10 +22,10 @@ afterEach(() => {
 })
 
 async function openHandler(options?: { txIdleMs?: number }) {
-  const handler = createMirrorHandler(async () => ({ db, close: () => {}, destroy: async () => {} }), options)
+  const handler = createMirrorHandler(async () => ({ db, close: () => {} }), options)
   const send = (request: MirrorRequest) => handler.handle(request)
   const schema = ["a", "b"].map((name) => ({ name, indexes: [] }))
-  await send({ type: "open", idbName: "test", schema, idbVersion: 1 })
+  await send({ type: "open", idbName: "test", schema })
   return send
 }
 
@@ -41,11 +41,13 @@ describe("mirror handler", () => {
   it("reports progress through an index rebuild, so a long open is not taken for a dead worker", async () => {
     const send = await openHandler()
     const entries = Array.from({ length: 2000 }, (_, n) => ({ key: encodeKey(n), value: encodeValue({ n }) }))
-    await send({ type: "apply", batch: [{ store: "a", op: "put", entries }] })
-    const reopened = createMirrorHandler(async () => ({ db, close: () => {}, destroy: async () => {} }))
+    await send({ type: "begin", tx: 1, readonly: false, stores: ["a"] })
+    await send({ type: "write", tx: 1, write: { store: "a", op: "put", entries } })
+    await send({ type: "commit", tx: 1, ledger: { tab: "tab", tx: 1 } })
+    const reopened = createMirrorHandler(async () => ({ db, close: () => {} }))
     let reports = 0
     const schema = [{ name: "a", indexes: [{ name: "n", keyPath: "n", multiEntry: false }] }]
-    await reopened.handle({ type: "open", idbName: "test", schema, idbVersion: 1 }, () => reports++)
+    await reopened.handle({ type: "open", idbName: "test", schema }, () => reports++)
     expect(reports).toBe(5)
   })
 
@@ -163,23 +165,20 @@ describe("mirror handler", () => {
     await send({ type: "commit", tx: 1, ledger: { tab: "tab", tx: 1 } })
     await send({ type: "begin", tx: 2, readonly: true, stores: ["a"] })
     const first = await send(get("k", 2))
-    let applied = false
-    const apply = send({
-      type: "apply",
-      batch: [{ store: "a", op: "put", entries: [{ key: encodeKey("k"), value: encodeValue("after") }] }],
-    }).then((reply) => {
-      applied = true
+    let cleared = false
+    const clear = send({ type: "backfillBegin", store: "a" }).then((reply) => {
+      cleared = true
       return reply
     })
     const second = await send(get("k", 2))
-    const appliedBeforeCommit = applied
+    const clearedBeforeCommit = cleared
     await send({ type: "commit", tx: 2, ledger: { tab: "tab", tx: 2 } })
-    await apply
-    expect({ first, second, appliedBeforeCommit, after: await send(get("k")) }).toMatchObject({
+    await clear
+    expect({ first, second, clearedBeforeCommit, after: await send(get("k")) }).toMatchObject({
       first: { result: encodeValue("before") },
       second: { result: encodeValue("before") },
-      appliedBeforeCommit: false,
-      after: { result: encodeValue("after") },
+      clearedBeforeCommit: false,
+      after: { result: undefined },
     })
   })
 })
