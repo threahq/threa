@@ -154,7 +154,7 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
   let presence: RuntimePresenceReport | undefined
 
   const unit = config.systemdUnit
-  const hibernation = unit ? (options.hibernation ?? new Hibernation(hibernationDir(), systemctlUser)) : undefined
+  const hibernation = unit ? (options.hibernation ?? new Hibernation(hibernationDir(), systemctlUser, log)) : undefined
   let hibernating = false
   // Run as a unit, an archived scratchpad stops it: the waker starts it again, and nothing stays resident meanwhile.
   const hibernate = (rootStreamId?: string): boolean => {
@@ -209,6 +209,9 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
     holdPresence: async () => {
       if (presence) await client.updatePresence(heldPresenceBody(presence))
     },
+    archivedWhileIdle: (rootStreamId) => {
+      if (!hibernate(rootStreamId)) dormant.sleep(rootStreamId)
+    },
     idleAfterMs: IDLE_WIND_DOWN_AFTER_MS,
     log,
   })
@@ -250,7 +253,9 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
       },
       log,
     })
-  session = createSession()
+  // A woken unit links only the scratchpad it hibernated on, never a fresh one minted over a re-archive.
+  const hibernatedRoot = unit ? hibernation?.find(unit)?.rootStreamId : undefined
+  session = createSession(hibernatedRoot ? { coldStartIfArchived: "wait", expectedRootStreamId: hibernatedRoot } : {})
 
   return {
     start: async () => {

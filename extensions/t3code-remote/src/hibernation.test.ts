@@ -16,12 +16,13 @@ function recordingSystemctl() {
 }
 
 /** A Threa that answers a session create with `link`, or refuses it as archived when `link` is undefined. */
-function fakeThrea(link: () => Record<string, unknown> | undefined) {
+function fakeThrea(link: () => Record<string, unknown> | undefined, creates: unknown[]) {
   return Bun.serve({
     port: 0,
-    fetch: (request) => {
+    fetch: async (request) => {
       const url = new URL(request.url)
       if (request.method === "POST" && url.pathname.endsWith("/bot-runtime/sessions")) {
+        creates.push(await request.json())
         const data = link()
         return data
           ? Response.json({ data })
@@ -43,17 +44,22 @@ afterEach(async () => {
   }
 })
 
-function startConnector(options: { unit?: string; link: () => Record<string, unknown> | undefined }) {
+function startConnector(options: {
+  unit?: string
+  link: () => Record<string, unknown> | undefined
+  /** The root an earlier hibernation of this unit recorded. */
+  hibernatedRoot?: string
+}) {
   const home = mkdtempSync(join(tmpdir(), "t3hib-"))
   const install = t3Install(home)
   mkdirSync(install.workDir, { recursive: true })
-  const server = fakeThrea(options.link)
+  const creates: Array<Record<string, unknown>> = []
+  const server = fakeThrea(options.link, creates)
   const loaded = loadT3Config({
     env: {
       THREA_WORKSPACE_ID: "ws_test",
       THREA_API_KEY: "threa_bk_test",
       THREA_BASE_URL: `http://127.0.0.1:${server.port}`,
-      THREA_COLD_START_IF_ARCHIVED: "wait",
       ...(options.unit ? { THREA_T3CODE_UNIT: options.unit } : {}),
     },
     cwd: install.workDir,
@@ -67,7 +73,18 @@ function startConnector(options: { unit?: string; link: () => Record<string, unk
   )
   const dir = join(home, "hibernating")
   const { calls, systemctl } = recordingSystemctl()
-  const hibernation = new Hibernation(dir, systemctl)
+  if (options.hibernatedRoot) {
+    new Hibernation(
+      dir,
+      () => {},
+      () => {}
+    ).sleep({
+      unit: UNIT,
+      runtimeSessionId: loaded.config.runtimeSessionId,
+      rootStreamId: options.hibernatedRoot,
+    })
+  }
+  const hibernation = new Hibernation(dir, systemctl, () => {})
   const logs: string[] = []
   const connector = createT3Connector(loaded.config, {
     hibernation,
@@ -75,14 +92,16 @@ function startConnector(options: { unit?: string; link: () => Record<string, unk
     log: (message) => logs.push(message),
   })
   running.push({ connector, server })
-  return { connector, hibernation, calls, logs, dir, runtimeSessionId: loaded.config.runtimeSessionId }
+  return { connector, hibernation, calls, logs, creates, runtimeSessionId: loaded.config.runtimeSessionId }
 }
 
 describe("a connector run as a unit", () => {
   test("hibernates when its scratchpad is already archived at start, keeping the root an earlier hibernation knew", async () => {
-    const { connector, hibernation, calls, runtimeSessionId } = startConnector({ unit: UNIT, link: () => undefined })
-    hibernation.sleep({ unit: UNIT, runtimeSessionId, rootStreamId: "stream_root" })
-    calls.length = 0
+    const { connector, hibernation, calls, runtimeSessionId } = startConnector({
+      unit: UNIT,
+      link: () => undefined,
+      hibernatedRoot: "stream_root",
+    })
 
     await connector.start()
     await until(() => calls.length > 1)
@@ -96,9 +115,10 @@ describe("a connector run as a unit", () => {
     })
   })
 
-  test("enables its unit again and drops the record once it links", async () => {
-    const { connector, hibernation, calls, runtimeSessionId } = startConnector({
+  test("woken, it links only the scratchpad it hibernated on, then enables its unit and drops the record", async () => {
+    const { connector, hibernation, calls, creates } = startConnector({
       unit: UNIT,
+      hibernatedRoot: "stream_root",
       link: () => ({
         linkId: "brsl_1",
         rootStreamId: "stream_root",
@@ -107,12 +127,14 @@ describe("a connector run as a unit", () => {
         streamUrlPath: "/w/ws_test/s/stream_root",
       }),
     })
-    hibernation.sleep({ unit: UNIT, runtimeSessionId, rootStreamId: "stream_root" })
-    calls.length = 0
 
     await connector.start()
 
-    expect({ records: hibernation.list(), calls }).toEqual({ records: [], calls: [["enable", UNIT]] })
+    expect({
+      records: hibernation.list(),
+      calls,
+      link: { ifArchived: creates[0]?.ifArchived, ifMissing: creates[0]?.ifMissing },
+    }).toEqual({ records: [], calls: [["enable", UNIT]], link: { ifArchived: "wait", ifMissing: "error" } })
   })
 
   test("without a unit, an archived scratchpad at start touches no systemd state", async () => {
@@ -135,12 +157,17 @@ describe("a connector run as a unit", () => {
 describe("createWaker", () => {
   function setup(archived: Record<string, boolean | Error>) {
     const dir = mkdtempSync(join(tmpdir(), "t3wake-"))
-    const hibernation = new Hibernation(dir, () => {})
+    const hibernation = new Hibernation(
+      dir,
+      () => {},
+      () => {}
+    )
     hibernation.sleep({ unit: "threa-t3-a.service", runtimeSessionId: "t3s_a", rootStreamId: "stream_a" })
     hibernation.sleep({ unit: "threa-t3-b.service", runtimeSessionId: "t3s_b", rootStreamId: "stream_b" })
     hibernation.sleep({ unit: "threa-t3-c.service", runtimeSessionId: "t3s_c" })
     hibernation.sleep({ unit: "threa-t3-d.service", runtimeSessionId: "t3s_d", rootStreamId: "stream_d" })
     writeFileSync(join(dir, "notes.txt"), "not a record")
+    writeFileSync(join(dir, "threa-t3-e.service.json"), '{"unit": "threa-t3-e.serv')
     const started: string[] = []
     const waker = createWaker({
       hibernating: () => hibernation.list(),

@@ -848,7 +848,11 @@ export class RemoteSession {
     } catch (error) {
       this.log(`could not link to Threa (will retry): ${this.summarize(error)}${this.linkErrorHint(error)}`)
       if (error instanceof ThreaApiError && error.code === "SCRATCHPAD_ARCHIVED") {
-        await this.delegate.onLinkRefusedArchived?.()
+        try {
+          await this.delegate.onLinkRefusedArchived?.()
+        } catch (hookError) {
+          this.log(`onLinkRefusedArchived failed: ${this.summarize(hookError)}`)
+        }
       }
     }
   }

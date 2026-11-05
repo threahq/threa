@@ -35,7 +35,8 @@ export function hibernationDir(): string {
 export class Hibernation {
   constructor(
     private readonly dir: string,
-    private readonly systemctl: Systemctl
+    private readonly systemctl: Systemctl,
+    private readonly log: (message: string) => void
   ) {}
 
   list(): HibernationRecord[] {
@@ -48,7 +49,14 @@ export class Hibernation {
     }
     return names.flatMap((name) => {
       if (!name.endsWith(".json")) return []
-      const raw = readJsonFile(join(this.dir, name)) ?? {}
+      let raw: Record<string, unknown>
+      try {
+        raw = readJsonFile(join(this.dir, name)) ?? {}
+      } catch (error) {
+        // One damaged record must not strand every other hibernating unit.
+        this.log(`skipping hibernation record: ${error instanceof Error ? error.message : String(error)}`)
+        return []
+      }
       const unit = str(raw.unit)
       const runtimeSessionId = str(raw.runtimeSessionId)
       const rootStreamId = str(raw.rootStreamId)
@@ -76,7 +84,7 @@ export class Hibernation {
     return true
   }
 
-  private find(unit: string): HibernationRecord | undefined {
+  find(unit: string): HibernationRecord | undefined {
     return this.list().find((record) => record.unit === unit)
   }
 
