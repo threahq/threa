@@ -3,7 +3,14 @@ import { getPerfCapture } from "@/lib/perf/capture"
 import { importIndexedDb } from "./import"
 import { mirrorChannelName } from "./marks"
 import type { CommitLedger, MirrorStoreSchema, MirrorWrite } from "./mirror-store"
-import type { MirrorReadRequest, MirrorReadResults, MirrorReply, MirrorRequest, MirrorTransport } from "./protocol"
+import type {
+  MirrorReadRequest,
+  MirrorReadResults,
+  MirrorReply,
+  MirrorRequest,
+  MirrorTransport,
+  OpenTimings,
+} from "./protocol"
 import {
   observeSqliteRead,
   reportStorageBoot,
@@ -521,7 +528,7 @@ export class SqliteMirror {
       const transport = createTransport()
       this.transport = transport
       const ask = (request: MirrorRequest) => this.askWorker(transport, request)
-      await ask({ type: "open", idbName: database.name, schema })
+      const { timings } = await ask({ type: "open", idbName: database.name, schema })
       const openMs = performance.now() - openedAt
       getPerfCapture().mark("sqlite.open", openMs)
       this.role = "owner"
@@ -534,7 +541,7 @@ export class SqliteMirror {
         this.idbGate.resolve()
         if (this.role !== "owner") return
       }
-      this.reportBoot("owner", { openMs: Math.round(openMs) })
+      this.reportBoot("owner", { openMs: Math.round(openMs), ...timings })
       this.decided = true
       this.resumeServing()
       this.announce()
@@ -552,7 +559,7 @@ export class SqliteMirror {
     if (recovered) reportStorageRecovered()
   }
 
-  private reportBoot(role: "owner" | "follower", fields: { openMs?: number } = {}): void {
+  private reportBoot(role: "owner" | "follower", fields: { openMs?: number } & Partial<OpenTimings> = {}): void {
     if (this.bootReported) return
     this.bootReported = true
     reportStorageBoot(role, fields)

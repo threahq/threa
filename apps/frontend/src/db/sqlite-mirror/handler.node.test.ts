@@ -21,8 +21,11 @@ afterEach(() => {
   db.close()
 })
 
+const timings = { wasmMs: 300, installMs: 40, installAttempts: 2, connectMs: 7 }
+const openDatabase = async () => ({ db, close: () => {}, timings })
+
 async function openHandler(options?: { txIdleMs?: number }) {
-  const handler = createMirrorHandler(async () => ({ db, close: () => {} }), options)
+  const handler = createMirrorHandler(openDatabase, options)
   const send = (request: MirrorRequest) => handler.handle(request)
   const schema = ["a", "b"].map((name) => ({ name, indexes: [] }))
   await send({ type: "open", idbName: "test", schema })
@@ -38,13 +41,19 @@ const get = (key: string, tx?: number, store = "a"): MirrorRequest => ({ type: "
 const failure = (reply: MirrorReply) => (reply.ok ? null : reply.error)
 
 describe("mirror handler", () => {
+  it("answers an open with where its time went, its own schema step included", async () => {
+    const handler = createMirrorHandler(openDatabase)
+    const reply = await handler.handle({ type: "open", idbName: "test", schema: [{ name: "a", indexes: [] }] })
+    expect(reply).toEqual({ ok: true, ms: expect.any(Number), timings: { ...timings, schemaMs: expect.any(Number) } })
+  })
+
   it("reports progress through an index rebuild, so a long open is not taken for a dead worker", async () => {
     const send = await openHandler()
     const entries = Array.from({ length: 2000 }, (_, n) => ({ key: encodeKey(n), value: encodeValue({ n }) }))
     await send({ type: "begin", tx: 1, readonly: false, stores: ["a"] })
     await send({ type: "write", tx: 1, write: { store: "a", op: "put", entries } })
     await send({ type: "commit", tx: 1, ledger: { tab: "tab", tx: 1 } })
-    const reopened = createMirrorHandler(async () => ({ db, close: () => {} }))
+    const reopened = createMirrorHandler(openDatabase)
     let reports = 0
     const schema = [{ name: "a", indexes: [{ name: "n", keyPath: "n", multiEntry: false }] }]
     await reopened.handle({ type: "open", idbName: "test", schema }, () => reports++)

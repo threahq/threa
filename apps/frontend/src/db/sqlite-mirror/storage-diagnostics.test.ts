@@ -60,7 +60,14 @@ describe("storage diagnostics", () => {
 
   it("records boots, failures and a read summary under the running engine", async () => {
     setStorageContext("read-write")
-    reportStorageBoot("owner", { openMs: 42 })
+    reportStorageBoot("owner", {
+      openMs: 42,
+      wasmMs: 20,
+      installMs: 9,
+      installAttempts: 1,
+      connectMs: 3,
+      schemaMs: 4,
+    })
     reportStorageFailure("worker_failed", { attempt: 2 })
     for (const ms of [5, 10, 20, 400]) observeSqliteRead(ms)
     for (const ms of [8, 30]) observeRangeRead(ms)
@@ -74,6 +81,11 @@ describe("storage diagnostics", () => {
         storageMode: "read-write",
         role: "owner",
         openMs: 42,
+        wasmMs: 20,
+        installMs: 9,
+        installAttempts: 1,
+        connectMs: 3,
+        schemaMs: 4,
       },
       {
         event: "storage_failure",
