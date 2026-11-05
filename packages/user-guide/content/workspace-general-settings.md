@@ -11,7 +11,7 @@ Workspace-wide settings are the **Workspace** pages of the settings window. **Wo
 
 ## Open the workspace pages
 
-Choose **Workspace settings** from the menu in the sidebar footer, which opens the settings Overview at the workspace pages, or run **Settings: Workspace details** from the command palette. Every member can open them. Pages you can't change are marked **View only**, and **Workspace AI** is shown to admins only.
+Choose **Settings** from the menu in the sidebar footer and pick a **Workspace** page, or run **Settings: Workspace details** from the command palette. Every member can open them. Pages you can't change are marked **View only**, and **Workspace AI** is shown to admins only.
 
 ## What Workspace details shows
 
