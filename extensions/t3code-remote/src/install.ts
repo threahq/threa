@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
 import { connectorEntry, renderUserUnit, userUnitCommands } from "@threahq/remote-session"
 import { t3Install, type T3Install } from "./config"
@@ -19,29 +19,51 @@ export function runInstall(options: InstallOptions): void {
   const { install } = options
   const log = options.log ?? (() => {})
   const verb = (doing: string, would: string) => (options.dryRun ? would : doing)
-  const unit = renderUserUnit({
-    description: "Threa T3 Code connector",
+  const common = {
     runtimePath: options.runtimePath,
     entryPath: options.entryPath,
     workingDirectory: install.workDir,
     logDir: install.logDir,
     envFile: install.envFile,
-  })
+  }
+  const units = [
+    {
+      path: install.unitPath,
+      // Pinned, not left to the env file: each connector's unit name is its own, and naming it is what lets an
+      // archived scratchpad hibernate the unit for the waker to start again.
+      content: renderUserUnit({
+        ...common,
+        description: "Threa T3 Code connector",
+        pinnedEnvironment: { THREA_T3CODE_UNIT: "%n" },
+      }),
+    },
+    {
+      path: install.wakeUnitPath,
+      content: renderUserUnit({
+        ...common,
+        description: "Threa T3 Code connector waker",
+        args: ["wake"],
+        logName: "wake",
+      }),
+    },
+  ]
   for (const dir of [dirname(install.unitPath), install.workDir, install.logDir]) {
     log(`${verb("creating", "would create")} ${dir}`)
     if (!options.dryRun) mkdirSync(dir, { recursive: true, mode: 0o700 })
   }
-  log(`${verb("writing", "would write")} ${install.unitPath}`)
-  if (!options.dryRun) {
-    try {
-      writeFileSync(install.unitPath, unit, { mode: 0o600, flag: options.force ? "w" : "wx" })
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
-      throw new Error(`${install.unitPath} already exists. Pass --force to overwrite it.`)
-    }
+  if (!options.force && !options.dryRun) {
+    const existing = units.find((unit) => existsSync(unit.path))
+    if (existing) throw new Error(`${existing.path} already exists. Pass --force to overwrite it.`)
+  }
+  for (const unit of units) {
+    log(`${verb("writing", "would write")} ${unit.path}`)
+    if (!options.dryRun) writeFileSync(unit.path, unit.content, { mode: 0o600 })
   }
   const run = options.run ?? ((command, args) => spawnSync(command, args, { stdio: "inherit" }))
-  for (const [command, ...args] of userUnitCommands(install.serviceName, options.start ?? false)) {
+  for (const [command, ...args] of userUnitCommands(
+    [install.serviceName, install.wakeServiceName],
+    options.start ?? false
+  )) {
     const line = [command, ...args].join(" ")
     log(`${verb("running", "would run")} ${line}`)
     if (options.dryRun) continue
@@ -74,7 +96,9 @@ function main(): void {
     ...args,
     log: (message) => process.stdout.write(`${message}\n`),
   })
-  process.stdout.write(`unit: ${install.unitPath}\nenv file: ${install.envFile}\nlogs: ${install.logDir}\n`)
+  process.stdout.write(
+    `units: ${install.unitPath} ${install.wakeUnitPath}\nenv file: ${install.envFile}\nlogs: ${install.logDir}\n`
+  )
 }
 
 if (import.meta.main) {

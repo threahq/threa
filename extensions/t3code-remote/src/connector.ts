@@ -10,6 +10,7 @@ import {
 import { T3Auth, type FetchLike } from "./auth"
 import { readJsonFile, type T3RemoteConfig } from "./config"
 import { DormantLink } from "./dormant-link"
+import { Hibernation, hibernationDir, systemctlUser } from "./hibernation"
 import { T3CODE_RUNTIME, T3TurnRunner, type PendingSpawn, type ThreadStore } from "./run-bridge"
 import { createT3SessionControl } from "./session-control"
 import { T3Client, type ModelOption, type ModelSelection } from "./t3-client"
@@ -90,6 +91,7 @@ export function createFileThreadStore(path: string): ThreadStore {
 export interface T3ConnectorOptions {
   fetch?: FetchLike
   log?: (message: string) => void
+  hibernation?: Hibernation
 }
 
 const IDLE_WIND_DOWN_AFTER_MS = 90 * 60_000
@@ -151,8 +153,25 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
   })
   let presence: RuntimePresenceReport | undefined
 
-  // An archived scratchpad, or 90 minutes without a turn, ends the session. The process stays up and links it again
-  // once the scratchpad is restored or a message arrives, holding the session's presence meanwhile when it went idle.
+  const unit = config.systemdUnit
+  const hibernation = unit ? (options.hibernation ?? new Hibernation(hibernationDir(), systemctlUser)) : undefined
+  let hibernating = false
+  // Run as a unit, an archived scratchpad stops it: the waker starts it again, and nothing stays resident meanwhile.
+  const hibernate = (rootStreamId?: string): boolean => {
+    if (!unit || !hibernation || hibernating) return hibernating
+    try {
+      hibernation.sleep({ unit, runtimeSessionId: config.runtimeSessionId, ...(rootStreamId ? { rootStreamId } : {}) })
+      hibernating = true
+      log(`scratchpad ${rootStreamId ?? "for this session"} archived; hibernating ${unit} until it is restored`)
+    } catch (error) {
+      log(`hibernating ${unit} failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    return hibernating
+  }
+
+  // An archived scratchpad that could not hibernate, or 90 minutes without a turn, ends the session. The process stays
+  // up and links it again once the scratchpad is restored or a message arrives, holding the session's presence
+  // meanwhile when it went idle.
   const dormant = new DormantLink({
     runtimeSessionId: config.runtimeSessionId,
     watch: (nudge) => {
@@ -209,11 +228,21 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
           return runner.deliverTurn(turn)
         },
         sessionControl,
+        onLinked: () => {
+          if (!unit || !hibernation) return
+          try {
+            if (hibernation.wake(unit)) log(`linked again; ${unit} enabled`)
+          } catch (error) {
+            log(`re-enabling ${unit} failed: ${error instanceof Error ? error.message : String(error)}`)
+          }
+        },
         onArchived: ({ rootStreamId }) => {
           runner.shutdown()
+          if (hibernate(rootStreamId)) return
           log(`scratchpad ${rootStreamId} archived; waiting for it to be restored`)
           dormant.sleep(rootStreamId)
         },
+        onLinkRefusedArchived: () => void hibernate(),
       },
       runtime: T3CODE_RUNTIME,
       onPresence: (report) => {

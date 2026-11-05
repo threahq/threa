@@ -23,6 +23,9 @@ export interface T3Install {
   tokenPath: string
   serviceName: string
   unitPath: string
+  /** The waker's unit: it starts the connector's unit again after it hibernated on an archived scratchpad. */
+  wakeServiceName: string
+  wakeUnitPath: string
   envFile: string
   identity: ConnectorIdentity
 }
@@ -30,6 +33,8 @@ export interface T3Install {
 export function t3Install(homeDir: string = homedir()): T3Install {
   const configDir = join(homeDir, ".threa", "t3code-remote")
   const serviceName = "threa-t3code-remote.service"
+  const wakeServiceName = "threa-t3code-wake.service"
+  const unitDir = join(homeDir, ".config", "systemd", "user")
   return {
     configDir,
     configPath: join(configDir, "config.json"),
@@ -37,7 +42,9 @@ export function t3Install(homeDir: string = homedir()): T3Install {
     logDir: join(configDir, "log"),
     tokenPath: join(configDir, "token.json"),
     serviceName,
-    unitPath: join(homeDir, ".config", "systemd", "user", serviceName),
+    unitPath: join(unitDir, serviceName),
+    wakeServiceName,
+    wakeUnitPath: join(unitDir, wakeServiceName),
     envFile: join(homeDir, ".config", "threa", "t3code-remote.env"),
     identity: {
       idPrefix: "t3",
@@ -61,6 +68,8 @@ export interface T3Settings {
 export interface T3RemoteConfig extends RemoteSessionConfig {
   t3: T3Settings
   install: T3Install
+  /** The systemd unit running this connector (`THREA_T3CODE_UNIT`). Set, an archived scratchpad hibernates the unit. */
+  systemdUnit?: string
 }
 
 export interface T3RawConfig extends RawConfig {
@@ -131,5 +140,14 @@ export function loadT3Config(input: LoadConfigInput & { file?: T3RawConfig; inst
   if ("error" in result) return result
   const t3 = loadT3Settings(input.env, input.file)
   if ("error" in t3) return t3
-  return { config: { ...result.config, localCwd: install.workDir, t3: t3.settings, install } }
+  const systemdUnit = str(input.env.THREA_T3CODE_UNIT)
+  return {
+    config: {
+      ...result.config,
+      localCwd: install.workDir,
+      t3: t3.settings,
+      install,
+      ...(systemdUnit === undefined ? {} : { systemdUnit }),
+    },
+  }
 }

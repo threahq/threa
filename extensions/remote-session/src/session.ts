@@ -282,6 +282,12 @@ export interface RemoteSessionDelegate {
    * the grace window reattaches the session instead and this never fires.
    */
   onArchived?: (payload: { rootStreamId: string }) => Promise<void> | void
+  /**
+   * A cold start's session create was refused because this identity's
+   * scratchpad is archived (`coldStartIfArchived: "wait"`). Nothing is linked;
+   * the SDK retries on every poll tick until the connector stops it.
+   */
+  onLinkRefusedArchived?: () => Promise<void> | void
 }
 
 export interface ShutdownOptions {
@@ -841,6 +847,9 @@ export class RemoteSession {
       await this.createLink()
     } catch (error) {
       this.log(`could not link to Threa (will retry): ${this.summarize(error)}${this.linkErrorHint(error)}`)
+      if (error instanceof ThreaApiError && error.code === "SCRATCHPAD_ARCHIVED") {
+        await this.delegate.onLinkRefusedArchived?.()
+      }
     }
   }
 
@@ -887,7 +896,9 @@ export class RemoteSession {
       return " — check THREA_API_KEY (must be a bot key, threa_bk_…) and THREA_WORKSPACE_ID"
     }
     if (error.code === "SCRATCHPAD_ARCHIVED" && !this.archive.detached) {
-      return " — the server does not support ifArchived replace yet; unarchive the scratchpad in Threa to link"
+      return this.config.coldStartIfArchived === "wait"
+        ? " — waiting for the scratchpad to be unarchived"
+        : " — the server does not support ifArchived replace yet; unarchive the scratchpad in Threa to link"
     }
     return ""
   }

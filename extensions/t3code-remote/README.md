@@ -46,14 +46,15 @@ and `t3AutoLogin`. Environment variables win.
 
 ## Running it as a service
 
-On Linux, `threa-t3code-install --start` writes a systemd user unit, then enables and starts it. The unit runs the
+On Linux, `threa-t3code-install --start` writes two systemd user units, the connector and its waker, then enables
+and starts both. The unit runs the
 installed package with the node that installed it, so `npm update -g @threahq/t3code-remote` and a
 `systemctl --user restart threa-t3code-remote` upgrade it. The installer refuses to run from `npx`, whose cache npm
 clears under a running unit. From a checkout, `bun run install-service --start` writes a unit that runs the source
 with bun.
 
-It writes `~/.config/systemd/user/threa-t3code-remote.service` (refusing to overwrite an existing one without
-`--force`) and creates `~/.threa/t3code-remote/log/`, where the connector's output lands. `--dry-run` prints the
+It writes `~/.config/systemd/user/threa-t3code-remote.service` and `threa-t3code-wake.service` (refusing to overwrite
+either without `--force`) and creates `~/.threa/t3code-remote/log/`, where the output of both lands. `--dry-run` prints the
 plan and touches nothing. The unit reads its environment from `~/.config/threa/t3code-remote.env`, one `KEY=value`
 per line. With auto-login on, the connector runs `t3`, so put a `PATH` that reaches it in that file: a `PATH` there
 replaces the unit's own, so include the directory of the node or bun the unit runs too.
@@ -111,8 +112,13 @@ Every thread is a normal T3 thread, so you can open it in the T3 app and keep go
 Stopping the connector leaves T3's runs alone: they finish in T3, and their Threa turns end with "T3 Code connector
 shut down".
 
-Archiving the scratchpad ends the connector's Threa session, and the connector links it again once the scratchpad is
-restored. After 90 minutes with no turn running it ends the session too, and keeps posting the bot's last presence so
+Archiving the scratchpad ends the connector's Threa session. Run as a unit (`THREA_T3CODE_UNIT` names it, which the
+installer's unit does with `%n`), the connector then hibernates: it records the unit under
+`~/.threa/t3code-remote/hibernating/`, disables and stops it, so nothing runs for the scratchpad and a reboot leaves it
+down. `threa-t3code wake`, the waker's unit, is the one process left: it listens for every restore and message for the
+bot's sessions and starts the recorded unit, which links the scratchpad again and enables itself. After a reconnect it
+also starts any recorded unit whose scratchpad was restored while it was down. Run by hand, the connector instead
+stays up and links the scratchpad again once it is restored. After 90 minutes with no turn running it ends the session too, and keeps posting the bot's last presence so
 the scratchpad still shows it available with its commands. The next message or command for it links the session again
 and runs. T3 keeps running either way.
 
