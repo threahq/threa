@@ -102,13 +102,6 @@ export function appendPrefetch(dbName: string, payload: PrefetchPayload): Promis
   })
 }
 
-export function hasPrefetches(dbName: string): Promise<boolean> {
-  return withInbox("readonly", (entries) => {
-    const counted = entries.index(BY_DATABASE_INDEX).count(dbName)
-    return () => counted.result > 0
-  })
-}
-
 /** Every prefetch queued for `dbName`, oldest first. */
 export function queuedPrefetches(dbName: string): Promise<InboxEntry[]> {
   return withInbox("readonly", (entries) => {
@@ -127,11 +120,7 @@ export function deletePrefetches(keys: readonly number[]): Promise<void> {
   })
 }
 
-/**
- * Drops every prefetch queued for `dbName`. Leaving read-write storage lands
- * SQLite's backlog in IndexedDB; a prefetch queued before it may predate
- * writes in that backlog, and applied after it would roll them back.
- */
+/** Drops every prefetch queued for `dbName`. */
 export function discardPrefetches(dbName: string): Promise<void> {
   return withInbox("readwrite", (entries) => {
     const queued = entries.index(BY_DATABASE_INDEX).openKeyCursor(dbName)

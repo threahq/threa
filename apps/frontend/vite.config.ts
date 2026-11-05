@@ -50,15 +50,14 @@ const REACT_PACKAGES = ["react", "react-dom", "scheduler"]
 
 /** Workbox's per-file precache limit: a larger file fails the deploy build. */
 const PRECACHE_FILE_LIMIT_BYTES = 5 * 1024 * 1024
-const PRECACHE_EXTENSIONS = ["js", "mjs", "css", "html", "ico", "png", "svg", "woff", "woff2"]
+const PRECACHE_EXTENSIONS = ["js", "mjs", "css", "html", "ico", "png", "svg", "woff", "woff2", "wasm"]
 // recover.html is the nuclear-option SW-unregister page (public/recover.html).
 // It must stay network-served even when the app shell is broken; precaching
 // it would route recovery through the SW it is trying to unregister.
 const PRECACHE_IGNORED_FILE = "recover.html"
-// Only sessions with the sqliteStorage flag load the SQLite mirror worker and
-// its wasm; sw.ts caches them on first use. sqlite-wasm's own worker1 and OPFS
-// proxy scripts are emitted but never loaded (the mirror uses opfs-sahpool).
-const PRECACHE_IGNORED_ASSETS = ["assets/mirror-worker-*", "assets/sqlite3-*"]
+// sqlite-wasm's own worker1 and OPFS proxy scripts are emitted but never
+// loaded (storage uses opfs-sahpool through the mirror worker).
+const PRECACHE_IGNORED_ASSETS = ["assets/sqlite3-worker1-*", "assets/sqlite3-opfs-async-proxy-*"]
 // The deploy build's PostHog plugins add a chunk-id snippet to every chunk
 // (360 bytes measured), which a build without the PostHog secrets never sees.
 const POSTHOG_CHUNK_ID_RESERVE_BYTES = 1024

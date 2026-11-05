@@ -61,16 +61,9 @@ export const FEATURE_FLAGS = {
   // "on" lets cache-only IndexedDB writes confirm before the disk flush; writes
   // touching device-only data (unsent messages, drafts, uploads) stay strict.
   idbRelaxedDurability: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "on" }),
-  // "shadow" copies every committed IndexedDB write into a SQLite database on
-  // OPFS and compares a sample of reads against it; IndexedDB answers every
-  // read. "read-only" also serves readonly transactions from SQLite in the tab
-  // owning the copy, for stores it holds in full; writes still go to
-  // IndexedDB first. "read-write" serves every read and write of the copied
-  // stores from SQLite once a boot finds all of them copied in full, and
-  // replays each committed write into IndexedDB in the background. A change
-  // asks the user to restart Threa; the mode switches at the first boot with
-  // no other tab of the database open, after replaying SQLite's backlog when
-  // leaving read-write. Until then every tab keeps the database's recorded mode.
+  // Read only by builds that ran SQLite storage behind this flag; current
+  // builds run every device that can on SQLite, importing IndexedDB once.
+  // Kept so those builds still resolve it; delete once none run.
   sqliteStorage: defineFlag({
     values: ["off", "shadow", "read-only", "read-write"],
     scopes: ["user"],

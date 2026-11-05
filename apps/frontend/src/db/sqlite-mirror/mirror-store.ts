@@ -1,7 +1,7 @@
 import type { Database, PreparedStatement, SqlValue } from "@sqlite.org/sqlite-wasm"
 import { indexKeys } from "./index-keys"
 import { isKeyInRange, keyId, type EncodedRange } from "./key-codec"
-import type { HeldCommits, WriterCommit } from "./marks"
+import type { HeldCommits, WriterCommit } from "./protocol"
 import { decodeValue } from "./value-codec"
 
 export interface MirrorEntry {

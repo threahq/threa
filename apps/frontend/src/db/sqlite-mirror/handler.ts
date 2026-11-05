@@ -1,5 +1,5 @@
 import type { Database } from "@sqlite.org/sqlite-wasm"
-import { MirrorStore, backlogSize, type MirrorMutation } from "./mirror-store"
+import { MirrorStore, backlogSize } from "./mirror-store"
 import type { MirrorReply, MirrorRequest } from "./protocol"
 import { txOf } from "./protocol"
 
@@ -17,10 +17,8 @@ interface Session {
 
 type ReplyData = Omit<Extract<MirrorReply, { ok: true }>, "ok" | "ms">
 
-interface Transaction {
+interface Transaction extends Scope {
   id: number
-  readonly: boolean
-  writes: MirrorMutation[]
   /** Set once a write failed: SQLite may have rolled the transaction back, so nothing after may write or commit. */
   failed: DOMException | null
   idle?: ReturnType<typeof setTimeout>
@@ -28,12 +26,30 @@ interface Transaction {
 
 type Begin = Extract<MirrorRequest, { type: "begin" }>
 
-/** A transaction's `begin`, or a request outside any; `readonly: false` outside one waits for every admitted transaction. */
+/** What a transaction or a request outside any reads or writes; one outside any reaches every store. */
+interface Scope {
+  readonly: boolean
+  stores: ReadonlySet<string> | null
+}
+
+/** A transaction's `begin`, or a request outside any; a write outside one waits for every admitted transaction. */
 interface Waiting {
   begin?: Begin
-  readonly: boolean
+  scope: Scope
   release: () => void
 }
+
+/** As IndexedDB orders transactions: two whose stores overlap run in turn unless both are readonly. */
+function conflicts(a: Scope, b: Scope): boolean {
+  if (a.readonly && b.readonly) return false
+  if (a.stores === null || b.stores === null) return true
+  for (const store of a.stores) if (b.stores.has(store)) return true
+  return false
+}
+
+const scopeOf = (begin: Begin): Scope => ({ readonly: begin.readonly, stores: new Set(begin.stores) })
+const OUTSIDE_READ: Scope = { readonly: true, stores: null }
+const OUTSIDE_WRITE: Scope = { readonly: false, stores: null }
 
 /** Requests outside a transaction that change what a transaction reads, or end the backlog's drain: they wait for every admitted one. */
 const WRITES_OUTSIDE: ReadonlySet<MirrorRequest["type"]> = new Set([
@@ -69,12 +85,14 @@ function rollBack(db: Database): void {
 
 /**
  * Runs requests against one mirror database, one at a time in arrival order.
- * Transactions are admitted in `begin` order as IndexedDB orders overlapping
- * ones: readonly ones together, a readwrite one alone, holding the single
- * connection from `begin` to its commit or rollback. Requests of transactions
- * not yet admitted wait; reads outside any wait while a readwrite one runs,
- * and writes outside any while any runs. A transaction with no request for
- * `txIdleMs` is rolled back, so a frozen tab cannot hold the others forever.
+ * Transactions are admitted as IndexedDB orders them: one waits for every
+ * earlier one whose stores overlap its own unless both are readonly. The single
+ * connection holds one readwrite transaction at a time, from `begin` to its
+ * commit or rollback, so readwrite ones also run in turn; a readonly one beside
+ * it reads only stores it cannot write. Requests of transactions not yet
+ * admitted wait; reads outside any wait while a readwrite one runs, and writes
+ * outside any while any runs. A transaction with no request for `txIdleMs` is
+ * rolled back, so a frozen tab cannot hold the others forever.
  */
 export function createMirrorHandler(
   openDatabase: (idbName: string) => Promise<MirrorDatabase>,
@@ -101,12 +119,15 @@ export function createMirrorHandler(
     throw expired.get(tx) ?? new DOMException(`Transaction ${tx} is not active`, "TransactionInactiveError")
   }
 
-  function admissible(readonly: boolean): boolean {
-    return writer === null && (readonly || admitted.size === 0)
+  /** Whether `candidate` may run now, given what runs and what waits ahead of it; readwrite ones keep their order. */
+  function admissible(scope: Scope, ahead: readonly Waiting[]): boolean {
+    if (!scope.readonly && writer !== null) return false
+    for (const transaction of admitted.values()) if (conflicts(scope, transaction)) return false
+    return !ahead.some((waiting) => conflicts(scope, waiting.scope) || (!scope.readonly && !waiting.scope.readonly))
   }
 
-  function admit(begin: Begin): void {
-    admitted.set(begin.tx, { id: begin.tx, readonly: begin.readonly, writes: [], failed: null })
+  function admit(begin: Begin, scope: Scope): void {
+    admitted.set(begin.tx, { id: begin.tx, ...scope, failed: null })
     if (!begin.readonly) writer = begin.tx
   }
 
@@ -114,9 +135,14 @@ export function createMirrorHandler(
     clearTimeout(transaction.idle)
     admitted.delete(transaction.id)
     if (writer === transaction.id) writer = null
-    while (queued.length > 0 && admissible(queued[0].readonly)) {
-      const next = queued.shift()!
-      if (next.begin) admit(next.begin)
+    for (let i = 0; i < queued.length; ) {
+      const next = queued[i]
+      if (!admissible(next.scope, queued.slice(0, i))) {
+        i++
+        continue
+      }
+      queued.splice(i, 1)
+      if (next.begin) admit(next.begin, next.scope)
       next.release()
     }
     for (const release of held.splice(0)) release()
@@ -167,9 +193,7 @@ export function createMirrorHandler(
         if (tx.readonly) throw new DOMException("The transaction is read-only", "ReadOnlyError")
         if (tx.failed) throw tx.failed
         try {
-          const { failures, applied } = store.write(request.write)
-          tx.writes.push(applied)
-          return { failures }
+          return { failures: store.write(request.write).failures }
         } catch (error) {
           tx.failed = new DOMException(
             `Transaction ${tx.id} was rolled back after a failed write: ${error}`,
@@ -185,7 +209,6 @@ export function createMirrorHandler(
         if (tx.failed) throw tx.failed
         if (!tx.readonly) {
           try {
-            if (tx.writes.length > 0) store.appendBacklog(tx.writes)
             store.recordCommit(request.ledger)
             database.db.exec("COMMIT")
           } catch (error) {
@@ -266,13 +289,14 @@ export function createMirrorHandler(
 
   /** `progress` runs as the request begins and while a long one runs, so the caller can tell a busy worker from a dead one. */
   function handle(request: MirrorRequest, progress: () => void = () => {}): Promise<MirrorReply> {
-    const wait = (readonly: boolean, begin?: Begin) =>
+    const wait = (scope: Scope, begin?: Begin) =>
       new Promise<MirrorReply>((resolve) =>
-        queued.push({ begin, readonly, release: () => resolve(dispatch(request, progress)) })
+        queued.push({ begin, scope, release: () => resolve(dispatch(request, progress)) })
       )
     if (request.type === "begin") {
-      if (queued.length > 0 || !admissible(request.readonly)) return wait(request.readonly, request)
-      admit(request)
+      const scope = scopeOf(request)
+      if (!admissible(scope, queued)) return wait(scope, request)
+      admit(request, scope)
       return dispatch(request, progress)
     }
     const tx = txOf(request)
@@ -284,10 +308,10 @@ export function createMirrorHandler(
       return dispatch(request, progress)
     }
     if (WRITES_OUTSIDE.has(request.type)) {
-      return queued.length > 0 || !admissible(false) ? wait(false) : dispatch(request, progress)
+      return admissible(OUTSIDE_WRITE, queued) ? dispatch(request, progress) : wait(OUTSIDE_WRITE)
     }
     // Behind a write outside any transaction that arrived first, so what was asked first is answered first.
-    if (queued.some(({ begin }) => !begin)) return wait(true)
+    if (queued.some(({ begin }) => !begin)) return wait(OUTSIDE_READ)
     if (writer !== null) return new Promise((resolve) => held.push(() => resolve(handle(request, progress))))
     return dispatch(request, progress)
   }

@@ -1,5 +1,4 @@
 import type { EncodedRange } from "./key-codec"
-import type { WriterCommit } from "./marks"
 import type {
   CommitLedger,
   MirrorEntry,
@@ -10,6 +9,19 @@ import type {
   MirrorStoreSchema,
   MirrorWrite,
 } from "./mirror-store"
+
+/**
+ * A writer's transaction that committed marks and, per store it marked, the
+ * writer's previous transaction that marked that store (0 for none).
+ */
+export interface WriterCommit {
+  writer: string
+  seq: number
+  prev: Record<string, number>
+}
+
+/** Per writer and store, the seq through which SQLite holds every commit of the writer to the store. */
+export type HeldCommits = Record<string, Record<string, number>>
 
 /** `tx` names the read-write transaction a read belongs to, which sees that transaction's own writes. */
 export type MirrorReadRequest = (
@@ -46,7 +58,7 @@ export type MirrorRequest =
   | { type: "forgetWriters"; writers: string[] }
   | { type: "destroy"; idbName: string }
   /** Holds every request of other transactions, and outside any, until this one commits or rolls back. */
-  | { type: "begin"; tx: number; readonly: boolean }
+  | { type: "begin"; tx: number; readonly: boolean; stores: readonly string[] }
   | { type: "write"; tx: number; write: MirrorWrite }
   /** `ledger` names it among commits, recorded with its writes so a tab that lost the owner meanwhile can ask whether it landed. */
   | { type: "commit"; tx: number; ledger: CommitLedger }

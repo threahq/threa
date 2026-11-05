@@ -40,19 +40,26 @@ let epoch = 0
 const inFlight = new Set<Promise<unknown>>()
 
 /**
+ * The current account's fence, for work that waits outside account-owned work
+ * (so a switch never waits on it) before running as account-owned work.
+ */
+export function currentAccountFence(): AccountWorkFence {
+  const startedAt = epoch
+  const accountGeneration = getAccountAssertionGeneration()
+  return {
+    // Identity equality misses an A → B → A round trip while work is awaiting.
+    isRetired: () => epoch !== startedAt || getAccountAssertionGeneration() !== accountGeneration,
+  }
+}
+
+/**
  * Run a unit of account-owned work under the current account's fence. The
  * returned promise is what a retiring switch waits on, so keep the unit to
  * work the account actually owns (a queue drain, one transfer), not an
  * indefinite subscription.
  */
 export function runAccountOwnedWork<T>(run: (fence: AccountWorkFence) => Promise<T>): Promise<T> {
-  const startedAt = epoch
-  const accountGeneration = getAccountAssertionGeneration()
-  const fence: AccountWorkFence = {
-    // Identity equality misses an A → B → A round trip while work is awaiting.
-    isRetired: () => epoch !== startedAt || getAccountAssertionGeneration() !== accountGeneration,
-  }
-  const work = Promise.resolve(run(fence)).finally(() => {
+  const work = Promise.resolve(run(currentAccountFence())).finally(() => {
     inFlight.delete(work)
   })
   inFlight.add(work)

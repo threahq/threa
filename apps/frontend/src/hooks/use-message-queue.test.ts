@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, onTestFinished } from "vitest"
 import { renderHook, act, waitFor } from "@testing-library/react"
 import { useMessageQueue as useMessageQueueHook } from "./use-message-queue"
 import * as contextsModule from "@/contexts"
@@ -227,6 +227,88 @@ describe("useMessageQueue", () => {
     })
 
     expect(record.mock.calls).toEqual([["message_queue_blocked", { blockedBy: "in_flight" }]])
+  })
+
+  describe("while another tab holds the outbox lock", () => {
+    /** One `threa-outbox` lock another tab holds until released, as navigator.locks grants it. */
+    function holdOutboxInAnotherTab(): () => void {
+      let held = true
+      const waiters: Array<() => void> = []
+      const free = () => {
+        held = false
+        waiters.shift()?.()
+      }
+      const request = async (name: string, options: unknown, callback?: unknown) => {
+        const ifAvailable = typeof options === "object" && (options as { ifAvailable?: boolean }).ifAvailable
+        const grant = (callback ?? options) as (lock: { name: string } | null) => Promise<unknown>
+        if (held && ifAvailable) return grant(null)
+        if (held) await new Promise<void>((resolve) => waiters.push(resolve))
+        held = true
+        try {
+          return await grant({ name })
+        } finally {
+          free()
+        }
+      }
+      Object.defineProperty(navigator, "locks", { value: { request }, configurable: true })
+      onTestFinished(() => {
+        delete (navigator as { locks?: unknown }).locks
+      })
+      return free
+    }
+
+    const queued = (clientId: string): MockPendingMessage => ({
+      clientId,
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      content: "Hello",
+      contentFormat: "markdown",
+      createdAt: 1000,
+      retryCount: 0,
+    })
+
+    it("should send once the other tab lets go, since its last read may have missed this message", async () => {
+      const release = holdOutboxInAnotherTab()
+      mockPendingMessages = [queued("temp_waiting")]
+      const record = vi.spyOn(diagnosticsModule, "recordConnectivityEvent").mockImplementation(() => {})
+      renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+      await waitFor(() => expect(record).toHaveBeenCalledWith("message_queue_blocked", { blockedBy: "lock" }))
+      const sentWhileHeld = mockCreate.mock.calls.length
+
+      release()
+
+      await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1))
+      const lockTransitions = record.mock.calls.filter(([, fields]) => fields?.blockedBy === "lock")
+      expect({ sentWhileHeld, transitions: lockTransitions }).toEqual({
+        sentWhileHeld: 0,
+        transitions: [
+          ["message_queue_blocked", { blockedBy: "lock" }],
+          ["message_queue_unblocked", { blockedBy: "lock" }],
+        ],
+      })
+    })
+
+    it("should not hold an account switch while waiting for the other tab, nor drain or re-run a kick once the account it waited for is retired", async () => {
+      const release = holdOutboxInAnotherTab()
+      mockPendingMessages = [queued("temp_switch")]
+      const record = vi.spyOn(diagnosticsModule, "recordConnectivityEvent").mockImplementation(() => {})
+      const { unmount } = renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+      await waitFor(() => expect(record).toHaveBeenCalledWith("message_queue_blocked", { blockedBy: "lock" }))
+      const kick = mockRegisterQueueNotify.mock.calls.at(-1)![0] as () => void
+      kick()
+
+      const started = performance.now()
+      await act(() => retireAccountWork(1000))
+      const switchMs = performance.now() - started
+      release()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      unmount()
+
+      expect({ switchedQuickly: switchMs < 500, sent: mockCreate.mock.calls.length }).toEqual({
+        switchedQuickly: true,
+        sent: 0,
+      })
+    })
   })
 
   it("should process a pending message when connected", async () => {

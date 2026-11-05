@@ -22,32 +22,22 @@ function nextTask(callback: () => void): void {
  * Stands in for an IndexedDB transaction whose requests SQLite serves, with
  * the surface Dexie's Transaction uses. Like IndexedDB's auto-commit it
  * completes once no request is pending and a macrotask passes without a new
- * one.
- *
- * Under read-only storage only readonly ones exist. Their reads wait for
- * `blockers`, the native readwrite transactions over the same stores still
- * running when it was created; from its first read until it finishes, later
- * commits to its stores wait for it, so all its reads see one state.
- *
- * Under read-write storage the worker admits every one in creation order, as
- * IndexedDB orders overlapping ones, so a readonly one sees no write made
- * after it was created. A readwrite one completes once SQLite acknowledges the
- * commit; an abort rolls back first.
+ * one. The worker admits every one in creation order, as IndexedDB orders
+ * overlapping ones, so a readonly one sees no write made after it was created.
+ * A readwrite one completes once SQLite acknowledges the commit; an abort
+ * rolls back first.
  */
 export class EmulatedTransaction extends EventTarget {
   error: DOMException | null = null
   oncomplete: ((event: Event) => void) | null = null
   onabort: ((event: Event) => void) | null = null
   onerror: ((event: Event) => void) | null = null
-  /** The worker transaction ordering it among the others, under read-write storage. */
-  readonly id: number | undefined
+  /** The worker transaction ordering it among the others. */
+  readonly id: number
   private pending = 0
   private requests = 0
   private commitRequested = false
   private state: "active" | "finishing" | "complete" | "aborted" = "active"
-  private snapshot: Promise<void> | null = null
-  private settle: () => void = () => {}
-  private readonly settled = new Promise<void>((resolve) => (this.settle = resolve))
   private rejectPending: (error: DOMException) => void = () => {}
   /** Rejects every pending request at abort, as IndexedDB fails them, without waiting for SQLite to answer. */
   private readonly abortedWhilePending = new Promise<never>((_, reject) => (this.rejectPending = reject))
@@ -55,12 +45,11 @@ export class EmulatedTransaction extends EventTarget {
   constructor(
     readonly mirror: SqliteMirror,
     readonly storeNames: readonly string[],
-    readonly mode: "readonly" | "readwrite",
-    private readonly blockers: readonly Promise<void>[] = []
+    readonly mode: "readonly" | "readwrite"
   ) {
     super()
     this.abortedWhilePending.catch(() => {})
-    this.id = mirror.readWrite ? mirror.beginTransaction(mode) : undefined
+    this.id = mirror.beginTransaction(mode, storeNames)
     this.scheduleCompletion()
   }
 
@@ -68,11 +57,7 @@ export class EmulatedTransaction extends EventTarget {
     if (this.state !== "active" || this.commitRequested) return Promise.reject(inactive())
     this.pending++
     this.requests++
-    const ready = this.blockers.length > 0 ? Promise.all(this.blockers) : Promise.resolve()
-    const request = ready
-      .then(() => {
-        if (this.id === undefined) return (this.snapshot ??= this.mirror.snapshot(this.storeNames, this.settled))
-      })
+    const request = Promise.resolve()
       .then(() => {
         if (this.state === "aborted") throw aborted()
         return read()
@@ -88,15 +73,6 @@ export class EmulatedTransaction extends EventTarget {
     return Promise.race([request, this.abortedWhilePending])
   }
 
-  /** Stays active until `done` settles, as for a pending request. */
-  hold(done: Promise<unknown>): void {
-    this.pending++
-    void done.finally(() => {
-      this.pending--
-      this.scheduleCompletion()
-    })
-  }
-
   /** Like IndexedDB's: no new requests, and the commit follows the pending ones without waiting a macrotask. */
   commit(): void {
     if (this.state !== "active") throw inactive()
@@ -108,8 +84,7 @@ export class EmulatedTransaction extends EventTarget {
     if (this.state !== "active") return
     this.state = "aborted"
     this.rejectPending(aborted())
-    const rolledBack = this.id === undefined ? Promise.resolve() : this.mirror.rollbackTransaction(this.id)
-    void rolledBack.then(() => nextTask(() => this.dispatch("abort")))
+    void this.mirror.rollbackTransaction(this.id).then(() => nextTask(() => this.dispatch("abort")))
   }
 
   private scheduleCompletion(): void {
@@ -123,13 +98,8 @@ export class EmulatedTransaction extends EventTarget {
   }
 
   private finish(): void {
-    if (this.id === undefined) {
-      this.state = "complete"
-      this.dispatch("complete")
-      return
-    }
     this.state = "finishing"
-    this.mirror.commitTransaction(this.id, this.mode === "readwrite").then(
+    this.mirror.commitTransaction(this.id).then(
       () => {
         this.state = "complete"
         this.dispatch("complete")
@@ -143,7 +113,6 @@ export class EmulatedTransaction extends EventTarget {
   }
 
   private dispatch(type: "complete" | "abort"): void {
-    this.settle()
     const event = new Event(type)
     this.dispatchEvent(event)
     ;(type === "complete" ? this.oncomplete : this.onabort)?.call(this, event)

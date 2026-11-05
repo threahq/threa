@@ -104,6 +104,16 @@ export function generateTestId(): string {
 }
 
 /**
+ * Runs the app in `context` on IndexedDB, as a browser that cannot reach OPFS does, for specs that read,
+ * seed or hold IndexedDB's stores directly: SQLite storage keeps them in OPFS instead.
+ */
+export async function runOnIndexedDb(context: BrowserContext): Promise<void> {
+  await context.addInitScript(() => {
+    Object.defineProperty(StorageManager.prototype, "getDirectory", { value: undefined, configurable: true })
+  })
+}
+
+/**
  * Login as a new unique user and create a workspace.
  * Uses test-only API routes for speed; equivalent auth + workspace state
  * is created without UI form interactions.

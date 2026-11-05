@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
-import { createChannelViaApi, enrollUserFlag, loginAndCreateWorkspaceViaApi } from "./helpers"
+import { createChannelViaApi, loginAndCreateWorkspaceViaApi } from "./helpers"
 
 const composer = (page: Page): Locator => page.locator("[data-editor-zone='main'] [contenteditable='true']")
 const message = (page: Page, text: string): Locator =>
@@ -24,8 +24,8 @@ async function switchTo(page: Page, slug: string) {
   await opened(page, slug)
 }
 
-/** The OPFS pool directories the SQLite mirror worker created. */
-function mirrorPools(page: Page): Promise<string[]> {
+/** The OPFS pool directories SQLite storage's worker created. */
+function sqlitePools(page: Page): Promise<string[]> {
   return page.evaluate(async () => {
     const names: string[] = []
     const root = (await navigator.storage.getDirectory()) as FileSystemDirectoryHandle & {
@@ -36,7 +36,7 @@ function mirrorPools(page: Page): Promise<string[]> {
   })
 }
 
-/** The storage mode recorded for each database; a database without a record runs off. */
+/** The storage mode recorded for each database; a database without a record runs on IndexedDB. */
 function recordedModes(page: Page): Promise<string[]> {
   return page.evaluate(
     () =>
@@ -56,45 +56,34 @@ function recordedModes(page: Page): Promise<string[]> {
   )
 }
 
-/** The mode the delivered flag asked for the account's database; null while the page is between documents too. */
-function requestedMode(page: Page): Promise<string | null> {
-  return page
-    .evaluate(() => {
-      const key = Object.keys(localStorage).find((name) => name.startsWith("threa:sqliteStorage:"))
-      return key ? localStorage.getItem(key) : null
+/** Drafts IndexedDB holds for the account, read without the app. */
+function draftsInIndexedDb(page: Page): Promise<number> {
+  return page.evaluate(async () => {
+    const account = (await indexedDB.databases()).find((database) => database.name?.startsWith("threa_v2_"))
+    if (!account?.name) return 0
+    return new Promise<number>((resolve) => {
+      const request = indexedDB.open(account.name!)
+      request.onerror = () => resolve(0)
+      request.onsuccess = () => {
+        const idb = request.result
+        if (!idb.objectStoreNames.contains("drafts")) {
+          idb.close()
+          return resolve(0)
+        }
+        const count = idb.transaction("drafts").objectStore("drafts").count()
+        count.onsuccess = () => {
+          idb.close()
+          resolve(count.result)
+        }
+      }
     })
-    .catch(() => null)
+  })
 }
 
-/** Counts the page's loads, so a test can wait out the restart it took. */
 function countLoads(page: Page): () => number {
   let loads = 0
   page.on("load", () => loads++)
   return () => loads
-}
-
-/** Nothing reloads on its own: storage asks for a restart and the user takes it. */
-async function restart(page: Page) {
-  await expect(page.getByText("Storage upgrade ready")).toBeVisible({ timeout: 30_000 })
-  await page.getByRole("button", { name: "Restart" }).click()
-}
-
-/** Opens the channel, takes the restart the delivered flag asks for, then waits for the boot under its mode; returns the page's load count. */
-async function openUnderFlag(page: Page, path: string, slug: string, mode: string): Promise<() => number> {
-  const loads = countLoads(page)
-  await page.goto(path)
-  await expect.poll(() => requestedMode(page), { timeout: 30_000 }).toBe(mode)
-  await restart(page)
-  await expect.poll(loads, { timeout: 30_000 }).toBeGreaterThanOrEqual(2)
-  await opened(page, slug)
-  return loads
-}
-
-/** The boot that copies every store into SQLite restarts every tab by itself once done; the boot after enters read-write. */
-async function enterReadWrite(page: Page, slug: string, loads: () => number) {
-  await expect.poll(loads, { timeout: 90_000 }).toBe(3)
-  await opened(page, slug)
-  await expect.poll(() => recordedModes(page)).toEqual(["read-write"])
 }
 
 function sqliteErrors(page: Page): string[] {
@@ -105,85 +94,102 @@ function sqliteErrors(page: Page): string[] {
   return errors
 }
 
-// Two reloads and four stream switches against a dev server; read-write also waits out a full copy.
-test.describe.configure({ timeout: 180_000 })
+test.describe.configure({ timeout: 120_000 })
 
-for (const mode of ["shadow", "read-only", "read-write"] as const) {
-  test(`keeps messages across stream switches and reloads with sqliteStorage=${mode}`, async ({ page }) => {
-    const mirrorErrors = sqliteErrors(page)
-    const { workspaceId, testId } = await loginAndCreateWorkspaceViaApi(page, `sqlite-${mode}`)
-    await enrollUserFlag(page, workspaceId, "sqliteStorage", mode)
-    const first = { slug: `first-${testId}` }
-    const second = { slug: `second-${testId}` }
-    const firstId = await createChannelViaApi(page, workspaceId, first.slug)
-    await createChannelViaApi(page, workspaceId, second.slug)
-
-    const loads = await openUnderFlag(page, `/w/${workspaceId}/s/${firstId}`, first.slug, mode)
-    if (mode === "read-write") await enterReadWrite(page, first.slug, loads)
-    await expect.poll(() => mirrorPools(page)).toHaveLength(1)
-
-    await send(page, `hello first ${mode}`)
-    await switchTo(page, second.slug)
-    await send(page, `hello second ${mode}`)
-    await switchTo(page, first.slug)
-    await expect(message(page, `hello first ${mode}`)).toBeVisible()
-
-    // A boot that reads what the previous one mirrored.
-    await page.reload()
-    await expect(message(page, `hello first ${mode}`)).toBeVisible({ timeout: 20_000 })
-    await switchTo(page, second.slug)
-    await expect(message(page, `hello second ${mode}`)).toBeVisible()
-    await send(page, `after reload ${mode}`)
-    await switchTo(page, first.slug)
-    await switchTo(page, second.slug)
-    await expect(message(page, `after reload ${mode}`)).toBeVisible()
-    expect(await recordedModes(page)).toEqual([mode])
-
-    expect(mirrorErrors).toEqual([])
-  })
-}
-
-test("turning read-write off with a second tab open restarts both on request and keeps every message", async ({
+test("a fresh device runs on SQLite from its first boot and keeps messages across switches and reloads", async ({
   page,
 }) => {
-  const mirrorErrors = sqliteErrors(page)
-  const { workspaceId, testId } = await loginAndCreateWorkspaceViaApi(page, "sqlite-flip")
-  await enrollUserFlag(page, workspaceId, "sqliteStorage", "read-write")
+  const errors = sqliteErrors(page)
+  const loads = countLoads(page)
+  const { workspaceId, testId } = await loginAndCreateWorkspaceViaApi(page, "sqlite-fresh")
+  const first = { slug: `first-${testId}` }
+  const second = { slug: `second-${testId}` }
+  const firstId = await createChannelViaApi(page, workspaceId, first.slug)
+  await createChannelViaApi(page, workspaceId, second.slug)
+
+  const loadsBefore = loads()
+  await page.goto(`/w/${workspaceId}/s/${firstId}`)
+  await opened(page, first.slug)
+  await expect.poll(() => recordedModes(page)).toEqual(["read-write"])
+  await expect.poll(() => sqlitePools(page)).toEqual([expect.stringMatching(/^\.threa-mirror-[0-9a-f]+$/)])
+
+  await send(page, "hello first")
+  await switchTo(page, second.slug)
+  await send(page, "hello second")
+  await switchTo(page, first.slug)
+  await expect(message(page, "hello first")).toBeVisible()
+  expect(loads() - loadsBefore).toBe(1)
+
+  await page.reload()
+  await expect(message(page, "hello first")).toBeVisible({ timeout: 20_000 })
+  await switchTo(page, second.slug)
+  await expect(message(page, "hello second")).toBeVisible()
+  await send(page, "after reload")
+  await switchTo(page, first.slug)
+  await switchTo(page, second.slug)
+  await expect(message(page, "after reload")).toBeVisible()
+  expect({ loads: loads() - loadsBefore, errors }).toEqual({ loads: 2, errors: [] })
+})
+
+test("two tabs share one SQLite copy without either reloading", async ({ page }) => {
+  const errors = sqliteErrors(page)
+  const { workspaceId, testId } = await loginAndCreateWorkspaceViaApi(page, "sqlite-tabs")
   const first = { slug: `first-${testId}` }
   const second = { slug: `second-${testId}` }
   const firstId = await createChannelViaApi(page, workspaceId, first.slug)
   const secondId = await createChannelViaApi(page, workspaceId, second.slug)
-  const pageLoads = await openUnderFlag(page, `/w/${workspaceId}/s/${firstId}`, first.slug, "read-write")
-  await enterReadWrite(page, first.slug, pageLoads)
+  await page.goto(`/w/${workspaceId}/s/${firstId}`)
+  await opened(page, first.slug)
 
   const other = await page.context().newPage()
   const otherErrors = sqliteErrors(other)
+  const loads = [countLoads(page), countLoads(other)]
   await other.goto(`/w/${workspaceId}/s/${secondId}`)
   await opened(other, second.slug)
   await send(page, "from the first tab")
   await send(other, "from the second tab")
-  // Seen from the other tab, each send committed: a reload aborts a transaction still in flight, as IndexedDB's does.
   await switchTo(page, second.slug)
   await expect(message(page, "from the second tab")).toBeVisible()
   await switchTo(other, first.slug)
   await expect(message(other, "from the first tab")).toBeVisible()
 
-  const loads = [countLoads(page), countLoads(other)]
-  await enrollUserFlag(page, workspaceId, "sqliteStorage", "off")
-  await restart(page)
-  for (const loaded of loads) await expect.poll(loaded, { timeout: 20_000 }).toBeGreaterThan(0)
-  await expect.poll(() => requestedMode(page)).toBeNull()
-  // The first boot holding the other tab out lands SQLite's backlog, then drops it.
-  await expect.poll(() => recordedModes(page).catch(() => null), { timeout: 60_000 }).toEqual([])
-  await expect.poll(() => mirrorPools(page).catch(() => null)).toEqual([])
-
-  await opened(page, second.slug)
-  await expect(message(page, "from the second tab")).toBeVisible()
-  await switchTo(page, first.slug)
-  await expect(message(page, "from the first tab")).toBeVisible()
-  await opened(other, first.slug)
+  // The owning tab closes; the other takes the file over and keeps serving.
+  await page.close()
+  await switchTo(other, second.slug)
+  await send(other, "after the owner closed")
+  await switchTo(other, first.slug)
   await expect(message(other, "from the first tab")).toBeVisible()
   await switchTo(other, second.slug)
-  await expect(message(other, "from the second tab")).toBeVisible()
-  expect([...mirrorErrors, ...otherErrors]).toEqual([])
+  await expect(message(other, "after the owner closed")).toBeVisible()
+  expect({ loads: loads.map((loaded) => loaded()), errors: [...errors, ...otherErrors] }).toEqual({
+    loads: [0, 1],
+    errors: [],
+  })
+})
+
+test("a device on IndexedDB imports its unsent draft into SQLite at the next boot", async ({ page }) => {
+  // Until the test allows it, the page cannot reach OPFS, so the app runs on IndexedDB as a browser without SQLite storage does.
+  await page.addInitScript(() => {
+    if (localStorage.getItem("test:allowSqlite")) return
+    Object.defineProperty(StorageManager.prototype, "getDirectory", { value: undefined, configurable: true })
+  })
+  const errors = sqliteErrors(page)
+  const { workspaceId, testId } = await loginAndCreateWorkspaceViaApi(page, "sqlite-import")
+  const slug = `import-${testId}`
+  const channelId = await createChannelViaApi(page, workspaceId, slug)
+  await page.goto(`/w/${workspaceId}/s/${channelId}`)
+  await opened(page, slug)
+  await send(page, "sent on IndexedDB")
+  await composer(page).pressSequentially("unsent on IndexedDB")
+  await expect.poll(() => draftsInIndexedDb(page), { timeout: 10_000 }).toBeGreaterThan(0)
+  expect(await recordedModes(page)).toEqual([])
+
+  await page.evaluate(() => localStorage.setItem("test:allowSqlite", "1"))
+  await page.reload()
+  await opened(page, slug)
+  await expect(composer(page)).toHaveText("unsent on IndexedDB")
+  await expect(message(page, "sent on IndexedDB")).toBeVisible()
+  await expect.poll(() => recordedModes(page)).toEqual(["read-write"])
+  await expect.poll(() => draftsInIndexedDb(page)).toBe(0)
+  expect(errors).toEqual([])
 })

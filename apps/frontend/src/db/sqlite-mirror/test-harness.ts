@@ -1,7 +1,6 @@
 import type { Database } from "@sqlite.org/sqlite-wasm"
-import type { CoordinationMessage, MirrorCoordination } from "./client"
+import type { MirrorCoordination, ReadWriteMessage } from "./client"
 import { createMirrorHandler } from "./handler"
-import { mirrorChannelName } from "./marks"
 import type { MirrorReply, MirrorRequest, MirrorTransport } from "./protocol"
 import type { ModeLock } from "./storage-mode"
 
@@ -9,8 +8,7 @@ let tabs = 0
 
 /** Tabs on one in-memory channel; the first to claim owns until it resigns. */
 export function createBus() {
-  const listeners = new Set<(message: CoordinationMessage) => void>()
-  const live = new Set<string>()
+  const listeners = new Set<(message: ReadWriteMessage) => void>()
   const watchers = new Map<string, Set<() => void>>()
   const queue: Array<(owner: boolean) => void> = []
   let holder: ((owner: boolean) => void) | null = null
@@ -25,19 +23,7 @@ export function createBus() {
     holder = queue.shift() ?? null
     holder?.(true)
   }
-  const channels: BroadcastChannel[] = []
   return {
-    /** Also delivers what handles without a mirror announce on the database's channel. */
-    hearAnnouncements(idbName: string) {
-      const channel = new BroadcastChannel(mirrorChannelName(idbName))
-      channel.onmessage = ({ data }: MessageEvent<CoordinationMessage>) => {
-        for (const listener of listeners) listener(data)
-      }
-      channels.push(channel)
-    },
-    close() {
-      for (const channel of channels.splice(0)) channel.close()
-    },
     /** Delays every broadcast until `release`, as a busy channel would. */
     hold() {
       held = []
@@ -47,24 +33,12 @@ export function createBus() {
       held = null
       for (const deliver of deliveries) deliver()
     },
-    /** A tab that runs no mirror but is alive, as one still booting would be. */
-    liveTab(tabId: string) {
-      live.add(tabId)
-    },
     /** One tab's side of the mode lock, as Web Locks grant it; `close` stands for the tab's end. */
     modeLock(): ModeLock & { close(): void } {
       const tab = {}
       return {
-        async exclusive(waitMs) {
-          const deadline = performance.now() + waitMs
-          while (exclusive || sharing.size > 0) {
-            const left = deadline - performance.now()
-            if (left <= 0) return null
-            await new Promise<void>((wake) => {
-              waitingForLock.push(wake)
-              setTimeout(wake, left)
-            })
-          }
+        async exclusive() {
+          if (exclusive || sharing.size > 0) return null
           exclusive = tab
           return () => {
             if (exclusive !== tab) return
@@ -75,17 +49,6 @@ export function createBus() {
         async shared() {
           while (exclusive) await new Promise<void>((wake) => waitingForLock.push(wake))
           sharing.add(tab)
-        },
-        async ifShared(run) {
-          if (exclusive) return run(false)
-          const hold = {}
-          sharing.add(hold)
-          try {
-            return await run(true)
-          } finally {
-            sharing.delete(hold)
-            wakeLockWaiters()
-          }
         },
         close() {
           sharing.delete(tab)
@@ -101,8 +64,7 @@ export function createBus() {
     ): MirrorCoordination & { resigned: () => boolean; die: () => void; dispose: () => void } {
       let mine: ((owner: boolean) => void) | null = null
       let resigned = false
-      const own = new Set<(message: CoordinationMessage) => void>()
-      live.add(tabId)
+      const own = new Set<(message: ReadWriteMessage) => void>()
       const resign = () => {
         resigned = true
         if (holder === mine) handOver()
@@ -110,7 +72,6 @@ export function createBus() {
       }
       return {
         tabId,
-        liveTabs: async () => new Set(live),
         watchTab(tab, onGone) {
           const watching = watchers.get(tab) ?? new Set()
           watchers.set(tab, watching)
@@ -120,7 +81,6 @@ export function createBus() {
         resigned: () => resigned,
         /** The tab is killed: it hears nothing more and its locks are released. */
         die() {
-          live.delete(tabId)
           lock?.close()
           for (const listener of own) listeners.delete(listener)
           resign()

@@ -7,11 +7,12 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Progress } from "@/components/ui/progress"
-import { useStorageUpgrade } from "@/hooks/use-storage-restart"
+import { useStorageUpgrade } from "@/hooks/use-storage-upgrade"
 
 /**
- * Holds the app while storage copies every store into SQLite, once per device;
- * the copy restarts every tab when it is done. Mount through `AppToastHost`.
+ * Holds the app while storage copies this device's IndexedDB rows into SQLite; a
+ * device with nothing to copy never sees it. The app carries on where it was once
+ * the copy is done. Mount through `AppToastHost`.
  */
 export function StorageUpgradeLock() {
   const progress = useStorageUpgrade()
@@ -19,7 +20,7 @@ export function StorageUpgradeLock() {
   const focusedBefore = useRef<HTMLElement | null>(null)
 
   return (
-    <AlertDialog open={progress !== null}>
+    <AlertDialog open={Boolean(progress?.total)}>
       <AlertDialogContent
         tabIndex={-1}
         // With no action to focus and no trigger to return to, the dialog moves focus in and back out itself,
@@ -38,7 +39,7 @@ export function StorageUpgradeLock() {
       >
         <AlertDialogHeader>
           <AlertDialogTitle>Upgrading storage</AlertDialogTitle>
-          <AlertDialogDescription>Threa restarts when it's done.</AlertDialogDescription>
+          <AlertDialogDescription>Moving this device's saved data to faster storage.</AlertDialogDescription>
         </AlertDialogHeader>
         <Progress value={percent} aria-label="Storage upgrade progress" />
       </AlertDialogContent>

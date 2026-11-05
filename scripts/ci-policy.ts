@@ -176,7 +176,7 @@ export const areas: Area[] = [
   },
   {
     name: "storage",
-    sources: [`${fe}db/`, `${fe}hooks/use-sqlite-storage-flag`],
+    sources: [`${fe}db/`, `${fe}hooks/use-storage-upgrade`, `${fe}components/storage-upgrade-lock`],
     specs: ["sqlite-storage"],
   },
   {

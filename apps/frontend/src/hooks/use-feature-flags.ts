@@ -16,8 +16,6 @@ import {
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { useWorkspaceMetadata } from "@/stores/workspace-store"
 
-const NO_LAYERS: FeatureFlagLayers = { workspace: {}, user: {} }
-
 /**
  * The viewer's raw override layers, preferring the live bootstrap query cache
  * (kept socket-patched by chunk 3) and falling back to the layers persisted in
@@ -76,26 +74,6 @@ export function useFeatureFlagWhenKnown<K extends FeatureFlagKey>(
 ): FeatureFlagValue<K> | null {
   const flags = useResolvedFeatureFlags(workspaceId)
   return flags?.[key] ?? null
-}
-
-/**
- * The viewer's value as the server delivered it this session: null until the
- * network bootstrap lands, never the copy persisted from an earlier session.
- */
-export function useDeliveredFeatureFlag<K extends FeatureFlagKey>(
-  workspaceId: string,
-  key: K
-): FeatureFlagValue<K> | null {
-  const queryClient = useQueryClient()
-  const { data } = useQuery({
-    queryKey: workspaceKeys.bootstrap(workspaceId),
-    queryFn: () => queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId)) ?? null,
-    enabled: false,
-    staleTime: Infinity,
-    select: (bootstrap) =>
-      bootstrap ? resolveFeatureFlags(coerceLayers(bootstrap.featureFlags ?? null) ?? NO_LAYERS)[key] : null,
-  })
-  return data ?? null
 }
 
 /**

@@ -1,7 +1,6 @@
 import sqlite3InitModule, { type Database } from "@sqlite.org/sqlite-wasm"
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { createMirrorHandler } from "./handler"
-import { backlogSize } from "./mirror-store"
 import { encodeKey } from "./key-codec"
 import type { MirrorReply, MirrorRequest } from "./protocol"
 import { encodeValue } from "./value-codec"
@@ -25,16 +24,17 @@ afterEach(() => {
 async function openHandler(options?: { txIdleMs?: number }) {
   const handler = createMirrorHandler(async () => ({ db, close: () => {}, destroy: async () => {} }), options)
   const send = (request: MirrorRequest) => handler.handle(request)
-  await send({ type: "open", idbName: "test", schema: [{ name: "a", indexes: [] }], idbVersion: 1 })
+  const schema = ["a", "b"].map((name) => ({ name, indexes: [] }))
+  await send({ type: "open", idbName: "test", schema, idbVersion: 1 })
   return send
 }
 
-const put = (tx: number, key: string, value: string): MirrorRequest => ({
+const put = (tx: number, key: string, value: string, store = "a"): MirrorRequest => ({
   type: "write",
   tx,
-  write: { store: "a", op: "put", entries: [{ key: encodeKey(key), value: encodeValue(value) }] },
+  write: { store, op: "put", entries: [{ key: encodeKey(key), value: encodeValue(value) }] },
 })
-const get = (key: string, tx?: number): MirrorRequest => ({ type: "get", store: "a", key: encodeKey(key), tx })
+const get = (key: string, tx?: number, store = "a"): MirrorRequest => ({ type: "get", store, key: encodeKey(key), tx })
 const failure = (reply: MirrorReply) => (reply.ok ? null : reply.error)
 
 describe("mirror handler", () => {
@@ -52,10 +52,10 @@ describe("mirror handler", () => {
   it("answers whether a commit landed from its ledger row, and unknown once the row was pruned", async () => {
     const send = await openHandler()
     for (let tx = 1; tx <= 1002; tx++) {
-      await send({ type: "begin", tx, readonly: false })
+      await send({ type: "begin", tx, readonly: false, stores: ["a"] })
       await send({ type: "commit", tx, ledger: { tab: "tab", tx } })
     }
-    await send({ type: "begin", tx: 1003, readonly: false })
+    await send({ type: "begin", tx: 1003, readonly: false, stores: ["a"] })
     await send(put(1003, "k", "v"))
     await send({ type: "rollback", tx: 1003 })
     const committed = async (tab: string, tx: number) => {
@@ -74,7 +74,7 @@ describe("mirror handler", () => {
   it("syncs every commit to disk, whatever the connection was set to before it opened", async () => {
     db.exec("PRAGMA synchronous=OFF")
     const send = await openHandler()
-    await send({ type: "begin", tx: 1, readonly: false })
+    await send({ type: "begin", tx: 1, readonly: false, stores: ["a"] })
     await send(put(1, "k", "v"))
     await send({ type: "commit", tx: 1, ledger: { tab: "tab", tx: 1 } })
     expect(db.selectValue("PRAGMA synchronous")).toBe(2)
@@ -82,7 +82,7 @@ describe("mirror handler", () => {
 
   it("refuses every write and the commit of a transaction after a write failed", async () => {
     const send = await openHandler()
-    await send({ type: "begin", tx: 1, readonly: false })
+    await send({ type: "begin", tx: 1, readonly: false, stores: ["a"] })
     await send(put(1, "first", "v"))
     const failed = await send({
       type: "write",
@@ -109,9 +109,9 @@ describe("mirror handler", () => {
   it("rolls back a transaction left without a request, failing it, so the next one runs", async () => {
     const send = await openHandler({ txIdleMs: 20 })
     const error = vi.spyOn(console, "error").mockImplementation(() => {})
-    await send({ type: "begin", tx: 1, readonly: false })
+    await send({ type: "begin", tx: 1, readonly: false, stores: ["a"] })
     await send(put(1, "frozen", "v"))
-    const next = await send({ type: "begin", tx: 2, readonly: false })
+    const next = await send({ type: "begin", tx: 2, readonly: false, stores: ["a"] })
     await send(put(2, "next", "v"))
     await send({ type: "commit", tx: 2, ledger: { tab: "tab", tx: 2 } })
     const frozenCommit = await send({ type: "commit", tx: 1, ledger: { tab: "tab", tx: 1 } })
@@ -124,28 +124,44 @@ describe("mirror handler", () => {
     error.mockRestore()
   })
 
-  it("refuses to reset or destroy while IndexedDB lacks committed transactions", async () => {
+  it("runs a readonly transaction on other stores beside a readwrite one, and holds those that overlap it", async () => {
     const send = await openHandler()
-    await send({ type: "begin", tx: 1, readonly: false })
-    await send(put(1, "k", "v"))
+    const settled: string[] = []
+    const track = (name: string, reply: Promise<MirrorReply>) =>
+      reply.then((value) => {
+        settled.push(name)
+        return value
+      })
+    await send({ type: "begin", tx: 1, readonly: false, stores: ["a"] })
+    await send(put(1, "k", "written"))
+    await send({ type: "begin", tx: 2, readonly: true, stores: ["b"] })
+    const beside = await track("beside", send(get("k", 2, "b")))
+    void send({ type: "begin", tx: 3, readonly: true, stores: ["a"] })
+    const overlapping = track("overlapping", send(get("k", 3)))
+    void send({ type: "begin", tx: 4, readonly: false, stores: ["b"] })
+    const secondWriter = track("secondWriter", send(put(4, "k", "second", "b")))
+    await send({ type: "commit", tx: 2, ledger: { tab: "tab", tx: 2 } })
+    const beforeCommit = [...settled]
     await send({ type: "commit", tx: 1, ledger: { tab: "tab", tx: 1 } })
-    const reset = await send({ type: "reset", incarnation: "next" })
-    const kept = await send(get("k"))
-    const destroy = await send({ type: "destroy", idbName: "test" })
-    expect({ reset: reset.ok, kept, destroy: destroy.ok, backlog: backlogSize(db) }).toMatchObject({
-      reset: false,
-      kept: { result: encodeValue("v") },
-      destroy: false,
-      backlog: 1,
+    expect({
+      beside: beside.ok,
+      beforeCommit,
+      overlapping: await overlapping,
+      secondWriter: (await secondWriter).ok,
+    }).toEqual({
+      beside: true,
+      beforeCommit: ["beside"],
+      overlapping: expect.objectContaining({ result: encodeValue("written") }),
+      secondWriter: true,
     })
   })
 
   it("holds a write outside any transaction until the readonly transactions reading meanwhile finish", async () => {
     const send = await openHandler()
-    await send({ type: "begin", tx: 1, readonly: false })
+    await send({ type: "begin", tx: 1, readonly: false, stores: ["a"] })
     await send(put(1, "k", "before"))
     await send({ type: "commit", tx: 1, ledger: { tab: "tab", tx: 1 } })
-    await send({ type: "begin", tx: 2, readonly: true })
+    await send({ type: "begin", tx: 2, readonly: true, stores: ["a"] })
     const first = await send(get("k", 2))
     let applied = false
     const apply = send({
