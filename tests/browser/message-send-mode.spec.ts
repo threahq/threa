@@ -30,7 +30,7 @@ test.describe("Message Send Mode", () => {
 
     // Wait for the nav to mount before opening the page; checking visibility
     // immediately races the dialog's deferred content render.
-    const keyboardPage = dialog.getByRole("link", { name: "Keyboard & composer" })
+    const keyboardPage = dialog.getByRole("link", { name: "Keyboard & composer", exact: true })
     await expect(keyboardPage).toBeVisible({ timeout: 5000 })
     await keyboardPage.click()
 
