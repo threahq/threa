@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
-import { createChannel, loginAndCreateWorkspace } from "./helpers"
+import { createChannel, loginAndCreateWorkspace, runOnIndexedDb } from "./helpers"
 
 /**
  * The memo embed card, asserted in a real browser.
@@ -77,6 +77,8 @@ async function dropClientCache(page: Page) {
 
 test.describe("memo embed card", () => {
   test.describe.configure({ timeout: 120_000 })
+  // dropClientCache deletes IndexedDB's databases, which hold the client cache only on the IndexedDB fallback.
+  test.beforeEach(({ context }) => runOnIndexedDb(context))
 
   test("renders the memo's content on first paint and never moves after it", async ({ page }) => {
     await loginAndCreateWorkspace(page, "memo-card")
