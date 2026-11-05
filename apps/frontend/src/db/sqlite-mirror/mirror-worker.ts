@@ -6,7 +6,7 @@ const DATABASE_FILE = "/mirror.sqlite3"
 const INSTALL_ATTEMPTS = 6
 const FIRST_RETRY_MS = 100
 
-const sqlite3Ready = sqlite3InitModule()
+const sqlite3Ready = sqlite3InitModule().then((sqlite3) => ({ sqlite3, wasmMs: Math.round(performance.now()) }))
 
 function fnv1a(text: string): string {
   let hash = 0x811c9dc5
@@ -19,15 +19,14 @@ function fnv1a(text: string): string {
 
 // The pool locks its directory exclusively, so each database gets its own; a
 // tab inheriting ownership retries while the previous owner's worker lets go.
-async function installPool(idbName: string) {
-  const sqlite3 = await sqlite3Ready
+async function installPool(sqlite3: Awaited<typeof sqlite3Ready>["sqlite3"], idbName: string) {
   const name = `threa-mirror-${fnv1a(idbName)}`
   // Without both flags a failed install deletes the pool's files, then caches the failure.
   // forceReinitIfPreviouslyFailed is honoured at runtime but missing from the typings.
   const options = { name, directory: `.${name}`, preserveOnInitFailure: true, forceReinitIfPreviouslyFailed: true }
   for (let attempt = 1; ; attempt++) {
     try {
-      return await sqlite3.installOpfsSAHPoolVfs(options)
+      return { pool: await sqlite3.installOpfsSAHPoolVfs(options), attempts: attempt }
     } catch (error) {
       if (attempt === INSTALL_ATTEMPTS) throw error
       await new Promise((resolve) => setTimeout(resolve, FIRST_RETRY_MS * 2 ** (attempt - 1)))
@@ -36,7 +35,11 @@ async function installPool(idbName: string) {
 }
 
 const handler = createMirrorHandler(async (idbName) => {
-  const pool = await installPool(idbName)
+  const { sqlite3, wasmMs } = await sqlite3Ready
+  const installStartedAt = performance.now()
+  const { pool, attempts } = await installPool(sqlite3, idbName)
+  const connectStartedAt = performance.now()
+  const installMs = Math.round(connectStartedAt - installStartedAt)
   const db = new pool.OpfsSAHPoolDb(DATABASE_FILE)
   // The pool VFS has no shared memory, so WAL needs exclusive locking from the first read. A rollback journal costs
   // several OPFS flushes a commit, WAL one; NORMAL in WAL may lose the last commits on power loss but never corrupts.
@@ -50,6 +53,12 @@ const handler = createMirrorHandler(async (idbName) => {
   return {
     db,
     close: () => db.close(),
+    timings: {
+      wasmMs,
+      installMs,
+      installAttempts: attempts,
+      connectMs: Math.round(performance.now() - connectStartedAt),
+    },
   }
 })
 

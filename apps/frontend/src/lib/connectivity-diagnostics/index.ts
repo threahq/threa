@@ -107,6 +107,11 @@ export interface DiagnosticFields {
   role?: "owner" | "follower"
   kind?: (typeof STORAGE_FAILURE_KINDS)[number]
   openMs?: number
+  wasmMs?: number
+  installMs?: number
+  installAttempts?: number
+  connectMs?: number
+  schemaMs?: number
   rangeP50Ms?: number
   rangeP95Ms?: number
 }
@@ -756,10 +761,22 @@ function projectFields(fields: DiagnosticFields): DiagnosticFields {
   if (oneOf(fields.blockedBy, ["socket", "in_flight", "lock"])) result.blockedBy = fields.blockedBy
   const boundedInteger = (value: number | undefined, max: number) =>
     Number.isSafeInteger(value) && value! >= 0 && value! <= max
-  for (const key of ["elapsedMs", "p50Ms", "p95Ms", "maxMs", "openMs", "rangeP50Ms", "rangeP95Ms"] as const) {
+  for (const key of [
+    "elapsedMs",
+    "p50Ms",
+    "p95Ms",
+    "maxMs",
+    "openMs",
+    "wasmMs",
+    "installMs",
+    "connectMs",
+    "schemaMs",
+    "rangeP50Ms",
+    "rangeP95Ms",
+  ] as const) {
     if (boundedInteger(fields[key], 86_400_000)) result[key] = fields[key]
   }
-  for (const key of ["count", "failed", "interrupted"] as const) {
+  for (const key of ["count", "failed", "interrupted", "installAttempts"] as const) {
     if (boundedInteger(fields[key], 100_000)) result[key] = fields[key]
   }
   if (oneOf(fields.storageMode, STORAGE_MODES)) result.storageMode = fields.storageMode

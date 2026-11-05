@@ -32,10 +32,20 @@ export type MirrorRequest =
   | { type: "rollback"; tx: number }
   | MirrorReadRequest
 
+/** Where an open's time went, in whole milliseconds; `wasmMs` counts from the worker's start. */
+export interface OpenTimings {
+  wasmMs: number
+  installMs: number
+  installAttempts: number
+  connectMs: number
+  schemaMs: number
+}
+
 export type MirrorReply =
   | {
       ok: true
       ms: number
+      timings?: OpenTimings
       result?: MirrorReadResults[keyof MirrorReadResults]
       /** Positions of a write's entries whose `add` met an existing key. */
       failures?: number[]

@@ -1,11 +1,12 @@
 import type { Database } from "@sqlite.org/sqlite-wasm"
 import { MirrorStore } from "./mirror-store"
-import type { MirrorReply, MirrorRequest } from "./protocol"
+import type { MirrorReply, MirrorRequest, OpenTimings } from "./protocol"
 import { txOf } from "./protocol"
 
 export interface MirrorDatabase {
   db: Database
   close(): void
+  timings: Omit<OpenTimings, "schemaMs">
 }
 
 interface Session {
@@ -145,10 +146,11 @@ export function createMirrorHandler(
       session?.database.close()
       session = null
       const database = await openDatabase(request.idbName)
+      const schemaStartedAt = performance.now()
       const store = new MirrorStore(database.db)
       store.ensureSchema(request.schema, progress)
       session = { database, store }
-      return {}
+      return { timings: { ...database.timings, schemaMs: Math.round(performance.now() - schemaStartedAt) } }
     }
     const { store, database } = requireSession()
     switch (request.type) {
