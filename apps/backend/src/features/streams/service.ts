@@ -98,6 +98,7 @@ import {
   type StreamDirectoryStats,
   type ReferenceAudience,
   STREAM_DISPLAY_NAME_MAX_LENGTH,
+  NotificationLevels,
 } from "@threahq/types"
 import { ContextBagRepository, PersonaRepository, assertAssignablePersona } from "../agents"
 import { draftStreamUniquenessKey } from "../drafts"
@@ -122,6 +123,7 @@ import {
   memoryModeSchema,
 } from "../../lib/schemas"
 import { isAllowedLevel } from "./notification-config"
+import { resolveNotificationLevelsForMember } from "./notification-resolver"
 import { StreamPoliciesRepository } from "./policy-repository"
 import { normalizeStreamDescription } from "./description"
 import { publishThreadUpdated } from "./thread-updated"
@@ -3056,6 +3058,12 @@ export class StreamService {
 
   async getMembershipsBatch(workspaceId: string, streamIds: string[], memberId: string): Promise<StreamMember[]> {
     return StreamMemberRepository.findByStreamsAndMember(this.pool, workspaceId, streamIds, memberId)
+  }
+
+  /** The member's streams among `streamIds` whose effective level, own or inherited, is Muted. */
+  async listMutedStreamIds(workspaceId: string, streamIds: string[], memberId: string): Promise<string[]> {
+    const levels = await resolveNotificationLevelsForMember(this.pool, workspaceId, memberId, streamIds)
+    return streamIds.filter((id) => levels.get(id) === NotificationLevels.MUTED)
   }
 
   // TODO: This is a permission check masquerading as a membership check. "isMember" is

@@ -12,6 +12,7 @@ import {
   typicalStartMinutes,
   startOfWorkForDay,
   firstWorkingWeekday,
+  isWithinWorkingHours,
 } from "./work-schedule"
 
 /** Build a schedule where every listed weekday gets the same shift(s). */
@@ -108,5 +109,41 @@ describe("first working weekday (start of the working week)", () => {
     })
     expect(firstWorkingWeekday(all)).toBe(1)
     expect(firstWorkingWeekday(schedule({}))).toBeNull()
+  })
+})
+
+describe("within working hours", () => {
+  const split = schedule({
+    1: [
+      { start: "08:00", end: "11:00" },
+      { start: "15:00", end: "20:00" },
+    ],
+  })
+
+  test("reads the shift on the zone's wall clock, start inclusive and end exclusive", () => {
+    // Monday 2026-11-02 07:00 UTC is 08:00 in Stockholm (CET).
+    const at = (iso: string) => isWithinWorkingHours(split, new Date(iso), "Europe/Stockholm")
+    expect({
+      shiftStart: at("2026-11-02T07:00:00Z"),
+      beforeStart: at("2026-11-02T06:59:00Z"),
+      shiftEnd: at("2026-11-02T10:00:00Z"),
+      secondShift: at("2026-11-02T14:30:00Z"),
+    }).toEqual({ shiftStart: true, beforeStart: false, shiftEnd: false, secondShift: true })
+  })
+
+  test("uses the zone's weekday, not UTC's", () => {
+    // Monday 23:30 UTC is already Tuesday 08:30 in Tokyo.
+    const tuesday = schedule({ 2: NINE_FIVE })
+    expect(isWithinWorkingHours(tuesday, new Date("2026-11-03T00:30:00Z"), "Asia/Tokyo")).toBe(true)
+    expect(isWithinWorkingHours(tuesday, new Date("2026-11-03T00:30:00Z"), "UTC")).toBe(false)
+  })
+
+  test("is never within hours on a day off or an empty schedule", () => {
+    expect(isWithinWorkingHours(DEFAULT_WORK_SCHEDULE, new Date("2026-11-01T12:00:00Z"), "UTC")).toBe(false)
+    expect(isWithinWorkingHours(schedule({}), new Date("2026-11-02T12:00:00Z"), "UTC")).toBe(false)
+  })
+
+  test("throws for an unknown zone", () => {
+    expect(() => isWithinWorkingHours(DEFAULT_WORK_SCHEDULE, new Date(), "Mars/Olympus")).toThrow(RangeError)
   })
 })

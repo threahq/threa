@@ -299,7 +299,11 @@ describe("resolveDeliveryGroups — workspace people and guest-safe events", () 
   })
 
   it("should reach the whole workspace when the event is listed as guest-safe", () => {
-    for (const eventType of ["workspace_settings:updated", "feature_flags:workspace_updated"] as const) {
+    for (const eventType of [
+      "workspace_settings:updated",
+      "feature_flags:workspace_updated",
+      "workspace:name_updated",
+    ] as const) {
       expect(resolveDeliveryGroups(event(eventType, { workspaceId: "ws_1" }))).toEqual([WORKSPACE_GROUP])
     }
   })

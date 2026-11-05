@@ -71,6 +71,7 @@ import {
   createAvatarProcessWorker,
   createAvatarProcessOnDLQ,
   UserRepository,
+  WorkspaceNameSyncHandler,
 } from "./features/workspaces"
 import { InvitationService, InvitationShadowSyncHandler } from "./features/invitations"
 import { WorkosOrgServiceImpl, StubWorkosOrgService } from "@threahq/backend-common"
@@ -252,6 +253,7 @@ import {
   createPushDeliverWorker,
   createPushDeliverOnDLQ,
   createPushSessionExpiredWorker,
+  isOutsideWorkingHours,
 } from "./features/push"
 import { AttachmentUploadedHandler, AttachmentEmbeddingHandler } from "./features/attachments"
 import { AICostService, AISpendGate, WorkspaceAIResidencyPolicy } from "./features/ai-usage"
@@ -773,9 +775,42 @@ export async function startServer(): Promise<ServerInstance> {
       : null,
     lookups: {
       getUserPushPreferences: async (workspaceId, userId) => {
-        const { notificationLevel, pushActions, pushReminderMinutes, pushQuickReaction } =
-          await userPreferencesService.getPreferences(workspaceId, userId)
-        return { notificationLevel, pushActions, pushReminderMinutes, pushQuickReaction }
+        const {
+          notificationLevel,
+          pushActions,
+          pushReminderMinutes,
+          pushQuickReaction,
+          quietOutsideWorkingHours,
+          workSchedule,
+          timezone,
+        } = await userPreferencesService.getPreferences(workspaceId, userId)
+        return {
+          notificationLevel,
+          pushActions,
+          pushReminderMinutes,
+          pushQuickReaction,
+          quietOutsideWorkingHours,
+          workSchedule,
+          timezone,
+        }
+      },
+      isOutsideWorkingHours: async (workspaceId, userId, preferences, at) => {
+        const [user, workspaceSettings] = await Promise.all([
+          UserRepository.findById(pool, workspaceId, userId),
+          workspaceSettingsService.getSettings(workspaceId),
+        ])
+        const outside = isOutsideWorkingHours({
+          userSchedule: preferences.workSchedule,
+          workspaceSchedule: workspaceSettings.defaultWorkSchedule,
+          deviceTimezone: user?.timezone ?? null,
+          preferenceTimezone: preferences.timezone,
+          now: at,
+        })
+        if (outside === null) {
+          logger.warn({ workspaceId, userId }, "Quiet hours skipped: no valid timezone for the user")
+          return false
+        }
+        return outside
       },
       isNotificationPaused: async (workspaceId, userId) => {
         // Single query (INV-30): the mapped user already masks an expired status
@@ -1031,6 +1066,7 @@ export async function startServer(): Promise<ServerInstance> {
     storage,
     ai,
     controlPlaneClient,
+    region: config.region,
     costService,
     accessLogService,
     analyticsReporter,
@@ -1884,6 +1920,7 @@ export async function startServer(): Promise<ServerInstance> {
     )
   }
   const githubRouteSyncHandler = config.region ? new GithubRouteSyncHandler(pool, controlPlaneClient) : null
+  const workspaceNameSyncHandler = controlPlaneClient ? new WorkspaceNameSyncHandler(pool, controlPlaneClient) : null
   const outboxHandlers: (OutboxHandler & { ensureListener(): Promise<void> })[] = [
     broadcastHandler,
     companionHandler,
@@ -1910,6 +1947,7 @@ export async function startServer(): Promise<ServerInstance> {
     ...(callRingPushHandler ? [callRingPushHandler] : []),
     ...(shadowSyncHandler ? [shadowSyncHandler] : []),
     ...(githubRouteSyncHandler ? [githubRouteSyncHandler] : []),
+    ...(workspaceNameSyncHandler ? [workspaceNameSyncHandler] : []),
     ...(analyticsOutboxHandler ? [analyticsOutboxHandler] : []),
     ...(bridgeClient ? [new StreamConnectionPokeHandler(pool, bridgeClient)] : []),
   ]

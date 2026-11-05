@@ -85,13 +85,16 @@ const updatePreferencesSchema = z.object({
     .optional(),
   pushReminderMinutes: z.number().int().min(PUSH_REMINDER_MINUTES_MIN).max(PUSH_REMINDER_MINUTES_MAX).optional(),
   pushQuickReaction: z.string().min(1).max(64).optional(),
+  quietOutsideWorkingHours: z.boolean().optional(),
   scratchpadCustomPrompt: z.string().max(8000).nullable().optional(),
+  codeBlockCollapseEnabled: z.boolean().optional(),
   codeBlockCollapseThreshold: z
     .number()
     .int()
     .min(CODE_BLOCK_COLLAPSE_THRESHOLD_MIN)
     .max(CODE_BLOCK_COLLAPSE_THRESHOLD_MAX)
     .optional(),
+  blockquoteCollapseEnabled: z.boolean().optional(),
   blockquoteCollapseThreshold: z
     .number()
     .int()

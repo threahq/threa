@@ -93,6 +93,21 @@ export class WorkspaceService {
   }
 
   /**
+   * The region owns the name once the workspace exists. The event both reaches open clients and
+   * drives `WorkspaceNameSyncHandler`, which mirrors the name into the control-plane registry.
+   */
+  async renameWorkspace(workspaceId: string, name: string): Promise<Workspace> {
+    return withTransaction(this.pool, async (client) => {
+      const workspace = await WorkspaceRepository.updateName(client, workspaceId, name)
+      if (!workspace) {
+        throw new HttpError("Workspace not found", { status: 404, code: "WORKSPACE_NOT_FOUND" })
+      }
+      await OutboxRepository.insert(client, "workspace:name_updated", { workspaceId, name: workspace.name })
+      return workspace
+    })
+  }
+
+  /**
    * Create a workspace from a control-plane instruction.
    * Accepts a pre-generated ID and slug — skips invite validation and slug generation
    * since the control-plane already handled those.

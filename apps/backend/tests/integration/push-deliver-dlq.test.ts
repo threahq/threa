@@ -95,8 +95,12 @@ describe("dead-lettered push delivery jobs", () => {
           pushActions: [...DEFAULT_PUSH_ACTIONS],
           pushReminderMinutes: DEFAULT_PUSH_REMINDER_MINUTES,
           pushQuickReaction: DEFAULT_PUSH_QUICK_REACTION,
+          quietOutsideWorkingHours: false,
+          workSchedule: null,
+          timezone: "UTC",
         }),
         isNotificationPaused: async () => false,
+        isOutsideWorkingHours: async () => false,
         getStreamType: async () => StreamTypes.CHANNEL,
         getWorkosUserId: async () => "user_WORKOS",
         resolveActivityPush: async () => ({

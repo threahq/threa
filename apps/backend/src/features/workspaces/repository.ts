@@ -125,6 +125,14 @@ export const WorkspaceRepository = {
     return result.rows[0]?.workos_organization_id ?? null
   },
 
+  async updateName(db: Querier, workspaceId: string, name: string): Promise<Workspace | null> {
+    const result = await db.query<WorkspaceRow>(sql`
+      UPDATE workspaces SET name = ${name}, updated_at = NOW() WHERE id = ${workspaceId}
+      RETURNING id, name, slug, tier, created_by, created_at, updated_at
+    `)
+    return result.rows[0] ? mapRowToWorkspace(result.rows[0]) : null
+  },
+
   async updateTier(db: Querier, workspaceId: string, tier: WorkspaceTier): Promise<boolean> {
     const result = await db.query(sql`
       UPDATE workspaces SET tier = ${tier}, updated_at = NOW() WHERE id = ${workspaceId}

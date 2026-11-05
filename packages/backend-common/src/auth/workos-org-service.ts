@@ -96,6 +96,7 @@ export interface WorkosOrganizationMembership {
 
 export interface WorkosOrgService {
   createOrganization(params: { name: string; externalId: string }): Promise<{ id: string }>
+  renameOrganization(params: { organizationId: string; name: string }): Promise<void>
   getOrganizationByExternalId(externalId: string): Promise<{ id: string } | null>
   hasAcceptedWorkspaceCreationInvitation(email: string): Promise<boolean>
   sendInvitation(params: {
@@ -174,6 +175,10 @@ export class WorkosOrgServiceImpl implements WorkosOrgService {
     })
     logger.info({ orgId: org.id, externalId: params.externalId }, "Created WorkOS organization")
     return { id: org.id }
+  }
+
+  async renameOrganization(params: { organizationId: string; name: string }): Promise<void> {
+    await this.workos.organizations.updateOrganization({ organization: params.organizationId, name: params.name })
   }
 
   async getOrganizationByExternalId(externalId: string): Promise<{ id: string } | null> {

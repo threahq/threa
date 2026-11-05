@@ -34,6 +34,9 @@ function pushPreferences(notificationLevel: PrefNotificationLevel): PushPreferen
     pushActions: [...DEFAULT_PUSH_ACTIONS],
     pushReminderMinutes: DEFAULT_PUSH_REMINDER_MINUTES,
     pushQuickReaction: DEFAULT_PUSH_QUICK_REACTION,
+    quietOutsideWorkingHours: false,
+    workSchedule: null,
+    timezone: "UTC",
   }
 }
 
@@ -421,6 +424,7 @@ describe("Push Notifications", () => {
         lookups: {
           getUserPushPreferences: async () => pushPreferences(PrefNotificationLevels.ALL),
           isNotificationPaused: async () => false,
+          isOutsideWorkingHours: async () => false,
           getStreamType: async () => StreamTypes.CHANNEL,
           getWorkosUserId: async () => null,
           resolveActivityPush: async () => ({ valid: false, reason: "gone" }),
@@ -603,6 +607,7 @@ describe("Push Notifications", () => {
           getUserPushPreferences: async () =>
             pushPreferences(overrides?.notificationLevel ?? PrefNotificationLevels.ALL),
           isNotificationPaused: async () => overrides?.notificationPaused ?? false,
+          isOutsideWorkingHours: async () => false,
           getStreamType: async (_workspaceId) => overrides?.streamType ?? StreamTypes.CHANNEL,
           getWorkosUserId: async () => overrides?.workosUserId ?? null,
           resolveActivityPush: async ({ activityId, plannedStreamId }) => {
@@ -1397,6 +1402,7 @@ describe("Push Notifications", () => {
         lookups: {
           getUserPushPreferences: async () => pushPreferences(PrefNotificationLevels.ALL),
           isNotificationPaused: async () => false,
+          isOutsideWorkingHours: async () => false,
           getStreamType: async () => StreamTypes.CHANNEL,
           getWorkosUserId: async () => null,
           resolveActivityPush: async () => ({ valid: false, reason: "gone" }),
@@ -1685,6 +1691,7 @@ describe("Push Notifications", () => {
         lookups: {
           getUserPushPreferences: async () => pushPreferences(PrefNotificationLevels.ALL),
           isNotificationPaused: async () => false,
+          isOutsideWorkingHours: async () => false,
           getStreamType: async () => StreamTypes.CHANNEL,
           getWorkosUserId: async () => null,
           resolveActivityPush: async () => ({ valid: false, reason: "gone" }),

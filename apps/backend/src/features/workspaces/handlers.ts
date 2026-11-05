@@ -19,7 +19,6 @@ import type { CommandAvailabilityService } from "../commands"
 import type { AvatarService } from "./avatar-service"
 import type { LabelService, LabelAssignmentService } from "../labels"
 import { getEmojiList } from "../emoji"
-import { getEffectiveLevel } from "../streams"
 import { SyncLogRepository } from "../sync"
 import { BotRepository, serializeBot } from "../public-api"
 import { AgentSessionRepository } from "../agents"
@@ -36,10 +35,12 @@ import {
   LabelActorTypes,
   type WorkspacePermissionSlug,
   type StreamReadFrontier,
+  updateWorkspaceSchema,
+  workspaceNameSchema,
 } from "@threahq/types"
 
 const createWorkspaceSchema = z.object({
-  name: z.string().min(1, "name is required"),
+  name: workspaceNameSchema,
   // Seeds the workspace's billing timezone from the creator's device.
   timezone: z.string().refine(isValidIanaTimezone, { message: "must be a valid IANA timezone identifier" }).optional(),
 })
@@ -91,6 +92,8 @@ interface Dependencies {
   callService?: import("../calls").CallService
   pool: import("pg").Pool
   analytics: { posthogToken: string; posthogHost: string } | null
+  /** This backend's region; null in single-region dev. */
+  region: string | null
 }
 
 export function createWorkspaceHandlers({
@@ -115,7 +118,10 @@ export function createWorkspaceHandlers({
   callService,
   pool,
   analytics,
+  region,
 }: Dependencies) {
+  const withRegion = <T extends object>(workspace: T) => (region ? { ...workspace, region } : workspace)
+
   return {
     async list(req: Request, res: Response) {
       // Pre-workspace route: uses WorkOS identity (no workspace user context yet)
@@ -132,7 +138,13 @@ export function createWorkspaceHandlers({
         return res.status(404).json({ error: "Workspace not found" })
       }
 
-      res.json({ workspace })
+      res.json({ workspace: withRegion(workspace) })
+    },
+
+    async update(req: Request, res: Response) {
+      const { name } = validateRequest(updateWorkspaceSchema, req.body)
+      const workspace = await workspaceService.renameWorkspace(req.workspaceId!, name)
+      res.json({ workspace: withRegion(workspace) })
     },
 
     async create(req: Request, res: Response) {
@@ -260,19 +272,21 @@ export function createWorkspaceHandlers({
       // Inbox arrival order: candidates are held streams plus every member
       // stream (the arrival lookup itself drops streams with nothing unread).
       const inboxArrivalCandidateIds = [...new Set([...membershipStreamIds, ...inboxHeldStreamIds])]
-      const [unreadCountsMap, activityCounts, unreadActivities, inboxArrivedAtDates] = await Promise.all([
-        streamService.getUnreadCounts(
-          workspaceId,
-          streamMemberships.map((m) => ({
-            streamId: m.streamId,
-            memberId: userId,
-            lastReadEventId: effectiveReadState.get(m.streamId)?.lastReadEventId ?? null,
-          }))
-        ),
-        activityService?.getUnreadCounts(userId, workspaceId),
-        activityService?.listFeed(userId, workspaceId, { unreadOnly: true, othersOnly: true, limit: 200 }),
-        streamService.getInboxArrivedAt(workspaceId, userId, inboxArrivalCandidateIds),
-      ])
+      const [unreadCountsMap, activityCounts, unreadActivities, inboxArrivedAtDates, mutedStreamIds] =
+        await Promise.all([
+          streamService.getUnreadCounts(
+            workspaceId,
+            streamMemberships.map((m) => ({
+              streamId: m.streamId,
+              memberId: userId,
+              lastReadEventId: effectiveReadState.get(m.streamId)?.lastReadEventId ?? null,
+            }))
+          ),
+          activityService?.getUnreadCounts(userId, workspaceId),
+          activityService?.listFeed(userId, workspaceId, { unreadOnly: true, othersOnly: true, limit: 200 }),
+          streamService.getInboxArrivedAt(workspaceId, userId, inboxArrivalCandidateIds),
+          streamService.listMutedStreamIds(workspaceId, membershipStreamIds, userId),
+        ])
       const inboxArrivedAt: Record<string, string> = {}
       for (const [streamId, arrivedAt] of Object.entries(inboxArrivedAtDates)) {
         inboxArrivedAt[streamId] = arrivedAt.toISOString()
@@ -350,17 +364,6 @@ export function createWorkspaceHandlers({
 
       const commands = commandAvailabilityService.listWorkspaceCommands()
 
-      // Compute muted stream IDs: streams where effective notification level is "muted".
-      // Uses explicit level + stream-type default (no ancestor inheritance — acceptable
-      // approximation for bootstrap since ancestor-inherited mutes are rare).
-      const streamTypeMap = new Map(resolvedStreams.map((s) => [s.id, s.type]))
-      const mutedStreamIds = streamMemberships
-        .filter((m) => {
-          const type = streamTypeMap.get(m.streamId)
-          return type && getEffectiveLevel(m.notificationLevel, type) === "muted"
-        })
-        .map((m) => m.streamId)
-
       // The WorkOS JWT carries `permissions` once authz rollout is active.
       // Distinguish "claim absent" (older tokens / OAuth callback path) from
       // "claim present but empty" — only the former triggers the role-derived
@@ -376,7 +379,7 @@ export function createWorkspaceHandlers({
         : undefined
 
       sendBootstrapJson(res, "workspace", startedAt, {
-        workspace,
+        workspace: withRegion(workspace),
         users,
         streams: resolvedStreams,
         archivedStreams: resolvedArchivedStreams,

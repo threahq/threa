@@ -246,6 +246,16 @@ export const WorkspaceRegistryRepository = {
     return (result.rowCount ?? 0) > 0
   },
 
+  /** Null when no workspace has the id; otherwise its WorkOS organization, if one exists yet. */
+  async updateName(db: Querier, id: string, name: string): Promise<{ workosOrganizationId: string | null } | null> {
+    const result = await db.query<{ workos_organization_id: string | null }>(
+      "UPDATE workspace_registry SET name = $2, updated_at = NOW() WHERE id = $1 RETURNING workos_organization_id",
+      [id, name]
+    )
+    const row = result.rows[0]
+    return row ? { workosOrganizationId: row.workos_organization_id } : null
+  },
+
   async updateTier(db: Querier, id: string, tier: WorkspaceTier): Promise<boolean> {
     const result = await db.query("UPDATE workspace_registry SET tier = $2, updated_at = NOW() WHERE id = $1", [
       id,

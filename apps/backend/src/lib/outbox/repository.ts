@@ -94,6 +94,7 @@ export type OutboxEventType =
   | "user_preferences:updated"
   | "sidebar_config:updated"
   | "workspace_settings:updated"
+  | "workspace:name_updated"
   | "feature_flags:updated"
   | "feature_flags:workspace_updated"
   | "agent_config:updated"
@@ -916,6 +917,11 @@ export interface WorkspaceSettingsUpdatedOutboxPayload extends WorkspaceScopedPa
   settings: WorkspaceSettings
 }
 
+// Every member and guest sees the workspace name, so the broadcast goes to the workspace room.
+export interface WorkspaceNameUpdatedOutboxPayload extends WorkspaceScopedPayload {
+  name: string
+}
+
 // Persona config override event payload (workspace-scoped — every member
 // inherits the built-in persona, so a config change falls through to the
 // workspace room; carries the resolved light persona so display name/avatar
@@ -1166,6 +1172,8 @@ export interface CallInvitationCreatedOutboxPayload extends WorkspaceScopedPaylo
   inviter: { id: string; name: string | null }
   mode: string
   expiresAt: string
+  /** When the ring started; quiet hours are read at this instant for the ring and its cancel alike. */
+  ringedAt: string
 }
 
 /**
@@ -1180,6 +1188,8 @@ export interface CallInvitationSettledOutboxPayload extends WorkspaceScopedPaylo
   callId: string
   outcome: "accepted" | "declined" | "cancelled" | "expired" | "superseded"
   settledBy?: string
+  /** The settled ring's {@link CallInvitationCreatedOutboxPayload.ringedAt}. */
+  ringedAt: string
   /**
    * Inviter display name, for the SW's offline "Call ended" fallback. Present so
    * a cancel that collapsed an unshown ring can still name the caller; null when
@@ -1531,6 +1541,7 @@ export interface OutboxEventPayloadMap {
   "user_preferences:updated": UserPreferencesUpdatedOutboxPayload
   "sidebar_config:updated": SidebarConfigUpdatedOutboxPayload
   "workspace_settings:updated": WorkspaceSettingsUpdatedOutboxPayload
+  "workspace:name_updated": WorkspaceNameUpdatedOutboxPayload
   "feature_flags:updated": FeatureFlagsUpdatedOutboxPayload
   "feature_flags:workspace_updated": FeatureFlagsWorkspaceUpdatedOutboxPayload
   "agent_config:updated": AgentConfigUpdatedOutboxPayload

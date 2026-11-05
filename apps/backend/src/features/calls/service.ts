@@ -1356,6 +1356,7 @@ export class CallService {
             inviter: { id: params.userId, name: inviter?.name ?? null },
             mode: params.mode,
             expiresAt: invitation.expiresAt.toISOString(),
+            ringedAt: invitation.createdAt.toISOString(),
           })
         }
       }
@@ -2066,6 +2067,7 @@ export class CallService {
       callId: invitation.callId,
       outcome,
       inviterName: inviter?.name ?? null,
+      ringedAt: invitation.createdAt.toISOString(),
     })
     callRingOutcomesTotal.inc({ outcome })
   }

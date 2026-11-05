@@ -91,6 +91,7 @@ const COPY_TREATMENT: Record<string, { treatment: Treatment; why: string }> = {
     why: "budget alerts and invitation acceptance only",
   },
   "features/workspace-integrations/route-sync-outbox-handler.ts": { treatment: "inert", why: "GitHub routes only" },
+  "features/workspaces/name-sync-outbox-handler.ts": { treatment: "inert", why: "workspace renames only" },
   "lib/outbox/broadcast-handler.ts": { treatment: "serves", why: "fans a copy's events out to local sockets" },
 }
 

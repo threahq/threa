@@ -175,6 +175,8 @@ describe("durable push delivery", () => {
     interface Sources {
       level: PrefNotificationLevel
       paused: boolean
+      quietOutsideWorkingHours: boolean
+      outsideWorkingHours: boolean
       /** An Error is thrown once, then the source reads valid again, unless `activityKeepsFailing`. */
       activity: ActivityPushResolution | Error
       activityKeepsFailing: boolean
@@ -198,6 +200,8 @@ describe("durable push delivery", () => {
       sources = {
         level: PrefNotificationLevels.ALL,
         paused: false,
+        quietOutsideWorkingHours: false,
+        outsideWorkingHours: false,
         activity: validActivity("hello"),
         activityKeepsFailing: false,
         activityReads: 0,
@@ -252,9 +256,13 @@ describe("durable push delivery", () => {
               pushActions: [...DEFAULT_PUSH_ACTIONS],
               pushReminderMinutes: DEFAULT_PUSH_REMINDER_MINUTES,
               pushQuickReaction: DEFAULT_PUSH_QUICK_REACTION,
+              quietOutsideWorkingHours: sources.quietOutsideWorkingHours,
+              workSchedule: null,
+              timezone: "UTC",
             }
           },
           isNotificationPaused: async () => sources.paused,
+          isOutsideWorkingHours: async () => sources.outsideWorkingHours,
           getStreamType: async () => StreamTypes.CHANNEL,
           getWorkosUserId: async () => "user_WORKOS",
           resolveActivityPush: async () => {
@@ -543,6 +551,10 @@ describe("durable push delivery", () => {
         paused: () => {
           sources.paused = true
         },
+        quietHours: () => {
+          sources.quietOutsideWorkingHours = true
+          sources.outsideWorkingHours = true
+        },
         prefNone: () => {
           sources.level = PrefNotificationLevels.NONE
         },
@@ -570,7 +582,14 @@ describe("durable push delivery", () => {
       const outcomes: Record<string, unknown> = {}
       for (const [name, change] of Object.entries(cases)) {
         ws = workspaceId()
-        sources = { ...sources, level: PrefNotificationLevels.ALL, paused: false, activity: validActivity("hello") }
+        sources = {
+          ...sources,
+          level: PrefNotificationLevels.ALL,
+          paused: false,
+          quietOutsideWorkingHours: false,
+          outsideWorkingHours: false,
+          activity: validActivity("hello"),
+        }
         const service = createService()
         const sub = await subscribe(ws, uid, `https://push.example.com/${name}`)
         scripts.set(sub.endpoint, [failing(503)])
@@ -590,6 +609,7 @@ describe("durable push delivery", () => {
         moved: suppressed("source_gone"),
         deleted: suppressed("source_gone"),
         paused: suppressed("paused"),
+        quietHours: suppressed("quiet_hours"),
         prefNone: suppressed("pref_none"),
         mentionsOnly: suppressed("mentions_mode"),
         attendedElsewhere: suppressed("not_targeted"),
@@ -2012,8 +2032,12 @@ describe("durable push delivery", () => {
             pushActions: [...DEFAULT_PUSH_ACTIONS],
             pushReminderMinutes: DEFAULT_PUSH_REMINDER_MINUTES,
             pushQuickReaction: DEFAULT_PUSH_QUICK_REACTION,
+            quietOutsideWorkingHours: false,
+            workSchedule: null,
+            timezone: "UTC",
           }),
           isNotificationPaused: async () => false,
+          isOutsideWorkingHours: async () => false,
           getStreamType: async () => StreamTypes.CHANNEL,
           getWorkosUserId: async () => null,
           resolveActivityPush: (params) => activityService.resolvePushSource(params),

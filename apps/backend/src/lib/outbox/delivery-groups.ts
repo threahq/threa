@@ -503,8 +503,14 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
     return bot.type === "personal" ? [BROWSE_GROUP, userGroup(bot.ownerUserId)] : [WORKSPACE_GROUP]
   }
 
-  // Safe for guests to hear: workspace settings carry no stream content.
-  if (isOneOfOutboxEventType(event, ["workspace_settings:updated", "feature_flags:workspace_updated"])) {
+  // Safe for guests to hear: workspace settings and its name carry no stream content.
+  if (
+    isOneOfOutboxEventType(event, [
+      "workspace_settings:updated",
+      "feature_flags:workspace_updated",
+      "workspace:name_updated",
+    ])
+  ) {
     return [WORKSPACE_GROUP]
   }
 

@@ -64,7 +64,7 @@ export type { ThreadUpdatedSource } from "./thread-updated"
 export { adjustStreamMessageCount, lockMessageCountStreams } from "./message-count"
 export { registerStreamMessageCountBackfill } from "./message-count-backfill"
 
-export { NOTIFICATION_CONFIG, isAllowedLevel, getDefaultLevel, getEffectiveLevel } from "./notification-config"
+export { NOTIFICATION_CONFIG, isAllowedLevel } from "./notification-config"
 
 export { resolveNotificationLevelsForStream } from "./notification-resolver"
 export type { ResolvedNotification } from "./notification-resolver"

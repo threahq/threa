@@ -148,3 +148,29 @@ export function firstWorkingWeekday(schedule: WorkSchedule): Weekday | null {
   }
   return best
 }
+
+const WEEKDAY_BY_SHORT_NAME: Record<string, Weekday> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }
+
+/**
+ * Whether `at` falls inside one of the schedule's shifts, read on the wall
+ * clock of the IANA zone `timeZone`. A shift covers its start minute up to, not
+ * including, its end. Throws a RangeError for an unknown zone.
+ */
+export function isWithinWorkingHours(schedule: WorkSchedule, at: Date, timeZone: string): boolean {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(at)
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? ""
+  const weekday = WEEKDAY_BY_SHORT_NAME[part("weekday")]
+  if (weekday === undefined) return false
+  const minutes = Number(part("hour")) * 60 + Number(part("minute"))
+  return getDayShifts(schedule, weekday).some((shift) => {
+    const start = parseHHMM(shift.start)
+    const end = parseHHMM(shift.end)
+    return start !== null && end !== null && minutes >= start && minutes < end
+  })
+}

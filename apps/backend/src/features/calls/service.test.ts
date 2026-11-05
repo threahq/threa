@@ -249,6 +249,7 @@ describe("CallService.startCall — DM ring", () => {
       workspaceId === "ws_1" ? [{ memberId: "usr_a" }, { memberId: "usr_peer" }] : []) as never)
     const ring = spyOn(CallInvitationRepository, "insertRinging").mockResolvedValue({
       id: "callinv_1",
+      createdAt: NOW,
       expiresAt: NOW,
     } as never)
     const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
@@ -322,7 +323,7 @@ describe("CallService.joinCall — revive, capacity, membership", () => {
     spyOn(CallParticipantRepository, "admit").mockResolvedValue(fakeParticipant())
     stubCleanEndpointAdmission()
     const accept = spyOn(CallInvitationRepository, "acceptRingingForUser").mockResolvedValue([
-      { id: "callinv_1", workspaceId: "ws_1", callId: "call_1", inviteeUserId: "usr_b" } as never,
+      { id: "callinv_1", createdAt: NOW, workspaceId: "ws_1", callId: "call_1", inviteeUserId: "usr_b" } as never,
     ])
     const bump = spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
     const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
@@ -787,7 +788,14 @@ describe("CallService.leaveCall", () => {
     spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
     spyOn(CallRepository, "findById").mockResolvedValue(fakeCall({ status: "ended", endedReason: "completed" }))
     const cancelAll = spyOn(CallInvitationRepository, "cancelRingingForCall").mockResolvedValue([
-      { id: "callinv_1", workspaceId: "ws_1", callId: "call_1", inviteeUserId: "usr_peer", inviterUserId: "usr_a" },
+      {
+        id: "callinv_1",
+        createdAt: NOW,
+        workspaceId: "ws_1",
+        callId: "call_1",
+        inviteeUserId: "usr_peer",
+        inviterUserId: "usr_a",
+      },
     ] as never)
     const activityInsert = spyOn(activityModule.ActivityRepository, "insert").mockResolvedValue({} as never)
     const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
@@ -817,7 +825,14 @@ describe("CallService.leaveCall", () => {
     spyOn(CallRepository, "findById").mockResolvedValue(fakeCall())
     const end = spyOn(CallRepository, "endActiveIfEmpty").mockResolvedValue(null)
     const cancelByInviter = spyOn(CallInvitationRepository, "cancelRingingByInviter").mockResolvedValue([
-      { id: "callinv_2", workspaceId: "ws_1", callId: "call_1", inviteeUserId: "usr_peer", inviterUserId: "usr_a" },
+      {
+        id: "callinv_2",
+        createdAt: NOW,
+        workspaceId: "ws_1",
+        callId: "call_1",
+        inviteeUserId: "usr_peer",
+        inviterUserId: "usr_a",
+      },
     ] as never)
     const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
 
@@ -1033,6 +1048,7 @@ describe("CallService.removeParticipant", () => {
     const cancelByInviter = spyOn(CallInvitationRepository, "cancelRingingByInviter").mockResolvedValue([
       {
         id: "callinv_3",
+        createdAt: NOW,
         workspaceId: "ws_1",
         callId: "call_1",
         inviteeUserId: "usr_peer",
@@ -1075,6 +1091,7 @@ describe("CallService.removeParticipant", () => {
     const cancelAll = spyOn(CallInvitationRepository, "cancelRingingForCall").mockResolvedValue([
       {
         id: "callinv_4",
+        createdAt: NOW,
         workspaceId: "ws_1",
         callId: "call_1",
         inviteeUserId: "usr_peer",
@@ -1137,6 +1154,7 @@ describe("CallService invitations", () => {
     stubTransaction()
     spyOn(CallInvitationRepository, "decline").mockResolvedValue({
       id: "callinv_1",
+      createdAt: NOW,
       status: "declined",
       workspaceId: "ws_1",
       callId: "call_1",
@@ -1162,6 +1180,7 @@ describe("CallService invitations", () => {
     stubTransaction()
     spyOn(CallInvitationRepository, "cancel").mockResolvedValue({
       id: "callinv_1",
+      createdAt: NOW,
       status: "cancelled",
       workspaceId: "ws_1",
       callId: "call_1",
@@ -1276,7 +1295,9 @@ describe("CallService sweeps", () => {
 
   it("expireStaleRings and endGraceExpiredCalls return their counts", async () => {
     stubTransaction()
-    spyOn(CallInvitationRepository, "expireStaleRings").mockResolvedValue([{ id: "callinv_1" } as never])
+    spyOn(CallInvitationRepository, "expireStaleRings").mockResolvedValue([
+      { id: "callinv_1", createdAt: NOW } as never,
+    ])
     spyOn(CallRepository, "endGraceExpired").mockResolvedValue([fakeCall({ status: "ended" })])
     spyOn(CallRepository, "findById").mockResolvedValue(null)
 
@@ -1287,7 +1308,14 @@ describe("CallService sweeps", () => {
   it("expireStaleRings settles each ring and lands a missed-call activity for the invitee", async () => {
     stubTransaction()
     spyOn(CallInvitationRepository, "expireStaleRings").mockResolvedValue([
-      { id: "callinv_1", workspaceId: "ws_1", callId: "call_1", inviteeUserId: "usr_peer", inviterUserId: "usr_a" },
+      {
+        id: "callinv_1",
+        createdAt: NOW,
+        workspaceId: "ws_1",
+        callId: "call_1",
+        inviteeUserId: "usr_peer",
+        inviterUserId: "usr_a",
+      },
     ] as never)
     spyOn(CallRepository, "findById").mockResolvedValue(fakeCall({ streamId: "stream_dm", mode: "audio_only" }))
     const activityInsert = spyOn(activityModule.ActivityRepository, "insert").mockResolvedValue({

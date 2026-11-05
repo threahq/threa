@@ -41,7 +41,11 @@ const fakePool = {
 
 function makeService(
   isNotificationPaused: boolean,
-  level: PrefNotificationLevel = PrefNotificationLevels.ALL
+  level: PrefNotificationLevel = PrefNotificationLevels.ALL,
+  quiet: { enabled: boolean; isOutsideWorkingHours: (at: Date) => Promise<boolean> } = {
+    enabled: false,
+    isOutsideWorkingHours: async () => false,
+  }
 ): PushService {
   const keys = webpush.generateVAPIDKeys()
   return new PushService({
@@ -54,8 +58,12 @@ function makeService(
         pushActions: ["mark_read", "remind"],
         pushReminderMinutes: 5,
         pushQuickReaction: "👍",
+        quietOutsideWorkingHours: quiet.enabled,
+        workSchedule: null,
+        timezone: "UTC",
       }),
       isNotificationPaused: async () => isNotificationPaused,
+      isOutsideWorkingHours: async (_workspaceId, _userId, _prefs, at) => quiet.isOutsideWorkingHours(at),
       getStreamType: async () => "channel",
       getWorkosUserId: async () => "workos_1",
       resolveActivityPush: async () => ({ valid: false, reason: "gone" }),
@@ -93,6 +101,7 @@ describe("PushService do-not-disturb gating", () => {
       inviter: { id: "usr_2", name: "Ada" },
       mode: "video",
       expiresAt: "2026-07-19T12:00:45.000Z",
+      ringedAt: "2026-07-19T12:00:00.000Z",
     })
     expect(findByUserId).not.toHaveBeenCalled()
   })
@@ -106,6 +115,7 @@ describe("PushService do-not-disturb gating", () => {
       attemptId: "callinv_01ABCDEF",
       callId: "call_1",
       outcome: "cancelled",
+      ringedAt: "2026-07-19T12:00:00.000Z",
     })
     expect(findByUserId).not.toHaveBeenCalled()
   })
@@ -117,6 +127,7 @@ describe("PushService do-not-disturb gating", () => {
       attemptId: "callinv_01ABCDEF",
       callId: "call_1",
       outcome: "cancelled",
+      ringedAt: "2026-07-19T12:00:00.000Z",
     })
     expect(findByUserId).not.toHaveBeenCalled()
   })
@@ -131,6 +142,104 @@ describe("PushService do-not-disturb gating", () => {
   it("resolves the user's devices when notifications are not paused", async () => {
     await makeService(false).planActivityPush(EVENT, makeActivityPayload())
     expect(findByUserId).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("PushService quiet outside working hours", () => {
+  let findByUserId: ReturnType<typeof spyOn>
+
+  beforeEach(() => {
+    findByUserId = spyOn(PushSubscriptionRepository, "findByUserId").mockResolvedValue([])
+  })
+
+  afterEach(() => {
+    findByUserId.mockRestore()
+  })
+
+  const ring = {
+    workspaceId: "ws_1",
+    targetUserId: "usr_1",
+    attemptId: "callinv_01ABCDEF",
+    callId: "call_1",
+    streamId: "stream_dm",
+    inviter: { id: "usr_2", name: "Ada" },
+    mode: "video" as const,
+    expiresAt: "2026-07-19T12:00:45.000Z",
+    ringedAt: "2026-07-19T12:00:00.000Z",
+  }
+
+  it("suppresses activity and ring pushes outside working hours when the setting is on", async () => {
+    const service = makeService(false, PrefNotificationLevels.ALL, {
+      enabled: true,
+      isOutsideWorkingHours: async () => true,
+    })
+    await service.planActivityPush(EVENT, makeActivityPayload())
+    await service.deliverCallRing(ring)
+    expect(findByUserId).not.toHaveBeenCalled()
+  })
+
+  it("should cancel a ring sent just before quiet hours when it settles after they start", async () => {
+    const quietFrom = new Date("2026-07-19T17:00:00.000Z")
+    const asked: string[] = []
+    const service = makeService(false, PrefNotificationLevels.ALL, {
+      enabled: true,
+      isOutsideWorkingHours: async (at) => {
+        asked.push(at.toISOString())
+        return at >= quietFrom
+      },
+    })
+    const ringedAt = "2026-07-19T16:59:40.000Z"
+    await service.deliverCallRing({ ...ring, ringedAt })
+    await service.deliverCallRingCancel({
+      workspaceId: ring.workspaceId,
+      targetUserId: ring.targetUserId,
+      attemptId: ring.attemptId,
+      callId: ring.callId,
+      outcome: "expired",
+      ringedAt,
+    })
+    expect({ asked, deviceLookups: findByUserId.mock.calls.length }).toEqual({
+      asked: [ringedAt, ringedAt],
+      deviceLookups: 2,
+    })
+  })
+
+  it("should not cancel a ring that quiet hours suppressed", async () => {
+    const service = makeService(false, PrefNotificationLevels.ALL, {
+      enabled: true,
+      isOutsideWorkingHours: async (at) => at >= new Date("2026-07-19T17:00:00.000Z"),
+    })
+    await service.deliverCallRingCancel({
+      workspaceId: ring.workspaceId,
+      targetUserId: ring.targetUserId,
+      attemptId: ring.attemptId,
+      callId: ring.callId,
+      outcome: "expired",
+      ringedAt: "2026-07-19T17:00:05.000Z",
+    })
+    expect(findByUserId).not.toHaveBeenCalled()
+  })
+
+  it("delivers inside working hours when the setting is on", async () => {
+    const service = makeService(false, PrefNotificationLevels.ALL, {
+      enabled: true,
+      isOutsideWorkingHours: async () => false,
+    })
+    await service.planActivityPush(EVENT, makeActivityPayload())
+    expect(findByUserId).toHaveBeenCalledTimes(1)
+  })
+
+  it("never reads working hours when the setting is off", async () => {
+    let reads = 0
+    const service = makeService(false, PrefNotificationLevels.ALL, {
+      enabled: false,
+      isOutsideWorkingHours: async () => {
+        reads++
+        return true
+      },
+    })
+    await service.planActivityPush(EVENT, makeActivityPayload())
+    expect({ reads, deviceLookups: findByUserId.mock.calls.length }).toEqual({ reads: 0, deviceLookups: 1 })
   })
 })
 
@@ -176,6 +285,7 @@ describe("PushService delivery options", () => {
       inviter: { id: "usr_2", name: "Ada" },
       mode: "video",
       expiresAt: "2026-07-19T12:00:45.000Z",
+      ringedAt: "2026-07-19T12:00:00.000Z",
     })
 
     expect(sendNotification).toHaveBeenCalledTimes(1)
@@ -192,6 +302,7 @@ describe("PushService delivery options", () => {
       callId: "call_1",
       outcome: "cancelled",
       inviterName: "Ada",
+      ringedAt: "2026-07-19T12:00:00.000Z",
     })
 
     const [, payload, options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
