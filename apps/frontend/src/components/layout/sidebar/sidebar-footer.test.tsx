@@ -16,7 +16,6 @@ import * as drawerModule from "@/components/ui/drawer"
 const logout = vi.fn()
 const updatePreference = vi.fn()
 const openSettings = vi.fn()
-const openOverview = vi.fn()
 const collapseOnMobile = vi.fn()
 const isTouch = { value: true }
 
@@ -59,7 +58,6 @@ describe("SidebarFooter", () => {
     vi.restoreAllMocks()
     logout.mockReset()
     openSettings.mockReset()
-    openOverview.mockReset()
     collapseOnMobile.mockReset()
     updatePreference.mockReset()
     isTouch.value = true
@@ -70,7 +68,6 @@ describe("SidebarFooter", () => {
 
     vi.spyOn(contextsModule, "useSettings").mockReturnValue({
       openSettings,
-      openOverview,
     } as unknown as ReturnType<typeof contextsModule.useSettings>)
 
     vi.spyOn(contextsModule, "useSidebar").mockReturnValue({
@@ -270,7 +267,7 @@ describe("SidebarFooter", () => {
     expect(openSettings).toHaveBeenCalledWith("profile")
   })
 
-  it("opens the overview on the workspace scope from Workspace settings", async () => {
+  it("offers one Settings entry that opens the settings window", async () => {
     isTouch.value = false
     const user = userEvent.setup()
 
@@ -284,10 +281,10 @@ describe("SidebarFooter", () => {
     )
 
     await user.click(screen.getByRole("button", { name: /kris/i }))
-    await user.click(screen.getByText("Workspace settings"))
+    const workspaceEntry = screen.queryByText("Workspace settings")
+    await user.click(screen.getByText("Settings"))
 
-    expect(openOverview).toHaveBeenCalledWith("workspace")
-    expect(openSettings).not.toHaveBeenCalled()
+    expect({ workspaceEntry, opened: openSettings.mock.calls }).toEqual({ workspaceEntry: null, opened: [[]] })
   })
 
   it("surfaces a do-not-disturb label in the account header when notifications are paused", async () => {

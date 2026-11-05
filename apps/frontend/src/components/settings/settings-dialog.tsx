@@ -239,7 +239,6 @@ function SettingsWindow({
     activeStreamTab,
     streamIndex,
     streamId,
-    overviewScope,
     activeSetting,
     closeSettings,
     getSettingsUrl,
@@ -363,7 +362,7 @@ function SettingsWindow({
     workspaceName: workspace?.name,
     stream,
     anyStreamTabs,
-    scope: overviewScope ?? (streamIndex ? "stream" : null),
+    scope: streamIndex ? "stream" : null,
     getSettingsUrl,
     getStreamSettingsUrl,
     linkHistory,
@@ -976,7 +975,7 @@ interface IndexProps {
   stream: StreamSettingsScope | null
   /** Without a stream: the stream pages some stream of the viewer's has, each asking which stream. */
   anyStreamTabs: readonly StreamSettingsTab[]
-  /** The scope a link named, such as the account menu's workspace settings: the index opens scrolled to it. */
+  /** A stream link with no page names the stream's scope: the index opens scrolled to it. */
   scope: SettingsScope | null
   getSettingsUrl: (tab?: SettingsTab, setting?: string) => string
   getStreamSettingsUrl: (streamId: string | null, tab?: StreamSettingsTab) => string
