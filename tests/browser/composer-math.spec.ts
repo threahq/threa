@@ -128,8 +128,9 @@ test.describe("Composer math", () => {
     await clickComposerToolbarButton(page, "Math")
     await page.keyboard.type("x^2")
     await page.keyboard.press("Enter")
-    await page.keyboard.type(" b")
     await expect(texField(page)).toHaveCount(0)
+    await expect(composerEditor(page)).toBeFocused()
+    await page.keyboard.type(" b")
 
     // Back across " b", then onto the equation.
     await page.keyboard.press("ArrowLeft")
