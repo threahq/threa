@@ -78,8 +78,9 @@ export function settingIds(anchor: string) {
 }
 
 /**
- * Width of a row's control column from `sm` up, and of a control that fills it,
- * so every control in a card starts at one edge and ends at the other.
+ * Width of a row's control column from `sm` up, and of a control that fills it
+ * (select, input, picker), so those start at one edge and end at the other.
+ * Buttons and segmented choices keep their content width at the column's end.
  */
 export const SETTING_CONTROL_WIDTH = "w-full sm:w-72"
 
@@ -364,7 +365,7 @@ export function SettingStateAction({
   const generatedId = useId()
   const stateId = id ?? generatedId
   const describedBy = [stateId, action["aria-describedby"]].filter(Boolean).join(" ")
-  const actionClass = cn("shrink-0", SETTING_CONTROL_WIDTH, SETTING_CONTROL_HEIGHT, action.className)
+  const actionClass = cn("w-full shrink-0 sm:w-auto", SETTING_CONTROL_HEIGHT, action.className)
   let control: ReactNode
   if ("href" in action) {
     control = (
@@ -743,7 +744,7 @@ export function SettingRow(props: SettingRowProps) {
             className={cn(
               "shrink-0",
               stacked && "w-full",
-              !toggle && !stacked && cn(SETTING_CONTROL_WIDTH, "[&>a]:w-full [&>button]:w-full")
+              !toggle && !stacked && cn(SETTING_CONTROL_WIDTH, "flex flex-col sm:items-end")
             )}
           >
             {control}

@@ -3,8 +3,7 @@ import { createChannelViaApi, loginAndCreateWorkspace } from "./helpers"
 
 /**
  * Where the open settings page's title starts, the outer edges of its
- * sections, each card whose row controls don't share one left and one right
- * edge, run past the card's padding, or squeeze a button's label past its
+ * sections, each card whose row controls don't share one right edge, run past the card's padding, or squeeze a button's label past its
  * padding, where the page's row chevrons end, and where its control text starts.
  */
 async function edges(page: Page) {
@@ -24,7 +23,6 @@ async function edges(page: Page) {
         (wrapper) => wrapper.getBoundingClientRect().width > 0
       )
       const controls = wrappers.map((wrapper) => (wrapper.firstElementChild ?? wrapper).getBoundingClientRect())
-      const lefts = [...new Set(controls.map((rect) => Math.round(rect.left)))]
       // A control's right edge is its painted extent; read-only text has none.
       // An icon's margin counts, so a chevron inset like a select's lands on the field edge.
       const rights = spread(
@@ -49,8 +47,8 @@ async function edges(page: Page) {
         [...card.querySelectorAll<HTMLElement>("[data-setting-control] button")].some(
           (button) => button.scrollWidth > button.clientWidth + 1
         )
-      if (lefts.length <= 1 && rights.length === 0 && !overflowing) return []
-      return [{ section: section.querySelector("h3")?.textContent, lefts, rights, overflowing }]
+      if (rights.length === 0 && !overflowing) return []
+      return [{ section: section.querySelector("h3")?.textContent, rights, overflowing }]
     })
     const chevronRights = sections.flatMap((section) =>
       [...section.querySelectorAll<SVGElement>("svg.lucide-chevron-right, svg.lucide-chevron-down")]
@@ -178,7 +176,7 @@ async function overviewScopes(page: Page) {
 test.describe("Settings layout", () => {
   test.use({ viewport: { width: 1440, height: 900 } })
 
-  test("every desktop page shares the overview's edges and starts where its title starts; a card's controls share both edges, row chevrons one x and control text one start", async ({
+  test("every desktop page shares the overview's edges and starts where its title starts; a card's controls share the right edge, row chevrons one x and control text one start", async ({
     page,
   }) => {
     test.setTimeout(90000)
