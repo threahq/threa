@@ -966,37 +966,25 @@ export const STREAM_SETTINGS_PAGE_CONFIG: Record<StreamSettingsTab, { label: str
   connect: { label: "Sharing", icon: Share2 },
 }
 
-/** Who a stream section's changes reach: only the viewer, or everyone in the stream. */
-export type SettingsAudience = "you" | "everyone"
-
 interface StreamSettingsSectionConfig {
   tab: StreamSettingsTab
   title: string
-  audience?: SettingsAudience
 }
 
 export const STREAM_SETTINGS_SECTIONS = {
-  "stream-notify": { tab: "general", title: "Your notifications", audience: "you" },
-  "stream-details": { tab: "general", title: "Details", audience: "everyone" },
-  "stream-memory": { tab: "general", title: "Memory", audience: "everyone" },
-  "stream-archive": { tab: "general", title: "Archiving", audience: "everyone" },
-  "stream-agent": { tab: "companion", title: "Replies", audience: "everyone" },
-  // Read-only and mixed: each row carries its own audience and names its editor.
+  "stream-notify": { tab: "general", title: "Your notifications" },
+  "stream-details": { tab: "general", title: "Details" },
+  "stream-memory": { tab: "general", title: "Memory" },
+  "stream-archive": { tab: "general", title: "Archiving" },
+  "stream-agent": { tab: "companion", title: "Replies" },
   "stream-agent-sees": { tab: "companion", title: "What shapes replies" },
-  "stream-context": { tab: "companion", title: "Context", audience: "everyone" },
-  "stream-tools": { tab: "companion", title: "Tools", audience: "everyone" },
-  "stream-people": { tab: "members", title: "People", audience: "everyone" },
-  "stream-sharing": { tab: "connect", title: "Sharing", audience: "everyone" },
+  "stream-context": { tab: "companion", title: "Context" },
+  "stream-tools": { tab: "companion", title: "Tools" },
+  "stream-people": { tab: "members", title: "People" },
+  "stream-sharing": { tab: "connect", title: "Sharing" },
 } as const satisfies Record<string, StreamSettingsSectionConfig>
 
 export type StreamSettingsSectionId = keyof typeof STREAM_SETTINGS_SECTIONS
-
-/** Who a section's changes reach, where the page mixes yours with the stream's. */
-export function sectionAudience(id: SettingsSectionId | StreamSettingsSectionId): SettingsAudience | undefined {
-  if (!Object.hasOwn(STREAM_SETTINGS_SECTIONS, id)) return undefined
-  const section: StreamSettingsSectionConfig = STREAM_SETTINGS_SECTIONS[id as StreamSettingsSectionId]
-  return section.audience
-}
 
 type StreamNotifyChoice = keyof (typeof SETTING_CHOICE_LABELS)["stream-notifications"]
 

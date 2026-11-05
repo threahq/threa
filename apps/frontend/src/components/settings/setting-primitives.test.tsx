@@ -24,12 +24,11 @@ import {
   SettingValue,
   SettingsDisclosure,
   SettingsDisclosureTrigger,
-  SettingsSection,
   SwitchSetting,
   settingIds,
   SaveError,
 } from "./setting-primitives"
-import { sectionTitle, settingDef } from "./settings-registry"
+import { settingDef } from "./settings-registry"
 
 function mountFileInsert(onCheckedChange = vi.fn()) {
   render(<SwitchSetting setting="file-insert" checked={false} onCheckedChange={onCheckedChange} />)
@@ -387,29 +386,6 @@ describe("SwitchSetting error", () => {
       id: settingIds("file-insert").error,
     })
     expect(screen.getByRole("switch")).toHaveAccessibleDescription(expect.stringContaining("Couldn't save. Try again."))
-  })
-})
-
-describe("SettingsSection", () => {
-  it("marks who a stream section's changes reach, and nothing on your own pages", () => {
-    render(
-      <>
-        <SettingsSection section="stream-notify">
-          <div />
-        </SettingsSection>
-        <SettingsSection section="stream-details">
-          <div />
-        </SettingsSection>
-        <SettingsSection section="long-messages">
-          <div />
-        </SettingsSection>
-      </>
-    )
-    const [notify, details, messages] = screen.getAllByRole("region")
-
-    expect(
-      [notify, details, messages].map((section) => section.getAttribute("aria-describedby") && section.textContent)
-    ).toEqual([`${sectionTitle("stream-notify")}Only you`, `${sectionTitle("stream-details")}Everyone here`, null])
   })
 })
 

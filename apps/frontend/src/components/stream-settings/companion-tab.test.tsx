@@ -323,12 +323,9 @@ describe("CompanionTab links to the account settings behind it", () => {
       .getAllByRole("listitem")
       .map((row) => [row.textContent, row.querySelector("a")?.getAttribute("href") ?? null])
     expect(rows).toEqual([
-      ["ModelEveryone hereThe model this agent runs on. Edited by workspace admins.Claude Sonnet 5", null],
-      [
-        "Agent instructionsEveryone hereWhat the agent follows wherever it replies. Edited by workspace admins.3 words",
-        null,
-      ],
-      ["ToolsEveryone hereWhat the agent can use besides replying. Edited by the owner.All tools", null],
+      ["ModelThe model this agent runs on. Edited by workspace admins.Claude Sonnet 5", null],
+      ["Agent instructionsWhat the agent follows wherever it replies. Edited by workspace admins.3 words", null],
+      ["ToolsWhat the agent can use besides replying. Edited by the owner.All tools", null],
       [
         "Your deviceOnly youWhat agents learn about the device you're on. Edited by you.Layout, system and open docs",
         "/w/ws_1/s/stream_sp?settings=privacy&setting=device-sharing",
@@ -336,7 +333,7 @@ describe("CompanionTab links to the account settings behind it", () => {
     ])
   })
 
-  it("sums up agent instructions by length and opens them in full, the audience on each row rather than the mixed section", async () => {
+  it("sums up agent instructions by length and opens them in full", async () => {
     const user = userEvent.setup()
     vi.spyOn(workspaceStore, "useWorkspacePersonas").mockReturnValue([
       {
@@ -355,14 +352,9 @@ describe("CompanionTab links to the account settings behind it", () => {
     expect({
       summary: instructions.textContent,
       opened: within(summary).getByText(/Help people think/).textContent,
-      audience: summary.querySelector("[data-audience]"),
-      repliesAudience: screen.getByRole("region", { name: "Replies" }).querySelector("[data-audience]")?.textContent,
     }).toEqual({
-      summary:
-        "Agent instructionsEveryone hereWhat the agent follows wherever it replies. Edited by workspace admins.9 words",
+      summary: "Agent instructionsWhat the agent follows wherever it replies. Edited by workspace admins.9 words",
       opened: "Help people think, decide and remember.",
-      audience: null,
-      repliesAudience: "Everyone here",
     })
   })
 

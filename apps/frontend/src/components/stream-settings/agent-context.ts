@@ -1,10 +1,5 @@
 import { StreamTypes, TOOL_PRIVACY_CATEGORY_LABELS, type StreamType, type ToolPrivacyPolicy } from "@threahq/types"
-import {
-  SETTING_CHOICE_LABELS,
-  type SettingId,
-  type SettingsAudience,
-  type StreamSettingId,
-} from "@/components/settings/settings-registry"
+import { SETTING_CHOICE_LABELS, type SettingId, type StreamSettingId } from "@/components/settings/settings-registry"
 import { stripMarkdownToInline } from "@/lib/markdown/strip"
 import { modelDisplayName } from "@/lib/model-display"
 import { streamFallbackLabel } from "@/lib/streams"
@@ -33,8 +28,8 @@ export interface AgentContextItem {
   description: string
   value: string
   editedBy: string
-  /** Whose replies it shapes: everyone's here, or only the viewer's. */
-  audience: SettingsAudience
+  /** Shapes only the viewer's replies; the rest shape everyone's here. */
+  onlyYou?: true
   /** Free text cut to one line: it reads under the label, not beside it. */
   prose?: true
   /** Full text the row expands to show, read-only. */
@@ -104,7 +99,6 @@ export function describeAgentContext(input: AgentContextInput): AgentContextItem
       description: "Who replies here.",
       value: "Ariadne",
       editedBy: "Fixed in encrypted scratchpads",
-      audience: "everyone",
       link: null,
     })
   } else if (input.agent) {
@@ -117,7 +111,6 @@ export function describeAgentContext(input: AgentContextInput): AgentContextItem
       description: "The model this agent runs on.",
       value: modelDisplayName(model),
       editedBy,
-      audience: "everyone",
       link,
     })
     const text = instructions?.trim() || null
@@ -127,7 +120,6 @@ export function describeAgentContext(input: AgentContextInput): AgentContextItem
       description: "What the agent follows wherever it replies.",
       value: lengthValue(text),
       editedBy,
-      audience: "everyone",
       link,
       detail: text ?? undefined,
     })
@@ -140,7 +132,7 @@ export function describeAgentContext(input: AgentContextInput): AgentContextItem
       description: "What every agent follows in your scratchpads.",
       ...proseValue(input.instructions),
       editedBy: "Edited by you",
-      audience: "you",
+      onlyYou: true,
       link: { setting: "ai-instructions" },
     })
   }
@@ -153,7 +145,6 @@ export function describeAgentContext(input: AgentContextInput): AgentContextItem
       description: "What the agent reads on every turn here.",
       ...(loading ? { value: "Loading…" } : proseValue(content)),
       editedBy: sharedWith ? `Edited by members, shared with ${sharedWith}` : "Edited by members",
-      audience: "everyone",
       link: { streamSetting: "stream-brief" },
     })
   }
@@ -166,7 +157,6 @@ export function describeAgentContext(input: AgentContextInput): AgentContextItem
       description: "What the agent can use besides replying.",
       value: toolsValue(policy),
       editedBy: viewerIsOwner ? "Edited by you" : "Edited by the owner",
-      audience: "everyone",
       link: viewerIsOwner ? { streamSetting: "stream-tools" } : null,
     })
   }
@@ -178,7 +168,7 @@ export function describeAgentContext(input: AgentContextInput): AgentContextItem
       description: "What agents learn about the device you're on.",
       value: SETTING_CHOICE_LABELS["device-sharing"][input.deviceSharing ? "on" : "off"],
       editedBy: "Edited by you",
-      audience: "you",
+      onlyYou: true,
       link: { setting: "device-sharing" },
     })
   }

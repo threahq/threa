@@ -25,7 +25,6 @@ import {
   Smartphone,
   TriangleAlert,
   User,
-  Users,
   X,
   type LucideIcon,
 } from "lucide-react"
@@ -42,7 +41,6 @@ import { useOptionalSettings } from "@/contexts/settings-context"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useCoarsePointer } from "@/hooks/use-pointer"
 import {
-  sectionAudience,
   sectionTitle,
   settingAnchorId,
   settingDef,
@@ -50,7 +48,6 @@ import {
   upperFirst,
   type AnySettingId,
   type SettingAppliesOn,
-  type SettingsAudience,
   type SettingsSectionId,
   type StreamSettingsSectionId,
 } from "./settings-registry"
@@ -398,14 +395,9 @@ export function SettingStateAction({
   )
 }
 
-const AUDIENCE_MARKERS: Record<SettingsAudience, { icon: LucideIcon; label: string }> = {
-  you: { icon: User, label: "Only you" },
-  everyone: { icon: Users, label: "Everyone here" },
-}
-
-/** Who changes reach: beside a section's title, or beside each row's label where a read-only section mixes them. */
-export function AudienceBadge({ audience }: { audience: SettingsAudience }) {
-  return <SettingBadge icon={AUDIENCE_MARKERS[audience].icon}>{AUDIENCE_MARKERS[audience].label}</SettingBadge>
+/** Marks the one personal row in a section whose changes otherwise reach everyone here. */
+export function OnlyYouBadge() {
+  return <SettingBadge icon={User}>Only you</SettingBadge>
 }
 
 export function SettingsSection({
@@ -420,28 +412,19 @@ export function SettingsSection({
 }) {
   const headingId = settingsSectionHeadingId(section)
   const title = sectionTitle(section)
-  const audience = sectionAudience(section)
-  const audienceId = `${headingId}-audience`
   return (
-    <section aria-labelledby={headingId} aria-describedby={audience ? audienceId : undefined} className="space-y-2">
+    <section aria-labelledby={headingId} className="space-y-2">
       <div className="flex min-h-6 items-end justify-between gap-3">
-        <div className="flex min-h-6 flex-wrap items-center gap-x-2 gap-y-1">
-          <h3
-            id={headingId}
-            tabIndex={-1}
-            className={cn(
-              "rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              SETTING_SECTION_HEADING_TEXT
-            )}
-          >
-            {title}
-          </h3>
-          {audience && (
-            <span id={audienceId} data-audience={audience}>
-              <AudienceBadge audience={audience} />
-            </span>
+        <h3
+          id={headingId}
+          tabIndex={-1}
+          className={cn(
+            "flex min-h-6 items-center rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            SETTING_SECTION_HEADING_TEXT
           )}
-        </div>
+        >
+          {title}
+        </h3>
         {aside}
       </div>
       <div className="divide-y divide-border rounded-lg border bg-card">{children}</div>
@@ -452,8 +435,8 @@ export function SettingsSection({
 /**
  * The one badge in settings: an attribute of what it sits on, such as its
  * scope ("This device", "Only you"), a role ("Owner") or a state ("Built-in").
- * Scope and audience sit beside a section's title, device-ness beside a row's
- * label, item attributes after an item's name.
+ * Device-ness and audience sit beside a row's label, item attributes after an
+ * item's name.
  */
 export function SettingBadge({
   icon: Icon,

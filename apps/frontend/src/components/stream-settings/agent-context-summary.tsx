@@ -6,7 +6,7 @@ import { useOptionalSettings } from "@/contexts/settings-context"
 import { settingHref } from "@/hooks/use-setting-href"
 import { SettingsLink } from "@/components/workspace-settings/settings-link"
 import {
-  AudienceBadge,
+  OnlyYouBadge,
   LANDING_TARGET_CLASS,
   SETTING_ROW_CHEVRON_CLASS,
   SettingLinkRow,
@@ -141,15 +141,15 @@ function aboutLine(item: AgentContextItem): string {
 }
 
 /**
- * The row's label; on the Agent page, where the section mixes rows that shape
- * everyone's replies with ones that shape only yours, each row carries its audience.
+ * The row's label; on the Agent page, a row that shapes only your replies says
+ * so, since the rest of the section shapes everyone's.
  */
 function ItemLabel({ item, variant }: { item: AgentContextItem; variant: "section" | "panel" }) {
   if (variant === "panel") return item.label
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
       {item.label}
-      <AudienceBadge audience={item.audience} />
+      {item.onlyYou && <OnlyYouBadge />}
     </span>
   )
 }
