@@ -116,5 +116,13 @@ describe("MirrorStore", () => {
       store.ensureSchema(schema("m"))
       expect(indexRows()).toEqual(expected(["p", 2], ["q", 1]))
     })
+
+    it("is emptied with its store by a backfill and indexes the rows the backfill copies", () => {
+      store.ensureSchema(schema("n"))
+      apply([put("a", entry(1, value({ n: 5 })))])
+      store.beginBackfill(["a"])
+      store.backfillChunk("a", [entry(2, value({ n: 7 }))])
+      expect(indexRows()).toEqual(expected([7, 2]))
+    })
   })
 })

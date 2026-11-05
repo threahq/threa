@@ -73,15 +73,6 @@ describe("mirror handler", () => {
     }).toEqual({ latest: true, oldestKept: true, pruned: null, rolledBack: false, otherTab: false })
   })
 
-  it("syncs every commit to disk, whatever the connection was set to before it opened", async () => {
-    db.exec("PRAGMA synchronous=OFF")
-    const send = await openHandler()
-    await send({ type: "begin", tx: 1, readonly: false, stores: ["a"] })
-    await send(put(1, "k", "v"))
-    await send({ type: "commit", tx: 1, ledger: { tab: "tab", tx: 1 } })
-    expect(db.selectValue("PRAGMA synchronous")).toBe(2)
-  })
-
   it("refuses every write and the commit of a transaction after a write failed", async () => {
     const send = await openHandler()
     await send({ type: "begin", tx: 1, readonly: false, stores: ["a"] })

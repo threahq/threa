@@ -145,8 +145,6 @@ export function createMirrorHandler(
       session?.database.close()
       session = null
       const database = await openDatabase(request.idbName)
-      // The pool VFS has no shared memory, so SQLite keeps its rollback journal; NORMAL there can corrupt the file on power loss.
-      database.db.exec("PRAGMA synchronous=FULL")
       const store = new MirrorStore(database.db)
       store.ensureSchema(request.schema, progress)
       session = { database, store }

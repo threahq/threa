@@ -38,6 +38,15 @@ async function installPool(idbName: string) {
 const handler = createMirrorHandler(async (idbName) => {
   const pool = await installPool(idbName)
   const db = new pool.OpfsSAHPoolDb(DATABASE_FILE)
+  // The pool VFS has no shared memory, so WAL needs exclusive locking from the first read. A rollback journal costs
+  // several OPFS flushes a commit, WAL one; NORMAL in WAL may lose the last commits on power loss but never corrupts.
+  db.exec("PRAGMA locking_mode=EXCLUSIVE")
+  const mode = db.selectValue("PRAGMA journal_mode=WAL")
+  if (mode !== "wal") {
+    db.close()
+    throw new Error(`SQLite storage could not enter WAL mode: ${String(mode)}`)
+  }
+  db.exec("PRAGMA synchronous=NORMAL")
   return {
     db,
     close: () => db.close(),
