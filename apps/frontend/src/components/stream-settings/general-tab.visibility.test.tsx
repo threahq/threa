@@ -63,7 +63,7 @@ describe("GeneralTab visibility", () => {
     const update = vi.fn().mockResolvedValue({ ...stream, visibility: Visibilities.GUEST_PUBLIC })
     renderTab(stream, update)
 
-    await userEvent.click(screen.getByRole("button", { name: /Open to guests/ }))
+    await userEvent.click(screen.getByRole("radio", { name: /Open to guests/ }))
     expect(await screen.findByText(/Members and guests will be able to find this channel/)).toBeInTheDocument()
     await userEvent.click(screen.getByRole("button", { name: "Confirm" }))
 
@@ -77,7 +77,7 @@ describe("GeneralTab visibility", () => {
   ] as const)("should explain the change when a %s channel becomes %s", async (from, option, copy) => {
     renderTab(channel({ visibility: from }), vi.fn())
 
-    await userEvent.click(screen.getByRole("button", { name: new RegExp(option) }))
+    await userEvent.click(screen.getByRole("radio", { name: new RegExp(option) }))
     expect(await screen.findByText(copy)).toBeInTheDocument()
   })
 })
@@ -86,7 +86,7 @@ describe("GeneralTab channel settings for a guest", () => {
   function settingsControls() {
     return {
       visibilityOptions: screen
-        .getAllByRole("button", { name: /Public|Private|Open to guests/ })
+        .getAllByRole("radio", { name: /Public|Private|Open to guests/ })
         .map((option) => (option as HTMLButtonElement).disabled),
       slugDisabled: screen.getByPlaceholderText("channel-name").hasAttribute("disabled"),
       memoryDisabled: screen.getByRole("switch", { name: /automatic memory/i }).hasAttribute("disabled"),
@@ -127,7 +127,7 @@ describe("GeneralTab doc visibility", () => {
     const update = vi.fn().mockResolvedValue({ ...stream, visibility: Visibilities.PUBLIC })
     renderTab(stream, update)
 
-    await userEvent.click(screen.getByRole("button", { name: /^Public/ }))
+    await userEvent.click(screen.getByRole("radio", { name: /^Public/ }))
     expect(await screen.findByText(/Making this doc public will make it visible/)).toBeInTheDocument()
     await userEvent.click(screen.getByRole("button", { name: "Confirm" }))
 
@@ -138,7 +138,7 @@ describe("GeneralTab doc visibility", () => {
     viewerWith([])
     renderTab(doc(), vi.fn())
     const locked = screen
-      .getAllByRole("button", { name: /Public|Private|Open to guests/ })
+      .getAllByRole("radio", { name: /Public|Private|Open to guests/ })
       .map((option) => (option as HTMLButtonElement).disabled)
     expect(locked).toEqual([true, true, true])
   })
@@ -146,6 +146,6 @@ describe("GeneralTab doc visibility", () => {
   it("should offer no visibility control on a hosted doc", () => {
     viewerWith([WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE])
     renderTab(doc({ parentStreamId: "stream_general", rootStreamId: "stream_general" }), vi.fn())
-    expect(screen.queryAllByRole("button", { name: /Public|Private|Open to guests/ })).toEqual([])
+    expect(screen.queryAllByRole("radio", { name: /Public|Private|Open to guests/ })).toEqual([])
   })
 })

@@ -52,6 +52,8 @@ export interface CachedWorkspace {
   id: string
   name: string
   slug: string
+  /** Where the workspace's data lives; absent in single-region dev. */
+  region?: string
   createdAt: string
   updatedAt: string
   _cachedAt: number

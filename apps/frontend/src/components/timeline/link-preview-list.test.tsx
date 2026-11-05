@@ -61,6 +61,42 @@ describe("LinkPreviewList", () => {
     vi.spyOn(contextsModule, "useSocket").mockReturnValue(null as ReturnType<typeof contextsModule.useSocket>)
   })
 
+  it("links each card, and the row of hidden previews, to the setting that caps them", () => {
+    vi.spyOn(linkPreviewsApi, "resolveInAppLink").mockResolvedValue({
+      kind: "message",
+      accessTier: "full",
+      deleted: true,
+    })
+    const cards = [0, 1, 2, 3].map(
+      (i): LinkPreviewSummary => ({
+        ...preview,
+        id: `p_msg_${i}`,
+        contentType: "message_link",
+        url: `https://app.threa.io/w/ws_123/s/stream_1?m=msg_${i}`,
+      })
+    )
+    const websites = [...cards, { ...preview, id: "p_web_0", title: "Web 0" }]
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/w/ws_123/s/stream_1"]}>
+          <contextsModule.SettingsProvider>
+            <LinkPreviewList workspaceId="ws_123" messageId="msg_123" previews={websites} />
+          </contextsModule.SettingsProvider>
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    const hiddenRow = screen.getByRole("button", { name: "Show 1 more preview" }).parentElement as HTMLElement
+    const href = "/w/ws_123/s/stream_1?settings=messages&setting=link-preview-count"
+    expect({
+      card: within(toggleForTitle("Web 0").closest('[data-native-context="true"]') as HTMLElement)
+        .getByRole("link", { name: "Link preview settings" })
+        .getAttribute("href"),
+      hiddenRow: within(hiddenRow).getByRole("link", { name: "Link preview settings" }).getAttribute("href"),
+    }).toEqual({ card: href, hiddenRow: href })
+  })
+
   it("renders previews from the event payload without fetching per-message preview data", () => {
     render(<LinkPreviewList workspaceId="ws_123" messageId="msg_123" previews={[preview]} />)
 

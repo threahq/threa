@@ -1,159 +1,468 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { Badge } from "@/components/ui/badge"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { CircleAlert, RotateCcw, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { Label } from "@/components/ui/label"
-import { Separator } from "@/components/ui/separator"
-import { Switch } from "@/components/ui/switch"
+import { Input } from "@/components/ui/input"
+import { Toggle } from "@/components/ui/toggle"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { RotateCcw } from "lucide-react"
 import { usePreferences } from "@/contexts"
+import { useOptionalSettings } from "@/contexts/settings-context"
 import {
+  QUICK_JUMP_ACTION_ID,
   SHORTCUT_ACTIONS,
-  getShortcutsByCategory,
-  getEffectiveKeyBinding,
-  formatKeyBinding,
+  captureBindingForAction,
+  conflictingActions,
+  defaultKeyOf,
+  detectConflicts,
   formatActionBinding,
   formatKeyBindingText,
-  detectConflicts,
+  getEffectiveKeyBinding,
+  getShortcutAction,
+  getShortcutsByCategory,
+  isCustomBinding,
+  isMac,
+  isModifierKey,
   occupiedBindings,
-  shortcutChord,
-  conflictingActions,
-  captureBindingForAction,
-  defaultKeyOf,
   resolveShortcutBindingUpdate,
+  shortcutChord,
   type ShortcutAction,
 } from "@/lib/keyboard-shortcuts"
-import { DEFAULT_USER_PREFERENCES, MESSAGE_SEND_MODE_OPTIONS, type MessageSendMode } from "@threahq/types"
+import { cn } from "@/lib/utils"
+import {
+  COMPOSER_ACTION_SIDE_OPTIONS,
+  DEFAULT_ACCESSIBILITY,
+  DEFAULT_USER_PREFERENCES,
+  MESSAGE_SEND_MODE_OPTIONS,
+  type ComposerActionSide,
+} from "@threahq/types"
+import {
+  ChoiceSetting,
+  SETTING_CONTROL_HEIGHT,
+  SettingEmptyNote,
+  SettingRow,
+  SettingsSection,
+  SwitchSetting,
+  settingIds,
+} from "./setting-primitives"
+import { SettingChangedMark } from "./setting-relations"
+import {
+  SEND_KEY_CHOICE_DESCRIPTIONS,
+  SETTINGS,
+  SETTING_CHOICE_LABELS,
+  SHORTCUT_ANCHOR_PREFIX,
+  settingDef,
+  type SettingsSectionId,
+} from "./settings-registry"
+import { FOCUS_FALLBACK, FOCUS_ITEM, FOCUS_SCOPE, useFocusAfterRemoval } from "./use-focus-after-removal"
 
-const SEND_MODE_CONFIG: Record<MessageSendMode, { label: string; description: string }> = {
-  enter: {
-    label: "Enter to send",
-    description: "Press Enter to send, Shift+Enter for new line",
-  },
-  cmdEnter: {
-    label: "⌘/Ctrl + Enter to send",
-    description: "Press ⌘+Enter (Mac) or Ctrl+Enter (Windows) to send",
-  },
+const SEND_SIDE_LABELS: Record<ComposerActionSide, string> = { right: "Right", left: "Left" }
+
+const CATEGORY_TITLES: Record<ShortcutAction["category"], string> = {
+  navigation: "Navigation",
+  view: "View",
+  editing: "Editing",
 }
 
-function getBadgeLabel(
-  actionId: string,
-  isCapturing: boolean,
-  conflictInfo: { binding: string } | null,
-  binding: string | undefined
-): string {
-  if (isCapturing) {
-    return conflictInfo ? formatActionBinding(actionId, conflictInfo.binding) : "Press keys..."
+const CATEGORY_SECTIONS = {
+  navigation: "shortcuts-navigation",
+  view: "shortcuts-view",
+  editing: "shortcuts-editing",
+} as const satisfies Record<ShortcutAction["category"], SettingsSectionId>
+
+const CATEGORY_ORDER: ShortcutAction["category"][] = ["navigation", "view", "editing"]
+
+const PRESS_KEYS = "Press the new keys. Esc cancels."
+
+const SHORTCUT_LIST_ID = "settings-shortcut-list"
+
+type ShortcutEdit =
+  | { actionId: string; phase: "capture"; hint: string | null }
+  | { actionId: string; phase: "conflict"; binding: string; conflictIds: string[] }
+
+function shortcutIds(actionId: string) {
+  return settingIds(`${SHORTCUT_ANCHOR_PREFIX}${actionId}`)
+}
+
+function focusShortcut(actionId: string) {
+  document.getElementById(shortcutIds(actionId).control)?.focus()
+}
+
+function actionLabels(ids: string[]): string {
+  return ids
+    .map((id) => getShortcutAction(id)?.label)
+    .filter((label): label is string => Boolean(label))
+    .join(", ")
+}
+
+function bindingLabel(actionId: string, binding: string | undefined): string {
+  return binding ? formatActionBinding(actionId, binding) : "not set"
+}
+
+function modifierHint(actionId: string): string {
+  if (actionId === QUICK_JUMP_ACTION_ID) return "Hold a modifier and press a number."
+  return isMac() ? "Hold ⌘, ⌥ or ⌃ with the key." : "Hold Ctrl or Alt with the key."
+}
+
+/** Plain Tab moves focus on; with a modifier it is a chord being captured (⌃Tab). */
+function isFocusTab(event: KeyboardEvent): boolean {
+  return event.key === "Tab" && !event.ctrlKey && !event.metaKey && !event.altKey
+}
+
+export function KeyboardSettings({
+  onCaptureStateChange,
+}: { onCaptureStateChange?: (isCapturing: boolean) => void } = {}) {
+  const { preferences, updatePreference, updateAccessibility, resetKeyboardShortcut, resetAllKeyboardShortcuts } =
+    usePreferences()
+  // Spread over the defaults: a cached blob written before a field existed lacks it.
+  const accessibility = { ...DEFAULT_ACCESSIBILITY, ...preferences?.accessibility }
+  const customBindings = useMemo(() => preferences?.keyboardShortcuts ?? {}, [preferences?.keyboardShortcuts])
+  const shortcuts = useMemo(() => getShortcutsByCategory(), [])
+  const conflicts = useMemo(() => detectConflicts(customBindings), [customBindings])
+  const focusAfterRemoval = useFocusAfterRemoval()
+
+  const [edit, setEdit] = useState<ShortcutEdit | null>(null)
+  const [announcement, setAnnouncement] = useState("")
+  const [filter, setFilter] = useState("")
+  const [changedOnly, setChangedOnly] = useState(false)
+  const changedCount = SHORTCUT_ACTIONS.filter((action) => isCustomBinding(action, customBindings)).length
+  const showChangedOnly = changedOnly && changedCount > 0
+  const filterWords = filter.toLowerCase().split(/\s+/).filter(Boolean)
+  const filtering = filterWords.length > 0 || showChangedOnly
+  const visibleShortcuts = CATEGORY_ORDER.map((category) => ({
+    category,
+    actions: shortcuts[category].filter(
+      (action) =>
+        matchesFilter(action, filterWords, customBindings) &&
+        (!showChangedOnly || isCustomBinding(action, customBindings))
+    ),
+  })).filter(({ actions }) => actions.length > 0)
+  const visibleCount = visibleShortcuts.reduce((count, { actions }) => count + actions.length, 0)
+
+  // A link to a shortcut the filter hides clears the filter, in this render, so the landing finds the row.
+  const settings = useOptionalSettings()
+  const landingOn = settings?.activeSetting?.startsWith(SHORTCUT_ANCHOR_PREFIX)
+    ? settings.activeSetting.slice(SHORTCUT_ANCHOR_PREFIX.length)
+    : null
+  const [handledLanding, setHandledLanding] = useState<string | null>(null)
+  if (landingOn && settings && handledLanding !== settings.landingKey) {
+    setHandledLanding(settings.landingKey)
+    if (!visibleShortcuts.some(({ actions }) => actions.some((action) => action.id === landingOn))) {
+      setFilter("")
+      setChangedOnly(false)
+    }
   }
-  return binding ? formatActionBinding(actionId, binding) : "—"
+
+  useEffect(() => {
+    onCaptureStateChange?.(edit !== null)
+  }, [edit, onCaptureStateChange])
+
+  useEffect(() => () => onCaptureStateChange?.(false), [onCaptureStateChange])
+
+  const save = useCallback(
+    async (actionId: string, binding: string) => {
+      const label = getShortcutAction(actionId)?.label
+      setEdit(null)
+      focusShortcut(actionId)
+      try {
+        await updatePreference("keyboardShortcuts", resolveShortcutBindingUpdate(customBindings, actionId, binding))
+        setAnnouncement(`${label} is now ${formatActionBinding(actionId, binding)}.`)
+      } catch {
+        setAnnouncement(`Couldn't change ${label}. Its shortcut is unchanged.`)
+      }
+    },
+    [customBindings, updatePreference]
+  )
+
+  const cancel = useCallback((actionId: string, restoreFocus: boolean) => {
+    setEdit(null)
+    setAnnouncement(`${getShortcutAction(actionId)?.label} unchanged.`)
+    if (restoreFocus) focusShortcut(actionId)
+  }, [])
+
+  useEffect(() => {
+    if (!edit) return
+    const label = getShortcutAction(edit.actionId)?.label
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (!edit) return
+      if (edit.phase === "conflict") {
+        // The choice is ordinary buttons, so only Escape is ours.
+        if (event.key !== "Escape") return
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        cancel(edit.actionId, true)
+        return
+      }
+      if (isFocusTab(event)) {
+        cancel(edit.actionId, false)
+        return
+      }
+      // Window capture phase, so nothing else (the settings window's Escape, app
+      // shortcuts) sees the keys being recorded.
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      if (event.key === "Escape") {
+        cancel(edit.actionId, true)
+        return
+      }
+      const captured = captureBindingForAction(edit.actionId, event)
+      if (!captured) {
+        if (isModifierKey(event.key)) return
+        const hint = modifierHint(edit.actionId)
+        setEdit({ ...edit, hint })
+        setAnnouncement(hint)
+        return
+      }
+      const conflictIds = conflictingActions(customBindings, edit.actionId, captured)
+      if (conflictIds.length === 0) {
+        void save(edit.actionId, captured)
+        return
+      }
+      setEdit({ actionId: edit.actionId, phase: "conflict", binding: captured, conflictIds })
+      setAnnouncement(
+        `${formatActionBinding(edit.actionId, captured)} is already used by ${actionLabels(conflictIds)}. Move it to ${label}, or keep it.`
+      )
+    }
+
+    window.addEventListener("keydown", handleKeyDown, { capture: true })
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true })
+  }, [edit, customBindings, save, cancel])
+
+  const startCapture = (actionId: string) => {
+    setEdit({ actionId, phase: "capture", hint: null })
+    setAnnouncement(`Press the new keys for ${getShortcutAction(actionId)?.label}. Escape cancels.`)
+  }
+
+  const resetOne = async (actionId: string) => {
+    const action = getShortcutAction(actionId)
+    const defaultKey = action && defaultKeyOf(action)
+    focusShortcut(actionId)
+    // Under "Changed", the reset row leaves the list.
+    const control = document.getElementById(shortcutIds(actionId).control)
+    if (control) focusAfterRemoval(control)
+    try {
+      await resetKeyboardShortcut(actionId)
+      setAnnouncement(`${action?.label} reset to ${bindingLabel(actionId, defaultKey)}.`)
+    } catch {
+      setAnnouncement(`Couldn't reset ${action?.label}.`)
+    }
+  }
+
+  const resetAll = async () => {
+    document.getElementById(settingIds("shortcuts").row)?.focus()
+    try {
+      await resetAllKeyboardShortcuts()
+      setAnnouncement("All shortcuts reset to their defaults.")
+    } catch {
+      setAnnouncement("Couldn't reset the shortcuts.")
+    }
+  }
+
+  const shortcutsDescription =
+    conflicts.size > 0 ? `${settingDef("shortcuts").description} Some share keys and are marked below.` : undefined
+  const filterBar = (
+    <div className="flex items-center gap-2">
+      <div className="relative min-w-0 flex-1">
+        <Search
+          aria-hidden
+          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+        />
+        <Input
+          {...FOCUS_FALLBACK}
+          type="search"
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+          placeholder="Filter by name or keys"
+          aria-label="Filter shortcuts"
+          aria-controls={SHORTCUT_LIST_ID}
+          className={cn("pl-9", SETTING_CONTROL_HEIGHT)}
+        />
+      </div>
+      {changedCount > 0 && (
+        <Toggle
+          variant="outline"
+          pressed={showChangedOnly}
+          onPressedChange={setChangedOnly}
+          aria-controls={SHORTCUT_LIST_ID}
+          className={cn("shrink-0 px-3 text-sm", SETTING_CONTROL_HEIGHT)}
+        >
+          Changed ({changedCount})
+        </Toggle>
+      )}
+    </div>
+  )
+  const filterCount = (
+    <p aria-live="polite" className="sr-only">
+      {filtering ? `${visibleCount} of ${SHORTCUT_ACTIONS.length} shortcuts` : ""}
+    </p>
+  )
+  const shortcutSections = visibleShortcuts.map(({ category, actions }) => (
+    <SettingsSection key={category} section={CATEGORY_SECTIONS[category]}>
+      {actions.map((action) => (
+        <ShortcutRow
+          key={action.id}
+          action={action}
+          customBindings={customBindings}
+          sharedWith={sharedWith(conflicts, customBindings, action.id)}
+          edit={edit?.actionId === action.id ? edit : null}
+          onStartCapture={startCapture}
+          onCancel={cancel}
+          onSave={save}
+          onReset={resetOne}
+        />
+      ))}
+    </SettingsSection>
+  ))
+
+  return (
+    <div className="space-y-8">
+      <SettingsSection section="sending">
+        <ChoiceSetting
+          setting="send-key"
+          value={preferences?.messageSendMode ?? "enter"}
+          options={MESSAGE_SEND_MODE_OPTIONS.map((value) => ({
+            value,
+            label: SETTING_CHOICE_LABELS["send-key"][value],
+            description: SEND_KEY_CHOICE_DESCRIPTIONS[value],
+          }))}
+          variant="segmented"
+          onValueChange={(value) => updatePreference("messageSendMode", value)}
+        />
+        <ChoiceSetting
+          setting="send-side"
+          value={accessibility.composerActionSide}
+          options={COMPOSER_ACTION_SIDE_OPTIONS.map((value) => ({ value, label: SEND_SIDE_LABELS[value] }))}
+          onValueChange={(value) => updateAccessibility({ composerActionSide: value })}
+        />
+      </SettingsSection>
+
+      <SettingsSection section={SETTINGS["file-insert"].section}>
+        <SwitchSetting
+          setting="file-insert"
+          checked={preferences?.mobileInlineAttachments ?? DEFAULT_USER_PREFERENCES.mobileInlineAttachments}
+          onCheckedChange={(checked) => updatePreference("mobileInlineAttachments", checked)}
+        />
+      </SettingsSection>
+
+      <div {...FOCUS_SCOPE} id={SHORTCUT_LIST_ID} className="space-y-8">
+        <SettingsSection
+          section="shortcuts"
+          aside={
+            changedCount > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className={cn("gap-1.5 px-2", SETTING_CONTROL_HEIGHT)}
+                onClick={resetAll}
+              >
+                <RotateCcw aria-hidden />
+                Reset to defaults
+              </Button>
+            )
+          }
+        >
+          <SettingRow setting="shortcuts" labelFor={false} description={shortcutsDescription}>
+            {filterBar}
+            {filterCount}
+            {visibleCount === 0 && (
+              <div className="mt-3">
+                <SettingEmptyNote>No shortcuts match.</SettingEmptyNote>
+              </div>
+            )}
+          </SettingRow>
+        </SettingsSection>
+        {shortcutSections}
+      </div>
+      {/* Last, so the sr-only node never takes the first section's place in the page's spacing. */}
+      <div role="status" aria-live="polite" className="sr-only">
+        {announcement}
+      </div>
+    </div>
+  )
 }
 
 interface ShortcutRowProps {
   action: ShortcutAction
   customBindings: Record<string, string>
-  capturingId: string | null
-  onStartCapture: (id: string) => void
-  onCancelCapture: () => void
-  onSaveBinding: (actionId: string, binding: string) => void
-  onResetBinding: (actionId: string) => void
+  /** Other actions whose current keys collide with this one. */
+  sharedWith: string[]
+  edit: ShortcutEdit | null
+  onStartCapture: (actionId: string) => void
+  onCancel: (actionId: string, restoreFocus: boolean) => void
+  onSave: (actionId: string, binding: string) => void
+  onReset: (actionId: string) => void
 }
 
 function ShortcutRow({
   action,
   customBindings,
-  capturingId,
+  sharedWith,
+  edit,
   onStartCapture,
-  onCancelCapture,
-  onSaveBinding,
-  onResetBinding,
+  onCancel,
+  onSave,
+  onReset,
 }: ShortcutRowProps) {
-  const isCapturing = capturingId === action.id
-  const [pendingBinding, setPendingBinding] = useState<string | null>(null)
-  const [conflictInfo, setConflictInfo] = useState<{ binding: string; conflictIds: string[] } | null>(null)
-  const badgeRef = useRef<HTMLButtonElement>(null)
+  const anchor = `${SHORTCUT_ANCHOR_PREFIX}${action.id}`
+  const ids = shortcutIds(action.id)
   const binding = getEffectiveKeyBinding(action.id, customBindings)
-  const isCustom = action.id in customBindings && customBindings[action.id] !== defaultKeyOf(action)
-  const conflictLabels =
-    conflictInfo?.conflictIds
-      .map((id) => SHORTCUT_ACTIONS.find((shortcutAction) => shortcutAction.id === id)?.label)
-      .filter((label): label is string => Boolean(label)) ?? []
-  const conflictOwnersLabel = conflictLabels.join(", ")
-  const keepLabel = conflictLabels.length === 1 ? `Keep ${conflictOwnersLabel}` : "Keep current owners"
-
-  const handleCapturedBinding = useCallback(
-    (captured: string) => {
-      const conflicting = conflictingActions(customBindings, action.id, captured)
-
-      if (conflicting.length > 0) {
-        setPendingBinding(captured)
-        setConflictInfo({ binding: captured, conflictIds: conflicting })
-      } else {
-        onSaveBinding(action.id, captured)
-      }
-    },
-    [action.id, customBindings, onSaveBinding]
-  )
-
-  useEffect(() => {
-    if (!isCapturing) {
-      setPendingBinding(null)
-      setConflictInfo(null)
-      return
-    }
-
-    function handleKeyDown(e: KeyboardEvent) {
-      e.preventDefault()
-      e.stopPropagation()
-      e.stopImmediatePropagation()
-
-      if (e.key === "Escape") {
-        onCancelCapture()
-        return
-      }
-
-      const captured = captureBindingForAction(action.id, e)
-      if (!captured) return
-
-      handleCapturedBinding(captured)
-    }
-
-    window.addEventListener("keydown", handleKeyDown, { capture: true })
-    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true })
-  }, [action.id, isCapturing, onCancelCapture, handleCapturedBinding])
-
-  useEffect(() => {
-    if (isCapturing) {
-      badgeRef.current?.focus()
-    }
-  }, [isCapturing])
-
-  const handleConfirmConflict = useCallback(() => {
-    if (!pendingBinding || !conflictInfo) return
-    onSaveBinding(action.id, pendingBinding)
-  }, [action.id, pendingBinding, conflictInfo, onSaveBinding])
+  const isCustom = isCustomBinding(action, customBindings)
+  const capturing = edit?.phase === "capture"
+  const description = capturing ? (edit.hint ?? PRESS_KEYS) : action.description
+  const shared = sharedWith.length > 0 && !edit
 
   return (
-    <div className="space-y-2" data-shortcut-row>
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <p className="font-medium text-sm">{action.label}</p>
-          <p className="text-xs text-muted-foreground">{action.description}</p>
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          {isCustom && !isCapturing && (
+    <SettingRow
+      label={action.label}
+      anchor={anchor}
+      landing
+      labelFor={false}
+      marks={<SettingChangedMark setting={anchor} changed={isCustom} />}
+      description={description && (capturing ? <span className="text-foreground">{description}</span> : description)}
+      notice={shared ? `Same keys as ${actionLabels(sharedWith)}` : undefined}
+      noticeIcon={CircleAlert}
+      control={
+        <div className="flex items-center gap-1">
+          <button
+            {...FOCUS_ITEM}
+            id={ids.control}
+            type="button"
+            aria-label={
+              capturing
+                ? `Change shortcut for ${action.label}. Press the new keys`
+                : `Change shortcut for ${action.label}, currently ${bindingLabel(action.id, binding)}`
+            }
+            aria-describedby={
+              [description && ids.description, shared && ids.notice].filter(Boolean).join(" ") || undefined
+            }
+            title={!capturing && binding ? formatKeyBindingText(binding) : undefined}
+            onClick={() => (capturing ? onCancel(action.id, true) : onStartCapture(action.id))}
+            onBlur={() => capturing && onCancel(action.id, false)}
+            className={cn(
+              "flex min-w-0 flex-1 items-center rounded-md border px-3 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+              SETTING_CONTROL_HEIGHT,
+              capturing
+                ? "border-primary bg-primary/10 font-mono font-semibold text-primary motion-safe:animate-pulse"
+                : "border-input bg-background hover:bg-muted",
+              !capturing && (binding ? "font-mono font-semibold text-foreground" : "text-muted-foreground")
+            )}
+          >
+            <span className="truncate">
+              {capturing && "Press keys…"}
+              {!capturing && (binding ? formatActionBinding(action.id, binding) : "Not set")}
+            </span>
+          </button>
+          {isCustom && !edit && (
             <TooltipProvider delayDuration={300}>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0"
-                    onClick={() => onResetBinding(action.id)}
-                    aria-label="Reset to default"
+                    size="icon"
+                    className="size-11 shrink-0 text-muted-foreground sm:size-9 [@media(pointer:coarse)]:size-11"
+                    onClick={() => onReset(action.id)}
+                    aria-label={`Reset ${action.label} to default`}
                   >
-                    <RotateCcw className="h-3 w-3" />
+                    <RotateCcw className="h-3.5 w-3.5" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="top" className="text-xs">
@@ -162,323 +471,84 @@ function ShortcutRow({
               </Tooltip>
             </TooltipProvider>
           )}
-          <Popover open={isCapturing} onOpenChange={(open) => !open && onCancelCapture()}>
-            <PopoverAnchor asChild>
-              <button
-                ref={badgeRef}
-                type="button"
-                onClick={() => (isCapturing ? onCancelCapture() : onStartCapture(action.id))}
-                title={!isCapturing && binding ? formatKeyBindingText(binding) : undefined}
-                className={
-                  isCapturing
-                    ? "inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-mono font-semibold border-primary bg-primary/10 text-primary animate-pulse cursor-pointer focus:outline-none"
-                    : "inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-mono font-semibold border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80 cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                }
-              >
-                {getBadgeLabel(action.id, isCapturing, conflictInfo, binding)}
-              </button>
-            </PopoverAnchor>
-
-            {isCapturing && (
-              <PopoverContent align="end" className="w-80 p-3" onOpenAutoFocus={(event) => event.preventDefault()}>
-                {conflictInfo ? (
-                  <div className="space-y-3">
-                    <div className="space-y-1">
-                      <p className="font-medium text-sm">Move shortcut?</p>
-                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                        <Badge
-                          variant="outline"
-                          className="mr-1 font-mono"
-                          title={formatKeyBindingText(conflictInfo.binding)}
-                        >
-                          {formatActionBinding(action.id, conflictInfo.binding)}
-                        </Badge>
-                        is currently used by {conflictOwnersLabel}.
-                      </div>
-                    </div>
-
-                    <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground">
-                          {conflictLabels.length === 1 ? "Current owner" : "Current owners"}
-                        </span>
-                        <span className="font-medium text-right">{conflictOwnersLabel}</span>
-                      </div>
-                      <div className="mt-2 flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground">New owner</span>
-                        <span className="font-medium text-right">{action.label}</span>
-                      </div>
-                    </div>
-
-                    <div className="flex justify-end gap-2">
-                      <Button variant="ghost" size="sm" onClick={onCancelCapture}>
-                        {keepLabel}
-                      </Button>
-                      <Button size="sm" onClick={handleConfirmConflict}>
-                        Move to {action.label}
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <p className="font-medium text-sm">Press shortcut keys</p>
-                    <div className="flex items-center justify-end">
-                      <Button variant="ghost" size="sm" onClick={onCancelCapture}>
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </PopoverContent>
-            )}
-          </Popover>
         </div>
-      </div>
-    </div>
+      }
+    >
+      {edit?.phase === "conflict" && (
+        <ConflictChoice
+          action={action}
+          binding={edit.binding}
+          conflictIds={edit.conflictIds}
+          onMove={() => onSave(action.id, edit.binding)}
+          onKeep={() => onCancel(action.id, true)}
+        />
+      )}
+    </SettingRow>
   )
 }
 
-function ShortcutCategory({
-  title,
-  description,
-  actions,
-  customBindings,
-  capturingId,
-  onStartCapture,
-  onCancelCapture,
-  onSaveBinding,
-  onResetBinding,
+function ConflictChoice({
+  action,
+  binding,
+  conflictIds,
+  onMove,
+  onKeep,
 }: {
-  title: string
-  description: string
-  actions: ShortcutAction[]
-  customBindings: Record<string, string>
-  capturingId: string | null
-  onStartCapture: (id: string) => void
-  onCancelCapture: () => void
-  onSaveBinding: (actionId: string, binding: string) => void
-  onResetBinding: (actionId: string) => void
+  action: ShortcutAction
+  binding: string
+  conflictIds: string[]
+  onMove: () => void
+  onKeep: () => void
 }) {
-  if (actions.length === 0) return null
-
-  return (
-    <section className="space-y-3">
-      <div>
-        <h3 className="text-sm font-medium">{title}</h3>
-        <p className="text-sm text-muted-foreground">{description}</p>
-      </div>
-      <div className="space-y-3">
-        {actions.map((action) => (
-          <ShortcutRow
-            key={action.id}
-            action={action}
-            customBindings={customBindings}
-            capturingId={capturingId}
-            onStartCapture={onStartCapture}
-            onCancelCapture={onCancelCapture}
-            onSaveBinding={onSaveBinding}
-            onResetBinding={onResetBinding}
-          />
-        ))}
-      </div>
-    </section>
-  )
-}
-
-interface KeyboardSettingsProps {
-  onCaptureStateChange?: (isCapturing: boolean) => void
-}
-
-export function KeyboardSettings({ onCaptureStateChange }: KeyboardSettingsProps = {}) {
-  const { preferences, updatePreference, resetKeyboardShortcut, resetAllKeyboardShortcuts } = usePreferences()
-
-  const customBindings = preferences?.keyboardShortcuts ?? {}
-  const shortcuts = useMemo(() => getShortcutsByCategory(), [])
-  const conflicts = useMemo(() => detectConflicts(customBindings), [customBindings])
-  const hasConflicts = conflicts.size > 0
-  const hasCustomBindings = Object.keys(customBindings).length > 0
-  const messageSendMode = preferences?.messageSendMode ?? "enter"
-  const mobileInlineAttachments =
-    preferences?.mobileInlineAttachments ?? DEFAULT_USER_PREFERENCES.mobileInlineAttachments
-
-  const [capturingId, setCapturingId] = useState<string | null>(null)
+  const moveRef = useRef<HTMLButtonElement>(null)
+  const textId = `${shortcutIds(action.id).control}-conflict`
+  const owners = actionLabels(conflictIds)
 
   useEffect(() => {
-    onCaptureStateChange?.(capturingId !== null)
-  }, [capturingId, onCaptureStateChange])
-
-  useEffect(() => {
-    return () => onCaptureStateChange?.(false)
-  }, [onCaptureStateChange])
-
-  const handleSaveBinding = useCallback(
-    (actionId: string, binding: string) => {
-      const nextBindings = resolveShortcutBindingUpdate(customBindings, actionId, binding)
-      void updatePreference("keyboardShortcuts", nextBindings)
-      setCapturingId(null)
-    },
-    [customBindings, updatePreference]
-  )
-
-  const handleResetBinding = useCallback(
-    (actionId: string) => {
-      resetKeyboardShortcut(actionId)
-    },
-    [resetKeyboardShortcut]
-  )
-
-  const handleCancelCapture = useCallback(() => {
-    setCapturingId(null)
+    moveRef.current?.focus()
   }, [])
-
-  const handleStartCapture = useCallback((id: string) => {
-    setCapturingId(id)
-  }, [])
-
-  const sharedProps = {
-    customBindings,
-    capturingId,
-    onStartCapture: handleStartCapture,
-    onCancelCapture: handleCancelCapture,
-    onSaveBinding: handleSaveBinding,
-    onResetBinding: handleResetBinding,
-  }
 
   return (
-    <div className="space-y-6">
-      {hasConflicts && (
-        <>
-          <section className="space-y-3">
-            <div>
-              <h3 className="text-sm font-medium text-destructive">Shortcut Conflicts</h3>
-              <p className="text-sm text-muted-foreground">Some shortcuts are using the same key binding</p>
-            </div>
-            <ul className="space-y-2 text-sm">
-              {Array.from(conflicts.entries()).map(([key, actionIds]) => (
-                <li key={key}>
-                  {chordBindings(customBindings, key, actionIds).map((binding) => (
-                    <Badge
-                      key={binding}
-                      variant="outline"
-                      className="font-mono mr-2"
-                      title={formatKeyBindingText(binding)}
-                    >
-                      {formatKeyBinding(binding)}
-                    </Badge>
-                  ))}
-                  <span className="text-muted-foreground">
-                    {actionIds
-                      .map((id) => SHORTCUT_ACTIONS.find((a) => a.id === id)?.label)
-                      .filter(Boolean)
-                      .join(", ")}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </section>
-          <Separator />
-        </>
-      )}
-
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-sm font-medium">Send Messages</h3>
-          <p className="text-sm text-muted-foreground">Choose how to send messages in the composer</p>
-        </div>
-        <RadioGroup
-          value={messageSendMode}
-          onValueChange={(value) => updatePreference("messageSendMode", value as MessageSendMode)}
-          className="space-y-3"
-        >
-          {MESSAGE_SEND_MODE_OPTIONS.map((option) => (
-            <div key={option} className="flex items-start space-x-3">
-              <RadioGroupItem value={option} id={`send-mode-${option}`} className="mt-1" />
-              <div className="grid gap-0.5">
-                <Label htmlFor={`send-mode-${option}`} className="cursor-pointer font-medium">
-                  {SEND_MODE_CONFIG[option].label}
-                </Label>
-                <p className="text-sm text-muted-foreground">{SEND_MODE_CONFIG[option].description}</p>
-              </div>
-            </div>
-          ))}
-        </RadioGroup>
-      </section>
-
-      <Separator />
-
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-sm font-medium">File attachments</h3>
-          <p className="text-sm text-muted-foreground">Control how picked files appear in the mobile composer</p>
-        </div>
-        <div className="flex items-center justify-between gap-4">
-          <div className="space-y-1">
-            <Label htmlFor="mobile-inline-attachments">Insert files at the cursor</Label>
-            <p className="text-sm text-muted-foreground">
-              Adds a file chip to the message. Removing the chip keeps the file attached.
-            </p>
-          </div>
-          <Switch
-            id="mobile-inline-attachments"
-            checked={mobileInlineAttachments}
-            onCheckedChange={(checked) => updatePreference("mobileInlineAttachments", checked)}
-          />
-        </div>
-      </section>
-
-      {shortcuts.navigation.length > 0 && (
-        <>
-          <Separator />
-          <ShortcutCategory
-            title="Navigation"
-            description="Keyboard shortcuts for navigating Threa"
-            actions={shortcuts.navigation}
-            {...sharedProps}
-          />
-        </>
-      )}
-
-      {shortcuts.view.length > 0 && (
-        <>
-          <Separator />
-          <ShortcutCategory
-            title="View"
-            description="Keyboard shortcuts for view controls"
-            actions={shortcuts.view}
-            {...sharedProps}
-          />
-        </>
-      )}
-
-      {shortcuts.editing.length > 0 && (
-        <>
-          <Separator />
-          <ShortcutCategory
-            title="Editing"
-            description="Keyboard shortcuts for formatting in the editor"
-            actions={shortcuts.editing}
-            {...sharedProps}
-          />
-        </>
-      )}
-
-      {hasCustomBindings && (
-        <div className="flex justify-end">
-          <Button variant="outline" size="sm" onClick={resetAllKeyboardShortcuts}>
-            <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-            Reset all shortcuts
-          </Button>
-        </div>
-      )}
+    <div role="group" aria-labelledby={textId} className="space-y-3">
+      <p id={textId} className="text-sm">
+        <span className="font-mono font-semibold" title={formatKeyBindingText(binding)}>
+          {formatActionBinding(action.id, binding)}
+        </span>{" "}
+        is already used by {owners}. Moving it leaves {owners} without a shortcut.
+      </p>
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button variant="ghost" size="sm" className={SETTING_CONTROL_HEIGHT} onClick={onKeep}>
+          {conflictIds.length === 1 ? `Keep for ${owners}` : "Keep as is"}
+        </Button>
+        <Button ref={moveRef} size="sm" className={SETTING_CONTROL_HEIGHT} onClick={onMove}>
+          Move to {action.label}
+        </Button>
+      </div>
     </div>
   )
 }
 
-/** The bindings, as each action spells it, that press `chord`: ⌃Tab and ⌘Tab are one chord but read differently on a Mac. */
-function chordBindings(customBindings: Record<string, string>, chord: string, actionIds: string[]): string[] {
-  const bindings = actionIds.flatMap((id) => {
-    const binding = getEffectiveKeyBinding(id, customBindings)
-    return binding ? occupiedBindings(id, binding).filter((occupied) => shortcutChord(occupied) === chord) : []
-  })
-  return [...new Set(bindings)]
+/** Every word of the filter appears in the action's name, description, category or keys. */
+function matchesFilter(action: ShortcutAction, words: string[], customBindings: Record<string, string>): boolean {
+  if (words.length === 0) return true
+  const binding = getEffectiveKeyBinding(action.id, customBindings)
+  const haystack = [
+    action.label,
+    action.description,
+    CATEGORY_TITLES[action.category],
+    binding,
+    binding && formatKeyBindingText(binding),
+    binding && formatActionBinding(action.id, binding),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+  return words.every((word) => haystack.includes(word))
+}
+
+function sharedWith(conflicts: Map<string, string[]>, customBindings: Record<string, string>, actionId: string) {
+  const binding = getEffectiveKeyBinding(actionId, customBindings)
+  if (!binding) return []
+  const ids = occupiedBindings(actionId, binding).flatMap((occupied) => conflicts.get(shortcutChord(occupied)) ?? [])
+  return [...new Set(ids)].filter((id) => id !== actionId)
 }

@@ -8,6 +8,7 @@ import { UnsharedReferencePrompt } from "@/components/shared-messages/unshared-r
 import { useUserProfile } from "@/components/user-profile"
 import { PersonaAvatar } from "@/components/persona-avatar"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
+import { SettingsGearLink } from "@/components/in-context-settings/settings-gear-link"
 import { cn } from "@/lib/utils"
 import { usePreferencesOptional } from "@/contexts/preferences-context"
 import { useBlockCollapse } from "./use-block-collapse"
@@ -57,6 +58,7 @@ export function QuoteReplyBlock({
   const preferencesContext = usePreferencesOptional()
   const threshold =
     preferencesContext?.preferences?.blockquoteCollapseThreshold ?? DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD
+  const foldsLong = preferencesContext?.preferences?.blockquoteCollapseEnabled ?? true
 
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const measured = useMeasuredLineCount(bodyRef, [quotedText])
@@ -64,7 +66,7 @@ export function QuoteReplyBlock({
   // Measured by rendered line-height (handles soft wrapping) with the same
   // "more than threshold" semantic. The +0.5 keeps barely-over quotes from
   // sprouting a toggle that would only hide the half line we already show.
-  const collapsible = lineCount !== null && lineCount > threshold + 0.5
+  const collapsible = foldsLong && lineCount !== null && lineCount > threshold + 0.5
   const displayLineCount = lineCount !== null ? Math.max(1, Math.round(lineCount)) : 0
 
   const { collapsed, canToggle, toggle } = useBlockCollapse({
@@ -111,6 +113,7 @@ export function QuoteReplyBlock({
           )}
         </button>
       )}
+      {canToggle && <SettingsGearLink setting="quote-collapse" label="Long quote settings" />}
     </div>
   )
 

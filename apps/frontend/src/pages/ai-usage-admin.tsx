@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
-import { ArrowLeft, DollarSign } from "lucide-react"
+import { ArrowLeft, DollarSign, Settings2 } from "lucide-react"
 import { buttonVariants } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useAIBudget, useAIUsage, useAIUserLimits, useUpdateAIBudget } from "@/hooks"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
+import { useSettingHref } from "@/hooks/use-setting-href"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { UsageTimezoneSelector } from "@/components/ai-usage/timezone-selector"
 import {
@@ -37,6 +38,7 @@ export function AIUsageAdminPage() {
   )
 
   const bootstrap = useCachedWorkspaceBootstrap(workspaceId ?? "")
+  const spendSettingsHref = useSettingHref("spend-limits")
   const deviceTimezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, [])
   // null while bootstrap is still in flight — the dashboard can mount off the IDB
   // read model before that query lands, and defaulting to "UTC" here would render
@@ -153,7 +155,16 @@ export function AIUsageAdminPage() {
           <DollarSign className="h-5 w-5 shrink-0 text-muted-foreground" />
           <h1 className="truncate font-semibold">AI Usage &amp; Budget</h1>
         </div>
-        <div className="flex min-w-0 sm:ml-auto sm:shrink-0">
+        <div className="flex min-w-0 items-center gap-2 sm:ml-auto sm:shrink-0">
+          {spendSettingsHref && (
+            <Link
+              to={spendSettingsHref}
+              className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "h-11 shrink-0 sm:h-8")}
+            >
+              <Settings2 className="mr-1 h-4 w-4" aria-hidden />
+              Spend settings
+            </Link>
+          )}
           <UsageTimezoneSelector
             mode={tzMode}
             onModeChange={setTzMode}

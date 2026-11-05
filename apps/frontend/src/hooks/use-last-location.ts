@@ -11,6 +11,7 @@ import {
   sanitizeBoardSearch,
 } from "@/lib/last-location"
 import type { CachedStream } from "@/db"
+import { withoutSettingsWindow } from "@/contexts/settings-context"
 
 // The exact arm serves only a cold launch — the OS killed the backgrounded PWA
 // and relaunched it at `start_url`. Once this JS context has rendered any
@@ -163,8 +164,13 @@ export function usePersistLastLocation(workspaceId: string | undefined) {
     coldLaunch = false
     if (pathname.startsWith(`/w/${workspaceId}/delegations/`) || pathname.startsWith(`/w/${workspaceId}/memos/`)) return
     if (onHiddenStream) return
+    // The settings window is never a place to restore to; the rest of the URL is kept verbatim.
+    const params = new URLSearchParams(search)
+    const kept = withoutSettingsWindow(params).toString()
+    let exactSearch = search
+    if (kept !== params.toString()) exactSearch = kept ? `?${kept}` : ""
     const persist = () => {
-      const exact = { path: `${pathname}${search}`, at: Date.now() }
+      const exact = { path: `${pathname}${exactSearch}`, at: Date.now() }
       const existing = getLastLocation(user.id, workspaceId)
       if (onBoard) {
         setLastLocation(user.id, workspaceId, {

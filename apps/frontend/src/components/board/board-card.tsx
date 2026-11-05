@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
+import { SettingsGearLink } from "@/components/in-context-settings/settings-gear-link"
 import { buildBranchedBoardRows, foldLedgerEventRows, injectUnreadDivider } from "@/components/board/board-row-item"
 import {
   BranchedBoardRows,
@@ -1199,21 +1200,27 @@ export function BoardCard({
 
             {/* Collapsed: keep scale visible without hiding the whole conversation body. */}
             {bodyCollapsed && (
-              <button
-                type="button"
-                onClick={toggleBodyCollapsed}
-                className="mt-2 flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-              >
-                <span>
-                  <RollingNumber value={messageCount} /> {messageCount === 1 ? "message" : "messages"}
-                  {subtopicCount > 0 && (
-                    <>
-                      {" · "}
-                      <RollingNumber value={subtopicCount} /> {subtopicCount === 1 ? "sub-topic" : "sub-topics"}
-                    </>
-                  )}
-                </span>
-              </button>
+              <div className="mt-2 flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={toggleBodyCollapsed}
+                  className="flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <span>
+                    <RollingNumber value={messageCount} /> {messageCount === 1 ? "message" : "messages"}
+                    {subtopicCount > 0 && (
+                      <>
+                        {" · "}
+                        <RollingNumber value={subtopicCount} /> {subtopicCount === 1 ? "sub-topic" : "sub-topics"}
+                      </>
+                    )}
+                  </span>
+                </button>
+                <SettingsGearLink
+                  setting={boardCardCollapseEnabled && tall ? "board-card-collapse" : "board-card-collapse-to"}
+                  label="Collapsed card settings"
+                />
+              </div>
             )}
           </div>
           {conversationTitle && (

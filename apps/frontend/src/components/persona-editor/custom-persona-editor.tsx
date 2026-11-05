@@ -107,7 +107,7 @@ interface CustomPersonaEditorProps {
   config: PersonaConfigResponse
   onSyncStateChange?: (sync: SyncState) => void
   /** Where to navigate after archiving. A workspace custom returns to the admin
-   *  roster (`?ws-settings=ai-agents`); a personal persona returns to its owner's
+   *  roster (`?settings=workspace-ai`); a personal persona returns to its owner's
    *  personal settings AI tab (`?settings=ai`), which a non-admin can actually
    *  open. Defaults to the admin roster. */
   returnTo?: string
@@ -127,7 +127,7 @@ export function CustomPersonaEditor({
   personaId,
   config,
   onSyncStateChange,
-  returnTo = `/w/${workspaceId}?ws-settings=ai-agents`,
+  returnTo = `/w/${workspaceId}?settings=workspace-ai`,
 }: CustomPersonaEditorProps) {
   const queryClient = useQueryClient()
   const navigate = useNavigate()

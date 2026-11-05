@@ -10,7 +10,7 @@ import * as preferencesModule from "@/contexts/preferences-context"
 import * as lineMeasureModule from "./use-measured-line-count"
 
 // Stubbable preferences mock — each test can override via `currentPrefs`.
-let currentPrefs: { blockquoteCollapseThreshold?: number } | null = {
+let currentPrefs: { blockquoteCollapseEnabled?: boolean; blockquoteCollapseThreshold?: number } | null = {
   blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
 }
 
@@ -93,6 +93,16 @@ describe("BlockquoteBlock collapse behavior", () => {
     measure = { lineCount: 1, lineHeightPx: 20 }
     renderBlockquote(<p>Just one line.</p>)
     expect(screen.getByText(/1 line, click to expand/i)).toBeInTheDocument()
+  })
+
+  it("shows every quote in full, with no fold control, when folding is off", () => {
+    currentPrefs = { blockquoteCollapseEnabled: false, blockquoteCollapseThreshold: 0 }
+    measure = { lineCount: 3, lineHeightPx: 22 }
+    renderBlockquote(<p>Just one long line.</p>)
+    expect({
+      button: screen.queryByRole("button"),
+      clamp: clampStyle(),
+    }).toEqual({ button: null, clamp: undefined })
   })
 
   it("expanding a collapsed quote drops the clamp; full content stays mounted", async () => {

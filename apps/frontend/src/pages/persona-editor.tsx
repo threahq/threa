@@ -48,7 +48,7 @@ export function PersonaEditorPage() {
   // A personal persona returns to the owner's personal AI settings (openable by a
   // non-admin); a built-in/workspace persona returns to the admin roster.
   const isPersonalPersona = config?.kind === "personal" || ownsPersonal
-  const backTo = isPersonalPersona ? `/w/${workspaceId}?settings=ai` : `/w/${workspaceId}?ws-settings=ai-agents`
+  const backTo = isPersonalPersona ? `/w/${workspaceId}?settings=ai` : `/w/${workspaceId}?settings=workspace-ai`
   // Mirrored from the form so the test pane can show the same "saving/saved" indicator;
   // the debounce itself stays owned by the form (deliverable 5).
   const [syncState, setSyncState] = useState<SyncState>("idle")

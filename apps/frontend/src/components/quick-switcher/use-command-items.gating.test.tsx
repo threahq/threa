@@ -39,13 +39,58 @@ function renderItems(
   return result.current.items.map((item) => item.id)
 }
 
-describe("useCommandItems — rollout-gated settings tabs", () => {
-  it("hides the Diagnostics settings command while the flag is off", () => {
-    expect(renderItems({ workspace: {}, user: {} })).not.toContain("settings-diagnostics")
+describe("useCommandItems — settings", () => {
+  it("hides the Diagnostics setting while the flag is off", () => {
+    expect(renderItems({ workspace: {}, user: {} })).not.toContain("setting-diagnostics")
   })
 
-  it("offers the Diagnostics settings command once the flag is available", () => {
-    expect(renderItems({ workspace: { perfDiagnostics: "available" }, user: {} })).toContain("settings-diagnostics")
+  it("offers the Diagnostics setting once the flag is available", () => {
+    expect(renderItems({ workspace: { perfDiagnostics: "available" }, user: {} })).toContain("setting-diagnostics")
+  })
+
+  it("finds a setting by the symptom a user describes", () => {
+    expect(renderItems({ workspace: {}, user: {} }, commandContext, "only the first link")).toContain(
+      "setting-link-preview-count"
+    )
+  })
+
+  it("puts a setting named by the query ahead of commands that only match an alias", () => {
+    expect(renderItems({ workspace: {}, user: {} }, commandContext, "preview")[0]).toBe("setting-link-preview-count")
+    expect(renderItems({ workspace: {}, user: {} }, commandContext, "theme")[0]).toBe("setting-theme")
+  })
+
+  it("keeps a command named by the query ahead of settings", () => {
+    expect(renderItems({ workspace: {}, user: {} }, commandContext, "notifications")[0]).toBe("settings-notifications")
+  })
+
+  it("offers the workspace AI agents page to admins only", () => {
+    const flags = { workspace: {}, user: {} }
+    expect(renderItems(flags, commandContext, "ai agents")).not.toContain("settings-workspace-ai")
+    expect(renderItems(flags, commandContext, "ai agents", [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN])).toContain(
+      "settings-workspace-ai"
+    )
+  })
+})
+
+describe("useCommandItems — stream settings with no stream in view", () => {
+  it("offers them and asks which stream on select", () => {
+    const openStreamSettings = vi.fn()
+    const context = { workspaceId: "ws_1", closeDialog: vi.fn(), openStreamSettings } as unknown as CommandContext
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspacesModule.workspaceKeys.bootstrap("ws_1"), {
+      featureFlags: { workspace: {}, user: {} },
+      viewerPermissions: [],
+    } as unknown as WorkspaceBootstrap)
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    const { result } = renderHook(() => useCommandItems({ query: "mute channel", commandContext: context }), {
+      wrapper,
+    })
+
+    const item = result.current.items.find((candidate) => candidate.id === "setting-stream-notifications")
+    expect(item?.description).toContain("Any stream › General › Your notifications")
+    item?.onSelect?.()
+    expect(openStreamSettings).toHaveBeenCalledWith(null, "general", "stream-notifications")
   })
 })
 

@@ -56,6 +56,7 @@ import { shareById, useShared } from "@/lib/structural-sharing"
 import { setStreamCustomSection, setSectionFilter, setSectionOrder, setSectionReverse } from "./sidebar-config"
 import type { SectionViewChange } from "./section-view-options"
 import { RemoveLabelDialog } from "./remove-label-dialog"
+import { SidebarReceiptRow, useSettledByRule, type SidebarReceipt } from "./sidebar-receipt"
 import type { SidebarActionItem } from "./sidebar-actions"
 import {
   buildVirtualDmDrafts,
@@ -190,6 +191,7 @@ const SidebarBody = memo(function SidebarBody({
   const unassignLabel = useUnassignLabel(workspaceId)
   const preferencesContext = usePreferencesOptional()
   const [labelRemovePrompt, setLabelRemovePrompt] = useState<{ streamId: string; labelId: string } | null>(null)
+  const [receipt, setReceipt] = useState<SidebarReceipt | null>(null)
   const navigate = useNavigate()
   const currentUser = workspaceUsers.find((u) => u.workosUserId === user?.id) ?? null
   const createEncryptedScratchpad = useCreateEncryptedScratchpad(workspaceId, currentUser?.id ?? null)
@@ -740,20 +742,23 @@ const SidebarBody = memo(function SidebarBody({
     if (next !== sidebarConfig) setSidebarConfig(next)
   })
 
-  const removeStreamLabel = (streamId: string, labelId: string) => {
-    unassignLabel.mutate({ labelId, resourceType: LabelableResourceTypes.STREAM, resourceId: streamId })
+  const removeStreamLabel = (streamId: string, labelId: string, onSuccess?: () => void) => {
+    unassignLabel.mutate({ labelId, resourceType: LabelableResourceTypes.STREAM, resourceId: streamId }, { onSuccess })
   }
 
   // A stream was dragged out of the label lens it was under. Whether that strips
-  // the old label follows the user's `labelRemoveOnMove` preference: act silently
-  // for "always"/"never", otherwise prompt (and let the prompt persist a choice).
+  // the old label follows the user's `labelRemoveOnMove` preference: "never" keeps
+  // it, "always" strips it and says so in a receipt with Undo, "ask" prompts (and
+  // lets the prompt persist a choice).
   const handleStreamMovedFromLabel = useStableCallback((streamId: string, sourceLabelId: string) => {
     const label = labelsById.get(sourceLabelId)
     if (!label) return
     const behavior = preferencesContext?.preferences?.labelRemoveOnMove ?? "ask"
     if (behavior === "never") return
     if (behavior === "always") {
-      removeStreamLabel(streamId, sourceLabelId)
+      removeStreamLabel(streamId, sourceLabelId, () =>
+        setReceipt({ kind: "label-removed", streamId, labelId: sourceLabelId })
+      )
       return
     }
     setLabelRemovePrompt({ streamId, labelId: sourceLabelId })
@@ -780,6 +785,60 @@ const SidebarBody = memo(function SidebarBody({
       void preferencesContext.updatePreference("labelRemoveOnMove", remove ? "always" : "never")
     }
   }
+
+  // A receipt explains what one of the viewer's rules just did; it goes when
+  // they open another stream, or when a settled stream comes back to the Inbox.
+  useEffect(() => setReceipt(null), [activeStreamId])
+  useSettledByRule({
+    workspaceId,
+    inboxStreamIds: unreadStreamIds,
+    activeStreamId,
+    mode: preferencesContext?.preferences?.inboxClearMode ?? "interaction",
+    stillListed: (streamId) =>
+      !mutedStreamIdSet.has(streamId) &&
+      processedStreams.some((stream) => stream.id === streamId && !stream.archivedAt),
+    onSettled: setReceipt,
+  })
+  const shownReceipt = receipt?.kind === "settled" && unreadStreamIds.has(receipt.streamId) ? null : receipt
+  const dismissReceipt = useStableCallback(() => setReceipt(null))
+  const undoReceipt = useStableCallback(() => {
+    if (receipt?.kind !== "label-removed") return
+    assignLabel.mutate({
+      labelId: receipt.labelId,
+      resourceType: LabelableResourceTypes.STREAM,
+      resourceId: receipt.streamId,
+    })
+    setReceipt(null)
+  })
+  const receiptStream = shownReceipt ? processedStreams.find((stream) => stream.id === shownReceipt.streamId) : null
+  const receiptStreamName = receiptStream ? streamLabel(receiptStream, "sidebar") : null
+  const receiptLabelName =
+    shownReceipt?.kind === "label-removed" ? labelsById.get(shownReceipt.labelId)?.name : undefined
+  const receiptSectionId = shownReceipt
+    ? (resolvedSections.find(({ section, items }) =>
+        shownReceipt.kind === "settled"
+          ? section.spec.kind === "unread"
+          : items.some((item) => item.id === shownReceipt.streamId)
+      )?.section.id ?? null)
+    : null
+  const receiptSlot = useMemo(
+    () =>
+      shownReceipt && receiptStreamName
+        ? {
+            sectionId: receiptSectionId,
+            node: (
+              <SidebarReceiptRow
+                receipt={shownReceipt}
+                streamName={receiptStreamName}
+                labelName={receiptLabelName}
+                onUndo={shownReceipt.kind === "label-removed" ? undoReceipt : undefined}
+                onDismiss={dismissReceipt}
+              />
+            ),
+          }
+        : undefined,
+    [shownReceipt, receiptStreamName, receiptLabelName, receiptSectionId, undoReceipt, dismissReceipt]
+  )
 
   if (phase !== "ready") {
     return (
@@ -854,6 +913,7 @@ const SidebarBody = memo(function SidebarBody({
             onClearInbox={clearInbox}
             clearInboxKeyHint={clearInboxKeyHint}
             onInboxRowHoverChange={handleInboxRowHoverChange}
+            receipt={receiptSlot}
           />
         }
         footer={

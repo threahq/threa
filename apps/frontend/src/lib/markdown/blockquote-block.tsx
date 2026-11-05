@@ -13,6 +13,7 @@ import {
   useQuoteNestingDepth,
 } from "./markdown-block-context"
 import { extractBlockText } from "./extract-block-text"
+import { SettingsGearLink } from "@/components/in-context-settings/settings-gear-link"
 
 interface BlockquoteBlockProps {
   children: ReactNode
@@ -24,6 +25,7 @@ export function BlockquoteBlock({ children }: BlockquoteBlockProps) {
   const preferencesContext = usePreferencesOptional()
   const threshold =
     preferencesContext?.preferences?.blockquoteCollapseThreshold ?? DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD
+  const foldsLong = preferencesContext?.preferences?.blockquoteCollapseEnabled ?? true
 
   const messageContext = useMarkdownBlockContext()
   const nested = useIsInsideCollapsibleBlock()
@@ -41,7 +43,7 @@ export function BlockquoteBlock({ children }: BlockquoteBlockProps) {
   // wrapping) rather than paragraph/char estimates. The extra half line is
   // exactly what the collapsed view reveals as the "there's more" hint, so a
   // barely-over quote never gets a useless toggle.
-  const collapsible = foldable && lineCount !== null && lineCount > threshold + 0.5
+  const collapsible = foldable && foldsLong && lineCount !== null && lineCount > threshold + 0.5
   const displayLineCount = lineCount !== null ? Math.max(1, Math.round(lineCount)) : 0
 
   const { collapsed, canToggle, toggle } = useBlockCollapse({
@@ -85,26 +87,29 @@ export function BlockquoteBlock({ children }: BlockquoteBlockProps) {
         )}
       >
         {canToggle ? (
-          <button
-            type="button"
-            onClick={toggle}
-            aria-expanded={!collapsed}
-            aria-label={toggleLabel}
-            title={toggleLabel}
-            className="flex w-full cursor-pointer items-center gap-1 px-3 py-1 text-left text-[11px] font-medium text-muted-foreground hover:text-foreground"
-          >
-            {collapsed ? (
-              <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
-            ) : (
-              <ChevronUp className="h-3 w-3 shrink-0" aria-hidden="true" />
-            )}
-            <span className="shrink-0">Quote</span>
-            {collapsed && (
-              <span className="text-muted-foreground/80 font-normal shrink-0">
-                — {displayLineCount} line{displayLineCount === 1 ? "" : "s"}, click to expand
-              </span>
-            )}
-          </button>
+          <div className="flex items-center pr-1">
+            <button
+              type="button"
+              onClick={toggle}
+              aria-expanded={!collapsed}
+              aria-label={toggleLabel}
+              title={toggleLabel}
+              className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 px-3 py-1 text-left text-[11px] font-medium text-muted-foreground hover:text-foreground"
+            >
+              {collapsed ? (
+                <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
+              ) : (
+                <ChevronUp className="h-3 w-3 shrink-0" aria-hidden="true" />
+              )}
+              <span className="shrink-0">Quote</span>
+              {collapsed && (
+                <span className="text-muted-foreground/80 font-normal shrink-0">
+                  — {displayLineCount} line{displayLineCount === 1 ? "" : "s"}, click to expand
+                </span>
+              )}
+            </button>
+            <SettingsGearLink setting="quote-collapse" label="Long quote settings" />
+          </div>
         ) : null}
         <div className={cn("relative", canToggle && "px-4 pb-2 text-muted-foreground italic")}>
           <div

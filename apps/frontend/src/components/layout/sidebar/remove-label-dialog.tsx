@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { Link } from "react-router-dom"
 import {
   ResponsiveAlertDialog,
   ResponsiveAlertDialogAction,
@@ -10,6 +11,7 @@ import {
   ResponsiveAlertDialogTitle,
 } from "@/components/ui/responsive-alert-dialog"
 import { Checkbox } from "@/components/ui/checkbox"
+import { useSettingHref } from "@/hooks/use-setting-href"
 
 interface RemoveLabelDialogProps {
   open: boolean
@@ -29,6 +31,7 @@ interface RemoveLabelDialogProps {
  */
 export function RemoveLabelDialog({ open, onOpenChange, labelName, streamName, onResolve }: RemoveLabelDialogProps) {
   const [remember, setRemember] = useState(false)
+  const settingsHref = useSettingHref("label-move")
 
   return (
     <ResponsiveAlertDialog open={open} onOpenChange={onOpenChange}>
@@ -41,10 +44,21 @@ export function RemoveLabelDialog({ open, onOpenChange, labelName, streamName, o
           </ResponsiveAlertDialogDescription>
         </ResponsiveAlertDialogHeader>
 
-        <label className="flex items-center gap-2 px-1 text-sm text-muted-foreground">
-          <Checkbox checked={remember} onCheckedChange={(value) => setRemember(value === true)} />
-          Remember my choice
-        </label>
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-1 text-sm text-muted-foreground">
+          <label className="flex min-h-11 items-center gap-2 sm:min-h-0">
+            <Checkbox checked={remember} onCheckedChange={(value) => setRemember(value === true)} />
+            Remember my choice
+          </label>
+          {settingsHref && (
+            <Link
+              to={settingsHref}
+              onClick={() => onOpenChange(false)}
+              className="flex min-h-11 items-center underline-offset-4 hover:text-foreground hover:underline sm:min-h-0"
+            >
+              Change in settings
+            </Link>
+          )}
+        </div>
 
         <ResponsiveAlertDialogFooter>
           <ResponsiveAlertDialogCancel onClick={() => onResolve(false, remember)}>

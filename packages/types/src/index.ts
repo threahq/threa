@@ -1105,7 +1105,6 @@ export {
   VOICE_STEERING_WORD_MAX_LENGTH,
   VOICE_STEERING_BASE_TERMS,
   // Settings tabs
-  SETTINGS_TAB_OPTIONS,
   SETTINGS_TABS,
   type SettingsTab,
   // Domain types
@@ -1607,11 +1606,9 @@ export {
 
 // In-app links (`app:` hrefs) for agents and the user guide
 export {
-  WORKSPACE_SETTINGS_TABS,
-  type WorkspaceSettingsTab,
   APP_LINK_PAGES,
   APP_LINK_SETTINGS_TABS,
-  APP_LINK_WORKSPACE_SETTINGS_TABS,
+  LEGACY_SETTINGS_TABS,
   type AppLinkDestination,
   type AppLinkPage,
   APP_LINK_SCHEME,

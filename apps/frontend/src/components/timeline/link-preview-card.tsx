@@ -47,6 +47,7 @@ import {
   PR_STATE_LABELS,
   prStateColor,
   PREVIEW_CARD_WIDTH,
+  PreviewSettingsLink,
   StatePill,
 } from "./link-preview-primitives"
 import type {
@@ -367,11 +368,12 @@ function PreviewCardHeader({
           </a>
         </div>
       )}
+      <PreviewSettingsLink />
       {onDismiss && (
         <Button
           variant="ghost"
           size="icon"
-          className="h-5 w-5 shrink-0"
+          className="size-6 shrink-0"
           onClick={onDismiss}
           aria-label="Dismiss preview"
         >

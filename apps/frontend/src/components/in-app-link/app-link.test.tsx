@@ -7,8 +7,11 @@ import { APP_LINK_PAGES } from "@threahq/types"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { SettingsDialog } from "@/components/settings/settings-dialog"
 import * as notificationsSettingsModule from "@/components/settings/notifications-settings"
+import * as scheduleSettingsModule from "@/components/settings/schedule-settings"
+import * as quietHoursModule from "@/components/settings/quiet-hours-setting"
 import { SettingsProvider } from "@/contexts"
 import * as workspaceStore from "@/stores/workspace-store"
+import * as workspacesModule from "@/hooks/use-workspaces"
 import { router } from "@/routes"
 
 function LocationProbe() {
@@ -45,9 +48,12 @@ describe("app: links in markdown", () => {
     vi.spyOn(workspaceStore, "useWorkspaceStreams").mockReturnValue([])
     vi.spyOn(workspaceStore, "useWorkspaceUsers").mockReturnValue([])
     vi.spyOn(workspaceStore, "useWorkspaceDmPeers").mockReturnValue([])
+    vi.spyOn(workspacesModule, "useCurrentWorkspaceUser").mockReturnValue(null)
     vi.spyOn(notificationsSettingsModule, "NotificationsSettings").mockImplementation(() => (
       <div>Notifications panel</div>
     ))
+    vi.spyOn(scheduleSettingsModule, "ScheduleSettings").mockImplementation(() => <div>Schedule panel</div>)
+    vi.spyOn(quietHoursModule, "QuietHoursSetting").mockImplementation(() => <div>Quiet hours panel</div>)
   })
 
   it("should open the settings dialog on its tab over the current view when the chip is clicked", async () => {
@@ -59,12 +65,12 @@ describe("app: links in markdown", () => {
     expect(screen.getByTestId("location")).toHaveTextContent("/w/ws_1/s/stream_here?m=msg_1&settings=notifications")
   })
 
-  it("should open a workspace settings tab over the current view when the chip is clicked", async () => {
+  it("should open a page from a legacy workspace-settings link in the one settings window", async () => {
     renderMarkdown("Admins manage them under [Bots](app:workspace-settings/bots).")
 
     await userEvent.click(screen.getByRole("link", { name: "Bots" }))
 
-    expect(screen.getByTestId("location")).toHaveTextContent("/w/ws_1/s/stream_here?m=msg_1&ws-settings=bots")
+    expect(screen.getByTestId("location")).toHaveTextContent("/w/ws_1/s/stream_here?m=msg_1&settings=bots")
   })
 
   it("should navigate to a workspace page when the chip is clicked", async () => {
@@ -132,8 +138,8 @@ describe("app: links in markdown", () => {
     renderMarkdown(`${origin}/go/settings/ai and ${origin}/go/workspace-settings/bots and ${origin}/go/board`)
 
     expect(screen.getAllByRole("link").map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
-      ["Settings: AI", "/w/ws_1/s/stream_here?m=msg_1&settings=ai"],
-      ["Workspace settings: Bots", "/w/ws_1/s/stream_here?m=msg_1&ws-settings=bots"],
+      ["Settings: Your AI", "/w/ws_1/s/stream_here?m=msg_1&settings=ai"],
+      ["Settings: Shared bots", "/w/ws_1/s/stream_here?m=msg_1&settings=bots"],
       ["Board", "/w/ws_1/board"],
     ])
   })

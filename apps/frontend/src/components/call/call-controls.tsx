@@ -22,6 +22,7 @@ import { useCallDevices, useCallDiagnostics, useCallRoster, useCallWorkspaceId }
 import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { useCallLifecycleEvents, type CallLifecycleEntry } from "@/calls/lifecycle-log"
+import { SettingsMenuItem } from "@/components/in-context-settings/settings-gear-link"
 
 // setSinkId (output device selection) is unsupported on Safari/Firefox; hide the
 // speaker picker where the API is absent rather than showing a dead control.
@@ -122,6 +123,7 @@ export function DevicePickerMenu({ devices }: { devices: CallDeviceState }) {
             </DropdownMenuRadioGroup>
           </>
         )}
+        <SettingsMenuItem setting="call-mirror" label="Call settings" separatorBefore />
       </DropdownMenuContent>
     </DropdownMenu>
   )

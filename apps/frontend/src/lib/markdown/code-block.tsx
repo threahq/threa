@@ -12,11 +12,16 @@ import { useCodeViewerOptional } from "@/contexts/code-viewer-context"
 import { useBlockCollapse } from "./use-block-collapse"
 import { useMeasuredLineCount } from "./use-measured-line-count"
 import { ensureHighlight, tryHighlightSync } from "./highlighter"
+import { SettingsGearLink } from "@/components/in-context-settings/settings-gear-link"
 
 // Applied to Shiki's <pre>; the invisible placeholder mirrors them so the
 // measured line count matches what the highlighted block will render.
 const SCROLL_PRE_CLASSES = "[&>pre]:overflow-x-auto [&>pre]:whitespace-pre"
 const WRAP_PRE_CLASSES = "[&>pre]:whitespace-pre-wrap [&>pre]:[overflow-wrap:anywhere]"
+
+const HEADER_ICON_CLASSES =
+  "flex size-6 shrink-0 items-center justify-center rounded-md transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
+const HEADER_ICON_IDLE = "text-muted-foreground hover:bg-primary/15 hover:text-primary"
 
 interface CodeBlockProps {
   language: string
@@ -30,6 +35,7 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
   const preferencesContext = usePreferencesOptional()
   const codeViewer = useCodeViewerOptional()
   const threshold = preferencesContext?.preferences?.codeBlockCollapseThreshold ?? DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD
+  const foldsLong = preferencesContext?.preferences?.codeBlockCollapseEnabled ?? true
 
   const trimmedCode = useMemo(() => children.trim(), [children])
   const languageId = normalizeCodeLanguage(language)
@@ -56,7 +62,7 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
   // The extra half line keeps a barely-over block from sprouting a toggle that
   // would only hide a sliver — and it is exactly the half line the collapsed
   // view shows as the "there's more" hint.
-  const collapsible = lineCount !== null && lineCount > threshold + 0.5
+  const collapsible = foldsLong && lineCount !== null && lineCount > threshold + 0.5
   const displayLineCount = lineCount !== null ? Math.max(1, Math.round(lineCount)) : 0
 
   const { collapsed, canToggle, toggle } = useBlockCollapse({
@@ -144,6 +150,12 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
           </span>
         )}
       </button>
+      {/* Lands on what this block is doing: its collapse threshold when it folds, line wrapping otherwise. */}
+      <SettingsGearLink
+        setting={collapsible ? "code-collapse" : "code-wrap"}
+        label="Code block settings"
+        className={HEADER_ICON_IDLE}
+      />
       {codeViewer && (
         <button
           type="button"
@@ -151,11 +163,11 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
             event.stopPropagation()
             codeViewer.open({ code: trimmedCode, languageId })
           }}
-          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-all duration-150 hover:bg-primary/15 hover:text-primary"
+          className={cn(HEADER_ICON_CLASSES, HEADER_ICON_IDLE)}
           title="Open full screen"
           aria-label="Open full screen"
         >
-          <Maximize2 className="h-3 w-3" />
+          <Maximize2 className="size-3.5" aria-hidden />
         </button>
       )}
       <button
@@ -164,15 +176,13 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
         className={cn(
           // Always visible (not hover-gated): touch devices have no hover, so a
           // hover-only button would be unreachable there.
-          "flex h-5 w-5 items-center justify-center rounded transition-all duration-150 shrink-0",
-          copied
-            ? "bg-green-500/15 text-green-600 dark:text-green-400"
-            : "text-muted-foreground hover:bg-primary/15 hover:text-primary"
+          HEADER_ICON_CLASSES,
+          copied ? "bg-green-500/15 text-green-600 dark:text-green-400" : HEADER_ICON_IDLE
         )}
         title={copied ? "Copied!" : "Copy code"}
         aria-label={copied ? "Copied" : "Copy code"}
       >
-        {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+        {copied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
       </button>
     </div>
   )

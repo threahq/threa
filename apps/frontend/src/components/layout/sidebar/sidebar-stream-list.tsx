@@ -21,7 +21,7 @@ import { StreamSection, TieredStreamSection, sectionVisibleItems } from "./secti
 import { StreamDropZone } from "./sidebar-dnd"
 import { defaultSectionOrder, sectionOrderOptions } from "@threahq/types"
 import { sectionPresentation, type SidebarSectionSpec } from "./sidebar-config"
-import type { SectionViewChange, SectionViewOptions } from "./section-view-options"
+import type { SectionSettingsLink, SectionViewChange, SectionViewOptions } from "./section-view-options"
 import { findSourceLabelId, type ResolvedSection } from "./resolve-sections"
 import { SidebarLabelsProvider } from "./sidebar-labels"
 import { SidebarRowOpenersProvider } from "./sidebar-row-openers"
@@ -68,6 +68,11 @@ function slotted<V>(slots: PropSlots, slot: string, key: unknown, create: () => 
   const value = create()
   slots.set(slot, { key, value })
   return value
+}
+
+const SECTION_SETTINGS: Partial<Record<SidebarSectionSpec["kind"], SectionSettingsLink>> = {
+  unread: { label: "Inbox settings", setting: "settling" },
+  label: { label: "Label settings", setting: "label-move" },
 }
 
 const ALL_CAUGHT_UP = <span className="text-[11px] italic text-muted-foreground/50">All caught up</span>
@@ -220,6 +225,8 @@ interface SidebarStreamListProps {
    * disabled or unbound it — the hint is omitted rather than shown stale.
    */
   clearInboxKeyHint?: string
+  /** A receipt for something a rule just did, shown under the section with `sectionId` (last when none). */
+  receipt?: { sectionId: string | null; node: ReactNode }
 }
 
 export const SidebarStreamList = memo(function SidebarStreamList({
@@ -248,6 +255,7 @@ export const SidebarStreamList = memo(function SidebarStreamList({
   onClearInbox,
   onInboxRowHoverChange,
   clearInboxKeyHint,
+  receipt,
 }: SidebarStreamListProps) {
   // Drag-to-file is a mouse interaction; a finger does the same through the
   // action drawer's section picker. Keyed on the active input (not capability)
@@ -469,6 +477,7 @@ export const SidebarStreamList = memo(function SidebarStreamList({
           orderOptions: sectionOrderOptions(section.spec),
           reverse: viewReverse,
           onChange: (change) => onSectionViewChange(section.id, change),
+          settings: SECTION_SETTINGS[section.spec.kind],
         }))
     // Walk exactly what this section is about to render: a tiered section or a
     // filtered one holds a tail behind the "more" expander, so raw items are
@@ -576,6 +585,8 @@ export const SidebarStreamList = memo(function SidebarStreamList({
       />
     )
 
+    const receiptHere = receipt?.sectionId === section.id ? receipt.node : null
+
     // Custom and label sections are drop targets — a stream dragged onto a
     // custom section is filed there; one dragged onto a label section is
     // tagged with that label. Other section kinds render as-is.
@@ -589,6 +600,7 @@ export const SidebarStreamList = memo(function SidebarStreamList({
           onDropStream={(streamId) => handleDropIntoSection(streamId, sectionId)}
         >
           {sectionEl}
+          {receiptHere}
         </StreamDropZone>
       )
     }
@@ -602,10 +614,16 @@ export const SidebarStreamList = memo(function SidebarStreamList({
           onDropStream={(streamId) => handleDropOntoLabel(streamId, labelId)}
         >
           {sectionEl}
+          {receiptHere}
         </StreamDropZone>
       )
     }
-    return <Fragment key={section.id}>{sectionEl}</Fragment>
+    return (
+      <Fragment key={section.id}>
+        {sectionEl}
+        {receiptHere}
+      </Fragment>
+    )
   })
 
   return (
@@ -626,6 +644,7 @@ export const SidebarStreamList = memo(function SidebarStreamList({
             ? quickLinksSlot
             : null}
           {sectionElements}
+          {receipt && receipt.sectionId === null && receipt.node}
         </SidebarQuickJumpProvider>
       </SidebarRowOpenersProvider>
     </SidebarLabelsProvider>

@@ -22,7 +22,7 @@ import { RelativeTime } from "@/components/relative-time"
 import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-content"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { CollapsibleBody, useMessageCollapseSettings } from "@/lib/markdown/collapsible-body"
+import { CollapsibleBody, useCollapsibleProbe, useMessageCollapseSettings } from "@/lib/markdown/collapsible-body"
 import { MarkdownBlockProvider } from "@/lib/markdown/markdown-block-context"
 import { LinkPreviewProvider } from "@/lib/markdown/link-preview-context"
 import { AttachmentList } from "@/components/timeline/attachment-list"
@@ -40,7 +40,7 @@ import { EditedIndicator } from "@/components/timeline/edited-indicator"
 import { MessageHistoryDialog } from "@/components/timeline/message-history-dialog"
 import { ReminderPickerSheet } from "@/components/timeline/reminder-picker-sheet"
 import { ShareMessageModal } from "@/components/share/share-message-modal"
-import type { MessageActionContext } from "@/components/timeline/message-actions"
+import { containsCodeBlock, type MessageActionContext } from "@/components/timeline/message-actions"
 import { useConversationRowRead } from "@/components/message/conversation-read-context"
 import { useQuoteReply } from "@/components/timeline/quote-reply-context"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks/use-message-reactions"
@@ -437,6 +437,8 @@ export function MessageItem({
   }, [currentUserId, message.reactions])
   const allReactionShortcodes = useMemo(() => reactionShortcodes(message.reactions), [message.reactions])
 
+  const { onCollapsibleChange: handleCollapsibleChange, isCollapsible: isLongMessage } = useCollapsibleProbe()
+
   // Reactions/copy/label plus copy-link (surface-specific via `conversationId`),
   // "View in channel/thread/…", and quote reply when a conversation composer is in
   // the tree. `isThreadParent: true` suppresses "Reply in thread" (no thread
@@ -495,6 +497,9 @@ export function MessageItem({
     onMarkReadUpToHere:
       conversationRead && rowRead !== "read" ? () => conversationRead.markReadUpToHere(message.id) : undefined,
     onMarkUnread: conversationRead && rowRead !== "unread" ? () => conversationRead.markUnread(message.id) : undefined,
+    isLongMessage,
+    hasLinkPreviews: linkPreviews.length > 0,
+    hasCodeBlocks: () => containsCodeBlock(editInitialContentJson),
   }
 
   // Desktop hover toolbar, mirroring the stream timeline (`MessageEvent`): the same
@@ -667,6 +672,7 @@ export function MessageItem({
         collapseAtHeight={messageCollapse.collapseAtHeight}
         collapseToHeight={messageCollapse.collapseToHeight}
         defaultCollapsed={messageCollapse.enabled}
+        onCollapsibleChange={handleCollapsibleChange}
         trailing={
           <>
             <LinkPreviewList

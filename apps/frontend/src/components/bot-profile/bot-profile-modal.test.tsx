@@ -216,7 +216,7 @@ describe("BotProfileModal", () => {
 
     await userEvent.click(await screen.findByRole("link", { name: /Manage/ }))
     expect(screen.getByTestId("location")).toHaveTextContent(
-      `/w/${WORKSPACE_ID}/s/stream_here?ws-settings=bots&bot=${BOT_ID}`
+      `/w/${WORKSPACE_ID}/s/stream_here?settings=bots&bot=${BOT_ID}`
     )
   })
 })

@@ -205,7 +205,7 @@ describe("GoRedirect", () => {
   it.each([
     ["/go/memory", "/w/ws_abc/memory"],
     ["/go/settings/notifications", "/w/ws_abc?settings=notifications"],
-    ["/go/workspace-settings/bots", "/w/ws_abc?ws-settings=bots"],
+    ["/go/workspace-settings/bots", "/w/ws_abc?settings=bots"],
   ])("should open %s in the last workspace when the account has one", async (path, landing) => {
     signedInAs("workos_A")
     setLastWorkspaceId("workos_A", "ws_abc")

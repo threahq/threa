@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { toast } from "sonner"
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { QueryClient } from "@tanstack/react-query"
 import {
   WORKSPACE_PERMISSION_SCOPES,
   type PersonaListItem,
@@ -15,6 +15,8 @@ import { workspaceSettingsApi } from "@/api"
 import * as personasHooks from "@/hooks/use-personas"
 import * as emojiHooks from "@/hooks/use-workspace-emoji"
 import { DefaultCompanionSection } from "./default-companion-section"
+import { renderWorkspaceSettings } from "./test-harness"
+import { settingDef } from "@/components/settings/settings-registry"
 
 function persona(overrides: Partial<PersonaListItem> & Pick<PersonaListItem, "id" | "slug" | "name">): PersonaListItem {
   return {
@@ -45,11 +47,7 @@ function seedBootstrap(
 }
 
 function renderSection(queryClient: QueryClient) {
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <DefaultCompanionSection workspaceId="ws_1" />
-    </QueryClientProvider>
-  )
+  return renderWorkspaceSettings(<DefaultCompanionSection workspaceId="ws_1" />, { permissions: null, queryClient })
 }
 
 describe("DefaultCompanionSection", () => {
@@ -72,7 +70,7 @@ describe("DefaultCompanionSection", () => {
     const user = userEvent.setup()
 
     renderSection(queryClient)
-    const combobox = screen.getByRole("combobox", { name: /companion agent/i })
+    const combobox = screen.getByRole("combobox", { name: settingDef("workspace-default-companion").label })
     expect(combobox).toHaveTextContent("Ariadne")
 
     await user.click(combobox)
@@ -89,10 +87,10 @@ describe("DefaultCompanionSection", () => {
     const user = userEvent.setup()
 
     renderSection(queryClient)
-    await user.click(screen.getByRole("combobox", { name: /companion agent/i }))
+    await user.click(screen.getByRole("combobox", { name: settingDef("workspace-default-companion").label }))
     await user.click(await screen.findByRole("option", { name: /Coach/i }))
 
-    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Failed to save the default companion"))
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Couldn't save the default agent"))
     const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
     expect(bootstrap?.workspaceSettings?.defaultCompanionPersonaId).toBeNull()
   })
@@ -103,7 +101,22 @@ describe("DefaultCompanionSection", () => {
 
     renderSection(queryClient)
 
-    expect(screen.queryByRole("combobox", { name: /companion agent/i })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("combobox", { name: settingDef("workspace-default-companion").label })
+    ).not.toBeInTheDocument()
     expect(screen.getByText("Coach")).toBeInTheDocument()
+    expect(screen.getByText("Only workspace admins can change this.")).toBeInTheDocument()
+  })
+
+  it("links to the personal default agent", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN], null)
+
+    renderSection(queryClient)
+
+    expect(screen.getByRole("link", { name: settingDef("default-companion").label })).toHaveAttribute(
+      "href",
+      "/?settings=ai&setting=default-companion"
+    )
   })
 })

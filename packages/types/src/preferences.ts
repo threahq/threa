@@ -314,23 +314,31 @@ export const VOICE_TRANSCRIPTION_MODELS: readonly VoiceTranscriptionModelOption[
   },
 ] as const
 
-export const SETTINGS_TAB_OPTIONS = [
+/**
+ * Pages of the one settings window, in nav order: the viewer's own settings,
+ * then the workspace's shared ones. `?settings=<page>` opens a page.
+ */
+export const SETTINGS_TABS = [
   "profile",
-  "ai",
-  "dictation",
-  "calls",
-  "appearance",
-  "datetime",
-  "schedule",
   "notifications",
+  "appearance",
+  "messages",
+  "inbox",
   "keyboard",
-  "accessibility",
+  "datetime",
+  "ai",
+  "voice",
   "privacy",
-  "diagnostics",
+  "developer",
+  "early-access",
+  "members",
+  "workspace",
+  "workspace-defaults",
+  "workspace-ai",
+  "integrations",
+  "bots",
 ] as const
-export type SettingsTab = (typeof SETTINGS_TAB_OPTIONS)[number]
-
-export const SETTINGS_TABS = SETTINGS_TAB_OPTIONS
+export type SettingsTab = (typeof SETTINGS_TABS)[number]
 
 /**
  * Accessibility preferences stored as JSONB

@@ -247,6 +247,19 @@ describe("usePersistLastLocation", () => {
     })
   })
 
+  it("never records an open settings window as part of the place to return to", () => {
+    const exactAt = (entry: string) => {
+      renderHook(() => usePersistLastLocation(WS), { wrapper: routerAt(entry) })
+      return getLastLocation(USER, WS)?.exact?.path
+    }
+
+    expect([
+      exactAt("/w/ws_1/s/stream_a?stream-settings=members&sid=stream_a"),
+      exactAt("/w/ws_1/board?lens=mine&settings=appearance&setting=theme"),
+      exactAt("/w/ws_1/s/stream_a?ws-settings=users&panel=stream_b"),
+    ]).toEqual(["/w/ws_1/s/stream_a", "/w/ws_1/board?lens=mine", "/w/ws_1/s/stream_a?panel=stream_b"])
+  })
+
   it("writes nothing on transient redirect routes (index, delegations, memos)", () => {
     for (const path of ["/w/ws_1", "/w/ws_1/delegations/deleg_1", "/w/ws_1/memos/memo_1"]) {
       renderHook(() => usePersistLastLocation(WS), { wrapper: routerAt(path) })

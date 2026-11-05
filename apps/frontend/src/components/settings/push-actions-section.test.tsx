@@ -3,12 +3,14 @@ import { spyOnExport } from "@/test/spy"
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import type { PushAction } from "@threahq/types"
+import type { PrefNotificationLevel, PushAction } from "@threahq/types"
+import type { PushDeviceState } from "@/hooks/push-device-state"
 import { PushActionsSection, assignSlot } from "./push-actions-section"
 import * as contextsModule from "@/contexts"
 import * as authModule from "@/auth"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as reactionEmojiPickerModule from "@/components/timeline/reaction-emoji-picker"
+import * as pointerModule from "@/hooks/use-pointer"
 
 const WS = "ws_1"
 
@@ -20,7 +22,10 @@ function stubNotification(maxActions: number | undefined) {
   Object.defineProperty(globalThis, "Notification", { value: { maxActions }, configurable: true, writable: true })
 }
 
-function mount(prefs: { pushActions?: PushAction[]; pushReminderMinutes?: number; pushQuickReaction?: string }) {
+function mount(
+  prefs: { pushActions?: PushAction[]; pushReminderMinutes?: number; pushQuickReaction?: string },
+  { level = "all", pushDevice = "on" }: { level?: PrefNotificationLevel; pushDevice?: PushDeviceState } = {}
+) {
   const updatePreference = vi.fn()
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
     preferences: { ...prefs, accessibility: {} },
@@ -44,7 +49,7 @@ function mount(prefs: { pushActions?: PushAction[]; pushReminderMinutes?: number
       </button>
     </div>
   )) as unknown as typeof reactionEmojiPickerModule.ReactionEmojiPicker)
-  render(<PushActionsSection workspaceId={WS} />)
+  render(<PushActionsSection workspaceId={WS} level={level} pushDevice={pushDevice} />)
   return { updatePreference }
 }
 
@@ -53,6 +58,17 @@ function previewButtons(): string[] {
   return within(preview)
     .getAllByRole("listitem")
     .map((node) => node.textContent ?? "")
+}
+
+/** The row while the buttons can't show: its trigger's state and name, and the controls still reachable. */
+function unavailableRow() {
+  const trigger = screen.getByRole("button", { name: /^Notification buttons/ })
+  return {
+    disabled: trigger.getAttribute("aria-disabled"),
+    expanded: trigger.getAttribute("aria-expanded"),
+    name: trigger.textContent,
+    selects: screen.queryAllByRole("combobox").length,
+  }
 }
 
 describe("PushActionsSection", () => {
@@ -65,11 +81,41 @@ describe("PushActionsSection", () => {
     stubNotification(undefined)
   })
 
-  it("only explains where buttons appear when this device cannot show them", () => {
+  it("starts folded on a phone behind a summary of the chosen buttons, and opens on tap", async () => {
+    vi.spyOn(pointerModule, "useIsMobileOrCoarse").mockReturnValue(true)
+    const user = userEvent.setup()
+    mount({ pushActions: ["mark_read", "remind"] })
+    const trigger = screen.getByRole("button", { name: /^Notification buttons/ })
+    const folded = {
+      expanded: trigger.getAttribute("aria-expanded"),
+      summary: trigger.textContent,
+      selects: screen.queryAllByRole("combobox").length,
+    }
+
+    await user.click(trigger)
+
+    expect({ folded, openSelects: screen.getAllByRole("combobox").length }).toEqual({
+      folded: { expanded: "false", summary: "Notification buttonsMark read, Remind me", selects: 0 },
+      openSelects: 3,
+    })
+  })
+
+  it("stays shut with the reason when this device cannot show them", async () => {
     stubNotification(0)
-    mount({})
-    expect(screen.getByText(/This device can't show buttons/)).toBeInTheDocument()
-    expect(screen.queryByLabelText("Notification preview")).not.toBeInTheDocument()
+    const user = userEvent.setup()
+    mount({ pushActions: ["mark_read"] })
+    await user.tab()
+    await user.keyboard("{Enter}")
+
+    expect({ focused: document.activeElement?.textContent, row: unavailableRow() }).toEqual({
+      focused: "Notification buttonsOnly shown in desktop Chrome.Mark read",
+      row: {
+        disabled: "true",
+        expanded: "false",
+        name: "Notification buttonsOnly shown in desktop Chrome.Mark read",
+        selects: 0,
+      },
+    })
   })
 
   it("hides the settings on Android, which reports buttons it cannot attribute", () => {
@@ -81,8 +127,8 @@ describe("PushActionsSection", () => {
     })
     try {
       mount({})
-      expect(screen.getByText(/This device can't show buttons/)).toBeInTheDocument()
-      expect(screen.queryByLabelText("Notification preview")).not.toBeInTheDocument()
+      expect(unavailableRow()).toMatchObject({ disabled: "true", selects: 0 })
+      expect(unavailableRow().name).toContain("Only shown in desktop Chrome.")
     } finally {
       Reflect.deleteProperty(navigator, "userAgent")
     }
@@ -134,5 +180,33 @@ describe("assignSlot", () => {
     expect(assignSlot(["mark_read", "remind"], 0, "remind")).toEqual(["remind"])
     expect(assignSlot(["mark_read"], 1, "react")).toEqual(["mark_read", "react"])
     expect(assignSlot(["mark_read", "remind"], 0, null)).toEqual(["remind"])
+  })
+
+  it("names what has to change while no pushes are sent", () => {
+    stubNotification(2)
+    mount({}, { level: "none" })
+
+    expect(unavailableRow().name).toBe(
+      "Notification buttonsShown once “Push notifications” isn't “No push”.Mark read, Remind me"
+    )
+  })
+
+  it("should stay editable with push off on this device, since the buttons sync to the others", async () => {
+    stubNotification(2)
+    const user = userEvent.setup()
+    const { updatePreference } = mount({}, { pushDevice: "blocked" })
+    const row = unavailableRow()
+    await user.click(screen.getByRole("combobox", { name: "First button" }))
+    await user.click(await screen.findByRole("option", { name: "React" }))
+
+    expect({
+      row,
+      note: screen.getByText(/Quick actions on a notification/).textContent,
+      writes: updatePreference.mock.calls,
+    }).toEqual({
+      row: { disabled: null, expanded: "true", name: "Notification buttonsMark read, Remind me", selects: 3 },
+      note: "Quick actions on a notification. Shown once “Push on this device” is on.",
+      writes: [["pushActions", ["react", "remind"]]],
+    })
   })
 })

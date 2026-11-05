@@ -116,7 +116,7 @@ describe("StreamSheet", () => {
 
     // The agent settings the desktop pill hides behind a popover are inline.
     const quiet = screen.getByRole("radio", { name: "Quiet" })
-    expect(screen.getByRole("radio", { name: "Companion" })).toBeChecked()
+    expect(screen.getByRole("radio", { name: "On" })).toBeChecked()
     await userEvent.click(quiet)
     expect(updateCompanionMode).toHaveBeenCalledWith({ companionMode: CompanionModes.OFF })
   })
@@ -133,7 +133,7 @@ describe("StreamSheet", () => {
 
     expect(screen.getByText("Channel")).toBeInTheDocument()
     expect(screen.getByText("Archived")).toBeInTheDocument()
-    expect(screen.queryByRole("radio", { name: "Companion" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("radio", { name: "On" })).not.toBeInTheDocument()
   })
 
   it("closes the sheet and runs the selected action", async () => {

@@ -35,12 +35,6 @@ export function companionPickerValue(
     : COMPANION_DEFAULT_OPTION_VALUE
 }
 
-/** Label for the stream pickers' synthetic inherit row, naming the persona the
- *  default currently resolves to. */
-export function companionDefaultOptionLabel(defaultPersona: CompanionPersona | undefined): string {
-  return `Default (${defaultPersona?.name ?? "Ariadne"})`
-}
-
 /** Map a picker value back to the stored pointer: the synthetic inherit row
  *  round-trips as null; any other value is a concrete persona id (a pin). */
 export function companionPointerFromPickerValue(value: string): string | null {
@@ -77,11 +71,14 @@ export interface CompanionDefaultBadges {
   personalDefaultId?: string
 }
 
+/** How each default tier reads beside a picker row. */
+export const COMPANION_DEFAULT_TAGS = { personal: "Your default", workspace: "Workspace default" } as const
+
 function defaultBadgeLabel(personaId: string, badges: CompanionDefaultBadges | undefined): string | null {
   if (!badges) return null
   // "Your default" is the more specific tier — it wins when both land on one row.
-  if (badges.personalDefaultId === personaId) return "Your default"
-  if (badges.workspaceDefaultId === personaId) return "Workspace default"
+  if (badges.personalDefaultId === personaId) return COMPANION_DEFAULT_TAGS.personal
+  if (badges.workspaceDefaultId === personaId) return COMPANION_DEFAULT_TAGS.workspace
   return null
 }
 
@@ -106,17 +103,22 @@ interface CompanionAgentSelectProps {
   onChange: (personaId: string) => void
   disabled?: boolean
   triggerClassName?: string
-  /** A leading synthetic option (e.g. "Default (Ariadne)") rendered before the
-   *  persona rows; it carries {@link COMPANION_DEFAULT_OPTION_VALUE}, which the
-   *  caller maps back to null/unset. Creation-time surfaces only — a created
-   *  scratchpad is pinned to one persona and offers no inherit row. */
-  defaultOption?: { label: string }
-  /** Row indicators marking the workspace/personal default personas. */
+  /**
+   * A leading row that follows the default rather than pinning a persona: the
+   * persona it resolves to now, tagged with its tier ("Workspace default"). It
+   * carries {@link COMPANION_DEFAULT_OPTION_VALUE}, which the caller maps back
+   * to null/unset. A created scratchpad is pinned to one persona and offers none.
+   */
+  defaultOption?: { persona: CompanionPersona | undefined; tag: string }
+  /** Tags on the persona rows marking the workspace/personal defaults, for a picker without `defaultOption`, which names the default itself. */
   defaultBadges?: CompanionDefaultBadges
+  /** The surrounding row's label; without one the trigger names itself. */
+  "aria-labelledby"?: string
+  "aria-describedby"?: string
 }
 
-/** The companion-agent dropdown (avatar + name rows) shared by every surface
- *  that offers the picker, so option rendering can't drift between them. */
+/** The companion-agent dropdown shared by every surface that offers the picker:
+ *  every row, the default one included, is avatar, name, then muted tags. */
 export function CompanionAgentSelect({
   workspaceId,
   personas,
@@ -126,6 +128,8 @@ export function CompanionAgentSelect({
   triggerClassName,
   defaultOption,
   defaultBadges,
+  "aria-labelledby": labelledBy,
+  "aria-describedby": describedBy,
 }: CompanionAgentSelectProps) {
   // An empty roster means the store hasn't hydrated yet (built-ins guarantee a
   // real roster is never empty), so keep the trigger mounted at full size and
@@ -136,29 +140,60 @@ export function CompanionAgentSelect({
   const hydrating = personas.length === 0
   return (
     <Select value={hydrating ? undefined : value} onValueChange={onChange} disabled={disabled || hydrating}>
-      <SelectTrigger className={triggerClassName} aria-label="Companion agent">
+      <SelectTrigger
+        className={triggerClassName}
+        aria-label={labelledBy ? undefined : "Companion agent"}
+        aria-labelledby={labelledBy}
+        aria-describedby={describedBy}
+      >
         <SelectValue placeholder={hydrating ? "Loading agents…" : "Select an agent"} />
       </SelectTrigger>
       <SelectContent>
         {defaultOption && (
           <SelectItem value={COMPANION_DEFAULT_OPTION_VALUE}>
-            <span className="truncate">{defaultOption.label}</span>
+            <CompanionOption workspaceId={workspaceId} persona={defaultOption.persona} tags={[defaultOption.tag]} />
           </SelectItem>
         )}
         {personas.map((persona) => {
           const { defaultBadge, isPersonal } = companionRowBadges(persona, defaultBadges)
           return (
             <SelectItem key={persona.id} value={persona.id}>
-              <span className="flex items-center gap-2">
-                <PersonaListAvatar workspaceId={workspaceId} persona={persona} size="xs" />
-                <span className="truncate">{persona.name}</span>
-                {defaultBadge && <span className="shrink-0 text-[10px] text-muted-foreground">{defaultBadge}</span>}
-                {isPersonal && <span className="shrink-0 text-[10px] text-muted-foreground">Personal</span>}
-              </span>
+              <CompanionOption
+                workspaceId={workspaceId}
+                persona={persona}
+                tags={[defaultBadge, isPersonal ? "Personal" : null]}
+              />
             </SelectItem>
           )
         })}
       </SelectContent>
     </Select>
+  )
+}
+
+/** One picker row, as the trigger also shows it: avatar, name, muted tags that never wrap. */
+function CompanionOption({
+  workspaceId,
+  persona,
+  tags,
+}: {
+  workspaceId: string
+  /** Unresolved while the roster loads: the row names Ariadne, the built-in default. */
+  persona: CompanionPersona | undefined
+  tags: readonly (string | null)[]
+}) {
+  return (
+    <span className="flex items-center gap-2">
+      {persona && <PersonaListAvatar workspaceId={workspaceId} persona={persona} size="xs" />}
+      <span className="truncate">{persona?.name ?? "Ariadne"}</span>
+      {tags.map(
+        (tag) =>
+          tag && (
+            <span key={tag} className="shrink-0 text-xs text-muted-foreground">
+              {tag}
+            </span>
+          )
+      )}
+    </span>
   )
 }

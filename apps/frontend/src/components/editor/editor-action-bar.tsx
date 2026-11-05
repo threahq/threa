@@ -17,6 +17,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
 import { cn } from "@/lib/utils"
 import type { ComposerActionSide } from "@threahq/types"
+import { ComposerSettingsMenuRow } from "@/components/composer/composer-settings-link"
 import { EditorToolbar } from "./editor-toolbar"
 import type { RichEditorHandle } from "./rich-editor"
 
@@ -401,7 +402,7 @@ function FootMenu({
       // The count replaces the content-derived accessible name, so the label
       // has to ride inside it.
       aria-label={badge ? `${label} (${badge.count} ${badge.noun})` : undefined}
-      className="h-9 w-full justify-start gap-2 px-2 text-sm"
+      className="h-11 w-full justify-start gap-2 px-2 text-sm sm:h-9"
       onPointerDown={(e) => e.preventDefault()}
       onClick={() => {
         setOpen(false)
@@ -474,6 +475,7 @@ function FootMenu({
             mobileExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />,
             () => onMobileExpandedChange(!mobileExpanded)
           )}
+        <ComposerSettingsMenuRow onNavigate={() => setOpen(false)} />
       </PopoverContent>
     </Popover>
   )

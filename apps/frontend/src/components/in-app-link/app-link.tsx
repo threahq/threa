@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { Link, useParams, useSearchParams } from "react-router-dom"
+import { Link, useParams } from "react-router-dom"
 import { SlidersHorizontal } from "lucide-react"
 import {
   APP_LINK_GO_ROUTE,
@@ -12,8 +12,7 @@ import {
   type SidebarQuickLinkKey,
 } from "@threahq/types"
 import { QUICK_LINK_META } from "@/components/layout/sidebar/quick-link-meta"
-import { SETTINGS_TAB_CONFIG } from "@/components/settings/tab-config"
-import { WORKSPACE_SETTINGS_TAB_CONFIG, WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
+import { SETTINGS_PAGE_CONFIG } from "@/components/settings/settings-registry"
 import { useOptionalSettings } from "@/contexts"
 import { InAppLinkChip } from "./in-app-link-chip"
 
@@ -32,10 +31,7 @@ export function appLinkHrefFromGoPath(path: string): string | null {
 
 /** The destination's name as the app shows it, for a link that carries no label of its own. */
 export function appLinkDestinationLabel(destination: AppLinkDestination): string {
-  if (destination.kind === "settings") return `Settings: ${SETTINGS_TAB_CONFIG[destination.tab].label}`
-  if (destination.kind === "workspace-settings") {
-    return `Workspace settings: ${WORKSPACE_SETTINGS_TAB_CONFIG[destination.tab].label}`
-  }
+  if (destination.kind === "settings") return `Settings: ${SETTINGS_PAGE_CONFIG[destination.tab].label}`
   const { page } = destination
   return isKnownQuickLinkKey(page) ? QUICK_LINK_META[page].label : NON_QUICK_LINK_PAGE_LABELS[page]
 }
@@ -43,14 +39,10 @@ export function appLinkDestinationLabel(destination: AppLinkDestination): string
 function resolveAppLinkPath(
   destination: AppLinkDestination,
   workspaceId: string,
-  search: URLSearchParams,
   getSettingsUrl: ((tab: SettingsTab) => string) | undefined
 ): string | null {
   if (destination.kind === "page") return `/w/${workspaceId}/${destination.page}`
-  if (destination.kind === "settings") return getSettingsUrl?.(destination.tab) ?? null
-  const params = new URLSearchParams(search)
-  params.set(WS_SETTINGS_PARAM, destination.tab)
-  return `?${params.toString()}`
+  return getSettingsUrl?.(destination.tab) ?? null
 }
 
 /**
@@ -61,13 +53,10 @@ function resolveAppLinkPath(
  */
 export function AppLink({ href, label }: { href: string; label: ReactNode }) {
   const { workspaceId } = useParams<{ workspaceId: string }>()
-  const [searchParams] = useSearchParams()
   const settings = useOptionalSettings()
   const destination = parseAppLinkHref(href)
   const path =
-    destination && workspaceId
-      ? resolveAppLinkPath(destination, workspaceId, searchParams, settings?.getSettingsUrl)
-      : null
+    destination && workspaceId ? resolveAppLinkPath(destination, workspaceId, settings?.getSettingsUrl) : null
   if (!destination || !path) return <span>{label}</span>
 
   const icon = destination.kind === "page" ? undefined : SlidersHorizontal

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { PushTestDeviceProgress, PushTestProgress, PushTestResponse } from "@threahq/types"
 import { act, fireEvent, render, screen, userEvent, within } from "@/test"
 import { api } from "@/api/client"
@@ -8,6 +9,7 @@ import * as pushHooksModule from "@/hooks/use-push-notifications"
 import * as pauseControlsModule from "@/hooks/use-notification-pause-controls"
 import * as pushActionsModule from "./push-actions-section"
 import { NotificationsSettings } from "./notifications-settings"
+import { SETTING_CHOICE_LABELS, settingDef } from "./settings-registry"
 
 const WS = "ws_1"
 const FIREFOX_ANDROID = "Mozilla/5.0 (Android 14; Mobile; rv:131.0) Gecko/131.0 Firefox/131.0"
@@ -16,7 +18,10 @@ const CHROME_MAC =
 const SAFARI_IPHONE =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
 
-const push = { isSubscribed: true }
+const push: { isSubscribed: boolean; permission: NotificationPermission } = {
+  isSubscribed: true,
+  permission: "granted",
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -26,7 +31,8 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-function mount() {
+function mount({ permission = "granted" }: { permission?: NotificationPermission } = {}) {
+  push.permission = permission
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
     preferences: { notificationLevel: "all" },
     updatePreference: vi.fn(),
@@ -36,7 +42,7 @@ function mount() {
   vi.spyOn(pushHooksModule, "usePushNotifications").mockImplementation(
     () =>
       ({
-        permission: "granted",
+        permission: push.permission,
         isSubscribed: push.isSubscribed,
         status: push.isSubscribed ? "subscribed" : "idle",
         error: null,
@@ -57,13 +63,18 @@ function mount() {
     resume: vi.fn(),
   } as unknown as ReturnType<typeof pauseControlsModule.useNotificationPauseControls>)
   vi.spyOn(pushActionsModule, "PushActionsSection").mockImplementation(() => <></>)
+  const queryClient = new QueryClient()
   const tree = () => (
-    <MemoryRouter initialEntries={[`/w/${WS}/settings`]}>
-      <Link to="/w/ws_2/settings">Other workspace</Link>
-      <Routes>
-        <Route path="/w/:workspaceId/settings" element={<NotificationsSettings />} />
-      </Routes>
-    </MemoryRouter>
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[`/w/${WS}/settings`]}>
+        <contextsModule.SettingsProvider>
+          <Link to="/w/ws_2/settings">Other workspace</Link>
+          <Routes>
+            <Route path="/w/:workspaceId/settings" element={<NotificationsSettings />} />
+          </Routes>
+        </contextsModule.SettingsProvider>
+      </MemoryRouter>
+    </QueryClientProvider>
   )
   const { rerender } = render(tree())
   return {
@@ -87,6 +98,82 @@ function devicesResponse(
     devices,
   }
 }
+
+describe("NotificationsSettings layout", () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("should render every setting of the page at its own anchor", () => {
+    mount()
+    const anchors = ["notification-level", "pause", "push-device"].map(
+      (id) => document.getElementById(`setting-${id}`)?.dataset.setting
+    )
+    expect(anchors).toEqual(["notification-level", "pause", "push-device"])
+  })
+
+  it("keeps a blocked device's switch reachable, with the setting's description and the block as its reason", () => {
+    mount({ permission: "denied" })
+    const toggle = screen.getByRole("switch", { name: settingDef("push-device").label })
+
+    expect({ disabled: toggle.getAttribute("aria-disabled"), tabbable: toggle.tabIndex }).toEqual({
+      disabled: "true",
+      tabbable: 0,
+    })
+    expect(toggle).toHaveAccessibleDescription(
+      `${settingDef("push-device").description} Your browser blocks notifications from Threa. Allow them in the browser's site settings, then reload.`
+    )
+  })
+
+  it("shows the pause as a select reading Not paused, described by what pausing does", () => {
+    mount()
+    const pause = screen.getByRole("combobox", { name: settingDef("pause").label })
+    expect({ value: pause.textContent, description: pause.getAttribute("aria-describedby") }).toEqual({
+      value: "Not paused",
+      description: "setting-pause-description",
+    })
+    expect(pause).toHaveAccessibleDescription(settingDef("pause").description)
+  })
+
+  it("pauses for the duration picked from the select", async () => {
+    mount()
+    const { pauseFor } = vi.mocked(pauseControlsModule.useNotificationPauseControls).mock.results[0]!.value
+    await userEvent.click(screen.getByRole("combobox", { name: settingDef("pause").label }))
+    await userEvent.click(await screen.findByRole("option", { name: "For 1 hour" }))
+    expect(pauseFor).toHaveBeenCalledWith(expect.objectContaining({ id: "1h" }))
+  })
+
+  it("should save the notification level picked from its list", async () => {
+    mount()
+    const updatePreference = vi.mocked(contextsModule.usePreferences).mock.results[0]!.value.updatePreference
+    await userEvent.click(screen.getByRole("radio", { name: SETTING_CHOICE_LABELS["notification-level"].mentions }))
+    expect(updatePreference).toHaveBeenCalledWith("notificationLevel", "mentions")
+  })
+
+  it("should point from the account level to a stream's own level", () => {
+    mount()
+    const row = document.getElementById("setting-notification-level")!
+    const description = within(row).getByRole("radiogroup").getAttribute("aria-describedby")!
+    expect({
+      described: document.getElementById(description)?.textContent?.includes("channels default to mentions only."),
+      landsOnStreamLevel: within(row)
+        .getByRole("link", { name: "Pick a stream" })
+        .getAttribute("href")
+        ?.includes("stream-notifications"),
+    }).toEqual({ described: true, landsOnStreamLevel: true })
+  })
+
+  it("should say this device once, in the label, and turn push off from its switch", async () => {
+    mount()
+    const row = document.getElementById("setting-push-device")!
+    expect(within(row).queryByText("This device")).toBeNull()
+    const toggle = within(row).getByRole("switch", { name: "Push on this device" })
+    expect(toggle).toBeChecked()
+    await userEvent.click(toggle)
+    const { unsubscribe } = vi.mocked(pushHooksModule.usePushNotifications).mock.results.at(-1)!.value
+    expect(unsubscribe).toHaveBeenCalled()
+  })
+})
 
 describe("NotificationsSettings Send test", () => {
   afterEach(() => {
@@ -401,7 +488,7 @@ describe("NotificationsSettings Send test device reports", () => {
     mount()
 
     expect(screen.getByRole("button", { name: "Send test" })).toHaveAccessibleDescription(
-      "Devices on a current version of Threa report back to Threa whether they created it. Those reports expire after 24 hours and are only shown here."
+      "Sends to every device with push on. Devices on a current version of Threa report back to Threa whether they created it. Those reports expire after 24 hours and are only shown here."
     )
   })
 

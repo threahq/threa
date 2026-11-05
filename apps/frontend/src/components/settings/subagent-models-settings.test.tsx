@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { ReactNode } from "react"
@@ -35,7 +35,15 @@ function renderSection(workspaceModels: string[]) {
   function Wrapper({ children }: { children: ReactNode }) {
     return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   }
-  return render(<PersonalSubagentModelsSection workspaceId="ws_1" />, { wrapper: Wrapper })
+  const view = render(<PersonalSubagentModelsSection workspaceId="ws_1" />, { wrapper: Wrapper })
+  openModels()
+  return view
+}
+
+/** The models sit behind a disclosure whose trigger carries the current summary. */
+function openModels() {
+  const trigger = screen.queryByRole("button", { name: /Your subagent models/ })
+  if (trigger) fireEvent.click(trigger)
 }
 
 describe("PersonalSubagentModelsSection", () => {
@@ -50,7 +58,7 @@ describe("PersonalSubagentModelsSection", () => {
 
     expect(screen.getByLabelText("GPT-5.6 Terra")).toHaveAttribute("data-state", "checked")
     expect(screen.getByLabelText("Claude Sonnet 5")).toHaveAttribute("data-state", "checked")
-    expect(screen.getByText(/Following your workspace's set/)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Your subagent models/ })).toHaveTextContent("Same as the workspace")
   })
 
   it("renders nothing when the workspace offers fewer than two models — there is nothing to subset", () => {
@@ -100,14 +108,16 @@ describe("PersonalSubagentModelsSection", () => {
     await waitFor(() => expect(updatePreference).toHaveBeenCalledWith("subagentModels", []))
   })
 
-  it("unticking the last one stores an empty list — that is the follow-the-workspace state", async () => {
+  it("keeps the last ticked model on, since an empty list would mean every model", async () => {
     mockPreferences([SONNET])
     const user = userEvent.setup()
     renderSection([TERRA, SONNET])
 
-    await user.click(screen.getByLabelText("Claude Sonnet 5"))
-
-    await waitFor(() => expect(updatePreference).toHaveBeenCalledWith("subagentModels", []))
+    const last = screen.getByLabelText("Claude Sonnet 5")
+    expect(last).toBeDisabled()
+    expect(last).toHaveAccessibleDescription(/Keep at least one model\./)
+    await user.click(last)
+    expect(updatePreference).not.toHaveBeenCalled()
   })
 
   it("drops a stored model the workspace no longer offers on the next edit", async () => {
@@ -132,7 +142,7 @@ describe("PersonalSubagentModelsSection", () => {
     expect(screen.getByLabelText("GPT-5.6 Terra")).toHaveAttribute("data-state", "unchecked")
     expect(screen.getByLabelText("Claude Sonnet 5")).toHaveAttribute("data-state", "unchecked")
     expect(screen.getByText(/nothing can be delegated for you/)).toBeInTheDocument()
-    expect(screen.queryByText(/Following your workspace's set/)).toBeNull()
+    expect(screen.getByRole("button", { name: /Your subagent models/ })).toHaveTextContent("None picked")
   })
 
   it("re-picking from the emptied state stores just that model", async () => {
@@ -152,6 +162,7 @@ describe("PersonalSubagentModelsSection", () => {
       return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     }
     render(<PersonalSubagentModelsSection workspaceId="ws_1" />, { wrapper: Wrapper })
+    openModels()
 
     for (const modelId of DEFAULT_SUBAGENT_MODELS) {
       const box = screen.getByLabelText(SUBAGENT_MODEL_CATALOG.find((entry) => entry.id === modelId)!.label)
@@ -170,6 +181,7 @@ describe("PersonalSubagentModelsSection", () => {
       return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     }
     render(<PersonalSubagentModelsSection workspaceId="ws_1" />, { wrapper: Wrapper })
+    openModels()
 
     expect(screen.queryByText(/nothing can be delegated for you/)).not.toBeInTheDocument()
   })

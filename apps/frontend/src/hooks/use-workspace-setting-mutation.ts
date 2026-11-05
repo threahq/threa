@@ -19,12 +19,19 @@ export function useWorkspaceSettingMutation<K extends keyof UpdateWorkspaceSetti
   workspaceId: string,
   key: K,
   errorMessage: string,
-  /** Runs after the cache rollback — for surfaces holding the value in local state too. */
-  options?: { onError?: () => void }
+  options?: {
+    /** Runs after the cache rollback — for surfaces holding the value in local state too. */
+    onError?: () => void
+    /** The caller shows a failure beside the field, so no toast repeats it. */
+    errorShownInPlace?: boolean
+  }
 ) {
   const queryClient = useQueryClient()
 
   return useMutation({
+    // Writes carry the key's whole value, so they reach the server in call order:
+    // a later save landing first would be overwritten by an older one.
+    scope: { id: `workspace-setting:${workspaceId}:${key}` },
     mutationFn: (value: NonNullable<UpdateWorkspaceSettingsInput[K]>) =>
       workspaceSettingsApi.update(workspaceId, { [key]: value } as UpdateWorkspaceSettingsInput),
     onMutate: async (value) => {
@@ -48,7 +55,7 @@ export function useWorkspaceSettingMutation<K extends keyof UpdateWorkspaceSetti
         )
       }
       options?.onError?.()
-      toast.error(errorMessage)
+      if (!options?.errorShownInPlace) toast.error(errorMessage)
     },
     onSuccess: (saved) => {
       // Same reason, inverted: the response is authoritative for committed state,

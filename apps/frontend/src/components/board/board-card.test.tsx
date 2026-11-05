@@ -15,6 +15,7 @@ import {
   TraceProvider,
   MediaGalleryProvider,
   PendingMessagesProvider,
+  SettingsProvider,
 } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { __clearBoardRailRegistry } from "@/hooks/use-board-card-messages"
@@ -100,15 +101,17 @@ function cardTree(post: BoardViewPost, conversations: Record<string, unknown>, q
       <TooltipProvider>
         <ServicesProvider services={{ conversations: conversations as never }}>
           <MemoryRouter initialEntries={[`/w/${WS}/board`]}>
-            <TraceProvider>
-              <PanelProvider>
-                <MediaGalleryProvider>
-                  <PendingMessagesProvider>
-                    <BoardCard workspaceId={WS} post={post} contextLabel="#general" streamType="channel" />
-                  </PendingMessagesProvider>
-                </MediaGalleryProvider>
-              </PanelProvider>
-            </TraceProvider>
+            <SettingsProvider>
+              <TraceProvider>
+                <PanelProvider>
+                  <MediaGalleryProvider>
+                    <PendingMessagesProvider>
+                      <BoardCard workspaceId={WS} post={post} contextLabel="#general" streamType="channel" />
+                    </PendingMessagesProvider>
+                  </MediaGalleryProvider>
+                </PanelProvider>
+              </TraceProvider>
+            </SettingsProvider>
           </MemoryRouter>
         </ServicesProvider>
       </TooltipProvider>
@@ -725,6 +728,10 @@ describe("BoardCard collapse", () => {
     expect(screen.getByText("Rotate the API tokens")).toBeTruthy()
     expect(screen.getByText("1 message")).toBeTruthy()
     expect(screen.getByText("Opening body.")).toBeTruthy()
+    // Folded by hand: the gear lands on the folded height, which hand folds use.
+    expect(screen.getByRole("link", { name: "Collapsed card settings" }).getAttribute("href")).toMatch(
+      /[?&]setting=board-card-collapse-to$/
+    )
 
     await user.click(screen.getByLabelText("Expand conversation"))
     expect(await screen.findByText("Opening body.")).toBeTruthy()
@@ -739,6 +746,9 @@ describe("BoardCard collapse", () => {
       expect(await screen.findByText("Rotate the API tokens")).toBeTruthy()
       expect(screen.getByLabelText("Expand conversation")).toBeTruthy()
       expect(screen.getByText("Opening body.")).toBeTruthy()
+      expect(screen.getByRole("link", { name: "Collapsed card settings" }).getAttribute("href")).toMatch(
+        /[?&]setting=board-card-collapse$/
+      )
     } finally {
       restore()
     }

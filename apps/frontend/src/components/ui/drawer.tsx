@@ -5,6 +5,7 @@ import { Drawer as DrawerPrimitive } from "vaul"
 
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
+import { FOOTER_TOUCH_TARGETS } from "./button"
 import { HistoryBackClose, type HistoryEntryProp } from "./history-back-close"
 
 const InsideDrawerContext = React.createContext(false)
@@ -98,7 +99,7 @@ const DrawerHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivEleme
 DrawerHeader.displayName = "DrawerHeader"
 
 const DrawerFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("mt-auto flex flex-col gap-2 p-4", className)} {...props} />
+  <div className={cn("mt-auto flex flex-col gap-2 p-4", FOOTER_TOUCH_TARGETS, className)} {...props} />
 )
 DrawerFooter.displayName = "DrawerFooter"
 

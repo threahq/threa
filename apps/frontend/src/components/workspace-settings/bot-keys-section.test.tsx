@@ -91,7 +91,8 @@ describe("BotKeysSection — duplicate", () => {
 
     renderSection()
 
-    await user.click(await screen.findByRole("button", { name: "Duplicate production" }))
+    await user.click(await screen.findByRole("button", { name: "Actions for production" }))
+    await user.click(await screen.findByRole("menuitem", { name: "Duplicate" }))
 
     const nameInput = screen.getByRole("textbox", {
       name: "Key name",
@@ -108,6 +109,6 @@ describe("BotKeysSection — duplicate", () => {
         apiVersion: olderVersion,
       })
     )
-    expect(await screen.findByText("Your new bot key: production (copy)")).toBeTruthy()
+    expect(await screen.findByText("New key: production (copy)")).toBeTruthy()
   })
 })

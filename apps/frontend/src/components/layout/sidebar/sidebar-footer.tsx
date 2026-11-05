@@ -5,6 +5,7 @@ import {
   BookOpen,
   BellOff,
   ChevronUp,
+  Building2,
   DollarSign,
   FileText,
   Hash,
@@ -18,6 +19,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sun,
+  UserRound,
   type LucideIcon,
 } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
@@ -31,6 +33,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { getInitials } from "@/lib/initials"
 import { STREAM_ICONS } from "@/lib/streams"
+import { buildAIUsagePath } from "@/lib/stream-links"
 import { cn } from "@/lib/utils"
 import {
   getAvatarUrl,
@@ -48,7 +51,6 @@ import { useResumeNotifications } from "@/hooks"
 import { formatNotificationPauseLabel, formatStatusClearLabel } from "@/lib/status"
 import { StatusPicker } from "@/components/status/status-picker"
 import { PauseNotificationsDialog } from "@/components/notifications/pause-notifications-dialog"
-import { WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
 import { SidebarActionDrawer, SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
 
 const USER_GUIDE_URL = "https://threa.io/guide"
@@ -241,7 +243,7 @@ export const SidebarFooter = memo(function SidebarFooter({
   onShowGettingStarted,
 }: SidebarFooterProps) {
   const [, setSearchParams] = useSearchParams()
-  const { openSettings } = useSettings()
+  const { openSettings, openOverview } = useSettings()
   const { collapseOnMobile } = useSidebar()
   // Drawer vs. dropdown is a presentation choice — follow the active input so a
   // mouse on a touchscreen laptop gets the dropdown, a finger gets the sheet.
@@ -346,20 +348,18 @@ export const SidebarFooter = memo(function SidebarFooter({
 
   const handleOpenSettings = useCallback(() => {
     collapseOnMobile()
+    openSettings()
+  }, [collapseOnMobile, openSettings])
+
+  const openProfile = useCallback(() => {
+    collapseOnMobile()
     openSettings("profile")
   }, [collapseOnMobile, openSettings])
 
   const openWorkspaceSettings = useCallback(() => {
     collapseOnMobile()
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        next.set(WS_SETTINGS_PARAM, "users")
-        return next
-      },
-      { replace: true }
-    )
-  }, [collapseOnMobile, setSearchParams])
+    openOverview("workspace")
+  }, [collapseOnMobile, openOverview])
 
   const openAccountSwitcher = useCallback(() => {
     collapseOnMobile()
@@ -456,23 +456,29 @@ export const SidebarFooter = memo(function SidebarFooter({
         : []),
       ...appearanceActions,
       {
+        id: "profile",
+        label: "Profile",
+        icon: UserRound,
+        onSelect: openProfile,
+        separatorBefore: true,
+      },
+      {
         id: "settings",
         label: "Settings",
         icon: Settings,
         onSelect: handleOpenSettings,
-        separatorBefore: true,
       },
       {
         id: "workspace-settings",
-        label: "Workspace Settings",
-        icon: Settings,
+        label: "Workspace settings",
+        icon: Building2,
         onSelect: openWorkspaceSettings,
       },
       {
         id: "ai-usage",
-        label: "AI Usage",
+        label: "AI usage",
         icon: DollarSign,
-        href: `/w/${workspaceId}/admin/ai-usage`,
+        href: buildAIUsagePath(workspaceId),
         onSelect: collapseOnMobile,
         separatorBefore: true,
       },
@@ -482,7 +488,7 @@ export const SidebarFooter = memo(function SidebarFooter({
         ? [
             {
               id: "admin-portal",
-              label: "Admin Portal",
+              label: "Admin portal",
               icon: ShieldCheck,
               href: adminPortalUrl,
               external: true,
@@ -528,6 +534,7 @@ export const SidebarFooter = memo(function SidebarFooter({
       onEditLayout,
       appearanceActions,
       handleOpenSettings,
+      openProfile,
       openWorkspaceSettings,
       openAccountSwitcher,
       collapseOnMobile,

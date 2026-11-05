@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react"
+import { useCallback, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react"
 import { ChevronDown, ChevronUp } from "lucide-react"
 import {
   DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT,
@@ -7,6 +7,7 @@ import {
 } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { usePreferencesOptional } from "@/contexts/preferences-context"
+import { SettingsGearLink } from "@/components/in-context-settings/settings-gear-link"
 import { useBlockCollapse } from "./use-block-collapse"
 import { useMeasuredLineCount } from "./use-measured-line-count"
 import { InsideCollapsibleBlockProvider, MarkdownBlockProvider, type MarkdownBlockKind } from "./markdown-block-context"
@@ -48,6 +49,8 @@ interface CollapsibleBodyProps {
   group?: CollapsibleBodyGroup
   /** Receives the body's full height (trailing included) before paint. */
   onHeight?: (heightPx: number) => void
+  /** Told whether the body is tall enough to fold, whenever that changes. */
+  onCollapsibleChange?: (collapsible: boolean) => void
 }
 
 // The collapsed body fades out its own bottom edge via a mask (the content goes
@@ -79,6 +82,7 @@ export function CollapsibleBody({
   trailing,
   group,
   onHeight,
+  onCollapsibleChange,
 }: CollapsibleBodyProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const { lineCount, lineHeightPx, heightPx, remeasure } = useMeasuredLineCount(bodyRef, [content], {
@@ -99,6 +103,10 @@ export function CollapsibleBody({
   useLayoutEffect(() => {
     if (fullHeightPx !== null) onHeight?.(fullHeightPx)
   }, [fullHeightPx, onHeight])
+
+  useLayoutEffect(() => {
+    onCollapsibleChange?.(collapsible)
+  }, [collapsible, onCollapsibleChange])
 
   const exceedsClamp = (height: number | null | undefined) =>
     collapseToHeight !== undefined && height !== null && height !== undefined && height > collapseToHeight
@@ -202,29 +210,30 @@ export function CollapsibleBody({
         </div>
       </InsideCollapsibleBlockProvider>
       {toggleLabel && (
-        <button
-          type="button"
-          onClick={group ? group.onToggle : own.toggle}
-          aria-expanded={expanded}
-          data-run-fold-toggle={group ? "" : undefined}
-          // When collapsed, lift the toggle up into the faded bottom band (the
-          // clamp's half-line teaser + the mask fade read as empty space) so it
-          // sits centered in that spacer rather than pinned below it. Expanded,
-          // there is no fade — keep normal spacing under the full body. The
-          // padding is the hit area (a 32px-tall target for mouse and thumb);
-          // the negative margins cancel it so the label sits where it did.
-          className={cn(
-            "-mx-2 flex cursor-pointer items-center gap-1 rounded-md px-2 py-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
-            collapsed ? "-mt-4" : "-mt-1"
-          )}
-        >
-          {expanded ? (
-            <ChevronUp className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          ) : (
-            <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          )}
-          {toggleLabel}
-        </button>
+        <div className={cn("flex items-center gap-3", collapsed ? "-mt-4" : "-mt-1")}>
+          <button
+            type="button"
+            onClick={group ? group.onToggle : own.toggle}
+            aria-expanded={expanded}
+            data-run-fold-toggle={group ? "" : undefined}
+            // When collapsed, the wrapper lifts the toggle up into the faded
+            // bottom band (the clamp's half-line teaser + the mask fade read as
+            // empty space) so it sits centered in that spacer rather than pinned
+            // below it. Expanded, there is no fade — keep normal spacing under
+            // the full body. The padding is the hit area (a 32px-tall target for
+            // mouse and thumb); the negative margins cancel it so the label sits
+            // where it did.
+            className="-mx-2 flex cursor-pointer items-center gap-1 rounded-md px-2 py-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {expanded ? (
+              <ChevronUp className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            )}
+            {toggleLabel}
+          </button>
+          {kind === "message" && <SettingsGearLink setting="message-collapse" label="Long message settings" />}
+        </div>
       )}
     </div>
   )
@@ -249,4 +258,17 @@ export function resolveMessageCollapseSettings(preferences?: UserPreferences | n
 export function useMessageCollapseSettings(): MessageCollapseSettings {
   const preferences = usePreferencesOptional()
   return resolveMessageCollapseSettings(preferences?.preferences)
+}
+
+/**
+ * Tracks whether a body folds, for `onCollapsibleChange`. Read on demand (when
+ * a menu opens), so measuring the body never re-renders its owner.
+ */
+export function useCollapsibleProbe() {
+  const collapsibleRef = useRef(false)
+  const onCollapsibleChange = useCallback((collapsible: boolean) => {
+    collapsibleRef.current = collapsible
+  }, [])
+  const isCollapsible = useCallback(() => collapsibleRef.current, [])
+  return { onCollapsibleChange, isCollapsible }
 }

@@ -1,7 +1,6 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { Plus } from "lucide-react"
 import { PERSONA_NAME_MAX_CHARS, type PersonaListItem } from "@threahq/types"
 import {
   Dialog,
@@ -18,6 +17,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useForkPersona } from "@/hooks/use-personas"
+import { SettingAddButton } from "@/components/settings/setting-primitives"
 
 interface PersonaForkDialogProps {
   workspaceId: string
@@ -28,9 +28,8 @@ interface PersonaForkDialogProps {
   sources: Pick<PersonaListItem, "id" | "name">[]
   /**
    * Fork target scope. `workspace` (default, admin surface) creates a shared
-   * custom "agent"; `personal` creates a "persona" private to the caller
-   * (user-scoped-personas). Only the copy and the request scope differ — one
-   * dialog serves both.
+   * custom agent; `personal` creates one private to the caller. Only one line of
+   * copy and the request scope differ — one dialog serves both.
    */
   scope?: "workspace" | "personal"
 }
@@ -50,7 +49,6 @@ export function PersonaForkDialog({ workspaceId, sources, scope = "workspace" }:
   const [sourceId, setSourceId] = useState<string>(sources[0]?.id ?? "")
   const [name, setName] = useState("")
   const isPersonal = scope === "personal"
-  const noun = isPersonal ? "persona" : "agent"
 
   const canCreate = !!sourceId && name.trim().length > 0 && name.length <= PERSONA_NAME_MAX_CHARS && !fork.isPending
 
@@ -74,7 +72,7 @@ export function PersonaForkDialog({ workspaceId, sources, scope = "workspace" }:
           setName("")
           navigate(`/w/${workspaceId}/settings/personas/${persona.id}`)
         },
-        onError: (error) => toast.error(error instanceof Error ? error.message : `Failed to create ${noun}`),
+        onError: () => toast.error("Couldn't create the agent"),
       }
     )
   }
@@ -82,25 +80,22 @@ export function PersonaForkDialog({ workspaceId, sources, scope = "workspace" }:
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
-        <Button type="button" size="sm" variant="outline">
-          <Plus className="mr-1 h-3.5 w-3.5" />
-          New {noun}
-        </Button>
+        <SettingAddButton>New agent</SettingAddButton>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New {noun}</DialogTitle>
+          <DialogTitle>New agent</DialogTitle>
           <DialogDescription>
-            Fork an existing {noun} into an editable copy — its prompt, tools, model, and style carry over. Or start
-            from a blank {noun} and write your own.
+            Copy another agent&apos;s prompt, tools, model and style, or start blank.{" "}
+            {isPersonal ? "Only you can use it." : "Everyone in the workspace can use it."}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
             <Label htmlFor="fork-source">Copy from</Label>
             <Select value={sourceId} onValueChange={setSourceId}>
-              <SelectTrigger id="fork-source">
-                <SelectValue placeholder={`Select a ${noun}`} />
+              <SelectTrigger id="fork-source" className="h-11 sm:h-9 [@media(pointer:coarse)]:min-h-11">
+                <SelectValue placeholder="Pick an agent" />
               </SelectTrigger>
               <SelectContent>
                 {sources.map((source) => (
@@ -108,7 +103,7 @@ export function PersonaForkDialog({ workspaceId, sources, scope = "workspace" }:
                     {source.name}
                   </SelectItem>
                 ))}
-                <SelectItem value={BLANK_SOURCE}>Blank {noun}</SelectItem>
+                <SelectItem value={BLANK_SOURCE}>Blank agent</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -118,7 +113,8 @@ export function PersonaForkDialog({ workspaceId, sources, scope = "workspace" }:
               id="fork-name"
               value={name}
               maxLength={PERSONA_NAME_MAX_CHARS}
-              placeholder="e.g. Research assistant"
+              placeholder="e.g. Researcher"
+              className="h-11 sm:h-9 [@media(pointer:coarse)]:min-h-11"
               onChange={(event) => setName(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
@@ -131,11 +127,17 @@ export function PersonaForkDialog({ workspaceId, sources, scope = "workspace" }:
         </div>
         <DialogFooter>
           <DialogClose asChild>
-            <Button type="button" variant="ghost" size="sm">
+            <Button type="button" variant="ghost" size="sm" className="h-11 sm:h-9 [@media(pointer:coarse)]:min-h-11">
               Cancel
             </Button>
           </DialogClose>
-          <Button type="button" size="sm" onClick={handleCreate} disabled={!canCreate}>
+          <Button
+            type="button"
+            size="sm"
+            className="h-11 sm:h-9 [@media(pointer:coarse)]:min-h-11"
+            onClick={handleCreate}
+            disabled={!canCreate}
+          >
             {fork.isPending ? "Creating…" : "Create"}
           </Button>
         </DialogFooter>

@@ -250,9 +250,9 @@ describe("ConnectTab", () => {
     expect(
       screen.getAllByRole("button").map((button) => [button.textContent, button.hasAttribute("disabled")])
     ).toEqual([
+      ["Create invite link", true],
       ["Revoke", true],
       ["Revoking…", true],
-      ["Create invite link", true],
     ])
     await act(async () => finishRevoke(makeConnection({ id: "strconn_1", state: "revoked", revision: 2 })))
     await waitFor(() => expect(screen.getByRole("button", { name: "Create invite link" })).toBeEnabled())
@@ -606,14 +606,14 @@ describe("ConnectTab", () => {
         name: row.textContent?.replace(/Disconnect$/, ""),
         disconnect: within(row).queryByRole("button", { name: "Disconnect" }) !== null,
       })),
-      reason: screen.getByText("Only the workspace this channel comes from can share it.").tagName,
+      reason: screen.getByText("Only the workspace this channel comes from can share it.").id,
       invite: screen.queryByRole("button", { name: "Create invite link" }),
     }).toEqual({
       rows: [
         { name: "Gamma", disconnect: false },
         { name: "Acme", disconnect: true },
       ],
-      reason: "P",
+      reason: "setting-stream-connect-description",
       invite: null,
     })
   })

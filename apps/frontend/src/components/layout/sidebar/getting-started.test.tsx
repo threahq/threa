@@ -165,7 +165,7 @@ describe("GettingStarted", () => {
     expect(onCreateScratchpad).toHaveBeenCalled()
 
     await user.click(screen.getByRole("button", { name: "Invite your team" }))
-    expect(screen.getByTestId("location-search")).toHaveTextContent("ws-settings=users")
+    expect(openSettings).toHaveBeenCalledWith("members", "invites")
   })
 
   it("should show Meet Ariadne after the first-note task and mark it done when onboardingStreamId is set", () => {

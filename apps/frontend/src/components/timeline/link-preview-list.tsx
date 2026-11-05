@@ -10,6 +10,7 @@ import { useLinkPreviewDismissal } from "@/hooks/use-link-preview-dismissals"
 import { useLinkPreviewOpen } from "@/hooks/use-link-preview-collapse"
 import { resolveLinkPreviewDefaults } from "./link-preview-policy"
 import { LinkPreviewCard } from "./link-preview-card"
+import { PreviewSettingsLink } from "./link-preview-primitives"
 import { InAppLinkPreviewCard } from "./in-app-link-preview-card"
 import {
   isInAppLinkContentType,
@@ -166,15 +167,18 @@ export function LinkPreviewList({
           })}
 
           {hiddenCount > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="basis-full justify-start h-7 text-xs text-muted-foreground"
-              onClick={() => setIsExpanded(true)}
-            >
-              <ChevronDown className="h-3 w-3 mr-1" />
-              Show {hiddenCount} more preview{hiddenCount > 1 ? "s" : ""}
-            </Button>
+            <div className="flex basis-full items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="justify-start h-7 text-xs text-muted-foreground"
+                onClick={() => setIsExpanded(true)}
+              >
+                <ChevronDown className="h-3 w-3 mr-1" />
+                Show {hiddenCount} more preview{hiddenCount > 1 ? "s" : ""}
+              </Button>
+              <PreviewSettingsLink />
+            </div>
           )}
         </div>
       )}

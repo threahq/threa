@@ -1,7 +1,17 @@
 import { memo } from "react"
-import { ArrowLeft, ArrowRight, Command, FileText, History, Search as SearchIcon, Terminal } from "lucide-react"
+import {
+  ArrowLeft,
+  ArrowRight,
+  Command,
+  FileText,
+  History,
+  Search as SearchIcon,
+  Settings as SettingsIcon,
+  Terminal,
+} from "lucide-react"
 import { Link } from "react-router-dom"
-import { useQuickSwitcher, usePreferences, useSidebar } from "@/contexts"
+import { useQuickSwitcher, usePreferences, useSettings, useSidebar } from "@/contexts"
+import { SETTINGS_ENTRY_ATTRIBUTE } from "@/contexts/settings-context"
 import { useSearchPanel } from "@/components/search/search-panel-context"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { ThreaLogo } from "@/components/threa-logo"
@@ -145,6 +155,7 @@ export const SidebarHeader = memo(function SidebarHeader({ workspaceName, worksp
             {searchBinding && <ShortcutHint binding={searchBinding} />}
           </TooltipContent>
         </Tooltip>
+        <SettingsLink onClick={collapseOnMobile} />
         <SidebarActionMenu
           actions={switcherActions}
           side="bottom"
@@ -204,6 +215,28 @@ function HistoryStep({
         {content}
       </Link>
     </DropdownMenuItem>
+  )
+}
+
+/** Its own leaf: the settings url changes on every navigation, the memoized header must not. */
+function SettingsLink({ onClick }: { onClick: () => void }) {
+  const { getSettingsUrl } = useSettings()
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
+          asChild
+        >
+          <Link to={getSettingsUrl()} aria-label="Settings" onClick={onClick} {...{ [SETTINGS_ENTRY_ATTRIBUTE]: "" }}>
+            <SettingsIcon className="h-4 w-4" />
+          </Link>
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">Settings</TooltipContent>
+    </Tooltip>
   )
 }
 

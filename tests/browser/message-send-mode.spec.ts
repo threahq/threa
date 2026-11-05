@@ -23,28 +23,20 @@ test.describe("Message Send Mode", () => {
     await expect(page.getByRole("dialog")).toBeVisible({ timeout: 5000 })
   }
 
-  /**
-   * Helper to change send mode in settings.
-   * Uses exact role match for radio buttons since both labels contain "Enter to send".
-   */
+  /** Helper to change send mode in settings. */
   async function setSendMode(page: import("@playwright/test").Page, mode: "enter" | "cmdEnter") {
     await openSettings(page)
     const dialog = page.getByRole("dialog")
 
-    // Wait for the responsive nav to mount before selecting Composer; checking
-    // visibility immediately races the dialog's deferred content render.
-    const composerSidebarButton = dialog.getByRole("button", { name: /^Composer\b/ })
-    await expect(composerSidebarButton).toBeVisible({ timeout: 5000 })
-    await composerSidebarButton.click()
+    // Wait for the nav to mount before opening the page; checking visibility
+    // immediately races the dialog's deferred content render.
+    const keyboardPage = dialog.getByRole("link", { name: "Keyboard & composer" })
+    await expect(keyboardPage).toBeVisible({ timeout: 5000 })
+    await keyboardPage.click()
 
-    await expect(dialog.getByRole("radio", { name: "Enter to send", exact: true })).toBeVisible({ timeout: 5000 })
-
-    // Use exact name match for radio buttons
-    if (mode === "enter") {
-      await dialog.getByRole("radio", { name: "Enter to send", exact: true }).click()
-    } else {
-      await dialog.getByRole("radio", { name: "⌘/Ctrl + Enter to send", exact: true }).click()
-    }
+    const choice = dialog.getByRole("radio", { name: mode === "enter" ? "Send message" : "Start a new line" })
+    await expect(choice).toBeVisible({ timeout: 5000 })
+    await choice.click()
     await page.keyboard.press("Escape")
     await expect(dialog).not.toBeVisible()
   }

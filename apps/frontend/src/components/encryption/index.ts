@@ -1,5 +1,5 @@
 export { PassphraseSetupModal } from "./passphrase-setup-modal"
 export { PassphraseUnlockModal } from "./passphrase-unlock-modal"
-export { EncryptedScratchpadsSection } from "./encrypted-scratchpads-section"
+export { EncryptionKeysSetting } from "./encryption-keys-setting"
 export { InviteActorButton } from "./invite-actor-button"
 export { InviteBotButton } from "./invite-bot-button"

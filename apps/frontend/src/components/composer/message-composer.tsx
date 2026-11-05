@@ -38,6 +38,7 @@ import { ComposerPillDndHost } from "@/components/editor/composer-pill-dnd"
 import { MicButton, type MicButtonHandle } from "./mic-button"
 import { StashedDraftsComposerBridgeContext, type StashedDraftsComposerBridge } from "./stashed-drafts-open-context"
 import { ComposerActionBar } from "./composer-action-bar"
+import { ComposerSendHint, ComposerSettingsButton } from "./composer-settings-link"
 import { ComposerLinkPreviews } from "./composer-link-previews"
 import { StashedDraftsPicker, type StashedDraftsPickerProps } from "./stashed-drafts-picker"
 import { ContextRefStrip } from "./context-ref-strip"
@@ -70,6 +71,7 @@ const MOBILE_COMPOSER_DEFAULT_MAX_PX = 380
 const MOBILE_COMPOSER_KEYBOARD_MAX_RATIO = 0.5
 const MOBILE_KEYBOARD_SETTLE_MS = 350
 const MOBILE_ORIENTATION_SETTLE_MS = 600
+const COMPOSER_SETTINGS_BUTTON = <ComposerSettingsButton />
 
 function visibleViewportHeight(): number {
   if (typeof window === "undefined") return MOBILE_COMPOSER_DEFAULT_MAX_PX * 2
@@ -1193,6 +1195,7 @@ export function MessageComposer({
       autoFocus={autoFocus}
       scopeId={scopeId}
       staticToolbarOpen={!isMobile && formatOpen}
+      toolbarTrailingContent={COMPOSER_SETTINGS_BUTTON}
       className={isMobile ? undefined : "flex min-h-0 flex-col"}
       disableSelectionToolbar={disableSelectionToolbar}
       onEditLastMessage={onEditLastMessage}
@@ -1398,6 +1401,7 @@ export function MessageComposer({
                 autoFocus
                 scopeId={scopeId}
                 staticToolbarOpen={!isMobile}
+                toolbarTrailingContent={COMPOSER_SETTINGS_BUTTON}
                 disableSelectionToolbar
                 onEditLastMessage={onEditLastMessage}
                 onHistoryStep={stepBrowserHistory}
@@ -1908,9 +1912,7 @@ export function MessageComposer({
 
             {!isMobile && (
               <div className={cn("flex px-1 pt-1", mirrored ? "justify-start" : "justify-end")}>
-                <span className="text-[10px] text-muted-foreground opacity-60 select-none pointer-events-none">
-                  {sendHint}
-                </span>
+                <ComposerSendHint hint={sendHint} />
               </div>
             )}
           </ComposerPillDndHost>

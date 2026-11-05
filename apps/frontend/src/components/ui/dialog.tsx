@@ -3,6 +3,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { FOOTER_TOUCH_TARGETS } from "./button"
 import { HistoryBackClose, type HistoryEntryProp } from "./history-back-close"
 
 const Dialog = ({
@@ -98,7 +99,10 @@ const DialogHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivEleme
 DialogHeader.displayName = "DialogHeader"
 
 const DialogFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2", className)} {...props} />
+  <div
+    className={cn("flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2", FOOTER_TOUCH_TARGETS, className)}
+    {...props}
+  />
 )
 DialogFooter.displayName = "DialogFooter"
 

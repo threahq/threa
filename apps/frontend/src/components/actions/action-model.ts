@@ -20,7 +20,7 @@ export interface ActionDefinition<Context> {
    * {@link ActionDefinition.groupId}), only the group's primary action's
    * `separatorBefore` is honored — alternatives ride along the group.
    */
-  separatorBefore?: boolean
+  separatorBefore?: boolean | ((context: Context) => boolean)
   /** Visual variant — "destructive" renders in red */
   variant?: "destructive"
   /**
@@ -61,6 +61,10 @@ export type GroupedAction<Context> = GroupedItems<ActionDefinition<Context>>
 /** Resolve the visible label for an action, handling the string/function variants. */
 export function resolveActionLabel<Context>(action: ActionDefinition<Context>, context: Context): string {
   return typeof action.label === "function" ? action.label(context) : action.label
+}
+
+export function hasSeparatorBefore<Context>(action: ActionDefinition<Context>, context: Context): boolean {
+  return typeof action.separatorBefore === "function" ? action.separatorBefore(context) : !!action.separatorBefore
 }
 
 /** Filter actions that should be shown for a given context. */

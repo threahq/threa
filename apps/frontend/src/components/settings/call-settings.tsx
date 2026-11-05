@@ -1,6 +1,5 @@
-import { Label } from "@/components/ui/label"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { Separator } from "@/components/ui/separator"
+import { ChoiceSetting, SettingsSection, type ChoiceOption } from "./setting-primitives"
+import { SETTING_CHOICE_LABELS } from "./settings-registry"
 import {
   setCallLayout,
   setCallSelfMirror,
@@ -13,40 +12,34 @@ import {
 } from "@/stores/call-prefs-store"
 
 // Picking an explicit surface in settings also seeds `lastDesktopSurface`, so a later
-// switch to "Keep last" resolves to what the user actually chose, not the stale default.
+// switch to "Where you left it" resolves to what the user actually chose, not the stale default.
 function chooseDesktopSurface(value: DesktopCallSurface): void {
   setDesktopCallSurface(value)
   if (value !== "keep_last") setLastDesktopSurface(value)
 }
 
-const MIRROR_OPTIONS: { value: CallSelfMirror; label: string; description: string }[] = [
-  {
-    value: "auto",
-    label: "Automatic",
-    description: "Mirror a front-facing or desktop camera; leave a phone's back camera normal.",
-  },
-  { value: "on", label: "Always mirror", description: "Always show your self-view mirrored." },
-  { value: "off", label: "Never mirror", description: "Always show your self-view the normal way." },
+export const MIRROR_OPTIONS: ChoiceOption<CallSelfMirror>[] = [
+  { value: "auto", label: "Automatic", description: "On front and desktop cameras, not a phone's back camera." },
+  { value: "on", label: "Always", description: "On every camera." },
+  { value: "off", label: "Never" },
 ]
 
-const LAYOUT_OPTIONS: { value: CallLayout; label: string; description: string }[] = [
-  {
-    value: "speaker",
-    label: "Speaker",
-    description: "One large tile for the active speaker, the rest in a filmstrip.",
-  },
-  { value: "grid", label: "Grid", description: "Equal-sized tiles for everyone." },
+export const LAYOUT_OPTIONS: ChoiceOption<CallLayout>[] = [
+  { value: "speaker", label: "Speaker", description: "One large tile for whoever is talking, the rest in a strip." },
+  { value: "grid", label: "Grid", description: "Every tile the same size." },
 ]
 
-const DESKTOP_SURFACE_OPTIONS: { value: DesktopCallSurface; label: string; description: string }[] = [
-  { value: "keep_last", label: "Keep last", description: "Reopen calls wherever you last had them." },
+const DESKTOP_SURFACE_LABELS = SETTING_CHOICE_LABELS["call-desktop-video"]
+
+export const DESKTOP_SURFACE_OPTIONS: ChoiceOption<DesktopCallSurface>[] = [
+  { value: "keep_last", label: DESKTOP_SURFACE_LABELS.keep_last },
+  { value: "floating", label: DESKTOP_SURFACE_LABELS.floating, description: "Drag it anywhere, or minimize it." },
   {
-    value: "floating",
-    label: "Floating square",
-    description: "A movable square you can drag anywhere and minimize.",
+    value: "sidebar",
+    label: DESKTOP_SURFACE_LABELS.sidebar,
+    description: "Docked on the right. Drag its edge to resize.",
   },
-  { value: "sidebar", label: "Sidebar", description: "Docked down the right side, resizable." },
-  { value: "fullscreen", label: "Fullscreen", description: "Fills the desktop area beside navigation." },
+  { value: "fullscreen", label: DESKTOP_SURFACE_LABELS.fullscreen, description: "Fills the space beside navigation." },
 ]
 
 /**
@@ -56,81 +49,28 @@ const DESKTOP_SURFACE_OPTIONS: { value: DesktopCallSurface; label: string; descr
 export function CallSettings() {
   const { selfMirror, layout, desktopCallSurface } = useCallPrefs()
   return (
-    <div className="space-y-6">
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-sm font-medium">Mirror my video</h3>
-          <p className="text-sm text-muted-foreground">
-            Flips your own self-view like a mirror. Only you see it mirrored — everyone else always sees you the normal
-            way.
-          </p>
-        </div>
-        <RadioGroup
-          value={selfMirror}
-          onValueChange={(value) => setCallSelfMirror(value as CallSelfMirror)}
-          className="space-y-3"
-        >
-          {MIRROR_OPTIONS.map((option) => (
-            <div key={option.value} className="flex items-start space-x-3">
-              <RadioGroupItem value={option.value} id={`mirror-${option.value}`} className="mt-1" />
-              <div className="grid gap-1">
-                <Label htmlFor={`mirror-${option.value}`} className="cursor-pointer">
-                  {option.label}
-                </Label>
-                <p className="text-sm text-muted-foreground">{option.description}</p>
-              </div>
-            </div>
-          ))}
-        </RadioGroup>
-      </section>
-
-      <Separator />
-
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-sm font-medium">Default layout</h3>
-          <p className="text-sm text-muted-foreground">How a call opens; you can still switch layouts mid-call.</p>
-        </div>
-        <RadioGroup value={layout} onValueChange={(value) => setCallLayout(value as CallLayout)} className="space-y-3">
-          {LAYOUT_OPTIONS.map((option) => (
-            <div key={option.value} className="flex items-start space-x-3">
-              <RadioGroupItem value={option.value} id={`layout-${option.value}`} className="mt-1" />
-              <div className="grid gap-1">
-                <Label htmlFor={`layout-${option.value}`} className="cursor-pointer">
-                  {option.label}
-                </Label>
-                <p className="text-sm text-muted-foreground">{option.description}</p>
-              </div>
-            </div>
-          ))}
-        </RadioGroup>
-      </section>
-
-      <Separator />
-
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-sm font-medium">Desktop video</h3>
-          <p className="text-sm text-muted-foreground">Where a call opens on desktop; you can still switch mid-call.</p>
-        </div>
-        <RadioGroup
-          value={desktopCallSurface}
-          onValueChange={(value) => chooseDesktopSurface(value as DesktopCallSurface)}
-          className="space-y-3"
-        >
-          {DESKTOP_SURFACE_OPTIONS.map((option) => (
-            <div key={option.value} className="flex items-start space-x-3">
-              <RadioGroupItem value={option.value} id={`desktop-surface-${option.value}`} className="mt-1" />
-              <div className="grid gap-1">
-                <Label htmlFor={`desktop-surface-${option.value}`} className="cursor-pointer">
-                  {option.label}
-                </Label>
-                <p className="text-sm text-muted-foreground">{option.description}</p>
-              </div>
-            </div>
-          ))}
-        </RadioGroup>
-      </section>
-    </div>
+    <SettingsSection section="calls">
+      <ChoiceSetting
+        setting="call-layout"
+        variant="segmented"
+        value={layout}
+        options={LAYOUT_OPTIONS}
+        onValueChange={setCallLayout}
+      />
+      <ChoiceSetting
+        setting="call-desktop-video"
+        variant="select"
+        value={desktopCallSurface}
+        options={DESKTOP_SURFACE_OPTIONS}
+        onValueChange={chooseDesktopSurface}
+      />
+      <ChoiceSetting
+        setting="call-mirror"
+        variant="segmented"
+        value={selfMirror}
+        options={MIRROR_OPTIONS}
+        onValueChange={setCallSelfMirror}
+      />
+    </SettingsSection>
   )
 }

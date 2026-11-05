@@ -1,10 +1,19 @@
-import { useId, useRef, useState, type Ref } from "react"
+import { useId, useState } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Separator } from "@/components/ui/separator"
+import {
+  ResponsiveDialog,
+  ResponsiveDialogBody,
+  ResponsiveDialogContent,
+  ResponsiveDialogFooter,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle,
+} from "@/components/ui/responsive-dialog"
+import { SETTING_CONTROL_HEIGHT, SettingFieldError } from "@/components/settings/setting-primitives"
+import { SettingCheckboxList } from "@/components/settings/setting-lists"
+import { SETTING_MUTED_NOTE_TEXT } from "@/components/settings/setting-text"
 import {
   API_KEY_ELIGIBLE_PICKER_SCOPES,
   API_KEY_NAME_MAX_LENGTH,
@@ -25,7 +34,7 @@ export const SCOPE_LABELS: Record<string, string> = Object.fromEntries(
 
 const COPY_SUFFIX = " (copy)"
 
-export interface ApiKeyDraft {
+interface ApiKeyDraft {
   name: string
   scopes: ReadonlySet<WorkspacePermissionSlug>
   /** Undefined leaves the pin to the server, which pins its current version. */
@@ -45,12 +54,18 @@ export function draftFromKey(key: Pick<UserApiKey, "name" | "scopes" | "apiVersi
   }
 }
 
-function toggleDraftScope(draft: ApiKeyDraft, scope: WorkspacePermissionSlug): ApiKeyDraft {
+function setDraftScope(draft: ApiKeyDraft, scope: WorkspacePermissionSlug, checked: boolean): ApiKeyDraft {
   const scopes = new Set(draft.scopes)
-  if (scopes.has(scope)) scopes.delete(scope)
-  else scopes.add(scope)
+  if (checked) scopes.add(scope)
+  else scopes.delete(scope)
   return { ...draft, scopes }
 }
+
+export const API_KEY_SCOPE_ITEMS = API_KEY_ELIGIBLE_PICKER_SCOPES.map((perm) => ({
+  value: perm.slug,
+  label: perm.name,
+  description: perm.description,
+}))
 
 function createInputFromDraft(draft: ApiKeyDraft): CreateApiKeyInput | null {
   const name = draft.name.trim()
@@ -59,8 +74,8 @@ function createInputFromDraft(draft: ApiKeyDraft): CreateApiKeyInput | null {
 }
 
 /**
- * Open/close/create lifecycle for {@link ApiKeyCreateForm}. A create can't be
- * aborted server-side, so the form stays open and locked until it settles.
+ * Open/close/create lifecycle for {@link ApiKeyCreateDialog}. A create can't be
+ * aborted server-side, so the dialog stays open and locked until it settles.
  */
 export function useApiKeyCreateForm<TCreated extends { key: { name: string }; value: string }>({
   create,
@@ -70,7 +85,6 @@ export function useApiKeyCreateForm<TCreated extends { key: { name: string }; va
   onCreated: (created: TCreated) => void
 }) {
   const [draft, setDraft] = useState<ApiKeyDraft | null>(null)
-  const nameInputRef = useRef<HTMLInputElement>(null)
   const mutation = useMutation({
     mutationFn: create,
     onSuccess: (created) => {
@@ -82,122 +96,125 @@ export function useApiKeyCreateForm<TCreated extends { key: { name: string }; va
   const open = (next: ApiKeyDraft) => {
     mutation.reset()
     setDraft(next)
-    // An already-open form keeps its mounted input, so autoFocus won't bring it back into view.
-    nameInputRef.current?.focus()
   }
 
-  const formProps: Omit<ApiKeyCreateFormProps, "nameLabel" | "namePlaceholder"> | null = draft && {
+  const form: ApiKeyCreateFormState | null = draft && {
     draft,
     onDraftChange: (next) => {
       if (mutation.isError) mutation.reset()
       setDraft(next)
     },
-    nameInputRef,
     isPending: mutation.isPending,
     error: mutation.error,
     onCancel: () => setDraft(null),
     onCreate: (input) => mutation.mutate(input),
   }
 
-  return { isOpen: draft !== null, isPending: mutation.isPending, open, formProps }
+  return { isPending: mutation.isPending, open, form }
 }
 
-interface ApiKeyCreateFormProps {
+interface ApiKeyCreateFormState {
   draft: ApiKeyDraft
   onDraftChange: (draft: ApiKeyDraft) => void
-  nameInputRef: Ref<HTMLInputElement>
-  nameLabel: string
-  namePlaceholder: string
   isPending: boolean
   error: Error | null
   onCancel: () => void
   onCreate: (input: CreateApiKeyInput) => void
 }
 
-export function ApiKeyCreateForm({
+interface ApiKeyCreateDialogProps {
+  /** The open form, or `null` when the dialog is closed. */
+  form: ApiKeyCreateFormState | null
+  nameLabel: string
+  namePlaceholder: string
+}
+
+export function ApiKeyCreateDialog({ form, nameLabel, namePlaceholder }: ApiKeyCreateDialogProps) {
+  return (
+    <ResponsiveDialog
+      open={form !== null}
+      onOpenChange={(open) => !open && form && !form.isPending && form.onCancel()}
+      disableSnapPoints
+      historyEntry={false}
+    >
+      <ResponsiveDialogContent desktopClassName="max-w-md" drawerClassName="max-h-[92dvh]">
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>New API key</ResponsiveDialogTitle>
+        </ResponsiveDialogHeader>
+        {form && <ApiKeyCreateFields {...form} nameLabel={nameLabel} namePlaceholder={namePlaceholder} />}
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
+  )
+}
+
+function ApiKeyCreateFields({
   draft,
   onDraftChange,
-  nameInputRef,
   nameLabel,
   namePlaceholder,
   isPending,
   error,
   onCancel,
   onCreate,
-}: ApiKeyCreateFormProps) {
+}: ApiKeyCreateFormState & { nameLabel: string; namePlaceholder: string }) {
   const nameId = useId()
+  const permissionsId = useId()
   const droppedNoteId = useId()
   const hasDroppedScopes = draft.droppedScopes.length > 0
   const input = createInputFromDraft(draft)
 
   return (
-    <div className="rounded-lg border bg-card p-4 space-y-4">
-      <div className="space-y-1.5">
-        <Label htmlFor={nameId} className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          {nameLabel}
-        </Label>
-        <Input
-          id={nameId}
-          ref={nameInputRef}
-          placeholder={namePlaceholder}
-          value={draft.name}
-          onChange={(e) => onDraftChange({ ...draft, name: e.target.value })}
-          disabled={isPending}
-          aria-describedby={hasDroppedScopes ? droppedNoteId : undefined}
-          autoFocus
-        />
-      </div>
-
-      <div className="space-y-1.5">
-        <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Permissions</Label>
-        <div className="rounded-md border divide-y">
-          {API_KEY_ELIGIBLE_PICKER_SCOPES.map((perm) => (
-            <label
-              key={perm.slug}
-              className="block px-3 py-2.5 cursor-pointer hover:bg-accent/50 transition-colors first:rounded-t-md last:rounded-b-md has-[:disabled]:cursor-not-allowed has-[:disabled]:hover:bg-transparent"
-            >
-              <span className="flex items-center gap-3">
-                <Checkbox
-                  checked={draft.scopes.has(perm.slug)}
-                  disabled={isPending}
-                  onCheckedChange={() => onDraftChange(toggleDraftScope(draft, perm.slug))}
-                />
-                <span className="text-sm font-medium">{perm.name}</span>
-              </span>
-              <p className="text-xs text-muted-foreground leading-relaxed ml-7 mt-0.5">{perm.description}</p>
-            </label>
-          ))}
+    <>
+      <ResponsiveDialogBody className="min-h-0 space-y-5">
+        <div className="space-y-2">
+          <Label htmlFor={nameId}>{nameLabel}</Label>
+          <Input
+            id={nameId}
+            placeholder={namePlaceholder}
+            value={draft.name}
+            onChange={(e) => onDraftChange({ ...draft, name: e.target.value })}
+            disabled={isPending}
+            aria-describedby={hasDroppedScopes ? droppedNoteId : undefined}
+            className={SETTING_CONTROL_HEIGHT}
+          />
         </div>
-        {hasDroppedScopes && (
-          <p id={droppedNoteId} className="text-xs text-muted-foreground">
-            Not copied, no longer available for keys:{" "}
-            {draft.droppedScopes.map((scope) => SCOPE_LABELS[scope] ?? scope).join(", ")}
+
+        <div className="space-y-1">
+          <p id={permissionsId} className="text-sm font-medium">
+            Permissions
           </p>
-        )}
-      </div>
+          <SettingCheckboxList
+            aria-labelledby={permissionsId}
+            items={API_KEY_SCOPE_ITEMS}
+            selected={draft.scopes}
+            disabled={isPending}
+            onCheckedChange={(scope, checked) => onDraftChange(setDraftScope(draft, scope, checked))}
+          />
+          {hasDroppedScopes && (
+            <p id={droppedNoteId} className={SETTING_MUTED_NOTE_TEXT}>
+              Not copied, no longer available for keys:{" "}
+              {draft.droppedScopes.map((scope) => SCOPE_LABELS[scope] ?? scope).join(", ")}
+            </p>
+          )}
+        </div>
 
-      <ApiKeyVersionControl
-        apiVersion={draft.apiVersion === undefined ? CURRENT_API_VERSION : draft.apiVersion}
-        onChange={(apiVersion) => onDraftChange({ ...draft, apiVersion })}
-        disabled={isPending}
-      />
+        <ApiKeyVersionControl
+          apiVersion={draft.apiVersion === undefined ? CURRENT_API_VERSION : draft.apiVersion}
+          onChange={(apiVersion) => onDraftChange({ ...draft, apiVersion })}
+          disabled={isPending}
+        />
 
-      <Separator />
+        {error && <SettingFieldError>{error.message || "Couldn't create the key. Try again."}</SettingFieldError>}
+      </ResponsiveDialogBody>
 
-      <div className="flex items-center justify-between">
-        <Button variant="ghost" size="sm" onClick={onCancel} disabled={isPending}>
+      <ResponsiveDialogFooter>
+        <Button variant="outline" onClick={onCancel} disabled={isPending}>
           Cancel
         </Button>
-        <Button size="sm" onClick={() => input && onCreate(input)} disabled={!input || isPending}>
-          {isPending ? "Creating..." : "Create key"}
+        <Button onClick={() => input && onCreate(input)} disabled={!input || isPending}>
+          {isPending ? "Creating…" : "Create key"}
         </Button>
-      </div>
-
-      {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {error.message || "Failed to create key. Please try again."}
-        </p>
-      )}
-    </div>
+      </ResponsiveDialogFooter>
+    </>
   )
 }

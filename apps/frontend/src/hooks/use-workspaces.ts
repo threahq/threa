@@ -8,7 +8,7 @@ import { getQueryLoadState, isTerminalBootstrapError } from "@/lib/query-load-st
 import { db, getActiveDb } from "@/db"
 import { getAccountGeneration } from "@/db/event-writes"
 import { joinRoomBestEffort } from "@/lib/socket-room"
-import { applyWorkspaceBootstrap } from "@/sync/workspace-sync"
+import { applyWorkspaceBootstrap, applyWorkspaceName } from "@/sync/workspace-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { syncLogCursorKey } from "@/sync/sync-log-cursor"
 import { useWorkspaceUsers, upsertWorkspaceUserInCache } from "@/stores/workspace-store"
@@ -241,6 +241,20 @@ export function useCreateWorkspace() {
 
       db.workspaces.put({ ...newWorkspace, _cachedAt: Date.now() })
     },
+  })
+}
+
+/**
+ * Admin rename. Silent either way: the new name shows wherever the workspace is
+ * named, and the rename field shows a failure in place.
+ */
+export function useRenameWorkspace(workspaceId: string) {
+  const workspaceService = useWorkspaceService()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (name: string) => workspaceService.rename(workspaceId, name),
+    onSuccess: (workspace) => applyWorkspaceName(queryClient, workspaceId, workspace.name),
   })
 }
 

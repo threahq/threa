@@ -82,6 +82,7 @@ export function ModeTabs({
         labels={TAB_LABELS}
         value={currentMode}
         onValueChange={(v) => handleTabClick(v)}
+        aria-label="Quick switcher mode"
       >
         {/* Desktop: custom pill buttons with keyboard navigation */}
         <div className="hidden sm:flex gap-1" role="tablist" aria-label="Quick switcher modes">

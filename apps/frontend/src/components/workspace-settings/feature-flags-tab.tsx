@@ -1,8 +1,47 @@
-import { Badge } from "@/components/ui/badge"
+import type { FeatureFlagKey, FeatureFlagValue } from "@threahq/types"
+import { SettingBadge, SettingEmptyNote } from "@/components/settings/setting-primitives"
+import { SETTING_NOTE_TEXT } from "@/components/settings/setting-text"
+import { cn } from "@/lib/utils"
 import { useOverriddenFeatureFlags } from "@/hooks/use-feature-flags"
 
 interface FeatureFlagsTabProps {
   workspaceId: string
+}
+
+/** Every flag needs copy here, so a new flag can't reach the list as a raw key. */
+const FLAG_COPY: { [K in FeatureFlagKey]: { label: string; description: string } } = {
+  batchedLiveWrites: {
+    label: "Batched background updates",
+    description: "Saves updates from streams you're not viewing together.",
+  },
+  idbRelaxedDurability: {
+    label: "Faster local cache",
+    description: "Cached data saves without waiting for the disk. Drafts and unsent messages still wait.",
+  },
+  sqliteStorage: { label: "SQLite storage", description: "Keeps this device's data in SQLite." },
+  calls: { label: "Calls", description: "Voice and video calls in streams." },
+  callsP2p: { label: "Direct calls", description: "Calls connect straight between people when they can." },
+  composeTraces: { label: "Composer traces", description: "Records send timings to help fix slow sends." },
+  perfDiagnostics: {
+    label: "Performance diagnostics",
+    description: "Adds Performance diagnostics to Privacy & security.",
+  },
+  search: { label: "New search", description: "Reworked ranking, deep search, and memory and conversation groups." },
+  searchQueryLog: {
+    label: "Search logging",
+    description: "Keeps your searches and what you opened, to improve search.",
+  },
+  streamConnections: { label: "Threa Connect", description: "Share channels with other workspaces." },
+}
+
+const VALUE_LABELS: Record<FeatureFlagValue, string> = {
+  off: "Off",
+  on: "On",
+  available: "Available",
+  capture: "Capturing",
+  shadow: "Shadow copy",
+  "read-only": "Reads from SQLite",
+  "read-write": "Reads and writes SQLite",
 }
 
 /**
@@ -14,30 +53,23 @@ interface FeatureFlagsTabProps {
 export function FeatureFlagsTab({ workspaceId }: FeatureFlagsTabProps) {
   const flags = useOverriddenFeatureFlags(workspaceId)
 
-  return (
-    <div className="space-y-4 p-1">
-      <p className="text-sm text-muted-foreground">
-        These flags are set to a non-default value for your account. They are managed by Threa and cannot be changed
-        here.
-      </p>
+  if (flags.length === 0) return <SettingEmptyNote>No early features are on for you.</SettingEmptyNote>
 
-      {flags.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No flags are set on your account.</p>
-      ) : (
-        <ul className="space-y-3">
-          {flags.map(({ key, value, defaultValue, scope }) => (
-            <li key={key} className="flex items-center justify-between gap-3">
-              <div>
-                <div className="font-mono text-sm">{key}</div>
-                <div className="text-xs text-muted-foreground">Default: {defaultValue}</div>
-              </div>
-              <Badge variant="secondary" className="font-mono">
-                {value} · {scope === "user" ? "you" : "workspace"}
-              </Badge>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+  return (
+    <ul className="divide-y divide-border">
+      {flags.map(({ key, value, defaultValue, scope }) => (
+        <li key={key} className="flex min-h-11 items-start justify-between gap-3 py-2">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">{FLAG_COPY[key].label}</p>
+            <p className={cn("mt-0.5 text-muted-foreground", SETTING_NOTE_TEXT)}>{FLAG_COPY[key].description}</p>
+            <p className={cn("mt-0.5 text-muted-foreground", SETTING_NOTE_TEXT)}>
+              {scope === "user" ? "Rolling out to you" : "Rolling out to this workspace"} · normally{" "}
+              {VALUE_LABELS[defaultValue].toLowerCase()}
+            </p>
+          </div>
+          <SettingBadge>{VALUE_LABELS[value]}</SettingBadge>
+        </li>
+      ))}
+    </ul>
   )
 }

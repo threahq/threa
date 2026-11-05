@@ -1,12 +1,24 @@
-import { Moon, Sparkles } from "lucide-react"
 import { toast } from "sonner"
-import { Label } from "@/components/ui/label"
-import { cn } from "@/lib/utils"
+import {
+  ChoiceSetting,
+  SETTING_CONTROL_CLASS,
+  SettingLinkRow,
+  SettingRow,
+  SettingValue,
+  SettingsSection,
+  settingIds,
+} from "@/components/settings/setting-primitives"
+import { SETTING_MUTED_NOTE_TEXT } from "@/components/settings/setting-text"
+import { SettingsLink } from "@/components/workspace-settings/settings-link"
+import { SETTING_CHOICE_LABELS, settingDef } from "@/components/settings/settings-registry"
 import { useUpdateCompanionMode } from "@/hooks/use-streams"
 import { useCanManageChannels } from "@/lib/use-can-manage-channels"
 import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
 import { useCompanionRoster } from "@/hooks/use-companion-roster"
 import { useActiveBotPresence } from "@/hooks/use-active-bot-presence"
+import { useSettingHref } from "@/hooks/use-setting-href"
+import { usePreferencesOptional } from "@/contexts/preferences-context"
+import { streamFallbackLabel } from "@/lib/streams"
 import {
   CompanionModes,
   StreamTypes,
@@ -19,6 +31,8 @@ import { CompanionAgentSelect, resolveCompanionSelection } from "./companion-age
 import { ToolPolicyPicker } from "./tool-policy-picker"
 import { ExternalAgentIndicator } from "./external-agent-indicator"
 import { BriefSection } from "./brief-section"
+import { AgentContextSummary } from "./agent-context-summary"
+import { briefSharedWith } from "./agent-context"
 
 interface CompanionTabProps {
   workspaceId: string
@@ -59,162 +73,174 @@ export function CompanionTab({
   // The picker itself stays hidden on encrypted scratchpads (enclave is
   // Ariadne-only).
   const personas = useCompanionRoster(workspaceId)
-  const { workspaceDefault, personalDefault } = useDefaultCompanionPersona(workspaceId)
+  const { effectiveDefault, workspaceDefault, personalDefault } = useDefaultCompanionPersona(workspaceId)
+  const noun = streamFallbackLabel(stream.type, "noun")
+  const isScratchpad = stream.type === StreamTypes.SCRATCHPAD
+  // Personal instructions reach scratchpads and the threads under them.
+  const followsInstructions =
+    isScratchpad || (stream.type === StreamTypes.THREAD && rootStream?.type === StreamTypes.SCRATCHPAD)
 
   // A created scratchpad is pinned to one persona; a legacy NULL pointer
   // displays (and dispatches as) the built-in default. Only an explicit pick
   // changes the agent — defaults apply at create, never retroactively.
-  const { selectedPersonaId, companionName: resolvedName } = resolveCompanionSelection(
-    personas,
-    stream.companionPersonaId
-  )
+  const { selectedPersonaId, companionName } = resolveCompanionSelection(personas, stream.companionPersonaId)
   // Until the store hydrates ([] before the bootstrap/IDB seed lands), the real
-  // default is unknown — say "your companion" rather than flash a name that may
+  // default is unknown — say "Your agent" rather than flash a name that may
   // be wrong. E2E scratchpads genuinely always run Ariadne, so the resolved name
   // is correct there regardless.
   const rosterReady = isE2e || personas.length > 0
-  const companionName = rosterReady ? resolvedName : "your companion"
 
-  const handleChange = async (next: CompanionMode) => {
-    if (next === stream.companionMode) return
+  const update = async (params: Parameters<typeof updateCompanionMode>[0], failureMessage: string) => {
     try {
-      await updateCompanionMode({ companionMode: next })
+      await updateCompanionMode(params)
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to update companion mode"
-      toast.error(message)
+      toast.error(error instanceof Error ? error.message : failureMessage)
     }
   }
 
-  const handlePersonaChange = async (personaId: string) => {
+  const handleChange = (next: CompanionMode) => {
+    if (next !== stream.companionMode) void update({ companionMode: next }, "Failed to update agent replies")
+  }
+
+  const handlePersonaChange = (personaId: string) => {
     if (personaId === selectedPersonaId) return
-    try {
-      await updateCompanionMode({ companionMode: stream.companionMode, companionPersonaId: personaId })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to update companion agent"
-      toast.error(message)
-    }
+    void update({ companionMode: stream.companionMode, companionPersonaId: personaId }, "Failed to update agent")
   }
+
+  const agentIds = settingIds("stream-agent")
+  const hasContext = !isE2e || followsInstructions
 
   return (
-    <div className="space-y-6 p-1">
-      {externalAgent && <ExternalAgentIndicator agent={externalAgent} />}
+    <div className="space-y-8">
+      <SettingsSection section="stream-agent">
+        {externalAgent && <ExternalAgentIndicator agent={externalAgent} />}
+        <ChoiceSetting
+          setting="stream-replies"
+          variant="segmented"
+          value={stream.companionMode}
+          options={[
+            {
+              value: CompanionModes.ON,
+              label: SETTING_CHOICE_LABELS["stream-replies"].on,
+              description: `${rosterReady ? companionName : "Your agent"} answers each new message in this ${noun}.`,
+            },
+            {
+              value: CompanionModes.OFF,
+              label: SETTING_CHOICE_LABELS["stream-replies"].off,
+              description: "No agent replies and no AI usage.",
+            },
+          ]}
+          onValueChange={handleChange}
+          disabled={disabled}
+        />
 
-      <div className="space-y-3">
-        <div className="space-y-1">
-          <Label className="text-sm font-medium">Companion mode</Label>
-          <p className="text-xs text-muted-foreground">
-            Decide whether {companionName} reads new messages and replies, or whether this scratchpad stays a silent
-            dump.
-          </p>
-        </div>
-        <div
-          role="radiogroup"
-          aria-label="Companion mode"
-          aria-disabled={disabled || undefined}
-          className="grid gap-2 sm:grid-cols-2"
-        >
-          <CompanionOption
-            selected={stream.companionMode === CompanionModes.ON}
-            onSelect={() => handleChange(CompanionModes.ON)}
-            icon={Sparkles}
-            label="Companion"
-            hint={
-              rosterReady
-                ? `${companionName} reads new messages and replies in the thread`
-                : "Your companion reads new messages and replies in the thread"
+        {isE2e ? (
+          <SettingRow
+            setting="stream-agent"
+            labelFor={false}
+            description="Ariadne replies from inside the encryption enclave, so messages stay end-to-end encrypted. Other agents can't run here."
+            control={<SettingValue>Ariadne</SettingValue>}
+          />
+        ) : (
+          <SettingRow
+            setting="stream-agent"
+            labelFor={false}
+            description={`${isScratchpad ? "Which agent replies here and in this scratchpad's threads." : "Which agent replies here."} Running sessions keep the agent they started with.`}
+            control={
+              <CompanionAgentSelect
+                workspaceId={workspaceId}
+                personas={personas}
+                value={selectedPersonaId}
+                onChange={handlePersonaChange}
+                defaultBadges={{ workspaceDefaultId: workspaceDefault?.id, personalDefaultId: personalDefault?.id }}
+                disabled={disabled}
+                triggerClassName={SETTING_CONTROL_CLASS}
+                aria-labelledby={agentIds.label}
+                aria-describedby={agentIds.description}
+              />
             }
-            disabled={disabled}
-          />
-          <CompanionOption
-            selected={stream.companionMode === CompanionModes.OFF}
-            onSelect={() => handleChange(CompanionModes.OFF)}
-            icon={Moon}
-            label="Quiet"
-            hint="Just storage — no AI replies, no inference cost"
-            disabled={disabled}
-          />
-        </div>
-      </div>
+          >
+            {isScratchpad && <DefaultCompanionLine name={effectiveDefault?.name} />}
+          </SettingRow>
+        )}
+      </SettingsSection>
 
-      {/* Encrypted scratchpads always run the built-in Ariadne in the enclave
-          regardless of the pointer, so the persona picker is plaintext-only. */}
-      {!isE2e && (
-        <div className="space-y-2">
-          <div className="space-y-1">
-            <Label className="text-sm font-medium">Companion agent</Label>
-            <p className="text-xs text-muted-foreground">
-              Which agent replies here. Threads inherit this scratchpad&apos;s agent — sessions already running keep
-              their agent; new sessions use this selection.
-            </p>
-          </div>
-          <CompanionAgentSelect
-            workspaceId={workspaceId}
-            personas={personas}
-            value={selectedPersonaId}
-            onChange={handlePersonaChange}
-            defaultBadges={{ workspaceDefaultId: workspaceDefault?.id, personalDefaultId: personalDefault?.id }}
-            disabled={disabled}
-            triggerClassName="w-full sm:w-72"
-          />
-        </div>
-      )}
+      <AgentContextSummary
+        workspaceId={workspaceId}
+        personaId={selectedPersonaId}
+        e2e={isE2e}
+        stream={{ id: stream.id, type: stream.type, root: rootStream }}
+        tools={
+          isScratchpad && !canManageToolPolicy ? { policy: allowedToolCategories, viewerIsOwner: false } : undefined
+        }
+        exclude={SHOWN_AS_CONTROLS}
+        variant="section"
+      />
 
-      {isE2e && (
-        <p className="text-xs text-muted-foreground">
-          On encrypted scratchpads Ariadne replies from inside the encryption enclave, so your content stays end-to-end
-          encrypted either way. Companion lets her reply; Quiet keeps this a silent, encrypted dump.
-        </p>
+      {hasContext && (
+        <SettingsSection section="stream-context">
+          {/* Briefs are server-stored plaintext the enclave prompt never injects, so
+              they are unsupported on encrypted streams (roadmap §4.1 deviation). */}
+          {!isE2e && (
+            <BriefSection
+              workspaceId={workspaceId}
+              stream={stream}
+              locked={briefLocked}
+              description={
+                stream.type === StreamTypes.THREAD
+                  ? `${settingDef("stream-brief").description} Shared with ${briefSharedWith(rootStream)}.`
+                  : undefined
+              }
+            />
+          )}
+          {followsInstructions && <InstructionsRow />}
+        </SettingsSection>
       )}
 
       {canManageToolPolicy && (
-        <ToolPolicyPicker
-          workspaceId={workspaceId}
-          streamId={stream.id}
-          value={allowedToolCategories}
-          configuredCategories={configuredToolCategories}
-          e2e={isE2e}
-        />
+        <SettingsSection section="stream-tools">
+          <ToolPolicyPicker
+            workspaceId={workspaceId}
+            streamId={stream.id}
+            value={allowedToolCategories}
+            configuredCategories={configuredToolCategories}
+            e2e={isE2e}
+          />
+        </SettingsSection>
       )}
-
-      {/* Briefs are server-stored plaintext the enclave prompt never injects, so
-          they are unsupported on encrypted streams (roadmap §4.1 deviation). */}
-      {!isE2e && <BriefSection workspaceId={workspaceId} stream={stream} locked={briefLocked} />}
     </div>
   )
 }
 
-interface CompanionOptionProps {
-  selected: boolean
-  onSelect: () => void
-  icon: React.ComponentType<{ className?: string }>
-  label: string
-  hint: string
-  disabled?: boolean
+/**
+ * What shapes replies, minus what this page shows as controls: the agent, the
+ * brief and your instructions. It sits right under the agent picker, so the
+ * picked agent's model and instructions read as part of that choice.
+ */
+const SHOWN_AS_CONTROLS = ["agent", "brief", "instructions"] as const
+
+/** New scratchpads pin the default at create; this one keeps its agent when the default changes. */
+function DefaultCompanionLine({ name }: { name: string | undefined }) {
+  const href = useSettingHref("default-companion")
+  return (
+    <p className={SETTING_MUTED_NOTE_TEXT}>
+      {name ? `Your default for new scratchpads: ${name}.` : "New scratchpads start with your default agent."}{" "}
+      {href && <SettingsLink setting="default-companion">Change default</SettingsLink>}
+    </p>
+  )
 }
 
-function CompanionOption({ selected, onSelect, icon: Icon, label, hint, disabled }: CompanionOptionProps) {
+/** The account setting that also shapes replies here, shown where it applies and linked to where it is set. */
+function InstructionsRow() {
+  const preferences = usePreferencesOptional()?.preferences
+  const href = useSettingHref("ai-instructions")
+  if (!preferences) return null
+  const hasInstructions = !!preferences.scratchpadCustomPrompt?.trim()
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      disabled={disabled}
-      role="radio"
-      aria-checked={selected}
-      className={cn(
-        "flex flex-col items-start gap-1.5 rounded-lg border p-3 text-left transition-all",
-        disabled && "opacity-50 cursor-not-allowed",
-        selected
-          ? "border-primary bg-primary/5 ring-1 ring-primary/20"
-          : "border-border hover:border-muted-foreground/30 hover:bg-accent/50"
-      )}
-    >
-      <div className="flex items-center gap-2">
-        <Icon className={cn("h-3.5 w-3.5", selected ? "text-primary" : "text-muted-foreground")} />
-        <span className={cn("text-sm font-medium", selected ? "text-foreground" : "text-muted-foreground")}>
-          {label}
-        </span>
-      </div>
-      <span className="text-[11px] leading-snug text-muted-foreground">{hint}</span>
-    </button>
+    <SettingLinkRow
+      setting="ai-instructions"
+      href={href}
+      description={hasInstructions ? "Agents here follow them too." : "No instructions yet."}
+    />
   )
 }

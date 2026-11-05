@@ -7,6 +7,8 @@ interface ResponsiveTabsProps<T extends string> {
   labels: Record<T, string>
   value: T
   onValueChange: (value: T) => void
+  /** Names the phone dropdown, which has no visible label of its own. */
+  "aria-label": string
   /** Number of columns for the desktop grid (defaults to tabs.length). Ignored when children is provided. */
   columns?: number
   /** Custom desktop content. When provided, replaces the default TabsList grid on screens >= sm. */
@@ -23,6 +25,7 @@ export function ResponsiveTabs<T extends string>({
   labels,
   value,
   onValueChange,
+  "aria-label": ariaLabel,
   columns,
   children,
 }: ResponsiveTabsProps<T>) {
@@ -33,7 +36,7 @@ export function ResponsiveTabs<T extends string>({
       {/* Mobile: Shadcn Select dropdown */}
       <div className="sm:hidden">
         <Select value={value} onValueChange={(v) => onValueChange(v as T)}>
-          <SelectTrigger className="h-9 text-sm">
+          <SelectTrigger className="h-11 text-sm" aria-label={ariaLabel}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

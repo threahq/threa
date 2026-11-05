@@ -1,5 +1,5 @@
-import { type ReactElement, type ReactNode, useState, useEffect, useRef } from "react"
-import { ChevronsUpDown } from "lucide-react"
+import { type ReactElement, type ReactNode, useCallback, useState, useEffect, useRef } from "react"
+import { ChevronDown } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
@@ -44,6 +44,11 @@ interface SearchableSelectProps<T> {
   trigger?: ReactElement
   /** Where focus goes when the list closes; call `event.preventDefault()` to move it off the trigger. */
   onCloseAutoFocus?: (event: Event) => void
+  /** Forwarded to the trigger, so it's named by a visible label rather than only by its value. */
+  "aria-labelledby"?: string
+  "aria-describedby"?: string
+  /** Forwarded to the trigger. */
+  id?: string
 }
 
 export function SearchableSelect<T>({
@@ -68,12 +73,18 @@ export function SearchableSelect<T>({
   "data-testid": testId,
   trigger,
   onCloseAutoFocus,
+  "aria-labelledby": ariaLabelledBy,
+  "aria-describedby": ariaDescribedBy,
+  id,
 }: SearchableSelectProps<T>) {
   // Drawer-vs-popover presentation keys off the active input mode, so a mouse on
   // a touchscreen laptop gets the popover and only a finger gets the drawer.
   const isTouch = useInputMode() === "touch"
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState("")
+  // cmdk owns the listbox's id; read it once the list mounts, for the trigger's aria-controls.
+  const [listboxId, setListboxId] = useState<string | undefined>()
+  const listboxRef = useCallback((node: HTMLDivElement | null) => setListboxId(node?.id || undefined), [])
   const popoverSearchRef = useRef<HTMLInputElement>(null)
 
   // Reset filter input each time the popover/drawer closes so the next open shows the full list.
@@ -102,7 +113,7 @@ export function SearchableSelect<T>({
       {TriggerIcon && <TriggerIcon className="h-4 w-4 shrink-0" />}
       <span className="truncate">{placeholder}</span>
       {showAvailableCount && items.length > 0 && (
-        <span className="ml-auto pl-2 text-xs text-muted-foreground/70 shrink-0 tabular-nums">
+        <span className="ml-auto pl-2 text-xs text-muted-foreground shrink-0 tabular-nums">
           {availableLabel(items.length)}
         </span>
       )}
@@ -111,16 +122,21 @@ export function SearchableSelect<T>({
 
   const triggerButton = trigger ?? (
     <Button
+      id={id}
       type="button"
       variant="outline"
       role="combobox"
       aria-expanded={open}
+      aria-haspopup="listbox"
+      aria-controls={open ? listboxId : undefined}
+      aria-labelledby={ariaLabelledBy}
+      aria-describedby={ariaDescribedBy}
       disabled={disabled}
       data-testid={testId}
-      className={cn("w-full justify-between gap-2 font-normal", className)}
+      className={cn("w-full justify-between gap-2 px-3 font-normal", className)}
     >
       {triggerContent}
-      <ChevronsUpDown
+      <ChevronDown
         className={cn("h-4 w-4 shrink-0 opacity-50 transition-transform duration-150", open && "rotate-180 opacity-80")}
       />
     </Button>
@@ -160,7 +176,9 @@ export function SearchableSelect<T>({
           <DrawerTitle className="sr-only">{searchPlaceholder}</DrawerTitle>
           <Command>
             <CommandInput placeholder={searchPlaceholder} value={search} onValueChange={setSearch} />
-            <CommandList className="max-h-[70dvh] overscroll-contain">{commandList}</CommandList>
+            <CommandList ref={listboxRef} className="max-h-[70dvh] overscroll-contain">
+              {commandList}
+            </CommandList>
           </Command>
         </DrawerContent>
       </Drawer>
@@ -189,7 +207,9 @@ export function SearchableSelect<T>({
            * contain prevents body scroll-chaining once the user reaches the
            * top/bottom of the list.
            */}
-          <CommandList className="max-h-[min(60vh,360px)] overscroll-contain">{commandList}</CommandList>
+          <CommandList ref={listboxRef} className="max-h-[min(60vh,360px)] overscroll-contain">
+            {commandList}
+          </CommandList>
         </Command>
       </PopoverContent>
     </Popover>

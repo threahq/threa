@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD, type UnsharedReference } from "@threahq/types"
 import { messagesApi } from "@/api/messages"
+import { SettingsProvider } from "@/contexts"
 import { db } from "@/db"
 import { unsharedReferenceKeys } from "@/hooks/use-unshared-references"
 import { QuoteReplyBlock } from "./quote-reply-block"
@@ -16,7 +17,7 @@ import * as hooksModule from "@/hooks"
 import * as userProfileModule from "@/components/user-profile"
 import * as lineMeasureModule from "./use-measured-line-count"
 
-let currentPrefs: { blockquoteCollapseThreshold?: number } | null = {
+let currentPrefs: { blockquoteCollapseEnabled?: boolean; blockquoteCollapseThreshold?: number } | null = {
   blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
 }
 
@@ -125,6 +126,71 @@ describe("QuoteReplyBlock collapse behavior", () => {
     const toggle = screen.getByRole("button", { name: /expand 12 lines/i })
     expect(toggle).toHaveAttribute("aria-expanded", "false")
     expect(clampStyle()).toBe(`${(4 + 0.5) * 20}px`)
+  })
+
+  it("shows a long quote reply in full, with no fold control, when folding is off", () => {
+    currentPrefs = { blockquoteCollapseEnabled: false, blockquoteCollapseThreshold: 4 }
+    measure = { lineCount: 12, lineHeightPx: 20 }
+    renderQuoteReply(
+      <QuoteReplyBlock
+        authorName="Alex"
+        authorId="user_alex"
+        actorType="user"
+        streamId="stream_src"
+        messageId="msg_src"
+      >
+        <p>A quoted reply long enough to fold.</p>
+      </QuoteReplyBlock>
+    )
+
+    expect({
+      toggle: screen.queryByRole("button", { name: toggleName }),
+      clamp: clampStyle(),
+    }).toEqual({ toggle: null, clamp: undefined })
+  })
+
+  it("links folded quotes, and only folded ones, to the quote setting", () => {
+    currentPrefs = { blockquoteCollapseThreshold: 4 }
+    measure = { lineCount: 12, lineHeightPx: 20 }
+    const tree = (
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter initialEntries={["/w/ws_test/s/stream_1"]}>
+          <SettingsProvider>
+            <Routes>
+              <Route
+                path="/w/:workspaceId/s/:streamId"
+                element={
+                  <MarkdownBlockProvider messageId="msg_container">
+                    <QuoteReplyBlock
+                      authorName="Alex"
+                      authorId="user_alex"
+                      actorType="user"
+                      streamId="stream_src"
+                      messageId="msg_src"
+                    >
+                      <p>A quoted reply long enough to fold.</p>
+                    </QuoteReplyBlock>
+                    <BlockquoteBlock>
+                      <p>A block quote long enough to fold.</p>
+                    </BlockquoteBlock>
+                  </MarkdownBlockProvider>
+                }
+              />
+            </Routes>
+          </SettingsProvider>
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+    const gears = () =>
+      screen.queryAllByRole("link", { name: "Long quote settings" }).map((link) => link.getAttribute("href"))
+    const { unmount } = render(tree)
+    const href = "/w/ws_test/s/stream_1?settings=messages&setting=quote-collapse"
+    expect(gears()).toEqual([href, href])
+
+    unmount()
+    measure = { lineCount: 2, lineHeightPx: 20 }
+    render(tree)
+    expect(gears()).toEqual([])
   })
 
   it("expanding drops the clamp and persists the choice under the source-message namespace", async () => {

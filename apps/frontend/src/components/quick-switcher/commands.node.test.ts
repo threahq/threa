@@ -204,16 +204,13 @@ describe("commands", () => {
       expect(openSettings).toHaveBeenCalledWith(tab)
     })
 
-    it("reaches workspace settings and member invites from the palette", () => {
-      const openWorkspaceSettings = vi.fn()
+    it("lands Invite people on the invites row of Members", () => {
+      const openSettings = vi.fn()
       const closeDialog = vi.fn()
-      const context = { openWorkspaceSettings, closeDialog } as unknown as CommandContext
 
-      commands.find((c) => c.id === "open-workspace-settings")!.action(context)
-      expect(openWorkspaceSettings).toHaveBeenCalledWith("general")
+      commands.find((c) => c.id === "invite-people")!.action({ openSettings, closeDialog } as unknown as CommandContext)
 
-      commands.find((c) => c.id === "invite-people")!.action(context)
-      expect(openWorkspaceSettings).toHaveBeenCalledWith("users")
+      expect(openSettings).toHaveBeenCalledWith("members", "invites")
     })
   })
 })

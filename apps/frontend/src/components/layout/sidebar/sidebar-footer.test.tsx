@@ -16,6 +16,7 @@ import * as drawerModule from "@/components/ui/drawer"
 const logout = vi.fn()
 const updatePreference = vi.fn()
 const openSettings = vi.fn()
+const openOverview = vi.fn()
 const collapseOnMobile = vi.fn()
 const isTouch = { value: true }
 
@@ -58,6 +59,7 @@ describe("SidebarFooter", () => {
     vi.restoreAllMocks()
     logout.mockReset()
     openSettings.mockReset()
+    openOverview.mockReset()
     collapseOnMobile.mockReset()
     updatePreference.mockReset()
     isTouch.value = true
@@ -68,6 +70,7 @@ describe("SidebarFooter", () => {
 
     vi.spyOn(contextsModule, "useSettings").mockReturnValue({
       openSettings,
+      openOverview,
     } as unknown as ReturnType<typeof contextsModule.useSettings>)
 
     vi.spyOn(contextsModule, "useSidebar").mockReturnValue({
@@ -139,19 +142,17 @@ describe("SidebarFooter", () => {
     // The identity card at the top of the menu is the status affordance (no
     // status set in this fixture, so it invites the user to set one).
     expect(screen.getByRole("button", { name: "Set a status" })).toBeInTheDocument()
-    expect(screen.getByRole("link", { name: "AI Usage" })).toHaveAttribute("href", "/w/workspace_1/admin/ai-usage")
+    expect(screen.getByRole("link", { name: "AI usage" })).toHaveAttribute("href", "/w/workspace_1/admin/ai-usage")
     expect(screen.getByRole("link", { name: "App status" })).toHaveAttribute("href", "/w/workspace_1/app-status")
     expect(screen.getByRole("link", { name: "User guide" })).toHaveAttribute("href", "https://threa.io/guide")
 
-    // A single Settings entry — Profile is the dialog's default tab, not a
-    // second menu row into the same dialog.
-    expect(screen.queryByRole("button", { name: "Profile" })).not.toBeInTheDocument()
     // No restore callback provided → no Getting started row.
     expect(screen.queryByText("Getting started")).not.toBeInTheDocument()
 
     await user.click(screen.getByRole("button", { name: "Settings" }))
 
-    expect(openSettings).toHaveBeenCalledWith("profile")
+    // Settings opens the overview; Profile has its own row.
+    expect(openSettings).toHaveBeenCalledWith()
     expect(collapseOnMobile).toHaveBeenCalled()
   })
 
@@ -264,9 +265,29 @@ describe("SidebarFooter", () => {
     )
 
     await user.click(screen.getByRole("button", { name: /kris/i }))
-    await user.click(screen.getByText("Settings"))
+    await user.click(screen.getByText("Profile"))
 
     expect(openSettings).toHaveBeenCalledWith("profile")
+  })
+
+  it("opens the overview on the workspace scope from Workspace settings", async () => {
+    isTouch.value = false
+    const user = userEvent.setup()
+
+    renderWithRouter(
+      <SidebarFooter
+        workspaceId="workspace_1"
+        onCreateScratchpad={vi.fn()}
+        onCreateChannel={vi.fn()}
+        currentUser={currentUserFixture}
+      />
+    )
+
+    await user.click(screen.getByRole("button", { name: /kris/i }))
+    await user.click(screen.getByText("Workspace settings"))
+
+    expect(openOverview).toHaveBeenCalledWith("workspace")
+    expect(openSettings).not.toHaveBeenCalled()
   })
 
   it("surfaces a do-not-disturb label in the account header when notifications are paused", async () => {
@@ -332,7 +353,7 @@ describe("SidebarFooter", () => {
 
     await user.click(screen.getByRole("button", { name: /kris/i }))
 
-    const link = screen.getByRole("link", { name: "Admin Portal" })
+    const link = screen.getByRole("link", { name: "Admin portal" })
     // The dev/test fallback of getAdminPortalUrl (vitest runs with DEV=true).
     expect(link).toHaveAttribute("href", "http://localhost:3004")
     expect(link).toHaveAttribute("target", "_blank")
@@ -376,7 +397,7 @@ describe("SidebarFooter", () => {
 
     await user.click(screen.getByRole("button", { name: /pierre/i }))
 
-    expect(screen.queryByText("Admin Portal")).not.toBeInTheDocument()
+    expect(screen.queryByText("Admin portal")).not.toBeInTheDocument()
   })
 
   it("offers a pause-notifications entry in the account menu when not paused", async () => {

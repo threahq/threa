@@ -1,17 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Link, useParams } from "react-router-dom"
+import { useOptionalSettings, withStreamSettings } from "@/contexts/settings-context"
+import { SettingsLink } from "@/components/workspace-settings/settings-link"
 import { toast } from "sonner"
-import { ChevronDown, Pencil } from "lucide-react"
+import { Pencil } from "lucide-react"
 import { serializeToMarkdown, parsePromptMarkdown } from "@/components/editor/editor-markdown"
-import { EditorActionBar, RichEditor, type RichEditorHandle } from "@/components/editor"
-import { EncryptedScratchpadsSection } from "@/components/encryption"
+import { RichEditor, type RichEditorHandle } from "@/components/editor"
 import { Button, buttonVariants } from "@/components/ui/button"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
 import { PersonaListAvatar } from "@/components/persona-avatar"
 import { PersonaForkDialog } from "@/components/workspace-settings/persona-fork-dialog"
 import { PersonalSubagentModelsSection } from "./subagent-models-settings"
+import {
+  SETTING_CONTROL_CLASS,
+  SETTING_CONTROL_HEIGHT,
+  SettingEmptyNote,
+  SettingRow,
+  SettingsDisclosure,
+  SettingsSection,
+  settingIds,
+  SaveError,
+  SaveIndicator,
+} from "./setting-primitives"
+import { SETTING_INPUT_FRAME, SETTING_NOTE_TEXT } from "./setting-text"
+import { settingDef } from "./settings-registry"
+import { useCommittedText } from "./committed-field"
 import { usePreferences } from "@/contexts"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
@@ -19,20 +32,19 @@ import { useCompanionRoster } from "@/hooks/use-companion-roster"
 import { useArchivedPersonas, useUnarchivePersona } from "@/hooks/use-personas"
 import { useWorkspacePersonas } from "@/stores/workspace-store"
 import {
+  COMPANION_DEFAULT_TAGS,
   CompanionAgentSelect,
   companionPickerValue,
   companionPointerFromPickerValue,
 } from "@/components/stream-settings/companion-agent-select"
-import { type JSONContent } from "@threahq/types"
-
-const MODIFIER_LABEL =
-  typeof navigator !== "undefined" && navigator.platform?.toLowerCase().includes("mac") ? "Cmd" : "Ctrl"
+import { StreamTypes, type JSONContent } from "@threahq/types"
+import { useRouteStreamId, useStreamSettingsScope } from "./use-stream-settings-scope"
 
 /**
- * The viewer's personal default companion for scratchpads with no explicit pick.
- * A leading "Workspace default (<name>)" option round-trips as null (inherit the
- * workspace tier); any persona pick stores that concrete id, which wins over the
- * workspace default. Mirrors `BoardHomeSection`'s sentinel-value technique.
+ * The viewer's personal default agent for scratchpads with no explicit pick.
+ * A leading row following the workspace default round-trips as null (inherit
+ * the workspace tier); any persona pick stores that concrete id, which wins
+ * over the workspace default.
  */
 export function PersonalDefaultCompanionSection({ workspaceId }: { workspaceId: string }) {
   const { preferences, updatePreference, isLoading } = usePreferences()
@@ -47,44 +59,82 @@ export function PersonalDefaultCompanionSection({ workspaceId }: { workspaceId: 
     void updatePreference("defaultCompanionPersonaId", companionPointerFromPickerValue(next))
   }
 
-  if (personas.length === 0) return null
-
   return (
-    <section className="space-y-3">
-      <div>
-        <h3 className="text-sm font-medium">Default companion</h3>
-        <p className="text-sm text-muted-foreground">
-          The agent that answers in your scratchpads unless a scratchpad has its own pick. Choose Workspace default to
-          follow whatever your workspace sets.
-        </p>
-      </div>
-      <CompanionAgentSelect
-        workspaceId={workspaceId}
-        personas={personas}
-        value={value}
-        onChange={onChange}
-        defaultOption={{ label: `Workspace default (${workspaceDefault?.name ?? "Ariadne"})` }}
-        disabled={isLoading}
-        triggerClassName="w-full sm:w-72"
-      />
-    </section>
+    <SettingRow
+      setting="default-companion"
+      labelFor={false}
+      description={
+        <>
+          {settingDef("default-companion").description}
+          <ExistingScratchpadAgentLink workspaceId={workspaceId} />
+        </>
+      }
+      control={
+        <CompanionAgentSelect
+          workspaceId={workspaceId}
+          personas={personas}
+          value={value}
+          onChange={onChange}
+          defaultOption={{ persona: workspaceDefault, tag: COMPANION_DEFAULT_TAGS.workspace }}
+          disabled={isLoading}
+          triggerClassName={SETTING_CONTROL_CLASS}
+          aria-labelledby={settingIds("default-companion").label}
+          aria-describedby={settingIds("default-companion").description}
+        />
+      }
+    />
   )
 }
 
 /**
- * "My personas" — a member's own personal personas (user-scoped-personas), the
- * personal-settings counterpart to the admin `PersonasTab`. The active list reads
- * the bootstrap-backed store (the server scopes personal rows to their owner, so
- * `managedBy === "user"` here is kind placement, not a security filter); each row
- * links (INV-40) to the shared editor. "New persona" forks any caller-visible
- * persona (built-in, workspace custom, own personal) or a blank into a new
- * personal one. Archived personal personas sit behind a disclosure with Unarchive.
+ * Where an existing scratchpad's agent changes: the scratchpad in view's Agent
+ * page, else a pick of scratchpad. From another stream the window would read
+ * a bare stream page as that stream's, so the pick opens over the workspace
+ * home, a new history entry Back returns from.
+ */
+function ExistingScratchpadAgentLink({ workspaceId }: { workspaceId: string }) {
+  const settings = useOptionalSettings()
+  const routeStreamId = useRouteStreamId()
+  const stream = useStreamSettingsScope(workspaceId, routeStreamId)
+  if (!settings) return null
+  if (stream?.type === StreamTypes.SCRATCHPAD) {
+    return (
+      <>
+        {" "}
+        <SettingsLink to={settings.getStreamSettingsUrl(stream.streamId, "companion", "stream-agent")}>
+          Change this scratchpad&apos;s agent
+        </SettingsLink>
+      </>
+    )
+  }
+  const pick = settings.getStreamSettingsUrl(null, "companion", "stream-agent")
+  return (
+    <>
+      {" "}
+      <SettingsLink
+        to={
+          routeStreamId === null
+            ? pick
+            : `/w/${workspaceId}?${withStreamSettings(new URLSearchParams(), null, "companion", "stream-agent")}`
+        }
+        replace={routeStreamId === null}
+      >
+        Change a scratchpad&apos;s agent
+      </SettingsLink>
+    </>
+  )
+}
+
+/**
+ * The viewer's own personal personas, the personal counterpart to the admin
+ * `PersonasTab`. The server scopes personal rows to their owner, so
+ * `managedBy === "user"` here is kind placement, not a security filter. "New
+ * agent" forks any agent the viewer can see, or a blank one.
  */
 export function MyPersonasSection({ workspaceId }: { workspaceId: string }) {
   const storePersonas = useWorkspacePersonas(workspaceId)
   const { data: archivedAll } = useArchivedPersonas(workspaceId)
   const unarchive = useUnarchivePersona(workspaceId)
-  const [archivedOpen, setArchivedOpen] = useState(false)
 
   const personal = useMemo(
     () =>
@@ -94,211 +144,188 @@ export function MyPersonasSection({ workspaceId }: { workspaceId: string }) {
     [storePersonas]
   )
 
-  // Fork sources: every persona the caller can currently see, mapped to the light
-  // list-item shape the dialog renders (it only uses id/name); Blank is appended
-  // by the dialog itself.
   const forkSources = useMemo(
     () => storePersonas.filter((p) => p.status === "active").map((p) => ({ id: p.id, name: p.name })),
     [storePersonas]
   )
 
-  // `GET /personas/archived` returns workspace customs too (for admins); the
-  // personal roster only shows the caller's own personal archived personas.
+  // `GET /personas/archived` returns workspace customs too (for admins); this
+  // list only shows the caller's own archived personal personas.
   const archived = archivedAll?.filter((p) => p.kind === "personal")
 
   return (
-    <section className="space-y-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="space-y-1">
-          <h3 className="text-sm font-medium">My personas</h3>
-          <p className="text-sm text-muted-foreground">
-            Personal companions only you can see and use in your scratchpads. Fork a built-in or workspace agent, or
-            start from a blank one.
-          </p>
-        </div>
-        <PersonaForkDialog workspaceId={workspaceId} sources={forkSources} scope="personal" />
-      </div>
-
-      {personal.length > 0 ? (
-        <ul className="space-y-2">
-          {personal.map((persona) => (
-            <li key={persona.id} className="flex items-center gap-3 rounded-lg border border-input bg-card p-3">
-              <PersonaListAvatar workspaceId={workspaceId} persona={persona} size="lg" />
-              <div className="min-w-0 flex-1">
-                <span className="truncate text-sm font-medium">{persona.name}</span>
-                {persona.description && <p className="truncate text-xs text-muted-foreground">{persona.description}</p>}
-              </div>
-              <Link
-                to={`/w/${workspaceId}/settings/personas/${persona.id}`}
-                className={cn(buttonVariants({ variant: "outline", size: "sm" }), "shrink-0")}
-              >
-                <Pencil className="mr-1 h-3.5 w-3.5" />
-                Edit
-              </Link>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="text-sm text-muted-foreground">You haven&apos;t created any personal personas yet.</p>
-      )}
-
-      {archived && archived.length > 0 && (
-        <Collapsible open={archivedOpen} onOpenChange={setArchivedOpen}>
-          <CollapsibleTrigger className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
-            <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", archivedOpen && "rotate-180")} />
-            Archived ({archived.length})
-          </CollapsibleTrigger>
-          <CollapsibleContent className="mt-2">
-            <ul className="space-y-2">
-              {archived.map((persona) => (
-                <li
-                  key={persona.id}
-                  className="flex items-center gap-3 rounded-lg border border-dashed border-input p-3"
+    <>
+      <SettingRow
+        setting="my-personas"
+        labelFor={false}
+        control={<PersonaForkDialog workspaceId={workspaceId} sources={forkSources} scope="personal" />}
+      >
+        {personal.length > 0 ? (
+          <ul aria-labelledby={settingIds("my-personas").label} className="-my-2 divide-y divide-border">
+            {personal.map((persona) => (
+              <li key={persona.id} className="flex min-h-11 items-center gap-3 py-2">
+                <PersonaListAvatar workspaceId={workspaceId} persona={persona} size="lg" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{persona.name}</p>
+                  {persona.description && (
+                    <p className={cn("truncate text-muted-foreground", SETTING_NOTE_TEXT)}>{persona.description}</p>
+                  )}
+                </div>
+                <Link
+                  to={`/w/${workspaceId}/settings/personas/${persona.id}`}
+                  aria-label={`Edit ${persona.name}`}
+                  className={cn(buttonVariants({ variant: "outline", size: "sm" }), "shrink-0", SETTING_CONTROL_HEIGHT)}
                 >
-                  <PersonaListAvatar workspaceId={workspaceId} persona={persona} size="lg" />
-                  <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{persona.name}</span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0"
-                    disabled={unarchive.isPending}
-                    onClick={() =>
-                      unarchive.mutate(persona.id, { onError: () => toast.error("Failed to unarchive persona") })
-                    }
-                  >
-                    Unarchive
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          </CollapsibleContent>
-        </Collapsible>
+                  <Pencil className="mr-1 h-3.5 w-3.5" aria-hidden />
+                  Edit
+                </Link>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <SettingEmptyNote>No agents yet.</SettingEmptyNote>
+        )}
+      </SettingRow>
+      {archived && archived.length > 0 && (
+        <SettingsDisclosure label="Archived agents" settings={[]} summary={`${archived.length} archived`}>
+          <ul aria-label="Archived agents" className="divide-y divide-border">
+            {archived.map((persona) => (
+              <li key={persona.id} className="flex min-h-11 items-center gap-3 px-4 py-2">
+                <PersonaListAvatar workspaceId={workspaceId} persona={persona} size="lg" />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{persona.name}</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className={cn("shrink-0", SETTING_CONTROL_HEIGHT)}
+                  aria-label={`Unarchive ${persona.name}`}
+                  disabled={unarchive.isPending}
+                  onClick={() =>
+                    unarchive.mutate(persona.id, { onError: () => toast.error("Couldn't unarchive the agent") })
+                  }
+                >
+                  Unarchive
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </SettingsDisclosure>
       )}
-    </section>
+    </>
   )
 }
 
+/** Where your instructions stop applying, and where the per-stream equivalent lives. */
+function InstructionsScope() {
+  const streamId = useRouteStreamId()
+  const settings = useOptionalSettings()
+  return (
+    <>
+      {settingDef("ai-instructions").description}
+      {streamId && settings && (
+        <>
+          {" "}
+          <SettingsLink to={settings.getStreamSettingsUrl(streamId, "companion")}>
+            Agent settings for this stream
+          </SettingsLink>
+        </>
+      )}
+    </>
+  )
+}
+
+const INSTRUCTIONS_ERROR_ID = settingIds("ai-instructions").error
+
 export function AISettings() {
-  const { preferences, updatePreference, isLoading } = usePreferences()
+  const { preferences, updatePreference } = usePreferences()
   const { workspaceId } = useParams<{ workspaceId: string }>()
   // Selection toolbar is a hover/mouse affordance — suppress it only when a
   // finger is the active input, so a mouse on a touchscreen laptop keeps it.
   const disableSelectionToolbar = useInputMode() === "touch"
   const editorRef = useRef<RichEditorHandle>(null)
-  const savedPrompt = preferences?.scratchpadCustomPrompt ?? ""
-  const normalizedSavedPrompt = savedPrompt.trim()
+  const savedPrompt = (preferences?.scratchpadCustomPrompt ?? "").trim()
   const [contentJson, setContentJson] = useState<JSONContent>(() => parsePromptMarkdown(savedPrompt))
-  const [formatOpen, setFormatOpen] = useState(false)
+  const instructions = useCommittedText<HTMLDivElement>({
+    saved: savedPrompt,
+    commit: (markdown) => updatePreference("scratchpadCustomPrompt", markdown || null, { errorShownInPlace: true }),
+    failureMessage: "Couldn't save your instructions",
+  })
 
+  // The editor holds rich content and the draft its markdown. When the draft moves without
+  // the editor (Escape, a change from another device), the editor follows.
+  const editorText = useRef(savedPrompt)
   useEffect(() => {
-    setContentJson(parsePromptMarkdown(savedPrompt))
-    setFormatOpen(false)
-  }, [savedPrompt])
+    if (instructions.value.trim() === editorText.current.trim()) return
+    editorText.current = instructions.value
+    setContentJson(parsePromptMarkdown(instructions.value))
+  }, [instructions.value])
 
-  const currentMarkdown = useMemo(() => serializeToMarkdown(contentJson).trim(), [contentJson])
-  const isDirty = currentMarkdown !== normalizedSavedPrompt
-
-  const handleSave = async () => {
-    if (!isDirty || isLoading) {
-      return
-    }
-
-    await updatePreference("scratchpadCustomPrompt", currentMarkdown.length > 0 ? currentMarkdown : null)
-  }
-
-  const handleReset = () => {
-    setContentJson(parsePromptMarkdown(savedPrompt))
-    setFormatOpen(false)
+  const onEditorChange = (next: JSONContent) => {
+    editorText.current = serializeToMarkdown(next)
+    setContentJson(next)
+    instructions.onChange(editorText.current)
   }
 
   return (
-    <div className="space-y-6">
-      <section className="space-y-4">
-        <div>
-          <h3 className="text-sm font-medium">Scratchpad Instructions</h3>
-          <p className="text-sm text-muted-foreground">
-            Add standing guidance that Ariadne should follow in your personal scratchpads. This is injected after the
-            base system prompt for scratchpads and scratchpad-root threads only.
-          </p>
-        </div>
-
-        <div className="input-glow-wrapper">
-          <div
-            className="rounded-lg border border-input bg-card p-3"
-            onClick={(event) => {
-              if ((event.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']")) {
-                return
-              }
-              editorRef.current?.focus()
-            }}
-          >
-            <RichEditor
-              ref={editorRef}
-              value={contentJson}
-              onChange={setContentJson}
-              onSubmit={handleSave}
-              placeholder="Tell Ariadne how to think and help in your scratchpads..."
-              messageSendMode="cmdEnter"
-              staticToolbarOpen={formatOpen}
-              disableSelectionToolbar={disableSelectionToolbar}
-              ariaLabel="Scratchpad custom prompt editor"
-              className="min-h-0 [&_.tiptap]:min-h-[180px] [&_.tiptap]:max-h-[320px]"
-              enableMentions={false}
-              enableChannels={false}
-              enableCommands={false}
-              enableEmoji={false}
-            />
-
-            <div className="mt-2 border-t pt-2" onMouseDown={(event) => event.preventDefault()}>
-              <EditorActionBar
-                editorHandle={editorRef.current}
-                disabled={isLoading}
-                formatOpen={formatOpen}
-                onFormatOpenChange={setFormatOpen}
-                showAttach={false}
-                showMention={false}
-                showEmoji={false}
-                trailingContent={
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleReset}
-                      disabled={!isDirty || isLoading}
-                    >
-                      Reset
-                    </Button>
-                    <Button type="button" size="sm" onClick={handleSave} disabled={!isDirty || isLoading}>
-                      Save
-                    </Button>
-                  </div>
-                }
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-1 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-          <span>Delete everything and save to remove the custom prompt.</span>
-          <span>{MODIFIER_LABEL}+Enter to save</span>
-        </div>
-      </section>
-
+    <div className="space-y-8">
       {workspaceId && (
-        <>
-          <Separator />
+        <SettingsSection section="ai-agents">
           <PersonalDefaultCompanionSection workspaceId={workspaceId} />
-          <PersonalSubagentModelsSection workspaceId={workspaceId} />
-          <Separator />
           <MyPersonasSection workspaceId={workspaceId} />
-        </>
+          <PersonalSubagentModelsSection workspaceId={workspaceId} />
+        </SettingsSection>
       )}
 
-      <Separator />
+      <SettingsSection section="instructions">
+        <SettingRow setting="ai-instructions" labelFor={false} description={<InstructionsScope />}>
+          <div
+            ref={instructions.fieldRef}
+            className="input-glow-wrapper"
+            onBlur={(event) => {
+              if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+              void instructions.save()
+            }}
+          >
+            <div
+              className={cn("relative", SETTING_INPUT_FRAME)}
+              onClick={(event) => {
+                if (
+                  (event.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']")
+                ) {
+                  return
+                }
+                editorRef.current?.focus()
+              }}
+            >
+              <RichEditor
+                ref={editorRef}
+                value={contentJson}
+                onChange={onEditorChange}
+                onSubmit={() => void instructions.save()}
+                placeholder="How should agents think and help in your scratchpads?"
+                messageSendMode="cmdEnter"
+                disableSelectionToolbar={disableSelectionToolbar}
+                ariaLabel="Instructions for your scratchpads"
+                ariaErrorMessage={instructions.state.kind === "error" ? INSTRUCTIONS_ERROR_ID : undefined}
+                className="min-h-0 pr-6 [&_.tiptap]:min-h-[180px] [&_.tiptap]:max-h-[320px]"
+                enableMentions={false}
+                enableChannels={false}
+                enableCommands={false}
+                enableEmoji={false}
+              />
 
-      <EncryptedScratchpadsSection />
+              <span className="pointer-events-none absolute right-3 top-3">
+                <SaveIndicator state={instructions.state} />
+              </span>
+            </div>
+          </div>
+          {instructions.state.kind === "error" && (
+            <div className="mt-2">
+              <SaveError state={instructions.state} id={INSTRUCTIONS_ERROR_ID} />
+            </div>
+          )}
+        </SettingRow>
+      </SettingsSection>
     </div>
   )
 }

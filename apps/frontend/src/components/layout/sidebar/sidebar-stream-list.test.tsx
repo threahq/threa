@@ -12,6 +12,8 @@ import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as deviceModule from "@/lib/device"
 import type { CollapseState } from "@/contexts"
+import type { CachedLabel } from "@/hooks"
+import * as useMobileModule from "@/hooks/use-mobile"
 
 function makeStream(id: string): StreamItemData {
   return {
@@ -453,32 +455,35 @@ describe("SidebarStreamList — section view options", () => {
       unread?: (streamId: string) => number
       boardMode?: SidebarBoardMode | null
       onSectionViewChange?: (sectionId: string, change: SectionViewChange) => void
+      labelsById?: Map<string, CachedLabel>
     } = {}
   ) {
     const streams = sections.flatMap((s) => s.items)
     render(
       <MemoryRouter initialEntries={["/w/workspace_1"]}>
-        <SidebarStreamList
-          workspaceId="workspace_1"
-          hasError={false}
-          hasUserStreams
-          processedStreams={streams}
-          resolvedSections={sections}
-          labelsById={new Map()}
-          getUnreadCount={over.unread ?? (() => 0)}
-          getMentionCount={() => 0}
-          getSectionState={(key) => (key.endsWith(":more") ? "collapsed" : "open")}
-          toggleSectionState={vi.fn()}
-          onCreateScratchpad={vi.fn()}
-          onCreateChannel={vi.fn()}
-          onFileStreamToSection={vi.fn()}
-          onAssignStreamLabel={vi.fn()}
-          onStreamMovedFromLabel={vi.fn()}
-          onSectionViewChange={over.onSectionViewChange ?? vi.fn()}
-          homeHintFor={() => null}
-          boardMode={over.boardMode ?? null}
-          onClearInbox={vi.fn()}
-        />
+        <contextsModule.SettingsProvider>
+          <SidebarStreamList
+            workspaceId="workspace_1"
+            hasError={false}
+            hasUserStreams
+            processedStreams={streams}
+            resolvedSections={sections}
+            labelsById={over.labelsById ?? new Map()}
+            getUnreadCount={over.unread ?? (() => 0)}
+            getMentionCount={() => 0}
+            getSectionState={(key) => (key.endsWith(":more") ? "collapsed" : "open")}
+            toggleSectionState={vi.fn()}
+            onCreateScratchpad={vi.fn()}
+            onCreateChannel={vi.fn()}
+            onFileStreamToSection={vi.fn()}
+            onAssignStreamLabel={vi.fn()}
+            onStreamMovedFromLabel={vi.fn()}
+            onSectionViewChange={over.onSectionViewChange ?? vi.fn()}
+            homeHintFor={() => null}
+            boardMode={over.boardMode ?? null}
+            onClearInbox={vi.fn()}
+          />
+        </contextsModule.SettingsProvider>
       </MemoryRouter>
     )
   }
@@ -503,6 +508,52 @@ describe("SidebarStreamList — section view options", () => {
     openViewMenu("Inbox view options")
     expect(screen.queryByRole("group", { name: "Show" })).not.toBeInTheDocument()
     expect(screen.getByRole("menuitemradio", { name: "Arrival" })).toHaveAttribute("aria-checked", "true")
+  })
+
+  it("links the Inbox view options to the inbox settling setting", () => {
+    renderFor([unreadSection([makeStream("stream_a")])])
+    openViewMenu("Inbox view options")
+    expect(screen.getByRole("menuitem", { name: "Inbox settings" })).toHaveAttribute(
+      "href",
+      "/w/workspace_1?settings=inbox&setting=settling"
+    )
+  })
+
+  it("links a label section's view options to the label move setting", () => {
+    const label = {
+      id: "label_1",
+      workspaceId: "workspace_1",
+      creatorUserId: "user_1",
+      name: "Design",
+      slug: "design",
+      color: "blue",
+      emoji: null,
+      description: null,
+    } as CachedLabel
+    renderFor(
+      [
+        {
+          section: { id: "label:label_1", spec: { kind: "label", labelId: "label_1" } },
+          items: [makeStream("stream_a")],
+        } as unknown as ResolvedSection,
+      ],
+      { labelsById: new Map([[label.id, label]]) }
+    )
+    openViewMenu("Design view options")
+    expect(screen.getByRole("menuitem", { name: "Label settings" })).toHaveAttribute(
+      "href",
+      "/w/workspace_1?settings=inbox&setting=label-move"
+    )
+  })
+
+  it("links the Inbox settings from the phone view options sheet", () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    renderFor([unreadSection([makeStream("stream_a")])])
+    fireEvent.click(screen.getByRole("button", { name: "Inbox view options" }))
+    expect(screen.getByRole("link", { name: "Inbox settings" })).toHaveAttribute(
+      "href",
+      "/w/workspace_1?settings=inbox&setting=settling"
+    )
   })
 
   it("reports a view change with the section id", () => {

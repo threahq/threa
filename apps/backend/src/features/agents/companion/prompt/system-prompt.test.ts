@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { APP_LINK_PAGES, APP_LINK_SETTINGS_TABS, APP_LINK_WORKSPACE_SETTINGS_TABS, StreamTypes } from "@threahq/types"
+import { APP_LINK_PAGES, APP_LINK_SETTINGS_TABS, StreamTypes } from "@threahq/types"
 import { createReadUrlTool, createExaEngine, createWebSearchTool } from "@threahq/agent-runtime"
 import type { Persona } from "../../persona-repository"
 import type { StreamContext } from "../../context-builder"
@@ -74,7 +74,7 @@ describe("buildSystemPrompt", () => {
     })
 
     expect(prompt).toContain(
-      `Pages: ${APP_LINK_PAGES.join(", ")}. Settings tabs: ${APP_LINK_SETTINGS_TABS.join(", ")}. Workspace settings tabs: ${APP_LINK_WORKSPACE_SETTINGS_TABS.join(", ")}.`
+      `Pages: ${APP_LINK_PAGES.join(", ")}. Settings pages: ${APP_LINK_SETTINGS_TABS.join(", ")}.`
     )
   })
 

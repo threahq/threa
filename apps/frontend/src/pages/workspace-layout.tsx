@@ -83,9 +83,7 @@ import { draftsApi, messagesApi, syncApi } from "@/api"
 import { QuickSwitcher, type QuickSwitcherMode } from "@/components/quick-switcher"
 import { ComposeOverlayMount } from "@/components/board/compose-overlay-mount"
 import { SettingsDialog } from "@/components/settings"
-import { WorkspaceSettingsDialog } from "@/components/workspace-settings/workspace-settings-dialog"
 import { AccountSwitcherDialog, LogoutScopeDialog } from "@/components/account-switcher"
-import { StreamSettingsDialog } from "@/components/stream-settings/stream-settings-dialog"
 import { StreamMembersDialog } from "@/components/stream-settings/stream-members-dialog"
 import { CreateChannelDialog } from "@/components/create-channel"
 import { AttachmentExplorer, useExplorerUrlState } from "@/components/attachment-explorer"
@@ -645,12 +643,12 @@ function WorkspaceLayoutContent() {
             <CoordinatedLoadingProvider workspaceId={workspaceId} streamIds={coordinatedStreamIds}>
               <WorkspaceChannelLinkProvider workspaceId={workspaceId}>
                 <CallLaunchProvider>
-                  <PreferencesProvider workspaceId={workspaceId}>
-                    <UserProfileProvider>
-                      <MentionableWrapper>
-                        <WorkspaceCommandListProvider workspaceId={workspaceId}>
-                          <WorkspaceEmojiProvider workspaceId={workspaceId}>
-                            <SettingsProvider>
+                  <SettingsProvider>
+                    <PreferencesProvider workspaceId={workspaceId}>
+                      <UserProfileProvider>
+                        <MentionableWrapper>
+                          <WorkspaceCommandListProvider workspaceId={workspaceId}>
+                            <WorkspaceEmojiProvider workspaceId={workspaceId}>
                               <WorkspaceKeyboardHandler
                                 onOpenSwitcher={openSwitcher}
                                 currentStreamId={streamId}
@@ -692,10 +690,8 @@ function WorkspaceLayoutContent() {
                                                 </SearchPanelProvider>
                                               </SidebarProvider>
                                               <SettingsDialog />
-                                              <WorkspaceSettingsDialog workspaceId={workspaceId} />
                                               <AccountSwitcherDialog />
                                               <LogoutScopeDialog />
-                                              <StreamSettingsDialog workspaceId={workspaceId} />
                                               <StreamMembersDialog workspaceId={workspaceId} />
                                               <CreateChannelDialog workspaceId={workspaceId} />
                                               <AttachmentExplorer workspaceId={workspaceId} />
@@ -710,14 +706,14 @@ function WorkspaceLayoutContent() {
                                   </QuickSwitcherProvider>
                                 </E2eUnlockProvider>
                               </WorkspaceKeyboardHandler>
-                            </SettingsProvider>
-                          </WorkspaceEmojiProvider>
-                        </WorkspaceCommandListProvider>
-                      </MentionableWrapper>
-                    </UserProfileProvider>
-                  </PreferencesProvider>
-                  <CallDock />
-                  <IncomingCallOverlay workspaceId={workspaceId} />
+                            </WorkspaceEmojiProvider>
+                          </WorkspaceCommandListProvider>
+                        </MentionableWrapper>
+                      </UserProfileProvider>
+                    </PreferencesProvider>
+                    <CallDock />
+                    <IncomingCallOverlay workspaceId={workspaceId} />
+                  </SettingsProvider>
                 </CallLaunchProvider>
               </WorkspaceChannelLinkProvider>
             </CoordinatedLoadingProvider>

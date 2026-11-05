@@ -83,8 +83,13 @@ describe("UserApiKeysSection — API version pin", () => {
   })
 })
 
-// The create form renders above the key list, so its version trigger comes first.
-const formVersionTrigger = () => screen.getAllByRole("button", { name: /API version/ })[0] as HTMLButtonElement
+// The create dialog is modal, so the list's version triggers are hidden from the accessibility tree.
+const formVersionTrigger = () => screen.getByRole("button", { name: /API version/ }) as HTMLButtonElement
+
+async function duplicate(user: ReturnType<typeof userEvent.setup>, keyName: string) {
+  await user.click(await screen.findByRole("button", { name: `Actions for ${keyName}` }))
+  await user.click(await screen.findByRole("menuitem", { name: "Duplicate" }))
+}
 
 describe("UserApiKeysSection — create and duplicate", () => {
   it("leaves a new key's pin to the server", async () => {
@@ -119,7 +124,7 @@ describe("UserApiKeysSection — create and duplicate", () => {
 
     renderSection()
 
-    await user.click(await screen.findByRole("button", { name: "Duplicate CI pipeline" }))
+    await duplicate(user, "CI pipeline")
 
     const nameInput = screen.getByRole("textbox", {
       name: "Name",
@@ -136,7 +141,7 @@ describe("UserApiKeysSection — create and duplicate", () => {
         apiVersion: OLDER_API_VERSION,
       })
     )
-    expect(await screen.findByText("Your new API key: CI pipeline (copy)")).toBeTruthy()
+    expect(await screen.findByText("New key: CI pipeline (copy)")).toBeTruthy()
   })
 
   it("keeps an unpinned source key unpinned", async () => {
@@ -148,13 +153,13 @@ describe("UserApiKeysSection — create and duplicate", () => {
 
     renderSection()
 
-    await user.click(await screen.findByRole("button", { name: "Duplicate CI pipeline" }))
+    await duplicate(user, "CI pipeline")
     await user.click(screen.getByRole("button", { name: "Create key" }))
 
     await waitFor(() => expect(create).toHaveBeenCalledWith("ws_1", expect.objectContaining({ apiVersion: null })))
   })
 
-  it("duplicating into an open form replaces the draft and focuses its name; cancel discards it", async () => {
+  it("duplicating fills the form from that key and focuses its name; cancel discards it", async () => {
     vi.spyOn(workspacesApi, "listUserApiKeys").mockResolvedValue([
       makeKey({ scopes: ["messages:write", "bots:manage"], apiVersion: OLDER_API_VERSION }),
       makeKey({ id: "uak_3", name: "Laptop", scopes: ["messages:read"] }),
@@ -163,32 +168,30 @@ describe("UserApiKeysSection — create and duplicate", () => {
 
     renderSection()
 
-    await user.click(await screen.findByRole("button", { name: "Duplicate CI pipeline" }))
-    await user.click(screen.getByRole("checkbox", { name: /Read messages/ }))
-    await user.click(screen.getByRole("button", { name: "Duplicate Laptop" }))
+    await duplicate(user, "Laptop")
 
     const nameInput = screen.getByLabelText("Name") as HTMLInputElement
+    await waitFor(() => expect(document.activeElement).toBe(nameInput))
     expect({
       name: nameInput.value,
-      focused: document.activeElement === nameInput,
       readMessages: screen.getByRole("checkbox", { name: /Read messages/ }).getAttribute("aria-checked"),
       writeMessages: screen.getByRole("checkbox", { name: /Write messages/ }).getAttribute("aria-checked"),
       droppedNote: screen.queryByText(/Not copied/),
     }).toEqual({
       name: "Laptop (copy)",
-      focused: true,
       readMessages: "true",
       writeMessages: "false",
       droppedNote: null,
     })
 
+    await user.click(screen.getByRole("checkbox", { name: /Write messages/ }))
     await user.click(screen.getByRole("button", { name: "Cancel" }))
     await user.click(screen.getByRole("button", { name: "New key" }))
 
     expect({
       name: (screen.getByLabelText("Name") as HTMLInputElement).value,
-      readMessages: screen.getByRole("checkbox", { name: /Read messages/ }).getAttribute("aria-checked"),
-    }).toEqual({ name: "", readMessages: "false" })
+      writeMessages: screen.getByRole("checkbox", { name: /Write messages/ }).getAttribute("aria-checked"),
+    }).toEqual({ name: "", writeMessages: "false" })
   })
 
   it("clears a failed create's error once the draft is edited", async () => {
@@ -198,7 +201,7 @@ describe("UserApiKeysSection — create and duplicate", () => {
 
     renderSection()
 
-    await user.click(await screen.findByRole("button", { name: "Duplicate CI pipeline" }))
+    await duplicate(user, "CI pipeline")
     await user.click(screen.getByRole("button", { name: "Create key" }))
     expect((await screen.findByRole("alert")).textContent).toBe("Key limit reached")
     expect({
@@ -219,7 +222,7 @@ describe("UserApiKeysSection — create and duplicate", () => {
 
     renderSection()
 
-    await user.click(await screen.findByRole("button", { name: "Duplicate CI pipeline" }))
+    await duplicate(user, "CI pipeline")
     await user.click(screen.getByRole("button", { name: "Create key" }))
     expect(await screen.findByText("Key limit reached")).toBeTruthy()
 
@@ -229,11 +232,8 @@ describe("UserApiKeysSection — create and duplicate", () => {
     expect(screen.queryByText("Key limit reached")).toBeNull()
   })
 
-  it("locks the form and Duplicate until an in-flight create settles", async () => {
-    vi.spyOn(workspacesApi, "listUserApiKeys").mockResolvedValue([
-      makeKey(),
-      makeKey({ id: "uak_3", name: "Laptop", scopes: ["messages:read"] }),
-    ])
+  it("locks the dialog until an in-flight create settles", async () => {
+    vi.spyOn(workspacesApi, "listUserApiKeys").mockResolvedValue([makeKey()])
     let resolveCreate!: (value: { key: UserApiKey; value: string }) => void
     vi.spyOn(workspacesApi, "createUserApiKey").mockReturnValue(
       new Promise((resolve) => {
@@ -244,29 +244,23 @@ describe("UserApiKeysSection — create and duplicate", () => {
 
     renderSection()
 
-    await user.click(await screen.findByRole("button", { name: "Duplicate CI pipeline" }))
+    await duplicate(user, "CI pipeline")
     await user.click(screen.getByRole("button", { name: "Create key" }))
 
-    const isDisabled = (name: string) => (screen.getByRole("button", { name }) as HTMLButtonElement).disabled
     await waitFor(() =>
       expect({
         name: (screen.getByLabelText("Name") as HTMLInputElement).disabled,
         scope: (screen.getByRole("checkbox", { name: /Write messages/ }) as HTMLButtonElement).disabled,
         version: formVersionTrigger().disabled,
-        cancel: isDisabled("Cancel"),
-        duplicate: isDisabled("Duplicate Laptop"),
-      }).toEqual({ name: true, scope: true, version: true, cancel: true, duplicate: true })
+        cancel: (screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled,
+      }).toEqual({ name: true, scope: true, version: true, cancel: true })
     )
+    await user.keyboard("{Escape}")
+    expect(screen.getByRole("dialog")).toBeTruthy()
 
     resolveCreate({ key: makeKey({ id: "uak_2", name: "CI pipeline (copy)" }), value: "threa_uk_new" })
 
-    expect(await screen.findByText("Your new API key: CI pipeline (copy)")).toBeTruthy()
-    expect({
-      form: screen.queryByRole("button", { name: "Cancel" }),
-      duplicate: isDisabled("Duplicate Laptop"),
-    }).toEqual({
-      form: null,
-      duplicate: false,
-    })
+    expect(await screen.findByText("New key: CI pipeline (copy)")).toBeTruthy()
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
   })
 })

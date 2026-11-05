@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import {
@@ -27,17 +27,34 @@ function seedBootstrap(
   } as unknown as WorkspaceBootstrap)
 }
 
-function renderSection(queryClient: QueryClient) {
-  return render(
+function renderSection(queryClient: QueryClient, { open = true } = {}) {
+  const result = render(
     <QueryClientProvider client={queryClient}>
       <SubagentModelsSection workspaceId="ws_1" />
     </QueryClientProvider>
   )
+  if (open) fireEvent.click(screen.getByRole("button", { name: /Workspace subagent models/ }))
+  return result
 }
 
 describe("SubagentModelsSection", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+  })
+
+  it("folds the price list behind a count of allowed models", () => {
+    const queryClient = new QueryClient()
+    seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN], DEFAULT_SUBAGENT_MODELS)
+
+    renderSection(queryClient, { open: false })
+
+    expect({
+      summary: screen.getByRole("button", { name: /Workspace subagent models/ }).textContent,
+      prices: screen.queryByText(/per 1M tokens/),
+    }).toEqual({
+      summary: `Workspace subagent models${DEFAULT_SUBAGENT_MODELS.length} of ${SUBAGENT_MODEL_CATALOG.length} models allowed`,
+      prices: null,
+    })
   })
 
   it("shows every catalog model with its rates and marks the premium tier opt-in", () => {
@@ -140,7 +157,7 @@ describe("SubagentModelsSection", () => {
       expect(box).toHaveAttribute("data-state", DEFAULT_SUBAGENT_MODELS.includes(entry.id) ? "checked" : "unchecked")
       expect(box).toBeDisabled()
     }
-    expect(screen.queryByText(/assistants cannot delegate/)).toBeNull()
+    expect(screen.queryByText(/agents can.t delegate/)).toBeNull()
   })
 
   it("says so once an empty set is genuinely what the workspace stored", () => {
@@ -149,7 +166,7 @@ describe("SubagentModelsSection", () => {
 
     renderSection(queryClient)
 
-    expect(screen.getByText(/assistants cannot delegate/)).toBeInTheDocument()
+    expect(screen.getByText(/agents can.t delegate/)).toBeInTheDocument()
   })
 
   it("keeps a stored model the catalog no longer lists tickable, so it can be dropped", async () => {

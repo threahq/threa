@@ -1,7 +1,7 @@
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useQuery, useMutation } from "@tanstack/react-query"
 import { useSearchParams } from "react-router-dom"
-import { Check, ChevronDown, Copy, KeyRound, Link as LinkIcon, Mail, MoreHorizontal, Pencil } from "lucide-react"
+import { Check, Copy, KeyRound, Link as LinkIcon, Mail, MoreHorizontal, Pencil } from "lucide-react"
 import { toast } from "sonner"
 import {
   roleDisplayName,
@@ -10,8 +10,22 @@ import {
   type WorkspaceRoleSlug,
 } from "@threahq/types"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
+import {
+  SETTING_CONTROL_HEIGHT,
+  SettingActions,
+  SettingControlSkeleton,
+  SettingEmptyNote,
+  SettingFieldError,
+  SettingRow,
+  SettingsSection,
+  settingIds,
+  SettingBadge,
+} from "@/components/settings/setting-primitives"
+import { SETTING_ICON_BUTTON, SETTING_MUTED_NOTE_TEXT, SETTING_NOTE_TEXT } from "@/components/settings/setting-text"
+import { rankMatches } from "@/lib/match-score"
+import { cn } from "@/lib/utils"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   AlertDialog,
@@ -30,16 +44,18 @@ import { isPickableUser, useWorkspaceUsers } from "@/stores/workspace-store"
 import { useFormattedDate } from "@/hooks"
 import { useCoverClose } from "@/hooks/use-cover-close"
 import { INVITE_LINK_COVER } from "@/lib/covers"
-import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useChangeWorkspaceMemberRole, useRemoveWorkspaceMember } from "@/hooks/use-workspace-member-management"
-import { hasPermission } from "@/lib/permissions"
 import { useUser } from "@/auth"
 
-type WorkspaceUserRow = ReturnType<typeof useWorkspaceUsers>[number]
 import { InviteDialog } from "./invite-dialog"
 import { CreateInviteLinkDialog } from "./create-invite-link-dialog"
 import { EditInviteLinkDialog } from "./edit-invite-link-dialog"
 import { GuestDmPolicySection } from "./guest-dm-policy-section"
+import { accessDescription, useWorkspaceAccess } from "./workspace-permission"
+
+type WorkspaceUserRow = ReturnType<typeof useWorkspaceUsers>[number]
+
+/** A list item's ⋯ menu trigger, sized like its remove X. */
 
 function CopyLinkLabel({ isCopied, tokenInMemory }: { isCopied: boolean; tokenInMemory: boolean }) {
   if (isCopied) {
@@ -61,7 +77,7 @@ function CopyLinkLabel({ isCopied, tokenInMemory }: { isCopied: boolean; tokenIn
   return (
     <>
       <Copy className="h-3.5 w-3.5" />
-      Link sent
+      Link hidden
     </>
   )
 }
@@ -110,13 +126,13 @@ export function PendingEmailInvitationDetails({
 }) {
   return (
     <div className="min-w-0 space-y-1">
-      <span className="inline-flex min-w-0 items-center gap-1.5 truncate text-sm">
-        <Mail className="h-3.5 w-3.5" />
+      <span className="inline-flex min-w-0 items-center gap-1.5 truncate text-sm font-medium">
+        <Mail className="h-3.5 w-3.5 shrink-0" aria-hidden />
         {email}
       </span>
       <div className="flex items-center gap-2">
-        <Badge variant="outline">{roleDisplayName(role)}</Badge>
-        <span className="text-xs text-muted-foreground">
+        <SettingBadge>{roleDisplayName(role)}</SettingBadge>
+        <span className={SETTING_MUTED_NOTE_TEXT}>
           {expiresAt ? `Expires ${formatDate(new Date(expiresAt))}` : "Never expires"}
         </span>
       </div>
@@ -145,9 +161,14 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
     () => workspaceUsers.filter(isPickableUser).sort((a, b) => (a.name || a.slug).localeCompare(b.name || b.slug)),
     [workspaceUsers]
   )
+  const [memberFilter, setMemberFilter] = useState("")
+  const shownUsers = useMemo(
+    () => rankMatches(users, memberFilter, (user) => ({ labels: [user.name, user.slug] })),
+    [users, memberFilter]
+  )
 
-  const bootstrap = useCachedWorkspaceBootstrap(workspaceId)
-  const canManageMembers = hasPermission(bootstrap?.viewerPermissions, WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE)
+  const memberAccess = useWorkspaceAccess(workspaceId, WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE)
+  const canManageMembers = memberAccess.allowed
 
   const changeRoleMutation = useChangeWorkspaceMemberRole(workspaceId)
   const removeMutation = useRemoveWorkspaceMember(workspaceId)
@@ -155,6 +176,7 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
   const invitationsQuery = useQuery({
     queryKey: invitationKeys.list(workspaceId),
     queryFn: () => invitationsApi.list(workspaceId),
+    enabled: canManageMembers,
   })
 
   const revokeMutation = useMutation({
@@ -187,247 +209,329 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
     setSearchParams(next, { replace: selectedLink !== null })
   }
 
+  useEffect(() => {
+    if (!copiedInvitationId) return
+    const timer = setTimeout(() => setCopiedInvitationId(null), 2000)
+    return () => clearTimeout(timer)
+  }, [copiedInvitationId])
+
   const handleCopy = async (invitationId: string) => {
     const token = tokensRef.current.get(invitationId)
     if (!token) return
     try {
       await navigator.clipboard.writeText(buildJoinUrl(token))
       setCopiedInvitationId(invitationId)
-      setTimeout(() => setCopiedInvitationId(null), 2000)
     } catch {
       toast.error("Could not copy the invite link")
     }
   }
 
+  const missingToken = linkInvitations.some((invitation) => !tokensRef.current.has(invitation.id))
+
   return (
-    <div className="space-y-6 p-1">
-      <GuestDmPolicySection workspaceId={workspaceId} />
-
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium">Members ({users.length})</h3>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button size="sm">
-              Invite
-              <ChevronDown className="ml-1 h-3.5 w-3.5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => setEmailInviteOpen(true)}>
-              <Mail className="mr-2 h-4 w-4" />
-              <span>Invite by email</span>
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => openLink("create")}>
-              <LinkIcon className="mr-2 h-4 w-4" />
-              <span>Create invite link</span>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-
-      {invitationsQuery.isError && (
-        <p role="alert" className="text-sm text-destructive">
-          {invitationErrorMessage(invitationsQuery.error, "Failed to load invitations")}
-        </p>
-      )}
-
-      <div role="list" className="space-y-2">
-        {users.map((user) => {
-          const isSelf = user.workosUserId === authUser?.id
-          // Owners aren't demotable here — ownership transfer is its own flow.
-          const canEditRole =
-            canManageMembers &&
-            !isSelf &&
-            user.role !== "owner" &&
-            (WORKSPACE_ASSIGNABLE_ROLES as readonly string[]).includes(user.role)
-          const canRemove = canManageMembers && !isSelf && user.role !== "owner"
-          const isRoleChanging = changeRoleMutation.isPending && changeRoleMutation.variables?.userId === user.id
-
-          return (
-            <div
-              key={user.id}
-              role="listitem"
-              className="flex items-center justify-between gap-2 rounded-md border px-3 py-2"
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <ActorAvatar
-                  actorId={user.id}
-                  actorType="user"
-                  workspaceId={workspaceId}
-                  size="sm"
-                  alt={user.name || user.slug}
-                />
-                <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-2 min-w-0">
-                  <span className="text-sm font-medium truncate">{user.name || user.slug}</span>
-                  <span className="text-xs text-muted-foreground truncate">@{user.slug}</span>
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                {canEditRole ? (
-                  <Select
-                    value={user.role}
-                    disabled={isRoleChanging}
-                    onValueChange={(value) =>
-                      changeRoleMutation.mutate(
-                        { userId: user.id, roleSlug: value as WorkspaceRoleSlug },
-                        {
-                          onError: (err) => toast.error(memberErrorMessage(err, "Failed to update role")),
-                        }
-                      )
-                    }
-                  >
-                    <SelectTrigger className="h-7 w-[110px] px-2 py-0 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {WORKSPACE_ASSIGNABLE_ROLES.filter((slug) => slug !== "owner").map((slug) => (
-                        <SelectItem key={slug} value={slug}>
-                          {roleDisplayName(slug)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <Badge variant={user.role === "owner" ? "default" : "secondary"}>{roleDisplayName(user.role)}</Badge>
-                )}
-                {canRemove && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7"
-                        aria-label={`Manage ${user.name || user.slug}`}
-                      >
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        className="text-destructive focus:text-destructive"
-                        onSelect={() => setMemberToRemove(user)}
-                      >
-                        Remove from workspace
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-
-      {linkInvitations.length > 0 && (
-        <div className="space-y-2">
-          <h3 className="text-sm font-medium">Invite links ({linkInvitations.length})</h3>
+    <div className="space-y-8">
+      <SettingsSection section="workspace-people">
+        <SettingRow
+          setting="members"
+          labelFor={false}
+          description={accessDescription("members", memberAccess, {
+            base: `${users.length} ${users.length === 1 ? "person" : "people"} in this workspace.`,
+            reason: "Only admins can change roles or remove people.",
+          })}
+        >
           <div className="space-y-2">
-            {linkInvitations.map((invitation) => {
-              const tokenInMemory = tokensRef.current.has(invitation.id)
-              const exhausted = invitation.maxUses !== null && invitation.useCount >= invitation.maxUses
-              const expired = invitation.expiresAt !== null && new Date(invitation.expiresAt).getTime() <= Date.now()
-              let state = "Active"
-              if (expired) state = "Expired"
-              else if (exhausted) state = "Exhausted"
-              return (
-                <div
-                  key={invitation.id}
-                  className="flex flex-col gap-2 rounded-md border px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center gap-1.5 text-sm font-medium">
-                        <LinkIcon className="h-3.5 w-3.5 text-primary" />
-                        Invite link
-                      </span>
-                      <Badge variant="outline">{state}</Badge>
-                      <Badge variant="outline">{roleDisplayName(invitation.role)}</Badge>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {invitation.useCount} of {invitation.maxUses ?? "unlimited"} joined ·{" "}
-                      {invitation.expiresAt ? `Expires ${formatDate(new Date(invitation.expiresAt))}` : "Never expires"}
-                    </p>
-                    {invitation.note && (
-                      <p className="truncate text-xs text-muted-foreground" title={invitation.note}>
-                        {invitation.note}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 gap-1">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => handleCopy(invitation.id)}
-                      disabled={!tokenInMemory}
-                      title={tokenInMemory ? "Copy link" : "Link only available after creation"}
-                    >
-                      <CopyLinkLabel isCopied={copiedInvitationId === invitation.id} tokenInMemory={tokenInMemory} />
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => openLink(invitation.id)}>
-                      <Pencil className="mr-1 h-3.5 w-3.5" />
-                      Edit
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() =>
-                        revokeMutation.mutate(invitation.id, {
-                          onError: (error) => toast.error(invitationErrorMessage(error, "Failed to revoke link")),
-                        })
-                      }
-                      disabled={revokeMutation.isPending}
-                    >
-                      Revoke
-                    </Button>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
+            <Input
+              placeholder="Filter members"
+              aria-label="Filter members"
+              value={memberFilter}
+              onChange={(event) => setMemberFilter(event.target.value)}
+              className={SETTING_CONTROL_HEIGHT}
+            />
+            <ul
+              aria-labelledby={settingIds("members").label}
+              className="max-h-64 divide-y divide-border overflow-y-auto"
+            >
+              {shownUsers.map((user) => {
+                const isSelf = user.workosUserId === authUser?.id
+                const name = user.name || user.slug
+                // Owners aren't demotable here — ownership transfer is its own flow.
+                const canEditRole =
+                  canManageMembers &&
+                  !isSelf &&
+                  user.role !== "owner" &&
+                  (WORKSPACE_ASSIGNABLE_ROLES as readonly string[]).includes(user.role)
+                const canRemove = canManageMembers && !isSelf && user.role !== "owner"
+                const isRoleChanging = changeRoleMutation.isPending && changeRoleMutation.variables?.userId === user.id
 
-      {pendingEmailInvitations.length > 0 && (
-        <div className="space-y-2">
-          <h3 className="text-sm font-medium">Pending invitations ({pendingEmailInvitations.length})</h3>
-          {pendingEmailInvitations.map((invitation) => (
-            <div key={invitation.id} className="flex items-center justify-between gap-2 rounded-md border px-3 py-2">
-              <PendingEmailInvitationDetails
-                email={invitation.email}
-                role={invitation.role}
-                expiresAt={invitation.expiresAt}
-                formatDate={formatDate}
-              />
-              <div className="flex shrink-0 gap-1">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() =>
-                    resendMutation.mutate(invitation.id, {
-                      onError: (error) => toast.error(invitationErrorMessage(error, "Failed to resend invitation")),
-                    })
-                  }
-                  disabled={resendMutation.isPending}
-                >
-                  Resend
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() =>
-                    revokeMutation.mutate(invitation.id, {
-                      onError: (error) => toast.error(invitationErrorMessage(error, "Failed to revoke invitation")),
-                    })
-                  }
-                  disabled={revokeMutation.isPending}
-                >
-                  Revoke
-                </Button>
-              </div>
+                return (
+                  <li key={user.id} className="flex min-h-11 items-center justify-between gap-2 py-2">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <ActorAvatar actorId={user.id} actorType="user" workspaceId={workspaceId} size="sm" alt={name} />
+                      <div className="flex min-w-0 flex-col sm:flex-row sm:items-baseline sm:gap-2">
+                        <span className="truncate text-sm font-medium">
+                          {name}
+                          {isSelf && <span className="font-normal text-muted-foreground"> (you)</span>}
+                        </span>
+                        <span className={cn("truncate text-muted-foreground", SETTING_NOTE_TEXT)}>@{user.slug}</span>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      {canEditRole ? (
+                        <Select
+                          value={user.role}
+                          disabled={isRoleChanging}
+                          onValueChange={(value) =>
+                            changeRoleMutation.mutate(
+                              { userId: user.id, roleSlug: value as WorkspaceRoleSlug },
+                              {
+                                onError: (err) => toast.error(memberErrorMessage(err, "Failed to update role")),
+                              }
+                            )
+                          }
+                        >
+                          <SelectTrigger className={cn("w-40", SETTING_CONTROL_HEIGHT)} aria-label={`Role for ${name}`}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {WORKSPACE_ASSIGNABLE_ROLES.filter((slug) => slug !== "owner").map((slug) => (
+                              <SelectItem key={slug} value={slug}>
+                                {roleDisplayName(slug)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <SettingBadge>{roleDisplayName(user.role)}</SettingBadge>
+                      )}
+                      {canRemove && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className={SETTING_ICON_BUTTON}
+                              aria-label={`Manage ${name}`}
+                            >
+                              <MoreHorizontal aria-hidden />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onSelect={() => setMemberToRemove(user)}
+                            >
+                              Remove from workspace
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+            {shownUsers.length === 0 && <SettingEmptyNote>No members match.</SettingEmptyNote>}
+          </div>
+        </SettingRow>
+
+        <SettingRow
+          setting="invites"
+          labelFor={false}
+          description={accessDescription("invites", memberAccess, { reason: "Only admins can invite people." })}
+          control={
+            <SettingActions>
+              {!memberAccess.known ? (
+                <>
+                  <SettingControlSkeleton className="w-36" />
+                  <SettingControlSkeleton className="w-40" />
+                </>
+              ) : (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className={SETTING_CONTROL_HEIGHT}
+                    disabled={!canManageMembers}
+                    aria-describedby={canManageMembers ? undefined : settingIds("invites").description}
+                    onClick={() => setEmailInviteOpen(true)}
+                  >
+                    <Mail className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                    Invite by email
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className={SETTING_CONTROL_HEIGHT}
+                    disabled={!canManageMembers}
+                    aria-describedby={canManageMembers ? undefined : settingIds("invites").description}
+                    onClick={() => openLink("create")}
+                  >
+                    <LinkIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                    Create invite link
+                  </Button>
+                </>
+              )}
+            </SettingActions>
+          }
+        >
+          {(linkInvitations.length > 0 || pendingEmailInvitations.length > 0 || invitationsQuery.isError) && (
+            <div className="space-y-2">
+              {(linkInvitations.length > 0 || pendingEmailInvitations.length > 0) && (
+                <ul aria-label="Open invitations" className="divide-y divide-border">
+                  {linkInvitations.map((invitation) => {
+                    const tokenInMemory = tokensRef.current.has(invitation.id)
+                    const exhausted = invitation.maxUses !== null && invitation.useCount >= invitation.maxUses
+                    const expired =
+                      invitation.expiresAt !== null && new Date(invitation.expiresAt).getTime() <= Date.now()
+                    let state = "Active"
+                    if (expired) state = "Expired"
+                    else if (exhausted) state = "Used up"
+                    const linkName = invitation.note ? `invite link “${invitation.note}”` : "invite link"
+                    return (
+                      <li key={invitation.id} className="flex min-h-11 items-center justify-between gap-2 py-2">
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="inline-flex items-center gap-1.5 text-sm font-medium">
+                              <LinkIcon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                              Invite link
+                            </span>
+                            <SettingBadge>{state}</SettingBadge>
+                            <SettingBadge>{roleDisplayName(invitation.role)}</SettingBadge>
+                          </div>
+                          <p className={SETTING_MUTED_NOTE_TEXT}>
+                            {invitation.useCount} of {invitation.maxUses ?? "unlimited"} joined ·{" "}
+                            {invitation.expiresAt
+                              ? `Expires ${formatDate(new Date(invitation.expiresAt))}`
+                              : "Never expires"}
+                          </p>
+                          {invitation.note && (
+                            <p
+                              className={cn("truncate text-muted-foreground", SETTING_NOTE_TEXT)}
+                              title={invitation.note}
+                            >
+                              {invitation.note}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className={SETTING_CONTROL_HEIGHT}
+                            onClick={() => handleCopy(invitation.id)}
+                            disabled={!tokenInMemory}
+                          >
+                            <CopyLinkLabel
+                              isCopied={copiedInvitationId === invitation.id}
+                              tokenInMemory={tokenInMemory}
+                            />
+                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className={SETTING_ICON_BUTTON}
+                                aria-label={`More for ${linkName}`}
+                              >
+                                <MoreHorizontal aria-hidden />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onSelect={() => openLink(invitation.id)}>
+                                <Pencil aria-hidden />
+                                Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                disabled={revokeMutation.isPending}
+                                onSelect={() =>
+                                  revokeMutation.mutate(invitation.id, {
+                                    onError: (error) =>
+                                      toast.error(invitationErrorMessage(error, "Failed to revoke link")),
+                                  })
+                                }
+                              >
+                                Revoke
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </li>
+                    )
+                  })}
+                  {pendingEmailInvitations.map((invitation) => (
+                    <li key={invitation.id} className="flex min-h-11 items-center justify-between gap-2 py-2">
+                      <PendingEmailInvitationDetails
+                        email={invitation.email}
+                        role={invitation.role}
+                        expiresAt={invitation.expiresAt}
+                        formatDate={formatDate}
+                      />
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className={SETTING_CONTROL_HEIGHT}
+                          onClick={() =>
+                            resendMutation.mutate(invitation.id, {
+                              onError: (error) =>
+                                toast.error(invitationErrorMessage(error, "Failed to resend invitation")),
+                            })
+                          }
+                          disabled={resendMutation.isPending}
+                        >
+                          Resend
+                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className={SETTING_ICON_BUTTON}
+                              aria-label={`More for the invitation to ${invitation.email}`}
+                            >
+                              <MoreHorizontal aria-hidden />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              disabled={revokeMutation.isPending}
+                              onSelect={() =>
+                                revokeMutation.mutate(invitation.id, {
+                                  onError: (error) =>
+                                    toast.error(invitationErrorMessage(error, "Failed to revoke invitation")),
+                                })
+                              }
+                            >
+                              Revoke
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {missingToken && (
+                <p className={SETTING_MUTED_NOTE_TEXT}>
+                  A link can be copied only right after it&apos;s created. Create a new one to share it again.
+                </p>
+              )}
+              {invitationsQuery.isError && (
+                <SettingFieldError>
+                  {invitationErrorMessage(invitationsQuery.error, "Failed to load invitations")}
+                </SettingFieldError>
+              )}
             </div>
-          ))}
-        </div>
-      )}
+          )}
+        </SettingRow>
+      </SettingsSection>
+
+      <SettingsSection section="workspace-access">
+        <GuestDmPolicySection workspaceId={workspaceId} />
+      </SettingsSection>
 
       <InviteDialog
         workspaceId={workspaceId}

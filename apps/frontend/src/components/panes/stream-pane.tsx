@@ -15,7 +15,7 @@ import {
   Video,
   CornerDownRight,
   Paperclip,
-  Settings,
+  SlidersHorizontal,
   Sparkles,
   Moon,
   Lock,
@@ -356,6 +356,13 @@ export function StreamPane({
   const membersActions: SidebarActionItem[] = streamHasMembers(stream)
     ? [{ id: "members", label: "Members", icon: Users, onSelect: () => openStreamMembers(streamId) }]
     : []
+  const offersSettings = !isDoc || isTopLevelDoc
+  const settingsAction: SidebarActionItem = {
+    id: "stream-settings",
+    label: "Settings",
+    icon: SlidersHorizontal,
+    onSelect: () => openStreamSettings(streamId),
+  }
   const streamMenuActions: SidebarActionItem[] = []
   if (isDoc) {
     streamMenuActions.push(copyLinkAction)
@@ -373,22 +380,10 @@ export function StreamPane({
         href: `/w/${workspaceId}/s/${streamId}?${PANEL_PARAM}=${streamId}`,
       })
     }
-    if (isTopLevelDoc) {
-      streamMenuActions.push({
-        id: "stream-settings",
-        label: "Settings",
-        icon: Settings,
-        onSelect: () => openStreamSettings(streamId),
-      })
-    }
+    if (offersSettings) streamMenuActions.push(settingsAction)
     streamMenuActions.push(...membersActions, labelsAction)
   } else {
-    streamMenuActions.push(
-      { id: "stream-settings", label: "Settings", icon: Settings, onSelect: () => openStreamSettings(streamId) },
-      ...membersActions,
-      labelsAction,
-      copyLinkAction
-    )
+    streamMenuActions.push(settingsAction, ...membersActions, labelsAction, copyLinkAction)
   }
   if (createDoc.enabled) {
     streamMenuActions.push({
@@ -933,6 +928,18 @@ export function StreamPane({
         }
         menu={
           <>
+            {stream && !isDraft && offersStreamActions && offersSettings && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="relative h-8 w-8 [@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:-inset-1.5 [@media(pointer:coarse)]:after:content-['']"
+                title="Stream settings"
+                aria-label="Stream settings"
+                onClick={() => openStreamSettings(streamId, "general")}
+              >
+                <SlidersHorizontal className="h-4 w-4" aria-hidden />
+              </Button>
+            )}
             {stream && isMobile && canOpenSheet && (
               <>
                 <Button

@@ -1,23 +1,39 @@
-import { useState } from "react"
+import { useState, type ComponentProps, type KeyboardEvent } from "react"
 import { useParams } from "react-router-dom"
-import { CircleHelp, Smile } from "lucide-react"
+import { Smile } from "lucide-react"
 import { resolveActiveStatus } from "@threahq/types"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
-import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useAuth } from "@/auth"
 import { useUpdateProfile } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { StatusPicker } from "@/components/status/status-picker"
 import { formatStatusClearLabel } from "@/lib/status"
+import { cn } from "@/lib/utils"
 import { AvatarSection } from "./avatar-section"
+import { useCommittedText } from "./committed-field"
+import {
+  FieldAddon,
+  SETTING_CONTROL_CLASS,
+  SETTING_CONTROL_HEIGHT,
+  SETTING_CONTROL_WIDTH,
+  SettingRow,
+  SettingValue,
+  SettingsSection,
+  settingIds,
+  useSettingDescribedBy,
+  SaveError,
+  SaveIndicator,
+} from "./setting-primitives"
+import { settingDef, type SettingId } from "./settings-registry"
+import { SETTING_NOTE_TEXT } from "./setting-text"
 import { toast } from "sonner"
 
 const PRONOUN_PRESETS = ["he/him", "she/her", "they/them", "xe/xem"] as const
+const DESCRIPTION_MAX = 500
 
 function useCurrentUser(workspaceId: string): ReturnType<typeof useWorkspaceUsers>[number] | null {
   const { user } = useAuth()
@@ -26,299 +42,301 @@ function useCurrentUser(workspaceId: string): ReturnType<typeof useWorkspaceUser
   return workspaceUsers.find((u) => u.workosUserId === user.id) ?? null
 }
 
+type Commit = (value: string | null) => Promise<unknown>
+
+/** Profile fields store a cleared value as null. */
+function committedProfileText(saved: string, commit: Commit, required = false) {
+  return {
+    saved,
+    required,
+    commit: (value: string) => commit(value || null),
+    failureMessage: (error: unknown) => (error instanceof Error && error.message) || "Couldn't save your profile",
+  }
+}
+
+function enterSaves(save: () => Promise<void>) {
+  return (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter") return
+    event.preventDefault()
+    void save()
+  }
+}
+
+interface TextSettingProps {
+  setting: SettingId
+  saved: string
+  commit: Commit
+  required?: boolean
+  prefix?: string
+  inputProps?: Omit<ComponentProps<typeof Input>, "value" | "onChange" | "onBlur" | "onKeyDown" | "id">
+}
+
+function TextSetting({ setting, saved, commit, required, prefix, inputProps }: TextSettingProps) {
+  const ids = settingIds(setting)
+  const field = useCommittedText<HTMLInputElement>(committedProfileText(saved, commit, required))
+  const errorId = `${ids.control}-error`
+  return (
+    <SettingRow
+      setting={setting}
+      control={
+        <div className={cn("flex items-stretch", SETTING_CONTROL_WIDTH)}>
+          {prefix && (
+            <FieldAddon side="start" aria-hidden>
+              {prefix}
+            </FieldAddon>
+          )}
+          <div className="relative min-w-0 flex-1">
+            <Input
+              {...inputProps}
+              ref={field.fieldRef}
+              id={ids.control}
+              value={field.value}
+              required={required}
+              aria-invalid={field.state.kind === "error"}
+              aria-errormessage={field.state.kind === "error" ? errorId : undefined}
+              onChange={(event) => field.onChange(event.target.value)}
+              onBlur={() => void field.save()}
+              onKeyDown={enterSaves(field.save)}
+              className={cn("w-full pr-9", SETTING_CONTROL_HEIGHT, prefix && "rounded-l-none")}
+            />
+            <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+              <SaveIndicator state={field.state} />
+            </span>
+          </div>
+        </div>
+      }
+    >
+      {field.state.kind === "error" && <SaveError id={errorId} state={field.state} />}
+    </SettingRow>
+  )
+}
+
+function StatusSetting({
+  workspaceId,
+  user,
+}: {
+  workspaceId: string
+  user: NonNullable<ReturnType<typeof useCurrentUser>>
+}) {
+  const [open, setOpen] = useState(false)
+  const { toEmoji } = useWorkspaceEmoji(workspaceId)
+  const ids = settingIds("status")
+  const activeStatus = resolveActiveStatus({
+    statusEmoji: user.statusEmoji ?? null,
+    statusText: user.statusText ?? null,
+    statusExpiresAt: user.statusExpiresAt ?? null,
+  })
+  const glyph = activeStatus?.emoji ? toEmoji(activeStatus.emoji) : null
+  const clearLabel = formatStatusClearLabel(activeStatus?.expiresAt ?? null)
+
+  return (
+    <SettingRow
+      setting="status"
+      labelFor={false}
+      description={
+        <>
+          {settingDef("status").description}
+          {clearLabel && <span className="mt-0.5 block">{clearLabel}</span>}
+        </>
+      }
+      control={
+        <>
+          <Button
+            id={ids.control}
+            type="button"
+            variant="outline"
+            aria-labelledby={`${ids.label} ${ids.control}`}
+            aria-describedby={ids.description}
+            className={cn("justify-start gap-2 font-normal", SETTING_CONTROL_CLASS)}
+            onClick={() => setOpen(true)}
+          >
+            {glyph ? (
+              <span className="text-base leading-none">{glyph}</span>
+            ) : (
+              <Smile aria-hidden className="h-4 w-4 text-muted-foreground" />
+            )}
+            <span className={cn("truncate", !activeStatus && "text-muted-foreground")}>
+              {activeStatus?.text || (glyph ? "" : "Set a status")}
+            </span>
+          </Button>
+          {open && <StatusPicker workspaceId={workspaceId} open onOpenChange={setOpen} />}
+        </>
+      }
+    />
+  )
+}
+
+function PronounsSetting({ saved, commit }: { saved: string; commit: (value: string | null) => Promise<unknown> }) {
+  const ids = settingIds("pronouns")
+  const customErrorId = `${ids.control}-custom-error`
+  const isPreset = (PRONOUN_PRESETS as readonly string[]).includes(saved)
+  const [customOpen, setCustomOpen] = useState(false)
+  const custom = useCommittedText<HTMLInputElement>(
+    committedProfileText(isPreset ? "" : saved, async (value) => {
+      await commit(value)
+      setCustomOpen(false)
+    })
+  )
+  const showCustom = customOpen || (saved !== "" && !isPreset)
+  const selectValue = showCustom ? "custom" : saved || "none"
+
+  const choose = async (value: string) => {
+    if (value === "custom") {
+      setCustomOpen(true)
+      return
+    }
+    setCustomOpen(false)
+    const next = value === "none" ? null : value
+    if ((next ?? "") === saved) return
+    try {
+      await commit(next)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't save your pronouns")
+    }
+  }
+
+  return (
+    <SettingRow
+      setting="pronouns"
+      labelFor={false}
+      control={
+        <div className={cn("flex items-center gap-2", SETTING_CONTROL_WIDTH)}>
+          <Select value={selectValue} onValueChange={(value) => void choose(value)}>
+            <SelectTrigger
+              id={ids.control}
+              aria-labelledby={ids.label}
+              className={cn(SETTING_CONTROL_HEIGHT, showCustom ? "w-28 shrink-0" : "min-w-0 flex-1")}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">None</SelectItem>
+              {PRONOUN_PRESETS.map((preset) => (
+                <SelectItem key={preset} value={preset}>
+                  {preset}
+                </SelectItem>
+              ))}
+              <SelectItem value="custom">Custom</SelectItem>
+            </SelectContent>
+          </Select>
+          {showCustom && (
+            <div className="relative min-w-0 flex-1">
+              <Input
+                ref={custom.fieldRef}
+                aria-label="Custom pronouns"
+                aria-invalid={custom.state.kind === "error"}
+                aria-errormessage={custom.state.kind === "error" ? customErrorId : undefined}
+                value={custom.value}
+                onChange={(event) => custom.onChange(event.target.value)}
+                onBlur={() => void custom.save()}
+                onKeyDown={enterSaves(custom.save)}
+                maxLength={50}
+                placeholder="ze/zir"
+                className={cn("w-full pr-9", SETTING_CONTROL_HEIGHT)}
+              />
+              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+                <SaveIndicator state={custom.state} />
+              </span>
+            </div>
+          )}
+        </div>
+      }
+    >
+      {custom.state.kind === "error" && <SaveError id={customErrorId} state={custom.state} />}
+    </SettingRow>
+  )
+}
+
+function DescriptionSetting({ saved, commit }: { saved: string; commit: (value: string | null) => Promise<unknown> }) {
+  const ids = settingIds("bio")
+  const field = useCommittedText<HTMLTextAreaElement>(committedProfileText(saved, commit))
+  const counterId = `${ids.control}-count`
+  const errorId = `${ids.control}-error`
+  const describedBy = useSettingDescribedBy("bio", { extra: [counterId] })
+  return (
+    <SettingRow setting="bio" stacked>
+      <Textarea
+        ref={field.fieldRef}
+        id={ids.control}
+        aria-invalid={field.state.kind === "error"}
+        aria-errormessage={field.state.kind === "error" ? errorId : undefined}
+        value={field.value}
+        onChange={(event) => field.onChange(event.target.value)}
+        onBlur={() => void field.save()}
+        maxLength={DESCRIPTION_MAX}
+        rows={3}
+        placeholder="What you do, in a line or two"
+        aria-describedby={describedBy}
+        className="resize-none"
+      />
+      <div className="mt-1 flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <SaveError id={errorId} state={field.state} />
+        </div>
+        <SaveIndicator state={field.state} />
+        <p id={counterId} className={cn("tabular-nums text-muted-foreground", SETTING_NOTE_TEXT)}>
+          {field.value.length}/{DESCRIPTION_MAX}
+        </p>
+      </div>
+    </SettingRow>
+  )
+}
+
 export function ProfileSettings() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const currentUser = useCurrentUser(workspaceId!)
   const updateProfile = useUpdateProfile(workspaceId!)
 
-  const [name, setName] = useState<string | null>(null)
-  const [description, setDescription] = useState<string | null>(null)
-  const [pronouns, setPronouns] = useState<string | null>(null)
-  const [isCustomPronouns, setIsCustomPronouns] = useState(false)
-  const [phone, setPhone] = useState<string | null>(null)
-  const [githubUsername, setGithubUsername] = useState<string | null>(null)
-  const [statusOpen, setStatusOpen] = useState(false)
-  const { toEmoji } = useWorkspaceEmoji(workspaceId!)
-
   if (!currentUser) return null
 
-  const activeStatus = resolveActiveStatus({
-    statusEmoji: currentUser.statusEmoji ?? null,
-    statusText: currentUser.statusText ?? null,
-    statusExpiresAt: currentUser.statusExpiresAt ?? null,
-  })
-  const statusGlyph = activeStatus?.emoji ? toEmoji(activeStatus.emoji) : null
-  const statusClearLabel = formatStatusClearLabel(activeStatus?.expiresAt ?? null)
-
-  // Use local state if edited, otherwise show server value
-  const currentName = name ?? currentUser.name
-  const currentDescription = description ?? currentUser.description ?? ""
-  const currentPronouns = pronouns ?? currentUser.pronouns ?? ""
-  const currentPhone = phone ?? currentUser.phone ?? ""
-  const currentGithub = githubUsername ?? currentUser.githubUsername ?? ""
-
-  const nameChanged = name !== null && name !== currentUser.name
-  const descriptionChanged = description !== null && (description || null) !== (currentUser.description || null)
-  const pronounsChanged = pronouns !== null && (pronouns || null) !== (currentUser.pronouns || null)
-  const phoneChanged = phone !== null && (phone || null) !== (currentUser.phone || null)
-  const githubChanged = githubUsername !== null && (githubUsername || null) !== (currentUser.githubUsername || null)
-  const nameValid = currentName.trim().length > 0
-
-  const isPreset = PRONOUN_PRESETS.includes(currentPronouns as (typeof PRONOUN_PRESETS)[number])
-  const showCustomInput = isCustomPronouns || (currentPronouns !== "" && !isPreset)
-  const selectValue = showCustomInput ? "custom" : currentPronouns || "none"
-
-  const handleSaveName = async () => {
-    if (!nameChanged || !nameValid) return
-    try {
-      await updateProfile.mutateAsync({ name: currentName.trim() })
-      setName(null)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to update name")
-    }
-  }
-
-  const handleNameKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault()
-      handleSaveName()
-    }
-  }
-
-  const handleSaveDescription = async () => {
-    if (!descriptionChanged) return
-    try {
-      await updateProfile.mutateAsync({ description: currentDescription.trim() || null })
-      setDescription(null)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to update description")
-    }
-  }
-
-  const handlePronounSelectChange = (value: string) => {
-    if (value === "custom") {
-      setIsCustomPronouns(true)
-      if (!currentPronouns || isPreset) setPronouns("")
-    } else if (value === "none") {
-      setIsCustomPronouns(false)
-      setPronouns("")
-    } else {
-      setIsCustomPronouns(false)
-      setPronouns(value)
-    }
-  }
-
-  const handleSavePronouns = async () => {
-    if (!pronounsChanged) return
-    try {
-      await updateProfile.mutateAsync({ pronouns: currentPronouns.trim() || null })
-      setPronouns(null)
-      setIsCustomPronouns(false)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to update pronouns")
-    }
-  }
-
-  const handleSavePhone = async () => {
-    if (!phoneChanged) return
-    try {
-      await updateProfile.mutateAsync({ phone: currentPhone.trim() || null })
-      setPhone(null)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to update phone")
-    }
-  }
-
-  const handleSaveGithub = async () => {
-    if (!githubChanged) return
-    try {
-      await updateProfile.mutateAsync({ githubUsername: currentGithub.trim() || null })
-      setGithubUsername(null)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to update GitHub username")
-    }
-  }
-
-  const handleFieldKeyDown = (save: () => void) => (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault()
-      save()
-    }
-  }
+  const save = updateProfile.mutateAsync
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h3 className="text-sm font-medium mb-3">Photo</h3>
-        <AvatarSection workspaceId={workspaceId!} userName={currentUser.name} avatarUrl={currentUser.avatarUrl} />
-      </div>
+    <div className="space-y-8">
+      <SettingsSection section="identity">
+        <SettingRow
+          setting="avatar"
+          labelFor={false}
+          control={
+            <AvatarSection workspaceId={workspaceId!} userName={currentUser.name} avatarUrl={currentUser.avatarUrl} />
+          }
+        />
+        <TextSetting
+          setting="display-name"
+          saved={currentUser.name}
+          commit={(name) => save({ name: name ?? "" })}
+          required
+          inputProps={{ maxLength: 100, autoComplete: "name" }}
+        />
+        <StatusSetting workspaceId={workspaceId!} user={currentUser} />
+        <PronounsSetting saved={currentUser.pronouns ?? ""} commit={(pronouns) => save({ pronouns })} />
+        <DescriptionSetting saved={currentUser.description ?? ""} commit={(description) => save({ description })} />
+      </SettingsSection>
 
-      <div>
-        <Label>Status</Label>
-        <div className="mt-1.5">
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full justify-start gap-2 font-normal"
-            onClick={() => setStatusOpen(true)}
-          >
-            {statusGlyph ? (
-              <span className="text-base leading-none">{statusGlyph}</span>
-            ) : (
-              <Smile className="h-4 w-4 text-muted-foreground" />
-            )}
-            <span className={activeStatus ? "" : "text-muted-foreground"}>
-              {activeStatus?.text || (statusGlyph ? "" : "Set a status")}
-            </span>
-          </Button>
-          {statusClearLabel && <p className="mt-1 text-xs text-muted-foreground">{statusClearLabel}</p>}
-        </div>
-        {statusOpen && <StatusPicker workspaceId={workspaceId!} open onOpenChange={setStatusOpen} />}
-      </div>
-
-      <div>
-        <Label htmlFor="profile-name">Display name</Label>
-        <div className="flex gap-2 mt-1.5">
-          <Input
-            id="profile-name"
-            value={currentName}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={handleNameKeyDown}
-            maxLength={100}
-            className="flex-1"
-          />
-          {nameChanged && (
-            <Button size="sm" onClick={handleSaveName} disabled={!nameValid || updateProfile.isPending}>
-              Save
-            </Button>
-          )}
-        </div>
-      </div>
-
-      <div>
-        <div className="flex items-center gap-1.5">
-          <Label htmlFor="profile-email">Email</Label>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <CircleHelp className="h-3.5 w-3.5 text-muted-foreground" />
-            </TooltipTrigger>
-            <TooltipContent side="right" className="max-w-60">
-              Your email is your identity in this workspace. To change it, update your account email.
-            </TooltipContent>
-          </Tooltip>
-        </div>
-        <Input id="profile-email" value={currentUser.email ?? ""} disabled className="mt-1.5" />
-      </div>
-
-      <div>
-        <Label>Pronouns</Label>
-        <div className="flex gap-2 mt-1.5">
-          <div className="flex-1 flex gap-2">
-            <Select value={selectValue} onValueChange={handlePronounSelectChange}>
-              <SelectTrigger className="w-40">
-                <SelectValue placeholder="Select..." />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">None</SelectItem>
-                {PRONOUN_PRESETS.map((p) => (
-                  <SelectItem key={p} value={p}>
-                    {p}
-                  </SelectItem>
-                ))}
-                <SelectItem value="custom">Custom</SelectItem>
-              </SelectContent>
-            </Select>
-            {showCustomInput && (
-              <Input
-                value={currentPronouns}
-                onChange={(e) => setPronouns(e.target.value)}
-                onKeyDown={handleFieldKeyDown(handleSavePronouns)}
-                maxLength={50}
-                placeholder="e.g. ze/zir"
-                className="flex-1"
-              />
-            )}
-          </div>
-          {pronounsChanged && (
-            <Button size="sm" onClick={handleSavePronouns} disabled={updateProfile.isPending}>
-              Save
-            </Button>
-          )}
-        </div>
-      </div>
-
-      <div>
-        <div className="flex items-center justify-between">
-          <Label htmlFor="profile-description">Description</Label>
-          <span className="text-xs text-muted-foreground">{currentDescription.length}/500</span>
-        </div>
-        <div className="flex flex-col gap-2 mt-1.5">
-          <Textarea
-            id="profile-description"
-            value={currentDescription}
-            onChange={(e) => setDescription(e.target.value)}
-            maxLength={500}
-            rows={3}
-            placeholder="What do you do? A brief description."
-            className="resize-none"
-          />
-          <div className="flex justify-end">
-            <Button
-              size="sm"
-              onClick={handleSaveDescription}
-              disabled={!descriptionChanged || updateProfile.isPending}
-              className={descriptionChanged ? "" : "invisible"}
-            >
-              Save
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      <div>
-        <Label htmlFor="profile-phone">Phone</Label>
-        <div className="flex gap-2 mt-1.5">
-          <Input
-            id="profile-phone"
-            value={currentPhone}
-            onChange={(e) => setPhone(e.target.value)}
-            onKeyDown={handleFieldKeyDown(handleSavePhone)}
-            maxLength={30}
-            placeholder="e.g. +1 555-0123"
-            className="flex-1"
-          />
-          {phoneChanged && (
-            <Button size="sm" onClick={handleSavePhone} disabled={updateProfile.isPending}>
-              Save
-            </Button>
-          )}
-        </div>
-      </div>
-
-      <div>
-        <Label htmlFor="profile-github">GitHub</Label>
-        <div className="flex gap-2 mt-1.5">
-          <div className="flex flex-1 items-center">
-            <span className="inline-flex h-9 items-center rounded-l-md border border-r-0 bg-muted px-3 text-sm text-muted-foreground">
-              github.com/
-            </span>
-            <Input
-              id="profile-github"
-              value={currentGithub}
-              onChange={(e) => setGithubUsername(e.target.value)}
-              onKeyDown={handleFieldKeyDown(handleSaveGithub)}
-              maxLength={39}
-              placeholder="username"
-              className="rounded-l-none flex-1"
-            />
-          </div>
-          {githubChanged && (
-            <Button size="sm" onClick={handleSaveGithub} disabled={updateProfile.isPending}>
-              Save
-            </Button>
-          )}
-        </div>
-      </div>
+      <SettingsSection section="contact">
+        <SettingRow
+          setting="email"
+          labelFor={false}
+          control={
+            <SettingValue id={settingIds("email").control} className={SETTING_CONTROL_WIDTH}>
+              {currentUser.email}
+            </SettingValue>
+          }
+        />
+        <TextSetting
+          setting="phone"
+          saved={currentUser.phone ?? ""}
+          commit={(phone) => save({ phone })}
+          inputProps={{ maxLength: 30, type: "tel", autoComplete: "tel", placeholder: "+1 555-0123" }}
+        />
+        <TextSetting
+          setting="github"
+          saved={currentUser.githubUsername ?? ""}
+          commit={(githubUsername) => save({ githubUsername })}
+          prefix="github.com/"
+          inputProps={{ maxLength: 39, placeholder: "username", autoCapitalize: "none", spellCheck: false }}
+        />
+      </SettingsSection>
     </div>
   )
 }

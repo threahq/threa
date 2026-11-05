@@ -49,9 +49,13 @@ interface TimezonePickerProps {
   value: string
   onChange: (timezone: string) => void
   disabled?: boolean
+  id?: string
+  className?: string
+  "aria-labelledby"?: string
+  "aria-describedby"?: string
 }
 
-export function TimezonePicker({ value, onChange, disabled }: TimezonePickerProps) {
+export function TimezonePicker({ value, onChange, disabled, ...triggerProps }: TimezonePickerProps) {
   const detectedTimezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, [])
   const timezones = useMemo(() => getAvailableTimezones(), [])
   // Precompute the formatted label for every timezone once. formatTimezoneLabel
@@ -70,15 +74,16 @@ export function TimezonePicker({ value, onChange, disabled }: TimezonePickerProp
       value={value}
       onChange={onChange}
       disabled={disabled}
+      {...triggerProps}
       getKey={(tz) => tz}
       getKeywords={(tz) => [tz, tz.replace(/_/g, " "), labelFor(tz)]}
-      searchPlaceholder="Search timezone..."
-      emptyMessage="No timezone found."
-      renderSelected={(tz) => <span className="font-mono">{labelFor(tz)}</span>}
+      searchPlaceholder="Search time zones"
+      emptyMessage="No time zone found."
+      renderSelected={(tz) => labelFor(tz)}
       renderItem={(tz, isSelected) => (
         <>
-          <Check className={cn("mr-2 h-4 w-4", isSelected ? "opacity-100" : "opacity-0")} />
-          <span className="font-mono">{labelFor(tz)}</span>
+          <Check className={cn("mr-2 h-4 w-4", isSelected ? "opacity-100" : "opacity-0")} aria-hidden />
+          <span className="tabular-nums">{labelFor(tz)}</span>
         </>
       )}
       prefixContent={({ close }) =>
@@ -92,8 +97,8 @@ export function TimezonePicker({ value, onChange, disabled }: TimezonePickerProp
             className="font-medium"
           >
             <Check className="mr-2 h-4 w-4 opacity-0" aria-hidden="true" />
-            <span className="font-mono">{labelFor(detectedTimezone)}</span>
-            <span className="ml-2 text-muted-foreground">(device)</span>
+            <span className="tabular-nums">{labelFor(detectedTimezone)}</span>
+            <span className="ml-2 text-muted-foreground">(this device)</span>
           </CommandItem>
         ) : null
       }

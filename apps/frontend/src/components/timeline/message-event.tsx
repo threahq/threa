@@ -74,7 +74,7 @@ import { LinkPreviewList } from "./link-preview-list"
 import { MemoPreviewList } from "./memo-preview-list"
 import { GiphyPreviewList } from "./giphy-preview-list"
 import { LinkPreviewProvider, useLinkPreviewContext } from "@/lib/markdown/link-preview-context"
-import { CollapsibleBody, useMessageCollapseSettings } from "@/lib/markdown/collapsible-body"
+import { CollapsibleBody, useCollapsibleProbe, useMessageCollapseSettings } from "@/lib/markdown/collapsible-body"
 import { useRunFoldBody } from "./run-fold-context"
 import { MarkdownBlockProvider } from "@/lib/markdown/markdown-block-context"
 import { MessageContextMenu } from "./message-context-menu"
@@ -85,7 +85,7 @@ import { useOpenAside } from "@/hooks/use-open-aside"
 import { useAgentBlock } from "./agent-block-context"
 import { parseMarkdown } from "@threahq/prosemirror"
 import { MessageActionDrawer } from "./message-action-drawer"
-import { isAgentTraceActor } from "./message-actions"
+import { containsCodeBlock, isAgentTraceActor } from "./message-actions"
 import { ThreadSlot } from "./thread-slot"
 import { useHostArchived } from "./host-archived-context"
 import { useThreadAnchor } from "./use-thread-anchor"
@@ -274,6 +274,8 @@ interface MessageLayoutProps {
   /** Whether the L can pay off on this row (the reveal shows the pull hint). */
   swipeCanPullDown?: boolean
   batch?: BatchTimelineState
+  /** Told whether the body is tall enough to fold behind Show more. */
+  onCollapsibleChange?: (collapsible: boolean) => void
 }
 
 function focusVisibleZoneEditor(zone: HTMLElement | null, attempt = 0) {
@@ -585,6 +587,7 @@ function MessageLayout({
   swipePulled,
   swipeCanPullDown,
   batch,
+  onCollapsibleChange,
 }: MessageLayoutProps) {
   const theme = actorRowTheme(event.actorType)
   const hasInteractiveName = (event.actorType === "user" || event.actorType === "bot") && event.actorId != null
@@ -624,6 +627,7 @@ function MessageLayout({
             defaultCollapsed={messageCollapse.enabled}
             group={runFold.group}
             onHeight={runFold.onHeight}
+            onCollapsibleChange={onCollapsibleChange}
             trailing={
               <>
                 <MessageLinkPreviews
@@ -1375,6 +1379,8 @@ function SentMessageEvent({
     ]
   )
 
+  const { onCollapsibleChange: handleCollapsibleChange, isCollapsible: isLongMessage } = useCollapsibleProbe()
+
   // Shared action context for both desktop dropdown and mobile drawer
   const traceSessionId = isAgentTraceActor(event.actorType) ? payload.sessionId : undefined
   const actionContext = useMemo(
@@ -1527,8 +1533,13 @@ function SentMessageEvent({
         messageConversationId && conversationReplyCtx && !e2eEnabled ? handleReplyInConversation : undefined,
       onMarkReadUpToHere: rowRead !== "read" ? () => dispatchMarkReadUpToHere(streamId, event.id) : undefined,
       onMarkUnread: rowRead !== "unread" ? () => dispatchMarkUnread(streamId, payload.messageId) : undefined,
+      isLongMessage,
+      hasLinkPreviews: (payload.linkPreviews?.length ?? 0) > 0,
+      hasCodeBlocks: () => containsCodeBlock(payload.contentJson),
     }),
     [
+      isLongMessage,
+      payload.linkPreviews,
       payload.contentMarkdown,
       payload.contentJson,
       payload.revision,
@@ -1627,6 +1638,7 @@ function SentMessageEvent({
         modelBadgeId={modelBadgeId}
         attachmentRefs={attachmentRefs}
         sources={sources}
+        onCollapsibleChange={handleCollapsibleChange}
         statusIndicator={
           <>
             <RelativeTime date={event.createdAt} className="text-xs text-muted-foreground" />

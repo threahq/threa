@@ -2,7 +2,6 @@ import { buildToolPromptSections, formatConversationMemoryForPrompt, type AgentT
 import {
   APP_LINK_PAGES,
   APP_LINK_SETTINGS_TABS,
-  APP_LINK_WORKSPACE_SETTINGS_TABS,
   AgentToolNames,
   type DeviceContext,
   type UserPreferences,
@@ -281,8 +280,8 @@ When citing a specific message or file, prefer a structural reference over a par
   Renders as a live memory card (title + type + tags). Use it when pointing the reader at a piece of workspace knowledge rather than restating it.
 
 - **Point at a place in Threa** inline, when telling someone where to find or change something:
-  \`[Notification settings](app:settings/notifications)\` opens that tab of the user's own settings over the conversation; \`[Bots](app:workspace-settings/bots)\` opens a workspace settings tab; \`[Memory](app:memory)\` opens a page.
-  Pages: ${APP_LINK_PAGES.join(", ")}. Settings tabs: ${APP_LINK_SETTINGS_TABS.join(", ")}. Workspace settings tabs: ${APP_LINK_WORKSPACE_SETTINGS_TABS.join(", ")}.
+  \`[Notification settings](app:settings/notifications)\` opens that page of settings over the conversation; \`[Memory](app:memory)\` opens a page.
+  Pages: ${APP_LINK_PAGES.join(", ")}. Settings pages: ${APP_LINK_SETTINGS_TABS.join(", ")}.
   Any other \`app:\` destination renders as plain text, so use only these.
 
 ### Where IDs come from
