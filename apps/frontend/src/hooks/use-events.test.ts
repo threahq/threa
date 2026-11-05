@@ -681,6 +681,60 @@ describe("bounded timeline read from the events hook's window", () => {
     await waitFor(() => expect(result.current).toEqual({ openedEmpty: ["1", "2", "3"], openedPopulated: ["3"] }))
   })
 
+  it("should retain paged history when another fetch arrives after the end", async () => {
+    await seed(100)
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData(streamKeys.bootstrap("ws_1", STREAM), {
+      events: Array.from({ length: 50 }, (_, i) => cachedEvent(i + 51)),
+      windowVersion: 0,
+      hasOlderEvents: true,
+      latestSequence: "100",
+      windowFloor: "51",
+    } as unknown as CachedStreamBootstrap)
+    const getEvents = vi
+      .fn<StreamService["getEvents"]>()
+      .mockResolvedValueOnce({ events: Array.from({ length: 50 }, (_, i) => cachedEvent(i + 1)) })
+      .mockResolvedValue({ events: [] })
+
+    function Wrapper({ children }: { children: ReactNode }) {
+      return createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(ServicesProvider, {
+          services: { streams: { getEvents } as unknown as StreamService },
+          children: createElement(PendingMessagesProvider, undefined, children),
+        })
+      )
+    }
+    const { result } = renderHook(() => useEvents("ws_1", STREAM), { wrapper: Wrapper })
+    await waitFor(() => expect(result.current.events[0]?.sequence).toBe("51"))
+
+    act(() => {
+      result.current.fetchOlderEvents()
+    })
+    await waitFor(() => expect(result.current.events[0]?.sequence).toBe("1"))
+    await waitFor(() => expect(result.current.isFetchingOlder).toBe(false))
+    act(() => {
+      result.current.fetchOlderEvents()
+    })
+    await waitFor(() => expect(result.current.hasOlderEvents).toBe(false))
+
+    let started: boolean | undefined
+    await act(async () => {
+      started = result.current.fetchOlderEvents()
+    })
+    await waitFor(() => expect(result.current.isFetchingOlder).toBe(false))
+    expect(result.current.events.map((event) => event.sequence)).toEqual(
+      Array.from({ length: 100 }, (_, i) => String(i + 1))
+    )
+    expect(started).toBe(false)
+    expect(getEvents.mock.calls).toEqual([
+      ["ws_1", STREAM, { before: "51", limit: 50 }],
+      ["ws_1", STREAM, { before: "1", limit: 50 }],
+    ])
+    queryClient.clear()
+  })
+
   it("a thread with two thousand replies renders every reply", async () => {
     await seed(2000)
 
