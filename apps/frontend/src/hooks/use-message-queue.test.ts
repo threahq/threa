@@ -341,6 +341,8 @@ describe("useMessageQueue", () => {
     })
     expect(mockDelete).toHaveBeenCalledWith("temp_abc")
     expect(mockMarkSent).toHaveBeenCalledWith("temp_abc")
+    // Queued already marked pending, a first attempt writes nothing before its send.
+    expect(mockEventsUpdate.mock.calls).toEqual([[["ws_1", "temp_abc"], { _sentAt: expect.any(Number) }]])
   })
 
   it("hands the moved optimistic row to the UI before the draft rows are removed", async () => {
@@ -630,7 +632,7 @@ describe("useMessageQueue", () => {
         content: "Fail",
         contentFormat: "markdown",
         createdAt: 1000,
-        retryCount: 0,
+        retryCount: 1,
       },
     ]
 
@@ -689,7 +691,7 @@ describe("useMessageQueue", () => {
         content: "Hello",
         contentFormat: "markdown",
         createdAt: 1000,
-        retryCount: 0,
+        retryCount: 1,
       },
     ]
 
@@ -1260,7 +1262,7 @@ describe("useMessageQueue", () => {
         content: "Composed by A",
         contentFormat: "markdown",
         createdAt: 1000,
-        retryCount: 0,
+        retryCount: 1,
       },
     ]
 

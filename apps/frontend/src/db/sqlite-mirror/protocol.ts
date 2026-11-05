@@ -1,27 +1,5 @@
 import type { EncodedRange } from "./key-codec"
-import type {
-  CommitLedger,
-  MirrorEntry,
-  MirrorMutation,
-  MirrorQuery,
-  MirrorRow,
-  MirrorStatus,
-  MirrorStoreSchema,
-  MirrorWrite,
-} from "./mirror-store"
-
-/**
- * A writer's transaction that committed marks and, per store it marked, the
- * writer's previous transaction that marked that store (0 for none).
- */
-export interface WriterCommit {
-  writer: string
-  seq: number
-  prev: Record<string, number>
-}
-
-/** Per writer and store, the seq through which SQLite holds every commit of the writer to the store. */
-export type HeldCommits = Record<string, Record<string, number>>
+import type { CommitLedger, MirrorEntry, MirrorQuery, MirrorRow, MirrorStoreSchema, MirrorWrite } from "./mirror-store"
 
 /** `tx` names the read-write transaction a read belongs to, which sees that transaction's own writes. */
 export type MirrorReadRequest = (
@@ -30,12 +8,6 @@ export type MirrorReadRequest = (
   | { type: "query"; store: string; query: MirrorQuery }
   | { type: "count"; store: string; index: string | null; range: EncodedRange }
 ) & { tx?: number }
-
-/** A committed read-write transaction's writes, still to be replayed into IndexedDB. */
-export interface BacklogBatch {
-  seq: number
-  batch: MirrorMutation[]
-}
 
 /** What each read answers with; values stay encoded, `undefined` where no row exists. */
 export interface MirrorReadResults {
@@ -46,17 +18,11 @@ export interface MirrorReadResults {
 }
 
 export type MirrorRequest =
-  | { type: "open"; idbName: string; schema: MirrorStoreSchema[]; idbVersion: number }
-  | { type: "apply"; batch: MirrorMutation[]; commit?: WriterCommit }
-  | { type: "backfillBegin"; store: string }
+  | { type: "open"; idbName: string; schema: MirrorStoreSchema[] }
+  | { type: "backfillBegin"; stores: readonly string[] }
   | { type: "backfillChunk"; store: string; entries: MirrorEntry[] }
-  | { type: "backfillFinish"; store: string; covered: Record<string, number> }
-  | { type: "status" }
-  | { type: "reset"; incarnation: string }
-  /** Keeps every row and queues all of them for the IndexedDB incarnation named, which lacks them. */
-  | { type: "reseed"; incarnation: string }
-  | { type: "forgetWriters"; writers: string[] }
-  | { type: "destroy"; idbName: string }
+  /** Copies every commit into the database file and flushes it, so a power loss cannot roll them back. */
+  | { type: "checkpoint" }
   /** Holds every request of other transactions, and outside any, until this one commits or rolls back. */
   | { type: "begin"; tx: number; readonly: boolean; stores: readonly string[] }
   | { type: "write"; tx: number; write: MirrorWrite }
@@ -64,21 +30,15 @@ export type MirrorRequest =
   | { type: "commit"; tx: number; ledger: CommitLedger }
   | { type: "committed"; ledger: CommitLedger }
   | { type: "rollback"; tx: number }
-  | { type: "backlog"; limit: number }
-  | { type: "backlogDone"; through: number }
   | MirrorReadRequest
 
 export type MirrorReply =
   | {
       ok: true
       ms: number
-      status?: MirrorStatus
-      /** Rows of `_idb_backlog` when the database opened. */
-      backlog?: number
       result?: MirrorReadResults[keyof MirrorReadResults]
       /** Positions of a write's entries whose `add` met an existing key. */
       failures?: number[]
-      batches?: BacklogBatch[]
       /** `null` when the ledger no longer knows. */
       committed?: boolean | null
     }

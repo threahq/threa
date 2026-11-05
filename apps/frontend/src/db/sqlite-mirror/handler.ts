@@ -1,13 +1,11 @@
 import type { Database } from "@sqlite.org/sqlite-wasm"
-import { MirrorStore, backlogSize } from "./mirror-store"
+import { MirrorStore } from "./mirror-store"
 import type { MirrorReply, MirrorRequest } from "./protocol"
 import { txOf } from "./protocol"
 
 export interface MirrorDatabase {
   db: Database
   close(): void
-  /** Closes the database and deletes its storage. */
-  destroy(): Promise<void>
 }
 
 interface Session {
@@ -51,29 +49,13 @@ const scopeOf = (begin: Begin): Scope => ({ readonly: begin.readonly, stores: ne
 const OUTSIDE_READ: Scope = { readonly: true, stores: null }
 const OUTSIDE_WRITE: Scope = { readonly: false, stores: null }
 
-/** Requests outside a transaction that change what a transaction reads, or end the backlog's drain: they wait for every admitted one. */
-const WRITES_OUTSIDE: ReadonlySet<MirrorRequest["type"]> = new Set([
-  "apply",
-  "backfillBegin",
-  "backfillChunk",
-  "backfillFinish",
-  "reset",
-  "reseed",
-  "forgetWriters",
-  "backlog",
-  "backlogDone",
-])
+/** Requests outside a transaction that change what a transaction reads: they wait for every admitted one. */
+const WRITES_OUTSIDE: ReadonlySet<MirrorRequest["type"]> = new Set(["backfillBegin", "backfillChunk", "checkpoint"])
 
 /** Under the owner's 30 s worker deadline, so a frozen tab's transaction ends before the owner presumes its worker dead. */
 const DEFAULT_TX_IDLE_MS = 10_000
 /** Expired transactions remembered; one older than these is reported as merely inactive. */
 const MAX_EXPIRED = 64
-
-/** Nothing drops what IndexedDB lacks of SQLite's committed transactions. */
-function unlandedBacklog(db: Database): Error | null {
-  const pending = backlogSize(db)
-  return pending > 0 ? new Error(`${pending} committed transactions have not reached IndexedDB yet`) : null
-}
 
 function rollBack(db: Database): void {
   try {
@@ -163,22 +145,9 @@ export function createMirrorHandler(
       session?.database.close()
       session = null
       const database = await openDatabase(request.idbName)
-      // The pool VFS has no shared memory, so SQLite keeps its rollback journal; NORMAL there can corrupt the file on power loss.
-      database.db.exec("PRAGMA synchronous=FULL")
       const store = new MirrorStore(database.db)
-      store.ensureSchema(request.schema, request.idbVersion, progress)
+      store.ensureSchema(request.schema, progress)
       session = { database, store }
-      return { backlog: backlogSize(database.db) }
-    }
-    if (request.type === "destroy") {
-      const database = session?.database ?? (await openDatabase(request.idbName))
-      session = null
-      const unlanded = unlandedBacklog(database.db)
-      if (unlanded) {
-        database.close()
-        throw unlanded
-      }
-      await database.destroy()
       return {}
     }
     const { store, database } = requireSession()
@@ -229,36 +198,14 @@ export function createMirrorHandler(
       }
       case "committed":
         return { committed: store.committed(request.ledger) }
-      case "backlog":
-        return { batches: store.readBacklog(request.limit) }
-      case "backlogDone":
-        store.dropBacklog(request.through)
-        return {}
-      case "apply":
-        store.apply(request.batch, request.commit)
-        return {}
       case "backfillBegin":
-        store.beginBackfill(request.store)
+        store.beginBackfill(request.stores)
         return {}
       case "backfillChunk":
         store.backfillChunk(request.store, request.entries)
         return {}
-      case "backfillFinish":
-        store.finishBackfill(request.store, request.covered)
-        return {}
-      case "status":
-        return { status: store.status() }
-      case "reset": {
-        const unlanded = unlandedBacklog(database.db)
-        if (unlanded) throw unlanded
-        store.reset(request.incarnation)
-        return {}
-      }
-      case "reseed":
-        store.reseed(request.incarnation, progress)
-        return {}
-      case "forgetWriters":
-        store.forgetWriters(request.writers)
+      case "checkpoint":
+        database.db.exec("PRAGMA wal_checkpoint")
         return {}
       case "get":
         return { result: store.get(request.store, request.key) }
@@ -268,6 +215,8 @@ export function createMirrorHandler(
         return { result: store.query(request.store, request.query) }
       case "count":
         return { result: store.count(request.store, request.index, request.range) }
+      default:
+        throw new Error(`Unknown mirror request: ${(request as { type: string }).type}`)
     }
   }
 

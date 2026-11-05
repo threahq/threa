@@ -318,7 +318,10 @@ export function useMessageQueue(workspaceId: string): void {
         }
 
         markPending(next.clientId)
-        await database.events.update([next.workspaceId, next.clientId], { _status: "pending" })
+        // Only an automatic retry finds its event marked failed: the queue, a manual retry and an edit write it pending.
+        if (next.retryCount > 0) {
+          await database.events.update([next.workspaceId, next.clientId], { _status: "pending" })
+        }
 
         try {
           // If this message needs a stream created first, promote the draft

@@ -156,7 +156,7 @@ async function sendComposerContent(page: Page): Promise<void> {
 }
 
 function sentMessageRows(page: Page): Locator {
-  return page.getByRole("main").locator("[data-message-id]").filter({ hasText: "tail paragraph" })
+  return page.getByRole("main").locator('[data-message-id^="msg_"]').filter({ hasText: "tail paragraph" })
 }
 
 async function copyMessageAsMarkdown(page: Page, row: Locator): Promise<string> {

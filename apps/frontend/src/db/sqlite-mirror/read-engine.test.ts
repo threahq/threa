@@ -2,7 +2,7 @@ import sqlite3InitModule, { type Database } from "@sqlite.org/sqlite-wasm"
 import type { DBCoreKeyRange } from "dexie"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { decodeKey, encodeKey, encodeRange } from "./key-codec"
-import { MirrorStore, type MirrorQuery, type MirrorStoreSchema } from "./mirror-store"
+import { MirrorStore, type MirrorMutation, type MirrorQuery, type MirrorStoreSchema } from "./mirror-store"
 import { decodeValue, encodeValue } from "./value-codec"
 
 // IndexedDB (fake-indexeddb) is the oracle: every read must come back exactly as it answers.
@@ -62,11 +62,17 @@ let idb: IDBDatabase
 let mirror: MirrorStore
 const keyPool: IDBValidKey[] = []
 
+function applyAll(batch: MirrorMutation[]): void {
+  sqlite.transaction(() => {
+    for (const mutation of batch) mirror.write(mutation)
+  })
+}
+
 beforeAll(async () => {
   const sqlite3 = await sqlite3InitModule()
   sqlite = new sqlite3.oo1.DB(":memory:")
   mirror = new MirrorStore(sqlite)
-  mirror.ensureSchema(SCHEMA, 1)
+  mirror.ensureSchema(SCHEMA)
   const open = indexedDB.open(`read_engine_${Date.now()}`, 1)
   open.onupgradeneeded = () => {
     const store = open.result.createObjectStore(STORE, { keyPath: "id" })
@@ -78,7 +84,7 @@ beforeAll(async () => {
   const tx = idb.transaction(STORE, "readwrite")
   for (const row of rows) tx.objectStore(STORE).put(row)
   await new Promise((resolve) => (tx.oncomplete = resolve))
-  mirror.apply([
+  applyAll([
     {
       store: STORE,
       op: "put",
@@ -93,7 +99,7 @@ beforeAll(async () => {
   for (const key of deleted) tx2.objectStore(STORE).delete(key)
   tx2.objectStore(STORE).delete(IDBKeyRange.bound(10, 20, true, false))
   await new Promise((resolve) => (tx2.oncomplete = resolve))
-  mirror.apply([
+  applyAll([
     {
       store: STORE,
       op: "put",

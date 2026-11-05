@@ -246,7 +246,7 @@ describe("SQLite storage", () => {
   })
 
   it("serves every request on mirrored stores without opening an IndexedDB transaction", async () => {
-    const { database, log } = await readWriteSession()
+    const { database } = await readWriteSession()
     const nativeTransactions = spyNativeTransactions()
     await database.syncCursors.bulkPut([cursor("a", "1"), cursor("b", "2")])
     await database.transaction("rw", database.syncCursors, database.drafts, async () => {
@@ -256,11 +256,9 @@ describe("SQLite storage", () => {
     expect({
       cursors: await cursorsIn(database),
       nativeTransactions: nativeTransactions(),
-      backlogged: log.filter((type) => type === "backlog" || type === "apply"),
     }).toEqual({
       cursors: [cursor("a", "3"), cursor("b", "2")],
       nativeTransactions: 0,
-      backlogged: [],
     })
   })
 
@@ -410,6 +408,7 @@ describe("SQLite storage", () => {
         served,
         progress: [seen[0], seen.at(-2), seen.at(-1)],
         primary: isSqlitePrimary(name),
+        imported: tab.log.filter((type) => type.startsWith("backfill") || type === "checkpoint"),
         recorded: await readRecordedMode(name),
         indexedDb: await inIndexedDb(name, ["syncCursors", "uploadJobs", ...cleared]),
         reloads: reloadSpy.mock.calls.length,
@@ -417,6 +416,7 @@ describe("SQLite storage", () => {
         served: { readWrite: true, cursors: [cursor("a", "1"), cursor("b", "1"), cursor("c", "1")] },
         progress: [{ copied: 0, total: null }, { copied: 3, total: 3 }, null],
         primary: true,
+        imported: ["backfillBegin", "backfillChunk", "checkpoint"],
         recorded: "read-write",
         indexedDb: {
           syncCursors: [],

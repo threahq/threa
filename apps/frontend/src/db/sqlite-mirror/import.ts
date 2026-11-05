@@ -13,7 +13,7 @@ const IMPORT_CHUNK_ROWS = 500
 type Ask = (request: MirrorRequest) => Promise<Extract<MirrorReply, { ok: true }>>
 
 /** The installed database as it stands, without upgrading it; `null` when there is none. */
-function openInstalled(name: string): Promise<IDBDatabase | null> {
+export function openInstalled(name: string): Promise<IDBDatabase | null> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(name)
     let absent = false
@@ -60,11 +60,11 @@ export async function importIndexedDb(
     reportStorageUpgrade({ ...progress })
     progress.total = idb ? await countRows(idb, present) : 0
     reportStorageUpgrade({ ...progress })
-    for (const store of stores) {
-      await ask({ type: "backfillBegin", store })
+    await ask({ type: "backfillBegin", stores })
+    for (const store of present) {
       let last: IDBValidKey | undefined
-      while (idb && present.includes(store)) {
-        const rows = await readChunk(idb, store, last, IMPORT_CHUNK_ROWS)
+      for (;;) {
+        const rows = await readChunk(idb!, store, last, IMPORT_CHUNK_ROWS)
         if (rows.keys.length === 0) break
         await ask({ type: "backfillChunk", store, entries: encodeRows(store, rows.keys, rows.values) })
         progress.copied += rows.keys.length
@@ -72,8 +72,9 @@ export async function importIndexedDb(
         last = rows.keys[rows.keys.length - 1]
         await yieldToEventLoop()
       }
-      await ask({ type: "backfillFinish", store, covered: {} })
     }
+    // Commits are not flushed one by one, and IndexedDB is cleared once SQLite is the primary copy.
+    await ask({ type: "checkpoint" })
     await record()
     getPerfCapture().mark("sqlite.import", performance.now() - startedAt)
   } catch (error) {

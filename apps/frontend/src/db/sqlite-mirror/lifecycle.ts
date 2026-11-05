@@ -1,6 +1,7 @@
 import { ThreaDatabase } from "../database"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { createBrowserMirror, type SqliteMirror } from "./client"
+import { openInstalled } from "./import"
 import {
   browserModeLock,
   isSqlitePrimary,
@@ -91,6 +92,10 @@ async function bootStorage(database: ThreaDatabase, boot: StorageBoot): Promise<
 async function upgradeInstalled(name: string): Promise<boolean> {
   const installed = new ThreaDatabase(name)
   try {
+    // A first boot has none: creating it here would only leave the import empty stores to read.
+    const existing = await openInstalled(name)
+    if (!existing) return true
+    existing.close()
     await installed.open()
     return true
   } catch (error) {
