@@ -32,7 +32,8 @@
     "codex:setup": "bash scripts/codex-cloud-setup.sh",
     "codex:doctor": "bash scripts/codex-cloud-doctor.sh",
     "harnessd": "bun extensions/harness-daemon/src/index.ts",
-    "lint": "bun run --cwd apps/backend lint && bun run --cwd apps/control-plane lint && bun run --cwd apps/frontend lint && bun run --cwd apps/backoffice lint && bun run --cwd apps/db-read-proxy lint && bun run --cwd apps/enclave lint && bun run --cwd apps/public-site lint && bun run check:dockerfiles && bun run check:migrations && bun run check:package-scopes",
+    "lint": "bun run --cwd apps/backend lint && bun run lint:ox && bun run --cwd apps/public-site lint && bun run check:dockerfiles && bun run check:migrations && bun run check:package-scopes",
+    "lint:ox": "bun ./node_modules/oxlint/bin/oxlint --threads=1 --config oxlint.config.ts apps/control-plane/src/ apps/control-plane/tests/ apps/frontend/src/ apps/backoffice/src/ apps/db-read-proxy/src/ apps/db-read-proxy/tests/ apps/enclave/src/",
     "check:dockerfiles": "bun scripts/check-dockerfile-workspaces.ts",
     "check:migrations": "bun scripts/check-migrations.ts",
     "check:package-scopes": "bun scripts/check-package-scopes.ts",
@@ -65,6 +66,7 @@
     "test:codex:cloud": "bash scripts/test-codex-cloud.sh"
   },
   "devDependencies": {
+    "oxlint": "1.91.0",
     "typescript": "^5.9.3",
     "@hpke/core": "^1.9.0",
     "@hpke/dhkem-x25519": "^1.6.0",
