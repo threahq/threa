@@ -30,7 +30,7 @@ import { UnreadDivider } from "./unread-divider"
 import { DayDivider } from "./day-divider"
 import { localStartOfDayMs } from "@/lib/dates"
 import { isSameAuthorRun } from "@/lib/message-grouping"
-import { Skeleton } from "@/components/ui/skeleton"
+import { MessageRowSkeleton } from "@/components/message/message-row-skeleton"
 import { TimelineSkeletonRows } from "./timeline-skeleton"
 import { ConversationOverlayRow } from "./conversation-overlay/conversation-overlay"
 import type {
@@ -1166,13 +1166,8 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         // floating "Loading older messages..." pill carries the announcement;
         // these rows are purely visual (aria-hidden) and are swapped for the
         // real rows in the same render the page lands.
-        <div aria-hidden data-testid="older-skeleton-row" className="flex gap-3 px-gutter py-3">
-          <Skeleton className="h-8 w-8 shrink-0 rounded-[8px]" />
-          <div className="flex-1 space-y-2">
-            <Skeleton className="h-4 w-32" />
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-4 w-2/3" />
-          </div>
+        <div aria-hidden data-testid="older-skeleton-row">
+          <MessageRowSkeleton continuation={false} width="w-2/3" className="px-gutter" />
         </div>
       )}
       {item.type === "session_group" && !ctx.hideSessionCards && (
