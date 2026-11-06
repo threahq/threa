@@ -189,7 +189,7 @@ export interface DraftComposerState {
    * copy that drifted on another device survives as a stash entry. Send paths
    * use this; plain discards (stash, empty composer) use `clearDraft`.
    */
-  resolveDraft: () => Promise<void>
+  resolveDraft: (sentSnapshot?: { content: JSONContent; attachmentIds: string[] }) => Promise<void>
   clearAttachments: () => void
   /**
    * Take over already-uploaded attachments from another draft (a hand-off):
@@ -250,7 +250,7 @@ export function useDraftComposer({
     addAttachment: addDraftAttachment,
     removeAttachment: removeDraftAttachment,
     clearDraft,
-    resolveDraft,
+    resolveDraft: resolveLoadedDraft,
   } = useDraftMessage(workspaceId, draftKey, e2eStreamId, contentDraftIdRef)
 
   const savedContextRefs = useShared(loadedContextRefs, replaceEqualDeep)
@@ -317,6 +317,28 @@ export function useDraftComposer({
   // render and misfire its rising-edge tracking.
   const savedAttachmentsRef = useRef(savedAttachments)
   savedAttachmentsRef.current = savedAttachments
+
+  const resolveDraft = useCallback(
+    async (sentSnapshot?: { content: JSONContent; attachmentIds: string[] }) => {
+      await resolveLoadedDraft()
+
+      // Typing can continue after send clears the editor but before its persistence
+      // finishes. The resolved row belongs to the send; preserve newer editor state
+      // as a fresh draft after the resolve sequence has advanced.
+      if (!sentSnapshot) return
+      const currentContent = contentRef.current
+      const currentAttachments = persistableAttachments(getPendingAttachmentsSnapshot())
+      const hasNewContent = currentContent !== sentSnapshot.content
+      const hasNewAttachments =
+        currentAttachments.map((attachment) => attachment.id).join(",") !== sentSnapshot.attachmentIds.join(",")
+      if (!hasNewContent && !hasNewAttachments) return
+      if (!hasDocContent(currentContent) && currentAttachments.length === 0) return
+      contentDraftIdRef.current = null
+      const saved = await saveDraft(currentContent, currentAttachments)
+      if (!saved) throw new Error("New draft content could not be persisted")
+    },
+    [resolveLoadedDraft, saveDraft, getPendingAttachmentsSnapshot]
+  )
 
   const scopeRegistryKey = `${workspaceId} ${draftKey}`
   const composerTokenRef = useRef<string | null>(null)

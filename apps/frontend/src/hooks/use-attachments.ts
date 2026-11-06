@@ -175,7 +175,11 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
   // while the underlying jobs progress.
   const pendingAttachments = useMemo(() => computePending(entries), [entries, getUploadsVersion()])
 
-  const getPendingAttachmentsSnapshot = useCallback(() => computePending(entriesRef.current), [])
+  const unmountedSnapshotRef = useRef<PendingAttachment[] | null>(null)
+  const getPendingAttachmentsSnapshot = useCallback(
+    () => unmountedSnapshotRef.current ?? computePending(entriesRef.current),
+    []
+  )
 
   // Claim/release with per-id diffing: while a composer holds a job the
   // manager keeps its resources; a job is released only when it LEAVES the
@@ -197,12 +201,14 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
   // Unmount: release everything still held. StrictMode's simulated unmount
   // runs this too, but the claim effect re-runs immediately after (same
   // commit, nothing can settle in between) and re-claims the same set.
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    unmountedSnapshotRef.current = null
+    return () => {
+      // Send cleanup can outlive this composer; released jobs disappear when they settle.
+      unmountedSnapshotRef.current = computePending(entriesRef.current)
       releaseUploads([...claimedJobIdsRef.current])
-    },
-    []
-  )
+    }
+  }, [])
 
   const handleFileSelect = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {

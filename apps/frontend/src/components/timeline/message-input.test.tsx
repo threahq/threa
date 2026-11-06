@@ -86,6 +86,7 @@ let infoToastSpy: ReturnType<typeof vi.spyOn>
 const mockClearDraft = vi.fn()
 const mockResolveDraft = vi.fn()
 const mockClearAttachments = vi.fn()
+const mockReleaseAttachments = vi.fn()
 const mockSetContent = vi.fn()
 const mockSetIsSending = vi.fn()
 const mockHandleContentChange = vi.fn()
@@ -131,6 +132,7 @@ beforeEach(async () => {
   mockSetContent.mockImplementation((content: JSONContent) => (mockComposerState.content = content))
   mockScheduleMutateAsync.mockReset()
   mockScheduleMutateAsync.mockResolvedValue({})
+  mockReleaseAttachments.mockReset()
   capturedOnSchedule = null
   mockOpenPanel.mockReset()
   infoToastSpy = vi.spyOn(toast, "info").mockImplementation(() => "toast-id")
@@ -275,6 +277,7 @@ beforeEach(async () => {
         clearDraft: mockClearDraft,
         resolveDraft: mockResolveDraft,
         clearAttachments: mockClearAttachments,
+        releaseAttachments: mockReleaseAttachments,
         // On the real state; the disarm path flushes before releasing the draft
         // it stops hosting, and a stub missing this surfaces as an unhandled
         // rejection rather than a readable failure.
@@ -665,9 +668,9 @@ describe("MessageInput", () => {
       }).toEqual({ error: SCHEDULED_ENQUEUE_ERROR, schedules: 0, cleared: 0 })
     })
 
-    it("should resolve the draft and clear attachments after sending", async () => {
+    it("resolves the sent draft and releases only its attachments", async () => {
       mockComposerState.canSend = true
-      mockComposerState.content = makeDoc("Hello world")
+      mockComposerState.content = makeAttachmentDoc()
 
       render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
 
@@ -678,7 +681,62 @@ describe("MessageInput", () => {
       // edited on another device survives as a stash entry.
       expect(mockResolveDraft).toHaveBeenCalled()
       expect(mockClearDraft).not.toHaveBeenCalled()
-      expect(mockClearAttachments).toHaveBeenCalled()
+      expect(mockReleaseAttachments).toHaveBeenCalledWith(["attach_1"])
+      expect(mockClearAttachments).not.toHaveBeenCalled()
+    })
+
+    it("keeps attachments added while the send is pending", async () => {
+      mockComposerState.canSend = true
+      mockComposerState.content = makeAttachmentDoc()
+      let resolveSend: (value: object) => void = () => {}
+      mockSendMessage.mockReturnValue(new Promise((resolve) => (resolveSend = resolve)))
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
+      mockComposerState.pendingAttachments = [
+        { id: "attach_2", filename: "new.png", mimeType: "image/png", sizeBytes: 512, status: "uploaded" },
+      ]
+
+      await act(async () => resolveSend({}))
+
+      expect(mockReleaseAttachments.mock.calls).toEqual([[["attach_1"]]])
+    })
+
+    it("should resolve only scheduled attachment IDs when another attachment failed", async () => {
+      mockComposerState.canSend = true
+      mockComposerState.content = makeAttachmentDoc()
+      mockComposerState.pendingAttachments = [
+        { id: "attach_2", filename: "retry.png", mimeType: "image/png", sizeBytes: 512, status: "error" },
+      ]
+      const { unmount } = render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      let finishSchedule!: (value: object) => void
+      mockScheduleMutateAsync.mockReturnValue(new Promise((resolve) => (finishSchedule = resolve)))
+      let scheduled!: void | Promise<void>
+      act(() => {
+        scheduled = capturedOnSchedule!(new Date("2099-01-01T00:00:00.000Z"))
+      })
+      unmount()
+      finishSchedule({})
+      await scheduled
+      expect({
+        scheduled: mockScheduleMutateAsync.mock.calls[0][0].attachmentIds,
+        resolved: mockResolveDraft.mock.calls[0][0].attachmentIds,
+        released: mockReleaseAttachments.mock.calls,
+      }).toEqual({ scheduled: ["attach_1"], resolved: ["attach_1"], released: [[["attach_1"]]] })
+    })
+
+    it("does not restore an already-sent message when draft resolution fails", async () => {
+      const sentContent = makeDoc("Hello world")
+      mockComposerState.canSend = true
+      mockComposerState.content = sentContent
+      mockResolveDraft.mockRejectedValueOnce(new Error("IndexedDB unavailable"))
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
+
+      expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({ contentJson: sentContent }))
+      expect(mockSetContent.mock.calls).toEqual([[EMPTY_DOC]])
+      expect(screen.getByText("Message sent, but the draft could not be updated.")).toBeInTheDocument()
     })
 
     it("should prefer the live editor content passed by the composer at submit time", async () => {
@@ -716,7 +774,7 @@ describe("MessageInput", () => {
       expect(mockSetContent.mock.calls).toEqual([[EMPTY_DOC]])
 
       await act(async () => resolveSend({}))
-      expect(mockClearAttachments).toHaveBeenCalled()
+      expect(mockReleaseAttachments).toHaveBeenCalledWith([])
       expect(mockSetContent.mock.calls).toEqual([[EMPTY_DOC]])
     })
 

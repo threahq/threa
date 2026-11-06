@@ -652,6 +652,38 @@ describe("useDraftComposer", () => {
       expect(mockResolveDraft).toHaveBeenCalled()
     })
 
+    it("should persist an unsent retried attachment after the composer unmounts", async () => {
+      const sentContent = makeDoc("scheduled body")
+      mockDraftContentJson = sentContent
+      const failed = { id: "attach_retry", filename: "retry.png", mimeType: "image/png", sizeBytes: 512 }
+      mockPendingAttachments = [{ ...failed, status: "error" }]
+      mockSaveDraft.mockResolvedValue(persistedRow("draft_next"))
+      const { result, unmount } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+      const resolve = result.current.resolveDraft
+      act(() => result.current.setContent(EMPTY_DOC))
+      // The upload manager advances before React re-renders, then the user leaves.
+      mockPendingAttachments = [{ ...failed, status: "uploading" }]
+      unmount()
+      await resolve({ content: sentContent, attachmentIds: [] })
+      expect(mockSaveDraft).toHaveBeenCalledWith(EMPTY_DOC, [failed])
+    })
+
+    it("reports when newer content could not be persisted after send resolution", async () => {
+      const { result } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+      const newerContent = makeDoc("typed while sending")
+      mockSaveDraft.mockResolvedValueOnce(null)
+
+      act(() => result.current.handleContentChange(newerContent))
+
+      await act(async () => {
+        await expect(result.current.resolveDraft({ content: EMPTY_DOC, attachmentIds: [] })).rejects.toThrow(
+          "New draft content could not be persisted"
+        )
+      })
+
+      expect(mockSaveDraft).toHaveBeenCalledWith(newerContent, [])
+    })
+
     it("should expose clearAttachments from useAttachments", () => {
       const { result } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
 
