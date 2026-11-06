@@ -1082,6 +1082,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     // React node views can flush a pending prop echo during the next paste.
     // Reapplying that value would overwrite the document being rendered.
     if (value === lastEmittedValueRef.current) return
+    lastEmittedValueRef.current = null
 
     const stopExternalSync = getPerfCapture().time("editor.externalSync")
 

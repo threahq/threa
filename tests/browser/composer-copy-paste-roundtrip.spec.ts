@@ -96,6 +96,15 @@ async function captureEditorClipboard(page: Page, kind: "copy" | "cut"): Promise
   }, kind)
 }
 
+async function expectCanonicalComposerClipboard(page: Page, markdown: string): Promise<void> {
+  // Ctrl-A reaches ProseMirror's selection state; native Meta-A can leave it stale.
+  await expect(async () => {
+    await composerEditor(page).getByText("tail paragraph").click()
+    await page.keyboard.press("Control+a")
+    expect(await captureEditorClipboard(page, "copy")).toBe(markdown)
+  }).toPass({ timeout: 10000 })
+}
+
 /** Select an exact text run inside the composer via a DOM range (ProseMirror syncs from selectionchange). */
 async function selectEditorText(page: Page, text: string): Promise<void> {
   await page.evaluate((needle) => {
@@ -270,26 +279,7 @@ test.describe("Composer copy/paste roundtrip", () => {
     }).toPass({ timeout: 10000 })
     expect(partial).toBe("**bold**")
 
-    // Click the last text block (not the editor's center, which can land on
-    // an atom chip and swallow focus; not the first, which scrolls in under
-    // the floating toolbar), then select-all through the editor.
-    // Retried because the click can race the editor settling after paste,
-    // leaving the caret (and thus the selection) empty.
-    // Control (not ControlOrMeta): the suite's Desktop Chrome device emulates
-    // Linux, so ProseMirror binds select-all to Ctrl-A — the host-resolved
-    // Meta+A would be selected natively by the browser without ProseMirror's
-    // state ever seeing it, and the copy handler reads the state selection.
-    // Copy is non-destructive, so the whole select-all → copy sequence
-    // retries as a unit until ProseMirror's state selection has caught up
-    // (the DOM selection can briefly lead it after the click).
-    let copied = ""
-    await expect(async () => {
-      await composerEditor(page).getByText("tail paragraph").click()
-      await page.keyboard.press("Control+a")
-      copied = await captureEditorClipboard(page, "copy")
-      expect(copied).not.toBe("")
-    }).toPass({ timeout: 10000 })
-    expect(copied).toBe(canonicalMarkdown)
+    await expectCanonicalComposerClipboard(page, canonicalMarkdown)
     // Copy must not disturb the document.
     await expectEditorHasAllStyles(page)
 
@@ -305,11 +295,7 @@ test.describe("Composer copy/paste roundtrip", () => {
   test("should preserve the complete document when a paste immediately follows a cut", async ({ page }) => {
     await pastePlainText(page, canonicalMarkdown)
     await expectEditorHasAllStyles(page)
-    await expect(async () => {
-      await composerEditor(page).getByText("tail paragraph").click()
-      await page.keyboard.press("Control+a")
-      expect(await captureEditorClipboard(page, "copy")).toBe(canonicalMarkdown)
-    }).toPass({ timeout: 10000 })
+    await expectCanonicalComposerClipboard(page, canonicalMarkdown)
 
     const cut = await page.evaluate(() => {
       const editor = document.querySelector("main [contenteditable='true']")
@@ -325,6 +311,7 @@ test.describe("Composer copy/paste roundtrip", () => {
 
     expect(cut).toBe(canonicalMarkdown)
     await expectEditorHasAllStyles(page)
+    await expectCanonicalComposerClipboard(page, canonicalMarkdown)
   })
 
   /**
