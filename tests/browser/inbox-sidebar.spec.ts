@@ -1,5 +1,12 @@
 import { test, expect, type Page, type Locator } from "@playwright/test"
-import { loginAndCreateWorkspace, loginInNewContext, createChannel, expectApiOk, openPhoneSidebar } from "./helpers"
+import {
+  loginAndCreateWorkspace,
+  loginInNewContext,
+  createChannel,
+  createChannelViaApi,
+  expectApiOk,
+  openPhoneSidebar,
+} from "./helpers"
 
 /**
  * Inbox sidebar section (step 1.3 of the Inbox feature): a stream with an
@@ -116,6 +123,56 @@ async function seedUnreadChannel(page: Page, browser: import("@playwright/test")
 }
 
 test.describe("Inbox sidebar section", () => {
+  test("label icons share one column across the Inbox and other sections, and Settle lands on it", async ({
+    page,
+    browser,
+  }) => {
+    const { testId, workspaceId, streamId, otherContext } = await seedUnreadChannel(page, browser, "inbox-col")
+    const channelsStreamId = await createChannelViaApi(page, workspaceId, `col-b-${testId}`, "public")
+
+    const labelIds: string[] = []
+    for (const [index, emoji] of ["💻", "⭐", "📚", "🧪"].entries()) {
+      const response = await page.request.post(`/api/workspaces/${workspaceId}/labels`, {
+        data: { name: `col-${index}-${testId}`, color: "#4a8fd9", emoji },
+      })
+      await expectApiOk(response, `Create label ${index}`)
+      labelIds.push(((await response.json()) as { label: { id: string } }).label.id)
+    }
+    const assign = async (labelId: string, resourceId: string) =>
+      expectApiOk(
+        await page.request.post(`/api/workspaces/${workspaceId}/labels/${labelId}/assignments`, {
+          data: { resourceType: "stream", resourceId },
+        }),
+        "Assign label"
+      )
+    await assign(labelIds[0], streamId)
+    for (const labelId of labelIds) await assign(labelId, channelsStreamId)
+    await page.reload()
+
+    const inboxRow = sidebarRow(sectionByHeading(page, "Inbox"), streamId)
+    const channelsRow = sidebarRow(sectionByHeading(page, "Channels"), channelsStreamId)
+    const inboxLabels = inboxRow.getByRole("img", { name: /^Label: / })
+    const channelsLabels = channelsRow.getByRole("img", { name: "4 labels" })
+    await expect(inboxLabels).toBeVisible({ timeout: 10000 })
+    await expect(channelsLabels).toBeVisible({ timeout: 10000 })
+    await expect(channelsLabels).toContainText("+1")
+
+    const rightEdge = async (target: Locator) => {
+      const box = await target.boundingBox()
+      if (!box) throw new Error("label stack has no box")
+      return box.x + box.width
+    }
+    expect(Math.abs((await rightEdge(inboxLabels)) - (await rightEdge(channelsLabels)))).toBeLessThan(1)
+
+    await inboxRow.hover()
+    const settle = await inboxRow.getByRole("button", { name: "Settle" }).boundingBox()
+    const glyph = await inboxLabels.boundingBox()
+    if (!settle || !glyph) throw new Error("Settle or label glyph has no box")
+    expect(Math.abs(settle.x + settle.width / 2 - (glyph.x + glyph.width / 2))).toBeLessThan(2)
+
+    await otherContext.close()
+  })
+
   test("a held row clears from the Inbox on click and returns to its home section", async ({ page, browser }) => {
     const { workspaceId, streamId, otherContext } = await seedUnreadChannel(page, browser, "inbox")
 

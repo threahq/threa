@@ -172,6 +172,19 @@
     pointer-events: auto;
   }
 
+  /*
+   * Content sitting under a hover-revealed control (the sidebar label stack
+   * under Inbox Settle): fades out exactly when that control fades in, so the
+   * two never draw on top of each other.
+   */
+  html[data-input="mouse"] .reveal-yield {
+    transition: opacity 150ms ease;
+  }
+  html[data-input="mouse"] .reveal-host:hover .reveal-yield,
+  .reveal-host:has([data-reveal-over]:focus-within) .reveal-yield {
+    opacity: 0;
+  }
+
   .resize-handle-touch-target::after {
     content: "";
     top: 0;
