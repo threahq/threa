@@ -189,8 +189,8 @@ export interface HybridSearchParams {
   streamIds: string[]
   filters: ResolvedFilters
   limit: number
-  keywordWeight?: number
-  semanticWeight?: number
+  keywordWeight: number
+  semanticWeight: number
   k?: number
 }
 
@@ -206,7 +206,7 @@ function phrasePredicatesSql(phrases: string[]) {
   return predicates
 }
 
-/** Same quote characters the frontend's `parseSearchQuery` accepts; `"..."` in the query text means an exact phrase, as `websearch_to_tsquery` used to treat it. */
+/** Same quote characters the frontend's `parseSearchQuery` accepts; `"..."` in the query text means an exact phrase. */
 const QUOTED_PHRASE_RE = /["“]([^"“”]+)["”]/g
 
 function withQuotedPhrases(query: string, phrases: string[]): string[] {
@@ -384,17 +384,7 @@ export const SearchRepository = {
    * RRF formula: score(d) = Σ(weight / (k + rank(d)))
    */
   async hybridSearch(db: Querier, params: HybridSearchParams): Promise<SearchResult[]> {
-    const {
-      workspaceId,
-      query,
-      embedding,
-      streamIds,
-      filters,
-      limit,
-      keywordWeight = 0.6,
-      semanticWeight = 0.4,
-      k = 60,
-    } = params
+    const { workspaceId, query, embedding, streamIds, filters, limit, keywordWeight, semanticWeight, k = 60 } = params
     const phrases = withQuotedPhrases(query, params.phrases ?? [])
 
     if (streamIds.length === 0) {

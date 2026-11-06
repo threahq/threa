@@ -151,7 +151,7 @@ describe("Per-message text-search config", () => {
     })
 
     expect(await storedConfig(short.id)).toBe(DEFAULT_SEARCH_CONFIG)
-    expect(await searchIds(ws, "invoice", "on")).toEqual([short.id])
+    expect(await searchIds(ws, "invoice")).toEqual([short.id])
   })
 
   test("should re-detect the config when an edit rewrites the body", async () => {
@@ -172,7 +172,7 @@ describe("Per-message text-search config", () => {
     })
 
     expect(await storedConfig(message.id)).toBe("german")
-    expect(await searchIds(ws, "Rechnung", "on")).toEqual([message.id])
+    expect(await searchIds(ws, "Rechnung")).toEqual([message.id])
   })
 
   test("should resolve every configured name, and NULL, to a Postgres config", async () => {
@@ -205,7 +205,7 @@ describe("Per-message text-search config", () => {
       await pool.query("UPDATE messages SET search_config = NULL WHERE id = ANY($1)", [
         [legacyRow.id, otherWorkspaceRow.id],
       ])
-      expect(await searchIds(ws, "faktura", "on")).toEqual([])
+      expect(await searchIds(ws, "faktura")).toEqual([])
 
       const ctx = { pool }
       const chunks = await plan(ctx, ws.workspaceId)
@@ -215,7 +215,7 @@ describe("Per-message text-search config", () => {
       expect(processed).toEqual([{ processed: 1 }])
       expect(await storedConfig(legacyRow.id)).toBe("swedish")
       expect(await storedConfig(otherWorkspaceRow.id)).toBeNull()
-      expect(await searchIds(ws, "faktura", "on")).toEqual([legacyRow.id])
+      expect(await searchIds(ws, "faktura")).toEqual([legacyRow.id])
 
       // Idempotent: a redelivered chunk finds nothing left to fill.
       expect(await processChunk(ctx, ws.workspaceId, chunks[0]!)).toEqual({ processed: 0 })

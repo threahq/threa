@@ -73,6 +73,8 @@ describe("SearchRepository phrase predicates", () => {
       streamIds: ["stream_member_channel"],
       filters,
       limit: 20,
+      keywordWeight: 0.4,
+      semanticWeight: 0.6,
     })
 
     const { text, values } = queryConfig(db)
