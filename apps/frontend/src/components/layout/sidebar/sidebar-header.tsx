@@ -1,4 +1,4 @@
-import { memo } from "react"
+import { forwardRef, memo, type ComponentPropsWithoutRef } from "react"
 import {
   ArrowLeft,
   ArrowRight,
@@ -218,9 +218,7 @@ function HistoryStep({
   )
 }
 
-/** Its own leaf: the settings url changes on every navigation, the memoized header must not. */
-function SettingsLink({ onClick }: { onClick: () => void }) {
-  const { getSettingsUrl } = useSettings()
+const SettingsLink = memo(function SettingsLink({ onClick }: { onClick: () => void }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -230,15 +228,25 @@ function SettingsLink({ onClick }: { onClick: () => void }) {
           className="h-8 w-8 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
           asChild
         >
-          <Link to={getSettingsUrl()} aria-label="Settings" onClick={onClick} {...{ [SETTINGS_ENTRY_ATTRIBUTE]: "" }}>
-            <SettingsIcon className="h-4 w-4" />
-          </Link>
+          <SettingsAnchor onClick={onClick} />
         </Button>
       </TooltipTrigger>
       <TooltipContent side="bottom">Settings</TooltipContent>
     </Tooltip>
   )
-}
+})
+
+/** Its own leaf: the settings url changes on every navigation, the memoized header and the tooltip around it must not. */
+const SettingsAnchor = forwardRef<HTMLAnchorElement, Omit<ComponentPropsWithoutRef<typeof Link>, "to">>(
+  function SettingsAnchor(props, ref) {
+    const { getSettingsUrl } = useSettings()
+    return (
+      <Link ref={ref} to={getSettingsUrl()} aria-label="Settings" {...{ [SETTINGS_ENTRY_ATTRIBUTE]: "" }} {...props}>
+        <SettingsIcon className="h-4 w-4" />
+      </Link>
+    )
+  }
+)
 
 function ShortcutHint({ binding }: { binding: string }) {
   return (

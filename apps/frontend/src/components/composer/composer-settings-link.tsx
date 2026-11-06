@@ -1,3 +1,4 @@
+import { memo } from "react"
 import { Link } from "react-router-dom"
 import { Settings2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -48,9 +49,10 @@ const COARSE_TARGET =
 
 /**
  * The desktop composer's send hint, linked to the send key setting it describes.
- * Plain text outside the workspace shell.
+ * Plain text outside the workspace shell. Memoized: the composer re-renders on
+ * every keystroke, and the tooltip around the link is a dozen components.
  */
-export function ComposerSendHint({ hint }: { hint: string }) {
+export const ComposerSendHint = memo(function ComposerSendHint({ hint }: { hint: string }) {
   const href = useSettingHref("send-key")
   if (!href) return <span className={cn(HINT_CLASS, "pointer-events-none")}>{hint}</span>
   return (
@@ -73,4 +75,4 @@ export function ComposerSendHint({ hint }: { hint: string }) {
       </TooltipContent>
     </Tooltip>
   )
-}
+})
