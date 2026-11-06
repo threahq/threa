@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk, generateTestId } from "./helpers"
+import { loginAndCreateWorkspace, createChannel, expectApiOk, sendApiOk, generateTestId } from "./helpers"
 
 /**
  * Sending a message must not move the timeline. The optimistic row appends, the
@@ -37,13 +37,14 @@ async function seedMessages(page: Page, workspaceId: string, streamId: string, c
   for (let start = 1; start <= count; start += 5) {
     const end = Math.min(start + 4, count)
     await Promise.all(
-      Array.from({ length: end - start + 1 }, (_, i) => start + i).map((i) =>
-        page.request
-          .post(`/api/workspaces/${workspaceId}/messages`, {
-            data: { streamId, content: `seed msg-${String(i).padStart(3, "0")} some filler text here` },
-          })
-          .then((response) => expectApiOk(response, `seed ${i}`))
-      )
+      Array.from({ length: end - start + 1 }, (_, i) => start + i).map((i) => {
+        const data = {
+          streamId,
+          content: `seed msg-${String(i).padStart(3, "0")} some filler text here`,
+          clientMessageId: crypto.randomUUID(),
+        }
+        return sendApiOk(() => page.request.post(`/api/workspaces/${workspaceId}/messages`, { data }), `seed ${i}`)
+      })
     )
   }
 }
