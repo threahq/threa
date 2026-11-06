@@ -21,8 +21,6 @@ import {
 import { Link, useNavigate } from "react-router-dom"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { SectionPicker } from "./section-picker"
-import { MentionIndicator } from "@/components/mention-indicator"
-import { DraftIndicator } from "@/components/draft-indicator"
 import { isDraftId, useActors, useArchiveStream, useDraftScratchpads } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useInputMode } from "@/hooks/use-input-mode"
@@ -52,10 +50,10 @@ import {
   agentActivityLabel,
   InboxRowClearButton,
   InboxRowSwipeReveal,
+  StreamRowTrailing,
   type BoardTileState,
 } from "./stream-item"
 import { useAgentActivityForStream } from "@/stores/agent-activity-store"
-import { StreamLabelDots } from "./sidebar-labels"
 import { QuickJumpCap, useQuickJumpSlot } from "./quick-jump"
 import { useSidebarItemDrawer } from "./use-sidebar-item-drawer"
 import { useInboxRowHover } from "./use-inbox-row-hover"
@@ -430,9 +428,8 @@ export function ScratchpadItem({
                     showHoverPreview && "group-hover:-translate-y-[0.3125rem]"
                   )}
                 >
-                  {/* Right reserve for the hover "…" menu, widened on Inbox rows for the
-                    Clear button in its own slot — see StreamItem. */}
-                  <div className={cn("flex items-center gap-2", !isTouchInput && (isInboxRow ? "pr-16" : "pr-8"))}>
+                  {/* Right reserve for the hover "…" menu — see StreamItem. */}
+                  <div className={cn("flex items-center gap-2", !isTouchInput && "pr-8")}>
                     {nameDecrypting ? (
                       <Skeleton className="h-4 w-28" />
                     ) : (
@@ -445,13 +442,14 @@ export function ScratchpadItem({
                     {boardMuted && (
                       <BellOff className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-label="Muted on the board" />
                     )}
-                    <div className="ml-auto flex items-center gap-1.5">
+                    <StreamRowTrailing
+                      streamId={streamWithPreview.id}
+                      mentionCount={mentionCount}
+                      hasDraft={!!streamWithPreview.hasLoadedDraft}
+                      isActive={isActive}
+                    >
                       {dense && boardMode && <BoardTopicCount stats={boardMode.statsForStream(streamWithPreview.id)} />}
-                      <StreamLabelDots streamId={streamWithPreview.id} />
-                      {/* Suppressed on the active stream — its composer already shows the draft. */}
-                      {streamWithPreview.hasLoadedDraft && !isActive && <DraftIndicator />}
-                      <MentionIndicator count={mentionCount} />
-                    </div>
+                    </StreamRowTrailing>
                   </div>
                   {previewNode}
                 </div>

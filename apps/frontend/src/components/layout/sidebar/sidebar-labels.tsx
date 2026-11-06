@@ -2,6 +2,7 @@ import { createContext, useContext, useMemo, type ReactNode } from "react"
 import { LabelableResourceTypes } from "@threahq/types"
 import { useWorkspaceLabels, useWorkspaceLabelAssignments } from "@/stores/workspace-store"
 import { LabelGlyph } from "@/components/labels/label-chip"
+import { cn } from "@/lib/utils"
 import type { CachedLabel } from "@/hooks"
 
 /**
@@ -45,24 +46,41 @@ export function useStreamLabels(streamId: string): CachedLabel[] {
   return useContext(SidebarLabelsContext).get(streamId) ?? EMPTY
 }
 
+const STACK_LIMIT = 3
+
 /**
- * Compact label indicator for a stream row: the first label's color dot, with a
- * "+N" when the stream carries more. Sits on the right of the title so a stream
- * reads as labeled even when it's parked in a custom section (away from its
- * label lens). Returns null when the stream has no labels, so it adds nothing to
- * the layout in the common case (INV-21).
+ * Label indicator for a stream row: up to three label glyphs overlapping to the
+ * left of the first one, with a corner count for the rest. The first label
+ * always sits at the right edge, so rows line up on one column however many
+ * labels they carry. Returns null when the stream has no labels.
  */
 export function StreamLabelDots({ streamId }: { streamId: string }) {
   const labels = useStreamLabels(streamId)
   if (labels.length === 0) return null
 
-  const extra = labels.length - 1
+  const shown = labels.slice(0, STACK_LIMIT)
+  const extra = labels.length - shown.length
   const aria = labels.length === 1 ? `Label: ${labels[0].name}` : `${labels.length} labels`
 
   return (
-    <span className="flex shrink-0 items-center gap-0.5" role="img" aria-label={aria}>
-      <LabelGlyph label={labels[0]} className="h-3.5 w-3.5" />
-      {extra > 0 && <span className="text-[10px] font-medium leading-none text-muted-foreground">+{extra}</span>}
+    <span className="relative flex shrink-0 flex-row-reverse items-center" role="img" aria-label={aria}>
+      {shown.map((label, index) => (
+        <LabelGlyph
+          key={label.id}
+          label={label}
+          // Tucked under the glyph to its right; the mask cuts the overlap plus a
+          // 1.5px gap, so tinted glyphs never blend and no surface color is needed.
+          className={cn(
+            "h-3.5 w-3.5",
+            index > 0 && "-mr-1 [mask-image:linear-gradient(to_left,transparent_5.5px,#000_5.5px)]"
+          )}
+        />
+      ))}
+      {extra > 0 && (
+        <span className="absolute -right-1.5 -top-1.5 h-3 min-w-3 rounded-full bg-muted-foreground px-0.5 text-center text-[8px] font-semibold leading-3 text-background">
+          +{extra}
+        </span>
+      )}
     </span>
   )
 }

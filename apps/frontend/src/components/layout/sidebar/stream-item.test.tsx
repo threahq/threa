@@ -508,27 +508,6 @@ describe("StreamItem", () => {
     expect(avatarRow()).not.toHaveClass("opacity-60")
   })
 
-  it("widens the title's right-side reserve to make room for the row Settle button", () => {
-    touchState.inputMode = "mouse"
-    const stream = createStream()
-    const row = () => screen.getByText(/general/).parentElement
-
-    renderWithRouter(
-      <StreamItem
-        workspaceId="workspace_1"
-        stream={stream}
-        isActive={false}
-        unreadCount={1}
-        mentionCount={0}
-        isInboxRow
-        onClearFromInbox={vi.fn()}
-      />
-    )
-
-    expect(row()).toHaveClass("pr-16")
-    expect(row()).not.toHaveClass("pr-8")
-  })
-
   it("shows the row Settle button on an Inbox row under mouse input", () => {
     touchState.inputMode = "mouse"
     const stream = createStream()

@@ -114,10 +114,11 @@ export function BoardTileToggle({
 }
 
 /**
- * Row-level Inbox clear control: own reveal slot left of the "…" menu so hover
- * never shifts the row (INV-21). `keyHint` is the effective binding's
- * formatted display string (see `getEffectiveKeyBinding`/`formatKeyBinding`);
- * omitted when the viewer disabled or unbound the shortcut.
+ * Row-level Inbox clear control: revealed over the label column, whose stack
+ * yields to it ({@link StreamRowTrailing}), so hover never shifts the row
+ * (INV-21). `keyHint` is the effective binding's formatted display string
+ * (see `getEffectiveKeyBinding`/`formatKeyBinding`); omitted when the viewer
+ * disabled or unbound the shortcut.
  */
 export function InboxRowClearButton({ onClear, keyHint }: { onClear: () => void; keyHint?: string }) {
   return (
@@ -131,7 +132,8 @@ export function InboxRowClearButton({ onClear, keyHint }: { onClear: () => void;
             onClear()
           }}
           aria-label="Settle"
-          className="reveal-actions-hover-only absolute right-8 top-1 z-10 flex h-6 w-6 items-center justify-center rounded hover:bg-muted"
+          data-reveal-over
+          className="reveal-actions-hover-only absolute right-9 top-1 z-10 flex h-6 w-6 items-center justify-center rounded hover:bg-muted"
         >
           <Check className="h-3.5 w-3.5" />
         </button>
@@ -143,6 +145,38 @@ export function InboxRowClearButton({ onClear, keyHint }: { onClear: () => void;
         </div>
       </TooltipContent>
     </Tooltip>
+  )
+}
+
+/**
+ * Right end of a sidebar row's title line. The label stack comes last in a
+ * minimum-width, right-aligned slot, kept even when empty, so every row's
+ * labels share one column whatever sits beside them. The stack yields to the
+ * row's Settle button, which reveals over that column.
+ */
+export function StreamRowTrailing({
+  streamId,
+  mentionCount,
+  hasDraft,
+  isActive,
+  children,
+}: {
+  streamId: string
+  mentionCount: number
+  hasDraft: boolean
+  isActive: boolean
+  children?: ReactNode
+}) {
+  return (
+    <div className="ml-auto flex shrink-0 items-center gap-1.5">
+      {children}
+      {/* Not on the active stream — its composer already shows the draft. */}
+      {hasDraft && !isActive && <DraftIndicator />}
+      <MentionIndicator count={mentionCount} />
+      <span className="reveal-yield flex min-w-3.5 justify-end">
+        <StreamLabelDots streamId={streamId} />
+      </span>
+    </div>
   )
 }
 
@@ -813,9 +847,9 @@ export function StreamItem({
                     showHoverPreview && "group-hover:-translate-y-[0.3125rem]"
                   )}
                 >
-                  {/* Right reserve for the "…" menu (+ Inbox Clear button when applicable); touch
-                    skips it — long-press opens the drawer instead, so a phone spends it on the name. */}
-                  <div className={cn("flex items-center gap-2", !isTouchInput && (onClearRow ? "pr-16" : "pr-8"))}>
+                  {/* Right reserve for the "…" menu; touch skips it — long-press opens the
+                    drawer instead, so a phone spends it on the name. */}
+                  <div className={cn("flex items-center gap-2", !isTouchInput && "pr-8")}>
                     <span
                       className={cn(
                         "truncate text-sm",
@@ -843,15 +877,16 @@ export function StreamItem({
                     {boardMuted && (
                       <BellOff className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-label="Muted on the board" />
                     )}
-                    <div className="ml-auto flex items-center gap-1.5">
+                    <StreamRowTrailing
+                      streamId={stream.id}
+                      mentionCount={mentionCount}
+                      hasDraft={!!stream.hasLoadedDraft}
+                      isActive={isActive}
+                    >
                       {dense && boardMode && boardScopeId === stream.id && (
                         <BoardTopicCount stats={boardMode.statsForStream(boardScopeId)} />
                       )}
-                      <StreamLabelDots streamId={stream.id} />
-                      {/* Suppressed on the active stream — its composer already shows the draft. */}
-                      {stream.hasLoadedDraft && !isActive && <DraftIndicator />}
-                      <MentionIndicator count={mentionCount} />
-                    </div>
+                    </StreamRowTrailing>
                   </div>
                   {previewNode}
                 </div>
