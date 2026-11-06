@@ -3,7 +3,8 @@ import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen, userEvent, waitFor } from "@/test"
 import type { Workspace } from "@threahq/types"
-import { ConnectPage, CONNECTED_BOT_SCOPES, normalizeCode, slugForBot } from "./connect"
+import { CONNECTED_BOT_SCOPES } from "@/components/workspace-settings/api-key-scopes"
+import { ConnectPage, normalizeCode, slugForBot } from "./connect"
 import * as authModule from "@/auth"
 import * as hooksModule from "@/hooks"
 import { botConnectApi } from "@/api/bot-connect"
@@ -103,7 +104,10 @@ describe("ConnectPage", () => {
       traits: ["mentionable", "active-scratchpad"],
     })
     expect(create.mock.calls[1]![1].slug).toMatch(/^my-agent-[a-z0-9]{4}$/)
-    expect(createKey).toHaveBeenCalledWith("ws_1", "bot_1", { name: "threa-bot connect", scopes: CONNECTED_BOT_SCOPES })
+    expect(createKey).toHaveBeenCalledWith("ws_1", "bot_1", {
+      name: "threa-bot connect",
+      scopes: [...CONNECTED_BOT_SCOPES],
+    })
     expect(approve).toHaveBeenCalledWith({
       code: "BCDF-GHJK",
       workspaceId: "ws_1",

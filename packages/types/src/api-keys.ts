@@ -50,8 +50,7 @@ export function isApiKeyEligibleScope(scope: WorkspacePermissionSlug): boolean {
 
 /**
  * `WorkspacePermission` records (slug + name + description) for the eligible
- * subset, in catalog order. Frontend pickers render from this so the picker UI
- * stays a one-line consumer of the source of truth.
+ * subset, in catalog order, as the generated API docs list them.
  */
 export const API_KEY_ELIGIBLE_PICKER_SCOPES: readonly WorkspacePermission[] = WORKSPACE_PERMISSIONS.filter((p) =>
   ELIGIBLE_SCOPE_SET.has(p.slug)

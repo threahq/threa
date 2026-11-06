@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react"
+import { useState, type ReactNode } from "react"
 import { useMutation, useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query"
 import { MoreHorizontal } from "lucide-react"
 import type { CreateApiKeyInput, UserApiKey, WorkspacePermissionSlug } from "@threahq/types"
@@ -18,7 +18,6 @@ import {
 } from "@/components/ui/alert-dialog"
 import {
   ResponsiveDialog,
-  ResponsiveDialogBody,
   ResponsiveDialogContent,
   ResponsiveDialogDescription,
   ResponsiveDialogFooter,
@@ -30,18 +29,22 @@ import {
   SettingEmptyNote,
   SettingFieldError,
   SettingsDisclosureTrigger,
-  SettingBadge,
   SETTING_ITEM_DIVIDERS,
 } from "@/components/settings/setting-primitives"
-import { SettingCheckboxList } from "@/components/settings/setting-lists"
 import { SETTING_ICON_BUTTON, SETTING_MUTED_NOTE_TEXT, SETTING_NOTE_TEXT } from "@/components/settings/setting-text"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { cn } from "@/lib/utils"
 import { ApiKeyVersionControl } from "./api-key-version-control"
 import { NewApiKeyNotice } from "./new-api-key-notice"
+import { ApiKeyPermissionPicker, ApiKeyScopeSummary } from "./api-key-permission-picker"
+import { eligibleCount } from "./api-key-scopes"
 import {
-  API_KEY_SCOPE_ITEMS,
+  API_KEY_DIALOG_DESKTOP_CLASS,
+  API_KEY_DIALOG_FOOTER_CLASS,
+  API_KEY_DIALOG_HEADER_CLASS,
   ApiKeyCreateDialog,
+  ApiKeyDialogBody,
+  PermissionCount,
   NEW_API_KEY_DRAFT,
   SCOPE_LABELS,
   draftFromKey,
@@ -146,10 +149,8 @@ export function ApiKeysPanel({
                     {key.keyPrefix}…
                   </code>
                 </div>
-                <div className="mt-1 flex flex-wrap gap-1.5">
-                  {key.scopes.map((scope) => (
-                    <SettingBadge key={scope}>{SCOPE_LABELS[scope] ?? scope}</SettingBadge>
-                  ))}
+                <div className="mt-1">
+                  <ApiKeyScopeSummary scopes={key.scopes} labels={SCOPE_LABELS} />
                 </div>
                 <p className={cn("mt-1", SETTING_MUTED_NOTE_TEXT)}>
                   Created {formatDate(new Date(key.createdAt))}
@@ -292,8 +293,13 @@ function ApiKeyScopesDialog({
   onSaved: () => void
 }) {
   return (
-    <ResponsiveDialog open={target !== null} onOpenChange={(open) => !open && onClose()} historyEntry={false}>
-      <ResponsiveDialogContent desktopClassName="max-w-md" drawerClassName="max-h-[92dvh]">
+    <ResponsiveDialog
+      open={target !== null}
+      onOpenChange={(open) => !open && onClose()}
+      disableSnapPoints
+      historyEntry={false}
+    >
+      <ResponsiveDialogContent desktopClassName={API_KEY_DIALOG_DESKTOP_CLASS} drawerClassName="max-h-[92dvh]">
         {target && <ApiKeyScopesForm key={target.id} target={target} onClose={onClose} save={save} onSaved={onSaved} />}
       </ResponsiveDialogContent>
     </ResponsiveDialog>
@@ -311,7 +317,6 @@ function ApiKeyScopesForm({
   save: (keyId: string, scopes: WorkspacePermissionSlug[]) => Promise<unknown>
   onSaved: () => void
 }) {
-  const listId = useId()
   const [scopes, setScopes] = useState<Set<WorkspacePermissionSlug>>(() => new Set(target.scopes))
   const mutation = useMutation({
     mutationFn: () => save(target.id, [...scopes]),
@@ -323,32 +328,20 @@ function ApiKeyScopesForm({
 
   return (
     <>
-      <ResponsiveDialogHeader>
+      <ResponsiveDialogHeader className={API_KEY_DIALOG_HEADER_CLASS}>
         <ResponsiveDialogTitle>Edit permissions</ResponsiveDialogTitle>
-        <ResponsiveDialogDescription id={listId}>{target.name}</ResponsiveDialogDescription>
+        <ResponsiveDialogDescription>{target.name}</ResponsiveDialogDescription>
       </ResponsiveDialogHeader>
-      <ResponsiveDialogBody className="min-h-0 space-y-3">
-        <SettingCheckboxList
-          aria-labelledby={listId}
-          items={API_KEY_SCOPE_ITEMS}
-          selected={scopes}
-          disabled={mutation.isPending}
-          onCheckedChange={(scope, checked) =>
-            setScopes((prev) => {
-              const next = new Set(prev)
-              if (checked) next.add(scope)
-              else next.delete(scope)
-              return next
-            })
-          }
-        />
+      <ApiKeyDialogBody>
+        <ApiKeyPermissionPicker scopes={scopes} onChange={setScopes} disabled={mutation.isPending} />
         {mutation.error && <SettingFieldError>Couldn&apos;t save the permissions. Try again.</SettingFieldError>}
-      </ResponsiveDialogBody>
-      <ResponsiveDialogFooter>
+      </ApiKeyDialogBody>
+      <ResponsiveDialogFooter className={API_KEY_DIALOG_FOOTER_CLASS}>
+        <PermissionCount scopes={scopes} />
         <Button variant="outline" onClick={onClose} disabled={mutation.isPending}>
           Cancel
         </Button>
-        <Button onClick={() => mutation.mutate()} disabled={scopes.size === 0 || mutation.isPending}>
+        <Button onClick={() => mutation.mutate()} disabled={eligibleCount(scopes) === 0 || mutation.isPending}>
           {mutation.isPending ? "Saving…" : "Save permissions"}
         </Button>
       </ResponsiveDialogFooter>

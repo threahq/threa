@@ -1,4 +1,4 @@
-import { useId, useState } from "react"
+import { useId, useState, type ReactNode } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -11,11 +11,11 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
-import { SETTING_CONTROL_HEIGHT, SettingFieldError } from "@/components/settings/setting-primitives"
-import { SettingCheckboxList } from "@/components/settings/setting-lists"
+import { SETTING_CONTROL_HEIGHT, ScrollEdgeShadows, SettingFieldError } from "@/components/settings/setting-primitives"
 import { SETTING_MUTED_NOTE_TEXT } from "@/components/settings/setting-text"
+import { useScrollEdges } from "@/hooks/use-scroll-edges"
 import {
-  API_KEY_ELIGIBLE_PICKER_SCOPES,
+  API_KEY_ELIGIBLE_SCOPES,
   API_KEY_NAME_MAX_LENGTH,
   CURRENT_API_VERSION,
   WORKSPACE_PERMISSIONS,
@@ -25,6 +25,8 @@ import {
   type WorkspacePermissionSlug,
 } from "@threahq/types"
 import { ApiKeyVersionControl } from "./api-key-version-control"
+import { ApiKeyPermissionPicker } from "./api-key-permission-picker"
+import { eligibleCount } from "./api-key-scopes"
 
 // Full catalog drives SCOPE_LABELS so previously-issued keys with scopes
 // outside the eligible picker subset still render a human-readable name.
@@ -54,18 +56,33 @@ export function draftFromKey(key: Pick<UserApiKey, "name" | "scopes" | "apiVersi
   }
 }
 
-function setDraftScope(draft: ApiKeyDraft, scope: WorkspacePermissionSlug, checked: boolean): ApiKeyDraft {
-  const scopes = new Set(draft.scopes)
-  if (checked) scopes.add(scope)
-  else scopes.delete(scope)
-  return { ...draft, scopes }
+/** Desktop: a flex column, so the header and footer stay put and only the body scrolls. */
+export const API_KEY_DIALOG_DESKTOP_CLASS = "max-w-xl sm:flex sm:flex-col sm:gap-0 sm:overflow-hidden sm:p-0"
+export const API_KEY_DIALOG_HEADER_CLASS = "sm:px-6 sm:pb-4 sm:pt-6"
+export const API_KEY_DIALOG_FOOTER_CLASS = "sm:items-center sm:px-6 sm:py-4"
+
+/** The scrolling part of a key dialog, shadowed at an edge its content continues past. */
+export function ApiKeyDialogBody({ children }: { children: ReactNode }) {
+  const [body, setBody] = useState<HTMLDivElement | null>(null)
+  const edges = useScrollEdges(body)
+  return (
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <ResponsiveDialogBody ref={setBody} className="min-h-0 space-y-5 pb-5 pt-1 sm:pt-2">
+        {children}
+      </ResponsiveDialogBody>
+      <ScrollEdgeShadows {...edges} />
+    </div>
+  )
 }
 
-export const API_KEY_SCOPE_ITEMS = API_KEY_ELIGIBLE_PICKER_SCOPES.map((perm) => ({
-  value: perm.slug,
-  label: perm.name,
-  description: perm.description,
-}))
+/** How many of the key-eligible permissions are picked, announced as it changes. */
+export function PermissionCount({ scopes }: { scopes: ReadonlySet<string> }) {
+  return (
+    <p aria-live="polite" className="text-sm text-muted-foreground max-sm:text-center sm:mr-auto">
+      {eligibleCount(scopes)} of {API_KEY_ELIGIBLE_SCOPES.length} permissions
+    </p>
+  )
+}
 
 function createInputFromDraft(draft: ApiKeyDraft): CreateApiKeyInput | null {
   const name = draft.name.trim()
@@ -137,10 +154,7 @@ export function ApiKeyCreateDialog({ form, nameLabel, namePlaceholder }: ApiKeyC
       disableSnapPoints
       historyEntry={false}
     >
-      <ResponsiveDialogContent desktopClassName="max-w-md" drawerClassName="max-h-[92dvh]">
-        <ResponsiveDialogHeader>
-          <ResponsiveDialogTitle>New API key</ResponsiveDialogTitle>
-        </ResponsiveDialogHeader>
+      <ResponsiveDialogContent desktopClassName={API_KEY_DIALOG_DESKTOP_CLASS} drawerClassName="max-h-[92dvh]">
         {form && <ApiKeyCreateFields {...form} nameLabel={nameLabel} namePlaceholder={namePlaceholder} />}
       </ResponsiveDialogContent>
     </ResponsiveDialog>
@@ -158,15 +172,15 @@ function ApiKeyCreateFields({
   onCreate,
 }: ApiKeyCreateFormState & { nameLabel: string; namePlaceholder: string }) {
   const nameId = useId()
-  const permissionsId = useId()
   const droppedNoteId = useId()
   const hasDroppedScopes = draft.droppedScopes.length > 0
   const input = createInputFromDraft(draft)
 
   return (
     <>
-      <ResponsiveDialogBody className="min-h-0 space-y-5">
-        <div className="space-y-2">
+      <ResponsiveDialogHeader className={API_KEY_DIALOG_HEADER_CLASS}>
+        <ResponsiveDialogTitle>New API key</ResponsiveDialogTitle>
+        <div className="space-y-2 pt-3 text-left">
           <Label htmlFor={nameId}>{nameLabel}</Label>
           <Input
             id={nameId}
@@ -178,25 +192,20 @@ function ApiKeyCreateFields({
             className={SETTING_CONTROL_HEIGHT}
           />
         </div>
+      </ResponsiveDialogHeader>
 
-        <div className="space-y-1">
-          <p id={permissionsId} className="text-sm font-medium">
-            Permissions
+      <ApiKeyDialogBody>
+        <ApiKeyPermissionPicker
+          scopes={draft.scopes}
+          onChange={(scopes) => onDraftChange({ ...draft, scopes })}
+          disabled={isPending}
+        />
+        {hasDroppedScopes && (
+          <p id={droppedNoteId} className={SETTING_MUTED_NOTE_TEXT}>
+            Not copied, no longer available for keys:{" "}
+            {draft.droppedScopes.map((scope) => SCOPE_LABELS[scope] ?? scope).join(", ")}
           </p>
-          <SettingCheckboxList
-            aria-labelledby={permissionsId}
-            items={API_KEY_SCOPE_ITEMS}
-            selected={draft.scopes}
-            disabled={isPending}
-            onCheckedChange={(scope, checked) => onDraftChange(setDraftScope(draft, scope, checked))}
-          />
-          {hasDroppedScopes && (
-            <p id={droppedNoteId} className={SETTING_MUTED_NOTE_TEXT}>
-              Not copied, no longer available for keys:{" "}
-              {draft.droppedScopes.map((scope) => SCOPE_LABELS[scope] ?? scope).join(", ")}
-            </p>
-          )}
-        </div>
+        )}
 
         <ApiKeyVersionControl
           apiVersion={draft.apiVersion === undefined ? CURRENT_API_VERSION : draft.apiVersion}
@@ -205,9 +214,10 @@ function ApiKeyCreateFields({
         />
 
         {error && <SettingFieldError>{error.message || "Couldn't create the key. Try again."}</SettingFieldError>}
-      </ResponsiveDialogBody>
+      </ApiKeyDialogBody>
 
-      <ResponsiveDialogFooter>
+      <ResponsiveDialogFooter className={API_KEY_DIALOG_FOOTER_CLASS}>
+        <PermissionCount scopes={draft.scopes} />
         <Button variant="outline" onClick={onCancel} disabled={isPending}>
           Cancel
         </Button>

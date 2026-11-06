@@ -2,7 +2,7 @@ import { useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { Bot, Check, Hourglass, SearchX } from "lucide-react"
-import { BotTraits, WORKSPACE_PERMISSION_SCOPES, type Workspace } from "@threahq/types"
+import { BotTraits, type Workspace } from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
@@ -14,17 +14,7 @@ import { botConnectApi, type BotConnectLookup } from "@/api/bot-connect"
 import { botsApi } from "@/api/bots"
 import { useAuth } from "@/auth"
 import { useWorkspaces } from "@/hooks"
-
-/** What `threa-bot run` needs: presence, claims, replies, reading the stream, files both ways. */
-export const CONNECTED_BOT_SCOPES = [
-  WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE,
-  WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE,
-  WORKSPACE_PERMISSION_SCOPES.MESSAGES_WRITE,
-  WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ,
-  WORKSPACE_PERMISSION_SCOPES.STREAMS_READ,
-  WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_READ,
-  WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_WRITE,
-]
+import { CONNECTED_BOT_SCOPES } from "@/components/workspace-settings/api-key-scopes"
 
 export function normalizeCode(raw: string): string {
   const compact = raw
@@ -131,7 +121,7 @@ export async function approveConnect(input: ApproveConnectInput): Promise<{
     }
     const key = await botsApi.createKey(input.workspace.id, bot.id, {
       name: "threa-bot connect",
-      scopes: CONNECTED_BOT_SCOPES,
+      scopes: [...CONNECTED_BOT_SCOPES],
     })
     provisioned = {
       workspaceId: input.workspace.id,
