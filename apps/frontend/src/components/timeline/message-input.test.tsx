@@ -699,7 +699,30 @@ describe("MessageInput", () => {
 
       await act(async () => resolveSend({}))
 
-      expect(mockReleaseAttachments).toHaveBeenCalledWith(["attach_1"])
+      expect(mockReleaseAttachments.mock.calls).toEqual([[["attach_1"]]])
+    })
+
+    it("should resolve only scheduled attachment IDs when another attachment failed", async () => {
+      mockComposerState.canSend = true
+      mockComposerState.content = makeAttachmentDoc()
+      mockComposerState.pendingAttachments = [
+        { id: "attach_2", filename: "retry.png", mimeType: "image/png", sizeBytes: 512, status: "error" },
+      ]
+      const { unmount } = render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      let finishSchedule!: (value: object) => void
+      mockScheduleMutateAsync.mockReturnValue(new Promise((resolve) => (finishSchedule = resolve)))
+      let scheduled!: void | Promise<void>
+      act(() => {
+        scheduled = capturedOnSchedule!(new Date("2099-01-01T00:00:00.000Z"))
+      })
+      unmount()
+      finishSchedule({})
+      await scheduled
+      expect({
+        scheduled: mockScheduleMutateAsync.mock.calls[0][0].attachmentIds,
+        resolved: mockResolveDraft.mock.calls[0][0].attachmentIds,
+        released: mockReleaseAttachments.mock.calls,
+      }).toEqual({ scheduled: ["attach_1"], resolved: ["attach_1"], released: [[["attach_1"]]] })
     })
 
     it("does not restore an already-sent message when draft resolution fails", async () => {

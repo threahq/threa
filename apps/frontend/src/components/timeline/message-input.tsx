@@ -775,17 +775,20 @@ function MessageInputComponent({
       return
     }
 
-    disarm()
     try {
-      await composer.resolveDraft({ content: liveContent, attachmentIds })
-    } catch {
-      setError("Message sent, but the draft could not be updated.")
+      disarm()
+      try {
+        await composer.resolveDraft({ content: liveContent, attachmentIds })
+      } catch {
+        setError("Message sent, but the draft could not be updated.")
+      }
+      composer.releaseAttachments(attachmentIds)
+      if (result.navigateTo) {
+        navigate(result.navigateTo, { replace: result.replace ?? false })
+      }
+    } finally {
+      composer.setIsSending(false)
     }
-    composer.releaseAttachments(attachmentIds)
-    if (result.navigateTo) {
-      navigate(result.navigateTo, { replace: result.replace ?? false })
-    }
-    composer.setIsSending(false)
   })
 
   /**
@@ -847,20 +850,20 @@ function MessageInputComponent({
       return
     }
 
-    disarm()
     try {
-      await composer.resolveDraft({
-        content: liveContent,
-        attachmentIds: pendingAttachments.map((attachment) => attachment.id),
-      })
-    } catch {
-      setError("Message scheduled, but the draft could not be updated.")
+      disarm()
+      try {
+        await composer.resolveDraft({ content: liveContent, attachmentIds })
+      } catch {
+        setError("Message scheduled, but the draft could not be updated.")
+      }
+      composer.releaseAttachments(attachmentIds)
+      if (filesIntoDriftedConversation) {
+        toast.info("Scheduled — this reply will file into the conversation when it sends.")
+      }
+    } finally {
+      composer.setIsSending(false)
     }
-    composer.releaseAttachments(attachmentIds)
-    if (filesIntoDriftedConversation) {
-      toast.info("Scheduled — this reply will file into the conversation when it sends.")
-    }
-    composer.setIsSending(false)
   })
 
   const handleEditLastMessage = useStableCallback(() => {

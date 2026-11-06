@@ -327,7 +327,7 @@ export function useDraftComposer({
       // as a fresh draft after the resolve sequence has advanced.
       if (!sentSnapshot) return
       const currentContent = contentRef.current
-      const currentAttachments = persistableAttachments(pendingAttachmentsRef.current)
+      const currentAttachments = persistableAttachments(getPendingAttachmentsSnapshot())
       const hasNewContent = currentContent !== sentSnapshot.content
       const hasNewAttachments =
         currentAttachments.map((attachment) => attachment.id).join(",") !== sentSnapshot.attachmentIds.join(",")
@@ -337,7 +337,7 @@ export function useDraftComposer({
       const saved = await saveDraft(currentContent, currentAttachments)
       if (!saved) throw new Error("New draft content could not be persisted")
     },
-    [resolveLoadedDraft, saveDraft]
+    [resolveLoadedDraft, saveDraft, getPendingAttachmentsSnapshot]
   )
 
   const scopeRegistryKey = `${workspaceId} ${draftKey}`

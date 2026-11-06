@@ -105,6 +105,23 @@ describe("useAttachments", () => {
       await waitFor(() => expect(findUploadJob("attach_123")).toBeUndefined())
     })
 
+    it("should retain the last attachment snapshot after an unmounted upload settles", async () => {
+      mockReserve()
+      let finishUpload!: () => void
+      vi.spyOn(xhrTransport, "xhrUpload").mockImplementation(
+        () => new Promise((resolve) => (finishUpload = () => resolve({ status: 201, body: {} })))
+      )
+      const { result, unmount } = renderHook(() => useAttachments(workspaceId))
+      act(() => result.current.handleFileSelect(createChangeEvent([createFile("test.txt", "text/plain")])))
+      await waitFor(() => expect(result.current.uploadedIds).toEqual(["attach_123"]))
+      const snapshot = result.current.getPendingAttachmentsSnapshot
+      const held = snapshot()
+      unmount()
+      finishUpload()
+      await waitFor(() => expect(findUploadJob("attach_123")).toBeUndefined())
+      expect(snapshot()).toEqual(held)
+    })
+
     it("blocks send only during the reservation window", async () => {
       let resolveReserve!: () => void
       vi.spyOn(attachmentsApi, "reserve").mockImplementation(
