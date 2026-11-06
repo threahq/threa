@@ -16,6 +16,13 @@ export function useForwardScroll(scrollerRef: RefObject<HTMLElement | null> | un
   // scroller (the touch equivalent of onWheel); a tap doesn't move, so it never
   // scrolls.
   const touchStartY = useRef<number | null>(null)
+  const finishTouch = (type: "touchend" | "touchcancel", e: TouchEvent) => {
+    touchStartY.current = null
+    if (enabled) {
+      scrollerRef?.current?.dispatchEvent(new window.TouchEvent(type, { touches: Array.from(e.nativeEvent.touches) }))
+    }
+  }
+
   return {
     onWheel: (e: WheelEvent) => {
       const scroller = scrollerRef?.current
@@ -42,8 +49,7 @@ export function useForwardScroll(scrollerRef: RefObject<HTMLElement | null> | un
       scroller?.scrollBy({ top: touchStartY.current - y })
       touchStartY.current = y
     },
-    onTouchEnd: () => {
-      touchStartY.current = null
-    },
+    onTouchEnd: (e: TouchEvent) => finishTouch("touchend", e),
+    onTouchCancel: (e: TouchEvent) => finishTouch("touchcancel", e),
   }
 }
