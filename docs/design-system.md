@@ -27,40 +27,35 @@ A comprehensive reference for Threa's visual design language. Use this document 
 
 ## Typography
 
-### Primary Font: Space Grotesk
+### Primary Font: Switzer
 
-A geometric sans-serif with technical character. Gives Threa a distinctive, modern feel that stands out from generic system fonts.
+A neutral grotesk with enough character to keep dense UI readable for hours. One variable file covers every weight.
 
-**Source:** Google Fonts (free)
-
-```html
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link
-  href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap"
-  rel="stylesheet"
-/>
-```
+**Source:** self-hosted, `apps/frontend/public/fonts/switzer.woff2` (no font CDN). The public site and back office ship the same file.
 
 **Weights:**
 | Weight | Usage |
 |--------|-------|
 | 400 | Body text, descriptions |
-| 500 | UI labels, meta text |
-| 600 | Headings, emphasis |
-| 700 | Hero text, titles |
+| 500 | UI labels, row names |
+| 600 | Headings, section labels |
+| 700 | Rare; hero numbers |
 
 **Fallback Stack:**
 
 ```css
 font-family:
-  "Space Grotesk",
+  "Switzer",
   system-ui,
   -apple-system,
   BlinkMacSystemFont,
   "Segoe UI",
   sans-serif;
 ```
+
+### Mono: Commit Mono
+
+For ids, keys, values, code and aligned figures. Static 400 / 500 / 700, self-hosted beside Switzer. Never for body copy.
 
 ### Accessibility Options
 
@@ -2521,7 +2516,7 @@ The kitchen sink includes:
 
 When implementing a component, verify:
 
-- [ ] Uses Space Grotesk font
+- [ ] Uses Switzer (Commit Mono for ids, keys and code)
 - [ ] Follows color system (golden thread accents)
 - [ ] Correct border radius (16px modals, 12px cards, 8-10px items)
 - [ ] Appropriate spacing (multiples of 4px)
