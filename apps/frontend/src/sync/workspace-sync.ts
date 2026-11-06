@@ -1972,7 +1972,13 @@ export function registerWorkspaceSocketHandlers(
         : current
     )
     // The server hides an unreadable stream's rows from the feed and the badge counts.
-    commitCounter((state) => [...unreadableIds].reduce(dropActivitiesForStream, state))
+    commitCounter((state) => {
+      const dropped = [...unreadableIds].reduce(dropActivitiesForStream, state)
+      const unreadCounts = Object.fromEntries(
+        Object.entries(dropped.unreadCounts).filter(([streamId]) => !unreadableIds.has(streamId))
+      )
+      return { ...dropped, unreadCounts }
+    })
     queryClient.setQueriesData<Activity[]>({ queryKey: activityKeys.list(workspaceId) }, (old) =>
       old?.filter((a) => !a.streamId || !unreadableIds.has(a.streamId))
     )
@@ -1980,6 +1986,7 @@ export function registerWorkspaceSocketHandlers(
     await Promise.all(
       [...unreadableIds].flatMap((streamId) => [
         db.streams.delete([workspaceId, streamId]),
+        db.streamReadState.delete(`${workspaceId}:${streamId}`),
         deleteStreamSlots(db, workspaceId, streamId),
       ])
     )
@@ -2045,7 +2052,8 @@ export function registerWorkspaceSocketHandlers(
     if (!currentMember || payload.memberId !== currentMember.id) return
 
     const removedStream = old.streams?.find((s) => s.id === payload.streamId)
-    const shouldRemoveFromSidebar = removedStream?.visibility === "private"
+    // Threads carry no access of their own (INV-62): leaving one revokes nothing.
+    const shouldRemoveFromSidebar = removedStream?.visibility === "private" && removedStream.type !== StreamTypes.THREAD
     queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (current) =>
       current
         ? {
@@ -2057,7 +2065,6 @@ export function registerWorkspaceSocketHandlers(
 
     await Promise.all([
       db.streamMemberships.delete(`${workspaceId}:${payload.streamId}`),
-      db.streamReadState.delete(`${workspaceId}:${payload.streamId}`),
       // Threads carry no access of their own (INV-62): a private root's revocation takes them along.
       ...(shouldRemoveFromSidebar
         ? [pruneUnreadableStreams((s) => s.id === payload.streamId || s.rootStreamId === payload.streamId)]
