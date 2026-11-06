@@ -180,7 +180,7 @@
   html[data-input="mouse"] .reveal-yield {
     transition: opacity 150ms ease;
   }
-  html[data-input="mouse"] .reveal-host:hover .reveal-yield,
+  html[data-input="mouse"] .reveal-host:hover:has([data-reveal-over]) .reveal-yield,
   .reveal-host:has([data-reveal-over]:focus-within) .reveal-yield {
     opacity: 0;
   }

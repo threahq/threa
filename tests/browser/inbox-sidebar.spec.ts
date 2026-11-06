@@ -1,5 +1,6 @@
 import { test, expect, type Page, type Locator } from "@playwright/test"
 import {
+  at,
   loginAndCreateWorkspace,
   loginInNewContext,
   createChannel,
@@ -157,18 +158,14 @@ test.describe("Inbox sidebar section", () => {
     await expect(channelsLabels).toBeVisible({ timeout: 10000 })
     await expect(channelsLabels).toContainText("+1")
 
-    const rightEdge = async (target: Locator) => {
-      const box = await target.boundingBox()
-      if (!box) throw new Error("label stack has no box")
-      return box.x + box.width
-    }
-    expect(Math.abs((await rightEdge(inboxLabels)) - (await rightEdge(channelsLabels)))).toBeLessThan(1)
+    const inboxEdge = await at(inboxLabels, 1, 0.5)
+    const channelsEdge = await at(channelsLabels, 1, 0.5)
+    expect(Math.abs(inboxEdge.x - channelsEdge.x)).toBeLessThan(1)
 
     await inboxRow.hover()
-    const settle = await inboxRow.getByRole("button", { name: "Settle" }).boundingBox()
-    const glyph = await inboxLabels.boundingBox()
-    if (!settle || !glyph) throw new Error("Settle or label glyph has no box")
-    expect(Math.abs(settle.x + settle.width / 2 - (glyph.x + glyph.width / 2))).toBeLessThan(2)
+    const settleCenter = await at(inboxRow.getByRole("button", { name: "Settle" }), 0.5, 0.5)
+    const glyphCenter = await at(inboxLabels, 0.5, 0.5)
+    expect(Math.abs(settleCenter.x - glyphCenter.x)).toBeLessThan(2)
 
     await otherContext.close()
   })

@@ -445,8 +445,8 @@ export function ScratchpadItem({
                     <StreamRowTrailing
                       streamId={streamWithPreview.id}
                       mentionCount={mentionCount}
-                      showDraft={!!streamWithPreview.hasLoadedDraft && !isActive}
-                      settleable={!!isInboxRow && !!onClearFromInbox && !isTouchInput}
+                      hasDraft={!!streamWithPreview.hasLoadedDraft}
+                      isActive={isActive}
                     >
                       {dense && boardMode && <BoardTopicCount stats={boardMode.statsForStream(streamWithPreview.id)} />}
                     </StreamRowTrailing>

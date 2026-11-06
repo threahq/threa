@@ -63,16 +63,21 @@ export function StreamLabelDots({ streamId }: { streamId: string }) {
   const aria = labels.length === 1 ? `Label: ${labels[0].name}` : `${labels.length} labels`
 
   return (
-    <span className="relative flex shrink-0 items-center" role="img" aria-label={aria}>
-      {/* Reversed so the first label paints last: rightmost and on top. The
-          opaque base keeps overlapping tinted glyphs from blending. */}
-      {[...shown].reverse().map((label, index) => (
-        <span key={label.id} className={cn("rounded bg-sidebar ring-[1.5px] ring-sidebar", index > 0 && "-ml-1")}>
-          <LabelGlyph label={label} className="h-3.5 w-3.5" />
-        </span>
+    <span className="relative flex shrink-0 flex-row-reverse items-center" role="img" aria-label={aria}>
+      {shown.map((label, index) => (
+        <LabelGlyph
+          key={label.id}
+          label={label}
+          // Tucked under the glyph to its right; the mask cuts the overlap plus a
+          // 1.5px gap, so tinted glyphs never blend and no surface color is needed.
+          className={cn(
+            "h-3.5 w-3.5",
+            index > 0 && "-mr-1 [mask-image:linear-gradient(to_left,transparent_5.5px,#000_5.5px)]"
+          )}
+        />
       ))}
       {extra > 0 && (
-        <span className="absolute -right-1.5 -top-1.5 h-3 min-w-3 rounded-full bg-muted-foreground px-0.5 text-center text-[8px] font-semibold leading-3 text-sidebar ring-[1.5px] ring-sidebar">
+        <span className="absolute -right-1.5 -top-1.5 h-3 min-w-3 rounded-full bg-muted-foreground px-0.5 text-center text-[8px] font-semibold leading-3 text-background">
           +{extra}
         </span>
       )}

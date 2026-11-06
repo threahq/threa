@@ -116,8 +116,9 @@ export function BoardTileToggle({
 /**
  * Row-level Inbox clear control: revealed over the label column, whose stack
  * yields to it ({@link StreamRowTrailing}), so hover never shifts the row
- * (INV-21). `keyHint` is the effective binding's formatted display string (see `getEffectiveKeyBinding`/`formatKeyBinding`);
- * omitted when the viewer disabled or unbound the shortcut.
+ * (INV-21). `keyHint` is the effective binding's formatted display string
+ * (see `getEffectiveKeyBinding`/`formatKeyBinding`); omitted when the viewer
+ * disabled or unbound the shortcut.
  */
 export function InboxRowClearButton({ onClear, keyHint }: { onClear: () => void; keyHint?: string }) {
   return (
@@ -149,30 +150,30 @@ export function InboxRowClearButton({ onClear, keyHint }: { onClear: () => void;
 
 /**
  * Right end of a sidebar row's title line. The label stack comes last in a
- * fixed-width slot, kept even when empty, so every row's labels share one
- * column whatever sits beside them. On Settle-able rows the stack yields to the
- * Settle button, which reveals over that column.
+ * minimum-width, right-aligned slot, kept even when empty, so every row's
+ * labels share one column whatever sits beside them. The stack yields to the
+ * row's Settle button, which reveals over that column.
  */
 export function StreamRowTrailing({
   streamId,
   mentionCount,
-  showDraft,
-  settleable,
+  hasDraft,
+  isActive,
   children,
 }: {
   streamId: string
   mentionCount: number
-  showDraft: boolean
-  settleable: boolean
+  hasDraft: boolean
+  isActive: boolean
   children?: ReactNode
 }) {
   return (
     <div className="ml-auto flex shrink-0 items-center gap-1.5">
       {children}
-      {/* Suppressed by callers on the active stream — its composer already shows the draft. */}
-      {showDraft && <DraftIndicator />}
+      {/* Not on the active stream — its composer already shows the draft. */}
+      {hasDraft && !isActive && <DraftIndicator />}
       <MentionIndicator count={mentionCount} />
-      <span className={cn("flex min-w-3.5 justify-end", settleable && "reveal-yield")}>
+      <span className="reveal-yield flex min-w-3.5 justify-end">
         <StreamLabelDots streamId={streamId} />
       </span>
     </div>
@@ -879,8 +880,8 @@ export function StreamItem({
                     <StreamRowTrailing
                       streamId={stream.id}
                       mentionCount={mentionCount}
-                      showDraft={!!stream.hasLoadedDraft && !isActive}
-                      settleable={!!onClearRow && !isTouchInput}
+                      hasDraft={!!stream.hasLoadedDraft}
+                      isActive={isActive}
                     >
                       {dense && boardMode && boardScopeId === stream.id && (
                         <BoardTopicCount stats={boardMode.statsForStream(boardScopeId)} />
