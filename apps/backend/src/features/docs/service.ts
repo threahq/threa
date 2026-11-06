@@ -355,16 +355,18 @@ export class DocService {
     return seq
   }
 
-  async list(params: { workspaceId: string; userId: string }): Promise<DocListItem[]> {
+  async list(params: { workspaceId: string; userId: string; archived: boolean }): Promise<DocListItem[]> {
     const readable = streamAccessPredicateSql(params.workspaceId, params.userId, "s.id")
-    const docs = await DocRepository.listWithEditors(this.pool, params.workspaceId, readable)
+    const docs = await DocRepository.listWithEditors(this.pool, params.workspaceId, readable, {
+      archived: params.archived,
+    })
     return docs.map((doc) => {
       const editors = doc.editors.map((editor) => ({ ...editor, lastEditedAt: editor.lastEditedAt.toISOString() }))
       return {
         id: doc.id,
         displayName: doc.displayName,
         createdAt: doc.createdAt.toISOString(),
-        isTopLevel: doc.isTopLevel,
+        parentStreamId: doc.parentStreamId,
         lastEditedAt: editors[0]?.lastEditedAt ?? null,
         editors,
       }

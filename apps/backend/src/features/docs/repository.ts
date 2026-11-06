@@ -2,7 +2,7 @@ import { StreamTypes, type AuthorType, type DocSection, type JSONContent } from 
 import type { QueryConfig } from "pg"
 import type { DocReference } from "./projection"
 import { composeSql, sql, type Querier } from "../../db"
-import { effectivelyArchivedSql } from "../../lib/sql-filters"
+import { archiveStatusSql } from "../../lib/sql-filters"
 
 interface DocHeadRow {
   workspace_id: string
@@ -42,7 +42,7 @@ interface DocWithEditorsRow {
   id: string
   display_name: string | null
   created_at: Date
-  is_top_level: boolean
+  parent_stream_id: string | null
   editors: { actorId: string; actorType: AuthorType; lastEditedAt: string }[]
 }
 
@@ -50,7 +50,7 @@ export interface DocWithEditors {
   id: string
   displayName: string | null
   createdAt: Date
-  isTopLevel: boolean
+  parentStreamId: string | null
   /** Newest first. */
   editors: { actorId: string; actorType: AuthorType; lastEditedAt: Date }[]
 }
@@ -171,12 +171,18 @@ export const DocRepository = {
   },
 
   /**
-   * Non-archived docs passing `readable` (an access predicate over `s.id`, from
-   * `streamAccessPredicateSql`), most recently edited first.
+   * Docs passing `readable` (an access predicate over `s.id`, from `streamAccessPredicateSql`), most
+   * recently edited first: live ones, or with `archived` those archived themselves or under an archived ancestor.
    */
-  async listWithEditors(db: Querier, workspaceId: string, readable: QueryConfig): Promise<DocWithEditors[]> {
+  async listWithEditors(
+    db: Querier,
+    workspaceId: string,
+    readable: QueryConfig,
+    options: { archived: boolean }
+  ): Promise<DocWithEditors[]> {
+    const status = archiveStatusSql("s", options.archived ? ["archived"] : ["active"], { archivedIncludesSealed: true })
     const result = await db.query<DocWithEditorsRow>(composeSql`
-      SELECT s.id, s.display_name, s.created_at, (s.parent_stream_id IS NULL) AS is_top_level,
+      SELECT s.id, s.display_name, s.created_at, s.parent_stream_id,
         COALESCE(
           JSON_AGG(
             JSON_BUILD_OBJECT('actorId', e.actor_id, 'actorType', e.actor_type, 'lastEditedAt', e.last_edited_at)
@@ -188,7 +194,7 @@ export const DocRepository = {
       LEFT JOIN doc_editors e ON e.workspace_id = s.workspace_id AND e.doc_id = s.id
       WHERE s.workspace_id = ${workspaceId}
         AND s.type = ${StreamTypes.DOC}
-        AND ${sql`NOT ${sql.raw(effectivelyArchivedSql("s"))}`}
+        AND ${sql`${sql.raw(status)}`}
         AND ${readable}
       GROUP BY s.id, s.display_name, s.created_at, s.parent_stream_id
       ORDER BY MAX(e.last_edited_at) DESC NULLS LAST, s.created_at DESC, s.id
@@ -197,7 +203,7 @@ export const DocRepository = {
       id: row.id,
       displayName: row.display_name,
       createdAt: row.created_at,
-      isTopLevel: row.is_top_level,
+      parentStreamId: row.parent_stream_id,
       editors: row.editors.map((editor) => ({ ...editor, lastEditedAt: new Date(editor.lastEditedAt) })),
     }))
   },

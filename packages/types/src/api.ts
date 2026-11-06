@@ -2527,12 +2527,16 @@ export interface DocListItem {
   id: string
   displayName: string | null
   createdAt: string
-  isTopLevel: boolean
+  /** Null for a top-level doc. */
+  parentStreamId: string | null
   lastEditedAt: string | null
   editors: DocEditor[]
 }
 
-/** `GET /workspaces/:ws/docs`: every non-archived doc the viewer can read. */
+/**
+ * `GET /workspaces/:ws/docs`: every live doc the viewer can read; with `?status=archived`, those archived
+ * themselves or under an archived ancestor instead.
+ */
 export interface DocListResponse {
   docs: DocListItem[]
 }

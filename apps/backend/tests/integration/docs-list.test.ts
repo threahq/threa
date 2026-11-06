@@ -1,6 +1,6 @@
 /**
- * The workspace doc list against the real schema (INV-68): readable,
- * non-archived docs with who edited them, newest edit first.
+ * The workspace doc list against the real schema (INV-68): readable docs,
+ * live or archived, with who edited them, newest edit first.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
@@ -81,8 +81,8 @@ async function typeInto(docId: string, editor: string, value: string): Promise<v
   await docService.postUpdate({ workspaceId: wsId, userId: editor, docId, update })
 }
 
-async function listFor(user: string) {
-  return docService.list({ workspaceId: wsId, userId: user })
+async function listFor(user: string, archived = false) {
+  return docService.list({ workspaceId: wsId, userId: user, archived })
 }
 
 describe("DocService.list", () => {
@@ -117,13 +117,14 @@ describe("DocService.list", () => {
   })
 
   test("should list a never-edited doc with no editors and a null last edit", async () => {
-    const doc = await createDoc((await createChannel("public")).id)
+    const host = await createChannel("public")
+    const doc = await createDoc(host.id)
 
     expect((await listFor(viewer)).find((entry) => entry.id === doc.id)).toEqual({
       id: doc.id,
       displayName: null,
       createdAt: new Date(doc.createdAt).toISOString(),
-      isTopLevel: false,
+      parentStreamId: host.id,
       lastEditedAt: null,
       editors: [],
     })
@@ -146,6 +147,26 @@ describe("DocService.list", () => {
     const ids = (await listFor(owner)).map((entry) => entry.id)
     expect(ids).not.toContain(archivedDoc.id)
     expect(ids).not.toContain(hostedDoc.id)
+  })
+
+  test("should list only archived docs and docs under an archived host when listing archived", async () => {
+    const liveDoc = await createDoc((await createChannel("public")).id)
+    const archivedDoc = await createDoc((await createChannel("public")).id)
+    await streamService.archiveStream(archivedDoc.id, wsId, owner)
+    const archivedHost = await createChannel("public")
+    const hostedDoc = await createDoc(archivedHost.id)
+    await streamService.archiveStream(archivedHost.id, wsId, owner)
+    const hiddenDoc = await createDoc((await createChannel("private")).id)
+    await streamService.archiveStream(hiddenDoc.id, wsId, owner)
+
+    const docs = await listFor(viewer, true)
+    const ids = docs.map((entry) => entry.id)
+    expect({
+      archived: ids.includes(archivedDoc.id),
+      underArchivedHost: docs.find((entry) => entry.id === hostedDoc.id)?.parentStreamId,
+      live: ids.includes(liveDoc.id),
+      unreadable: ids.includes(hiddenDoc.id),
+    }).toEqual({ archived: true, underArchivedHost: archivedHost.id, live: false, unreadable: false })
   })
 
   test("should list a doc when the viewer reads it through a share grant", async () => {
@@ -188,7 +209,7 @@ describe("DocService.list", () => {
 
     const ownerDocs = await listFor(owner)
     const viewerDocs = await listFor(viewer)
-    expect(ownerDocs.find(({ id }) => id === rootDoc.id)?.isTopLevel).toBe(true)
-    expect(viewerDocs.find(({ id }) => id === hostedDoc.id)?.isTopLevel).toBe(false)
+    expect(ownerDocs.find(({ id }) => id === rootDoc.id)?.parentStreamId).toBeNull()
+    expect(viewerDocs.find(({ id }) => id === hostedDoc.id)?.parentStreamId).toBe(hostedDoc.parentStreamId)
   })
 })

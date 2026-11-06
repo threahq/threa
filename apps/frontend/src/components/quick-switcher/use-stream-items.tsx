@@ -5,7 +5,7 @@ import { StreamTypes, draftStreamScope, getAvatarUrl, isOpenVisibility } from "@
 import type { Stream, StreamType } from "@threahq/types"
 import { collectSealedStreamIds, getStreamName, resolveDmDisplayName, streamLabel, STREAM_ICONS } from "@/lib/streams"
 import { streamsApi } from "@/api"
-import { createDmDraftId, useUnreadCounts, useActivityCounts } from "@/hooks"
+import { createDmDraftId, streamKeys, useUnreadCounts, useActivityCounts } from "@/hooks"
 import { isPickableUser, useWorkspaceUnreadState, type CachedUnreadState } from "@/stores/workspace-store"
 import { asideHostKey, openAside } from "@/stores/aside-store"
 import { Button } from "@/components/ui/button"
@@ -124,7 +124,7 @@ export function useStreamItems(context: ModeContext): StreamModeResult {
   const showActive = statusFilters.length === 0 || statusFilters.includes("active")
 
   const { data: archivedStreams, isLoading: isLoadingArchived } = useQuery({
-    queryKey: ["streams", workspaceId, "archived"],
+    queryKey: streamKeys.archived(workspaceId),
     queryFn: () => streamsApi.list(workspaceId, { status: ["archived"] }),
     enabled: showArchived,
     staleTime: 30_000,

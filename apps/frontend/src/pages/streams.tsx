@@ -19,7 +19,7 @@ import { UnreadBadge } from "@/components/unread-badge"
 import { StreamHoverCard, useSidebarHoverIntent } from "@/components/layout/sidebar/stream-hover-card"
 import { getActivityTime, truncateContent } from "@/components/layout/sidebar/utils"
 import { useStreamService } from "@/contexts"
-import { actorTypeFromId, useActors, useJoinStream } from "@/hooks"
+import { actorTypeFromId, useActors, useArchivedStreams, useJoinStream } from "@/hooks"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useStreamWarmup } from "@/hooks/use-stream-warmup"
 import { useStreamName } from "@/hooks/use-stream-name"
@@ -131,12 +131,7 @@ function StreamsPageInner({
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
   const unreadCounts = useWorkspaceUnreadState(workspaceId)?.unreadCounts
-  const archivedQuery = useQuery({
-    queryKey: ["streams", workspaceId, "archived"],
-    queryFn: () => streamService.list(workspaceId, { status: ["archived"] }),
-    enabled: archived,
-    staleTime: 30_000,
-  })
+  const archivedQuery = useArchivedStreams(workspaceId, { enabled: archived })
   const statsQuery = useQuery({
     queryKey: ["streams", workspaceId, "directory-stats"],
     queryFn: () => streamService.directoryStats(workspaceId),
