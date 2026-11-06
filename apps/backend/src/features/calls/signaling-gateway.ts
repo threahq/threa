@@ -9,7 +9,6 @@ import { HttpError } from "../../lib/errors"
 import { CALLS_NAMESPACE, callRoom } from "../../lib/call-routing"
 import { createTokenBucket } from "../../lib/token-bucket"
 import { UserRepository } from "../workspaces"
-import type { FeatureFlagService } from "../feature-flags"
 import { checkCallAccess } from "./access"
 import type { CallService, CallRosterSnapshot } from "./service"
 import {
@@ -88,7 +87,6 @@ interface Dependencies {
   authService: AuthService
   sessionCookies: SessionCookies
   callService: CallService
-  featureFlagService: FeatureFlagService
   pool: Pool
   /** False when the CF media plane is unconfigured — every join then acks CALLS_UNAVAILABLE. */
   cloudflareEnabled: boolean
@@ -122,20 +120,10 @@ type Ack = (result: { ok: boolean; error?: string; code?: string; data?: unknown
  * reordered update is dropped by version check, not trusted.
  */
 export function registerCallGateway(io: Server, deps: Dependencies) {
-  const { authService, sessionCookies, callService, featureFlagService, pool, cloudflareEnabled } = deps
+  const { authService, sessionCookies, callService, pool, cloudflareEnabled } = deps
   const namespace = io.of(CALLS_NAMESPACE)
 
   namespace.use(createSocketAuthMiddleware({ authService, sessionCookies }))
-
-  // The per-workspace kill-switch (404-style CALLS_DISABLED, mirroring the REST
-  // `assertAvailable`). Gated on both `call:join` (reject new joins) and
-  // `call:lease:renew` — renewing on the flag lets a live call outlive the switch,
-  // so flipping calls off starves every live call within one lease TTL.
-  const assertWorkspaceCallsEnabled = async (workspaceId: string): Promise<void> => {
-    if ((await featureFlagService.getWorkspaceFlag(workspaceId, "calls")) !== "on") {
-      throw new HttpError("Calls are not enabled for this workspace", { status: 404, code: "CALLS_DISABLED" })
-    }
-  }
 
   namespace.on("connection", (socket) => {
     const workosUserId = socket.data.workosUserId as string
@@ -160,8 +148,7 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
     socket.on("call:join", async (payload: unknown, ack?: Ack) => {
       if (rateLimited(ack)) return
       // Availability before Zod (mirrors the REST gate order): the whole-feature
-      // switch needs no payload, so it precedes decoding; the per-workspace flag
-      // needs workspaceId, so it runs right after the parse and before access.
+      // switch needs no payload, so it precedes decoding.
       if (!cloudflareEnabled) {
         ack?.({ ok: false, error: "Calls media is not configured", code: "CALLS_UNAVAILABLE" })
         return
@@ -173,7 +160,6 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
       }
       const { workspaceId, callId, mediaIncarnation, takeover, transportCapability, transferCapability } = parsed.data
       try {
-        await assertWorkspaceCallsEnabled(workspaceId)
         const user = await UserRepository.findByWorkosUserIdInWorkspace(pool, workspaceId, workosUserId)
         if (!user) {
           ack?.({ ok: false, error: "No workspace access", code: "CALL_NOT_PARTICIPANT" })
@@ -397,9 +383,6 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
       }
       const bound = binding
       try {
-        // Gate the renew on the kill-switch so flipping calls off drains live
-        // calls within one lease TTL rather than letting them run indefinitely.
-        await assertWorkspaceCallsEnabled(bound.workspaceId)
         // Re-check host-stream access on every renew: a user kicked from the
         // host stream loses their lease within one TTL and the client tears down.
         const access = await checkCallAccess(pool, {

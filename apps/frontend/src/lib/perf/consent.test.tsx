@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render } from "@testing-library/react"
 import * as contextsModule from "@/contexts"
-import * as hooksModule from "@/hooks"
 import { NO_CAPTURE, getPerfCapture, isUploadPermitted, resetPerfArming, setPerfConsentArmed } from "./capture"
 import { setStorageAccount } from "@/lib/account-storage"
 import { PerfCaptureProvider } from "./context"
@@ -9,8 +8,7 @@ import { PerfCaptureConsentGate } from "./consent"
 
 const CONSENT_WORKSPACE_KEY = "threa:acct:acct_1:perf:consentWorkspace"
 
-function mockConsent(flag: "off" | "available" | null, optIn: boolean | null) {
-  vi.spyOn(hooksModule, "useFeatureFlagWhenKnown").mockReturnValue(flag as never)
+function mockConsent(optIn: boolean | null) {
   vi.spyOn(contextsModule, "usePreferencesOptional").mockReturnValue({
     preferences: optIn === null ? null : { performanceDiagnosticsOptIn: optIn },
   } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
@@ -43,35 +41,28 @@ describe("perf capture consent arming", () => {
     setStorageAccount(null)
   })
 
-  it("arms only when the flag is available AND the preference is on", () => {
-    mockConsent("available", true)
+  it("arms when the preference is on", () => {
+    mockConsent(true)
     renderGate()
 
     expect(getPerfCapture()).not.toBe(NO_CAPTURE)
     expect(isUploadPermitted()).toBe(true)
   })
 
-  it("never arms on the flag alone", () => {
-    mockConsent("available", false)
+  it("never arms while the preference is off", () => {
+    mockConsent(false)
     renderGate()
 
     expect(getPerfCapture()).toBe(NO_CAPTURE)
     expect(isUploadPermitted()).toBe(false)
   })
 
-  it("never arms on the preference alone", () => {
-    mockConsent("off", true)
-    renderGate()
-
-    expect(getPerfCapture()).toBe(NO_CAPTURE)
-  })
-
   it("re-arms and disarms on a preference change without a remount", () => {
-    mockConsent("available", false)
+    mockConsent(false)
     const { rerender } = renderGate()
     expect(getPerfCapture()).toBe(NO_CAPTURE)
 
-    mockConsent("available", true)
+    mockConsent(true)
     rerender(
       <PerfCaptureProvider>
         <PerfCaptureConsentGate workspaceId="ws_1" />
@@ -80,7 +71,7 @@ describe("perf capture consent arming", () => {
     const armed = getPerfCapture()
     expect(armed).not.toBe(NO_CAPTURE)
 
-    mockConsent("available", false)
+    mockConsent(false)
     rerender(
       <PerfCaptureProvider>
         <PerfCaptureConsentGate workspaceId="ws_1" />
@@ -89,15 +80,15 @@ describe("perf capture consent arming", () => {
     expect(getPerfCapture()).toBe(NO_CAPTURE)
   })
 
-  it("keeps a capture armed from remembered consent while the pair is unread, and through its confirmation", () => {
+  it("keeps a capture armed from remembered consent while preferences are unread, and through its confirmation", () => {
     setPerfConsentArmed(true)
-    mockConsent(null, null)
+    mockConsent(null)
     const { rerender } = renderGate()
     const armed = getPerfCapture()
     expect(armed).not.toBe(NO_CAPTURE)
     armed.mark("bootstrap.wsJoin", 4200)
 
-    mockConsent("available", true)
+    mockConsent(true)
     rerender(gate())
 
     expect(getPerfCapture()).toBe(armed)
@@ -105,10 +96,10 @@ describe("perf capture consent arming", () => {
     expect(window.localStorage.getItem(CONSENT_WORKSPACE_KEY)).toBe("ws_1")
   })
 
-  it("disarms remembered consent and forgets it once the pair reads as withdrawn", () => {
+  it("disarms remembered consent and forgets it once the preference reads as withdrawn", () => {
     window.localStorage.setItem(CONSENT_WORKSPACE_KEY, "ws_1")
     setPerfConsentArmed(true)
-    mockConsent("available", false)
+    mockConsent(false)
     renderGate()
 
     expect(getPerfCapture()).toBe(NO_CAPTURE)
@@ -117,7 +108,7 @@ describe("perf capture consent arming", () => {
 
   it("arms at mount from the account's remembered consent only on that workspace's pages", () => {
     window.localStorage.setItem(CONSENT_WORKSPACE_KEY, "ws_1")
-    mockConsent(null, null)
+    mockConsent(null)
 
     window.history.replaceState(null, "", "/w/ws_10/s/stream_1")
     renderGate().unmount()

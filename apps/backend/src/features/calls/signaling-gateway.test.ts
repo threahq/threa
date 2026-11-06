@@ -33,7 +33,6 @@ function fakeSocket(workosUserId = "workos_1") {
 function setup(overrides?: {
   callService?: Record<string, unknown>
   cloudflareEnabled?: boolean
-  callsEnabled?: boolean
   user?: unknown
   callAccess?: unknown
 }) {
@@ -83,15 +82,10 @@ function setup(overrides?: {
     ...overrides?.callService,
   }
 
-  const featureFlagService = {
-    getWorkspaceFlag: mock(async () => ((overrides?.callsEnabled ?? true) ? "on" : "off")),
-  }
-
   registerCallGateway(io, {
     authService: {} as never,
     sessionCookies: {} as never,
     callService: callService as never,
-    featureFlagService: featureFlagService as never,
     pool: {} as never,
     cloudflareEnabled: overrides?.cloudflareEnabled ?? true,
   })
@@ -99,7 +93,7 @@ function setup(overrides?: {
   const socket = fakeSocket()
   connectionHandler!(socket)
 
-  return { socket, callService, featureFlagService, checkCallAccess, emit, to, namespace }
+  return { socket, callService, checkCallAccess, emit, to, namespace }
 }
 
 const JOIN = { workspaceId: "ws_1", callId: "call_1", mediaIncarnation: "inc_1" }
@@ -179,14 +173,6 @@ describe("registerCallGateway call:join", () => {
     const ack = mock(() => {})
     await socket.trigger("call:join", JOIN, ack)
     expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: "CALLS_UNAVAILABLE" }))
-    expect(callService.joinCall).not.toHaveBeenCalled()
-  })
-
-  it("rejects the join with CALLS_DISABLED when the workspace kill-switch is off", async () => {
-    const { socket, callService } = setup({ callsEnabled: false })
-    const ack = mock(() => {})
-    await socket.trigger("call:join", JOIN, ack)
-    expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: "CALLS_DISABLED" }))
     expect(callService.joinCall).not.toHaveBeenCalled()
   })
 
@@ -561,21 +547,6 @@ describe("registerCallGateway call:lease:renew", () => {
     expect(callService.renewEndpointLease).not.toHaveBeenCalled()
     expect(socket.left.has("call:call_1")).toBe(true)
     expect(socket.left.has("call:call_1:ep:callep_1")).toBe(true)
-  })
-
-  it("rejects the renew with CALLS_DISABLED once the kill-switch is flipped off (drains live calls in one TTL)", async () => {
-    const { socket, callService, featureFlagService } = setup()
-    await socket.trigger(
-      "call:join",
-      JOIN,
-      mock(() => {})
-    )
-    featureFlagService.getWorkspaceFlag.mockResolvedValue("off" as never)
-
-    const ack = mock(() => {})
-    await socket.trigger("call:lease:renew", {}, ack)
-    expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: "CALLS_DISABLED" }))
-    expect(callService.renewEndpointLease).not.toHaveBeenCalled()
   })
 })
 

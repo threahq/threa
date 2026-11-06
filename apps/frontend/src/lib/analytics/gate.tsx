@@ -1,5 +1,5 @@
 import { useEffect } from "react"
-import { coerceLayers, resolveFeatureFlags, type WorkspaceBootstrap } from "@threahq/types"
+import type { WorkspaceBootstrap } from "@threahq/types"
 import { usePreferencesOptional } from "@/contexts"
 import { useAccountScopeOptional } from "@/auth/account-scope"
 import { useCurrentWorkspaceUserId } from "@/hooks/use-current-workspace-user-id"
@@ -11,24 +11,18 @@ import {
   suspendConnectivityDiagnostics,
 } from "@/lib/connectivity-diagnostics"
 
-function selectAnalyticsInputs(bootstrap: WorkspaceBootstrap) {
-  return {
-    analytics: bootstrap.analytics,
-    diagnosticFlag: resolveFeatureFlags(coerceLayers(bootstrap.featureFlags ?? null) ?? { workspace: {}, user: {} })
-      .perfDiagnostics,
-  }
+function selectAnalytics(bootstrap: WorkspaceBootstrap) {
+  return bootstrap.analytics
 }
 
 export function AnalyticsConsentGate({ workspaceId }: { workspaceId: string }) {
-  const { data } = useWorkspaceBootstrap(workspaceId, selectAnalyticsInputs)
-  const analytics = data?.analytics
+  const { data: analytics } = useWorkspaceBootstrap(workspaceId, selectAnalytics)
   const preferencesContext = usePreferencesOptional()
   const preferences = preferencesContext?.preferences
   const preferencesPending = preferencesContext?.isLoading === true
   const consent = preferences?.analyticsConsent
   const replayOptIn = preferences?.sessionReplayOptIn === true
   const distinctId = useCurrentWorkspaceUserId(workspaceId)
-  const diagnosticFlag = data?.diagnosticFlag ?? null
   const diagnosticsOptIn = preferences?.performanceDiagnosticsOptIn
   const diagnosticsDecisionVersion = preferences?.updatedAt
   const accountId = useAccountScopeOptional()?.activeWorkosUserId ?? null
@@ -58,13 +52,9 @@ export function AnalyticsConsentGate({ workspaceId }: { workspaceId: string }) {
         workspaceId,
         region: analytics.posthogHost,
       }
-      if (consent === "granted" && diagnosticsOptIn === true && diagnosticFlag === "available") {
+      if (consent === "granted" && diagnosticsOptIn === true) {
         authorizeConnectivityDiagnostics(accountId, scope, diagnosticsDecisionVersion)
-      } else if (
-        consent === "denied" ||
-        diagnosticsOptIn === false ||
-        (diagnosticFlag !== null && diagnosticFlag !== "available")
-      ) {
+      } else if (consent === "denied" || diagnosticsOptIn === false) {
         revokeConnectivityDiagnostics({ ...scope, accountId, decisionVersion: diagnosticsDecisionVersion })
       } else {
         suspendConnectivityDiagnostics()
@@ -77,7 +67,6 @@ export function AnalyticsConsentGate({ workspaceId }: { workspaceId: string }) {
     analytics?.posthogHost,
     consent,
     diagnosticsOptIn,
-    diagnosticFlag,
     diagnosticsDecisionVersion,
     preferencesPending,
     distinctId,

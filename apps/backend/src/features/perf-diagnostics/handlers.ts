@@ -46,7 +46,6 @@ export function createPerfDiagnosticsHandlers({ perfDiagnosticsService }: Depend
       const { id } = await perfDiagnosticsService.createCapture({
         workspaceId: req.workspaceId!,
         userId: req.user!.id,
-        workosUserId: req.workosUserId!,
         capture,
         byteSize,
       })

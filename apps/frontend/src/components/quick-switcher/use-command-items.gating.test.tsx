@@ -40,12 +40,8 @@ function renderItems(
 }
 
 describe("useCommandItems — settings", () => {
-  it("hides the Diagnostics setting while the flag is off", () => {
-    expect(renderItems({ workspace: {}, user: {} })).not.toContain("setting-diagnostics")
-  })
-
-  it("offers the Diagnostics setting once the flag is available", () => {
-    expect(renderItems({ workspace: { perfDiagnostics: "available" }, user: {} })).toContain("setting-diagnostics")
+  it("offers the Diagnostics setting", () => {
+    expect(renderItems({ workspace: {}, user: {} })).toContain("setting-diagnostics")
   })
 
   it("finds a setting by the symptom a user describes", () => {

@@ -1,7 +1,6 @@
 import { useState } from "react"
 import { useParams } from "react-router-dom"
 import { usePreferences } from "@/contexts"
-import { useFeatureFlag } from "@/hooks"
 import { useWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { ApiError } from "@/api/client"
 import { EncryptionKeysSetting } from "@/components/encryption"
@@ -42,7 +41,6 @@ export function PrivacySettings() {
   const { workspaceId = "" } = useParams<{ workspaceId: string }>()
   const { preferences, updatePreference } = usePreferences()
   const { data: bootstrap } = useWorkspaceBootstrap(workspaceId)
-  const diagnosticsOffered = useFeatureFlag(workspaceId, "perfDiagnostics") === "available"
   const configured = Boolean(bootstrap?.analytics)
   const { granted, replayOptIn } = effectiveDataSharing(configured, preferences)
   const unavailable = dataSharingUnavailable(configured, granted)
@@ -88,7 +86,7 @@ export function PrivacySettings() {
           error={errors.shareDeviceWithAgents}
           onCheckedChange={(checked) => void save("shareDeviceWithAgents", checked)}
         />
-        {diagnosticsOffered && <DiagnosticsSettings />}
+        <DiagnosticsSettings />
       </SettingsSection>
     </div>
   )

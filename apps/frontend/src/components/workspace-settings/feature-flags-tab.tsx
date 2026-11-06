@@ -19,13 +19,8 @@ const FLAG_COPY: { [K in FeatureFlagKey]: { label: string; description: string }
     description: "Cached data saves without waiting for the disk. Drafts and unsent messages still wait.",
   },
   sqliteStorage: { label: "SQLite storage", description: "Keeps this device's data in SQLite." },
-  calls: { label: "Calls", description: "Voice and video calls in streams." },
   callsP2p: { label: "Direct calls", description: "Calls connect straight between people when they can." },
   composeTraces: { label: "Composer traces", description: "Records send timings to help fix slow sends." },
-  perfDiagnostics: {
-    label: "Performance diagnostics",
-    description: "Adds Performance diagnostics to Privacy & security.",
-  },
   searchQueryLog: {
     label: "Search logging",
     description: "Keeps your searches and what you opened, to improve search.",
@@ -36,7 +31,6 @@ const FLAG_COPY: { [K in FeatureFlagKey]: { label: string; description: string }
 const VALUE_LABELS: Record<FeatureFlagValue, string> = {
   off: "Off",
   on: "On",
-  available: "Available",
   capture: "Capturing",
   shadow: "Shadow copy",
   "read-only": "Reads from SQLite",
