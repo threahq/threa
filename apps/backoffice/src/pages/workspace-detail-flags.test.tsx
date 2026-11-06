@@ -44,9 +44,10 @@ const MEMBERS: WorkspaceMember[] = [
 interface FetchConfig {
   flags: WorkspaceFeatureFlags
   onPut?: (body: unknown) => void
+  putStatus?: number
 }
 
-function installFetch({ flags, onPut }: FetchConfig): void {
+function installFetch({ flags, onPut, putStatus = 204 }: FetchConfig): void {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -54,7 +55,13 @@ function installFetch({ flags, onPut }: FetchConfig): void {
       const method = init?.method ?? "GET"
       if (url.includes("/feature-flags") && method === "PUT") {
         onPut?.(init?.body ? JSON.parse(init.body as string) : undefined)
-        return new Response(null, { status: 204 })
+        if (putStatus >= 400) {
+          return new Response(JSON.stringify({ error: "boom" }), {
+            status: putStatus,
+            headers: { "Content-Type": "application/json" },
+          })
+        }
+        return new Response(null, { status: putStatus })
       }
       if (url.includes("/feature-flags")) {
         return new Response(JSON.stringify(flags), { status: 200, headers: { "Content-Type": "application/json" } })
@@ -137,6 +144,7 @@ describe("WorkspaceDetailFlagsPage", () => {
 
     const memberGroup = screen.getByRole("radiogroup", { name: "calls for Alice" })
     expect(within(memberGroup).queryByRole("radio", { checked: true })).not.toBeInTheDocument()
+    expect(within(memberGroup).getByRole("radio", { name: "on" })).toBeDisabled()
     expect(screen.getByText("Everyone else:")).toHaveTextContent("Everyone else: on")
 
     await userEvent.click(within(memberGroup).getByRole("radio", { name: "off" }))
@@ -154,16 +162,47 @@ describe("WorkspaceDetailFlagsPage", () => {
     await waitFor(() => expect(screen.queryByRole("radiogroup", { name: "calls for Alice" })).not.toBeInTheDocument())
   })
 
-  it("disables the flag default for members while the workspace has moved off it", async () => {
+  it("pins no member to the flag default while the workspace has moved off it", async () => {
+    installFetch({
+      flags: callsFlags([
+        workspaceOverride("off"),
+        {
+          subjectType: "user",
+          subjectId: MEMBER_ID,
+          flagKey: "calls",
+          value: "off",
+          updatedAt: new Date().toISOString(),
+        },
+      ]),
+    })
+    renderPage()
+
+    const memberGroup = await screen.findByRole("radiogroup", { name: "calls for Alice" })
+    expect(within(memberGroup).getByRole("radio", { name: "on" })).toBeDisabled()
+    expect(within(memberGroup).getByRole("radio", { name: "off" })).toBeChecked()
+    expect(screen.getByText("Everyone else:")).toHaveTextContent("Everyone else: off")
+  })
+
+  it("offers no new member override when every value is either the default or inherited", async () => {
     installFetch({ flags: callsFlags([workspaceOverride("off")]) })
+    renderPage()
+
+    await workspaceGroup()
+    expect(screen.queryByRole("combobox", { name: "Add a member override for calls" })).not.toBeInTheDocument()
+  })
+
+  it("keeps a new member row when saving its first value fails", async () => {
+    installFetch({ flags: callsFlags(), putStatus: 500 })
     renderPage()
 
     const add = await screen.findByRole("combobox", { name: "Add a member override for calls" })
     await userEvent.selectOptions(add, MEMBER_ID)
+    await userEvent.click(
+      within(screen.getByRole("radiogroup", { name: "calls for Alice" })).getByRole("radio", { name: "off" })
+    )
 
-    const memberGroup = screen.getByRole("radiogroup", { name: "calls for Alice" })
-    expect(within(memberGroup).getByRole("radio", { name: "on" })).toBeDisabled()
-    expect(within(memberGroup).getByRole("radio", { name: "off" })).toBeEnabled()
-    expect(screen.getByText("Everyone else:")).toHaveTextContent("Everyone else: off")
+    expect(await screen.findByText(/Couldn't update flag/)).toBeInTheDocument()
+    expect(screen.getByRole("radiogroup", { name: "calls for Alice" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Cancel override for Alice" })).toBeInTheDocument()
   })
 })

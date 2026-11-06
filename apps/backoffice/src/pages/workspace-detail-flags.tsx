@@ -120,7 +120,7 @@ export function WorkspaceDetailFlagsPage() {
         flags={flagsQ.data}
         members={membersQ.data ?? []}
         busyKey={busyKey}
-        onSet={(vars) => setMutation.mutate(vars)}
+        onSet={(vars, onSuccess) => setMutation.mutate(vars, { onSuccess })}
       />
     </Section>
   )
@@ -145,7 +145,7 @@ function FlagsBody({
   flags: WorkspaceFeatureFlags | undefined
   members: WorkspaceMember[]
   busyKey: string | null
-  onSet: (vars: SetVars) => void
+  onSet: (vars: SetVars, onSuccess?: () => void) => void
 }) {
   if (loading) return <ListPlaceholder>Loading feature flags…</ListPlaceholder>
 
@@ -164,20 +164,29 @@ function FlagsBody({
     )
   }
 
+  const noMembers = members.length === 0 && flags.flags.some((f) => f.scopes.includes("user"))
+
   return (
-    <ul className="flex flex-col gap-3">
-      {flags.flags.map((flag) => (
-        <FlagCard
-          key={flag.key}
-          flag={flag}
-          workspaceId={workspaceId}
-          overrides={flags.overrides.filter((o) => o.flagKey === flag.key)}
-          members={members}
-          busyKey={busyKey}
-          onSet={onSet}
-        />
-      ))}
-    </ul>
+    <>
+      {noMembers ? (
+        <p className={cn("text-muted-foreground", NOTE_TEXT)}>
+          No members to flag. The WorkOS membership mirror is empty for this workspace.
+        </p>
+      ) : null}
+      <ul className="flex flex-col gap-3">
+        {flags.flags.map((flag) => (
+          <FlagCard
+            key={flag.key}
+            flag={flag}
+            workspaceId={workspaceId}
+            overrides={flags.overrides.filter((o) => o.flagKey === flag.key)}
+            members={members}
+            busyKey={busyKey}
+            onSet={onSet}
+          />
+        ))}
+      </ul>
+    </>
   )
 }
 
@@ -194,7 +203,7 @@ function FlagCard({
   overrides: Overrides
   members: WorkspaceMember[]
   busyKey: string | null
-  onSet: (vars: SetVars) => void
+  onSet: (vars: SetVars, onSuccess?: () => void) => void
 }) {
   const headingId = useId()
   const [draftId, setDraftId] = useState<string | null>(null)
@@ -204,9 +213,17 @@ function FlagCard({
   const userScoped = flag.scopes.includes("user")
   const memberOverrides = overrides.filter((o) => o.subjectType === "user")
   const overridden = new Set(memberOverrides.map((o) => o.subjectId))
-  const addable = userScoped ? members.filter((m) => !overridden.has(m.workosUserId) && m.workosUserId !== draftId) : []
-  const set = (subjectType: FeatureFlagScope, subjectId: string, value: string) =>
-    onSet({ subjectType, subjectId, flagKey: flag.key, value, defaultValue: flag.default })
+  const draft = draftId && !overridden.has(draftId) ? draftId : null
+  const inheritedValue = workspaceScoped ? workspaceValue : flag.default
+  // Writing a member's default value clears their override, so while the
+  // workspace has moved off the default a member can't be pinned to it. A new
+  // row also can't pick what the member already inherits: nothing would change.
+  const pinUnavailable = workspaceOverride !== undefined ? [flag.default] : []
+  const newRowUnavailable = [...pinUnavailable, inheritedValue]
+  const canAdd = userScoped && flag.values.some((v) => !newRowUnavailable.includes(v))
+  const addable = canAdd ? members.filter((m) => !overridden.has(m.workosUserId) && m.workosUserId !== draft) : []
+  const set = (subjectType: FeatureFlagScope, subjectId: string, value: string, onSuccess?: () => void) =>
+    onSet({ subjectType, subjectId, flagKey: flag.key, value, defaultValue: flag.default }, onSuccess)
 
   return (
     <li aria-labelledby={headingId} className={cn(CARD_CLASS, "overflow-hidden")}>
@@ -230,8 +247,8 @@ function FlagCard({
               name={`flag-${flag.key}-workspace`}
               aria-label={`${flag.key} for the whole workspace`}
               value={workspaceValue}
-              options={valueOptions(flag)}
-              disabled={busyKey === subjectFlagKey("workspace", workspaceId, flag.key)}
+              options={valueOptions(flag, [])}
+              busy={busyKey === subjectFlagKey("workspace", workspaceId, flag.key)}
               onValueChange={(value) => set("workspace", workspaceId, value)}
               className="w-full sm:w-auto sm:min-w-56"
             />
@@ -257,35 +274,37 @@ function FlagCard({
           ) : null}
         </div>
       </div>
-      {memberOverrides.length > 0 || draftId ? (
+      {memberOverrides.length > 0 || draft ? (
         <MemberOverrides
           flag={flag}
-          inheritedValue={workspaceScoped ? workspaceValue : flag.default}
-          workspaceDeviates={workspaceOverride !== undefined}
+          inheritedValue={inheritedValue}
+          unavailable={pinUnavailable}
+          newRowUnavailable={newRowUnavailable}
           overrides={memberOverrides}
-          draftId={draftId && !overridden.has(draftId) ? draftId : null}
+          draftId={draft}
           onDraftDone={() => setDraftId(null)}
           members={members}
           busyKey={busyKey}
-          onSet={(subjectId, value) => set("user", subjectId, value)}
+          onSet={(subjectId, value, onSuccess) => set("user", subjectId, value, onSuccess)}
         />
       ) : null}
     </li>
   )
 }
 
-function valueOptions(flag: WorkspaceFeatureFlagDefinition, unavailable?: string) {
+function valueOptions(flag: WorkspaceFeatureFlagDefinition, unavailable: string[]) {
   return flag.values.map((value) => ({
     value,
     label: <span className="font-mono text-[0.8125rem]">{value}</span>,
-    disabled: value === unavailable,
+    disabled: unavailable.includes(value),
   }))
 }
 
 function MemberOverrides({
   flag,
   inheritedValue,
-  workspaceDeviates,
+  unavailable,
+  newRowUnavailable,
   overrides,
   draftId,
   onDraftDone,
@@ -295,18 +314,16 @@ function MemberOverrides({
 }: {
   flag: WorkspaceFeatureFlagDefinition
   inheritedValue: string
-  workspaceDeviates: boolean
+  unavailable: string[]
+  newRowUnavailable: string[]
   overrides: Overrides
   draftId: string | null
   onDraftDone: () => void
   members: WorkspaceMember[]
   busyKey: string | null
-  onSet: (subjectId: string, value: string) => void
+  onSet: (subjectId: string, value: string, onSuccess?: () => void) => void
 }) {
   const byId = new Map(members.map((m) => [m.workosUserId, m]))
-  // Writing a member's default value clears their override, so while the
-  // workspace has moved off the default a member can't be pinned to it.
-  const unavailable = workspaceDeviates ? flag.default : undefined
 
   const rows = overrides.map((o) => ({ subjectId: o.subjectId, value: o.value as string | null }))
   if (draftId) rows.push({ subjectId: draftId, value: null })
@@ -340,12 +357,9 @@ function MemberOverrides({
                   name={`flag-${flag.key}-user-${row.subjectId}`}
                   aria-label={`${flag.key} for ${name}`}
                   value={row.value}
-                  options={valueOptions(flag, unavailable)}
-                  disabled={busy}
-                  onValueChange={(value) => {
-                    if (row.value === null) onDraftDone()
-                    onSet(row.subjectId, value)
-                  }}
+                  options={valueOptions(flag, row.value === null ? newRowUnavailable : unavailable)}
+                  busy={busy}
+                  onValueChange={(value) => onSet(row.subjectId, value, row.value === null ? onDraftDone : undefined)}
                   className="flex-1 sm:min-w-56 sm:flex-initial"
                 />
                 <Button

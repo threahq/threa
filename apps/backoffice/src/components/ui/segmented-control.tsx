@@ -2,7 +2,7 @@ import { type ReactNode } from "react"
 
 import { cn } from "@/lib/utils"
 
-export interface SegmentedOption<T extends string> {
+interface SegmentedOption<T extends string> {
   value: T
   label: ReactNode
   disabled?: boolean
@@ -11,6 +11,8 @@ export interface SegmentedOption<T extends string> {
 /**
  * Two to four short, mutually exclusive options as native radios: arrow keys
  * move between them and Tab leaves the group. `value` of `null` checks none.
+ * `busy` ignores changes but keeps the radios focusable, so a pending
+ * write doesn't throw keyboard focus back to the page.
  * Four or more segments pair up in a 2×2 grid on phones.
  */
 export function SegmentedControl<T extends string>({
@@ -18,7 +20,7 @@ export function SegmentedControl<T extends string>({
   value,
   options,
   onValueChange,
-  disabled,
+  busy,
   className,
   ...aria
 }: {
@@ -26,7 +28,7 @@ export function SegmentedControl<T extends string>({
   value: T | null
   options: readonly SegmentedOption<T>[]
   onValueChange: (value: T) => void
-  disabled?: boolean
+  busy?: boolean
   className?: string
   "aria-label"?: string
   "aria-labelledby"?: string
@@ -35,9 +37,10 @@ export function SegmentedControl<T extends string>({
   return (
     <div
       role="radiogroup"
+      aria-disabled={busy || undefined}
       {...aria}
       className={cn(
-        "gap-0.5 rounded-lg bg-muted p-0.5",
+        "gap-0.5 rounded-lg bg-muted p-0.5 aria-disabled:opacity-60",
         options.length > 3 ? "grid grid-cols-2 sm:flex" : "flex flex-wrap",
         className
       )}
@@ -57,8 +60,10 @@ export function SegmentedControl<T extends string>({
             name={name}
             value={option.value}
             checked={value === option.value}
-            disabled={disabled || option.disabled}
-            onChange={() => onValueChange(option.value)}
+            disabled={option.disabled}
+            onChange={() => {
+              if (!busy) onValueChange(option.value)
+            }}
             className="sr-only"
           />
           {option.label}

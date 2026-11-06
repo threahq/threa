@@ -71,7 +71,6 @@
     --control: 38 65% 50%;
     --control-foreground: 40 20% 98%;
     --ring: var(--control);
-    --muted-foreground-strong: 30 8% 38%;
 
     --radius: 0.5rem;
   }
@@ -107,7 +106,6 @@
     --control: 40 55% 55%;
     --control-foreground: 30 15% 8%;
     --ring: var(--control);
-    --muted-foreground-strong: 35 10% 64%;
   }
 }
 

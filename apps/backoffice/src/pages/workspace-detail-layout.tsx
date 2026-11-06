@@ -35,7 +35,16 @@ export function WorkspaceDetailLayout() {
 
   return (
     <Page>
-      <Body loading={query.isLoading} error={query.error} workspace={query.data} workspaceId={id} />
+      <div className="flex flex-col gap-2">
+        <Link
+          to="/workspaces"
+          className="-ml-1 inline-flex min-h-9 w-fit items-center gap-1 rounded-md px-1 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <ChevronLeft aria-hidden className="size-4" />
+          Workspaces
+        </Link>
+        <Body loading={query.isLoading} error={query.error} workspace={query.data} workspaceId={id} />
+      </div>
     </Page>
   )
 }
@@ -60,19 +69,10 @@ function Body({
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-6">
-        <div className="flex flex-col gap-2">
-          <Link
-            to="/workspaces"
-            className="-ml-1 inline-flex min-h-9 w-fit items-center gap-1 rounded-md px-1 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <ChevronLeft aria-hidden className="size-4" />
-            Workspaces
-          </Link>
-          <PageHeader
-            title={workspace.name}
-            description={<MetaLine parts={[`@${workspace.slug}`, workspace.region]} />}
-          />
-        </div>
+        <PageHeader
+          title={workspace.name}
+          description={<MetaLine parts={[`@${workspace.slug}`, workspace.region]} />}
+        />
         {workspaceId ? <TabNav id={workspaceId} /> : null}
       </div>
       <Outlet />
