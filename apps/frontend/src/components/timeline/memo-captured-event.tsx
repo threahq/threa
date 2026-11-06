@@ -26,7 +26,7 @@ export function MemoCapturedEvent({ event, workspaceId }: MemoCapturedEventProps
   if (!payload?.memos?.length) return null
 
   return (
-    <div className="py-2 px-3 sm:px-6 text-center">
+    <div className="py-2 px-gutter text-center">
       <p className="text-sm text-muted-foreground">
         <Sparkles className="inline-block h-3.5 w-3.5 mr-1.5 -mt-0.5 text-amber-500" aria-hidden="true" />
         Saved to memory:{" "}

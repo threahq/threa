@@ -73,7 +73,7 @@ import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { localStartOfDayMs } from "@/lib/dates"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 import { Skeleton } from "@/components/ui/skeleton"
-import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
+import { MessageRowSkeleton, type MessageRowSkeletonShape } from "@/components/message/message-row-skeleton"
 
 interface BoardCardProps {
   workspaceId: string
@@ -1124,8 +1124,10 @@ export function BoardCard({
           // Type-to-focus routes a keystroke to THIS card's composer when the
           // last click landed anywhere inside it (see use-type-to-focus).
           data-type-capture-scope=""
+          // The timeline gutter follows the card's padding, so timeline rows on the
+          // card (session, memo, dividers) line up with its messages.
           className={cn(
-            "board-card-hover rounded-xl border bg-card p-3 shadow-[0_1px_2px_rgb(0_0_0/0.04),0_4px_14px_-8px_rgb(0_0_0/0.10)] sm:p-4 dark:shadow-[0_1px_2px_rgb(0_0_0/0.4),0_6px_16px_-8px_rgb(0_0_0/0.5)]",
+            "board-card-hover rounded-xl border bg-card p-3 [--timeline-gutter:0.75rem] sm:[--timeline-gutter:1rem] shadow-[0_1px_2px_rgb(0_0_0/0.04),0_4px_14px_-8px_rgb(0_0_0/0.10)] sm:p-4 dark:shadow-[0_1px_2px_rgb(0_0_0/0.4),0_6px_16px_-8px_rgb(0_0_0/0.5)]",
             flash && "board-post-flash",
             removed && "opacity-60"
           )}
@@ -1320,7 +1322,7 @@ export function BoardCard({
 }
 
 /** Head/continuation shape of a placeholder card's message run. */
-const CARD_SKELETON_ROWS: { continuation: boolean; width: string }[] = [
+const CARD_SKELETON_ROWS: MessageRowSkeletonShape[] = [
   { continuation: false, width: "w-11/12" },
   { continuation: true, width: "w-3/4" },
 ]
@@ -1345,26 +1347,7 @@ export function BoardCardSkeleton() {
       </div>
       {CARD_SKELETON_ROWS.map((row, i) => (
         <div key={i} className="-mx-3 sm:-mx-4">
-          <div
-            className={cn(
-              "flex items-start gap-3 px-3 sm:px-4",
-              row.continuation ? MESSAGE_ROW_CONTINUATION_PADDING : MESSAGE_ROW_HEAD_PADDING
-            )}
-          >
-            {row.continuation ? (
-              <div className="h-8 w-8 shrink-0" />
-            ) : (
-              <Skeleton className="h-8 w-8 shrink-0 rounded-[8px]" />
-            )}
-            <div className="min-w-0 flex-1">
-              {!row.continuation && (
-                <div className="mb-0.5 flex items-baseline gap-2">
-                  <Skeleton className="h-5 w-28" />
-                </div>
-              )}
-              <Skeleton className={cn("h-[22px]", row.width)} />
-            </div>
-          </div>
+          <MessageRowSkeleton {...row} className="px-3 sm:px-4" />
         </div>
       ))}
     </div>

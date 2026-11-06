@@ -202,7 +202,7 @@ export function CallCard({ event, workspaceId, streamId, endedPatch, isThreadPar
   const card = (
     <div
       className={cn(
-        "group reveal-host relative px-3 py-1.5 sm:px-6",
+        "group reveal-host relative px-gutter py-1.5",
         actionSurface.isTouchInput && "select-none",
         actionSurface.longPress.isPressed && "opacity-70 transition-opacity duration-100"
       )}

@@ -31,6 +31,7 @@ import { DayDivider } from "./day-divider"
 import { localStartOfDayMs } from "@/lib/dates"
 import { isSameAuthorRun } from "@/lib/message-grouping"
 import { Skeleton } from "@/components/ui/skeleton"
+import { TimelineSkeletonRows } from "./timeline-skeleton"
 import { ConversationOverlayRow } from "./conversation-overlay/conversation-overlay"
 import type {
   ConversationOverlayContext,
@@ -1138,7 +1139,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
     <>
       {item.type === "day_divider" && <DayDivider dayStartMs={item.dayStartMs} />}
       {item.type === "command_group" && (
-        <div className="px-3 sm:px-6" data-event-id={item.events[0]?.id}>
+        <div className="px-gutter" data-event-id={item.events[0]?.id}>
           <CommandEvent events={item.events} workspaceId={ctx.workspaceId} />
         </div>
       )}
@@ -1154,7 +1155,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         <div
           role="status"
           aria-label="Loading missed messages"
-          className="flex h-8 items-center gap-2 px-3 sm:px-6 text-xs text-muted-foreground"
+          className="flex h-8 items-center gap-2 px-gutter text-xs text-muted-foreground"
         >
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
           <span>Loading {item.missingCount === 1 ? "a missed message" : `${item.missingCount} missed messages`}…</span>
@@ -1165,8 +1166,8 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         // floating "Loading older messages..." pill carries the announcement;
         // these rows are purely visual (aria-hidden) and are swapped for the
         // real rows in the same render the page lands.
-        <div aria-hidden data-testid="older-skeleton-row" className="flex gap-3 px-4 py-3 sm:px-6">
-          <Skeleton className="h-9 w-9 rounded-full" />
+        <div aria-hidden data-testid="older-skeleton-row" className="flex gap-3 px-gutter py-3">
+          <Skeleton className="h-8 w-8 shrink-0 rounded-[8px]" />
           <div className="flex-1 space-y-2">
             <Skeleton className="h-4 w-32" />
             <Skeleton className="h-4 w-full" />
@@ -1175,7 +1176,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         </div>
       )}
       {item.type === "session_group" && !ctx.hideSessionCards && (
-        <div className="px-3 sm:px-6" data-event-id={item.events[0]?.id}>
+        <div className="px-gutter" data-event-id={item.events[0]?.id}>
           <AgentSessionEvent
             events={item.events}
             workspaceId={ctx.workspaceId}
@@ -1185,7 +1186,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         </div>
       )}
       {item.type === "agent_run_group" && !ctx.hideSessionCards && (
-        <div className="relative px-3 sm:px-6" data-event-id={item.events[0]?.id}>
+        <div className="relative px-gutter" data-event-id={item.events[0]?.id}>
           {/* Each member's start event answers to this row: the read scan, the
               unread divider and scroll-to-event all find rows by data-event-id. */}
           {item.sessions.slice(1).map((session) => (
@@ -1525,27 +1526,7 @@ export function EventList({
   // onto the grouped list.
   const itemsWithDividers = useMemo(() => injectDayDividers(timelineItems), [timelineItems])
 
-  if (isLoading) {
-    return (
-      <div className="flex flex-col gap-4 px-4 py-6 sm:px-6">
-        <div className="flex gap-3">
-          <Skeleton className="h-9 w-9 rounded-full" />
-          <div className="flex-1 space-y-2">
-            <Skeleton className="h-4 w-32" />
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-4 w-2/3" />
-          </div>
-        </div>
-        <div className="flex gap-3">
-          <Skeleton className="h-9 w-9 rounded-full" />
-          <div className="flex-1 space-y-2">
-            <Skeleton className="h-4 w-24" />
-            <Skeleton className="h-4 w-5/6" />
-          </div>
-        </div>
-      </div>
-    )
-  }
+  if (isLoading) return <TimelineSkeletonRows />
 
   // First-message lookup for the context-bag attachment badge. We render the
   // chip on whichever message sits at the top of the stream (smallest

@@ -809,7 +809,7 @@ function MessageLayout({
           // Opaque background so swipe-to-quote icon shows behind the message.
           // `transition-[background-color]` (NOT transform — the swipe drives
           // transform via inline style and a transition would lag the drag).
-          "message-item group reveal-host relative flex gap-3 px-3 sm:px-6 bg-background transition-[background-color]",
+          "message-item group reveal-host relative flex gap-3 px-gutter bg-background transition-[background-color]",
           rowVerticalPadding,
           // Per-actor accent (gradient + inset stripe) — see ACTOR_ROW_THEME.
           theme.rowAccent,
@@ -2117,7 +2117,7 @@ function applyDecryptedContent(payload: MessagePayload, decrypted: DecryptedMess
  */
 function DecryptingPlaceholder({ groupContinuation }: { groupContinuation: boolean }) {
   return (
-    <div className="flex gap-3 px-3 py-1 sm:px-6" aria-hidden="true">
+    <div className="flex gap-3 px-gutter py-1" aria-hidden="true">
       {groupContinuation ? (
         <div className="w-8 shrink-0" />
       ) : (

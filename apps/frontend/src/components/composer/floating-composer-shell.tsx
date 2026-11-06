@@ -27,9 +27,13 @@ export function FloatingComposerShell({ hidden = false, children, ref, ...rest }
     <div
       ref={ref}
       {...rest}
-      className={hidden ? "hidden" : "pointer-events-none absolute inset-x-0 bottom-0 z-20 will-change-transform"}
+      className={
+        hidden
+          ? "hidden"
+          : "pointer-events-none absolute bottom-0 left-0 right-[var(--scrollbar-gutter,0px)] z-20 will-change-transform"
+      }
     >
-      <div className="pointer-events-auto pt-3 px-3 pb-3 sm:pt-6 sm:px-6 sm:pb-4 mx-auto max-w-[800px] w-full min-w-0">
+      <div className="pointer-events-auto pt-3 px-gutter pb-3 sm:pt-6 sm:pb-4 mx-auto max-w-[800px] w-full min-w-0">
         {children}
       </div>
     </div>

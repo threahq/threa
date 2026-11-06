@@ -192,7 +192,12 @@ export function VirtualizedScroller({
         <div
           aria-hidden
           data-testid="settle-mask"
-          className="pointer-events-none absolute inset-0 z-10 overflow-hidden bg-background"
+          // A mask stands in for the scroller, so it reserves the same gutter; the
+          // skeleton reserves its own.
+          className={cn(
+            "pointer-events-none absolute inset-0 z-10 overflow-hidden bg-background",
+            mask && "[scrollbar-gutter:stable]"
+          )}
         >
           {mask ?? skeleton}
         </div>

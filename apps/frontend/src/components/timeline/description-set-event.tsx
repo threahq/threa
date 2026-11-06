@@ -87,14 +87,14 @@ export function DescriptionSetEvent({ event, workspaceId }: DescriptionSetEventP
 
   if (!markdown) {
     return (
-      <div className="py-2 px-3 sm:px-6 text-center">
+      <div className="py-2 px-gutter text-center">
         <p className="text-sm text-muted-foreground">{actor} cleared the description</p>
       </div>
     )
   }
 
   return (
-    <div className="py-2 px-3 sm:px-6">
+    <div className="py-2 px-gutter">
       <p className="text-center text-sm text-muted-foreground">{actor} set the description</p>
       <div className="mx-auto mt-1.5 max-w-2xl border-l-2 border-border pl-3.5">
         <MarkdownBlockProvider messageId={event.id}>

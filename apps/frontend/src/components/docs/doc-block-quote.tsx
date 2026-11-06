@@ -39,7 +39,7 @@ export function DocBlockQuote({ workspaceId, docId, blockId, replyCount }: DocBl
 
   return (
     <ThreadAnchorFrame replyCount={replyCount}>
-      <div className="flex flex-col gap-2 px-3 sm:px-6">
+      <div className="flex flex-col gap-2 px-gutter">
         <Link
           to={getPanelUrl(docId)}
           className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
