@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Route } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk, generateTestId } from "./helpers"
+import { loginAndCreateWorkspace, createChannel, sendApiOk, generateTestId } from "./helpers"
 
 /**
  * A message that arrives while the reader watches appears at full height in one
@@ -43,16 +43,22 @@ async function seedMessages(page: Page, workspaceId: string, streamId: string, c
 }
 
 async function createThread(page: Page, workspaceId: string, streamId: string, anchorMessageId: string) {
-  const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
-    data: { type: "thread", parentStreamId: streamId, parentAnchorId: anchorMessageId },
-  })
-  await expectApiOk(response, "create thread")
+  const response = await sendApiOk(
+    () =>
+      page.request.post(`/api/workspaces/${workspaceId}/streams`, {
+        data: { type: "thread", parentStreamId: streamId, parentAnchorId: anchorMessageId },
+      }),
+    "create thread"
+  )
   return ((await response.json()) as { stream: { id: string } }).stream.id
 }
 
 async function postMessage(page: Page, workspaceId: string, streamId: string, content: string): Promise<string> {
-  const response = await page.request.post(`/api/workspaces/${workspaceId}/messages`, { data: { streamId, content } })
-  await expectApiOk(response, `post ${content}`)
+  const data = { streamId, content, clientMessageId: crypto.randomUUID() }
+  const response = await sendApiOk(
+    () => page.request.post(`/api/workspaces/${workspaceId}/messages`, { data }),
+    `post ${content}`
+  )
   return ((await response.json()) as { message: { id: string } }).message.id
 }
 
