@@ -47,20 +47,14 @@ export function SidebarUserMenu({ email, name, onSignOut }: UserMenuProps) {
         <button
           type="button"
           className={cn(
-            "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors",
-            "hover:bg-accent/50 data-[state=open]:bg-accent/60"
+            "flex min-h-11 w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors",
+            "hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-[state=open]:bg-muted"
           )}
         >
           <UserAvatar initial={initial} size="sm" />
           <div className="flex min-w-0 flex-1 flex-col">
-            <span className="truncate text-xs font-medium text-foreground">{display}</span>
-            {showEmailLine ? (
-              <span className="truncate text-[10px] text-muted-foreground">{email}</span>
-            ) : (
-              <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                Platform admin
-              </span>
-            )}
+            <span className="truncate text-sm font-medium text-foreground">{display}</span>
+            <span className="truncate text-xs text-muted-foreground">{showEmailLine ? email : "Platform admin"}</span>
           </div>
           <ChevronUp className="size-4 shrink-0 text-muted-foreground" />
         </button>
@@ -98,7 +92,7 @@ export function MobileUserMenu({ email, name, onSignOut }: UserMenuProps) {
         type="button"
         aria-label="Open account menu"
         onClick={() => setOpen(true)}
-        className="flex size-9 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-accent/60"
+        className="flex size-11 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <UserAvatar initial={initial} size="md" />
       </button>
@@ -135,7 +129,7 @@ function UserAvatar({ initial, size }: { initial: string; size: "sm" | "md" }) {
   return (
     <span
       className={cn(
-        "flex shrink-0 items-center justify-center rounded-full bg-primary/15 font-semibold text-primary",
+        "flex shrink-0 items-center justify-center rounded-avatar bg-accent font-semibold text-accent-foreground",
         sizeClass
       )}
     >
@@ -166,18 +160,10 @@ function UserMenuHeader({
     <div className={wrapperClass}>
       <UserAvatar initial={initial} size={variant === "drawer" ? "md" : "sm"} />
       <div className="flex min-w-0 flex-col leading-tight">
-        <span className={cn("truncate font-medium text-foreground", variant === "drawer" ? "text-sm" : "text-xs")}>
-          {display}
+        <span className="truncate text-sm font-medium text-foreground">{display}</span>
+        <span className="truncate text-xs text-muted-foreground">
+          {email && email !== display ? email : "Platform admin"}
         </span>
-        {email && email !== display ? (
-          <span className={cn("truncate text-muted-foreground", variant === "drawer" ? "text-xs" : "text-[10px]")}>
-            {email}
-          </span>
-        ) : (
-          <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Platform admin
-          </span>
-        )}
       </div>
     </div>
   )

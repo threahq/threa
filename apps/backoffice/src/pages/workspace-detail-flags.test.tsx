@@ -83,61 +83,87 @@ function renderPage() {
   )
 }
 
-describe("WorkspaceDetailFlagsPage default handling", () => {
+function workspaceGroup() {
+  return screen.findByRole("radiogroup", { name: "calls for the whole workspace" })
+}
+
+function flagCard(group: HTMLElement): HTMLElement {
+  const card = group.closest("li")
+  if (!card) throw new Error("flag card not found")
+  return card
+}
+
+describe("WorkspaceDetailFlagsPage", () => {
   afterEach(() => {
     cleanup()
     vi.unstubAllGlobals()
   })
 
-  it("shows the explicit default (not values[0]) and marks the (default) option on it", async () => {
+  it("selects the explicit default (not values[0]) when the workspace has no override", async () => {
     installFetch({ flags: callsFlags() })
     renderPage()
 
-    const [workspaceSelect] = await screen.findAllByLabelText<HTMLSelectElement>("calls")
-    // No override → resolves to the flag's explicit default "on", not values[0] "off".
-    expect(workspaceSelect.value).toBe("on")
-    // The (default) suffix rides the explicit default, not the first-declared value.
-    expect(within(workspaceSelect).getByRole("option", { name: "on (default)" })).toBeInTheDocument()
-    expect(within(workspaceSelect).getByRole("option", { name: "off" })).toBeInTheDocument()
-    // At its default, the control is not highlighted as a deviation.
-    expect(workspaceSelect.className).not.toContain("emerald")
+    const group = await workspaceGroup()
+    expect(within(group).getByRole("radio", { name: "on" })).toBeChecked()
+    expect(within(group).getByRole("radio", { name: "off" })).not.toBeChecked()
+    expect(within(flagCard(group)).getByText(/^Default/)).toHaveTextContent("Default on·Workspace and members")
+    expect(within(flagCard(group)).queryByText("Changed")).not.toBeInTheDocument()
   })
 
-  it("shows a member the inherited workspace value without a false deviation highlight", async () => {
-    // Workspace set to the non-default "off"; the member has no personal override.
-    installFetch({ flags: callsFlags([workspaceOverride("off")]) })
-    renderPage()
-
-    const [workspaceSelect, memberSelect] = await screen.findAllByLabelText<HTMLSelectElement>("calls")
-    // Workspace deviates from the default → highlighted.
-    expect(workspaceSelect.value).toBe("off")
-    expect(workspaceSelect.className).toContain("emerald")
-    // Member inherits the workspace value (off), and is NOT falsely highlighted —
-    // they match their inherited baseline, they haven't deviated from it.
-    expect(memberSelect.value).toBe("off")
-    expect(memberSelect.className).not.toContain("emerald")
-  })
-
-  it("clears the override when set back to the explicit default", async () => {
+  it("clears the workspace override when set back to the explicit default", async () => {
     const puts: unknown[] = []
     installFetch({ flags: callsFlags([workspaceOverride("off")]), onPut: (body) => puts.push(body) })
     renderPage()
 
-    const [workspaceSelect] = await screen.findAllByLabelText<HTMLSelectElement>("calls")
-    expect(workspaceSelect.value).toBe("off")
+    const group = await workspaceGroup()
+    expect(within(group).getByRole("radio", { name: "off" })).toBeChecked()
+    expect(within(flagCard(group)).getByText("Changed")).toBeInTheDocument()
 
-    await userEvent.selectOptions(workspaceSelect, "on")
+    await userEvent.click(within(group).getByRole("radio", { name: "on" }))
 
-    // The PUT carries the explicit default; the optimistic cache clears the
-    // override (defaultValue === value), agreeing with the server's clear.
     await waitFor(() => expect(puts).toHaveLength(1))
-    expect(puts[0]).toEqual({
-      subjectType: "workspace",
-      subjectId: WORKSPACE_ID,
-      flagKey: "calls",
-      value: "on",
-    })
-    await waitFor(() => expect(workspaceSelect.value).toBe("on"))
-    expect(workspaceSelect.className).not.toContain("emerald")
+    expect(puts[0]).toEqual({ subjectType: "workspace", subjectId: WORKSPACE_ID, flagKey: "calls", value: "on" })
+    await waitFor(() => expect(within(group).getByRole("radio", { name: "on" })).toBeChecked())
+    expect(within(flagCard(group)).queryByText("Changed")).not.toBeInTheDocument()
+  })
+
+  it("adds a member override, then clears it back to inheriting", async () => {
+    const puts: unknown[] = []
+    installFetch({ flags: callsFlags(), onPut: (body) => puts.push(body) })
+    renderPage()
+
+    const add = await screen.findByRole("combobox", { name: "Add a member override for calls" })
+    await userEvent.selectOptions(add, MEMBER_ID)
+
+    const memberGroup = screen.getByRole("radiogroup", { name: "calls for Alice" })
+    expect(within(memberGroup).queryByRole("radio", { checked: true })).not.toBeInTheDocument()
+    expect(screen.getByText("Everyone else:")).toHaveTextContent("Everyone else: on")
+
+    await userEvent.click(within(memberGroup).getByRole("radio", { name: "off" }))
+    await waitFor(() => expect(puts).toHaveLength(1))
+    expect(puts[0]).toEqual({ subjectType: "user", subjectId: MEMBER_ID, flagKey: "calls", value: "off" })
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("radiogroup", { name: "calls for Alice" })).getByRole("radio", { name: "off" })
+      ).toBeChecked()
+    )
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear Alice's override" }))
+    await waitFor(() => expect(puts).toHaveLength(2))
+    expect(puts[1]).toEqual({ subjectType: "user", subjectId: MEMBER_ID, flagKey: "calls", value: "on" })
+    await waitFor(() => expect(screen.queryByRole("radiogroup", { name: "calls for Alice" })).not.toBeInTheDocument())
+  })
+
+  it("disables the flag default for members while the workspace has moved off it", async () => {
+    installFetch({ flags: callsFlags([workspaceOverride("off")]) })
+    renderPage()
+
+    const add = await screen.findByRole("combobox", { name: "Add a member override for calls" })
+    await userEvent.selectOptions(add, MEMBER_ID)
+
+    const memberGroup = screen.getByRole("radiogroup", { name: "calls for Alice" })
+    expect(within(memberGroup).getByRole("radio", { name: "on" })).toBeDisabled()
+    expect(within(memberGroup).getByRole("radio", { name: "off" })).toBeEnabled()
+    expect(screen.getByText("Everyone else:")).toHaveTextContent("Everyone else: off")
   })
 })

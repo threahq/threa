@@ -5,7 +5,7 @@ import { Ban } from "lucide-react"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Badge } from "@/components/ui/badge"
+import { Badge, type BadgeProps } from "@/components/ui/badge"
 import {
   ResponsiveAlertDialog,
   ResponsiveAlertDialogAction,
@@ -17,8 +17,11 @@ import {
   ResponsiveAlertDialogTitle,
 } from "@/components/ui/responsive-alert-dialog"
 import { InlineBanner } from "@/components/inline-banner"
+import { Page } from "@/components/layout/page"
 import { PageHeader } from "@/components/layout/page-header"
 import { Section } from "@/components/layout/section"
+import { CARD_CLASS, ListPlaceholder, ROW_PADDING, RowList, RowText } from "@/components/layout/rows"
+import { cn } from "@/lib/utils"
 import { readApiError } from "@/api/client"
 import {
   backofficeKeys,
@@ -30,13 +33,11 @@ import {
 } from "@/api/backoffice"
 import { formatDateTime } from "@/lib/format"
 
-function stateBadgeVariant(
-  state: WorkspaceOwnerInvitation["state"]
-): "default" | "secondary" | "destructive" | "outline" {
-  if (state === "pending") return "default"
-  if (state === "accepted") return "secondary"
-  if (state === "revoked") return "destructive"
-  return "outline"
+const STATE_TONE: Record<WorkspaceOwnerInvitation["state"], BadgeProps["tone"]> = {
+  pending: "primary",
+  accepted: "success",
+  revoked: "destructive",
+  expired: "neutral",
 }
 
 function timestampLabel(invitation: WorkspaceOwnerInvitation): string {
@@ -117,16 +118,16 @@ export function InviteWorkspaceOwnerPage() {
   else if (revokeMutation.isPending) busyId = revokeMutation.variables ?? null
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-10">
+    <Page>
       <PageHeader
         title="Workspace owner invitations"
         description="Send a Threa invitation via WorkOS. When the invitee accepts and signs in, they can create their own workspace."
       />
 
-      <Section label="New invitation" description="Enter the email address of the person you want to invite.">
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4 border-t pt-5">
-          <div className="flex flex-col gap-2 sm:max-w-md">
-            <Label htmlFor="email">Email</Label>
+      <Section label="New invitation">
+        <form onSubmit={handleSubmit} className={cn(CARD_CLASS, "flex flex-col gap-3 p-4")}>
+          <Label htmlFor="email">Email</Label>
+          <div className="flex flex-col gap-2 sm:flex-row">
             <Input
               id="email"
               type="email"
@@ -136,7 +137,11 @@ export function InviteWorkspaceOwnerPage() {
               onChange={(e) => setEmail(e.target.value)}
               required
               disabled={createMutation.isPending}
+              className="sm:max-w-md"
             />
+            <Button type="submit" disabled={createMutation.isPending || !email}>
+              {createMutation.isPending ? "Sending…" : "Send invitation"}
+            </Button>
           </div>
 
           {createMutation.isSuccess ? (
@@ -146,12 +151,6 @@ export function InviteWorkspaceOwnerPage() {
           ) : null}
 
           {createError ? <InlineBanner tone="error">{createError}</InlineBanner> : null}
-
-          <div>
-            <Button type="submit" disabled={createMutation.isPending || !email}>
-              {createMutation.isPending ? "Sending…" : "Send invitation"}
-            </Button>
-          </div>
         </form>
       </Section>
 
@@ -223,7 +222,7 @@ export function InviteWorkspaceOwnerPage() {
           </ResponsiveAlertDialogFooter>
         </ResponsiveAlertDialogContent>
       </ResponsiveAlertDialog>
-    </div>
+    </Page>
   )
 }
 
@@ -238,13 +237,9 @@ function InvitationList({
   emptyCopy: string
   renderRow: (invitation: WorkspaceOwnerInvitation) => React.ReactNode
 }) {
-  if (loading) {
-    return <div className="border-y px-1 py-6 text-center text-xs text-muted-foreground">Loading…</div>
-  }
-  if (invitations.length === 0) {
-    return <div className="border-y px-1 py-6 text-center text-xs text-muted-foreground">{emptyCopy}</div>
-  }
-  return <ul className="divide-y border-y">{invitations.map(renderRow)}</ul>
+  if (loading) return <ListPlaceholder>Loading invitations…</ListPlaceholder>
+  if (invitations.length === 0) return <ListPlaceholder>{emptyCopy}</ListPlaceholder>
+  return <RowList>{invitations.map(renderRow)}</RowList>
 }
 
 function InvitationRow({
@@ -260,36 +255,38 @@ function InvitationRow({
 }) {
   const hasActions = onResend && onRevoke
   return (
-    <li
-      className={
-        hasActions
-          ? "flex flex-col gap-3 border-l-[3px] border-l-transparent py-4 pl-4 pr-3 transition-colors hover:border-l-primary hover:bg-accent/30 sm:flex-row sm:items-center sm:justify-between"
-          : "flex flex-col gap-3 py-4 pl-4 pr-3 sm:flex-row sm:items-center sm:justify-between"
-      }
-    >
-      <div className="flex min-w-0 flex-col gap-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate text-sm font-medium text-foreground">{invitation.email}</span>
-          <Badge variant={stateBadgeVariant(invitation.state)} className="capitalize">
+    <li className={cn("flex min-h-14 flex-col gap-2 sm:flex-row sm:items-center sm:gap-4", ROW_PADDING)}>
+      <RowText
+        title={invitation.email}
+        badges={
+          <Badge tone={STATE_TONE[invitation.state]} className="capitalize">
             {invitation.state}
           </Badge>
-        </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          <span>{timestampLabel(invitation)}</span>
-          {invitation.workspaces.length > 0 ? (
-            <span className="flex items-center gap-1">
-              <span className="text-muted-foreground/70">·</span>
-              <WorkspaceLinks workspaces={invitation.workspaces} />
-            </span>
-          ) : null}
-        </div>
-      </div>
+        }
+        meta={
+          <>
+            {timestampLabel(invitation)}
+            {invitation.workspaces.length > 0 ? (
+              <>
+                <span className="px-1.5 text-muted-foreground/50">·</span>
+                <WorkspaceLinks workspaces={invitation.workspaces} />
+              </>
+            ) : null}
+          </>
+        }
+      />
       {hasActions ? (
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="-ml-3 flex shrink-0 items-center gap-1 sm:ml-0">
           <Button size="sm" variant="ghost" onClick={onResend} disabled={busy}>
             Resend
           </Button>
-          <Button size="sm" variant="ghost" onClick={onRevoke} disabled={busy}>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onRevoke}
+            disabled={busy}
+            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+          >
             Revoke
           </Button>
         </div>
@@ -300,14 +297,14 @@ function InvitationRow({
 
 function WorkspaceLinks({ workspaces }: { workspaces: WorkspaceOwnerInvitation["workspaces"] }) {
   return (
-    <span className="flex flex-wrap items-center gap-1">
-      Joined
+    <span>
+      Joined{" "}
       {workspaces.map((ws, i) => (
-        <span key={ws.id} className="inline-flex items-center gap-1">
+        <span key={ws.id}>
           <Link to={`/workspaces/${ws.id}`} className="text-primary underline-offset-2 hover:underline">
             {ws.name}
           </Link>
-          {i < workspaces.length - 1 ? <span>,</span> : null}
+          {i < workspaces.length - 1 ? ", " : null}
         </span>
       ))}
     </span>

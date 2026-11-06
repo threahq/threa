@@ -1,24 +1,22 @@
-import { type ReactNode } from "react"
 import { Link, NavLink, Outlet } from "react-router-dom"
-import { LayoutDashboard, Users, MailPlus, ClipboardList } from "lucide-react"
+import { LayoutDashboard, Users, MailPlus, ClipboardList, type LucideIcon } from "lucide-react"
 import { ThreaLogo } from "@/components/threa-logo"
 import { useAuth } from "@/auth"
 import { cn } from "@/lib/utils"
 import { MobileUserMenu, SidebarUserMenu } from "./user-menu"
 
 /**
- * Persistent shell for the backoffice. Mirrors the main app's pattern:
- * desktop puts the brand at the top of a left sidebar, nav in the middle,
- * and the signed-in user / sign-out at the bottom — freeing the top of
- * the content column for the page header. Mobile gets a slim header strip
- * with the brand and a sign-out icon, then a horizontal nav strip below.
+ * Persistent shell for the backoffice, drawn like the main app's settings
+ * window: a quiet left rail (brand, pages, account) beside the content column.
+ * Phones get a sticky header with the brand and account, and the pages as an
+ * evenly split tab strip under it.
  */
-const NAV_ITEMS: Array<{ to: string; label: string; icon: ReactNode; end?: boolean }> = [
-  { to: "/", label: "Overview", icon: <LayoutDashboard className="size-4" />, end: true },
+const NAV_ITEMS: Array<{ to: string; label: string; icon: LucideIcon; end?: boolean }> = [
+  { to: "/", label: "Overview", icon: LayoutDashboard, end: true },
   // `end` is omitted so NavLink treats `/workspaces/:id` as active too.
-  { to: "/workspaces", label: "Workspaces", icon: <Users className="size-4" /> },
-  { to: "/waitlist", label: "Waitlist", icon: <ClipboardList className="size-4" /> },
-  { to: "/invites/workspace-owners", label: "Invitations", icon: <MailPlus className="size-4" /> },
+  { to: "/workspaces", label: "Workspaces", icon: Users },
+  { to: "/waitlist", label: "Waitlist", icon: ClipboardList },
+  { to: "/invites/workspace-owners", label: "Invitations", icon: MailPlus },
 ]
 
 export function BackofficeShell() {
@@ -26,27 +24,18 @@ export function BackofficeShell() {
 
   return (
     <div className="flex min-h-screen bg-background">
-      {/* Desktop sidebar — brand top, nav middle, user info bottom-left. */}
-      <aside className="hidden w-60 shrink-0 flex-col border-r bg-card/60 md:flex">
-        <div className="border-b px-5 py-5">
-          <Link to="/" className="flex items-center gap-3">
-            <ThreaLogo size={30} />
-            <div className="flex min-w-0 flex-col leading-tight">
-              <span className="text-sm font-semibold uppercase tracking-[0.18em] text-primary">Threa</span>
-              <span className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
-                Backoffice
-              </span>
-            </div>
-          </Link>
+      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r bg-muted/30 md:flex">
+        <div className="px-5 pb-4 pt-5">
+          <Brand logoSize={26} />
         </div>
 
-        <nav aria-label="Backoffice sections" className="flex-1 px-3 py-4">
-          <ul className="flex flex-col gap-1">
-            {NAV_ITEMS.map((item) => (
-              <li key={item.to}>
-                <NavLink to={item.to} end={item.end} className={({ isActive }) => railNavLinkClass(isActive)}>
-                  {item.icon}
-                  {item.label}
+        <nav aria-label="Backoffice sections" className="flex-1 overflow-y-auto px-3 py-2">
+          <ul className="flex flex-col gap-0.5">
+            {NAV_ITEMS.map(({ to, end, label, icon: Icon }) => (
+              <li key={to}>
+                <NavLink to={to} end={end} className={({ isActive }) => railNavLinkClass(isActive)}>
+                  <Icon aria-hidden className="size-4 shrink-0" />
+                  {label}
                 </NavLink>
               </li>
             ))}
@@ -59,35 +48,26 @@ export function BackofficeShell() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Mobile top bar — slim brand line with the account avatar at the right. */}
-        <header className="flex items-center justify-between border-b px-4 py-3 md:hidden">
-          <Link to="/" className="flex min-w-0 items-center gap-2">
-            <ThreaLogo size={22} />
-            <div className="flex min-w-0 flex-col leading-tight">
-              <span className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Threa</span>
-              <span className="text-[9px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
-                Backoffice
-              </span>
-            </div>
-          </Link>
-          <MobileUserMenu email={user?.email} name={user?.name} onSignOut={logout} />
-        </header>
+        <div className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:hidden">
+          <header className="flex items-center justify-between px-4 pb-1 pt-2">
+            <Brand logoSize={22} />
+            <MobileUserMenu email={user?.email} name={user?.name} onSignOut={logout} />
+          </header>
+          <nav aria-label="Backoffice sections" className="px-2 pb-1.5">
+            <ul className="grid grid-cols-4 gap-1">
+              {NAV_ITEMS.map(({ to, end, label, icon: Icon }) => (
+                <li key={to} className="min-w-0">
+                  <NavLink to={to} end={end} className={({ isActive }) => mobileNavLinkClass(isActive)}>
+                    <Icon aria-hidden className="size-[18px] shrink-0" />
+                    <span className="max-w-full truncate">{label}</span>
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        </div>
 
-        {/* Mobile nav strip — collapses on md+ when the sidebar takes over. */}
-        <nav aria-label="Backoffice sections" className="border-b px-2 py-2 md:hidden">
-          <ul className="flex items-center gap-1 overflow-x-auto">
-            {NAV_ITEMS.map((item) => (
-              <li key={item.to}>
-                <NavLink to={item.to} end={item.end} className={({ isActive }) => mobileNavLinkClass(isActive)}>
-                  {item.icon}
-                  {item.label}
-                </NavLink>
-              </li>
-            ))}
-          </ul>
-        </nav>
-
-        <main className="flex-1 px-4 py-6 md:px-10 md:py-10">
+        <main className="flex-1 px-4 pb-16 pt-6 sm:px-6 md:px-10 md:pt-10">
           <Outlet />
         </main>
       </div>
@@ -95,16 +75,33 @@ export function BackofficeShell() {
   )
 }
 
+function Brand({ logoSize }: { logoSize: number }) {
+  return (
+    <Link
+      to="/"
+      className="flex min-w-0 items-center gap-2.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <ThreaLogo size={logoSize} />
+      <span className="text-base font-semibold tracking-tight text-foreground">Threa</span>
+      <span className="rounded-full border px-2 py-px text-xs font-medium leading-5 text-muted-foreground">
+        Backoffice
+      </span>
+    </Link>
+  )
+}
+
 function railNavLinkClass(isActive: boolean): string {
   return cn(
-    "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors",
-    isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+    "flex min-h-9 items-center gap-2.5 rounded-md px-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+    isActive
+      ? "bg-accent font-medium text-accent-foreground"
+      : "text-foreground/80 hover:bg-muted hover:text-foreground [&>svg]:text-muted-foreground"
   )
 }
 
 function mobileNavLinkClass(isActive: boolean): string {
   return cn(
-    "flex shrink-0 items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors",
-    isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+    "flex min-h-12 flex-col items-center justify-center gap-0.5 rounded-md px-1 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+    isActive ? "bg-accent font-medium text-accent-foreground" : "text-muted-foreground active:bg-muted"
   )
 }

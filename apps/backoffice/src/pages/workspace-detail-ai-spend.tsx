@@ -2,6 +2,9 @@ import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useParams } from "react-router-dom"
 import { Section } from "@/components/layout/section"
+import { CARD_CLASS, ListPlaceholder, ROW_PADDING } from "@/components/layout/rows"
+import { Switch } from "@/components/ui/switch"
+import { cn } from "@/lib/utils"
 import { InlineBanner } from "@/components/inline-banner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -42,23 +45,18 @@ export function WorkspaceAISpendSection({ workspaceId }: { workspaceId: string }
       label="AI spend"
       description="The workspace stops at the lower of its own monthly budget and this ceiling. Workspace admins can't change either control."
     >
-      {query.isLoading ? (
-        <p className="border-t pt-5 text-sm text-muted-foreground">Loading AI spend controls…</p>
-      ) : null}
+      {query.isLoading ? <ListPlaceholder>Loading AI spend controls…</ListPlaceholder> : null}
       {query.error ? <InlineBanner tone="error">Couldn't load AI spend controls.</InlineBanner> : null}
+      {error ? <InlineBanner tone="error">Couldn't save AI spend controls: {error}</InlineBanner> : null}
       {controls ? (
-        <div className="flex flex-col gap-5 border-t pt-5">
-          {error ? <InlineBanner tone="error">Couldn't save AI spend controls: {error}</InlineBanner> : null}
-          <label className="flex min-h-10 items-center gap-3 text-sm">
-            <input
-              type="checkbox"
-              role="switch"
-              className="size-5 accent-destructive"
+        <div className={cn(CARD_CLASS, "divide-y")}>
+          <label className={cn("flex min-h-14 cursor-pointer items-center justify-between gap-4", ROW_PADDING)}>
+            <span className="text-sm font-medium">AI off for this workspace</span>
+            <Switch
               checked={mutation.isPending ? mutation.variables.operatorAiDisabled : controls.operatorAiDisabled}
               disabled={mutation.isPending}
               onChange={(e) => mutation.mutate({ ...controls, operatorAiDisabled: e.target.checked })}
             />
-            AI off for this workspace
           </label>
           {/* Re-keying on the stored ceiling resets the input after a save or refetch. */}
           <CeilingForm
@@ -88,14 +86,16 @@ function CeilingForm({
 
   return (
     <form
-      className="flex flex-col gap-3 sm:max-w-xs"
+      className={cn("flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6", ROW_PADDING)}
       onSubmit={(e) => {
         e.preventDefault()
         if (valid) onSave(nextUsd)
       }}
     >
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="ai-operator-ceiling">Monthly ceiling (USD)</Label>
+      <Label htmlFor="ai-operator-ceiling" className="text-sm font-medium">
+        Monthly ceiling (USD)
+      </Label>
+      <div className="flex gap-2 sm:w-80">
         <Input
           id="ai-operator-ceiling"
           type="number"
@@ -105,9 +105,8 @@ function CeilingForm({
           value={ceiling}
           onChange={(e) => setCeiling(e.target.value)}
           aria-invalid={!valid}
+          className="tabular-nums"
         />
-      </div>
-      <div>
         <Button type="submit" disabled={!valid || nextUsd === ceilingUsd || saving}>
           {saving ? "Saving…" : "Save ceiling"}
         </Button>
