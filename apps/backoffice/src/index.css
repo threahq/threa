@@ -58,7 +58,9 @@
     --secondary-foreground: 30 15% 25%;
 
     --muted: 35 12% 93%;
-    --muted-foreground: 30 8% 45%;
+    /* The main app's settings shade (--muted-foreground-strong): every back office
+     * page is settings-dense 13px meta, which needs more than 4.5:1. */
+    --muted-foreground: 30 8% 38%;
 
     --accent: 40 50% 94%;
     --accent-foreground: 35 60% 35%;
@@ -93,7 +95,7 @@
     --secondary-foreground: 35 12% 85%;
 
     --muted: 30 10% 15%;
-    --muted-foreground: 35 10% 55%;
+    --muted-foreground: 35 10% 64%;
 
     --accent: 35 25% 18%;
     --accent-foreground: 40 45% 70%;

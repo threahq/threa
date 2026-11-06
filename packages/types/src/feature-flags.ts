@@ -94,6 +94,35 @@ export interface FeatureFlagLayers {
   user: Record<string, string>
 }
 
+/** Every flag needs copy here, so a new flag can't reach a settings or back office list as a raw key. */
+export const FEATURE_FLAG_COPY: { [K in FeatureFlagKey]: { label: string; description: string } } = {
+  batchedLiveWrites: {
+    label: "Batched background updates",
+    description: "Saves updates from streams you're not viewing together.",
+  },
+  idbRelaxedDurability: {
+    label: "Faster local cache",
+    description: "Cached data saves without waiting for the disk. Drafts and unsent messages still wait.",
+  },
+  sqliteStorage: { label: "SQLite storage", description: "Keeps this device's data in SQLite." },
+  callsP2p: { label: "Direct calls", description: "Calls connect straight between people when they can." },
+  composeTraces: { label: "Composer traces", description: "Records send timings to help fix slow sends." },
+  searchQueryLog: {
+    label: "Search logging",
+    description: "Keeps your searches and what you opened, to improve search.",
+  },
+  streamConnections: { label: "Threa Connect", description: "Share channels with other workspaces." },
+}
+
+export const FEATURE_FLAG_VALUE_LABELS: Record<FeatureFlagValue, string> = {
+  off: "Off",
+  on: "On",
+  capture: "Capturing",
+  shadow: "Shadow copy",
+  "read-only": "Reads from SQLite",
+  "read-write": "Reads and writes SQLite",
+}
+
 export const FEATURE_FLAG_KEYS = Object.keys(FEATURE_FLAGS) as FeatureFlagKey[]
 
 // Widened view of FEATURE_FLAGS for runtime lookups: the literal type is what derives

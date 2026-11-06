@@ -2,9 +2,9 @@ import { useId, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useParams } from "react-router-dom"
 import { X } from "lucide-react"
-import type { FeatureFlagScope } from "@threahq/types"
+import { FEATURE_FLAG_COPY, isFeatureFlagKey, type FeatureFlagScope } from "@threahq/types"
 import { NOTE_TEXT, Section } from "@/components/layout/section"
-import { CARD_CLASS, ListPlaceholder, ROW_PADDING } from "@/components/layout/rows"
+import { CARD_CLASS, ListPlaceholder, MetaLine, ROW_PADDING } from "@/components/layout/rows"
 import { InlineBanner } from "@/components/inline-banner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -206,6 +206,8 @@ function FlagCard({
   onSet: (vars: SetVars, onSuccess?: () => void) => void
 }) {
   const headingId = useId()
+  const copy = isFeatureFlagKey(flag.key) ? FEATURE_FLAG_COPY[flag.key] : null
+  const flagName = copy?.label ?? flag.key
   const [draftId, setDraftId] = useState<string | null>(null)
   const workspaceOverride = overrides.find((o) => o.subjectType === "workspace")?.value
   const workspaceValue = workspaceOverride ?? flag.default
@@ -230,22 +232,29 @@ function FlagCard({
       <div className={cn("flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6", ROW_PADDING)}>
         <div className="flex min-w-0 flex-col gap-0.5">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 id={headingId} className="break-all font-mono text-sm font-medium text-foreground">
-              {flag.key}
+            <h3 id={headingId} className={cn("text-sm font-medium text-foreground", !copy && "break-all font-mono")}>
+              {flagName}
             </h3>
             {workspaceOverride !== undefined ? <Badge tone="primary">Changed</Badge> : null}
           </div>
+          {copy ? <p className={cn("text-muted-foreground", NOTE_TEXT)}>{copy.description}</p> : null}
           <p className={cn("text-muted-foreground", NOTE_TEXT)}>
-            Default <span className="font-mono">{flag.default}</span>
-            <span className="px-1.5 text-muted-foreground/50">·</span>
-            {scopeLabel(workspaceScoped, userScoped)}
+            <MetaLine
+              parts={[
+                ...(copy ? [<span className="break-all font-mono">{flag.key}</span>] : []),
+                <span className="whitespace-nowrap">
+                  Default <span className="font-mono">{flag.default}</span>
+                </span>,
+                scopeLabel(workspaceScoped, userScoped),
+              ]}
+            />
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           {workspaceScoped ? (
             <SegmentedControl
               name={`flag-${flag.key}-workspace`}
-              aria-label={`${flag.key} for the whole workspace`}
+              aria-label={`${flagName} for the whole workspace`}
               value={workspaceValue}
               options={valueOptions(flag, [])}
               busy={busyKey === subjectFlagKey("workspace", workspaceId, flag.key)}
@@ -256,7 +265,7 @@ function FlagCard({
           {addable.length > 0 ? (
             <NativeSelect
               compact
-              aria-label={`Add a member override for ${flag.key}`}
+              aria-label={`Add a member override for ${flagName}`}
               value=""
               onChange={(e) => setDraftId(e.target.value)}
               className="w-full sm:w-40"
@@ -277,6 +286,7 @@ function FlagCard({
       {memberOverrides.length > 0 || draft ? (
         <MemberOverrides
           flag={flag}
+          flagName={flagName}
           inheritedValue={inheritedValue}
           unavailable={pinUnavailable}
           newRowUnavailable={newRowUnavailable}
@@ -302,6 +312,7 @@ function valueOptions(flag: WorkspaceFeatureFlagDefinition, unavailable: string[
 
 function MemberOverrides({
   flag,
+  flagName,
   inheritedValue,
   unavailable,
   newRowUnavailable,
@@ -313,6 +324,7 @@ function MemberOverrides({
   onSet,
 }: {
   flag: WorkspaceFeatureFlagDefinition
+  flagName: string
   inheritedValue: string
   unavailable: string[]
   newRowUnavailable: string[]
@@ -355,7 +367,7 @@ function MemberOverrides({
               <div className="flex shrink-0 items-center gap-1">
                 <SegmentedControl
                   name={`flag-${flag.key}-user-${row.subjectId}`}
-                  aria-label={`${flag.key} for ${name}`}
+                  aria-label={`${flagName} for ${name}`}
                   value={row.value}
                   options={valueOptions(flag, row.value === null ? newRowUnavailable : unavailable)}
                   busy={busy}

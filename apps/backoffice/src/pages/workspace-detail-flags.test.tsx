@@ -113,7 +113,11 @@ describe("WorkspaceDetailFlagsPage", () => {
     const group = await workspaceGroup()
     expect(within(group).getByRole("radio", { name: "on" })).toBeChecked()
     expect(within(group).getByRole("radio", { name: "off" })).not.toBeChecked()
-    expect(within(flagCard(group)).getByText(/^Default/)).toHaveTextContent("Default on·Workspace and members")
+    expect(
+      within(flagCard(group))
+        .getByText(/^Default/)
+        .closest("p")
+    ).toHaveTextContent("Default on·Workspace and members")
     expect(within(flagCard(group)).queryByText("Changed")).not.toBeInTheDocument()
   })
 
@@ -204,5 +208,24 @@ describe("WorkspaceDetailFlagsPage", () => {
     expect(await screen.findByText(/Couldn't update flag/)).toBeInTheDocument()
     expect(screen.getByRole("radiogroup", { name: "calls for Alice" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Cancel override for Alice" })).toBeInTheDocument()
+  })
+  it("names a registered flag by its label and description, keeping the key in the meta line", async () => {
+    installFetch({
+      flags: {
+        flags: [{ key: "streamConnections", values: ["off", "on"], default: "off", scopes: ["workspace"] }],
+        overrides: [],
+      },
+    })
+    renderPage()
+
+    const group = await screen.findByRole("radiogroup", { name: "Threa Connect for the whole workspace" })
+    const card = flagCard(group)
+    expect(within(card).getByRole("heading", { name: "Threa Connect" })).toBeInTheDocument()
+    expect(within(card).getByText("Share channels with other workspaces.")).toBeInTheDocument()
+    expect(
+      within(card)
+        .getByText(/^streamConnections/)
+        .closest("p")
+    ).toHaveTextContent("streamConnections·Default off·Workspace only")
   })
 })
