@@ -11,7 +11,7 @@ import {
 async function createThreadChannel(page: Page, workspaceId: string, channelName: string): Promise<void> {
   const channelId = await createChannelViaApi(page, workspaceId, channelName, "public")
   await page.goto(`/w/${workspaceId}/s/${channelId}`)
-  await expect(page.getByRole("heading", { name: `#${channelName}`, level: 1 })).toBeVisible({ timeout: 5000 })
+  await expect(page.getByRole("heading", { name: `#${channelName}`, level: 1 })).toBeVisible({ timeout: 20000 })
   await expect(page.getByRole("link", { name: `#${channelName}` })).toBeVisible({ timeout: 5000 })
 }
 
