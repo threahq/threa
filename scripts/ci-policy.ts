@@ -185,6 +185,11 @@ export const areas: Area[] = [
     specs: ["settings-"],
   },
   {
+    name: "api-keys",
+    sources: [`${fe}components/workspace-settings/api-key`],
+    specs: ["api-key-"],
+  },
+  {
     name: "personas",
     sources: [`${fe}components/persona-editor/`, `${fe}components/bot-profile/`, `${be}bot-runtimes/`],
     specs: ["bot-"],

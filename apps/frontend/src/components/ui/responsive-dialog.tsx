@@ -285,9 +285,11 @@ ResponsiveDialogDescription.displayName = "ResponsiveDialogDescription"
 
 // ── Body (scrollable content area) ──────────────────────────────────────
 
-function ResponsiveDialogBody({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("flex-1 overflow-y-auto px-4 sm:px-6", className)} {...props} />
-}
+const ResponsiveDialogBody = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+  ({ className, ...props }, ref) => (
+    <div ref={ref} className={cn("flex-1 overflow-y-auto px-4 sm:px-6", className)} {...props} />
+  )
+)
 ResponsiveDialogBody.displayName = "ResponsiveDialogBody"
 
 // ── Exports ─────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { API_VERSIONS, CURRENT_API_VERSION, type UserApiKey } from "@threahq/types"
@@ -23,6 +23,11 @@ function makeKey(overrides: Partial<UserApiKey> = {}): UserApiKey {
     createdAt: "2026-07-01T00:00:00.000Z",
     ...overrides,
   }
+}
+
+/** The None / Read / Write choice of one permission area in the open key dialog. */
+function levelRadio(area: string, level: "None" | "Read" | "Write") {
+  return within(screen.getByRole("radiogroup", { name: area })).getByRole("radio", { name: level }) as HTMLButtonElement
 }
 
 function renderSection(queryClient = new QueryClient()) {
@@ -103,7 +108,7 @@ describe("UserApiKeysSection — create and duplicate", () => {
 
     await user.click(await screen.findByRole("button", { name: "New key" }))
     await user.type(screen.getByLabelText("Name"), "local dev")
-    await user.click(screen.getByRole("checkbox", { name: /Read messages/ }))
+    await user.click(levelRadio("Messages", "Read"))
     await user.click(screen.getByRole("button", { name: "Create key" }))
 
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
@@ -111,6 +116,91 @@ describe("UserApiKeysSection — create and duplicate", () => {
       "ws_1",
       { name: "local dev", scopes: ["messages:read"], apiVersion: undefined },
     ])
+  })
+
+  it("builds a key's permissions from a preset, a group level, and one expanded permission", async () => {
+    vi.spyOn(workspacesApi, "listUserApiKeys").mockResolvedValue([])
+    const create = vi
+      .spyOn(workspacesApi, "createUserApiKey")
+      .mockResolvedValue({ key: makeKey({ id: "uak_2", name: "bot" }), value: "threa_uk_new" })
+    const user = userEvent.setup()
+
+    renderSection()
+
+    await user.click(await screen.findByRole("button", { name: "New key" }))
+    await user.type(screen.getByLabelText("Name"), "bot")
+    await user.click(screen.getByRole("radio", { name: "Connected bot" }))
+    await user.click(
+      within(screen.getByRole("radiogroup", { name: "All Workspace" })).getByRole("radio", { name: "Read" })
+    )
+    await user.click(screen.getByRole("button", { name: "Streams" }))
+    await user.click(screen.getByRole("checkbox", { name: /Write streams/ }))
+
+    expect({
+      preset: screen.getByRole("radio", { name: "Connected bot" }).getAttribute("aria-checked"),
+      streams: levelRadio("Streams", "Write").getAttribute("aria-checked"),
+      labels: levelRadio("Labels", "Read").getAttribute("aria-checked"),
+    }).toEqual({ preset: "false", streams: "true", labels: "true" })
+
+    await user.click(screen.getByRole("button", { name: "Create key" }))
+
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+    expect([...create.mock.calls[0][1].scopes].sort()).toEqual(
+      [
+        "attachments:read",
+        "attachments:write",
+        "bot-invocations:read",
+        "bot-invocations:write",
+        "bot-runtime:read",
+        "bot-runtime:write",
+        "labels:read",
+        "memos:read",
+        "messages:read",
+        "messages:write",
+        "streams:read",
+        "streams:write",
+        "users:read",
+      ].sort()
+    )
+  })
+
+  it("summarises a key by the preset it matches, else by area and level", async () => {
+    vi.spyOn(workspacesApi, "listUserApiKeys").mockResolvedValue([
+      makeKey({ id: "uak_1", name: "Reader", scopes: ["messages:read", "streams:read", "streams:write"] }),
+      makeKey({
+        id: "uak_2",
+        name: "Everything",
+        scopes: [
+          "messages:read",
+          "messages:write",
+          "messages:search",
+          "streams:read",
+          "streams:write",
+          "docs:read",
+          "docs:write",
+          "attachments:read",
+          "attachments:write",
+          "users:read",
+          "memos:read",
+          "labels:read",
+          "labels:write",
+          "delegations:read",
+          "delegations:write",
+          "bot-runtime:read",
+          "bot-runtime:write",
+          "bot-invocations:read",
+          "bot-invocations:write",
+        ],
+      }),
+    ])
+
+    renderSection()
+
+    expect({
+      reader: await screen.findByText("Messages · Read"),
+      streams: screen.getByText("Streams · Write"),
+      full: screen.getByText("Full access"),
+    }).toEqual({ reader: expect.anything(), streams: expect.anything(), full: expect.anything() })
   })
 
   it("mints a new key from an existing key's name, scopes, and pin, dropping scopes keys can no longer hold", async () => {
@@ -174,24 +264,22 @@ describe("UserApiKeysSection — create and duplicate", () => {
     await waitFor(() => expect(document.activeElement).toBe(nameInput))
     expect({
       name: nameInput.value,
-      readMessages: screen.getByRole("checkbox", { name: /Read messages/ }).getAttribute("aria-checked"),
-      writeMessages: screen.getByRole("checkbox", { name: /Write messages/ }).getAttribute("aria-checked"),
+      messagesRead: levelRadio("Messages", "Read").getAttribute("aria-checked"),
       droppedNote: screen.queryByText(/Not copied/),
     }).toEqual({
       name: "Laptop (copy)",
-      readMessages: "true",
-      writeMessages: "false",
+      messagesRead: "true",
       droppedNote: null,
     })
 
-    await user.click(screen.getByRole("checkbox", { name: /Write messages/ }))
+    await user.click(levelRadio("Messages", "Write"))
     await user.click(screen.getByRole("button", { name: "Cancel" }))
     await user.click(screen.getByRole("button", { name: "New key" }))
 
     expect({
       name: (screen.getByLabelText("Name") as HTMLInputElement).value,
-      writeMessages: screen.getByRole("checkbox", { name: /Write messages/ }).getAttribute("aria-checked"),
-    }).toEqual({ name: "", writeMessages: "false" })
+      messagesNone: levelRadio("Messages", "None").getAttribute("aria-checked"),
+    }).toEqual({ name: "", messagesNone: "true" })
   })
 
   it("clears a failed create's error once the draft is edited", async () => {
@@ -205,7 +293,7 @@ describe("UserApiKeysSection — create and duplicate", () => {
     await user.click(screen.getByRole("button", { name: "Create key" }))
     expect((await screen.findByRole("alert")).textContent).toBe("Key limit reached")
     expect({
-      scope: (screen.getByRole("checkbox", { name: /Write messages/ }) as HTMLButtonElement).disabled,
+      scope: levelRadio("Messages", "Write").disabled,
       version: formVersionTrigger().disabled,
       cancel: (screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled,
     }).toEqual({ scope: false, version: false, cancel: false })
@@ -250,7 +338,7 @@ describe("UserApiKeysSection — create and duplicate", () => {
     await waitFor(() =>
       expect({
         name: (screen.getByLabelText("Name") as HTMLInputElement).disabled,
-        scope: (screen.getByRole("checkbox", { name: /Write messages/ }) as HTMLButtonElement).disabled,
+        scope: levelRadio("Messages", "Write").disabled,
         version: formVersionTrigger().disabled,
         cancel: (screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled,
       }).toEqual({ name: true, scope: true, version: true, cancel: true })

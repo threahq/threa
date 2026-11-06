@@ -40,7 +40,7 @@ import { cn } from "@/lib/utils"
 import { useOptionalSettings } from "@/contexts/settings-context"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useCoarsePointer } from "@/hooks/use-pointer"
-import { useScrollEdges } from "@/hooks/use-scroll-edges"
+import { useScrollEdges, type ScrollEdges } from "@/hooks/use-scroll-edges"
 import {
   sectionTitle,
   settingAnchorId,
@@ -91,7 +91,7 @@ export const SETTING_CONTROL_HEIGHT = "h-11 sm:h-9 [@media(pointer:coarse)]:min-
 /** Dividers between the items of a list inside a row: lighter than the card's own row dividers. */
 export const SETTING_ITEM_DIVIDERS = "divide-y divide-border/50"
 
-const PEOPLE_LIST_EDGE = "pointer-events-none absolute inset-x-0 h-3 border-border/50 transition-opacity duration-150"
+const SCROLL_EDGE = "pointer-events-none absolute inset-x-0 h-3 border-border/50 transition-opacity duration-150"
 
 /**
  * A scrolling list of people in a setting row, about eight and a half rows
@@ -115,10 +115,29 @@ export function SettingPeopleList({ className, ...props }: ComponentPropsWithout
         )}
         {...props}
       />
+      <ScrollEdgeShadows above={above} below={below} bottomClassName="group-last/people:border-b-0" />
+    </div>
+  )
+}
+
+/**
+ * The soft shadows a scrolling box casts at an edge its content continues
+ * past. Place them in a `relative` wrapper around the box; content stays
+ * crisp and clickable beneath them.
+ */
+export function ScrollEdgeShadows({
+  above,
+  below,
+  bottomClassName,
+}: ScrollEdges & {
+  bottomClassName?: string
+}) {
+  return (
+    <>
       <div
         aria-hidden
         className={cn(
-          PEOPLE_LIST_EDGE,
+          SCROLL_EDGE,
           "top-0 border-t bg-gradient-to-b from-foreground/[0.06] to-transparent",
           above ? "opacity-100" : "opacity-0"
         )}
@@ -126,12 +145,13 @@ export function SettingPeopleList({ className, ...props }: ComponentPropsWithout
       <div
         aria-hidden
         className={cn(
-          PEOPLE_LIST_EDGE,
-          "bottom-0 border-b bg-gradient-to-t from-foreground/[0.06] to-transparent group-last/people:border-b-0",
+          SCROLL_EDGE,
+          "bottom-0 border-b bg-gradient-to-t from-foreground/[0.06] to-transparent",
+          bottomClassName,
           below ? "opacity-100" : "opacity-0"
         )}
       />
-    </div>
+    </>
   )
 }
 
@@ -970,7 +990,8 @@ export function SegmentedControl<T extends string>({
   ...props
 }: {
   options: readonly ChoiceOption<T>[]
-  value: T
+  /** `""` checks no segment, such as for a mix no one option describes. */
+  value: T | ""
   onValueChange: (value: string) => void
   id?: string
   disabled?: boolean
