@@ -1,5 +1,6 @@
 export { AgentActivityHeaderChip } from "./agent-activity-header-chip"
-export { StreamContent, TimelineSkeleton } from "./stream-content"
+export { StreamContent } from "./stream-content"
+export { TimelineSkeleton } from "./timeline-skeleton"
 export { EventList, groupTimelineItems } from "./event-list"
 export { EventItem } from "./event-item"
 export { MessageEvent } from "./message-event"

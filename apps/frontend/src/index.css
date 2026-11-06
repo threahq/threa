@@ -316,6 +316,11 @@ html[data-input="mouse"] .message-hover-wash:hover {
     /* Radius - slightly rounded, not too playful */
     --radius: 0.5rem;
 
+    /* Horizontal inset of every timeline row and the composer within the reading
+       column (`px-gutter`). A surface with its own padding, like a board card,
+       overrides it so timeline rows rendered inside line up with its messages. */
+    --timeline-gutter: 0.75rem;
+
     /* Sidebar - Slightly darker than main canvas for visual hierarchy */
     --sidebar-background: 35 15% 96%;
     --sidebar-foreground: 30 10% 25%;
@@ -355,6 +360,12 @@ html[data-input="mouse"] .message-hover-wash:hover {
     --call-stage: 30 15% 8%;
     --call-stage-2: 30 12% 13%;
     --call-stage-border: 30 10% 20%;
+  }
+
+  @media (min-width: 640px) {
+    :root {
+      --timeline-gutter: 1.5rem;
+    }
   }
 
   .dark {

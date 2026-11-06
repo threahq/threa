@@ -29,7 +29,7 @@ export function BriefUpdatedEvent({ event, workspaceId, streamId }: BriefUpdated
   const action = payload.version <= 1 ? "created" : "updated"
 
   return (
-    <div className="py-2 px-3 sm:px-6 text-center">
+    <div className="py-2 px-gutter text-center">
       <p className="text-sm text-muted-foreground">
         <BookText className="inline-block h-3.5 w-3.5 mr-1.5 -mt-0.5 text-primary" aria-hidden="true" />
         {actorName} {action} the{" "}

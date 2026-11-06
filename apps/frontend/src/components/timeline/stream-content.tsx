@@ -75,7 +75,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Skeleton } from "@/components/ui/skeleton"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { ErrorView } from "@/components/error-view"
 import {
@@ -132,6 +131,7 @@ import {
 import { ConversationOverlayPanel } from "./conversation-overlay/conversation-overlay"
 import { useConversationOverlay } from "./conversation-overlay/use-conversation-overlay"
 import { useOlderSkeletons } from "./use-older-skeletons"
+import { TimelineSkeleton } from "./timeline-skeleton"
 import { buildMessageConversationMap } from "./conversation-overlay/model"
 import type { ConversationOverlayContext } from "./conversation-overlay/model"
 import { MessageConversationProvider } from "./conversation-overlay/message-conversation-context"
@@ -586,25 +586,6 @@ interface StreamContentProps {
    * has started.
    */
   emptyState?: React.ReactNode
-}
-
-/**
- * The one skeleton a timeline shows before its rows: the active-load branch, the cold-boot fallback and a
- * pane still gliding in share it, so the seam to the first painted rows is invisible.
- */
-export function TimelineSkeleton() {
-  return (
-    <div className="flex flex-col gap-4 px-4 py-6 sm:px-6">
-      <div className="flex gap-3">
-        <Skeleton className="h-9 w-9 rounded-full" />
-        <div className="flex-1 space-y-2">
-          <Skeleton className="h-4 w-32" />
-          <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-2/3" />
-        </div>
-      </div>
-    </div>
-  )
 }
 
 export function StreamContent({

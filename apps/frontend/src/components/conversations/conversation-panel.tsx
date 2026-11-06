@@ -55,7 +55,7 @@ import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
 import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
 import { DeletedMessageEvent } from "@/components/timeline/deleted-message-event"
-import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
+import { MessageRowSkeleton, type MessageRowSkeletonShape } from "@/components/message/message-row-skeleton"
 import { useConversationUnreadMarker } from "@/components/conversations/use-conversation-unread-marker"
 import { RelativeTime } from "@/components/relative-time"
 import { BoardReplyComposer, type ArmedReply } from "@/components/board/board-reply-composer"
@@ -116,7 +116,7 @@ const REVEAL_TIMEOUT_MS = 1500
 
 /** Head/continuation shape of the placeholder run, so the skeleton has the same
  *  grouped rhythm as a real conversation instead of four identical blocks. */
-const SKELETON_ROWS: { continuation: boolean; width: string }[] = [
+const SKELETON_ROWS: MessageRowSkeletonShape[] = [
   { continuation: false, width: "w-11/12" },
   { continuation: true, width: "w-4/5" },
   { continuation: false, width: "w-3/4" },
@@ -125,7 +125,7 @@ const SKELETON_ROWS: { continuation: boolean; width: string }[] = [
 ]
 
 /** Reading column shared by the panel's rows, skeleton, and empty states. */
-const PANEL_ROW_WIDTH_CLASS = "mx-auto w-full min-w-0 max-w-[800px] px-3 sm:px-6"
+const PANEL_ROW_WIDTH_CLASS = "mx-auto w-full min-w-0 max-w-[800px] px-gutter"
 
 /** Headroom above the first row for its hover toolbar, which floats ~14px above
  *  the row. The stream timeline reserves the same room in its header spacer. */
@@ -149,27 +149,8 @@ function ConversationRowsSkeleton() {
   return (
     <div aria-hidden>
       {SKELETON_ROWS.map((row, i) => (
-        <div key={i} className="-mx-3 sm:-mx-6">
-          <div
-            className={cn(
-              "flex items-start gap-3 px-3 sm:px-6",
-              row.continuation ? MESSAGE_ROW_CONTINUATION_PADDING : MESSAGE_ROW_HEAD_PADDING
-            )}
-          >
-            {row.continuation ? (
-              <div className="h-8 w-8 shrink-0" />
-            ) : (
-              <Skeleton className="h-8 w-8 shrink-0 rounded-[8px]" />
-            )}
-            <div className="min-w-0 flex-1">
-              {!row.continuation && (
-                <div className="mb-0.5 flex items-baseline gap-2">
-                  <Skeleton className="h-5 w-28" />
-                </div>
-              )}
-              <Skeleton className={cn("h-[22px]", row.width)} />
-            </div>
-          </div>
+        <div key={i} className="-mx-gutter">
+          <MessageRowSkeleton {...row} className="px-gutter" />
         </div>
       ))}
     </div>
@@ -498,7 +479,7 @@ export function ConversationPanel({ workspaceId, className }: ConversationPanelP
         {/* The column's padding, so the placeholder rows sit exactly where the
             real ones will. */}
         <div className="min-h-0 flex-1 [scrollbar-gutter:stable] overflow-y-auto pt-4">
-          <div className="mx-auto w-full min-w-0 max-w-[800px] px-3 sm:px-6">{body}</div>
+          <div className="mx-auto w-full min-w-0 max-w-[800px] px-gutter">{body}</div>
         </div>
       </SidePanelContent>
     </SidePanel>
@@ -898,8 +879,8 @@ function ConversationPanelBody({
         // Break the row out of the column's padding and re-pad it, so an actor
         // accent fills to the column edges (the stream-view look) with content
         // aligned — matching the board card and timeline.
-        surfaceClassName="bg-background px-3 sm:px-6"
-        rowInsetClassName="-mx-3 sm:-mx-6"
+        surfaceClassName="bg-background px-gutter"
+        rowInsetClassName="-mx-gutter"
         onNewSubtopic={
           canBranch && !archivedReason ? () => inlineComposer.openNewSubtopic(rowStreamId, message.id) : undefined
         }
