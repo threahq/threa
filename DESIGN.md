@@ -161,24 +161,24 @@ Tailwind utilities read `hsl(var(--token))`. Both light (`:root`) and dark
 
 ### 2.1 Canvas tokens (light → dark)
 
-| Token                                | Light                       | Dark                       | Use                                                                                              |
-| ------------------------------------ | --------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------ |
-| `--background`                       | `40 20% 98%`                | `30 15% 8%`                | App canvas                                                                                       |
-| `--foreground`                       | `30 10% 12%`                | `35 15% 92%`               | Body text                                                                                        |
-| `--card` / `--popover`               | `40 15% 99%`                | `30 12% 11%`               | Elevated surfaces                                                                                |
-| `--primary`                          | `38 65% 50%`                | `40 55% 55%`               | Golden thread accent                                                                             |
-| `--primary-foreground`               | `40 20% 98%`                | `30 15% 8%`                | Text on primary                                                                                  |
-| `--secondary`                        | `35 10% 92%`                | `30 10% 18%`               | Less prominent actions                                                                           |
-| `--muted`                            | `35 12% 93%`                | `30 10% 15%`               | Subdued bg                                                                                       |
-| `--muted-foreground`                 | `30 8% 45%`                 | `35 10% 55%`               | Subdued text                                                                                     |
-| `--accent`                           | `40 50% 94%`                | `35 25% 18%`               | Hover highlights                                                                                 |
-| `--accent-foreground`                | `35 60% 35%`                | `40 45% 70%`               | Text on accent                                                                                   |
-| `--destructive`                      | `8 70% 55%`                 | `5 65% 48%`                | Errors / dangerous                                                                               |
-| `--border` / `--input`               | `35 15% 88%`                | `30 10% 20%`               | Lines                                                                                            |
-| `--control` / `--control-foreground` | `38 65% 50%` / `40 20% 98%` | `40 55% 55%` / `30 15% 8%` | Radios, checkboxes, switches. High contrast swaps a darker shade                                 |
-| `--ring`                             | `var(--control)`            | `var(--control)`           | Focus rings follow the control colour                                                            |
-| `--muted-foreground-strong`          | `30 8% 38%`                 | `35 10% 64%`               | Muted text on settings cards (`SETTING_LEGIBLE_MUTED`), where 11–13px lines need more than 4.5:1 |
-| `--radius`                           | `0.5rem`                    | (same)                     | Base radius                                                                                      |
+| Token                                | Light                       | Dark                       | Use                                                                                                      |
+| ------------------------------------ | --------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `--background`                       | `40 20% 98%`                | `30 15% 8%`                | App canvas                                                                                               |
+| `--foreground`                       | `30 10% 12%`                | `35 15% 92%`               | Body text                                                                                                |
+| `--card` / `--popover`               | `40 15% 99%`                | `30 12% 11%`               | Elevated surfaces                                                                                        |
+| `--primary`                          | `38 65% 50%`                | `40 55% 55%`               | Golden thread accent                                                                                     |
+| `--primary-foreground`               | `40 20% 98%`                | `30 15% 8%`                | Text on primary                                                                                          |
+| `--secondary`                        | `35 10% 92%`                | `30 10% 18%`               | Less prominent actions                                                                                   |
+| `--muted`                            | `35 12% 93%`                | `30 10% 15%`               | Subdued bg                                                                                               |
+| `--muted-foreground`                 | `30 8% 45%`                 | `35 10% 55%`               | Subdued text                                                                                             |
+| `--accent`                           | `40 50% 94%`                | `35 25% 18%`               | Hover highlights                                                                                         |
+| `--accent-foreground`                | `35 60% 35%`                | `40 45% 70%`               | Text on accent                                                                                           |
+| `--destructive`                      | `8 70% 55%`                 | `5 65% 48%`                | Errors / dangerous                                                                                       |
+| `--border` / `--input`               | `35 15% 88%`                | `30 10% 20%`               | Lines                                                                                                    |
+| `--control` / `--control-foreground` | `38 65% 50%` / `40 20% 98%` | `40 55% 55%` / `30 15% 8%` | Radios, checkboxes, switches. High contrast swaps a darker shade                                         |
+| `--ring`                             | `var(--control)`            | `var(--control)`           | Focus rings follow the control colour                                                                    |
+| `--muted-foreground-strong`          | `30 8% 38%`                 | `35 10% 64%`               | Muted text inside the settings shell (`SETTING_LEGIBLE_MUTED`), where 11–13px lines need more than 4.5:1 |
+| `--radius`                           | `0.5rem`                    | (same)                     | Base radius                                                                                              |
 
 Sidebar gets its own slightly darker canvas: `--sidebar-background`,
 `--sidebar-foreground`, `--sidebar-primary`, `--sidebar-accent`,
@@ -250,9 +250,9 @@ form-like or admin surface. The rules live in `setting-text.ts` and
 `setting-primitives.tsx`; reuse those constants rather than restating them.
 
 - **Section:** `SettingsSection` — an uppercase `SETTING_SECTION_HEADING_TEXT` heading (`text-xs font-semibold uppercase tracking-wide text-muted-foreground`) over one card, `rounded-lg border bg-card divide-y`. The card carries the grouping, not extra headings.
-- **Rows:** `px-4 py-3`, label left in `text-sm font-medium`, control right. Everything under a label — descriptions, meta, empty notes, errors — is `SETTING_NOTE_TEXT` (`text-[0.8125rem] leading-snug`) in `rem`, so Text size scales it. Muted lines on cards use `SETTING_LEGIBLE_MUTED`.
+- **Rows:** `px-4 py-3`, label left in `text-sm font-medium`, control right. Everything under a label — descriptions, meta, empty notes, errors — is `SETTING_NOTE_TEXT` (`text-[0.8125rem] leading-snug`) in `rem`, so Text size scales it. The settings dialog and drawer set `SETTING_LEGIBLE_MUTED` once (`settings-shell.tsx`), so every muted line inside gets the stronger shade.
 - **Group band:** `SettingGroupBand` names a run of rows inside one card (`bg-muted/40 px-4 py-1.5 text-xs font-medium`), not uppercase, so it never reads as a second section.
-- **Choices:** two or three short exclusive options are a `SegmentedControl` (native radios, arrow keys move, Tab leaves); longer lists are a select. Booleans are a `SwitchSetting`.
+- **Choices:** `ChoiceSetting`, with `variant` `segmented` for two or three short options (`SegmentedControl`, one radio group: arrow keys move, Tab leaves), `list` when options carry descriptions (the default then), `select` for long lists. Booleans are a `SwitchSetting`.
 - **Badges:** `SettingBadge` is an attribute of what it sits on (scope, role, state): `rounded-full border text-xs`, muted, beside a label or after an item's name.
 - **Touch:** controls are `SETTING_CONTROL_HEIGHT` (`h-11`, `sm:h-9`, back to 44px on coarse pointers); icon buttons `SETTING_ICON_BUTTON` (44px, 36px on fine-pointer desktops). Below `sm`, rows stack the label over the control instead of shrinking it.
 - **Empty:** inside a card, `SettingEmptyNote` (one muted note line). A whole page with nothing to show, such as a search with no matches, gets a dashed `rounded-lg border border-dashed` box with centred text in the card's place; the back office uses that box for every empty, loading and error list.
