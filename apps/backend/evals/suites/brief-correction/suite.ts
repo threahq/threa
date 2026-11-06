@@ -292,7 +292,6 @@ async function runBriefCorrectionTask(input: BriefCorrectionInput, ctx: EvalCont
       workspaceAgent,
       generalResearcher,
       searchService,
-      resolveSearchFlag: async () => "on",
       conversationSummaryService,
       attachmentService,
       memoExplorerService,

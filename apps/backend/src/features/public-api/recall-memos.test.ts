@@ -18,7 +18,6 @@ function createHandlers(recall: PreparedRecall["recall"]) {
     eventService: {} as PublicApiDeps["eventService"],
     streamService: {} as PublicApiDeps["streamService"],
     searchService: {} as PublicApiDeps["searchService"],
-    featureFlagService: {} as PublicApiDeps["featureFlagService"],
     memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
     preparedRecall: { recall } as PublicApiDeps["preparedRecall"],
     attachmentService: {} as PublicApiDeps["attachmentService"],

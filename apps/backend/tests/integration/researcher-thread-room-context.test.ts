@@ -67,7 +67,6 @@ describe("WorkspaceAgent thread and room context", () => {
       query: TOKEN,
       conversationHistory,
       invokingUserId: member,
-      searchFlag: "on",
     })
   }
 

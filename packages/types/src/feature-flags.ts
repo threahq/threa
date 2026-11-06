@@ -76,10 +76,6 @@ export const FEATURE_FLAGS = {
   // user's own opt-in preference is the consent, and the upload path re-checks
   // both server-side.
   perfDiagnostics: defineFlag({ values: ["off", "available"], scopes: ["workspace", "user"], default: "off" }),
-  // "on" is the reworked search: OR-joined keyword terms, no semantic distance
-  // gate, deep mode, memo and conversation groups, and the matching agent tool
-  // guidance. "off" keeps the pre-rework ranking on every surface.
-  search: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
   // Opt-in search query logging: "on" stores each message-search request and
   // the result the user opened (`search_query_log`) to seed a retrieval eval
   // set. Off writes nothing; the search response says whether a row exists.

@@ -25,10 +25,7 @@ import { PanelProvider } from "@/contexts"
 import { SearchPage } from "./search"
 import type { MemoExplorerResult, SearchCluster, SearchResultItem, SearchRefineOutcome } from "@/api"
 import * as apiModule from "@/api"
-import type { WorkspaceBootstrap } from "@/api"
-import type { FeatureFlagLayers } from "@threahq/types"
 import { MAX_SEARCH_REFINE_CHARS } from "@threahq/types"
-import { workspaceKeys } from "@/hooks/use-workspaces"
 
 const search = vi.fn()
 const clear = vi.fn()
@@ -47,12 +44,8 @@ function LocationProbe() {
   return <output data-testid="location">{`${location.pathname}${location.search}`}</output>
 }
 
-/** `featureFlags` seeds the bootstrap cache the `search` flag is read from; absent, every flag is at its default. */
-function renderPage(initialEntry = "/w/workspace_1/search?q=hello", featureFlags?: FeatureFlagLayers) {
+function renderPage(initialEntry = "/w/workspace_1/search?q=hello") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  if (featureFlags) {
-    queryClient.setQueryData(workspaceKeys.bootstrap("workspace_1"), { featureFlags } as WorkspaceBootstrap)
-  }
   return render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
@@ -364,8 +357,6 @@ describe("SearchPage", () => {
   })
 
   describe("refine", () => {
-    const searchOn: FeatureFlagLayers = { workspace: { search: "on" }, user: {} }
-
     function refinePill() {
       return screen.getByRole("button", { name: "Refine" })
     }
@@ -377,24 +368,17 @@ describe("SearchPage", () => {
     }
 
     it("offers the pill only with a query", () => {
-      const empty = renderPage("/w/workspace_1/search", searchOn)
+      const empty = renderPage("/w/workspace_1/search")
       expect(screen.queryByRole("button", { name: "Refine" })).not.toBeInTheDocument()
       empty.unmount()
 
-      renderPage(undefined, searchOn)
-      expect(refinePill()).toBeInTheDocument()
-    })
-
-    it("offers neither the pill nor the old hint under the pre-rework search flag", () => {
       renderPage()
-
-      expect(screen.queryByRole("button", { name: "Refine" })).not.toBeInTheDocument()
-      expect(screen.queryByText(/Refine the list in plain words/)).not.toBeInTheDocument()
+      expect(refinePill()).toBeInTheDocument()
     })
 
     it("commits the row's prose to the URL and drops it when the chip is removed", async () => {
       const user = userEvent.setup()
-      renderPage(undefined, searchOn)
+      renderPage()
 
       await waitFor(() => {
         expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object))
@@ -427,7 +411,7 @@ describe("SearchPage", () => {
 
     it("commits on Enter and closes the row on Escape without a chip", async () => {
       const user = userEvent.setup()
-      renderPage(undefined, searchOn)
+      renderPage()
 
       await user.click(refinePill())
       await user.type(await screen.findByLabelText("Refinement"), "only decisions")
@@ -444,7 +428,7 @@ describe("SearchPage", () => {
 
     it("keeps the row open with the validation line when the prose is over the cap", async () => {
       const user = userEvent.setup()
-      renderPage(undefined, searchOn)
+      renderPage()
 
       await user.click(refinePill())
       const field = await screen.findByLabelText("Refinement")
@@ -463,7 +447,7 @@ describe("SearchPage", () => {
 
     it("reopens the row prefilled from a chip and replaces that refine in the URL", async () => {
       const user = userEvent.setup()
-      renderPage("/w/workspace_1/search?q=hello&refine=only+decisions&refine=newest+first", searchOn)
+      renderPage("/w/workspace_1/search?q=hello&refine=only+decisions&refine=newest+first")
 
       await user.click(screen.getByRole("button", { name: "only decisions" }))
       const field = await screen.findByLabelText("Refinement")
@@ -503,7 +487,7 @@ describe("SearchPage", () => {
     it("offers a manual retry once the refine failed, and reruns the same search", async () => {
       const user = userEvent.setup()
       mockSearchState.refine = { applied: false, note: null }
-      renderPage("/w/workspace_1/search?q=hello&refine=only+decisions", searchOn)
+      renderPage("/w/workspace_1/search?q=hello&refine=only+decisions")
 
       expect(
         await screen.findByText(/Couldn't apply the refinement after two tries\. Showing all results\./)
@@ -530,7 +514,7 @@ describe("SearchPage", () => {
     it("spins the newest chip and keeps the count while a refined search is in flight", async () => {
       mockSearchState.refine = { applied: true, note: "Kept the decisions." }
       mockSearchState.isLoading = true
-      renderPage("/w/workspace_1/search?q=hello&refine=only+decisions", searchOn)
+      renderPage("/w/workspace_1/search?q=hello&refine=only+decisions")
 
       expect(await screen.findByText("#general")).toBeInTheDocument()
       expect(document.querySelector('[data-search-refine="only decisions"]')).toHaveAttribute(
@@ -549,7 +533,7 @@ describe("SearchPage", () => {
       mockSearchState.results = []
       mockSearchState.clusters = []
       mockSearchState.isLoading = true
-      renderPage("/w/workspace_1/search?q=hello", searchOn)
+      renderPage("/w/workspace_1/search?q=hello")
 
       await waitFor(() => expect(search).toHaveBeenCalled())
       expect(screen.queryByText("0 results")).not.toBeInTheDocument()
@@ -567,7 +551,7 @@ describe("SearchPage", () => {
 
     it("renders a row refinement shared in the URL by its title and sends it structured", async () => {
       mockSearchState.clusters = [launchCluster()]
-      renderPage("/w/workspace_1/search?q=hello&refine=drop:conv_1", searchOn)
+      renderPage("/w/workspace_1/search?q=hello&refine=drop:conv_1")
 
       expect(await screen.findByText("Drop Choosing the launch date")).toBeInTheDocument()
       expect(document.querySelector('[data-search-refine="drop:conv_1"]')).toBeInTheDocument()
@@ -584,7 +568,7 @@ describe("SearchPage", () => {
     it("writes a row refinement chosen from the menu back into the URL", async () => {
       mockSearchState.clusters = [launchCluster()]
       const user = userEvent.setup()
-      renderPage("/w/workspace_1/search?q=hello", searchOn)
+      renderPage("/w/workspace_1/search?q=hello")
 
       await screen.findByText("Choosing the launch date")
       const header = document.querySelector('[data-search-conversation-id="conv_1"]')!.parentElement as HTMLElement
@@ -598,7 +582,7 @@ describe("SearchPage", () => {
     it("opens the same actions in a drawer on a long press", async () => {
       vi.spyOn(touchCapableModule, "useTouchCapable").mockReturnValue(true)
       mockSearchState.clusters = [launchCluster()]
-      renderPage("/w/workspace_1/search?q=hello", searchOn)
+      renderPage("/w/workspace_1/search?q=hello")
 
       await screen.findByText("Choosing the launch date")
       const row = document.querySelector('[data-search-result-id="msg_1"]')!.closest("li") as HTMLElement

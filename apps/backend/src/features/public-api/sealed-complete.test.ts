@@ -128,7 +128,6 @@ function arrange(
     } as unknown as PublicApiDeps["eventService"],
     streamService: {} as PublicApiDeps["streamService"],
     searchService: {} as PublicApiDeps["searchService"],
-    featureFlagService: {} as PublicApiDeps["featureFlagService"],
     memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
     preparedRecall: {} as PublicApiDeps["preparedRecall"],
     attachmentService: {} as PublicApiDeps["attachmentService"],

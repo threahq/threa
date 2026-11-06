@@ -4,7 +4,7 @@ import { withClient, type Querier } from "../../../db"
 import { AISpendDeniedError, composeAbortSignal, isAbortError, type AI } from "@threahq/agent-runtime"
 import type { ConfigResolver, ResearcherConfig } from "../../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../../lib/ai/config-resolver"
-import { StreamTypes, type AuthoredByKind, type FeatureFlagValue, type TraceSource } from "@threahq/types"
+import { StreamTypes, type AuthoredByKind, type TraceSource } from "@threahq/types"
 import type { EmbeddingServiceLike, MemoAudience } from "../../memos"
 import { MessageRepository, type Message } from "../../messaging"
 import { MemoRepository, classifyMemoQueryIntent } from "../../memos"
@@ -38,7 +38,7 @@ import {
 import { logger } from "../../../lib/logger"
 import { truncateCodePoints } from "../../../lib/truncate"
 import { workspaceHomeUrl, workspaceMemoUrl, workspaceMessageUrl, workspaceStreamUrl } from "../workspace-links"
-import { hybridWeightsForQuery, searchRankingForFlag, type SearchRanking } from "../../search"
+import { hybridWeightsForQuery } from "../../search"
 import {
   PEOPLE_MAX_AUTHOR_SEARCHES,
   PEOPLE_MAX_REFERENCES,
@@ -128,8 +128,6 @@ export interface WorkspaceAgentInput {
   query: string
   conversationHistory: Message[]
   invokingUserId: string
-  /** The invoking user's resolved `search` flag; "off" keeps the pre-rework message ranking. */
-  searchFlag: FeatureFlagValue<"search">
   /**
    * Cooperative cancellation signal (from SessionAbortRegistry). When aborted the
    * researcher stops at the next safe checkpoint and returns partial results.
@@ -370,7 +368,6 @@ export class WorkspaceAgent {
   ): Promise<WorkspaceAgentResult> {
     const { configResolver, embeddingService } = this.deps
     const { workspaceId, query, conversationHistory } = input
-    const ranking = searchRankingForFlag(input.searchFlag)
 
     // User-scoped memos (roadmap 6.4) are private to one owner, and the
     // researcher's reply + broadcast trace sources reach every participant of the
@@ -433,8 +430,7 @@ export class WorkspaceAgent {
             embeddingService,
             memoReaders,
             true,
-            excludedMessageIds,
-            ranking
+            excludedMessageIds
           )
         : Promise.resolve({ memos: [], messages: [], attachments: [] })
 
@@ -503,8 +499,7 @@ export class WorkspaceAgent {
         embeddingService,
         memoReaders,
         true,
-        excludedMessageIds,
-        ranking
+        excludedMessageIds
       )
     // Who the query names is resolved while the planner's queries run; each person found then gets a search of
     // what they wrote.
@@ -771,8 +766,7 @@ Respond with:
     embeddingService: EmbeddingServiceLike,
     memoReaders: MemoReaders,
     includeSurroundingContext: boolean,
-    excludedMessageIds: Set<string>,
-    ranking: SearchRanking
+    excludedMessageIds: Set<string>
   ): Promise<{
     memos: EnrichedMemoResult[]
     messages: EnrichedMessageResult[]
@@ -810,8 +804,7 @@ Respond with:
             accessibleStreamIds,
             roomStreamIds,
             includeSurroundingContext,
-            excludedMessageIds,
-            ranking
+            excludedMessageIds
           )
           return {
             type: "messages" as const,
@@ -981,8 +974,7 @@ Respond with:
     accessibleStreamIds: string[],
     roomStreamIds: string[],
     includeSurroundingContext: boolean,
-    excludedMessageIds: Set<string>,
-    ranking: SearchRanking
+    excludedMessageIds: Set<string>
   ): Promise<EnrichedMessageResult[]> {
     const { embeddingService } = this.deps
 
@@ -1011,13 +1003,13 @@ Respond with:
         const hasEmbedding = embedding.length > 0
         // Skipped ids are dropped after ranking, so the fetch widens by their count to still fill `limit`.
         const search = async (streamIds: string[], limit: number, skip: Set<string>) => {
-          const params = { workspaceId, query: normalizedQuery, streamIds, filters, limit: limit + skip.size, ranking }
+          const params = { workspaceId, query: normalizedQuery, streamIds, filters, limit: limit + skip.size }
           const primary =
             hasQuery && hasEmbedding
               ? await SearchRepository.hybridSearch(client, {
                   ...params,
                   embedding,
-                  ...hybridWeightsForQuery(normalizedQuery, ranking),
+                  ...hybridWeightsForQuery(normalizedQuery),
                 })
               : await SearchRepository.fullTextSearch(client, params)
           const results =

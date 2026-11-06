@@ -119,7 +119,6 @@ function arrangeClaim(params: { responseStream: typeof THREAD | typeof ROOT; ins
     eventService: { getLatestSequence: mock(() => Promise.resolve(7n)) } as unknown as EventService,
     streamService: {} as PublicApiDeps["streamService"],
     searchService: {} as PublicApiDeps["searchService"],
-    featureFlagService: {} as PublicApiDeps["featureFlagService"],
     memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
     preparedRecall: {} as PublicApiDeps["preparedRecall"],
     attachmentService: {} as PublicApiDeps["attachmentService"],

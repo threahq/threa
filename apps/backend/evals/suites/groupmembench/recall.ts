@@ -97,7 +97,6 @@ async function runRecall({ question }: RecallInput, ctx: EvalContext): Promise<R
     query: question.question,
     conversationHistory: [],
     invokingUserId: askerId,
-    searchFlag: "on",
     deadlineAt: startedAt + WORKSPACE_AGENT_TOTAL_BUDGET_MS,
   })
   const latencyMs = Date.now() - startedAt

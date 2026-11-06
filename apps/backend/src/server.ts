@@ -1215,7 +1215,6 @@ export async function startServer(): Promise<ServerInstance> {
     workspaceAgent,
     generalResearcher,
     searchService,
-    resolveSearchFlag: (workspaceId, workosUserId) => featureFlagService.getFlag(workspaceId, workosUserId, "search"),
     conversationSummaryService,
     preparedRecall,
     attachmentService,

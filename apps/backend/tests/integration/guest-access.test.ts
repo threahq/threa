@@ -1030,7 +1030,6 @@ describe("stream access without membership", () => {
         streamIds: accessible,
         filters: {},
         limit: 100,
-        ranking: "improved",
       })
       const keyByMessage = new Map(Object.entries(messageIds).map(([key, id]) => [id, key]))
       return {

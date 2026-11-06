@@ -244,7 +244,6 @@ describe("Search result clusters", () => {
   test("should fold message hits and a memo into the conversation row, and keep the stray hit as its own row", async () => {
     const memo = memoHit(wsId, [rollbackId, hiddenId], padId)
     const { clusters, memos } = await makeService([memo]).searchClusters({
-      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(memberId),
       query: "deploy",
@@ -280,7 +279,6 @@ describe("Search result clusters", () => {
   test("should carry a memo's readable source messages when nothing else matched its conversation", async () => {
     const memo = memoHit(wsId, [postmortemId, rollbackId, hiddenId], padId)
     const { clusters } = await makeService([memo]).searchClusters({
-      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(memberId),
       query: "hexagonal",
@@ -302,7 +300,6 @@ describe("Search result clusters", () => {
   test("should run the memo leg with the frontend's default status filter", async () => {
     const memo = memoHit(wsId, [rollbackId], padId)
     const { clusters, memos } = await makeService([memo]).searchClusters({
-      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(memberId),
       query: "deploy",
@@ -319,7 +316,6 @@ describe("Search result clusters", () => {
   test("should cluster a memo's sources inside a thread the requester reads through the parent pad (INV-62)", async () => {
     const memo = memoHit(wsId, [threadNoteId], threadId)
     const { clusters } = await makeService([memo]).searchClusters({
-      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(memberId),
       query: "hexagonal",
@@ -341,7 +337,6 @@ describe("Search result clusters", () => {
   test("should not fetch source messages outside the requester's streams", async () => {
     const memo = memoHit(wsId, [hiddenId], privatePadId)
     const { clusters } = await makeService([memo]).searchClusters({
-      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(memberId),
       query: "hexagonal",

@@ -86,7 +86,6 @@ describe("WorkspaceAgent memo search audience", () => {
       query: TOKEN,
       conversationHistory: [],
       invokingUserId,
-      searchFlag: "off",
     })
     return result.memos.map((found) => found.memo.title.replace(`${TOKEN} `, "")).sort()
   }

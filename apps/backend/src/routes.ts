@@ -2414,7 +2414,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const publicApi = createPublicApiHandlers({
     getAccessibleStreamIds,
     searchService,
-    featureFlagService,
     memoExplorerService,
     preparedRecall,
     attachmentService,

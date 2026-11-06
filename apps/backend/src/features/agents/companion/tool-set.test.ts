@@ -58,7 +58,6 @@ const workspace: WorkspaceToolDeps = {
   memoViewerUserId: undefined,
   memoAudience: { kind: "users", userIds: ["usr_1"] },
   peopleViewer: { kind: "user", userId: "usr_1" },
-  searchFlag: "on",
   searchService: {} as WorkspaceToolDeps["searchService"],
   storage: {} as WorkspaceToolDeps["storage"],
   attachmentService: {} as WorkspaceToolDeps["attachmentService"],
@@ -83,15 +82,6 @@ describe("search_messages prompt guidance", () => {
   test("is absent without workspace deps", () => {
     expect(toolNames({})).not.toContain(AgentToolNames.SEARCH_MESSAGES)
   })
-
-  test("keeps the pre-rework description and no prompt prose when the search flag is off", () => {
-    const built = buildToolSet({ enabledTools: null, workspace: { ...workspace, searchFlag: "off" } })
-    const tool = built.find((t) => t.name === AgentToolNames.SEARCH_MESSAGES)
-
-    expect(tool?.config.promptBlock).toBeUndefined()
-    expect(tool?.config.description).not.toContain("rewritten into alternative phrasings")
-    expect(tool?.config.description).toContain("Search for messages in the workspace knowledge base")
-  })
 })
 
 describe("workspace_research prompt guidance", () => {
@@ -103,18 +93,6 @@ describe("workspace_research prompt guidance", () => {
     const tool = built.find((t) => t.name === "workspace_research")
 
     expect(tool?.config.promptBlock).toContain(DIRECTION_GUIDANCE)
-  })
-
-  test("drops the direction guidance when the search flag is off", () => {
-    const built = buildToolSet({
-      enabledTools: null,
-      workspace: { ...workspace, searchFlag: "off" },
-      runWorkspaceAgent: async () => ({}) as never,
-    })
-    const tool = built.find((t) => t.name === "workspace_research")
-
-    expect(tool?.config.promptBlock).toContain("workspace_research")
-    expect(tool?.config.promptBlock).not.toContain(DIRECTION_GUIDANCE)
   })
 })
 

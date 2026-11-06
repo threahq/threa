@@ -129,9 +129,10 @@ const SEARCH_MESSAGES_DESCRIPTION = `Search for messages in the workspace knowle
 - Context about decisions or plans
 
 Set exact=true to find literal phrase matches (useful for error messages, IDs, or quoted text).
-Optionally filter by stream using ID (stream_xxx), slug (general), or prefixed slug (#general).`
+Optionally filter by stream using ID (stream_xxx), slug (general), or prefixed slug (#general).
+Semantic searches are rewritten into alternative phrasings and reranked, so describe what you remember in plain words rather than guessing exact wording.`
 
-const IMPROVED_SEARCH_MESSAGES_PROMPT_BLOCK = `## Searching Messages
+const SEARCH_MESSAGES_PROMPT_BLOCK = `## Searching Messages
 
 You have a \`search_messages\` tool. It rewrites a plain-language query into alternative phrasings, searches keyword and meaning together, and reranks the results, so it works best when the query describes what the user is looking for rather than guessing the words they used.
 
@@ -143,17 +144,13 @@ You have a \`search_messages\` tool. It rewrites a plain-language query into alt
 - For broad recall ("what did we decide about…", "have I talked about…") prefer \`workspace_research\`, which searches messages, memos and attachments together and follows up on its own.`
 
 export function createSearchMessagesTool(deps: WorkspaceToolDeps) {
-  const { db, workspaceId, accessibleStreamIds, invokingUserId, searchService, searchFlag } = deps
-  const improved = searchFlag === "on"
+  const { db, workspaceId, accessibleStreamIds, invokingUserId, searchService } = deps
 
   return defineAgentTool({
     name: "search_messages",
     categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.SEARCH_MESSAGES],
-    ...(improved && { promptBlock: IMPROVED_SEARCH_MESSAGES_PROMPT_BLOCK }),
-    description: improved
-      ? `${SEARCH_MESSAGES_DESCRIPTION}
-Semantic searches are rewritten into alternative phrasings and reranked, so describe what you remember in plain words rather than guessing exact wording.`
-      : SEARCH_MESSAGES_DESCRIPTION,
+    promptBlock: SEARCH_MESSAGES_PROMPT_BLOCK,
+    description: SEARCH_MESSAGES_DESCRIPTION,
     inputSchema: SearchMessagesSchema,
 
     execute: async (input): Promise<AgentToolResult> => {
@@ -183,8 +180,7 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
           filters: input.stream ? { streamIds: filterStreamIds } : undefined,
           limit: 10,
           exact: input.exact,
-          deep: improved && !input.exact,
-          searchFlag,
+          deep: !input.exact,
         })
 
         const [enriched, conversationStreams] = await Promise.all([
@@ -223,7 +219,7 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
               stream: input.stream,
               exact: input.exact,
               results: [],
-              ...(improved && { conversations: [] }),
+              conversations: [],
               message: "No matching messages found",
             }),
           }
@@ -251,14 +247,12 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
               url: workspaceMessageUrl(workspaceId, r.streamId, r.id),
               date: r.createdAt,
             })),
-            ...(improved && {
-              conversations: conversations.map((c) => ({
-                ...c,
-                url: c.firstMessageId
-                  ? workspaceMessageUrl(workspaceId, c.streamId, c.firstMessageId)
-                  : workspaceStreamUrl(workspaceId, c.streamId),
-              })),
-            }),
+            conversations: conversations.map((c) => ({
+              ...c,
+              url: c.firstMessageId
+                ? workspaceMessageUrl(workspaceId, c.streamId, c.firstMessageId)
+                : workspaceStreamUrl(workspaceId, c.streamId),
+            })),
           }),
         }
       } catch (error) {

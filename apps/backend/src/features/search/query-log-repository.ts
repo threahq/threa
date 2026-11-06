@@ -1,6 +1,5 @@
 import type { SearchClickKind } from "@threahq/types"
 import { sql, type Querier } from "../../db"
-import type { SearchRanking } from "./config"
 
 export type SearchQueryMode = "normal" | "deep"
 
@@ -23,7 +22,6 @@ export interface InsertSearchQueryLogInput {
   query: string
   params: unknown
   mode: SearchQueryMode
-  ranking: SearchRanking
   resultIds: SearchQueryLogResultIds
 }
 
@@ -80,7 +78,7 @@ export const SearchQueryLogRepository = {
       INSERT INTO search_query_log (id, workspace_id, user_id, query, params, mode, ranking, result_ids)
       VALUES (
         ${input.id}, ${input.workspaceId}, ${input.userId}, ${input.query},
-        ${JSON.stringify(input.params)}::jsonb, ${input.mode}, ${input.ranking},
+        ${JSON.stringify(input.params)}::jsonb, ${input.mode}, 'improved',
         ${JSON.stringify(input.resultIds)}::jsonb
       )
     `)

@@ -8,7 +8,6 @@ import type { ConversationForMessage, SearchResult } from "./repository"
 import type { SearchCluster } from "./clusters"
 import { serializeMemoResult } from "../memos"
 import { resolveInFilterStreamIds, resolveUserAccessibleStreamIds } from "./access"
-import { searchRankingForFlag } from "./config"
 import { logger } from "../../lib/logger"
 import { validateRequest } from "../../lib/validation"
 import { setAuditSubjects } from "../access-log"
@@ -163,7 +162,6 @@ export function createSearchHandlers({ pool, searchService, searchQueryLogServic
         resolveUserAccessibleStreamIds(pool, workspaceId, userId, filters),
         featureFlagService.getFlags(workspaceId, req.user!.workosUserId),
       ])
-      const searchFlag = flags.search
 
       const {
         results,
@@ -182,7 +180,6 @@ export function createSearchHandlers({ pool, searchService, searchQueryLogServic
         limit,
         deep,
         refine,
-        searchFlag,
       })
 
       setAuditSubjects(res, [
@@ -214,7 +211,6 @@ export function createSearchHandlers({ pool, searchService, searchQueryLogServic
                 refine,
               },
               mode: deep ? "deep" : "normal",
-              ranking: searchRankingForFlag(searchFlag),
               resultIds: {
                 messages: results.map((r) => r.id),
                 conversations: [...new Set(clusters.flatMap((c) => (c.conversation ? [c.conversation.id] : [])))],

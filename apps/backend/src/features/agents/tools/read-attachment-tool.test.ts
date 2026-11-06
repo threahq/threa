@@ -33,7 +33,6 @@ function makeDeps(overrides?: Partial<WorkspaceToolDeps>): WorkspaceToolDeps {
     memoViewerUserId: undefined,
     memoAudience: { kind: "users", userIds: ["usr_test"] },
     peopleViewer: { kind: "user", userId: "usr_test" },
-    searchFlag: "on",
     searchService: {} as WorkspaceToolDeps["searchService"],
     storage: { getObject: async () => Buffer.from("test") } as unknown as WorkspaceToolDeps["storage"],
     attachmentService: makeAttachmentService(),

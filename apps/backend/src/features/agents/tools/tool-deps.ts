@@ -1,11 +1,5 @@
 import type { Pool } from "pg"
-import type {
-  AgentSettablePreferences,
-  FeatureFlagValue,
-  KnowledgeType,
-  MemoScope,
-  UserPreferences,
-} from "@threahq/types"
+import type { AgentSettablePreferences, KnowledgeType, MemoScope, UserPreferences } from "@threahq/types"
 import type { AttachmentService } from "../../attachments"
 import type { DocAgentService } from "../../docs"
 import type { MemoAudience, MemoExplorerService } from "../../memos"
@@ -29,8 +23,6 @@ export interface WorkspaceToolDeps {
   /** Who reads what a tool returns from workspace memory: the turn's audience, not the invoker. */
   memoAudience: MemoAudience
   peopleViewer: PeopleViewer
-  /** The invoking user's resolved `search` flag; "off" keeps the pre-rework tool prompt and ranking. */
-  searchFlag: FeatureFlagValue<"search">
   searchService: SearchService
   storage: StorageProvider
   attachmentService: AttachmentService

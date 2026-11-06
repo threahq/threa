@@ -137,7 +137,6 @@ describe("buildSystemPrompt", () => {
     const tools = [
       createWorkspaceResearchTool({
         runWorkspaceAgent: async () => ({ sources: [], memos: [], messages: [], substeps: [] }) as never,
-        searchFlag: "on",
       }),
       createWebSearchTool({ engines: [createExaEngine("exa-test")] }),
       createReadUrlTool(),

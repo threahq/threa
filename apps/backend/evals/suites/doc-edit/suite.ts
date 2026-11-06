@@ -388,7 +388,6 @@ async function runDocEditTask(input: DocEditInput, ctx: EvalContext): Promise<Do
       workspaceAgent,
       generalResearcher,
       searchService,
-      resolveSearchFlag: async () => "on",
       conversationSummaryService,
       attachmentService,
       memoExplorerService,

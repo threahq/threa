@@ -248,7 +248,6 @@ async function runPersonaStyleTask(input: PersonaStyleInput, ctx: EvalContext): 
       workspaceAgent,
       generalResearcher,
       searchService,
-      resolveSearchFlag: async () => "on",
       conversationSummaryService,
       attachmentService,
       memoExplorerService,

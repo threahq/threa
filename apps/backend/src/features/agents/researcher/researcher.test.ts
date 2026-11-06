@@ -58,7 +58,6 @@ describe("WorkspaceAgent abort/deadline checkpoints", () => {
       query: "What did we decide?",
       conversationHistory: [],
       invokingUserId: "user_1",
-      searchFlag: "on",
       signal: controller.signal,
     })
 
@@ -77,7 +76,6 @@ describe("WorkspaceAgent abort/deadline checkpoints", () => {
       query: "What did we decide?",
       conversationHistory: [],
       invokingUserId: "user_1",
-      searchFlag: "on",
       deadlineAt: Date.now() - 1, // already past
     })
 
@@ -96,7 +94,6 @@ describe("WorkspaceAgent abort/deadline checkpoints", () => {
       query: "What did we decide?",
       conversationHistory: [],
       invokingUserId: "user_1",
-      searchFlag: "on",
       signal: controller.signal,
     })
 
@@ -120,7 +117,6 @@ describe("WorkspaceAgent abort/deadline checkpoints", () => {
       query: "q",
       conversationHistory: [],
       invokingUserId: "user_1",
-      searchFlag: "on",
       signal: controller.signal,
       onSubstep,
     })
@@ -250,7 +246,6 @@ describe("WorkspaceAgent runSearchLoop", () => {
         query: options.query,
         conversationHistory: (options.conversationHistory ?? []) as WorkspaceAgentInput["conversationHistory"],
         invokingUserId: "user_1",
-        searchFlag: "on",
       },
       { type: "all_streams" },
       ["stream_1"],
@@ -445,7 +440,6 @@ describe("WorkspaceAgent abort/deadline checkpoints (continued)", () => {
         query: "q",
         conversationHistory: [],
         invokingUserId: "user_1",
-        searchFlag: "on",
       })
     } catch (err) {
       caught = err

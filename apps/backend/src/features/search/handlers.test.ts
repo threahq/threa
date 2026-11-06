@@ -60,7 +60,7 @@ function createHandlers(overrides: {
     searchService: { searchClusters } as unknown as SearchService,
     searchQueryLogService: { record, recordClick } as unknown as SearchQueryLogService,
     featureFlagService: {
-      getFlags: mock(() => Promise.resolve({ search: "on", searchQueryLog: overrides.searchQueryLog ?? "on" })),
+      getFlags: mock(() => Promise.resolve({ searchQueryLog: overrides.searchQueryLog ?? "on" })),
     } as unknown as FeatureFlagService,
   })
   return { handlers, record, recordClick, searchClusters }

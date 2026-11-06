@@ -46,7 +46,7 @@ export interface SearchRowMenuTarget {
   messageId: string | null
   /** Set on a row inside a conversation: More like this / Drop name it. */
   conversationId: string | null
-  /** Absent while refining is unavailable (no query, or the search flag is off). */
+  /** Absent while refining is unavailable (no query). */
   onRefine?: (refine: SearchRefinement) => void
 }
 
