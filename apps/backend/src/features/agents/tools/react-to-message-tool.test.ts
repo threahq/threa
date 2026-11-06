@@ -16,7 +16,6 @@ function makeWorkspace(overrides?: Partial<WorkspaceToolDeps>): WorkspaceToolDep
     memoViewerUserId: undefined,
     memoAudience: { kind: "users", userIds: ["usr_test"] },
     peopleViewer: { kind: "user", userId: "usr_test" },
-    searchFlag: "on",
     searchService: {} as WorkspaceToolDeps["searchService"],
     storage: {} as WorkspaceToolDeps["storage"],
     attachmentService: {} as WorkspaceToolDeps["attachmentService"],

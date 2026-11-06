@@ -277,7 +277,7 @@ describe("SettingsDialog", () => {
     unmount()
 
     vi.spyOn(useFeatureFlagsModule, "useOverriddenFeatureFlags").mockReturnValue([
-      { key: "search", value: "on", defaultValue: "off", scope: "user" },
+      { key: "searchQueryLog", value: "on", defaultValue: "off", scope: "user" },
     ])
     renderWindow("?settings=")
     const yours = within(await screen.findByRole("navigation", { name: "Settings pages" })).getByRole("list", {

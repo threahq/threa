@@ -60,7 +60,6 @@ describe("SearchService exact phrase search", () => {
     const service = makeService()
 
     await service.search({
-      searchFlag: "on",
       workspaceId: "ws_1",
       permissions: { accessibleStreamIds: ["stream_1"] },
       query: "created pr",
@@ -79,7 +78,6 @@ describe("SearchService exact phrase search", () => {
     const service = makeService()
 
     await service.search({
-      searchFlag: "on",
       workspaceId: "ws_1",
       permissions: { accessibleStreamIds: ["stream_1"] },
       query: "",
@@ -149,7 +147,6 @@ describe("SearchService deep mode", () => {
     })
 
     await service.search({
-      searchFlag: "on",
       workspaceId: "ws_1",
       permissions: { accessibleStreamIds: ["stream_1"] },
       query: "original query",
@@ -185,7 +182,6 @@ describe("SearchService deep mode", () => {
     })
 
     await service.search({
-      searchFlag: "on",
       workspaceId: "ws_1",
       permissions: { accessibleStreamIds: ["stream_1"] },
       query: "q",
@@ -206,7 +202,6 @@ describe("SearchService deep mode", () => {
     })
 
     const { results: searchResults } = await service.search({
-      searchFlag: "on",
       workspaceId: "ws_1",
       permissions: { accessibleStreamIds: ["stream_1"] },
       query: "q",
@@ -232,7 +227,6 @@ describe("SearchService deep mode", () => {
     })
 
     await service.search({
-      searchFlag: "on",
       workspaceId: "ws_1",
       permissions: { accessibleStreamIds: ["stream_1"], userId: "usr_1" },
       query: "original query",
@@ -248,7 +242,6 @@ describe("SearchService deep mode", () => {
     const service = makeService({ queryExpander: { expand } })
 
     await service.search({
-      searchFlag: "on",
       workspaceId: "ws_1",
       permissions: { accessibleStreamIds: ["stream_1"] },
       query: "q",
@@ -272,7 +265,6 @@ describe("SearchService deep mode", () => {
     })
 
     const { results: searchResults } = await service.search({
-      searchFlag: "on",
       workspaceId: "ws_1",
       permissions: { accessibleStreamIds: ["stream_1"] },
       query: "q",
@@ -299,7 +291,6 @@ describe("SearchService relevance scoring on an ordinary search", () => {
 
   const runSearch = (service: ReturnType<typeof makeService>, limit?: number) =>
     service.search({
-      searchFlag: "on",
       workspaceId: "ws_1",
       permissions: { accessibleStreamIds: ["stream_1"], userId: "usr_1" },
       query: "deploy rollback",
@@ -349,83 +340,15 @@ describe("SearchService relevance scoring on an ordinary search", () => {
 
     expect(results.map((r) => r.id)).toEqual(["a", "b"])
   })
-
-  test("legacy ranking neither widens the fetch nor scores", async () => {
-    const hybridSearch = spyOn(SearchRepository, "hybridSearch").mockResolvedValue([])
-    const score = mock(async () => null)
-    const service = makeService({
-      embeddingService: { embed: async () => [0], embedBatch: async (texts: string[]) => texts.map(() => [0]) },
-      relevanceScorer: { score },
-    })
-
-    await service.search({
-      searchFlag: "off",
-      workspaceId: "ws_1",
-      permissions: { accessibleStreamIds: ["stream_1"] },
-      query: "deploy rollback",
-      limit: 7,
-    })
-
-    expect(hybridSearch.mock.calls[0]?.[1]).toMatchObject({ limit: 7 })
-    expect(score).not.toHaveBeenCalled()
-  })
 })
 
-describe("SearchService with the search flag off", () => {
+describe("SearchService conversation leg", () => {
   afterEach(() => {
     pool.query.mockClear()
     mock.restore()
   })
 
-  test("runs the legacy ranking, ignores deep and skips the conversation leg", async () => {
-    const hybridSearch = spyOn(SearchRepository, "hybridSearch").mockResolvedValue([])
-    const conversationSearch = spyOn(SearchRepository, "conversationSearch").mockResolvedValue([])
-    const expand = mock(async () => ["variant"])
-    const score = mock<RelevanceScorerLike["score"]>(async () => null)
-    const service = makeService({
-      embeddingService: { embed: async () => [0], embedBatch: async (texts: string[]) => texts.map(() => [0]) },
-      queryExpander: { expand },
-      relevanceScorer: { score },
-    })
-
-    const { conversations } = await service.search({
-      searchFlag: "off",
-      workspaceId: "ws_1",
-      permissions: { accessibleStreamIds: ["stream_1"] },
-      query: "original query",
-      deep: true,
-    })
-
-    expect(hybridSearch).toHaveBeenCalledTimes(1)
-    expect(hybridSearch).toHaveBeenCalledWith(
-      pool,
-      expect.objectContaining({ workspaceId: "ws_1", query: "original query", ranking: "legacy", limit: 20 })
-    )
-    expect(expand).not.toHaveBeenCalled()
-    expect(score).not.toHaveBeenCalled()
-    expect(conversationSearch).not.toHaveBeenCalled()
-    expect(conversations).toEqual([])
-  })
-
-  test("passes the legacy ranking to full-text search", async () => {
-    const fullTextSearch = spyOn(SearchRepository, "fullTextSearch").mockResolvedValue([])
-    const service = makeService()
-
-    await service.search({
-      searchFlag: "off",
-      workspaceId: "ws_1",
-      permissions: { accessibleStreamIds: ["stream_1"] },
-      query: "railway deploy",
-      skipEmbedding: true,
-    })
-
-    expect(fullTextSearch).toHaveBeenCalledWith(
-      pool,
-      expect.objectContaining({ workspaceId: "ws_1", query: "railway deploy", ranking: "legacy" })
-    )
-  })
-
-  test("the flag on runs the conversation leg with the improved ranking", async () => {
+  test("runs alongside the hybrid message search", async () => {
     const hybridSearch = spyOn(SearchRepository, "hybridSearch").mockResolvedValue([])
     const conversationSearch = spyOn(SearchRepository, "conversationSearch").mockResolvedValue([])
     const service = makeService({
@@ -433,16 +356,12 @@ describe("SearchService with the search flag off", () => {
     })
 
     await service.search({
-      searchFlag: "on",
       workspaceId: "ws_1",
       permissions: { accessibleStreamIds: ["stream_1"] },
       query: "original query",
     })
 
-    expect(hybridSearch).toHaveBeenCalledWith(
-      pool,
-      expect.objectContaining({ workspaceId: "ws_1", ranking: "improved" })
-    )
+    expect(hybridSearch).toHaveBeenCalledWith(pool, expect.objectContaining({ workspaceId: "ws_1" }))
     expect(conversationSearch).toHaveBeenCalledTimes(1)
     expect(conversationSearch).toHaveBeenCalledWith(pool, expect.objectContaining({ workspaceId: "ws_1" }))
   })
@@ -472,7 +391,6 @@ describe("SearchService memo leg", () => {
     const service = makeService({ embeddingService: embedding, memoSearch: { search } })
 
     const { memos, clusters } = await service.searchClusters({
-      searchFlag: "on",
       workspaceId: "ws_1",
       permissions: { accessibleStreamIds: ["stream_1"], userId: "usr_1" },
       query: "launch date",
@@ -515,7 +433,6 @@ describe("SearchService memo leg", () => {
     })
 
     await service.searchClusters({
-      searchFlag: "on",
       workspaceId: "ws_1",
       permissions: { accessibleStreamIds: ["stream_1"], userId: "usr_1" },
       query: " launch date ",
@@ -542,7 +459,6 @@ describe("SearchService memo leg", () => {
 
     await expect(
       service.searchClusters({
-        searchFlag: "on",
         workspaceId: "ws_1",
         permissions: { accessibleStreamIds: ["stream_1"] },
         query: "launch date",
@@ -554,16 +470,15 @@ describe("SearchService memo leg", () => {
     })
   })
 
-  test("should skip the memo leg for a from: filter, for the legacy ranking, and for plain search", async () => {
+  test("should skip the memo leg for a from: filter and for plain search", async () => {
     spyOn(SearchRepository, "hybridSearch").mockResolvedValue([])
     spyOn(SearchRepository, "conversationSearch").mockResolvedValue([])
     const search = mock(async () => [])
     const service = makeService({ embeddingService: embedding, memoSearch: { search } })
     const base = { workspaceId: "ws_1", permissions: { accessibleStreamIds: ["stream_1"] }, query: "launch date" }
 
-    await service.searchClusters({ ...base, searchFlag: "on", filters: { authorId: "usr_2" } })
-    await service.searchClusters({ ...base, searchFlag: "off" })
-    await service.search({ ...base, searchFlag: "on" })
+    await service.searchClusters({ ...base, filters: { authorId: "usr_2" } })
+    await service.search({ ...base })
 
     expect(search).not.toHaveBeenCalled()
   })
@@ -577,7 +492,6 @@ describe("SearchService refine", () => {
 
   const embedding = { embed: async () => [0], embedBatch: async (texts: string[]) => texts.map(() => [0]) }
   const base = {
-    searchFlag: "on" as const,
     workspaceId: "ws_1",
     permissions: { accessibleStreamIds: ["stream_1"], userId: "usr_1" },
     query: "launch date",
@@ -657,18 +571,6 @@ describe("SearchService refine", () => {
 
     expect(response.clusters.map((cluster) => cluster.streamId)).toEqual(["stream_1", "stream_2", "stream_3"])
     expect(response.refine).toEqual({ applied: false, note: null })
-  })
-
-  test("should ignore the refine and report null under the pre-rework search flag", async () => {
-    stubLegs()
-    const refine = mock(async () => ({ keep: [], note: "" }))
-    const service = makeService({ embeddingService: embedding, refiner: { refine } })
-
-    const response = await service.searchClusters({ ...base, searchFlag: "off", refine: ["only decisions"] })
-
-    expect(refine).not.toHaveBeenCalled()
-    expect(response.refine).toBeNull()
-    expect(response.clusters.map((cluster) => cluster.streamId)).toEqual(["stream_1", "stream_2", "stream_3"])
   })
 
   test("should not call the refiner without a refine, and report null", async () => {

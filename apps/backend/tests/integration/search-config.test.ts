@@ -18,14 +18,9 @@ import { DEFAULT_SEARCH_CONFIG, SEARCH_TEXT_CONFIGS } from "../../src/lib/text-s
 import { userId, workspaceId, streamId } from "../../src/lib/id"
 import { StubRelevanceScorer } from "../../src/features/memos"
 
-const RANKINGS = [
-  { name: "legacy", searchFlag: "off" },
-  { name: "improved", searchFlag: "on" },
-] as const
-
 // No query embedding keeps search keyword-only: the test server's embedding
-// worker embeds these messages at its own pace, and with improved ranking any
-// embedded message is a semantic hit.
+// worker embeds these messages at its own pace, and any embedded message is a
+// semantic hit.
 function fakeEmbeddingService(): EmbeddingServiceLike {
   return { embed: async () => [], embedBatch: async () => [] }
 }
@@ -99,13 +94,8 @@ describe("Per-message text-search config", () => {
     return result.rows[0]!.search_config
   }
 
-  async function searchIds(
-    params: { workspaceId: string; permissions: SearchPermissions },
-    query: string,
-    searchFlag: "on" | "off"
-  ) {
+  async function searchIds(params: { workspaceId: string; permissions: SearchPermissions }, query: string) {
     const { results } = await makeService().search({
-      searchFlag,
       workspaceId: params.workspaceId,
       permissions: params.permissions,
       query,
@@ -113,45 +103,43 @@ describe("Per-message text-search config", () => {
     return results.map((r) => r.id)
   }
 
-  for (const ranking of RANKINGS) {
-    test(`should match an inflected Swedish word from its base form under ${ranking.name} ranking`, async () => {
-      const ws = await seedWorkspaceWithStream()
-      const swedish = await postMessage({
-        workspaceId: ws.workspaceId,
-        streamId: ws.streamId,
-        authorId: ws.userId,
-        text: "Jag har skickat fakturorna nu, säg till om något saknas",
-      })
-      await postMessage({
-        workspaceId: ws.workspaceId,
-        streamId: ws.streamId,
-        authorId: ws.userId,
-        text: "The invoices went out this morning, shout if anything is missing",
-      })
-
-      expect(await storedConfig(swedish.id)).toBe("swedish")
-      expect(await searchIds(ws, "faktura", ranking.searchFlag)).toEqual([swedish.id])
+  test("should match an inflected Swedish word from its base form", async () => {
+    const ws = await seedWorkspaceWithStream()
+    const swedish = await postMessage({
+      workspaceId: ws.workspaceId,
+      streamId: ws.streamId,
+      authorId: ws.userId,
+      text: "Jag har skickat fakturorna nu, säg till om något saknas",
+    })
+    await postMessage({
+      workspaceId: ws.workspaceId,
+      streamId: ws.streamId,
+      authorId: ws.userId,
+      text: "The invoices went out this morning, shout if anything is missing",
     })
 
-    test(`should keep matching inflected English under ${ranking.name} ranking`, async () => {
-      const ws = await seedWorkspaceWithStream()
-      const english = await postMessage({
-        workspaceId: ws.workspaceId,
-        streamId: ws.streamId,
-        authorId: ws.userId,
-        text: "The invoices went out this morning, shout if anything is missing",
-      })
-      await postMessage({
-        workspaceId: ws.workspaceId,
-        streamId: ws.streamId,
-        authorId: ws.userId,
-        text: "Jag har skickat fakturorna nu, säg till om något saknas",
-      })
+    expect(await storedConfig(swedish.id)).toBe("swedish")
+    expect(await searchIds(ws, "faktura")).toEqual([swedish.id])
+  })
 
-      expect(await storedConfig(english.id)).toBe("english")
-      expect(await searchIds(ws, "invoice", ranking.searchFlag)).toEqual([english.id])
+  test("should keep matching inflected English", async () => {
+    const ws = await seedWorkspaceWithStream()
+    const english = await postMessage({
+      workspaceId: ws.workspaceId,
+      streamId: ws.streamId,
+      authorId: ws.userId,
+      text: "The invoices went out this morning, shout if anything is missing",
     })
-  }
+    await postMessage({
+      workspaceId: ws.workspaceId,
+      streamId: ws.streamId,
+      authorId: ws.userId,
+      text: "Jag har skickat fakturorna nu, säg till om något saknas",
+    })
+
+    expect(await storedConfig(english.id)).toBe("english")
+    expect(await searchIds(ws, "invoice")).toEqual([english.id])
+  })
 
   test("should stem a short message as English", async () => {
     const ws = await seedWorkspaceWithStream()

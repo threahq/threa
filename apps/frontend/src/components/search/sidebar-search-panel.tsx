@@ -26,7 +26,6 @@ import { conversationTitles, countClusterResults, groupClustersByStream } from "
 import { useStreamGroupCollapse } from "./use-stream-group-collapse"
 import { SearchResultDisplayToggle } from "./search-result-display-toggle"
 import { useStoredSearchResultDisplayMode } from "@/lib/search-result-display-mode"
-import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { cn } from "@/lib/utils"
 
 /**
@@ -55,9 +54,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
     recordResultClick,
   } = useMessageSearch(workspaceId, query, refines)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
-  const refineEnabled = useFeatureFlag(workspaceId, "search") === "on"
   const refineControl = useRefineControl({ refines, onChange: setRefines })
-  const canRefine = refineEnabled && hasQuery
   const { preferences } = usePreferences()
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId)
   const groups = useMemo(() => groupClustersByStream(clusters, memos), [clusters, memos])
@@ -210,12 +207,12 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
               refines={refines}
               conversationTitles={rowTitles}
               onRemove={(index) => setRefines(refines.filter((_, i) => i !== index))}
-              onEdit={canRefine ? refineControl.edit : undefined}
+              onEdit={hasQuery ? refineControl.edit : undefined}
               pending={isLoading && refines.length > 0}
               failed={refineFailed}
             />
             <SearchFilterMenu workspaceId={workspaceId} query={query} onQueryChange={setQuery} />
-            {canRefine && (
+            {hasQuery && (
               <SearchRefineTrigger
                 ref={refineControl.triggerRef}
                 open={refineControl.isOpen}
@@ -224,7 +221,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
             )}
           </div>
 
-          {canRefine && refineControl.isOpen && (
+          {hasQuery && refineControl.isOpen && (
             <div className="px-3 pb-2">
               <SearchRefineRow
                 key={refineControl.editingIndex ?? "new"}
@@ -298,7 +295,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
                 onResultSelect={handleResultSelect}
                 onConversationSelect={(id) => recordResultClick({ kind: "conversation", id })}
                 onMemoSelect={(id) => recordResultClick({ kind: "memo", id })}
-                onRefine={canRefine ? refineControl.append : undefined}
+                onRefine={hasQuery ? refineControl.append : undefined}
               />
             </div>
           )}

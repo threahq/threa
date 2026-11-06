@@ -576,7 +576,6 @@ export async function runCompanionTask(
       workspaceAgent,
       generalResearcher,
       searchService,
-      resolveSearchFlag: async () => "on",
       conversationSummaryService,
       attachmentService,
       memoExplorerService,

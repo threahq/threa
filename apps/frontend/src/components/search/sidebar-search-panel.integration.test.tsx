@@ -15,10 +15,8 @@ import { SidebarSearchPanel } from "./sidebar-search-panel"
 import { mockStreamsList } from "@/test/fixtures"
 import { mockUsersList } from "@/test/fixtures/users"
 import { mockSearchResultsList } from "@/test/fixtures/messages"
-import type { AuthorType, FeatureFlagLayers } from "@threahq/types"
+import type { AuthorType } from "@threahq/types"
 import { MAX_SEARCH_REFINE_CHARS } from "@threahq/types"
-import { workspaceKeys } from "@/hooks/use-workspaces"
-import type { WorkspaceBootstrap } from "@/api"
 import {
   createMockClusterConversation,
   createMockMemoResult,
@@ -139,12 +137,8 @@ function OpenOnMount({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-/** `featureFlags` seeds the bootstrap cache the `search` flag is read from; absent, every flag is at its default. */
-function renderPanel(featureFlags?: FeatureFlagLayers) {
+function renderPanel() {
   const queryClient = createTestQueryClient()
-  if (featureFlags) {
-    queryClient.setQueryData(workspaceKeys.bootstrap("workspace_1"), { featureFlags } as WorkspaceBootstrap)
-  }
   return render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
@@ -252,7 +246,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
   describe("basic rendering", () => {
     it("renders the search input and the filter-syntax hint when empty", () => {
-      renderPanel({ workspace: { search: "on" }, user: {} })
+      renderPanel()
 
       expect(screen.getByLabelText("Search messages")).toBeInTheDocument()
       expect(screen.getByText(/from:@user/)).toBeInTheDocument()
@@ -1292,7 +1286,6 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
   describe("refine", () => {
     const baseFilters = { status: ["active", "archived"] }
-    const searchOn: FeatureFlagLayers = { workspace: { search: "on" }, user: {} }
 
     async function typeQuery(user: ReturnType<typeof userEvent.setup>, query = "hello") {
       const editor = screen.getByLabelText("Search messages")
@@ -1311,24 +1304,18 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.keyboard("{Enter}")
     }
 
-    it("offers the pill only with a query, and only under the search flag", async () => {
+    it("offers the pill only with a query", async () => {
       const user = userEvent.setup()
-      const { unmount } = renderPanel(searchOn)
+      renderPanel()
 
       expect(screen.queryByRole("button", { name: "Refine" })).not.toBeInTheDocument()
       await typeQuery(user)
       expect(refinePill()).toBeInTheDocument()
-
-      unmount()
-      renderPanel()
-      await typeQuery(user)
-      expect(screen.queryByRole("button", { name: "Refine" })).not.toBeInTheDocument()
-      expect(screen.queryByText(/Refine the list in plain words/)).not.toBeInTheDocument()
     })
 
     it("opens the row focused from the pill, with the commit segment disabled while empty", async () => {
       const user = userEvent.setup()
-      renderPanel(searchOn)
+      renderPanel()
       await typeQuery(user)
 
       expect(refinePill()).toHaveAttribute("aria-expanded", "false")
@@ -1350,7 +1337,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       mockSearchState.results = mockSearchResultsList
 
       const user = userEvent.setup()
-      renderPanel(searchOn)
+      renderPanel()
       await typeQuery(user)
       await waitFor(() => {
         expect(mockSearchState.search).toHaveBeenLastCalledWith("hello", baseFilters)
@@ -1381,7 +1368,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       mockSearchState.results = mockSearchResultsList
 
       const user = userEvent.setup()
-      renderPanel(searchOn)
+      renderPanel()
       await typeQuery(user)
       await commitRefine(user, "only decisions")
 
@@ -1392,7 +1379,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
     it("discards the text on Escape and hands focus back to the pill", async () => {
       const user = userEvent.setup()
-      renderPanel(searchOn)
+      renderPanel()
       await typeQuery(user)
 
       await user.click(refinePill())
@@ -1410,7 +1397,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
     it("discards the text from the close segment", async () => {
       const user = userEvent.setup()
-      renderPanel(searchOn)
+      renderPanel()
       await typeQuery(user)
 
       await user.click(refinePill())
@@ -1423,7 +1410,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
     it("keeps the row open with the validation line when the prose is over the cap", async () => {
       const user = userEvent.setup()
-      renderPanel(searchOn)
+      renderPanel()
       await typeQuery(user)
 
       await user.click(refinePill())
@@ -1445,7 +1432,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       mockSearchState.results = mockSearchResultsList
 
       const user = userEvent.setup()
-      renderPanel(searchOn)
+      renderPanel()
       await typeQuery(user)
       await commitRefine(user, "only decisions")
       await commitRefine(user, "newest first")
@@ -1473,7 +1460,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
     it("leaves the chip untouched when an edit is abandoned", async () => {
       const user = userEvent.setup()
-      renderPanel(searchOn)
+      renderPanel()
       await typeQuery(user)
       await commitRefine(user, "only decisions")
 
@@ -1489,7 +1476,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
     it("keeps the newest refines when the limit is exceeded", async () => {
       const user = userEvent.setup()
-      renderPanel(searchOn)
+      renderPanel()
       await typeQuery(user)
 
       for (const refine of ["one", "two", "three", "four", "five", "six"]) {
@@ -1503,7 +1490,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
     it("wraps the pill in a tooltip on a fine pointer", async () => {
       const user = userEvent.setup()
-      renderPanel(searchOn)
+      renderPanel()
       await typeQuery(user)
 
       await user.hover(refinePill())
@@ -1517,7 +1504,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       vi.spyOn(hooksModule, "useCoarsePointer").mockReturnValue(true)
 
       const user = userEvent.setup()
-      renderPanel(searchOn)
+      renderPanel()
       await typeQuery(user)
 
       await user.hover(refinePill())
@@ -1531,7 +1518,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       mockSearchState.refine = { applied: true, note: "Kept the decisions." }
 
       const user = userEvent.setup()
-      renderPanel(searchOn)
+      renderPanel()
       await typeQuery(user)
       await commitRefine(user, "only decisions")
 
@@ -1547,7 +1534,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       mockSearchState.isLoading = true
 
       const user = userEvent.setup()
-      renderPanel(searchOn)
+      renderPanel()
       await typeQuery(user)
       await commitRefine(user, "only decisions")
 
@@ -1568,7 +1555,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       mockSearchState.results = mockSearchResultsList
 
       const user = userEvent.setup()
-      renderPanel(searchOn)
+      renderPanel()
 
       const editor = await typeQuery(user)
       expect(await screen.findByText("#general")).toBeInTheDocument()
@@ -1588,7 +1575,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       mockSearchState.refine = { applied: false, note: null }
 
       const user = userEvent.setup()
-      renderPanel(searchOn)
+      renderPanel()
       await typeQuery(user)
       await commitRefine(user, "only decisions")
 
@@ -1618,7 +1605,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       mockSearchState.results = mockSearchResultsList
 
       const user = userEvent.setup()
-      renderPanel(searchOn)
+      renderPanel()
       await typeQuery(user, "/etc")
       await waitFor(() => {
         expect(mockSearchState.search).toHaveBeenLastCalledWith("/etc", baseFilters)
@@ -1632,13 +1619,12 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
   describe("row menu", () => {
     const baseFilters = { status: ["active", "archived"] }
-    const searchOn: FeatureFlagLayers = { workspace: { search: "on" }, user: {} }
 
-    async function renderWithConversationRow(featureFlags: FeatureFlagLayers = searchOn) {
+    async function renderWithConversationRow() {
       mockSearchState.results = mockSearchResultsList
       mockSearchState.clusters = [launchCluster()]
       const user = userEvent.setup()
-      renderPanel(featureFlags)
+      renderPanel()
       const editor = screen.getByLabelText("Search messages")
       await user.click(editor)
       await user.type(editor, "hello")
@@ -1744,10 +1730,10 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(screen.getByRole("menuitem", { name: "Save for later" })).toBeInTheDocument()
     })
 
-    it("omits More like this and Drop on a lone-message row, and without the search flag", async () => {
+    it("omits More like this and Drop on a lone-message row", async () => {
       mockSearchState.results = mockSearchResultsList
       const user = userEvent.setup()
-      renderPanel(searchOn)
+      renderPanel()
       const editor = screen.getByLabelText("Search messages")
       await user.click(editor)
       await user.type(editor, "hello")
@@ -1760,14 +1746,6 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(within(menu).getByRole("menuitem", { name: "Open message" })).toBeInTheDocument()
       expect(within(menu).queryByRole("menuitem", { name: "More like this" })).not.toBeInTheDocument()
       expect(within(menu).queryByRole("menuitem", { name: "Drop" })).not.toBeInTheDocument()
-    })
-
-    it("omits the refine items while the search flag is off", async () => {
-      const user = await renderWithConversationRow({ workspace: {}, user: {} })
-
-      const menu = await openConversationMenu(user)
-      expect(within(menu).getByRole("menuitem", { name: "Copy link" })).toBeInTheDocument()
-      expect(within(menu).queryByRole("menuitem", { name: "More like this" })).not.toBeInTheDocument()
     })
   })
 })

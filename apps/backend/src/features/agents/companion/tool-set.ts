@@ -217,9 +217,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
 
   const tools: Array<AgentTool | null> = [
     // Workspace research (available when agent has trigger context)
-    runWorkspaceAgent
-      ? createWorkspaceResearchTool({ runWorkspaceAgent, searchFlag: workspace?.searchFlag ?? "off" })
-      : null,
+    runWorkspaceAgent ? createWorkspaceResearchTool({ runWorkspaceAgent }) : null,
 
     // General research — bounded multi-surface research (workspace + web +
     // integrations). Like workspace_research it needs the trigger context that

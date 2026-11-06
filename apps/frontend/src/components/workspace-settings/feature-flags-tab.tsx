@@ -26,7 +26,6 @@ const FLAG_COPY: { [K in FeatureFlagKey]: { label: string; description: string }
     label: "Performance diagnostics",
     description: "Adds Performance diagnostics to Privacy & security.",
   },
-  search: { label: "New search", description: "Reworked ranking, deep search, and memory and conversation groups." },
   searchQueryLog: {
     label: "Search logging",
     description: "Keeps your searches and what you opened, to improve search.",

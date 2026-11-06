@@ -3,14 +3,12 @@ import { SearchRepository, type ConversationSearchResult, type SearchResult, typ
 import type { EmbeddingServiceLike, MemoExplorerResult, MemoExplorerSearchParams, RelevanceScorerLike } from "../memos"
 import { buildSearchClusters, type SearchCluster } from "./clusters"
 import { logger } from "../../lib/logger"
-import type { FeatureFlagValue, SearchRefinement, StreamType } from "@threahq/types"
+import type { SearchRefinement, StreamType } from "@threahq/types"
 import {
   CONVERSATION_SEARCH_LIMIT,
   CONVERSATION_SEARCH_MAX_DISTANCE,
   hybridWeightsForQuery,
   MEMO_SEARCH_LIMIT,
-  searchRankingForFlag,
-  type SearchRanking,
   SEARCH_DEEP_CANDIDATE_POOL,
   SEARCH_RELEVANCE_FLOOR,
   SEARCH_RRF_K,
@@ -63,12 +61,6 @@ export interface SearchParams {
   deep?: boolean
   /** Refinements of the result list, oldest first; one model call over the clustered rows. */
   refine?: SearchRefinement[]
-  /**
-   * The requester's resolved `search` flag. "off" runs the pre-rework ranking,
-   * ignores `deep` and returns no conversations. Required so a caller cannot
-   * fall into either behaviour by omission (INV-11).
-   */
-  searchFlag: FeatureFlagValue<"search">
 }
 
 export interface SearchResponse {
@@ -90,7 +82,7 @@ export interface SearchResponse {
 
 export interface SearchClustersResponse extends SearchResponse {
   /**
-   * Memos near the query, ranked. Empty on exact, keyword-only and legacy
+   * Memos near the query, ranked. Empty on exact and keyword-only
    * searches, and when a filter memo search cannot honour is set.
    */
   memos: MemoExplorerResult[]
@@ -200,11 +192,7 @@ export class SearchService {
   async searchClusters(params: SearchParams): Promise<SearchClustersResponse> {
     const { streamIds, ...legs } = await this.runLegs(params, { memos: true })
     const clusters = await this.clusterResults({ workspaceId: params.workspaceId, streamIds, ...legs })
-    // The refine belongs to the reworked ranking; under the pre-rework flag value it is ignored.
-    const refines =
-      searchRankingForFlag(params.searchFlag) === "improved"
-        ? (params.refine?.filter((refine) => typeof refine !== "string" || refine.trim().length > 0) ?? [])
-        : []
+    const refines = params.refine?.filter((refine) => typeof refine !== "string" || refine.trim().length > 0) ?? []
     if (refines.length === 0) return { ...legs, clusters, refine: null }
     if (clusters.length === 0) return { ...legs, clusters, refine: { applied: true, note: null } }
 
@@ -249,12 +237,10 @@ export class SearchService {
       limit = DEFAULT_LIMIT,
       exact = false,
       skipEmbedding = false,
-      searchFlag,
+      deep = false,
     } = params
-    const ranking = searchRankingForFlag(searchFlag)
-    const deep = ranking === "improved" && (params.deep ?? false)
 
-    logger.debug({ query, phrases, filters, workspaceId, exact, deep, ranking }, "Search request")
+    logger.debug({ query, phrases, filters, workspaceId, exact, deep }, "Search request")
 
     const candidateStreamIds = this.resolveStreamIds(permissions.accessibleStreamIds, filters)
 
@@ -298,7 +284,7 @@ export class SearchService {
 
     const normalizedQuery = query.trim()
     const memoQuery = [normalizedQuery, ...phrases].join(" ").trim()
-    const runMemoLeg = legs.memos && ranking === "improved" && memoQuery.length > 0 && filters.authorId === undefined
+    const runMemoLeg = legs.memos && memoQuery.length > 0 && filters.authorId === undefined
     if (runMemoLeg && !permissions.userId) throw new Error("Memo search requires the searching user")
 
     // One query embedding serves the message leg, the conversation leg and
@@ -313,7 +299,7 @@ export class SearchService {
     }
 
     const conversationLeg =
-      ranking === "improved" && queryEmbedding.length > 0
+      queryEmbedding.length > 0
         ? SearchRepository.conversationSearch(this.pool, {
             workspaceId,
             embedding: queryEmbedding,
@@ -343,7 +329,6 @@ export class SearchService {
             streamIds,
             repoFilters,
             limit,
-            ranking,
             workspaceId,
             userId: permissions.userId,
           })
@@ -420,11 +405,10 @@ export class SearchService {
     streamIds: string[]
     repoFilters: ResolvedFilters
     limit: number
-    ranking: SearchRanking
     workspaceId: string
     userId?: string
   }): Promise<SearchResult[]> {
-    const { normalizedQuery, embedding, phrases, streamIds, repoFilters, limit, ranking, workspaceId, userId } = params
+    const { normalizedQuery, embedding, phrases, streamIds, repoFilters, limit, workspaceId, userId } = params
 
     // INV-30: each branch issues a single query, pass pool directly
     const hasQuery = normalizedQuery.length > 0
@@ -438,12 +422,9 @@ export class SearchService {
         streamIds,
         filters: repoFilters,
         limit,
-        ranking,
       })
     }
 
-    // Improved ranking scores a pool and cuts to the limit; legacy fetches exactly what it returns.
-    const scored = ranking === "improved"
     const candidates = await SearchRepository.hybridSearch(this.pool, {
       workspaceId,
       query: normalizedQuery,
@@ -451,11 +432,9 @@ export class SearchService {
       embedding,
       streamIds,
       filters: repoFilters,
-      limit: scored ? Math.max(limit, SEARCH_SCORE_CANDIDATE_POOL) : limit,
-      ranking,
-      ...hybridWeightsForQuery(normalizedQuery, ranking),
+      limit: Math.max(limit, SEARCH_SCORE_CANDIDATE_POOL),
+      ...hybridWeightsForQuery(normalizedQuery),
     })
-    if (!scored) return candidates
 
     const ordered = await this.orderByRelevance(normalizedQuery, candidates, { workspaceId, userId })
     return ordered.slice(0, limit)
@@ -519,7 +498,6 @@ export class SearchService {
         streamIds,
         repoFilters,
         limit,
-        ranking: "improved",
         workspaceId,
         userId,
       })
@@ -536,8 +514,7 @@ export class SearchService {
           streamIds,
           filters: repoFilters,
           limit: SEARCH_DEEP_CANDIDATE_POOL,
-          ranking: "improved",
-          ...hybridWeightsForQuery(q, "improved"),
+          ...hybridWeightsForQuery(q),
         })
       )
     )

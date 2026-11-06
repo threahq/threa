@@ -3,7 +3,6 @@ import type { Request, Response } from "express"
 import type { Pool, PoolClient } from "pg"
 import type { Server } from "socket.io"
 import type { SearchService } from "../search"
-import type { FeatureFlagService } from "../feature-flags"
 import { setAuditSubjects } from "../access-log"
 import { serializeSearchResult, resolveUserAccessibleStreamIds, SearchRepository } from "../search"
 import { BotChannelAccessRepository, type BotChannelService } from "../api-keys"
@@ -903,7 +902,6 @@ async function buildSessionControlSealedAck(
 
 export interface PublicApiDeps {
   searchService: SearchService
-  featureFlagService: FeatureFlagService
   memoExplorerService: MemoExplorerService
   preparedRecall: PreparedRecall
   attachmentService: AttachmentService
@@ -958,7 +956,6 @@ export function createAccessibleStreamIdsResolver({
 
 export function createPublicApiHandlers({
   searchService,
-  featureFlagService,
   memoExplorerService,
   preparedRecall,
   attachmentService,
@@ -2992,8 +2989,6 @@ export function createPublicApiHandlers({
         }
       }
 
-      // API keys carry no user for the user layer; the workspace layer decides.
-      const searchFlag = await featureFlagService.getWorkspaceFlag(workspaceId, "search")
       const { results } = await searchService.search({
         workspaceId,
         permissions: { accessibleStreamIds },
@@ -3008,7 +3003,6 @@ export function createPublicApiHandlers({
         limit,
         exact,
         skipEmbedding: !semantic,
-        searchFlag,
       })
 
       await noteSandboxReads(

@@ -18,7 +18,6 @@ describe("SearchRepository phrase predicates", () => {
     const db = makeDb()
     await SearchRepository.fullTextSearch(db, {
       workspaceId: "ws_1",
-      ranking: "improved",
       query: "created pr",
       phrases: ["1429", "urgent"],
       streamIds: ["stream_member_channel"],
@@ -35,7 +34,6 @@ describe("SearchRepository phrase predicates", () => {
     const db = makeDb()
     await SearchRepository.fullTextSearch(db, {
       workspaceId: "ws_1",
-      ranking: "improved",
       query: "error",
       phrases: ["A%_\\B"],
       streamIds: ["stream_member_channel"],
@@ -52,7 +50,6 @@ describe("SearchRepository phrase predicates", () => {
     const db = makeDb()
     await SearchRepository.fullTextSearch(db, {
       workspaceId: "ws_1",
-      ranking: "improved",
       query: "",
       phrases: ["1429"],
       streamIds: ["stream_member_channel"],
@@ -70,7 +67,6 @@ describe("SearchRepository phrase predicates", () => {
     const db = makeDb()
     await SearchRepository.hybridSearch(db, {
       workspaceId: "ws_1",
-      ranking: "improved",
       query: "created pr",
       phrases: ["1429"],
       embedding: [0.1, 0.2],

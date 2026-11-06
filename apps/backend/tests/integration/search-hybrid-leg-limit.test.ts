@@ -73,7 +73,6 @@ describe("Hybrid search leg limit", () => {
       streamIds: [padId],
       filters: {},
       limit: MATCHING_MESSAGES,
-      ranking: "improved",
       keywordWeight: 0.4,
       semanticWeight: 0.6,
     })
@@ -89,7 +88,6 @@ describe("Hybrid search leg limit", () => {
       streamIds: [padId],
       filters: {},
       limit: SEARCH_HYBRID_LEG_LIMIT + 100,
-      ranking: "improved",
       keywordWeight: 0.4,
       semanticWeight: 0.6,
     })

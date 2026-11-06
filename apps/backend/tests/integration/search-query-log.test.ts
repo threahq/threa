@@ -27,7 +27,6 @@ describe("search query log", () => {
     query: "deploy checklist",
     params: { phrases: ["deploy checklist"], in: ["stream_1"], exact: false, limit: 20 },
     mode: "deep" as const,
-    ranking: "improved" as const,
     resultIds: { messages: ["msg_1", "msg_2"], conversations: ["conv_1"], memos: ["memo_1"] },
   }
 

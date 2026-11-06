@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { AuthoredByKinds, KnowledgeTypes, MemoTypes, WORKSPACE_ROLE_SLUGS, type AuthoredByKind } from "@threahq/types"
-import { FeatureFlagOverrideRepository } from "../../src/features/feature-flags"
 import { MemoRepository } from "../../src/features/memos"
 import { memoId } from "../../src/lib/id"
 import {
@@ -148,7 +147,6 @@ describe("memo audience over HTTP", () => {
       guestUser.id,
       WORKSPACE_ROLE_SLUGS.GUEST,
     ])
-    await FeatureFlagOverrideRepository.replaceForSubject(pool, workspaceId, "workspace", workspaceId, { search: "on" })
 
     const capturedMessages: Record<CaptureRoom, Awaited<ReturnType<typeof sendMessage>>> = {
       pub: await sendMessage(owner.client, workspaceId, pub.id, "Captured in the public channel"),

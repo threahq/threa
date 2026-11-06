@@ -25,7 +25,6 @@ import { useStreamGroupCollapse } from "@/components/search/use-stream-group-col
 import { SearchResultDisplayToggle } from "@/components/search/search-result-display-toggle"
 import { useStoredSearchResultDisplayMode } from "@/lib/search-result-display-mode"
 import { boundRefines, serializeRefine } from "@/lib/search-query-parser"
-import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
@@ -109,9 +108,7 @@ export function SearchPage() {
     recordResultClick,
   } = useMessageSearch(workspaceId ?? "", localQuery, refines)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
-  const refineEnabled = useFeatureFlag(workspaceId ?? "", "search") === "on"
   const refineControl = useRefineControl({ refines, onChange: setRefines })
-  const canRefine = refineEnabled && hasQuery
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId ?? "")
   const groups = useMemo(() => groupClustersByStream(clusters, memos), [clusters, memos])
@@ -173,7 +170,7 @@ export function SearchPage() {
             refines={refines}
             conversationTitles={rowTitles}
             onRemove={(index) => setRefines(refines.filter((_, i) => i !== index))}
-            onEdit={canRefine ? refineControl.edit : undefined}
+            onEdit={hasQuery ? refineControl.edit : undefined}
             pending={isLoading && refines.length > 0}
             failed={refineFailed}
           />
@@ -183,7 +180,7 @@ export function SearchPage() {
             onQueryChange={handleQueryChange}
             className="h-7"
           />
-          {canRefine && (
+          {hasQuery && (
             <SearchRefineTrigger
               ref={refineControl.triggerRef}
               open={refineControl.isOpen}
@@ -209,7 +206,7 @@ export function SearchPage() {
           )}
         </div>
 
-        {canRefine && refineControl.isOpen && (
+        {hasQuery && refineControl.isOpen && (
           <div className="px-4 pb-2">
             <SearchRefineRow
               key={refineControl.editingIndex ?? "new"}
@@ -271,7 +268,7 @@ export function SearchPage() {
               onResultSelect={handleResultSelect}
               onConversationSelect={(id) => recordResultClick({ kind: "conversation", id })}
               onMemoSelect={(id) => recordResultClick({ kind: "memo", id })}
-              onRefine={canRefine ? refineControl.append : undefined}
+              onRefine={hasQuery ? refineControl.append : undefined}
             />
           )}
 

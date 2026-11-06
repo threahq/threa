@@ -47,7 +47,6 @@ function createHandlers(streamService: Partial<StreamService>, botAccess: { isSt
     eventService: {} as PublicApiDeps["eventService"],
     streamService: streamService as StreamService,
     searchService: {} as PublicApiDeps["searchService"],
-    featureFlagService: {} as PublicApiDeps["featureFlagService"],
     memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
     preparedRecall: {} as PublicApiDeps["preparedRecall"],
     attachmentService: {} as PublicApiDeps["attachmentService"],
