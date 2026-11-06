@@ -110,11 +110,7 @@ async function setUpDmPair(
     await ownerPage.reload()
   }
 
-  // Calls are governed by the `calls` feature flag (workspace scope, default on).
-  // The flag is control-plane-written only — there is no regional enable path to
-  // hit from an e2e — but default-on means every workspace has calls unless a
-  // backoffice `off` override is set, which nothing here does. So no enable step;
-  // the dev-test stack's fake-CF seam satisfies the env gate.
+  // No enable step: the dev-test stack's fake-CF seam satisfies the only gate.
 
   // B joins the workspace as a member.
   await expectApiOk(
@@ -140,8 +136,7 @@ async function setUpDmPair(
   if (!dmStreamId) throw new Error("DM stream id not resolved after first message")
 
   // Reload A onto the freshly-materialized DM stream, and land B on the same DM
-  // so both see the timeline card. (The header call button is on by default via
-  // the `calls` flag, so no bootstrap round-trip is needed to reveal it.)
+  // so both see the timeline card.
   await ownerPage.reload()
   await invitee.page.goto(`/w/${workspaceId}/s/${dmStreamId}`)
 

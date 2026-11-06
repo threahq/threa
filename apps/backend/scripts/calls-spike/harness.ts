@@ -285,9 +285,8 @@ async function seedWorkspaceAndUsers(
       slug: `spike-${tag}-${rand}-u${i}`,
     })
   }
-  // Calls are gated by the `calls` feature flag (workspace scope), which defaults
-  // on — no per-workspace enable row needed; the fake-CF backends run with
-  // `cloudflareEnabled=true`, so the gates pass.
+  // The fake-CF backends run with `cloudflareEnabled=true`, so the only calls
+  // gate passes.
   return { wsId, users }
 }
 
