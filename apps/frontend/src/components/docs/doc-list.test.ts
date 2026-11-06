@@ -11,7 +11,7 @@ import {
   type DocListStream,
 } from "./doc-list"
 
-const NO_FILTERS: DocListFilters = { query: "", host: null, label: null, editor: null }
+const NO_FILTERS: DocListFilters = { query: "", host: null, label: null, editor: null, archived: false }
 
 function stream(id: string, overrides: Partial<DocListStream> = {}): DocListStream {
   return { id, type: "channel", slug: id, displayName: null, createdAt: "2026-10-01T00:00:00.000Z", ...overrides }
@@ -24,7 +24,7 @@ function doc(id: string, overrides: Partial<DocListStream> = {}): DocListStream 
 function item(
   id: string,
   editors: [actorId: string, lastEditedAt: string][],
-  listed: Pick<DocListItem, "displayName" | "createdAt"> & Partial<Pick<DocListItem, "isTopLevel">> = {
+  listed: Pick<DocListItem, "displayName" | "createdAt"> & Partial<Pick<DocListItem, "parentStreamId">> = {
     displayName: null,
     createdAt: "2026-10-01T00:00:00.000Z",
   }
@@ -32,7 +32,7 @@ function item(
   return {
     id,
     ...listed,
-    isTopLevel: listed.isTopLevel ?? false,
+    parentStreamId: listed.parentStreamId === undefined ? "general" : listed.parentStreamId,
     lastEditedAt: editors[0]?.[1] ?? null,
     editors: editors.map(([actorId, lastEditedAt]) => ({
       actorId,
@@ -62,7 +62,11 @@ const items = [
   ]),
   item("doc_notes", [["usr_ben", "2026-10-15T00:00:00.000Z"]]),
   item("doc_shared", [["usr_ana", "2026-10-05T00:00:00.000Z"]]),
-  item("doc_granted", [], { displayName: "Granted brief", createdAt: "2026-10-04T00:00:00.000Z", isTopLevel: true }),
+  item("doc_granted", [], {
+    displayName: "Granted brief",
+    createdAt: "2026-10-04T00:00:00.000Z",
+    parentStreamId: null,
+  }),
   item("doc_archived", []),
   item("doc_sealed", []),
 ]
@@ -74,7 +78,7 @@ const assignments = [
   { labelId: "label_q4", resourceType: "message", resourceId: "doc_plan" },
 ]
 
-const rows = buildDocRows({ streams, items, assignments, listedAt })
+const rows = buildDocRows({ streams, items, assignments, listedAt, archived: false })
 
 describe("buildDocRows", () => {
   it("should list live docs by last edit, else creation, newest first when joined with the list", () => {
@@ -95,6 +99,28 @@ describe("buildDocRows", () => {
 
   it("should drop a listed doc when it or its host is archived in the cache", () => {
     expect(rows.map((row) => row.doc.id).filter((id) => id === "doc_archived" || id === "doc_sealed")).toEqual([])
+  })
+
+  it("should list every archived item, sealed or not, and no cached live doc when built for the archived view", () => {
+    const archivedItems = [
+      item("doc_archived", []),
+      item("doc_sealed", [["usr_ana", "2026-10-06T00:00:00.000Z"]], {
+        displayName: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+        parentStreamId: "retired",
+      }),
+      item("doc_gone", [], {
+        displayName: "Uncached",
+        createdAt: "2026-10-02T00:00:00.000Z",
+        parentStreamId: "retired",
+      }),
+    ]
+    const archivedRows = buildDocRows({ streams, items: archivedItems, assignments, listedAt, archived: true })
+    expect(archivedRows.map((row) => [row.doc.id, row.title, row.host?.id ?? null])).toEqual([
+      ["doc_sealed", "Under a retired host", "retired"],
+      ["doc_gone", "Uncached", "retired"],
+      ["doc_archived", "Old", "general"],
+    ])
   })
 
   it("should leave the host empty when the viewer cannot read the doc's host", () => {
@@ -145,8 +171,8 @@ describe("filterDocRows", () => {
   })
 
   it("should prefer the cached placement after a move while the list response is stale", () => {
-    const staleItems = items.map((listed) => (listed.id === "doc_plan" ? { ...listed, isTopLevel: true } : listed))
-    const currentRows = buildDocRows({ streams, items: staleItems, assignments, listedAt })
+    const staleItems = items.map((listed) => (listed.id === "doc_plan" ? { ...listed, parentStreamId: null } : listed))
+    const currentRows = buildDocRows({ streams, items: staleItems, assignments, listedAt, archived: false })
     expect(filterDocRows(currentRows, { ...NO_FILTERS, host: "top-level" }).map(({ doc }) => doc.id)).toEqual([
       "doc_granted",
     ])
@@ -193,10 +219,11 @@ describe("doc list search params", () => {
       query: "plan",
       host: null,
       editor: "usr_ana",
+      archived: true,
     })
     expect({ search: written.toString(), filters: readDocListFilters(written) }).toEqual({
-      search: "other=1&q=plan&editor=usr_ana",
-      filters: { query: "plan", host: null, label: null, editor: "usr_ana" },
+      search: "other=1&q=plan&editor=usr_ana&archived=1",
+      filters: { query: "plan", host: null, label: null, editor: "usr_ana", archived: true },
     })
   })
 

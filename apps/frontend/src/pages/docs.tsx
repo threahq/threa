@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
-import { AlertCircle, Check, ChevronDown, Filter, Plus, Search } from "lucide-react"
+import { AlertCircle, Archive, Check, ChevronDown, Filter, Plus, Search } from "lucide-react"
 import { StreamTypes, type DocEditor } from "@threahq/types"
 import { PagePaneHeader } from "@/components/panes"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ActorAvatar } from "@/components/actor-avatar"
+import { ArchivedToggleLink } from "@/components/archived-toggle-link"
 import { LabelGlyph } from "@/components/labels/label-chip"
 import { SidebarLabelsProvider, StreamLabelDots } from "@/components/layout/sidebar/sidebar-labels"
 import {
@@ -30,7 +31,7 @@ import {
 } from "@/components/docs/doc-list"
 import { useDocList } from "@/components/docs/use-doc-list"
 import { usePanel } from "@/contexts"
-import { useActors, type ActorLookup } from "@/hooks"
+import { useActors, useArchivedStreams, type ActorLookup } from "@/hooks"
 import { useDebouncedUrlText } from "@/hooks/use-debounced-url-text"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useCreateTopLevelDoc } from "@/hooks/use-create-doc"
@@ -64,30 +65,39 @@ function DocsPageInner({ workspaceId }: { workspaceId: string }) {
   const createDoc = useCreateTopLevelDoc(workspaceId)
   const [searchParams, setSearchParams] = useSearchParams()
   const filters = useMemo(() => readDocListFilters(searchParams), [searchParams])
+  const { archived } = filters
   const cachedStreams = useWorkspaceStreams(workspaceId)
+  // Archived docs and their archived hosts are missing from the workspace cache.
+  const archivedStreams = useArchivedStreams(workspaceId, { enabled: archived })
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
   // A cached DM's displayName can be the raw row's null; its name is the peer's.
   const streams = useMemo(
     () =>
-      cachedStreams.map((stream) =>
+      [...cachedStreams, ...(archived ? (archivedStreams.data ?? []) : [])].map((stream) =>
         stream.type === StreamTypes.DM
           ? { ...stream, displayName: resolveDmDisplayName(stream.id, users, dmPeers) ?? stream.displayName }
           : stream
       ),
-    [cachedStreams, users, dmPeers]
+    [cachedStreams, archived, archivedStreams.data, users, dmPeers]
   )
   const labels = useWorkspaceLabels(workspaceId)
   const assignments = useWorkspaceLabelAssignments(workspaceId)
-  const docList = useDocList(workspaceId)
+  const docList = useDocList(workspaceId, { archived })
   const { getActorName } = useActors(workspaceId)
 
   const rows = useMemo(
     () =>
       docList.data
-        ? buildDocRows({ streams, items: docList.data.docs, assignments, listedAt: docList.dataUpdatedAt })
+        ? buildDocRows({
+            streams,
+            items: docList.data.docs,
+            assignments,
+            listedAt: docList.dataUpdatedAt,
+            archived,
+          })
         : [],
-    [docList.data, docList.dataUpdatedAt, streams, assignments]
+    [docList.data, docList.dataUpdatedAt, streams, assignments, archived]
   )
   const shown = useMemo(() => filterDocRows(rows, filters), [rows, filters])
   const options = useMemo(() => docFilterOptions(rows), [rows])
@@ -128,7 +138,10 @@ function DocsPageInner({ workspaceId }: { workspaceId: string }) {
     ),
   }))
 
-  const state = docsBodyState(docList)
+  const state = docsBodyState({
+    data: docList.data && (!archived || archivedStreams.data),
+    isError: docList.isError || (archived && archivedStreams.isError),
+  })
 
   return (
     <div className="flex h-full flex-col">
@@ -138,6 +151,7 @@ function DocsPageInner({ workspaceId }: { workspaceId: string }) {
         icon={<DocGlyph className="h-5 w-5 shrink-0 text-muted-foreground" />}
         title="Docs"
       >
+        <ArchivedToggleLink to={docListHref(workspaceId, searchParams, { archived: !archived })} archived={archived} />
         {createDoc.enabled && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -165,7 +179,7 @@ function DocsPageInner({ workspaceId }: { workspaceId: string }) {
               type="search"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              placeholder="Search docs"
+              placeholder={archived ? "Search archived docs" : "Search docs"}
               aria-label="Search docs"
               className="h-9 pl-8"
             />
@@ -206,6 +220,7 @@ function DocsPageInner({ workspaceId }: { workspaceId: string }) {
               workspaceId={workspaceId}
               state={state}
               listed={rows.length}
+              archived={archived}
               shown={shown}
               getActorName={getActorName}
               clearHref={docListHref(workspaceId, searchParams, { query: "", host: null, label: null, editor: null })}
@@ -228,6 +243,7 @@ function DocsBody({
   workspaceId,
   state,
   listed,
+  archived,
   shown,
   getActorName,
   clearHref,
@@ -235,13 +251,14 @@ function DocsBody({
   workspaceId: string
   state: DocsBodyState
   listed: number
+  archived: boolean
   shown: DocRow[]
   getActorName: ActorLookup["getActorName"]
   clearHref: string
 }) {
   if (state === "loading") return null
   if (state === "error") return <DocsEmpty kind="error" />
-  if (listed === 0) return <DocsEmpty kind="empty" />
+  if (listed === 0) return <DocsEmpty kind={archived ? "archivedEmpty" : "empty"} />
   if (shown.length === 0) return <DocsEmpty kind="filtered" clearHref={clearHref} />
   return (
     <ul>
@@ -394,6 +411,12 @@ const EMPTY_COPY = {
     body: "Docs you can read appear here, last edited first.",
     icon: DocGlyph,
     accent: "bg-primary/10 text-primary",
+  },
+  archivedEmpty: {
+    title: "No archived docs",
+    body: "Archived docs, and docs in archived streams, appear here.",
+    icon: Archive,
+    accent: "bg-muted text-muted-foreground",
   },
   filtered: {
     title: "No docs match",

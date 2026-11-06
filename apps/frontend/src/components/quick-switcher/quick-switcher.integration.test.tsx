@@ -330,6 +330,7 @@ function installSpies() {
   } as unknown as ReturnType<typeof contextsModule.useSettings>)
   vi.spyOn(contextsModule, "useStreamService").mockReturnValue({
     markAsRead: vi.fn(),
+    list: vi.fn().mockResolvedValue([]),
   } as unknown as ReturnType<typeof contextsModule.useStreamService>)
   vi.spyOn(contextsModule, "useWorkspaceService").mockReturnValue({
     markAllAsRead: vi.fn(),

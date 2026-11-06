@@ -35,6 +35,18 @@ export const streamKeys = {
     [...streamKeys.all, "bootstrap", workspaceId, streamId] as const,
   events: (workspaceId: string, streamId: string) => [...streamKeys.all, "events", workspaceId, streamId] as const,
   brief: (workspaceId: string, streamId: string) => [...streamKeys.all, "brief", workspaceId, streamId] as const,
+  archived: (workspaceId: string) => [...streamKeys.all, workspaceId, "archived"] as const,
+}
+
+/** The viewer's archived streams, which the workspace cache does not hold; fetched only while `enabled`. */
+export function useArchivedStreams(workspaceId: string, { enabled }: { enabled: boolean }) {
+  const streamService = useStreamService()
+  return useQuery({
+    queryKey: streamKeys.archived(workspaceId),
+    queryFn: () => streamService.list(workspaceId, { status: ["archived"] }),
+    enabled,
+    staleTime: 30_000,
+  })
 }
 
 export function useStreams(workspaceId: string, filters?: { type?: StreamType }) {

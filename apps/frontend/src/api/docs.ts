@@ -13,7 +13,9 @@ import type {
 } from "@threahq/types"
 
 export const docKeys = {
+  /** Prefix of both lists, so invalidating it refreshes the archived one too. */
   list: (workspaceId: string) => ["docList", workspaceId] as const,
+  archivedList: (workspaceId: string) => [...docKeys.list(workspaceId), "archived"] as const,
   threads: (workspaceId: string, docId: string) => ["docThreads", workspaceId, docId] as const,
   section: (workspaceId: string, docId: string, blockId: string) =>
     ["docSection", workspaceId, docId, blockId] as const,
@@ -23,9 +25,9 @@ export const docKeys = {
 
 /** Collaborative doc streams: full state, the update log, and Yjs writes (base64). */
 export const docsApi = {
-  /** Every live doc the viewer can read, with who edited it and when, last edited first. */
-  list(workspaceId: string): Promise<DocListResponse> {
-    return api.get<DocListResponse>(`/api/workspaces/${workspaceId}/docs`)
+  /** Every live (or archived) doc the viewer can read, with who edited it and when, last edited first. */
+  list(workspaceId: string, { archived }: { archived: boolean }): Promise<DocListResponse> {
+    return api.get<DocListResponse>(`/api/workspaces/${workspaceId}/docs${archived ? "?status=archived" : ""}`)
   },
 
   /** With `stateVector` (base64), `state` carries only what that vector lacks. */

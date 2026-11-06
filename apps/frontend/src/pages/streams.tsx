@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { Archive, ArrowDownUp, Check, Compass, Flame, Lock, Search, X } from "lucide-react"
+import { ArrowDownUp, Check, Compass, Flame, Lock, Search, X } from "lucide-react"
 import { toast } from "sonner"
 import {
   ENCRYPTED_MESSAGE_PREVIEW_LABEL,
@@ -15,11 +15,12 @@ import { Input } from "@/components/ui/input"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { PageHeaderTabs } from "@/components/layout"
 import { ActorAvatar } from "@/components/actor-avatar"
+import { ArchivedToggleLink } from "@/components/archived-toggle-link"
 import { UnreadBadge } from "@/components/unread-badge"
 import { StreamHoverCard, useSidebarHoverIntent } from "@/components/layout/sidebar/stream-hover-card"
 import { getActivityTime, truncateContent } from "@/components/layout/sidebar/utils"
 import { useStreamService } from "@/contexts"
-import { actorTypeFromId, useActors, useJoinStream } from "@/hooks"
+import { actorTypeFromId, useActors, useArchivedStreams, useJoinStream } from "@/hooks"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useStreamWarmup } from "@/hooks/use-stream-warmup"
 import { useStreamName } from "@/hooks/use-stream-name"
@@ -131,12 +132,7 @@ function StreamsPageInner({
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
   const unreadCounts = useWorkspaceUnreadState(workspaceId)?.unreadCounts
-  const archivedQuery = useQuery({
-    queryKey: ["streams", workspaceId, "archived"],
-    queryFn: () => streamService.list(workspaceId, { status: ["archived"] }),
-    enabled: archived,
-    staleTime: 30_000,
-  })
+  const archivedQuery = useArchivedStreams(workspaceId, { enabled: archived })
   const statsQuery = useQuery({
     queryKey: ["streams", workspaceId, "directory-stats"],
     queryFn: () => streamService.directoryStats(workspaceId),
@@ -211,21 +207,7 @@ function StreamsPageInner({
           label: TAB_LABELS[value],
           href: hrefWith(value === "threads" ? {} : { [DIRECTORY_ROOT_PARAM]: null }, pathFor(value)),
         }))}
-        actions={
-          <Link
-            to={hrefWith({ archived: archived ? null : "1" })}
-            replace
-            aria-pressed={archived}
-            aria-label="Archived"
-            className={cn(
-              buttonVariants({ variant: archived ? "secondary" : "ghost", size: "sm" }),
-              "h-8 gap-1.5 text-xs"
-            )}
-          >
-            <Archive className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Archived</span>
-          </Link>
-        }
+        actions={<ArchivedToggleLink to={hrefWith({ archived: archived ? null : "1" })} archived={archived} />}
       />
 
       <div className="border-b px-4 py-2 [container-type:inline-size]">

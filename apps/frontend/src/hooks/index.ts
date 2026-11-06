@@ -26,6 +26,7 @@ export {
   useDeleteStream,
   useArchiveStream,
   useUnarchiveStream,
+  useArchivedStreams,
   useSetNotificationLevel,
   useAddStreamMember,
   useJoinStream,

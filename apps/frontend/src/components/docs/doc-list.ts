@@ -2,7 +2,13 @@ import { LabelableResourceTypes, StreamTypes, type DocEditor, type DocListItem, 
 import { collectSealedStreamIds, streamLabel } from "@/lib/streams"
 
 /** The `/docs` page's filters, each one search param (INV-59). */
-export const DOC_LIST_PARAMS = { query: "q", host: "host", label: "label", editor: "editor" } as const
+export const DOC_LIST_PARAMS = {
+  query: "q",
+  host: "host",
+  label: "label",
+  editor: "editor",
+  archived: "archived",
+} as const
 export const DOC_LIST_TOP_LEVEL = "top-level"
 
 export interface DocListFilters {
@@ -10,6 +16,7 @@ export interface DocListFilters {
   host: string | null
   label: string | null
   editor: string | null
+  archived: boolean
 }
 
 export interface DocListStream {
@@ -48,6 +55,7 @@ export function readDocListFilters(params: URLSearchParams): DocListFilters {
     host: params.get(DOC_LIST_PARAMS.host) || null,
     label: params.get(DOC_LIST_PARAMS.label) || null,
     editor: params.get(DOC_LIST_PARAMS.editor) || null,
+    archived: params.get(DOC_LIST_PARAMS.archived) === "1",
   }
 }
 
@@ -55,7 +63,7 @@ export function writeDocListFilters(params: URLSearchParams, patch: Partial<DocL
   const next = new URLSearchParams(params)
   for (const key of Object.keys(patch) as (keyof DocListFilters)[]) {
     const value = patch[key]
-    if (value) next.set(DOC_LIST_PARAMS[key], value)
+    if (value) next.set(DOC_LIST_PARAMS[key], value === true ? "1" : value)
     else next.delete(DOC_LIST_PARAMS[key])
   }
   return next
@@ -68,25 +76,28 @@ export function docListHref(workspaceId: string, params: URLSearchParams, patch:
 }
 
 /**
- * The viewer's live docs, last activity first. `items` (the backend's list, fetched at `listedAt`) decides
- * which docs list; a cached doc missing from it lists only when created after the fetch. The cached streams
- * give fresher titles, hosts and archival: a doc archived, or under an archived ancestor, drops out. A doc
- * the cache lacks lists under its listed title, and a doc whose host the viewer cannot read has no host.
+ * The viewer's live (or `archived`) docs, last activity first. `items` (the backend's list, fetched at
+ * `listedAt`) decides which docs list. The cached streams give fresher titles and hosts. For live docs they
+ * also give fresher archival: a doc archived, or under an archived ancestor, drops out, and a cached doc
+ * missing from `items` lists when created after the fetch. A doc the cache lacks lists under its listed
+ * title, and a doc whose host the viewer cannot read has no host.
  */
 export function buildDocRows({
   streams,
   items,
   assignments,
   listedAt,
+  archived,
 }: {
   streams: readonly DocListStream[]
   items: readonly DocListItem[]
   assignments: readonly DocListAssignment[]
   listedAt: number
+  archived: boolean
 }): DocRow[] {
   const streamById = new Map(streams.map((stream) => [stream.id, stream]))
   const itemById = new Map(items.map((item) => [item.id, item]))
-  const sealed = collectSealedStreamIds(streams)
+  const sealed = archived ? new Set<string>() : collectSealedStreamIds(streams)
   const labelIdsByStream = new Map<string, string[]>()
   for (const assignment of assignments) {
     if (assignment.resourceType !== LabelableResourceTypes.STREAM) continue
@@ -101,12 +112,15 @@ export function buildDocRows({
         id: item.id,
         type: StreamTypes.DOC,
         displayName: item.displayName,
+        parentStreamId: item.parentStreamId,
         createdAt: item.createdAt,
       }
   )
-  for (const stream of streams) {
-    if (stream.type === StreamTypes.DOC && !itemById.has(stream.id) && Date.parse(stream.createdAt) > listedAt) {
-      docs.push(stream)
+  if (!archived) {
+    for (const stream of streams) {
+      if (stream.type === StreamTypes.DOC && !itemById.has(stream.id) && Date.parse(stream.createdAt) > listedAt) {
+        docs.push(stream)
+      }
     }
   }
 
@@ -119,7 +133,7 @@ export function buildDocRows({
         doc,
         title: streamLabel(doc, "generic"),
         host: doc.parentStreamId ? (streamById.get(doc.parentStreamId) ?? null) : null,
-        isTopLevel: doc.parentStreamId === null || (doc.parentStreamId === undefined && item?.isTopLevel === true),
+        isTopLevel: !doc.parentStreamId,
         activityAt: lastEditedAt ?? doc.createdAt,
         edited: lastEditedAt !== null,
         editors: item?.editors ?? [],

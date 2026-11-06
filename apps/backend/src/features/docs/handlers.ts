@@ -29,7 +29,7 @@ const paramsSchema = z.object({ docId: z.string().min(1) })
 
 const sectionParamsSchema = paramsSchema.extend({ blockId: z.string().min(1) })
 
-const listQuerySchema = z.object({}).strict()
+const listQuerySchema = z.object({ status: z.enum(["active", "archived"]).default("active") }).strict()
 
 const getQuerySchema = z.object({ sv: z.base64().max(MAX_STATE_VECTOR_BASE64_LENGTH).optional() })
 
@@ -57,8 +57,12 @@ const moveSchema = z.object({
 export function createDocHandlers({ docService, streamService }: Dependencies) {
   return {
     async list(req: Request, res: Response) {
-      validateRequest(listQuerySchema, req.query)
-      const docs = await docService.list({ workspaceId: req.workspaceId!, userId: req.user!.id })
+      const { status } = validateRequest(listQuerySchema, req.query)
+      const docs = await docService.list({
+        workspaceId: req.workspaceId!,
+        userId: req.user!.id,
+        archived: status === "archived",
+      })
       res.json({ docs } satisfies DocListResponse)
     },
 

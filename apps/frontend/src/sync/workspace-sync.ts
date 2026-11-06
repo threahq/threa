@@ -1094,6 +1094,12 @@ export function registerWorkspaceSocketHandlers(
     })
   }
 
+  // Both lists come from the server's archival verdict, which covers descendants the cache cannot see.
+  const invalidateArchivalLists = () => {
+    void queryClient.invalidateQueries({ queryKey: docKeys.list(workspaceId) })
+    void queryClient.invalidateQueries({ queryKey: streamKeys.archived(workspaceId) })
+  }
+
   const handleStreamArchived = async (payload: StreamPayload) => {
     if (payload.workspaceId !== workspaceId) return
     const descendantIds = payload.threadStreamIds ?? []
@@ -1133,6 +1139,7 @@ export function registerWorkspaceSocketHandlers(
     // counts; the held set follows so the badges fall with the sidebar entry.
     commitCounter((state) => sealedIds.reduce(dropActivitiesForStream, state))
     invalidateActivityFeed(true)
+    invalidateArchivalLists()
 
     // Upsert IndexedDB — partial merge preserves lastMessagePreview etc.; a
     // missing row (swept while archived) is restored rather than silently lost.
@@ -1145,6 +1152,7 @@ export function registerWorkspaceSocketHandlers(
 
   const handleStreamUnarchived = async (payload: StreamPayload) => {
     if (payload.workspaceId !== workspaceId) return
+    invalidateArchivalLists()
     queryClient.setQueryData(streamKeys.bootstrap(workspaceId, payload.stream.id), (old: unknown) => {
       if (!old || typeof old !== "object") return old
       const bootstrap = old as StreamBootstrap
