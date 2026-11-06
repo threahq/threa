@@ -75,7 +75,6 @@ import { StreamHeaderEncryptionAction } from "@/components/encryption/stream-enc
 import { StreamEncryptionGate } from "@/components/encryption/stream-encryption-gate"
 import { useDecryptedStreamName, useStreamNameDecrypting } from "@/hooks/use-decrypted-stream-name"
 import { Skeleton } from "@/components/ui/skeleton"
-import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { CallStartMenu, RejoinBar, useCallStart } from "@/components/call"
 import { ThreadHeader } from "@/components/thread"
 import { StreamTitlePreview } from "@/components/layout"
@@ -208,8 +207,6 @@ export function StreamPane({
   // An external agent (e.g. a Pi remote bot runtime) attached to this
   // scratchpad. Drives the "External" pill state and its connection dot.
   const activeBotPresence = useActiveBotPresence(workspaceId, streamId)
-
-  const callsEnabled = useFeatureFlag(workspaceId, "calls") === "on"
 
   const isThread = stream?.type === StreamTypes.THREAD
   const isChannel = stream?.type === StreamTypes.CHANNEL
@@ -663,7 +660,7 @@ export function StreamPane({
   const gap = 8
   const iconGap = 4
   const icon = 32 + iconGap
-  const offersCall = !!stream && !isDraft && (isChannel || isDm) && callsEnabled
+  const offersCall = !!stream && !isDraft && (isChannel || isDm)
   const offersAside = asideAction !== null
   const offersSearch = !isDraft && hasTimeline
   const offersContextIcon = !!stream && !isDraft && hasTimeline && offersContext

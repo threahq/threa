@@ -516,8 +516,7 @@ export interface UserPreferences {
   gettingStartedDismissed: boolean
   /**
    * The user's consent to upload client performance captures. Off unless the
-   * user turns it on; the `perfDiagnostics` flag only decides whether the
-   * toggle is offered, and the upload endpoint re-checks both.
+   * user turns it on; the upload endpoint re-checks it.
    */
   performanceDiagnosticsOptIn: boolean
   /**

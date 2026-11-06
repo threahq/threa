@@ -31,10 +31,7 @@ function mockInputs(params: {
     },
     isLoading: params.preferencesPending ?? false,
   } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
-  const bootstrap = {
-    analytics: params.analytics,
-    featureFlags: { user: { perfDiagnostics: "available" } },
-  } as unknown as WorkspaceBootstrap
+  const bootstrap = { analytics: params.analytics } as unknown as WorkspaceBootstrap
   vi.spyOn(useWorkspacesModule, "useWorkspaceBootstrap").mockImplementation(
     (_workspaceId, select) =>
       ({ data: select ? select(bootstrap) : bootstrap }) as ReturnType<typeof useWorkspacesModule.useWorkspaceBootstrap>
@@ -131,7 +128,7 @@ describe("AnalyticsConsentGate", () => {
     })
   })
 
-  it("should configure diagnostics only with analytics consent, feature access, and opt-in", () => {
+  it("should configure diagnostics only with analytics consent and opt-in", () => {
     const authorize = vi.spyOn(diagnosticsModule, "authorizeConnectivityDiagnostics").mockImplementation(() => {})
     mockInputs({ consent: "granted", analytics, userId: "usr_1", diagnostics: true })
 

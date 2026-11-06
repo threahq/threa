@@ -69,13 +69,8 @@ export const FEATURE_FLAGS = {
     scopes: ["user"],
     default: "off",
   }),
-  calls: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }),
   callsP2p: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "off" }),
   composeTraces: defineFlag({ values: ["off", "capture"], scopes: ["workspace"], default: "off" }),
-  // Availability only: "available" offers the Diagnostics settings toggle. The
-  // user's own opt-in preference is the consent, and the upload path re-checks
-  // both server-side.
-  perfDiagnostics: defineFlag({ values: ["off", "available"], scopes: ["workspace", "user"], default: "off" }),
   // Opt-in search query logging: "on" stores each message-search request and
   // the result the user opened (`search_query_log`) to seed a retrieval eval
   // set. Off writes nothing; the search response says whether a row exists.

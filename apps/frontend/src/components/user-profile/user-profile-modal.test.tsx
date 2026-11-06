@@ -87,12 +87,9 @@ function makeManager(): CallController {
   }
 }
 
-function renderModal(manager: CallController, callsEnabled: boolean, guestDmPolicy?: GuestDmPolicy) {
+function renderModal(manager: CallController, guestDmPolicy?: GuestDmPolicy) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  // `calls` is a workspace-scope flag defaulting on; an off workspace override
-  // turns the affordance dark. Seed the bootstrap's raw flag layers the hook reads.
   queryClient.setQueryData(workspaceKeys.bootstrap(WORKSPACE_ID), {
-    featureFlags: { workspace: callsEnabled ? {} : { calls: "off" }, user: {} },
     workspaceSettings: guestDmPolicy ? { guestDmPolicy } : undefined,
   } as unknown as WorkspaceBootstrap)
   return render(
@@ -137,23 +134,16 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks())
 
 describe("UserProfileModal — Call entry point", () => {
-  it("hides Call entirely when the workspace calls flag is off", () => {
-    seed(withDm)
-    renderModal(makeManager(), false)
-    expect(screen.getByRole("link", { name: /Message/i })).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: /^Call$/i })).toBeNull()
-  })
-
   it("disables Call until a DM exists (v1 has no message-less DM materialization)", () => {
     seed([])
-    renderModal(makeManager(), true)
+    renderModal(makeManager())
     expect(screen.getByRole("button", { name: /^Call$/i })).toBeDisabled()
   })
 
   it("starts a call on the existing DM stream when enabled", async () => {
     seed(withDm)
     const manager = makeManager()
-    renderModal(manager, true)
+    renderModal(manager)
     await userEvent.click(screen.getByRole("button", { name: /^Call$/i }))
     await waitFor(() =>
       expect(manager.startCall).toHaveBeenCalledWith({
@@ -167,13 +157,13 @@ describe("UserProfileModal — Call entry point", () => {
   it("disables Call while the viewer is already in a call", () => {
     seed(withDm)
     setCallPhase("connected")
-    renderModal(makeManager(), true)
+    renderModal(makeManager())
     expect(screen.getByRole("button", { name: /^Call$/i })).toBeDisabled()
   })
 
   it("exposes the disabled reason through a focusable tooltip trigger, not a bare title", () => {
     seed([])
-    renderModal(makeManager(), true)
+    renderModal(makeManager())
     const callBtn = screen.getByRole("button", { name: /^Call$/i })
     expect(callBtn).toBeDisabled()
     // A disabled button isn't focusable and screen readers ignore an ancestor's
@@ -188,7 +178,7 @@ describe("UserProfileModal — Call entry point", () => {
 describe("UserProfileModal — host user copy", () => {
   it("should show the profile without Message or Call when the user is a copy of a host user", () => {
     seed(withDm, { originWorkspaceId: "workspace_host" })
-    renderModal(makeManager(), true)
+    renderModal(makeManager())
     expect(screen.getByRole("heading", { name: "Grace" })).toBeInTheDocument()
     expect(screen.queryByRole("link", { name: /Message/i })).toBeNull()
     expect(screen.queryByRole("button", { name: /^Call$/i })).toBeNull()
@@ -199,7 +189,7 @@ describe("UserProfileModal — guest DM policy", () => {
   it("should offer Message to a guest only when the guest DM policy is open", () => {
     seed(withDm, { role: "guest" })
     const offered = (policy: GuestDmPolicy) => {
-      const { unmount } = renderModal(makeManager(), true, policy)
+      const { unmount } = renderModal(makeManager(), policy)
       const message = screen.queryByRole("link", { name: /Message/i }) !== null
       unmount()
       return message
@@ -214,7 +204,7 @@ describe("UserProfileModal — guest DM policy", () => {
 
   it("should offer Message to a member whatever the guest DM policy is", () => {
     seed(withDm)
-    renderModal(makeManager(), true, "off")
+    renderModal(makeManager(), "off")
     expect(screen.getByRole("link", { name: /Message/i })).toBeInTheDocument()
   })
 })
@@ -222,7 +212,7 @@ describe("UserProfileModal — guest DM policy", () => {
 describe("UserProfileModal — role badge", () => {
   it("should show a Guest badge when the user is a guest", () => {
     seed(withDm, { role: "guest" })
-    renderModal(makeManager(), true)
+    renderModal(makeManager())
     expect(screen.getByText("Guest")).toBeInTheDocument()
   })
 })

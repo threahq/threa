@@ -14,7 +14,6 @@ import {
   ResponsiveDialogBody,
 } from "@/components/ui/responsive-dialog"
 import { createDmDraftId } from "@/hooks"
-import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { useCallLaunch } from "@/components/call"
 import { isPickableUser, useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
@@ -118,7 +117,6 @@ export function UserProfileModal({ userId, open, onOpenChange }: UserProfileModa
   const messageHref = workspaceId ? `/w/${workspaceId}/s/${messageStreamId}` : undefined
   const guestDmOpen = useGuestDmOpen(workspaceId ?? "")
 
-  const callsEnabled = useFeatureFlag(workspaceId ?? "", "calls") === "on"
   const { launch: launchCall, callActive } = useCallLaunch()
 
   if (!user) return null
@@ -203,17 +201,15 @@ export function UserProfileModal({ userId, open, onOpenChange }: UserProfileModa
                   <MessageCircle className="h-4 w-4 mr-2" />
                   Message
                 </Link>
-                {callsEnabled && (
-                  <ProfileCallButton
-                    workspaceId={workspaceId}
-                    dmStreamId={existingDmStreamId}
-                    callActive={callActive}
-                    onLaunch={(streamId) => {
-                      onOpenChange(false)
-                      launchCall({ workspaceId: workspaceId!, streamId, mode: "video" })
-                    }}
-                  />
-                )}
+                <ProfileCallButton
+                  workspaceId={workspaceId}
+                  dmStreamId={existingDmStreamId}
+                  callActive={callActive}
+                  onLaunch={(streamId) => {
+                    onOpenChange(false)
+                    launchCall({ workspaceId: workspaceId!, streamId, mode: "video" })
+                  }}
+                />
               </div>
             </>
           )}

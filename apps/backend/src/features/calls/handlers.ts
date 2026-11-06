@@ -112,8 +112,7 @@ function parseOrThrow<T>(schema: z.ZodType<T>, body: unknown): T {
 
 /**
  * REST + CF-proxy surface for calls. Every endpoint is gated in the same order:
- * CF-config-absent ⇒ 503 CALLS_UNAVAILABLE (the whole feature is off), then the
- * per-workspace flag ⇒ 404-style CALLS_DISABLED (dark feature), then
+ * CF-config-absent ⇒ 503 CALLS_UNAVAILABLE (the whole feature is off), then
  * `checkCallAccess` authorization. The proxy endpoints are thin, incarnation-fenced
  * pass-throughs to CF holding the app secret; publish/close additionally update the
  * roster and fan `call:roster` to the `/calls` namespace room.
@@ -126,12 +125,9 @@ export function createCallHandlers({
   cloudflareEnabled,
   turnEnabled,
 }: Dependencies) {
-  async function assertAvailable(workspaceId: string): Promise<void> {
+  function assertAvailable(): void {
     if (!cloudflareEnabled) {
       throw new HttpError("Calls media is not configured", { status: 503, code: "CALLS_UNAVAILABLE" })
-    }
-    if ((await featureFlagService.getWorkspaceFlag(workspaceId, "calls")) !== "on") {
-      throw new HttpError("Calls are not enabled for this workspace", { status: 404, code: "CALLS_DISABLED" })
     }
   }
 
@@ -146,7 +142,7 @@ export function createCallHandlers({
     async start(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
-      await assertAvailable(workspaceId)
+      assertAvailable()
       const body = parseOrThrow(startSchema, req.body)
 
       const result = await callService.startCall({
@@ -188,7 +184,7 @@ export function createCallHandlers({
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
       const { callId } = req.params
-      await assertAvailable(workspaceId)
+      assertAvailable()
       await assertCallAccess(workspaceId, userId, callId)
 
       // Self-leave, endpoint-id-free: the rejoin bar's "Leave" after a fresh load
@@ -202,7 +198,7 @@ export function createCallHandlers({
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
       const { invitationId } = req.params
-      await assertAvailable(workspaceId)
+      assertAvailable()
 
       // Scoped to the invitee's own ring — `declineInvitation` CASes on
       // invitee_user_id, so a non-invitee gets the 409 not-actionable, never
@@ -215,7 +211,7 @@ export function createCallHandlers({
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
       const { invitationId } = req.params
-      await assertAvailable(workspaceId)
+      assertAvailable()
 
       // Inviter hang-up before an answer — scoped to the caller's own ring
       // (`cancelInvitation` CASes on inviter_user_id), so a non-inviter gets the
@@ -229,7 +225,7 @@ export function createCallHandlers({
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
       const { callId } = req.params
-      await assertAvailable(workspaceId)
+      assertAvailable()
       await assertCallAccess(workspaceId, userId, callId)
 
       const snapshot = await callService.getRosterSnapshot(workspaceId, callId)
@@ -250,7 +246,7 @@ export function createCallHandlers({
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
       const { callId } = req.params
-      await assertAvailable(workspaceId)
+      assertAvailable()
       const body = parseOrThrow(transferRequestSchema, req.body)
       const snapshot = await callService.requestTransportTransfer({ workspaceId, callId, userId, ...body })
       broadcastRoster(io, callId, snapshot)
@@ -261,7 +257,7 @@ export function createCallHandlers({
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
       const { callId } = req.params
-      await assertAvailable(workspaceId)
+      assertAvailable()
       const body = parseOrThrow(callTransferReadyAckSchema, req.body)
       const snapshot = await callService.acknowledgeTransferReady({ workspaceId, callId, userId, ...body })
       broadcastRoster(io, callId, snapshot)
@@ -272,7 +268,7 @@ export function createCallHandlers({
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
       const { callId } = req.params
-      await assertAvailable(workspaceId)
+      assertAvailable()
       const body = parseOrThrow(callTransferSwitchedAckSchema, req.body)
       const snapshot = await callService.acknowledgeTransferSwitched({ workspaceId, callId, userId, ...body })
       broadcastRoster(io, callId, snapshot)
@@ -283,7 +279,7 @@ export function createCallHandlers({
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
       const { callId } = req.params
-      await assertAvailable(workspaceId)
+      assertAvailable()
       const body = parseOrThrow(callTransferRestoredAckSchema, req.body)
       const snapshot = await callService.acknowledgeTransferRestored({ workspaceId, callId, userId, ...body })
       broadcastRoster(io, callId, snapshot)
@@ -294,7 +290,7 @@ export function createCallHandlers({
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
       const { callId, endpointId } = req.params
-      await assertAvailable(workspaceId)
+      assertAvailable()
       if ((await featureFlagService.getWorkspaceFlag(workspaceId, "callsP2p")) !== "on") {
         throw new HttpError("P2P calls are not enabled", { status: 404, code: "CALL_P2P_UNAVAILABLE" })
       }
@@ -316,7 +312,7 @@ export function createCallHandlers({
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
       const { callId, endpointId } = req.params
-      await assertAvailable(workspaceId)
+      assertAvailable()
       await assertCallAccess(workspaceId, userId, callId)
       const body = parseOrThrow(cfSessionSchema, req.body)
 
@@ -336,7 +332,7 @@ export function createCallHandlers({
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
       const { callId, endpointId } = req.params
-      await assertAvailable(workspaceId)
+      assertAvailable()
       await assertCallAccess(workspaceId, userId, callId)
       const body = parseOrThrow(renegotiateSchema, req.body)
 
@@ -357,7 +353,7 @@ export function createCallHandlers({
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
       const { callId, endpointId } = req.params
-      await assertAvailable(workspaceId)
+      assertAvailable()
       await assertCallAccess(workspaceId, userId, callId)
       const body = parseOrThrow(publishSchema, req.body)
 
@@ -380,7 +376,7 @@ export function createCallHandlers({
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
       const { callId, endpointId } = req.params
-      await assertAvailable(workspaceId)
+      assertAvailable()
       await assertCallAccess(workspaceId, userId, callId)
       const body = parseOrThrow(pullSchema, req.body)
 
@@ -405,7 +401,7 @@ export function createCallHandlers({
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
       const { callId, endpointId } = req.params
-      await assertAvailable(workspaceId)
+      assertAvailable()
       await assertCallAccess(workspaceId, userId, callId)
       const body = parseOrThrow(closeTracksSchema, req.body)
 

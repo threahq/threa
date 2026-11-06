@@ -16,7 +16,7 @@ const service = {
 const handlers = createPerfDiagnosticsHandlers({ perfDiagnosticsService: service })
 
 function request(body: unknown): Request {
-  return { body, workspaceId: "ws_1", user: { id: "usr_1" }, workosUserId: "wos_1" } as unknown as Request
+  return { body, workspaceId: "ws_1", user: { id: "usr_1" } } as unknown as Request
 }
 
 function response(): Response & { statusCode: number | null; body: unknown } {

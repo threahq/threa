@@ -28,13 +28,12 @@ function fakeReq(overrides: Partial<Request> = {}): Request {
 
 function makeHandlers(opts: {
   cloudflareEnabled?: boolean
-  callsEnabled?: boolean
   callsP2pEnabled?: boolean
   callService?: Record<string, unknown>
 }) {
   const featureFlagService = {
     getWorkspaceFlag: mock(async (_workspaceId: string, flag: string) =>
-      (flag === "callsP2p" ? opts.callsP2pEnabled : (opts.callsEnabled ?? true)) ? "on" : "off"
+      flag === "callsP2p" && opts.callsP2pEnabled ? "on" : "off"
     ),
   }
   return createCallHandlers({
@@ -53,12 +52,6 @@ describe("createCallHandlers.start — gating", () => {
     const handlers = makeHandlers({ cloudflareEnabled: false })
     const promise = handlers.start(fakeReq({ body: { streamId: "stream_1", mode: "video" } }), fakeRes())
     await expect(promise).rejects.toMatchObject({ status: 503, code: "CALLS_UNAVAILABLE" })
-  })
-
-  it("404 CALLS_DISABLED when the workspace flag is off", async () => {
-    const handlers = makeHandlers({ callsEnabled: false })
-    const promise = handlers.start(fakeReq({ body: { streamId: "stream_1", mode: "video" } }), fakeRes())
-    await expect(promise).rejects.toMatchObject({ status: 404, code: "CALLS_DISABLED" })
   })
 
   it("400 VALIDATION_ERROR on a bad body", async () => {

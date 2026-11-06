@@ -5,7 +5,6 @@ import { toast } from "sonner"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import * as contextsModule from "@/contexts"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
-import * as hooksModule from "@/hooks"
 import * as authModule from "@/auth"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import { PrivacySettings } from "./privacy-settings"
@@ -17,10 +16,8 @@ const IN_PLACE = { errorShownInPlace: true }
 function mount(
   consent: "unset" | "granted" | "denied",
   analytics: object | null = { posthogToken: "tok", posthogHost: "https://eu.example.com" },
-  shareDeviceWithAgents?: boolean,
-  diagnosticsFlag: "off" | "available" = "off"
+  shareDeviceWithAgents?: boolean
 ) {
-  vi.spyOn(hooksModule, "useFeatureFlag").mockReturnValue(diagnosticsFlag as never)
   vi.spyOn(authModule, "useAuth").mockReturnValue({ user: null } as unknown as ReturnType<typeof authModule.useAuth>)
   vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([])
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
@@ -168,7 +165,7 @@ describe("PrivacySettings", () => {
 
   describe("page layout", () => {
     it("renders encryption and every data-sharing row in registry order", () => {
-      const { container } = mount("granted", undefined, undefined, "available")
+      const { container } = mount("granted")
       expect([...container.querySelectorAll("[data-setting]")].map((row) => row.getAttribute("data-setting"))).toEqual([
         "encryption",
         "encryption-keep-unlocked",
@@ -178,11 +175,6 @@ describe("PrivacySettings", () => {
         "device-sharing",
         "diagnostics",
       ])
-    })
-
-    it("should leave diagnostics out when its rollout flag is off", () => {
-      const { container } = mount("granted")
-      expect(container.querySelector("#setting-diagnostics")).toBeNull()
     })
   })
 })

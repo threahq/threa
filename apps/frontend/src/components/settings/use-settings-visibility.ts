@@ -1,7 +1,6 @@
 import { useMemo } from "react"
 import { DEFAULT_SUBAGENT_MODELS, SETTINGS_TABS, WORKSPACE_PERMISSION_SCOPES, type SettingsTab } from "@threahq/types"
 import { usePreferencesOptional } from "@/contexts"
-import { useFeatureFlag } from "@/hooks"
 import { useOverriddenFeatureFlags } from "@/hooks/use-feature-flags"
 import { useCachedWorkspaceBootstrap, useViewerPermissions } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"
@@ -18,15 +17,13 @@ export interface ViewerSettingsVisibility extends SettingsVisibility {
 
 /**
  * Which settings pages and rows this viewer gets. Admin-only pages (their
- * routes are admin-gated server-side) wait for permissions; diagnostics
- * follows its rollout; the Early access page shows only when a flag is
+ * routes are admin-gated server-side) wait for permissions; the Early access page shows only when a flag is
  * actually set for the viewer; subagent models only when the picker has
  * something to offer.
  */
 export function useSettingsVisibility(workspaceId: string): ViewerSettingsVisibility {
   const permissions = useViewerPermissions(workspaceId)
   const isAdmin = hasPermission(permissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
-  const perfDiagnostics = useFeatureFlag(workspaceId, "perfDiagnostics")
   const hasOverriddenFlags = useOverriddenFeatureFlags(workspaceId).length > 0
   const permissionsLoaded = permissions !== undefined
   const workspaceModels = useCachedWorkspaceBootstrap(
@@ -41,7 +38,6 @@ export function useSettingsVisibility(workspaceId: string): ViewerSettingsVisibi
 
   return useMemo(() => {
     const hidden = new Set<SettingId>()
-    if (perfDiagnostics !== "available") hidden.add("diagnostics")
     if (!subagentModelsAvailable) hidden.add("subagent-models")
     const adminOnly = (tab: SettingsTab) => SETTINGS_PAGE_CONFIG[tab].admins === true
     const editableWith = (tab: SettingsTab) => SETTINGS_PAGE_CONFIG[tab].editableWith ?? []
@@ -61,5 +57,5 @@ export function useSettingsVisibility(workspaceId: string): ViewerSettingsVisibi
           : []
       ),
     }
-  }, [isAdmin, perfDiagnostics, hasOverriddenFlags, subagentModelsAvailable, permissionsLoaded, permissions])
+  }, [isAdmin, hasOverriddenFlags, subagentModelsAvailable, permissionsLoaded, permissions])
 }

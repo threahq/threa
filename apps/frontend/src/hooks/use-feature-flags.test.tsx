@@ -67,16 +67,15 @@ describe("useOverriddenFeatureFlags", () => {
 
   it("consumes the layered bootstrap shape and drops keys not in the registry", () => {
     const queryClient = new QueryClient()
-    const layers: FeatureFlagLayers = { workspace: { calls: "off" }, user: { newComposer: "on" } }
+    const layers: FeatureFlagLayers = { workspace: { batchedLiveWrites: "off" }, user: { newComposer: "on" } }
     queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), { featureFlags: layers } as WorkspaceBootstrap)
 
     const { result } = renderHook(() => useOverriddenFeatureFlags("ws_1"), {
       wrapper: createWrapper(queryClient),
     })
 
-    // `calls` is the shipped workspace-scope flag (default on): an off override
-    // surfaces. `newComposer` is not in the registry, so it is dropped.
-    expect(result.current).toEqual([{ key: "calls", value: "off", defaultValue: "on", scope: "workspace" }])
+    // `batchedLiveWrites` defaults on, so an off override surfaces. `newComposer` is not in the registry, so it is dropped.
+    expect(result.current).toEqual([{ key: "batchedLiveWrites", value: "off", defaultValue: "on", scope: "workspace" }])
   })
 })
 

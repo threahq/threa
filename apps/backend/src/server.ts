@@ -429,12 +429,8 @@ export async function startServer(): Promise<ServerInstance> {
   const messageFormatter = new MessageFormatter()
   const conversationService = new ConversationService(pool)
   const userPreferencesService = new UserPreferencesService(pool)
-  // Both halves of the consent pair are resolved server-side and injected as
-  // plain functions (INV-52): the flag decides availability, the preference is
-  // the consent itself.
   const perfDiagnosticsService = new PerfDiagnosticsService(
     pool,
-    (workspaceId, workosUserId) => featureFlagService.getFlag(workspaceId, workosUserId, "perfDiagnostics"),
     async (workspaceId, userId) =>
       (await userPreferencesService.getPreferences(workspaceId, userId)).performanceDiagnosticsOptIn
   )
@@ -1137,7 +1133,6 @@ export async function startServer(): Promise<ServerInstance> {
     authService,
     sessionCookies,
     callService,
-    featureFlagService,
     pool,
     cloudflareEnabled: config.cloudflareRealtime.enabled,
   })

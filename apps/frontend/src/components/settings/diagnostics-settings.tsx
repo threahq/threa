@@ -16,8 +16,7 @@ const SAVE_FAILED = "Couldn't save. Try again."
 
 /**
  * The consent surface for client performance capture. The toggle IS the
- * consent. The `perfDiagnostics` flag only decides whether this row is
- * offered. Connectivity events send automatically while online; performance
+ * consent. Connectivity events send automatically while online; performance
  * measurements send from this screen.
  */
 export function DiagnosticsSettings() {
