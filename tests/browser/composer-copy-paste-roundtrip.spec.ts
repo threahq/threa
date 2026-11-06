@@ -302,6 +302,31 @@ test.describe("Composer copy/paste roundtrip", () => {
     await expectEditorHasAllStyles(page)
   })
 
+  test("should preserve the complete document when a paste immediately follows a cut", async ({ page }) => {
+    await pastePlainText(page, canonicalMarkdown)
+    await expectEditorHasAllStyles(page)
+    await expect(async () => {
+      await composerEditor(page).getByText("tail paragraph").click()
+      await page.keyboard.press("Control+a")
+      expect(await captureEditorClipboard(page, "copy")).toBe(canonicalMarkdown)
+    }).toPass({ timeout: 10000 })
+
+    const cut = await page.evaluate(() => {
+      const editor = document.querySelector("main [contenteditable='true']")
+      if (!editor) throw new Error("Editor not found")
+      const clipboardData = new DataTransfer()
+      editor.dispatchEvent(new ClipboardEvent("cut", { clipboardData, bubbles: true, cancelable: true }))
+      const markdown = clipboardData.getData("text/plain")
+      const pasteData = new DataTransfer()
+      pasteData.setData("text/plain", markdown)
+      editor.dispatchEvent(new ClipboardEvent("paste", { clipboardData: pasteData, bubbles: true, cancelable: true }))
+      return markdown
+    })
+
+    expect(cut).toBe(canonicalMarkdown)
+    await expectEditorHasAllStyles(page)
+  })
+
   /**
    * Copying from strictly inside a block must not carry that block's own
    * markdown: the fence/quote marker/bullet belongs to text the selection

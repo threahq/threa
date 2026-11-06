@@ -336,6 +336,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
   const isInternalUpdate = useRef(false)
+  const lastEmittedValueRef = useRef<JSONContent | null>(null)
   // Retry trigger + bounded counter for the external-value sync below. If
   // applying restored content throws, we re-run the sync on the next frame so
   // the body still lands rather than leaving the composer blank over a draft
@@ -756,7 +757,9 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     },
     onUpdate: ({ editor }) => {
       if (isInternalUpdate.current) return
-      onChange(editor.getJSON())
+      const content = editor.getJSON()
+      lastEmittedValueRef.current = content
+      onChange(content)
     },
     onFocus: () => {
       setIsFocused(true)
@@ -1076,6 +1079,9 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   // Sync external value changes (e.g., draft restoration, clearing after send)
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
+    // React node views can flush a pending prop echo during the next paste.
+    // Reapplying that value would overwrite the document being rendered.
+    if (value === lastEmittedValueRef.current) return
 
     const stopExternalSync = getPerfCapture().time("editor.externalSync")
 
@@ -1103,7 +1109,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       const raf = requestAnimationFrame(() => setExternalSyncNonce((n) => n + 1))
       return () => cancelAnimationFrame(raf)
     }
-  }, [editableValue, editor, externalSyncNonce])
+  }, [editableValue, editor, externalSyncNonce, value])
 
   // A reference placed (drag or picker) while its upload was still reserving
   // carries the job's temp id. Flip it to the real id — and the image ordinal
