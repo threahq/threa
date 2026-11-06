@@ -521,7 +521,7 @@ describe("StreamContextPanel", () => {
 
     renderPanel()
 
-    expect(await screen.findByText("Roadmap")).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText("Roadmap")).toBeInTheDocument())
     await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
     await triggerSentinel()
     expect(await screen.findByText("Bravo")).toBeInTheDocument()
