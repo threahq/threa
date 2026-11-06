@@ -691,10 +691,19 @@ function MessageInputComponent({
       // path does. The dispatch consumes the command, so the user shouldn't
       // see their chip linger after pressing send.
       composer.setContent(EMPTY_DOC)
-      composer.resolveDraft()
+      const draftResolutionFailed = composer
+        .resolveDraft({
+          content: liveContent,
+          attachmentIds: pendingAttachments.map((attachment) => attachment.id),
+        })
+        .then(
+          () => false,
+          () => true
+        )
       collapse()
       try {
         await dispatchCommand(sendPlan, normalizedContent)
+        if (await draftResolutionFailed) setError("Command queued, but the draft could not be updated.")
       } catch {
         setError("Failed to queue command. Please try again.")
       } finally {
@@ -730,8 +739,9 @@ function MessageInputComponent({
     composer.setContent(EMPTY_DOC)
     collapse()
     const sentFrom = streamId
+    let result: Awaited<ReturnType<typeof sendMessage>>
     try {
-      const result = await sendMessage({
+      result = await sendMessage({
         contentJson: messageContent,
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         attachments: attachments.length > 0 ? attachments : undefined,
@@ -743,13 +753,6 @@ function MessageInputComponent({
         // a failed send keeps the filing armed alongside the restored content.
         conversation: armedConversationId ? { intent: "existing", conversationId: armedConversationId } : undefined,
       })
-
-      disarm()
-      composer.clearAttachments()
-      composer.resolveDraft()
-      if (result.navigateTo) {
-        navigate(result.navigateTo, { replace: result.replace ?? false })
-      }
     } catch (error) {
       const sendFailure =
         stream?.isDraft === false
@@ -768,9 +771,21 @@ function MessageInputComponent({
         if (isPrivacyConfirmationError(error)) blockOnPrivacy(restored)
         else setError(isGuestDmPolicyError(error) ? GUEST_DM_CLOSED_REASON : sendFailure)
       }
-    } finally {
       composer.setIsSending(false)
+      return
     }
+
+    disarm()
+    try {
+      await composer.resolveDraft({ content: liveContent, attachmentIds })
+    } catch {
+      setError("Message sent, but the draft could not be updated.")
+    }
+    composer.releaseAttachments(attachmentIds)
+    if (result.navigateTo) {
+      navigate(result.navigateTo, { replace: result.replace ?? false })
+    }
+    composer.setIsSending(false)
   })
 
   /**
@@ -824,19 +839,28 @@ function MessageInputComponent({
         conversation: armedConversationId ? { intent: "existing", conversationId: armedConversationId } : undefined,
         confirmedPrivacyWarning: options?.confirmedPrivacyWarning,
       })
-      disarm()
-      composer.resolveDraft()
-      composer.clearAttachments()
-      if (filesIntoDriftedConversation) {
-        toast.info("Scheduled — this reply will file into the conversation when it sends.")
-      }
     } catch (err) {
       composer.setContent(liveContent)
       const message = err instanceof Error ? err.message : "Could not schedule message"
       setError(message)
-    } finally {
       composer.setIsSending(false)
+      return
     }
+
+    disarm()
+    try {
+      await composer.resolveDraft({
+        content: liveContent,
+        attachmentIds: pendingAttachments.map((attachment) => attachment.id),
+      })
+    } catch {
+      setError("Message scheduled, but the draft could not be updated.")
+    }
+    composer.releaseAttachments(attachmentIds)
+    if (filesIntoDriftedConversation) {
+      toast.info("Scheduled — this reply will file into the conversation when it sends.")
+    }
+    composer.setIsSending(false)
   })
 
   const handleEditLastMessage = useStableCallback(() => {

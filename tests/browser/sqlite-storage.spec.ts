@@ -80,6 +80,37 @@ function draftsInIndexedDb(page: Page): Promise<number> {
   })
 }
 
+/** Draft bodies IndexedDB holds, read without the app. */
+function draftBodiesInIndexedDb(page: Page): Promise<string[]> {
+  return page.evaluate(async () => {
+    const account = (await indexedDB.databases()).find((database) => database.name?.startsWith("threa_v2_"))
+    if (!account?.name) return []
+    return new Promise<string[]>((resolve) => {
+      const request = indexedDB.open(account.name!)
+      request.onerror = () => resolve([])
+      request.onsuccess = () => {
+        const idb = request.result
+        if (!idb.objectStoreNames.contains("drafts")) {
+          idb.close()
+          return resolve([])
+        }
+        const rows = idb.transaction("drafts").objectStore("drafts").getAll()
+        rows.onsuccess = () => {
+          idb.close()
+          resolve(
+            rows.result.map((row) =>
+              (row.contentJson.content ?? [])
+                .flatMap((block) => block.content ?? [])
+                .map((node) => node.text ?? "")
+                .join("")
+            )
+          )
+        }
+      }
+    })
+  })
+}
+
 function countLoads(page: Page): () => number {
   let loads = 0
   page.on("load", () => loads++)
@@ -92,6 +123,34 @@ function sqliteErrors(page: Page): string[] {
     if (entry.type() === "error" && entry.text().includes("SQLite")) errors.push(entry.text())
   })
   return errors
+}
+
+async function holdPendingMessagesWrites(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const account = (await indexedDB.databases()).find((db) => db.name?.startsWith("threa_v2_"))!
+    const db = await new Promise<IDBDatabase>((resolve) => {
+      const request = indexedDB.open(account.name!)
+      request.onsuccess = () => resolve(request.result)
+    })
+    let hold = true
+    ;(window as unknown as { releasePendingSend: () => void }).releasePendingSend = () => {
+      hold = false
+    }
+    const transaction = db.transaction("pendingMessages", "readwrite")
+    const store = transaction.objectStore("pendingMessages")
+    const spin = () => {
+      const request = store.get("probe-missing")
+      request.onsuccess = () => {
+        if (hold) spin()
+      }
+    }
+    transaction.oncomplete = () => db.close()
+    spin()
+  })
+}
+
+async function releasePendingMessagesWrites(page: Page): Promise<void> {
+  await page.evaluate(() => (window as unknown as { releasePendingSend: () => void }).releasePendingSend())
 }
 
 test.describe.configure({ timeout: 120_000 })
@@ -179,9 +238,14 @@ test("a device on IndexedDB imports its unsent draft into SQLite at the next boo
   const channelId = await createChannelViaApi(page, workspaceId, slug)
   await page.goto(`/w/${workspaceId}/s/${channelId}`)
   await opened(page, slug)
+  await holdPendingMessagesWrites(page)
   await send(page, "sent on IndexedDB")
   await composer(page).pressSequentially("unsent on IndexedDB")
+  await releasePendingMessagesWrites(page)
+  await expect(page.getByRole("main").getByRole("button", { name: "Send", exact: true })).toBeEnabled()
+  await page.waitForTimeout(600)
   await expect.poll(() => draftsInIndexedDb(page), { timeout: 10_000 }).toBeGreaterThan(0)
+  await expect.poll(() => draftBodiesInIndexedDb(page), { timeout: 10_000 }).toContain("unsent on IndexedDB")
   expect(await recordedModes(page)).toEqual([])
 
   await page.evaluate(() => localStorage.setItem("test:allowSqlite", "1"))

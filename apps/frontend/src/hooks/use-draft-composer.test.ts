@@ -652,6 +652,22 @@ describe("useDraftComposer", () => {
       expect(mockResolveDraft).toHaveBeenCalled()
     })
 
+    it("reports when newer content could not be persisted after send resolution", async () => {
+      const { result } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+      const newerContent = makeDoc("typed while sending")
+      mockSaveDraft.mockResolvedValueOnce(null)
+
+      act(() => result.current.handleContentChange(newerContent))
+
+      await act(async () => {
+        await expect(result.current.resolveDraft({ content: EMPTY_DOC, attachmentIds: [] })).rejects.toThrow(
+          "New draft content could not be persisted"
+        )
+      })
+
+      expect(mockSaveDraft).toHaveBeenCalledWith(newerContent, [])
+    })
+
     it("should expose clearAttachments from useAttachments", () => {
       const { result } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
 
