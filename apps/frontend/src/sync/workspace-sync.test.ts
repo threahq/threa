@@ -5971,7 +5971,7 @@ describe("stream:member_removed board cleanup", () => {
     cleanup()
   })
 
-  it("drops the held activity and badges of a private root and its threads the viewer was removed from", async () => {
+  it("drops the held activity, badges, unread counts and read positions of a private root and its threads the viewer was removed from", async () => {
     const held = (id: string, streamId: string): Activity => ({
       id,
       workspaceId: "ws_1",
@@ -5999,11 +5999,35 @@ describe("stream:member_removed board cleanup", () => {
         },
         { ...makeStream("chan_y"), lastMessagePreview: null },
       ],
+      unreadCounts: { chan_x: 2, thread_t: 1, chan_y: 3 },
       unreadActivities: [held("act_root", "chan_x"), held("act_thread", "thread_t"), held("act_other", "chan_y")],
       activityCounts: { chan_x: 1, thread_t: 1, chan_y: 1 },
       mentionCounts: { chan_x: 1, thread_t: 1, chan_y: 1 },
       unreadActivityCount: 3,
     }))
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { chan_x: 2, thread_t: 1, chan_y: 3 },
+      mentionCounts: {},
+      activityCounts: {},
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      latestOrdinals: {},
+      mutedStreamIds: [],
+      _cachedAt: Date.now(),
+    })
+    await db.streamReadState.bulkPut(
+      ["thread_t", "chan_y"].map((streamId) => ({
+        id: `ws_1:${streamId}`,
+        workspaceId: "ws_1",
+        streamId,
+        lastReadEventId: "evt_1",
+        lastReadSequence: "1",
+        lastReadAt: null,
+        _cachedAt: Date.now(),
+      }))
+    )
     const reminder: Activity = { ...held("act_reminder", "chan_x"), activityType: "saved_reminder", streamId: null }
     queryClient.setQueryData(
       activityKeys.listFiltered("ws_1", { unreadOnly: false, mineOnly: false, othersOnly: false }),
@@ -6014,25 +6038,96 @@ describe("stream:member_removed board cleanup", () => {
 
     emit("stream:member_removed", { workspaceId: "ws_1", streamId: "chan_x", memberId: "member_1" })
 
-    await vi.waitFor(() => {
+    await vi.waitFor(async () => {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: activityKeys.list("ws_1") })
+      expect((await db.unreadState.get("ws_1"))?.unreadCounts).toEqual({ chan_y: 3 })
+      expect(await db.streamReadState.get("ws_1:thread_t")).toBeUndefined()
     })
     const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))!
     const feed = queryClient.getQueryData<Activity[]>(
       activityKeys.listFiltered("ws_1", { unreadOnly: false, mineOnly: false, othersOnly: false })
     )
     expect({
+      unreadCounts: bootstrap.unreadCounts,
+      readStates: (await db.streamReadState.where("workspaceId").equals("ws_1").toArray()).map((r) => r.streamId),
       held: bootstrap.unreadActivities?.map((a) => a.id),
       activityCounts: bootstrap.activityCounts,
       mentionCounts: bootstrap.mentionCounts,
       unreadActivityCount: bootstrap.unreadActivityCount,
       feed: feed?.map((a) => a.id),
     }).toEqual({
+      unreadCounts: { chan_y: 3 },
+      readStates: ["chan_y"],
       held: ["act_other"],
       activityCounts: { chan_y: 1 },
       mentionCounts: { chan_y: 1 },
       unreadActivityCount: 1,
       feed: ["act_other", "act_reminder"],
+    })
+    cleanup()
+  })
+
+  it("keeps a thread and its unread count when the viewer leaves it but stays in its private root (INV-62)", async () => {
+    await seedBoardRow("conv_t", "ws_1", "thread_t", "chan_x")
+    const queryClient = seededClient("private")
+    const thread = makeStream("thread_t", {
+      type: "thread",
+      visibility: "private",
+      parentStreamId: "chan_x",
+      rootStreamId: "chan_x",
+    })
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"), (old) => ({
+      ...old!,
+      streams: [...old!.streams, { ...thread, lastMessagePreview: null }],
+      streamMemberships: [
+        ...old!.streamMemberships,
+        { streamId: "thread_t", memberId: "member_1", notificationLevel: null, joinedAt: new Date().toISOString() },
+      ] as StreamMember[],
+      unreadCounts: { chan_x: 2, thread_t: 1 },
+    }))
+    await db.streams.clear()
+    await db.streams.put({ ...thread, _cachedAt: Date.now() })
+    await db.streamReadState.put({
+      id: "ws_1:thread_t",
+      workspaceId: "ws_1",
+      streamId: "thread_t",
+      lastReadEventId: "evt_1",
+      lastReadSequence: "1",
+      lastReadAt: null,
+      _cachedAt: Date.now(),
+    })
+    await db.streamMemberships.put({
+      id: "ws_1:thread_t",
+      workspaceId: "ws_1",
+      streamId: "thread_t",
+      memberId: "member_1",
+      notificationLevel: null,
+      joinedAt: new Date().toISOString(),
+      _cachedAt: Date.now(),
+    })
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    emit("stream:member_removed", { workspaceId: "ws_1", streamId: "thread_t", memberId: "member_1" })
+
+    await vi.waitFor(async () => {
+      expect(await db.streamMemberships.get("ws_1:thread_t")).toBeUndefined()
+    })
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))!
+    expect({
+      memberships: bootstrap.streamMemberships.map((m) => m.streamId),
+      cached: bootstrap.streams.map((s) => s.id),
+      unreadCounts: bootstrap.unreadCounts,
+      stored: (await db.streams.where("workspaceId").equals("ws_1").toArray()).map((s) => s.id),
+      boardRow: (await db.conversations.get(["ws_1", "conv_t"]))?.id,
+      readPosition: (await db.streamReadState.get("ws_1:thread_t"))?.lastReadEventId,
+    }).toEqual({
+      memberships: ["chan_x"],
+      cached: ["chan_x", "thread_t"],
+      unreadCounts: { chan_x: 2, thread_t: 1 },
+      stored: ["thread_t"],
+      boardRow: "conv_t",
+      readPosition: "evt_1",
     })
     cleanup()
   })
