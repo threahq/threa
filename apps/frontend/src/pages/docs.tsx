@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ActorAvatar } from "@/components/actor-avatar"
+import { ArchivedToggleLink } from "@/components/archived-toggle-link"
 import { LabelGlyph } from "@/components/labels/label-chip"
 import { SidebarLabelsProvider, StreamLabelDots } from "@/components/layout/sidebar/sidebar-labels"
 import {
@@ -150,19 +151,7 @@ function DocsPageInner({ workspaceId }: { workspaceId: string }) {
         icon={<DocGlyph className="h-5 w-5 shrink-0 text-muted-foreground" />}
         title="Docs"
       >
-        <Link
-          to={docListHref(workspaceId, searchParams, { archived: !archived })}
-          replace
-          aria-pressed={archived}
-          aria-label="Archived"
-          className={cn(
-            buttonVariants({ variant: archived ? "secondary" : "ghost", size: "sm" }),
-            "h-11 min-w-11 shrink-0 gap-1.5 text-xs sm:h-8 sm:min-w-0"
-          )}
-        >
-          <Archive className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Archived</span>
-        </Link>
+        <ArchivedToggleLink to={docListHref(workspaceId, searchParams, { archived: !archived })} archived={archived} />
         {createDoc.enabled && (
           <Tooltip>
             <TooltipTrigger asChild>
