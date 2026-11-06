@@ -1,11 +1,9 @@
 import { useState, useMemo, useCallback } from "react"
-import { useQuery } from "@tanstack/react-query"
 import { Hash, Plus, X, Archive } from "lucide-react"
 import { StreamTypes, draftStreamScope, getAvatarUrl, isOpenVisibility } from "@threahq/types"
 import type { Stream, StreamType } from "@threahq/types"
 import { collectSealedStreamIds, getStreamName, resolveDmDisplayName, streamLabel, STREAM_ICONS } from "@/lib/streams"
-import { streamsApi } from "@/api"
-import { createDmDraftId, streamKeys, useUnreadCounts, useActivityCounts } from "@/hooks"
+import { createDmDraftId, useArchivedStreams, useUnreadCounts, useActivityCounts } from "@/hooks"
 import { isPickableUser, useWorkspaceUnreadState, type CachedUnreadState } from "@/stores/workspace-store"
 import { asideHostKey, openAside } from "@/stores/aside-store"
 import { Button } from "@/components/ui/button"
@@ -123,11 +121,8 @@ export function useStreamItems(context: ModeContext): StreamModeResult {
   const showArchived = statusFilters.includes("archived")
   const showActive = statusFilters.length === 0 || statusFilters.includes("active")
 
-  const { data: archivedStreams, isLoading: isLoadingArchived } = useQuery({
-    queryKey: streamKeys.archived(workspaceId),
-    queryFn: () => streamsApi.list(workspaceId, { status: ["archived"] }),
+  const { data: archivedStreams, isLoading: isLoadingArchived } = useArchivedStreams(workspaceId, {
     enabled: showArchived,
-    staleTime: 30_000,
   })
 
   const handleAddFilter = (type: FilterType) => {
