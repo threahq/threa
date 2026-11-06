@@ -188,7 +188,11 @@ export class IncomingWebhookService {
   }
 
   /** Posts as the hook's bot on the hook's stream, over the same path a bot API key takes. */
-  async post(hook: IncomingWebhookRow, markdown: string): Promise<{ messageId: string }> {
+  async post(
+    hook: IncomingWebhookRow,
+    markdown: string,
+    metadata?: Record<string, string>
+  ): Promise<{ messageId: string }> {
     const principal = { kind: "bot", botId: hook.botId } as const
     await this.eventService.assertStreamWritableForPrincipal(principal, hook.workspaceId, hook.streamId)
     if (await E2eStreamsRepository.isE2eStream(this.pool, hook.workspaceId, hook.streamId)) {
@@ -211,6 +215,7 @@ export class IncomingWebhookService {
       contentJson,
       contentMarkdown,
       sentVia: sentViaWebhook(hook.id),
+      metadata,
     })
 
     // Only a delivered post counts as use, so a hook that authenticates but can no longer write reads as stale.

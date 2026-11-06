@@ -198,6 +198,35 @@ describe("bot invocation canonical source mutations", () => {
     expect(rows.rows).toEqual([{ prompt_markdown: "after", source_message_revision: 2, status: "pending" }])
   })
 
+  test("a hook-style bot message carries its external metadata into the invocation prompt", async () => {
+    const message = await MessageRepository.insert(pool, {
+      workspaceId: workspace,
+      id: messageId(),
+      streamId: stream,
+      sequence: ++sourceSequence,
+      authorId: "bot_hook",
+      authorType: "bot",
+      contentJson: testContentJson("New issue"),
+      contentMarkdown: "New issue",
+      metadata: { "posthog.issue": "0199f1c2-aaaa", "threa.reply_in_thread": "true" },
+    })
+
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
+
+    const rows = await pool.query<{ prompt_markdown: string }>(
+      "SELECT prompt_markdown FROM bot_invocations WHERE workspace_id = $1 AND source_message_id = $2",
+      [workspace, message.id]
+    )
+    expect(rows.rows).toEqual([
+      {
+        prompt_markdown:
+          "A non-user message was posted in your active Threa scratchpad.\n" +
+          "Use the stream context to decide whether a reply is useful. If no reply is needed, respond exactly: THREA_NO_RESPONSE\n\n" +
+          'New issue\n\nMessage metadata:\n- posthog.issue: "0199f1c2-aaaa"',
+      },
+    ])
+  })
+
   test("an edit after a completed turn dispatches a fresh invocation carrying the answered wording", async () => {
     const message = await source("before")
     await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
