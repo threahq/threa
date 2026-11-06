@@ -2,31 +2,31 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Space Grotesk self-hosted — no third-party font CDN, admin visitor IPs stay first-party */
+/* Switzer body/UI and Commit Mono data/code, self-hosted like the main app — admin visitor IPs stay first-party */
 @font-face {
-  font-family: "Space Grotesk";
-  src: url("/fonts/space-grotesk-400.woff2") format("woff2");
+  font-family: "Switzer";
+  src: url("/fonts/switzer.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Commit Mono";
+  src: url("/fonts/commit-mono-400.woff2") format("woff2");
   font-weight: 400;
   font-display: swap;
   font-style: normal;
 }
 @font-face {
-  font-family: "Space Grotesk";
-  src: url("/fonts/space-grotesk-500.woff2") format("woff2");
+  font-family: "Commit Mono";
+  src: url("/fonts/commit-mono-500.woff2") format("woff2");
   font-weight: 500;
   font-display: swap;
   font-style: normal;
 }
 @font-face {
-  font-family: "Space Grotesk";
-  src: url("/fonts/space-grotesk-600.woff2") format("woff2");
-  font-weight: 600;
-  font-display: swap;
-  font-style: normal;
-}
-@font-face {
-  font-family: "Space Grotesk";
-  src: url("/fonts/space-grotesk-700.woff2") format("woff2");
+  font-family: "Commit Mono";
+  src: url("/fonts/commit-mono-700.woff2") format("woff2");
   font-weight: 700;
   font-display: swap;
   font-style: normal;
@@ -41,6 +41,8 @@
 
 @layer base {
   :root {
+    color-scheme: light;
+
     --background: 40 20% 98%;
     --foreground: 30 10% 12%;
 
@@ -56,7 +58,9 @@
     --secondary-foreground: 30 15% 25%;
 
     --muted: 35 12% 93%;
-    --muted-foreground: 30 8% 45%;
+    /* The main app's settings shade (--muted-foreground-strong): every back office
+     * page is settings-dense 13px meta, which needs more than 4.5:1. */
+    --muted-foreground: 30 8% 38%;
 
     --accent: 40 50% 94%;
     --accent-foreground: 35 60% 35%;
@@ -66,12 +70,16 @@
 
     --border: 35 15% 88%;
     --input: 35 15% 88%;
-    --ring: 38 65% 50%;
+    --control: 38 65% 50%;
+    --control-foreground: 40 20% 98%;
+    --ring: var(--control);
 
     --radius: 0.5rem;
   }
 
   .dark {
+    color-scheme: dark;
+
     --background: 30 15% 8%;
     --foreground: 35 15% 92%;
 
@@ -87,7 +95,7 @@
     --secondary-foreground: 35 12% 85%;
 
     --muted: 30 10% 15%;
-    --muted-foreground: 35 10% 55%;
+    --muted-foreground: 35 10% 64%;
 
     --accent: 35 25% 18%;
     --accent-foreground: 40 45% 70%;
@@ -97,7 +105,9 @@
 
     --border: 30 10% 20%;
     --input: 30 10% 20%;
-    --ring: 40 55% 55%;
+    --control: 40 55% 55%;
+    --control-foreground: 30 15% 8%;
+    --ring: var(--control);
   }
 }
 
@@ -107,13 +117,7 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family:
-      "Space Grotesk",
-      system-ui,
-      -apple-system,
-      BlinkMacSystemFont,
-      "Segoe UI",
-      sans-serif;
+    @apply font-sans;
     min-height: 100vh;
   }
 }

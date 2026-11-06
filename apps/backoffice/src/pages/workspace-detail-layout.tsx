@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, NavLink, Outlet, useParams } from "react-router-dom"
 import { ChevronLeft } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { Page } from "@/components/layout/page"
 import { PageHeader } from "@/components/layout/page-header"
+import { ListPlaceholder, MetaLine } from "@/components/layout/rows"
 import { backofficeKeys, getBackofficeConfig, getWorkspace, type WorkspaceDetail } from "@/api/backoffice"
 import { ApiError } from "@/api/client"
 import { cn } from "@/lib/utils"
@@ -33,18 +34,18 @@ export function WorkspaceDetailLayout() {
   })
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-8">
-      <div>
-        <Button asChild variant="ghost" size="sm" className="-ml-2">
-          <Link to="/workspaces">
-            <ChevronLeft className="size-4" />
-            Back to workspaces
-          </Link>
-        </Button>
+    <Page>
+      <div className="flex flex-col gap-2">
+        <Link
+          to="/workspaces"
+          className="-ml-1 inline-flex min-h-9 w-fit items-center gap-1 rounded-md px-1 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <ChevronLeft aria-hidden className="size-4" />
+          Workspaces
+        </Link>
+        <Body loading={query.isLoading} error={query.error} workspace={query.data} workspaceId={id} />
       </div>
-
-      <Body loading={query.isLoading} error={query.error} workspace={query.data} workspaceId={id} />
-    </div>
+    </Page>
   )
 }
 
@@ -59,22 +60,21 @@ function Body({
   workspace: WorkspaceDetail | undefined
   workspaceId: string | undefined
 }) {
-  if (loading) {
-    return <div className="border-y px-1 py-10 text-center text-sm text-muted-foreground">Loading workspace…</div>
-  }
+  if (loading) return <ListPlaceholder>Loading workspace…</ListPlaceholder>
   if (error) {
     const notFound = ApiError.isApiError(error) && error.status === 404
-    return (
-      <div className="border-y px-1 py-10 text-center text-sm text-muted-foreground">
-        {notFound ? "That workspace doesn't exist." : "Couldn't load workspace."}
-      </div>
-    )
+    return <ListPlaceholder>{notFound ? "That workspace doesn't exist." : "Couldn't load workspace."}</ListPlaceholder>
   }
   if (!workspace) return null
   return (
     <div className="flex flex-col gap-8">
-      <PageHeader title={workspace.name} description={`@${workspace.slug}`} />
-      {workspaceId ? <TabNav id={workspaceId} /> : null}
+      <div className="flex flex-col gap-6">
+        <PageHeader
+          title={workspace.name}
+          description={<MetaLine parts={[`@${workspace.slug}`, workspace.region]} />}
+        />
+        {workspaceId ? <TabNav id={workspaceId} /> : null}
+      </div>
       <Outlet />
     </div>
   )
@@ -82,19 +82,21 @@ function Body({
 
 function TabNav({ id }: { id: string }) {
   return (
-    <nav className="-mt-2 flex gap-6 border-b text-sm">
-      <TabLink to={`/workspaces/${id}`} end>
-        Overview
-      </TabLink>
-      <TabLink to={`/workspaces/${id}/members`} end>
-        Members
-      </TabLink>
-      <TabLink to={`/workspaces/${id}/flags`} end>
-        Feature flags
-      </TabLink>
-      <TabLink to={`/workspaces/${id}/ai-spend`} end>
-        AI spend
-      </TabLink>
+    <nav aria-label="Workspace sections" className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+      <div className="flex min-w-max gap-6 border-b text-sm">
+        <TabLink to={`/workspaces/${id}`} end>
+          Overview
+        </TabLink>
+        <TabLink to={`/workspaces/${id}/members`} end>
+          Members
+        </TabLink>
+        <TabLink to={`/workspaces/${id}/flags`} end>
+          Feature flags
+        </TabLink>
+        <TabLink to={`/workspaces/${id}/ai-spend`} end>
+          AI spend
+        </TabLink>
+      </div>
     </nav>
   )
 }
@@ -106,9 +108,9 @@ function TabLink({ to, end, children }: { to: string; end?: boolean; children: R
       end={end}
       className={({ isActive }) =>
         cn(
-          "-mb-px border-b-2 pb-2.5 transition-colors",
+          "-mb-px flex min-h-11 items-center border-b-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           isActive
-            ? "border-foreground font-medium text-foreground"
+            ? "border-primary font-medium text-foreground"
             : "border-transparent text-muted-foreground hover:text-foreground"
         )
       }

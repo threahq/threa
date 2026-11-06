@@ -4,6 +4,9 @@ import { useParams } from "react-router-dom"
 import { RefreshCw, MoreHorizontal, Ban, UserPlus } from "lucide-react"
 import { roleDisplayName, WORKSPACE_ASSIGNABLE_ROLES, type WorkspaceRoleSlug } from "@threahq/types"
 import { Section } from "@/components/layout/section"
+import { CARD_CLASS, ListPlaceholder, ROW_PADDING, RowList, RowText } from "@/components/layout/rows"
+import { Badge, type BadgeProps } from "@/components/ui/badge"
+import { NativeSelect } from "@/components/ui/native-select"
 import { InlineBanner } from "@/components/inline-banner"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -88,6 +91,12 @@ function formatRelativeFuture(iso: string): string {
   const d = Math.floor(seconds / 86_400)
   if (d < 30) return `in ${d}d`
   return new Date(iso).toLocaleDateString("en-GB", { year: "numeric", month: "short", day: "2-digit" })
+}
+
+function expiryLabel(expiresAt: string | null): string {
+  if (!expiresAt) return "Never expires"
+  const relative = formatRelativeFuture(expiresAt)
+  return relative === "expired" ? "Expired" : `Expires ${relative}`
 }
 
 function memberDisplayName(m: WorkspaceMember): string | null {
@@ -276,7 +285,7 @@ export function WorkspaceDetailMembersPage() {
             onClick={() => resyncMutation.mutate()}
             disabled={notLinked || resyncMutation.isPending || isPolling || !id}
           >
-            <RefreshCw className={cn("size-3.5", (resyncMutation.isPending || isPolling) && "animate-spin")} />
+            <RefreshCw className={cn((resyncMutation.isPending || isPolling) && "animate-spin")} />
             {resyncButtonLabel(resyncMutation.isPending, isPolling)}
           </Button>
         }
@@ -371,11 +380,12 @@ function AssignMemberForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mb-4 flex flex-wrap items-end gap-2 rounded-md border bg-muted/30 p-3">
-      <div className="flex min-w-[260px] flex-1 flex-col gap-1">
-        <Label htmlFor="assign-workos-user-id" className="text-xs uppercase tracking-wider text-muted-foreground">
-          WorkOS user ID
-        </Label>
+    <form
+      onSubmit={handleSubmit}
+      className={cn(CARD_CLASS, "flex flex-col gap-3 p-4 sm:flex-row sm:flex-wrap sm:items-end")}
+    >
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5 sm:min-w-64">
+        <Label htmlFor="assign-workos-user-id">WorkOS user ID</Label>
         <Input
           id="assign-workos-user-id"
           value={workosUserId}
@@ -383,28 +393,27 @@ function AssignMemberForm({
           placeholder="user_01H…"
           autoComplete="off"
           disabled={disabled}
+          className="font-mono"
         />
       </div>
-      <div className="flex flex-col gap-1">
-        <Label htmlFor="assign-role" className="text-xs uppercase tracking-wider text-muted-foreground">
-          Role
-        </Label>
-        <select
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="assign-role">Role</Label>
+        <NativeSelect
           id="assign-role"
           value={roleSlug}
           onChange={(e) => setRoleSlug(e.target.value as WorkspaceRoleSlug)}
           disabled={disabled}
-          className="h-10 rounded-input border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+          className="sm:w-40"
         >
           {WORKSPACE_ASSIGNABLE_ROLES.map((slug) => (
             <option key={slug} value={slug}>
               {roleDisplayName(slug)}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       </div>
-      <Button type="submit" disabled={disabled || workosUserId.trim().length === 0} className="gap-1.5">
-        <UserPlus className="size-4" />
+      <Button type="submit" disabled={disabled || workosUserId.trim().length === 0}>
+        <UserPlus />
         Add member
       </Button>
     </form>
@@ -512,30 +521,26 @@ function MembersBody({
   onRequestRemove: (member: WorkspaceMember) => void
 }) {
   if (loading) {
-    return <div className="border-y px-1 py-10 text-center text-sm text-muted-foreground">Loading members…</div>
+    return <ListPlaceholder>Loading members…</ListPlaceholder>
   }
 
   if (error) {
     const notFound = ApiError.isApiError(error) && error.status === 404
-    return (
-      <div className="border-y px-1 py-10 text-center text-sm text-muted-foreground">
-        {notFound ? "That workspace doesn't exist." : "Couldn't load members."}
-      </div>
-    )
+    return <ListPlaceholder>{notFound ? "That workspace doesn't exist." : "Couldn't load members."}</ListPlaceholder>
   }
 
   if (!members || members.length === 0) {
     return (
-      <div className="border-y px-1 py-10 text-center text-sm text-muted-foreground">
+      <ListPlaceholder>
         {notLinked
           ? "Workspace isn't linked to a WorkOS organization — no mirror data to show."
           : "No members yet — backfill may still be running."}
-      </div>
+      </ListPlaceholder>
     )
   }
 
   return (
-    <ul className="divide-y border-y">
+    <RowList>
       {members.map((m) => (
         <MemberRow
           key={`${m.workosUserId}`}
@@ -545,7 +550,7 @@ function MembersBody({
           onRequestRemove={() => onRequestRemove(m)}
         />
       ))}
-    </ul>
+    </RowList>
   )
 }
 
@@ -564,23 +569,16 @@ function MemberRow({
   const fallback = member.email ?? member.workosUserId
   const memberRoleSet = new Set(member.roleSlugs)
   return (
-    <li className="flex items-center justify-between gap-4 py-4 pl-1 pr-3">
-      <div className="flex min-w-0 flex-col gap-1">
-        <span className="truncate text-sm font-medium text-foreground">{name ?? fallback}</span>
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-          {name && member.email ? <span className="truncate">{member.email}</span> : null}
-          {member.roleSlugs.length > 0 ? (
-            <>
-              {name && member.email ? <span className="text-muted-foreground/50">·</span> : null}
-              <RoleChips roles={member.roleSlugs} />
-            </>
-          ) : null}
-        </div>
-      </div>
+    <li className={cn("flex min-h-14 items-center gap-4", ROW_PADDING)}>
+      <RowText
+        title={name ?? fallback}
+        badges={<RoleChips roles={member.roleSlugs} />}
+        meta={name && member.email ? member.email : null}
+      />
       <div className="flex shrink-0 items-center gap-3">
         <StatusBadge status={member.status} />
         <span
-          className="hidden text-xs tabular-nums text-muted-foreground sm:inline"
+          className="hidden w-24 text-right text-sm tabular-nums text-muted-foreground sm:inline-block"
           title={formatDateTime(member.lastEventAt)}
         >
           {formatRelativeTimestamp(member.lastEventAt)}
@@ -590,7 +588,7 @@ function MemberRow({
             <Button
               size="icon"
               variant="ghost"
-              className="size-8"
+              className="size-9 [@media(pointer:coarse)]:size-11"
               disabled={busy}
               aria-label={`Manage ${name ?? fallback}`}
             >
@@ -625,16 +623,13 @@ function MemberRow({
 
 function RoleChips({ roles }: { roles: string[] }) {
   return (
-    <span className="flex flex-wrap items-center gap-1">
+    <>
       {roles.map((role) => (
-        <span
-          key={role}
-          className="inline-flex items-center rounded-full border border-border bg-muted/50 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground"
-        >
+        <Badge key={role} className="capitalize">
           {role}
-        </span>
+        </Badge>
       ))}
-    </span>
+    </>
   )
 }
 
@@ -648,28 +643,26 @@ function InvitationsBody({
   invitations: WorkspaceInvitation[] | undefined
 }) {
   if (loading) {
-    return <div className="border-y px-1 py-10 text-center text-sm text-muted-foreground">Loading invitations…</div>
+    return <ListPlaceholder>Loading invitations…</ListPlaceholder>
   }
 
   if (error) {
     const notFound = ApiError.isApiError(error) && error.status === 404
     return (
-      <div className="border-y px-1 py-10 text-center text-sm text-muted-foreground">
-        {notFound ? "That workspace doesn't exist." : "Couldn't load invitations."}
-      </div>
+      <ListPlaceholder>{notFound ? "That workspace doesn't exist." : "Couldn't load invitations."}</ListPlaceholder>
     )
   }
 
   if (!invitations || invitations.length === 0) {
-    return <div className="border-y px-1 py-10 text-center text-sm text-muted-foreground">No pending invitations.</div>
+    return <ListPlaceholder>No pending invitations.</ListPlaceholder>
   }
 
   return (
-    <ul className="divide-y border-y">
+    <RowList>
       {invitations.map((inv) => (
         <InvitationRow key={inv.id} invitation={inv} />
       ))}
-    </ul>
+    </RowList>
   )
 }
 
@@ -677,66 +670,40 @@ function InvitationRow({ invitation }: { invitation: WorkspaceInvitation }) {
   const primary = invitation.email ?? "Unclaimed link"
   const inviterName = invitation.inviter ? (invitation.inviter.name ?? invitation.inviter.email ?? "Unknown") : null
   return (
-    <li className="flex items-center justify-between gap-4 py-4 pl-1 pr-3">
-      <div className="flex min-w-0 flex-col gap-1">
-        <span className="truncate text-sm font-medium text-foreground">{primary}</span>
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-          <KindBadge kind={invitation.kind} />
-          <RoleChips roles={[invitation.roleSlug]} />
-          {inviterName ? (
-            <>
-              <span className="text-muted-foreground/50">·</span>
-              <span className="truncate">Invited by {inviterName}</span>
-            </>
-          ) : null}
-        </div>
-      </div>
+    <li className={cn("flex min-h-14 items-center gap-4", ROW_PADDING)}>
+      <RowText
+        title={primary}
+        badges={
+          <>
+            <Badge tone={invitation.kind === "link" ? "primary" : "neutral"} className="capitalize">
+              {invitation.kind}
+            </Badge>
+            <RoleChips roles={[invitation.roleSlug]} />
+          </>
+        }
+        meta={inviterName ? `Invited by ${inviterName}` : null}
+      />
       <div className="flex shrink-0 items-center gap-3">
         <span
-          className="hidden text-xs tabular-nums text-muted-foreground sm:inline"
+          className="hidden text-sm tabular-nums text-muted-foreground sm:inline"
           title={invitation.expiresAt ? formatDateTime(invitation.expiresAt) : "Never expires"}
         >
-          {invitation.expiresAt ? `Expires ${formatRelativeFuture(invitation.expiresAt)}` : "Never expires"}
+          {expiryLabel(invitation.expiresAt)}
         </span>
       </div>
     </li>
   )
 }
 
-const KIND_VARIANTS: Record<WorkspaceInvitation["kind"], string> = {
-  email: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
-  link: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
+const STATUS_TONE: Record<string, BadgeProps["tone"]> = {
+  active: "success",
+  pending: "warning",
 }
-
-function KindBadge({ kind }: { kind: WorkspaceInvitation["kind"] }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
-        KIND_VARIANTS[kind]
-      )}
-    >
-      {kind}
-    </span>
-  )
-}
-
-const STATUS_VARIANTS: Record<string, string> = {
-  active: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-  pending: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-}
-const STATUS_VARIANT_DEFAULT = "bg-muted text-muted-foreground"
 
 function StatusBadge({ status }: { status: string }) {
-  const variant = STATUS_VARIANTS[status] ?? STATUS_VARIANT_DEFAULT
   return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
-        variant
-      )}
-    >
+    <Badge tone={STATUS_TONE[status] ?? "neutral"} className="capitalize">
       {status}
-    </span>
+    </Badge>
   )
 }

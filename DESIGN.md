@@ -6,7 +6,7 @@ file that owns it. If a section drifts from the code, the code wins — fix this
 doc and the offending consumer.
 
 This document walks the **real** feature tree: provider stack → shell →
-sidebar → timeline → composer → trace → cross-cutting systems. It is *not* a
+sidebar → timeline → composer → trace → cross-cutting systems. It is _not_ a
 clone of `docs/design-system.md`; that doc captures intent and aspirations,
 this one captures the system as built.
 
@@ -15,14 +15,14 @@ this one captures the system as built.
 ## 0. Feel
 
 Before any of the concrete sections below, the principles that hold Threa
-together. New work should *read* like the rest of the app — these are the
+together. New work should _read_ like the rest of the app — these are the
 defaults to argue with, not to ignore.
 
 **The thread metaphor.** Threa is named for Ariadne's thread — the line you
 follow back out of the labyrinth. The vesica piscis ("needle's eye") with a
 single thread passing through it is the brand mark, and the same idea runs
 through the product: capture once, hold it, and the thread leads you back.
-Visual references to *thread*, *weave*, and *needle* (the logo, the
+Visual references to _thread_, _weave_, and _needle_ (the logo, the
 `thread-weave` keyframe, the `.thread-glow` utility, the gold accent itself)
 are not decoration — they are the load-bearing metaphor. Don't substitute a
 generic chat motif.
@@ -30,7 +30,7 @@ generic chat motif.
 **Gold on paper, ink for substance.** The palette is deliberately warm and
 restrained: a paper-toned canvas (`--background`), ink-toned text
 (`--foreground`), and a single gold accent (`--primary`, `38 65% 50%`) that
-carries *all* emphasis — focus rings, active rows, primary actions, the
+carries _all_ emphasis — focus rings, active rows, primary actions, the
 brand mark, persona accents. There is no blue "info" or green "success" in
 the token system; the few hard-coded accents (`URGENCY_COLORS`, bot emerald,
 system blue, trace step hues) are signals with specific semantic load — list
@@ -41,10 +41,10 @@ reaching for `--primary` instead.
 spend hours here — but the density comes from tight spacing and quiet
 chrome, not from cramming. Use Shadcn primitives. Use the `--radius: 0.5rem`
 base. Use lucide stroke icons in `currentColor`. Editorial typography
-(serif, italic-for-emphasis, oldstyle figures) is explicitly *not* used for
+(serif, italic-for-emphasis, oldstyle figures) is explicitly _not_ used for
 functional UI; it reads as decorative on a surface that needs to be
-scannable. Space Grotesk + a single mono companion is the entire type
-system.
+scannable. Switzer + Commit Mono is the entire type system in the app and
+the back office; the public site adds one marketing display face (§1.3).
 
 **Motion is short, subtle, and infinite-friendly.** Real durations from
 `tailwind.config.js`: entries are `0.2s ease-out` (`fade-in`,
@@ -68,7 +68,7 @@ to and respect that choice. Hints and tooltips must not cause layout shift
 **Build with the system, not around it.** Tokens live in `index.css`.
 Sidebar urgency colors live in `sidebar/config.ts`. Step colors live in
 `step-config.ts`. Actor theming lives in `ACTOR_ROW_THEME`. When you need a
-new variant, *extend the config* and let every consumer pick it up — do not
+new variant, _extend the config_ and let every consumer pick it up — do not
 hand-roll a one-off color or icon at the call site. Drift is the failure
 mode this doc exists to prevent.
 
@@ -100,10 +100,15 @@ stylized heart/thread used as the persona avatar.
 
 ### 1.2 Typography
 
-`apps/frontend/src/index.css` body font stack:
+Self-hosted from `apps/frontend/public/fonts/` (no font CDN), declared in
+`apps/frontend/src/index.css` and mapped in `tailwind.config.js`:
+
+- **Switzer** — body and UI (`font-sans`). One variable file, weights 100–900; `index.html` preloads it.
+- **Commit Mono** — ids, keys, values, code, timestamps that must align (`font-mono`). Static 400 / 500 / 700.
 
 ```
-"Space Grotesk", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif
+sans: "Switzer", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif
+mono: "Commit Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace
 ```
 
 User-switchable families (`[data-font-family]`): `system` (default), `monospace`, `dyslexic` (OpenDyslexic, loaded via `<link>` in `index.html`).
@@ -120,20 +125,21 @@ The public site (`threa.public-site`) and the app must read as the same
 product. That means the marketing surface inherits the app's identity rather
 than picking its own.
 
-- **Type family:** Space Grotesk is the only display/body face. No serif
-  display headlines, no Newsreader/Fraunces/Inter substitutions. Weight
-  variation (300 / 400 / 500) plus the gold accent is how emphasis is
-  expressed — never italic, never bold for the wordmark.
-- **Mono companion:** small captions, kickers and labels use a single
-  monospace face (JetBrains Mono is the default; IBM Plex Mono is an
-  acceptable substitute if JetBrains is unavailable). Reserve mono for
-  meta — kickers, timestamps, "/ vetted access" hints — not body copy.
+- **Type family:** Switzer for body and UI, the same file as the app.
+  Cabinet Grotesk (variable) is the marketing display face for the hero,
+  wordmark and section heads only (`apps/public-site/src/styles/global.css`).
+  No serif display headlines, no Newsreader/Fraunces/Inter substitutions.
+  Weight variation plus the gold accent is how emphasis is expressed —
+  never italic.
+- **Mono companion:** Commit Mono, as in the app. Reserve it for meta —
+  kickers, timestamps, "/ vetted access" hints — not body copy.
 - **Brand mark:** use the exact vesica + thread paths from §1.1 via an
   inline `<symbol id="threa-mark" viewBox="0 0 100 100">`. Do not redraw
   the mark with double ellipses or arcs; do not substitute a wordmark
   for the glyph.
-- **Wordmark:** `font-family: Space Grotesk; font-weight: 300; text-transform:
-  uppercase; letter-spacing: 0.15em`. Never italic, never bold.
+- **Wordmark:** `.wordmark` is Cabinet Grotesk 700 with `-0.01em` letter
+  spacing, never italic. The app's `ThreaLogoWithText` keeps its own
+  `font-light tracking-[0.15em] uppercase` treatment (§1.1).
 - **Color tokens:** lift `--gold`, `--paper`, `--paper-warm`, `--ink`,
   `--ink-soft`, `--night`, `--night-soft`, `--line`, `--muted` from
   `apps/frontend/src/index.css`. Do not introduce competing palettes.
@@ -155,22 +161,24 @@ Tailwind utilities read `hsl(var(--token))`. Both light (`:root`) and dark
 
 ### 2.1 Canvas tokens (light → dark)
 
-| Token | Light | Dark | Use |
-| --- | --- | --- | --- |
-| `--background` | `40 20% 98%` | `30 15% 8%` | App canvas |
-| `--foreground` | `30 10% 12%` | `35 15% 92%` | Body text |
-| `--card` / `--popover` | `40 15% 99%` | `30 12% 11%` | Elevated surfaces |
-| `--primary` | `38 65% 50%` | `40 55% 55%` | Golden thread accent |
-| `--primary-foreground` | `40 20% 98%` | `30 15% 8%` | Text on primary |
-| `--secondary` | `35 10% 92%` | `30 10% 18%` | Less prominent actions |
-| `--muted` | `35 12% 93%` | `30 10% 15%` | Subdued bg |
-| `--muted-foreground` | `30 8% 45%` | `35 10% 55%` | Subdued text |
-| `--accent` | `40 50% 94%` | `35 25% 18%` | Hover highlights |
-| `--accent-foreground` | `35 60% 35%` | `40 45% 70%` | Text on accent |
-| `--destructive` | `8 70% 55%` | `5 65% 48%` | Errors / dangerous |
-| `--border` / `--input` | `35 15% 88%` | `30 10% 20%` | Lines |
-| `--ring` | `38 65% 50%` | `40 55% 55%` | Focus rings |
-| `--radius` | `0.5rem` | (same) | Base radius |
+| Token                                | Light                       | Dark                       | Use                                                                                                      |
+| ------------------------------------ | --------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `--background`                       | `40 20% 98%`                | `30 15% 8%`                | App canvas                                                                                               |
+| `--foreground`                       | `30 10% 12%`                | `35 15% 92%`               | Body text                                                                                                |
+| `--card` / `--popover`               | `40 15% 99%`                | `30 12% 11%`               | Elevated surfaces                                                                                        |
+| `--primary`                          | `38 65% 50%`                | `40 55% 55%`               | Golden thread accent                                                                                     |
+| `--primary-foreground`               | `40 20% 98%`                | `30 15% 8%`                | Text on primary                                                                                          |
+| `--secondary`                        | `35 10% 92%`                | `30 10% 18%`               | Less prominent actions                                                                                   |
+| `--muted`                            | `35 12% 93%`                | `30 10% 15%`               | Subdued bg                                                                                               |
+| `--muted-foreground`                 | `30 8% 45%`                 | `35 10% 55%`               | Subdued text                                                                                             |
+| `--accent`                           | `40 50% 94%`                | `35 25% 18%`               | Hover highlights                                                                                         |
+| `--accent-foreground`                | `35 60% 35%`                | `40 45% 70%`               | Text on accent                                                                                           |
+| `--destructive`                      | `8 70% 55%`                 | `5 65% 48%`                | Errors / dangerous                                                                                       |
+| `--border` / `--input`               | `35 15% 88%`                | `30 10% 20%`               | Lines                                                                                                    |
+| `--control` / `--control-foreground` | `38 65% 50%` / `40 20% 98%` | `40 55% 55%` / `30 15% 8%` | Radios, checkboxes, switches. High contrast swaps a darker shade                                         |
+| `--ring`                             | `var(--control)`            | `var(--control)`           | Focus rings follow the control colour                                                                    |
+| `--muted-foreground-strong`          | `30 8% 38%`                 | `35 10% 64%`               | Muted text inside the settings shell (`SETTING_LEGIBLE_MUTED`), where 11–13px lines need more than 4.5:1 |
+| `--radius`                           | `0.5rem`                    | (same)                     | Base radius                                                                                              |
 
 Sidebar gets its own slightly darker canvas: `--sidebar-background`,
 `--sidebar-foreground`, `--sidebar-primary`, `--sidebar-accent`,
@@ -189,10 +197,10 @@ because they carry semantic meaning the token system doesn't express:
 
 ```ts
 URGENCY_COLORS = {
-  mentions: "hsl(0 90% 55%)",     // red
-  activity: "hsl(210 100% 55%)",  // blue
-  quiet:    "transparent",        // hidden
-  ai:       "hsl(45 100% 50%)",   // gold
+  mentions: "hsl(0 90% 55%)", // red
+  activity: "hsl(210 100% 55%)", // blue
+  quiet: "transparent", // hidden
+  ai: "hsl(45 100% 50%)", // gold
 }
 ```
 
@@ -200,9 +208,9 @@ URGENCY_COLORS = {
 
 ```ts
 BADGE_CONFIG = {
-  channel:    { icon: Hash,     color: "text-[hsl(200_60%_50%)]" },
+  channel: { icon: Hash, color: "text-[hsl(200_60%_50%)]" },
   scratchpad: { icon: FileEdit, color: "text-primary" },
-  dm:         { icon: User,     color: "text-muted-foreground" },
+  dm: { icon: User, color: "text-muted-foreground" },
 }
 ```
 
@@ -230,10 +238,34 @@ yellow, `::highlight(stream-search-active)` orange), wrapped in `@supports`.
 
 ## 3. Spacing, radius, motion
 
-- Base radius: `--radius: 0.5rem`. Cards typically `rounded-lg`, pills `rounded-full`, sidebar rows `rounded-l-lg` on the urgency-strip side.
+- Base radius: `--radius: 0.5rem` (`rounded-lg`; `md` / `sm` step down 2px each). Named radii in `tailwind.config.js`: `rounded-modal` 16px, `rounded-card` / `rounded-input` 12px, `rounded-button` 10px, `rounded-item` / `rounded-avatar` 8px, `rounded-pill` 20px. Settings cards are `rounded-lg`, badges `rounded-full`, sidebar rows `rounded-l-lg` on the urgency-strip side.
 - Layout uses Tailwind spacing (`gap-2`, `px-3`, `py-2`); no custom scale.
 - Pull-to-refresh has three modes — see §5.
 - Reduced-motion users get a CSS class (`.reduced-motion`) that collapses all animation/transition durations to 0.01ms. See `index.css`.
+
+### 3.1 Settings surfaces
+
+Settings (`apps/frontend/src/components/settings/`) are the reference for any
+form-like or admin surface. The rules live in `setting-text.ts` and
+`setting-primitives.tsx`; reuse those constants rather than restating them.
+
+- **Section:** `SettingsSection` — an uppercase `SETTING_SECTION_HEADING_TEXT` heading (`text-xs font-semibold uppercase tracking-wide text-muted-foreground`) over one card, `rounded-lg border bg-card divide-y`. The card carries the grouping, not extra headings.
+- **Rows:** `px-4 py-3`, label left in `text-sm font-medium`, control right. Everything under a label — descriptions, meta, empty notes, errors — is `SETTING_NOTE_TEXT` (`text-[0.8125rem] leading-snug`) in `rem`, so Text size scales it. The settings dialog and drawer set `SETTING_LEGIBLE_MUTED` once (`settings-shell.tsx`), so every muted line inside gets the stronger shade.
+- **Group band:** `SettingGroupBand` names a run of rows inside one card (`bg-muted/40 px-4 py-1.5 text-xs font-medium`), not uppercase, so it never reads as a second section.
+- **Choices:** `ChoiceSetting`, with `variant` `segmented` for two or three short options (`SegmentedControl`, one radio group: arrow keys move, Tab leaves), `list` when options carry descriptions (the default then), `select` for long lists. Booleans are a `SwitchSetting`.
+- **Badges:** `SettingBadge` is an attribute of what it sits on (scope, role, state): `rounded-full border text-xs`, muted, beside a label or after an item's name.
+- **Touch:** controls are `SETTING_CONTROL_HEIGHT` (`h-11`, `sm:h-9`, back to 44px on coarse pointers); icon buttons `SETTING_ICON_BUTTON` (44px, 36px on fine-pointer desktops). Below `sm`, rows stack the label over the control instead of shrinking it.
+- **Empty:** inside a card, `SettingEmptyNote` (one muted note line). A whole page with nothing to show, such as a search with no matches, gets a dashed `rounded-lg border border-dashed` box with centred text in the card's place; the back office uses that box for every empty, loading and error list.
+
+### 3.2 Back office
+
+`apps/backoffice` is its own Vite app and does not import frontend
+components, so it mirrors the system instead of sharing it:
+
+- Same fonts (copied into `apps/backoffice/public/fonts/`), the same colour, control and radius tokens in `src/index.css` / `tailwind.config.js`. Its `--muted-foreground` is the settings shade (`--muted-foreground-strong`) everywhere, because every page is settings-dense meta.
+- Layout pieces follow §3.1: `components/layout/section.tsx` (heading + note text), `rows.tsx` (`CARD_CLASS`, `ROW_PADDING`, `RowList`, `LinkRow`, `RowText`, `MetaLine`, `ListPlaceholder`), `stat.tsx`, and one `Page` column (`max-w-5xl`).
+- No Radix select, switch or radio group here: `components/ui/native-select.tsx`, `switch.tsx` and `segmented-control.tsx` are native elements styled like their settings counterparts, keeping platform pickers on phones.
+- Flag names and descriptions come from `FEATURE_FLAG_COPY` in `@threahq/types`, the same copy the app's settings use; values stay raw, in mono, because admins set exact values.
 
 ---
 
@@ -325,11 +357,11 @@ From the file's own comment:
 
 Three explicit modes — `pullModeConfig` in `app-shell.tsx`:
 
-| Mode | Background | Foreground | Label |
-| --- | --- | --- | --- |
-| `idle` | `bg-muted/50` | `text-muted-foreground` | "Pull to refresh" |
-| `soft` | `bg-muted/50` | `text-muted-foreground` | "Release to refresh" |
-| `hard` | `bg-orange-500/15` | `text-orange-500` | "Release to reload" |
+| Mode   | Background         | Foreground              | Label                |
+| ------ | ------------------ | ----------------------- | -------------------- |
+| `idle` | `bg-muted/50`      | `text-muted-foreground` | "Pull to refresh"    |
+| `soft` | `bg-muted/50`      | `text-muted-foreground` | "Release to refresh" |
+| `hard` | `bg-orange-500/15` | `text-orange-500`       | "Release to reload"  |
 
 Indicator grows with pull (`28 + progress * 8`px), rotates 0→270°, fades in opacity 0.4→1.0. While refreshing, the icon switches to `text-primary animate-spin`.
 
@@ -355,12 +387,12 @@ Folder: `apps/frontend/src/components/layout/sidebar/`. Public entry: `sidebar.t
 
 **Smart view** — `SMART_SECTIONS`:
 
-| Key | Label | Icon | Sort | Compact | Hover preview |
-| --- | --- | --- | --- | --- | --- |
-| `important` | "Important" | ⚡ | `importance` | no — full preview always | no |
-| `recent` | "Recent" | 🕐 | `activity` | yes | yes |
-| `pinned` | "Pinned" | 📌 | `activity` | yes | yes |
-| `other` | "Everything Else" | 📂 | `activity` | yes | yes |
+| Key         | Label             | Icon | Sort         | Compact                  | Hover preview |
+| ----------- | ----------------- | ---- | ------------ | ------------------------ | ------------- |
+| `important` | "Important"       | ⚡   | `importance` | no — full preview always | no            |
+| `recent`    | "Recent"          | 🕐   | `activity`   | yes                      | yes           |
+| `pinned`    | "Pinned"          | 📌   | `activity`   | yes                      | yes           |
+| `other`     | "Everything Else" | 📂   | `activity`   | yes                      | yes           |
 
 **All view** — `ALL_SECTIONS`:
 
@@ -433,7 +465,7 @@ Workspace-scoped (`/w/:workspaceId`):
 
 ## 8. Timeline (messages & events)
 
-Folder: `apps/frontend/src/components/timeline/`. The timeline is *event*-shaped, not message-shaped — `EventItem` switches over `event.eventType`.
+Folder: `apps/frontend/src/components/timeline/`. The timeline is _event_-shaped, not message-shaped — `EventItem` switches over `event.eventType`.
 
 ### 8.1 Event taxonomy
 
@@ -454,12 +486,12 @@ Additional rendered surfaces in the same folder:
 
 `message-event.tsx`, `ACTOR_ROW_THEME`:
 
-| Actor | Row accent | Name color | Badge |
-| --- | --- | --- | --- |
-| `user` | none | inherit | none |
-| `persona` | `bg-gradient-to-r from-primary/[0.06] to-transparent`, `shadow-[inset_3px_0_0_hsl(var(--primary))]` | `text-primary` | none |
-| `bot` | emerald gradient `from-emerald-500/[0.06]`, inset stripe `hsl(152 69% 41%)` | `text-emerald-600` | `BOT` pill, 10px, `text-emerald-600/70` |
-| `system` | blue gradient `from-blue-500/[0.04]`, inset stripe `hsl(210 100% 55%)` | `text-blue-500` | none |
+| Actor     | Row accent                                                                                          | Name color         | Badge                                   |
+| --------- | --------------------------------------------------------------------------------------------------- | ------------------ | --------------------------------------- |
+| `user`    | none                                                                                                | inherit            | none                                    |
+| `persona` | `bg-gradient-to-r from-primary/[0.06] to-transparent`, `shadow-[inset_3px_0_0_hsl(var(--primary))]` | `text-primary`     | none                                    |
+| `bot`     | emerald gradient `from-emerald-500/[0.06]`, inset stripe `hsl(152 69% 41%)`                         | `text-emerald-600` | `BOT` pill, 10px, `text-emerald-600/70` |
+| `system`  | blue gradient `from-blue-500/[0.04]`, inset stripe `hsl(210 100% 55%)`                              | `text-blue-500`    | none                                    |
 
 Defaults to `user` when `actorType` is absent.
 
@@ -501,7 +533,9 @@ CSS-based, in `index.css`:
 
 ```css
 @media (max-width: 639px) {
-  body:has([data-inline-edit]) [data-message-composer-root] { display: none; }
+  body:has([data-inline-edit]) [data-message-composer-root] {
+    display: none;
+  }
 }
 ```
 
@@ -583,20 +617,20 @@ Folder: `apps/frontend/src/components/trace/`. Entry: `<TraceDialog />`, gated b
 
 `apps/frontend/src/lib/step-config.ts` — `STEP_DISPLAY_CONFIG`. Each entry has `label`, `inlineLabel`, `icon` (lucide), `hue`, `saturation`, `lightness`.
 
-| Type | Label | Inline label | Icon | Hue/Sat/Lit |
-| --- | --- | --- | --- | --- |
-| `context_received` | Context | Reading messages… | `Inbox` | 220/70/55 |
-| `thinking` | Thinking | Thinking… | `Lightbulb` | 45/93/47 |
-| `reconsidering` | Reconsidering | Reconsidering… | `RotateCcw` | 280/70/55 |
-| `web_search` | Web Search | Searching the web… | `Search` | 200/70/50 |
-| `visit_page` | Reading Page | Reading page… | `FileText` | 200/70/50 |
-| `workspace_search` | Workspace Search | Searching workspace… | `Building2` | 270/60/50 |
-| `github_access` | GitHub | Reading GitHub… | `Github` | 210/10/25 |
-| `linear_access` | Linear | Reading Linear… | `CircleDot` | 238/56/60 |
-| `message_sent` | Response | Sending response… | `MessageSquare` | 142/76/36 |
-| `message_edited` | Response Updated | Updating response… | `MessageSquare` | 142/76/36 |
-| `tool_call` | Tool Call | Using tools… | `Wrench` | 200/70/50 |
-| `tool_error` | Error | Encountered an error… | `AlertTriangle` | 0/72/51 |
+| Type               | Label            | Inline label          | Icon            | Hue/Sat/Lit |
+| ------------------ | ---------------- | --------------------- | --------------- | ----------- |
+| `context_received` | Context          | Reading messages…     | `Inbox`         | 220/70/55   |
+| `thinking`         | Thinking         | Thinking…             | `Lightbulb`     | 45/93/47    |
+| `reconsidering`    | Reconsidering    | Reconsidering…        | `RotateCcw`     | 280/70/55   |
+| `web_search`       | Web Search       | Searching the web…    | `Search`        | 200/70/50   |
+| `visit_page`       | Reading Page     | Reading page…         | `FileText`      | 200/70/50   |
+| `workspace_search` | Workspace Search | Searching workspace…  | `Building2`     | 270/60/50   |
+| `github_access`    | GitHub           | Reading GitHub…       | `Github`        | 210/10/25   |
+| `linear_access`    | Linear           | Reading Linear…       | `CircleDot`     | 238/56/60   |
+| `message_sent`     | Response         | Sending response…     | `MessageSquare` | 142/76/36   |
+| `message_edited`   | Response Updated | Updating response…    | `MessageSquare` | 142/76/36   |
+| `tool_call`        | Tool Call        | Using tools…          | `Wrench`        | 200/70/50   |
+| `tool_error`       | Error            | Encountered an error… | `AlertTriangle` | 0/72/51     |
 
 Fallback (`getStepInlineLabel(null)`) returns `"Working…"`.
 
@@ -620,11 +654,11 @@ Fallback (`getStepInlineLabel(null)`) returns `"Working…"`.
 
 `apps/frontend/src/components/quick-switcher/quick-switcher.tsx`. Three modes:
 
-| Mode | Prefix | Icon | Placeholder |
-| --- | --- | --- | --- |
-| `stream` | (none) | `FileText` | "Search streams…" |
-| `command` | `> ` | `Terminal` | "Run a command…" |
-| `search` | `? ` | `Search` | "Search messages…" |
+| Mode      | Prefix | Icon       | Placeholder        |
+| --------- | ------ | ---------- | ------------------ |
+| `stream`  | (none) | `FileText` | "Search streams…"  |
+| `command` | `> `   | `Terminal` | "Run a command…"   |
+| `search`  | `? `   | `Search`   | "Search messages…" |
 
 `deriveMode(query)` switches mode by first character. `ModeTabs` lets the user flip mode via UI; `RichInput` parses triggers (`COMMAND_TRIGGERS`, `STREAM_TRIGGERS`, `SEARCH_TRIGGERS`). `ItemList` renders results. Mounted via `ResponsiveDialog`.
 
@@ -674,34 +708,34 @@ Radix popper z-index — `body > [data-radix-popper-content-wrapper] { z-index: 
 
 Lucide icons used in canonical roles. New surfaces should reuse these; introducing a synonym (`SquarePen` vs `FileEdit`, `MessageCircle` vs `MessageSquare`) creates drift.
 
-| Role | Icon |
-| --- | --- |
-| Scratchpad | `FileEdit` |
-| Channel | `Hash` |
-| Private channel | `Lock` |
-| DM | `User` |
-| Thread | `MessageSquareText` (sidebar) / `MessageSquareReply` (composer reply) |
-| Mention | `AtSign` |
-| Command | `Slash` / `Terminal` |
-| Search | `Search` |
-| Attach | `Paperclip` |
-| Add / new | `Plus` |
-| Close / dismiss | `X` |
-| Send | `ArrowUp` |
-| Maximize composer | `Maximize2` |
-| Notifications | `Bell` |
-| Settings | `Settings` |
-| Refresh | `RotateCcw` (reconsider step) / `RefreshCw` (pull-to-refresh) |
-| Saved / done | `Check` |
-| Quote | `Quote` |
-| Inbox / context | `Inbox` |
-| Thinking | `Lightbulb` |
-| Page | `FileText` |
-| Workspace | `Building2` |
-| GitHub | `Github` |
-| Linear | `CircleDot` |
-| Tool call | `Wrench` |
-| Error | `AlertTriangle` |
+| Role              | Icon                                                                  |
+| ----------------- | --------------------------------------------------------------------- |
+| Scratchpad        | `FileEdit`                                                            |
+| Channel           | `Hash`                                                                |
+| Private channel   | `Lock`                                                                |
+| DM                | `User`                                                                |
+| Thread            | `MessageSquareText` (sidebar) / `MessageSquareReply` (composer reply) |
+| Mention           | `AtSign`                                                              |
+| Command           | `Slash` / `Terminal`                                                  |
+| Search            | `Search`                                                              |
+| Attach            | `Paperclip`                                                           |
+| Add / new         | `Plus`                                                                |
+| Close / dismiss   | `X`                                                                   |
+| Send              | `ArrowUp`                                                             |
+| Maximize composer | `Maximize2`                                                           |
+| Notifications     | `Bell`                                                                |
+| Settings          | `Settings`                                                            |
+| Refresh           | `RotateCcw` (reconsider step) / `RefreshCw` (pull-to-refresh)         |
+| Saved / done      | `Check`                                                               |
+| Quote             | `Quote`                                                               |
+| Inbox / context   | `Inbox`                                                               |
+| Thinking          | `Lightbulb`                                                           |
+| Page              | `FileText`                                                            |
+| Workspace         | `Building2`                                                           |
+| GitHub            | `Github`                                                              |
+| Linear            | `CircleDot`                                                           |
+| Tool call         | `Wrench`                                                              |
+| Error             | `AlertTriangle`                                                       |
 
 ---
 
@@ -727,4 +761,4 @@ Cross-reference; full text in `AGENTS.md`.
 
 - **Source of truth is the code.** When adding a new step type, sidebar urgency level, actor type, badge variant, etc., update the config file in code first (`step-config.ts`, `sidebar/config.ts`, `ACTOR_ROW_THEME`, etc.). Then update this doc to match.
 - **`docs/design-system.md` describes intent.** Some of its claims drift from the code. Use it for vocabulary and motivation, not for implementation details.
-- **An HTML companion (`docs/DESIGN.html`) is intentionally absent.** A future companion should be *generated* from the real config (`URGENCY_COLORS`, `STEP_DISPLAY_CONFIG`, `ACTOR_ROW_THEME`, `BADGE_CONFIG`, `SMART_SECTIONS`) rather than hand-authored, so it can't drift.
+- **An HTML companion (`docs/DESIGN.html`) is intentionally absent.** A future companion should be _generated_ from the real config (`URGENCY_COLORS`, `STEP_DISPLAY_CONFIG`, `ACTOR_ROW_THEME`, `BADGE_CONFIG`, `SMART_SECTIONS`) rather than hand-authored, so it can't drift.

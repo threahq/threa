@@ -1224,6 +1224,8 @@ export {
   type FeatureFlagDefinition,
   type FeatureFlagLayers,
   defineFlag,
+  FEATURE_FLAG_COPY,
+  FEATURE_FLAG_VALUE_LABELS,
   isFeatureFlagKey,
   isFeatureFlagValue,
   flagAllowsScope,

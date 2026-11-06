@@ -4,12 +4,6 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Threa Design System - Kitchen Sink Reference</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
       /* ========================================
@@ -54,11 +48,35 @@
       }
 
       /* ========================================
-         TYPOGRAPHY - Space Grotesk
+         TYPOGRAPHY - Switzer + Commit Mono (the app's self-hosted files)
          ======================================== */
+      @font-face {
+        font-family: "Switzer";
+        src: url("../apps/frontend/public/fonts/switzer.woff2") format("woff2");
+        font-weight: 100 900;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "Commit Mono";
+        src: url("../apps/frontend/public/fonts/commit-mono-400.woff2") format("woff2");
+        font-weight: 400;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "Commit Mono";
+        src: url("../apps/frontend/public/fonts/commit-mono-500.woff2") format("woff2");
+        font-weight: 500;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "Commit Mono";
+        src: url("../apps/frontend/public/fonts/commit-mono-700.woff2") format("woff2");
+        font-weight: 700;
+        font-display: swap;
+      }
       body {
         font-family:
-          "Space Grotesk",
+          "Switzer",
           system-ui,
           -apple-system,
           sans-serif;
@@ -713,7 +731,7 @@
       }
 
       .rendered-content code {
-        font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+        font-family: "Commit Mono", ui-monospace, monospace;
         font-size: 0.9em;
         padding: 2px 6px;
         border-radius: 4px;
@@ -761,7 +779,7 @@
         font-size: 12px;
         font-weight: 500;
         color: hsl(var(--muted-foreground));
-        font-family: "SF Mono", "Fira Code", monospace;
+        font-family: "Commit Mono", ui-monospace, monospace;
       }
       .code-block-actions {
         display: flex;
@@ -868,7 +886,7 @@
         overflow-x: auto;
       }
       .code-block-body code {
-        font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+        font-family: "Commit Mono", ui-monospace, monospace;
         font-size: 13px;
         line-height: 1.5;
         color: hsl(var(--foreground));
@@ -1159,7 +1177,7 @@
         color: hsl(280 60% 55%);
         font-size: 13px;
         font-weight: 500;
-        font-family: "SF Mono", "Fira Code", monospace;
+        font-family: "Commit Mono", ui-monospace, monospace;
       }
 
       /* ========================================
@@ -2572,7 +2590,9 @@
       <section class="section">
         <div class="section-header">
           <h2 class="section-title">Typography</h2>
-          <p class="section-subtitle">Space Grotesk - Geometric, technical, modern. Fits "AI-native" positioning.</p>
+          <p class="section-subtitle">
+            Switzer - Neutral grotesk for dense, long-session UI. Commit Mono for ids, keys and code.
+          </p>
           <span class="section-ref">typography-exploration-01.html</span>
         </div>
 
@@ -3190,7 +3210,7 @@
                     background: hsl(var(--muted) / 0.3);
                     padding: 12px;
                     border-radius: 6px;
-                    font-family: &quot;SF Mono&quot;, &quot;Fira Code&quot;, monospace;
+                    font-family: &quot;Commit Mono&quot;, ui-monospace, monospace;
                     font-size: 12px;
                     margin-bottom: 12px;
                   "
@@ -6061,7 +6081,7 @@
                     The user wants to validate a JWT token. I'll provide a secure implementation using
                     <code
                       style="
-                        font-family: &quot;SF Mono&quot;, Monaco, monospace;
+                        font-family: &quot;Commit Mono&quot;, ui-monospace, monospace;
                         font-size: 13px;
                         background: hsl(var(--muted) / 0.5);
                         padding: 2px 6px;
@@ -6074,7 +6094,7 @@
                     style="
                       white-space: pre-wrap;
                       word-wrap: break-word;
-                      font-family: &quot;SF Mono&quot;, Monaco, monospace;
+                      font-family: &quot;Commit Mono&quot;, ui-monospace, monospace;
                       font-size: 13px;
                       background: hsl(var(--muted) / 0.5);
                       padding: 12px;
@@ -6140,7 +6160,7 @@ export function validateToken(token: string) {
                     <pre
                       style="
                         margin-top: 8px;
-                        font-family: &quot;SF Mono&quot;, Monaco, monospace;
+                        font-family: &quot;Commit Mono&quot;, ui-monospace, monospace;
                         background: hsl(var(--muted) / 0.3);
                         padding: 8px;
                         border-radius: 4px;
@@ -6283,7 +6303,7 @@ Status: ETIMEDOUT</pre
                 >
                   <div
                     id="longContentPreview"
-                    style="font-family: &quot;SF Mono&quot;, Monaco, monospace; white-space: pre-wrap"
+                    style="font-family: &quot;Commit Mono&quot;, ui-monospace, monospace; white-space: pre-wrap"
                   >
                     { "results": [ { "title": "Introduction to Web APIs", "url": "..." }, { "title": "REST vs GraphQL",
                     "url": "..." }, { "title": "Authentication Patterns", "url": "..." } ], "total": 47, "page": 1 }
@@ -6387,8 +6407,8 @@ Status: ETIMEDOUT</pre
             >
               <strong style="font-size: 13px">💡 Content Rendering:</strong>
               <p style="font-size: 13px; color: hsl(var(--muted-foreground)); margin-top: 8px; line-height: 1.6">
-                Code blocks use SF Mono/Monaco font with syntax-aware background. Long tool results (>500 chars) show
-                "Expand" button. Inline code uses
+                Code blocks use Commit Mono with syntax-aware background. Long tool results (>500 chars) show "Expand"
+                button. Inline code uses
                 <code style="background: hsl(var(--muted) / 0.5); padding: 2px 6px; border-radius: 3px; font-size: 12px"
                   >monospace with subtle background</code
                 >. Error states use red accents with collapsible technical details.

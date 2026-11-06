@@ -5,10 +5,15 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["Space Grotesk", "system-ui", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],
+        sans: ["Switzer", "system-ui", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],
+        mono: ["Commit Mono", "ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "monospace"],
       },
       colors: {
         border: "hsl(var(--border))",
+        control: {
+          DEFAULT: "hsl(var(--control))",
+          foreground: "hsl(var(--control-foreground))",
+        },
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
@@ -43,9 +48,13 @@ export default {
         },
       },
       borderRadius: {
+        modal: "16px",
         card: "12px",
         input: "12px",
         button: "10px",
+        item: "8px",
+        avatar: "8px",
+        pill: "20px",
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
