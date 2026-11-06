@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { RailwayLogLine } from "../railway"
 import { makeWindow } from "../types"
-import { collapseContinuations, groupTemplates, summarizeLogs, templateOf } from "./logs"
+import { collapseContinuations, groupTemplates, noiseReason, summarizeLogs, templateOf } from "./logs"
 
 const line = (message: string, over: Partial<RailwayLogLine> = {}): RailwayLogLine => ({
   timestamp: "2026-08-21T17:40:00.000Z",
@@ -97,5 +97,36 @@ describe("summarizeLogs", () => {
     const mk = (n: number) => Array.from({ length: n }, () => line("Pull failed for track_01M0JPKAYNB3XYS90BRGF8TAB1"))
     const report = summarizeLogs(window, { errSince: mk(30), errPrior: mk(12), warnSince: [], warnPrior: [] })
     expect(report.findings.map((f) => f.id)).toEqual(["logs.error.backend"])
+  })
+})
+
+describe("noiseReason", () => {
+  test("should tag scanner 429s outside our served prefixes and deploy-rollover socket timeouts as noise", () => {
+    const cases = [
+      "GET /icecoder 429",
+      "POST /app 429",
+      "GET /api/uploads/x/self/environ 429",
+      "POST /flowise/api/v1/node-custom-function 429",
+      "GET /api/v1/messages 429",
+      "POST /api/workspaces/ws_1/messages 429",
+      "GET /api/workspaces 429",
+      "POST /api/oauth/token 429",
+      "GET /api/attachments/img/avatar/att_1 429",
+      "POST /api/workspaces/ws_1/messages 400",
+      "Socket.io close timed out, continuing...",
+    ]
+    expect(Object.fromEntries(cases.map((message) => [message, noiseReason(message) !== null]))).toEqual({
+      "GET /icecoder 429": true,
+      "POST /app 429": true,
+      "GET /api/uploads/x/self/environ 429": false,
+      "POST /flowise/api/v1/node-custom-function 429": true,
+      "GET /api/v1/messages 429": false,
+      "POST /api/workspaces/ws_1/messages 429": false,
+      "GET /api/workspaces 429": false,
+      "POST /api/oauth/token 429": false,
+      "GET /api/attachments/img/avatar/att_1 429": false,
+      "POST /api/workspaces/ws_1/messages 400": false,
+      "Socket.io close timed out, continuing...": true,
+    })
   })
 })

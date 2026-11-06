@@ -171,13 +171,14 @@ describe("takeSnapshot", () => {
     const { deps } = fakeDeps({ creds0: true })
     const snapshot = await takeSnapshot(deps, {
       sha: SHA,
-      sections: sections("revision", "liveness", "pipelines", "logs", "resources"),
+      sections: sections("revision", "liveness", "pipelines", "logs", "posthog", "resources"),
     })
     expect(snapshot.level).toBe("warn")
     expect(snapshot.errors).toEqual([
       { section: "railway", error: "RAILWAY_READONLY_TOKEN missing; Railway planes skipped" },
       { section: "pipelines", error: "DB_READ_PROXY_URL/SECRET missing; pipelines skipped" },
       { section: "logs", error: "RAILWAY_READONLY_TOKEN missing; logs skipped" },
+      { section: "posthog", error: "POSTHOG_READ_ONLY_API_KEY/PROJECT_ID_EU missing; posthog skipped" },
       { section: "resources", error: "RAILWAY_READONLY_TOKEN missing; resources skipped" },
     ])
     expect(snapshot.revision?.planes.map((plane) => plane.level)).toEqual([

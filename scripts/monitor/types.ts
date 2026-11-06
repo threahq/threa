@@ -35,10 +35,16 @@ export function makeWindow(since: Date, now: Date, minWindowMs: number, label: s
   const effectiveSince = new Date(now.getTime() - span)
   const minutes = Math.round(span / 60000)
   const floored = requested < minWindowMs ? `, floored to ${minutes}m` : ""
+  const long = minutes >= 1440
+  const spanText = !long ? `${minutes}m` : minutes % 1440 === 0 ? `${minutes / 1440}d` : `${Math.round(minutes / 60)}h`
+  const at = since
+    .toISOString()
+    .slice(long ? 5 : 11, 16)
+    .replace("T", " ")
   return {
     since: effectiveSince.toISOString(),
     priorStart: new Date(effectiveSince.getTime() - span).toISOString(),
     now: now.toISOString(),
-    label: `${label} ${since.toISOString().slice(11, 16)}Z (${minutes}m window${floored})`,
+    label: `${label} ${at}Z (${spanText} window${floored})`,
   }
 }

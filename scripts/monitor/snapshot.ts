@@ -3,9 +3,11 @@ import { ReadProxyClient } from "./db"
 import type { Credentials } from "./env"
 import { remoteMainSha, runsForCommit, type ExecLike } from "./github"
 import { timedFetch, type FetchLike } from "./http"
+import { PostHogClient } from "./posthog"
 import { RailwayClient, type RailwayDeployment } from "./railway"
 import { probeLiveness, type LivenessReport } from "./probes/liveness"
 import { probeLogs, type LogReport } from "./probes/logs"
+import { probePostHog, type PostHogReport } from "./probes/posthog"
 import { probePipelines, type PipelineReport } from "./probes/pipelines"
 import { probePush, type PushReport } from "./probes/push"
 import { probeResources, type ResourceReport } from "./probes/resources"
@@ -24,7 +26,7 @@ export interface SectionError {
   error: string
 }
 
-export type Section = "revision" | "liveness" | "pipelines" | "push" | "logs" | "resources"
+export type Section = "revision" | "liveness" | "pipelines" | "push" | "logs" | "posthog" | "resources"
 
 export interface Snapshot {
   at: string
@@ -36,6 +38,7 @@ export interface Snapshot {
   pipelines: PipelineReport | null
   push: PushReport | null
   logs: LogReport | null
+  posthog: PostHogReport | null
   resources: ResourceReport | null
   errors: SectionError[]
   findings: Finding[]
@@ -49,7 +52,11 @@ export interface SnapshotOptions {
   sections: Set<Section>
 }
 
-export function clients(deps: Deps): { railway: RailwayClient | null; db: ReadProxyClient | null } {
+export function clients(deps: Deps): {
+  railway: RailwayClient | null
+  db: ReadProxyClient | null
+  posthog: PostHogClient | null
+} {
   const railway = deps.creds.RAILWAY_READONLY_TOKEN
     ? new RailwayClient(deps.creds.RAILWAY_READONLY_TOKEN, deps.fetchImpl)
     : null
@@ -57,7 +64,11 @@ export function clients(deps: Deps): { railway: RailwayClient | null; db: ReadPr
     deps.creds.DB_READ_PROXY_URL && deps.creds.DB_READ_PROXY_SECRET
       ? new ReadProxyClient(deps.creds.DB_READ_PROXY_URL, deps.creds.DB_READ_PROXY_SECRET, deps.fetchImpl)
       : null
-  return { railway, db }
+  const posthog =
+    deps.creds.POSTHOG_READ_ONLY_API_KEY && deps.creds.POSTHOG_PROJECT_ID_EU
+      ? new PostHogClient(deps.creds.POSTHOG_READ_ONLY_API_KEY, deps.creds.POSTHOG_PROJECT_ID_EU, deps.fetchImpl)
+      : null
+  return { railway, db, posthog }
 }
 
 export async function fetchFrontendVersion(
@@ -130,7 +141,7 @@ export async function takeRevision(
 
 export async function takeSnapshot(deps: Deps, opts: SnapshotOptions): Promise<Snapshot> {
   const now = deps.now()
-  const { railway, db } = clients(deps)
+  const { railway, db, posthog } = clients(deps)
   const errors: SectionError[] = []
 
   let expectedSha: string | null = null
@@ -163,7 +174,7 @@ export async function takeSnapshot(deps: Deps, opts: SnapshotOptions): Promise<S
     }
   }
 
-  const [liveness, pipelines, push, logs, resources] = await Promise.all([
+  const [liveness, pipelines, push, logs, posthogReport, resources] = await Promise.all([
     guard("liveness", () =>
       probeLiveness({
         fetchImpl: deps.fetchImpl,
@@ -184,6 +195,10 @@ export async function takeSnapshot(deps: Deps, opts: SnapshotOptions): Promise<S
       if (!railway) throw new Error("RAILWAY_READONLY_TOKEN missing; logs skipped")
       return probeLogs(railway, window)
     }),
+    guard("posthog", async () => {
+      if (!posthog) throw new Error("POSTHOG_READ_ONLY_API_KEY/PROJECT_ID_EU missing; posthog skipped")
+      return probePostHog(posthog, window)
+    }),
     guard("resources", async () => {
       if (!railway) throw new Error("RAILWAY_READONLY_TOKEN missing; resources skipped")
       return probeResources(railway, window)
@@ -196,6 +211,7 @@ export async function takeSnapshot(deps: Deps, opts: SnapshotOptions): Promise<S
     ...(pipelines?.findings ?? []),
     ...(push?.findings ?? []),
     ...(logs?.findings ?? []),
+    ...(posthogReport?.findings ?? []),
     ...(resources?.findings ?? []),
     ...errors.map((sectionError) => ({
       level: "warn" as Level,
@@ -212,6 +228,7 @@ export async function takeSnapshot(deps: Deps, opts: SnapshotOptions): Promise<S
     pipelines,
     push,
     logs,
+    posthog: posthogReport,
     resources,
     errors,
     findings,

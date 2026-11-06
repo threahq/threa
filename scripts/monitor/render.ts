@@ -3,6 +3,7 @@ import type { Finding, Level } from "./types"
 import type { Snapshot } from "./snapshot"
 import type { RevisionReport } from "./probes/revision"
 import type { LogReport } from "./probes/logs"
+import { exceptionLabel, type PostHogReport } from "./probes/posthog"
 import {
   hasReceiptSample,
   providerFailed,
@@ -38,8 +39,8 @@ export function renderRevision(revision: RevisionReport, now: Date): string[] {
   return lines
 }
 
-export function renderLogs(logs: LogReport, top: number): string[] {
-  const lines = [`logs      ${logs.window.label}; prior window equal length`]
+export function renderLogs(logs: LogReport, top: number, label = "logs"): string[] {
+  const lines = [`${pad(label, 9)} ${logs.window.label}; prior window equal length`]
   for (const service of logs.services) {
     lines.push(
       `  ${pad(service.service, 14)} error ${service.errorSince} (prior ${service.errorPrior})  warn ${service.warnSince} (prior ${service.warnPrior})${service.noiseSince ? `  noise ${service.noiseSince}` : ""}`
@@ -53,6 +54,24 @@ export function renderLogs(logs: LogReport, top: number): string[] {
     )
   }
   if (logs.truncated) lines.push("  (fetch capped; counts are lower bounds)")
+  return lines
+}
+
+export function renderPostHog(report: PostHogReport, top: number): string[] {
+  const lines = renderLogs(report.logs, top, "posthog")
+  if (report.retainedFrom)
+    lines.splice(
+      1 + report.logs.services.length,
+      0,
+      `  logs retained from ${report.retainedFrom.slice(0, 16).replace("T", " ")}Z`
+    )
+  const shown = report.exceptions.slice(0, top)
+  if (shown.length) lines.push("  exceptions:")
+  for (const group of shown) {
+    lines.push(
+      `    ×${group.since} (prior ${group.prior}) ${exceptionLabel(group)}  last ${group.lastAt.slice(5, 16).replace("T", " ")}Z`
+    )
+  }
   return lines
 }
 
@@ -145,6 +164,7 @@ export function renderSnapshot(snapshot: Snapshot, opts: { top?: number } = {}):
   }
   if (snapshot.push) out.push(...renderPush(snapshot.push))
   if (snapshot.logs) out.push(...renderLogs(snapshot.logs, opts.top ?? 5))
+  if (snapshot.posthog) out.push(...renderPostHog(snapshot.posthog, opts.top ?? 5))
   if (snapshot.resources) {
     out.push("resources")
     for (const row of snapshot.resources.rows) {

@@ -28,6 +28,8 @@ describe("resolveCredentials", () => {
       "THREA_PROD_BASE_URL",
       "THREA_PROD_READ_ONLY_API_KEY",
       "THREA_PROD_DEFAULT_WORKSPACE",
+      "POSTHOG_READ_ONLY_API_KEY",
+      "POSTHOG_PROJECT_ID_EU",
     ])
   })
 })

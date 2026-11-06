@@ -25,6 +25,7 @@ replaces.
 | Keep watching after a risky launch             | `bun run monitor watch --for 2h --interval 10m` (prints only new/resolved findings)     |
 | What errored since the deploy?                 | `bun run monitor logs --level error --since 2h --service backend [--grep <id>] [--raw]` |
 | Which deployment is each Railway service on?   | `bun run monitor deploys`                                                               |
+| What has PostHog seen this week?               | `bun run monitor status --only posthog --since 5d`                                      |
 
 `--json` keeps stdout machine-readable (status and a passing verify: the snapshot, verify progress on
 stderr; a failing verify: `{verified:false, sha, level, revision, errors}`; watch: one JSON line per
@@ -51,9 +52,13 @@ outright (exit 3). `--help` has the flags.
   shown in the pipelines line and excluded from findings). **Ready with an old oldest-age** means workers
   are not claiming.
 - **logs**: error/warn events per service versus the equal-length prior window, stack
-  frames folded into their parent event, known boot noise counted apart, and **new log
+  frames folded into their parent event, known noise (boot, scanner 429s, rollover) counted apart, and **new log
   templates** (seen ≥3× since the baseline, never before it). Investigate templates
   with `monitor logs --grep`.
+- **posthog**: the PostHog `logs` table (warn+ only, survives deploys, ~14d retention)
+  in the logs layout, plus `$exception` events grouped by issue. Same rate rules as logs. When
+  the prior window starts before the oldest retained log, log rate findings are dropped for one
+  `posthog.logs.prior_incomplete` warning; keep `--since` at half the retention or less.
 - **resources**: current CPU/memory versus the prior window's peak; rollover doubles
   peaks, so only sustained growth warns.
 
@@ -76,7 +81,8 @@ observed from what you inferred. Pipeline green without a revision row is not pr
 ## Credentials
 
 `RAILWAY_READONLY_TOKEN`, `DB_READ_PROXY_URL`, `DB_READ_PROXY_SECRET`,
-`THREA_PROD_BASE_URL`, `THREA_PROD_READ_ONLY_API_KEY`, `THREA_PROD_DEFAULT_WORKSPACE`
+`THREA_PROD_BASE_URL`, `THREA_PROD_READ_ONLY_API_KEY`, `THREA_PROD_DEFAULT_WORKSPACE`,
+`POSTHOG_READ_ONLY_API_KEY`, `POSTHOG_PROJECT_ID_EU`
 from the environment, else `~/.threa.env.agents`. The CLI prints which names it loaded,
 never values; a missing key skips its section and says so. Everything is read-only:
-project-access token, SELECT-only proxy role, public read key.
+project-access token, SELECT-only proxy role, public read key, PostHog read-only key.
