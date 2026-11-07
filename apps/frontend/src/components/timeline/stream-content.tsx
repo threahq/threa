@@ -1826,6 +1826,10 @@ export function StreamContent({
     (targetId: string) => findTimelineTargetIndex(visibleItemsRef.current, targetId),
     []
   )
+  // Edge pagination stands down while a refine loop owns the viewport. A window
+  // that fits the viewport emits no scroll once the loop lets go, so nothing
+  // else would re-check it and older history would never page in.
+  const edgePaginationRef = useRef<() => void>(() => {})
   const { scrollToMessage, scrollAbortRef, detachedHoldRef } = useScrollToMessage({
     findIndex: findTargetIndex,
     findLiveIndex: findLiveTargetIndex,
@@ -1835,6 +1839,7 @@ export function StreamContent({
     isFollowingTailRef,
     userInteractedAtRef,
     programmaticScrollAtRef,
+    onLoopEnd: () => requestAnimationFrame(() => edgePaginationRef.current()),
   })
 
   // Set when a jump (deep-link `?m=`, out-of-window search, or date picker) has
@@ -2932,6 +2937,7 @@ export function StreamContent({
                           conversationOverlay={activeConversationOverlay}
                           onJumpToDate={handleJumpToDate}
                           floatingChromeHidden={typingChromeHidden}
+                          edgePaginationRef={edgePaginationRef}
                         />
                         {/* Overlay loading indicators — absolutely positioned so they
                     don't cause layout shift when prepending older messages. */}
@@ -3235,6 +3241,7 @@ const TimelineMessageList = memo(function TimelineMessageList({
   conversationOverlay,
   onJumpToDate,
   floatingChromeHidden,
+  edgePaginationRef,
 }: {
   visibleItems: TimelineItem[]
   cancelledFollowUpIds: Set<string>
@@ -3304,6 +3311,8 @@ const TimelineMessageList = memo(function TimelineMessageList({
   onJumpToDate: (date: Date) => void
   /** True while floating date/jump chrome must yield to the composer. */
   floatingChromeHidden: boolean
+  /** Assigned this list's edge-pagination check; the parent re-runs it when a refine loop ends. */
+  edgePaginationRef: React.MutableRefObject<() => void>
 }) {
   const phase = useCoordinatedLoading((loading) => loading.phase)
   const socket = useSocket()
@@ -3416,7 +3425,6 @@ const TimelineMessageList = memo(function TimelineMessageList({
   const olderFetchCooldownRef = useRef(0)
   const newerFetchCooldownRef = useRef(0)
   const olderFetchRecheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const edgePaginationRef = useRef<() => void>(() => {})
   const FETCH_COOLDOWN_MS = 500
 
   const handleStartReached = useCallback(() => {
