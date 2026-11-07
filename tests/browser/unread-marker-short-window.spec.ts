@@ -1,15 +1,7 @@
 import { test, expect } from "@playwright/test"
 import { loginAndCreateWorkspace, expectApiOk, createChannelViaApi, joinWorkspace } from "./helpers"
 
-/**
- * A stream that opens at the unread marker and whose latest window fits the
- * viewport still pages in the history below that window. The landing's refine
- * loop holds edge pagination off while it owns the viewport; a window that
- * cannot scroll emits no scroll event afterwards, so the end of the loop has to
- * re-run the check. A window of finished agent runs (all folded into one or two
- * group rows) is how this shows up in practice — here zero-height reaction
- * events pad the window instead.
- */
+// Zero-height reaction events pad the window, as folded agent-run groups do in practice.
 
 test.describe.configure({ timeout: 120_000 })
 test.use({ viewport: { width: 412, height: 780 }, hasTouch: true, isMobile: true })
