@@ -1839,7 +1839,7 @@ export function StreamContent({
     isFollowingTailRef,
     userInteractedAtRef,
     programmaticScrollAtRef,
-    onLoopEnd: () => requestAnimationFrame(() => edgePaginationRef.current()),
+    onLoopEnd: () => edgePaginationRef.current(),
   })
 
   // Set when a jump (deep-link `?m=`, out-of-window search, or date picker) has
@@ -3311,7 +3311,7 @@ const TimelineMessageList = memo(function TimelineMessageList({
   onJumpToDate: (date: Date) => void
   /** True while floating date/jump chrome must yield to the composer. */
   floatingChromeHidden: boolean
-  /** Assigned this list's edge-pagination check; the parent re-runs it when a refine loop ends. */
+  /** Assigned this list's scroll handler, which re-checks the edges; the parent re-runs it when a refine loop ends. */
   edgePaginationRef: React.MutableRefObject<() => void>
 }) {
   const phase = useCoordinatedLoading((loading) => loading.phase)
