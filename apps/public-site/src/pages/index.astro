@@ -1,9 +1,16 @@
 ---
 import Layout from "../layouts/Layout.astro"
 import SvgDefs from "../components/SvgDefs.astro"
-import ThemeToggle from "../components/ThemeToggle.astro"
+import SiteHeader from "../components/SiteHeader.astro"
+import SiteFooter from "../components/SiteFooter.astro"
 import Message from "../components/Message.astro"
-import { apiBase, loginUrl } from "../lib/config"
+import TraceCard from "../components/TraceCard.astro"
+import AppStreamHeader from "../components/AppStreamHeader.astro"
+import AppComposer from "../components/AppComposer.astro"
+import MemoEmbed from "../components/MemoEmbed.astro"
+import MemoSaved from "../components/MemoSaved.astro"
+import WaitlistBand from "../components/WaitlistBand.astro"
+import { apiBase } from "../lib/config"
 import type { InstallPlatform } from "../lib/install-platform"
 
 const appHost = new URL(apiBase).host
@@ -36,814 +43,708 @@ const schema = [
 
 <Layout schema={schema}>
   <SvgDefs />
+  <SiteHeader current="product" />
 
-<div class="frame">
-  <div class="hero-shell">
-    <div class="hero-inner">
-      <div class="nav-row" data-decorative>
-        <div class="brand">
-          <svg><use href="#threa-mark"/></svg>
-          <span class="wordmark">Threa</span>
-        </div>
-        <nav class="nav-links">
-          <a href="/" aria-current="page">Product</a><a href="/about">About</a><a href="/guide">Guide</a><a href="/developers">Developers</a>
-        </nav>
-        <a class="nav-login" href={loginUrl}>Log in</a>
-        <ThemeToggle />
-      </div>
-      <div class="hero-stage">
-        <div>
-          <h1 class="h-display">
-            Chat that remembers the decisions.
-          </h1>
+  <main id="main">
+    <!-- HERO: the claim, then the product doing it. -->
+    <section class="section hero" aria-labelledby="hero-title">
+      <div class="wrap split hero-copy">
+        <h1 id="hero-title" class="h1">Chat that remembers the decisions.</h1>
+        <div class="hero-side">
           <p class="lede">
-            Team chat with a memory underneath. When your team settles
-            something, the decision and the why stay attached to the messages,
-            so when the question comes back in three months there's an answer
-            instead of a re-litigation. I built this because chat kept eating
-            mine.
+            Team chat with a memory underneath. When your team settles something,
+            the decision and the why stay attached to the messages, so when the
+            question comes back in three months there's an answer instead of a
+            re-litigation.
           </p>
           <div class="actions">
-            <a class="cta" href="#waitlist">Join the waitlist</a>
+            <a class="btn btn-primary" href="#waitlist">Join the waitlist</a>
+            <a class="text-link" href="#memory">How it remembers</a>
           </div>
+          <p class="status-line">Free during early access. Runs in your browser and <a href="#install">installs on any device</a>, <a href="#agents">works with your own coding agent</a>, and <a href="#open-source">its code is public</a>. See <a href="#privacy">what Threa can read</a> and <a href="#your-data">how to get your data out</a>.</p>
         </div>
-        <div class="hero-right" data-decorative>
-          <ol class="thread" aria-label="A decision made on March 12, kept as a memo, and answered on May 7">
-            <li class="stop is-then">
-              <p class="stop-head"><time class="stop-date" datetime="2026-03-12">Mar 12</time><span class="stop-where">#api-v3</span></p>
+      </div>
+
+      <div class="wrap">
+        <figure class="app-window app-ui" aria-label="Threa's #sprint-planning channel. Maya asks Ariadne why the auth refactor was paused; Ariadne answers from a decision memo saved on March 12, quoting Jordan's original message, and the memo is open beside the conversation.">
+          <div class="aw-sidebar" aria-hidden="true">
+            <div class="aws-head">
+              <span class="app-ib"><svg><use href="#icon-panelleft" /></svg></span>
+              <span class="aws-ws"><svg class="aws-logo"><use href="#threa-mark" /></svg><span>Threa</span></span>
+              <span class="app-ib"><svg><use href="#icon-search" /></svg></span>
+              <span class="app-ib"><svg><use href="#icon-command" /></svg></span>
+            </div>
+            <div class="aws-body">
+              <p class="aws-link aws-board"><svg><use href="#icon-grid" /></svg>Board<svg class="aws-end"><use href="#icon-arrowright" /></svg></p>
+              <p class="aws-section"><svg><use href="#icon-chevron" /></svg>Quick links</p>
+              <p class="aws-link"><svg><use href="#icon-fileedit" /></svg>Drafts</p>
+              <p class="aws-link"><svg><use href="#icon-bookmark" /></svg>Saved</p>
+              <p class="aws-link"><svg><use href="#icon-brain" /></svg>Memory</p>
+              <p class="aws-section"><svg><use href="#icon-chevron" /></svg>Scratchpads</p>
+              <p class="aws-stream"><span class="aws-tile is-pad"><svg><use href="#icon-fileedit" /></svg></span>Rotation notes<svg class="aws-lock"><use href="#icon-lock" /></svg></p>
+              <p class="aws-section"><svg><use href="#icon-chevron" /></svg>Channels</p>
+              <p class="aws-stream"><span class="aws-tile"><svg><use href="#icon-hash" /></svg></span>api-v3</p>
+              <p class="aws-stream"><span class="aws-tile"><svg><use href="#icon-hash" /></svg></span>product</p>
+              <p class="aws-stream is-active"><span class="aws-tile"><svg><use href="#icon-hash" /></svg></span>sprint-planning</p>
+            </div>
+            <div class="aws-foot"><span class="aws-me">MR</span>Maya Reyes<svg><use href="#icon-chevronup" /></svg></div>
+          </div>
+
+          <div class="aw-stream" aria-hidden="true">
+            <AppStreamHeader title="#sprint-planning" panelOpen />
+            <div class="aw-log">
+              <p class="day-divider aw-optional"><span>Thursday, May 7</span></p>
+              <Message author="sam" time="09:10" class="aw-optional">
+                <div class="tl-text">planning doc is up. auth is first on the list</div>
+              </Message>
+              <Message author="maya" time="09:12">
+                <div class="tl-text"><span class="mention">@ariadne</span> we're picking auth back up this sprint. Why did we hold it?</div>
+              </Message>
+              <TraceCard subtitle="3 steps • 4.1s" time="09:12" />
+              <Message author="ariadne" time="09:12">
+                <div class="tl-text">You paused v3 on March 12 until Jordan reviewed the token-rotation model. That walkthrough hasn't happened yet.</div>
+                <div class="quote-card">
+                  <div class="qm"><svg><use href="#quote-icon" /></svg></div>
+                  <div class="q-author">
+                    <div class="q-avatar tl-avatar av-jordan">JL</div>
+                    <div class="q-name">Jordan Lee</div>
+                    <div class="q-time">Mar 12, 11:42</div>
+                  </div>
+                  <div class="q-body">hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first.</div>
+                </div>
+                <div class="is-selected">
+                  <MemoEmbed type="decision" tag="#api-v3" title="Auth refactor held pending token-rotation review" date="Mar 12" />
+                </div>
+              </Message>
+            </div>
+            <div class="aw-composer aw-optional"><AppComposer /></div>
+          </div>
+
+          <aside class="aw-panel" aria-hidden="true">
+            <div class="aw-panel-head">
+              <svg class="aw-panel-icon"><use href="#icon-bookopen" /></svg>
+              <span>Auth refactor held pending token-rotation review</span>
+              <svg><use href="#icon-x" /></svg>
+            </div>
+            <div class="aw-memo">
+              <p class="aw-badges"><span class="aw-kind"><svg><use href="#icon-compass" /></svg>Decision</span><span class="aw-ver">#api-v3 • Mar 12</span></p>
+              <h3>Auth refactor held pending token-rotation review</h3>
+              <p class="aw-abstract">Jordan asked to pause the v3 auth boundary until the rotation flow has been walked through. Migrating live sessions would otherwise force everyone to sign in again.</p>
+              <p class="aw-memo-label">Key points</p>
+              <ul class="aw-points">
+                <li>v3 auth changes are on hold</li>
+                <li>Jordan walks the team through token rotation first</li>
+                <li>Existing sessions must migrate without a forced sign-in</li>
+              </ul>
+              <p class="aw-memo-label">Source messages</p>
+              <div class="aw-source">
+                <p class="aw-source-head">Jordan Lee</p>
+                <p class="aw-source-body">hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first.</p>
+              </div>
+            </div>
+          </aside>
+        </figure>
+      </div>
+    </section>
+
+    <!-- MEMORY: how capture works, shown at the moment it happens. -->
+    <section class="section" id="memory" aria-labelledby="memory-title">
+      <div class="wrap split">
+        <div class="copy">
+          <h2 id="memory-title" class="h2">What Threa keeps.</h2>
+          <p class="lede">
+            Threa reads each conversation once it goes quiet and keeps the parts
+            worth recalling as short memos, each linked to the messages it came
+            from. Every message stays searchable either way. A memo puts the
+            outcome and its reasons in one place, which is what Ariadne, the
+            built-in agent, finds when someone asks.
+          </p>
+          <dl class="kinds">
+            <div><dt>Decisions</dt><dd>A choice the team made, with the reasons.</dd></div>
+            <div><dt>Procedures</dt><dd>A setup, fix or process that works.</dd></div>
+            <div><dt>Learnings</dt><dd>Something found out by debugging or trying.</dd></div>
+            <div><dt>References</dt><dd>A fact pinned down: an id, a value, a place.</dd></div>
+            <div><dt>Context</dt><dd>Why something is the way it is.</dd></div>
+          </dl>
+          <p class="fine">
+            A model decides what's worth keeping, and passing status, reactions
+            and lunch orders usually produce nothing. You can edit or archive any
+            memo. A memo is visible to the people who can open the conversation it
+            came from, and automatic memory can be turned off per channel.
+          </p>
+        </div>
+        <figure class="media panel app-ui" aria-label="A conversation in #api-v3 on March 12. Two lunch messages are ignored; the three messages that settle the auth question become a memo, announced in the channel as Saved to memory.">
+          <div aria-hidden="true"><AppStreamHeader title="#api-v3" /></div>
+          <div class="panel-body" aria-hidden="true">
+            <p class="day-divider"><span>Thursday, March 12</span></p>
+            <Message author="sam" time="11:38" class="is-noise">
+              <div class="tl-text">lunch order, pasta or pizza. last call</div>
+            </Message>
+            <div class="kept">
               <Message author="jordan" time="11:42">
                 <div class="tl-text">hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. can we pause this?</div>
               </Message>
               <Message author="maya" time="11:44">
-                <div class="tl-text">Fair. Let's hold v3 until you've walked us through it.</div>
+                <div class="tl-text">Fair. Let's hold v3 until you've walked us through it. What do you need from us?</div>
               </Message>
-            </li>
-            <li class="stop is-kept">
-              <div class="memory-card decision-memo">
-                <div class="dm-kicker"><span class="dot"></span> Decision</div>
-                <div class="dm-title">Auth refactor held pending token-rotation review.</div>
-                <div class="dm-body">Migrating live sessions would force everyone to sign in again. Jordan walks through the rotation flow first.</div>
-                <div class="dm-source">Kept from 3 messages in <span class="ref-pill">#api-v3</span></div>
-              </div>
-            </li>
-            <li class="stop is-now">
-              <p class="stop-head"><time class="stop-date" datetime="2026-05-07">May 7</time><span class="stop-where">#sprint-planning</span></p>
-              <Message author="maya" time="09:12">
-                <div class="tl-text"><span class="mention">@ariadne</span> we're picking auth back up this sprint. Why did we hold it?</div>
-              </Message>
-              <Message author="ariadne" time="09:12">
-                <div class="tl-text">You paused v3 on Mar 12 until Jordan reviewed the token-rotation model. That walkthrough hasn't happened yet.</div>
-              </Message>
-            </li>
-          </ol>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<div class="frame">
-  <div class="memo-shell value-shell">
-    <ul class="value-grid">
-      <li>
-        <h3>Every channel is also a board</h3>
-        <p>The same messages, grouped by topic. A discussion from three weeks ago is one card away instead of a scroll away.</p>
-      </li>
-      <li>
-        <h3>Ask what was decided</h3>
-        <p>Threa keeps decisions and context as short memos linked to the messages they came from. Ask Ariadne, or search, and get the memo with its sources.</p>
-      </li>
-      <li>
-        <h3>Plug in your own agent</h3>
-        <p>Claude Code, Codex, Pi, or one you wrote. Connect it as a bot and it reads the room, answers mentions, and posts its work back.</p>
-      </li>
-      <li>
-        <h3>Open source</h3>
-        <p>The whole product is public. It's MIT licensed so you can help fixing what I broke. <a href="https://github.com/threahq/threa">It's on GitHub.</a></p>
-      </li>
-    </ul>
-  </div>
-</div>
-
-<!-- ============================================================
-     BOARD — the same channel, two ways
-     A frameless side-by-side: the stream (flat, on the paper, with a
-     floating composer) vs the board (real conversation cards). Same
-     messages both sides. Reuses the timeline-demo vocabulary (.tl-row,
-     .tl-avatar, .mention, .reactions, .trace-card, .recall-memo-card,
-     composer parts) so it tracks the hero.
-     ============================================================ -->
-<div class="frame warm" id="board">
-  <div class="memo-shell board-shell">
-    <h2>Chat you can find later.</h2>
-    <p class="lede">
-      A timeline is good for keeping up. It's bad for finding a discussion again
-      three weeks later. The board is the same channel grouped by topic, so you
-      open the conversation instead of scrolling for it.
-    </p>
-
-    <div class="board-compare" data-decorative>
-      <!-- STREAM: flat feed on the paper, composer pinned to the bottom -->
-      <div class="board-col is-stream">
-        <div class="board-lens"><span class="k">Stream</span><span class="m">#product, as it happened</span></div>
-
-        <Message author="maya" time="14:03">
-          <div class="tl-text">Picking the auth refactor back up next sprint. Anyone remember why we paused it in March?</div>
-        </Message>
-
-        <Message author="sam" time="14:04">
-          <div class="tl-text">empty states for the board are on staging now. the board one especially came out nice</div>
-          <div class="reactions"><span class="rxn"><span class="em">🙌</span><span class="num">2</span></span></div>
-        </Message>
-
-        <Message author="jordan" time="14:05">
-          <div class="tl-text">pretty sure there were open concerns but I can't find the thread lol</div>
-          <div class="board-prov"><svg><use href="#icon-layers"/></svg><span>continues <span class="topic">Auth refactor: pause or push?</span></span><span class="sep">·</span><span>2m</span></div>
-        </Message>
-
-        <Message author="alex" time="14:05">
-          <div class="tl-text">shit, uh 🤷 <span class="mention">@ariadne</span> ?</div>
-        </Message>
-
-        <div class="trace-card is-static">
-          <div class="trace-icon-slot">
-            <div class="trace-icon trace-icon-running" aria-hidden="true"><svg><use href="#spinner-icon"/></svg></div>
-            <div class="trace-icon trace-icon-done" aria-hidden="true"><svg><use href="#check-icon"/></svg></div>
-          </div>
-          <div class="trace-main">
-            <div class="trace-row trace-row-running"><div class="trace-title">Ariadne is working…</div><div class="trace-sub">searching</div></div>
-            <div class="trace-row trace-row-done"><div class="trace-title">Session complete</div><div class="trace-sub">5 steps · 3.7s</div></div>
-          </div>
-          <div class="trace-time">14:05</div>
-        </div>
-
-        <Message author="ariadne" time="14:05">
-          <div class="tl-text">You paused it for Jordan's review of the token-rotation model. The concern was migrating live sessions without a forced re-auth.</div>
-        </Message>
-
-      </div>
-
-      <!-- center gutter: "same messages" (stands horizontal on mobile) -->
-      <div class="board-gutter"><div class="board-badge"><span class="ic"><svg><use href="#icon-swap"/></svg></span><span class="lbl">same messages</span></div></div>
-
-      <!-- BOARD: the same messages grouped into two topic cards -->
-      <div class="board-col">
-        <div class="board-lens"><span class="k">Board</span><span class="m">#product, by topic</span></div>
-        <div class="board-list">
-          <div class="board-card">
-            <div class="board-card-title">
-              <svg class="chev"><use href="#icon-chevron"/></svg>
-              <span class="title">Auth refactor: pause or push?</span>
-              <span class="unread-dot"></span>
-              <span class="board-hbtn" aria-label="Open conversation"><svg><use href="#icon-panelright"/></svg></span>
-              <span class="board-hbtn" aria-label="More"><svg><use href="#icon-morevert"/></svg></span>
-            </div>
-            <div class="board-locator"><span class="board-tile"><svg><use href="#icon-hash"/></svg></span><span class="lstream">product</span><span class="sep">·</span><span>now</span></div>
-            <div class="board-card-body">
-              <Message author="maya" time="14:03">
-                <div class="tl-text">Picking the auth refactor back up next sprint. Anyone remember why we paused it in March?</div>
-              </Message>
-              <Message author="jordan" time="14:05">
-                <div class="tl-text">pretty sure there were open concerns but I can't find the thread lol</div>
-              </Message>
-              <Message author="alex" time="14:05">
-                <div class="tl-text">shit, uh 🤷 <span class="mention">@ariadne</span> ?</div>
-              </Message>
-              <div class="trace-card is-static">
-                <div class="trace-icon-slot">
-                  <div class="trace-icon trace-icon-running" aria-hidden="true"><svg><use href="#spinner-icon"/></svg></div>
-                  <div class="trace-icon trace-icon-done" aria-hidden="true"><svg><use href="#check-icon"/></svg></div>
-                </div>
-                <div class="trace-main">
-                  <div class="trace-row trace-row-running"><div class="trace-title">Ariadne is working…</div><div class="trace-sub">searching</div></div>
-                  <div class="trace-row trace-row-done"><div class="trace-title">Session complete</div><div class="trace-sub">5 steps · 3.7s</div></div>
-                </div>
-                <div class="trace-time">14:05</div>
-              </div>
-              <Message author="ariadne" time="14:05">
-                <div class="tl-text">You paused it for Jordan's review of the token-rotation model.</div>
-                <div class="recall-memo-card">
-                  <div class="rmc-icon"><svg><use href="#icon-compass"/></svg></div>
-                  <div class="rmc-body">
-                    <div class="rmc-kicker"><span class="k-type">decision</span><span class="k-tag">#product</span></div>
-                    <div class="rmc-title">Auth refactor held pending token-rotation review</div>
-                  </div>
-                  <div class="rmc-meta">Mar 12</div>
-                </div>
+              <Message author="jordan" time="11:46">
+                <div class="tl-text">a walkthrough of the rotation flow + how existing sessions migrate. I'll block out time the week of the 18th</div>
               </Message>
             </div>
-          </div>
-
-          <div class="board-card">
-            <div class="board-card-title">
-              <svg class="chev"><use href="#icon-chevron"/></svg>
-              <span class="title">Empty states shipped to staging</span>
-              <span class="dot-slot"></span>
-              <span class="board-hbtn" aria-label="Open conversation"><svg><use href="#icon-panelright"/></svg></span>
-              <span class="board-hbtn" aria-label="More"><svg><use href="#icon-morevert"/></svg></span>
-            </div>
-            <div class="board-locator"><span class="board-tile"><svg><use href="#icon-hash"/></svg></span><span class="lstream">product</span><span class="sep">·</span><span>now</span></div>
-            <div class="board-card-body">
-              <Message author="sam" time="14:04">
-                <div class="tl-text">empty states for the board are on staging now. the board one especially came out nice</div>
-                <div class="reactions"><span class="rxn"><span class="em">🙌</span><span class="num">2</span></span></div>
-              </Message>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ============================================================
-     MEMORY FLOW — capture · hold · return
-     Mirrors the real mechanic: extract a decision from the
-     conversation, hold it as a memo, retrieve it when someone asks
-     about the topic again. No invented graph relations.
-     ============================================================ -->
-<div class="frame">
-  <div class="memo-shell">
-    <h2>Decisions get kept. Lunch orders don't.</h2>
-    <p class="lede">
-      Threa reads the conversation, keeps the lines where the team settled
-      something, and saves them as short memos linked to the messages they
-      came from. When the question comes up again, Ariadne finds the memo and
-      the conversation behind it.
-    </p>
-
-    <div class="memory-flow">
-
-      <!-- ============ 01 · CAPTURE ============ -->
-      <div class="memory-col">
-        <h3 class="memory-heading"><span class="n">1</span>Capture what matters</h3>
-        <p class="memory-why">
-          Most of a channel is noise. The parts worth keeping are usually a
-          handful of lines where the team settles something, works out a process,
-          or shares context they'll need again.
-        </p>
-
-        <div class="capture-list" data-decorative aria-label="Five-message slice; the three middle messages carry the decision.">
-          <Message author="sam" time="11:38" class="is-noise">
-            <div class="tl-text">lunch order, pasta or pizza. last call</div>
-          </Message>
-
-          <Message author="jordan" time="11:42">
-            <div class="tl-text">hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. can we pause this until I've reviewed the design</div>
-          </Message>
-
-          <Message author="maya" time="11:44">
-            <div class="tl-text">Fair. Let's hold v3 then. What do you need from us before sign-off?</div>
-          </Message>
-
-          <Message author="jordan" time="11:46">
-            <div class="tl-text">a walkthrough of the rotation flow + how existing sessions migrate. I'll block out time the week of the 18th</div>
-          </Message>
-
-          <Message author="sam" time="11:47" class="is-noise">
-            <div class="tl-text">pizza it is, ordering now</div>
-          </Message>
-
-        </div>
-
-      </div>
-
-      <!-- ============ 02 · HOLD ============ -->
-      <div class="memory-col">
-        <h3 class="memory-heading"><span class="n">2</span>Hold it as a memo</h3>
-        <p class="memory-why">
-          Nobody rereads a transcript two months later. A short, sourced memo is
-          the part that stays useful once the thread has scrolled away.
-        </p>
-
-        <div class="memory-card decision-memo" data-decorative>
-          <div class="dm-kicker"><span class="dot"></span> Decision · Mar 12</div>
-          <div class="dm-title">Auth refactor held pending token-rotation review.</div>
-
-          <div class="dm-field">
-            <div class="dm-label">Why</div>
-            <div class="dm-body">Jordan asked to pause the v3 auth boundary until the rotation flow has been walked through. The concern was migrating existing sessions without a forced re-auth wave.</div>
-          </div>
-
-          <div class="dm-field">
-            <div class="dm-label">Next</div>
-            <div class="dm-body">Design walkthrough with Jordan, week of Apr 18.</div>
-          </div>
-
-          <div class="dm-field">
-            <div class="dm-label">Source</div>
-            <div class="dm-body dm-source">3 messages · <span class="ref-pill">#api-v3</span> · Jordan Lee · Maya Reyes</div>
-          </div>
-        </div>
-
-      </div>
-
-      <!-- ============ 03 · RETURN ============ -->
-      <div class="memory-col is-return">
-        <h3 class="memory-heading"><span class="n">3</span>Return when it comes up again</h3>
-        <p class="memory-why">
-          A reason you can't find isn't worth much. When the question returns,
-          ask Ariadne to search for the relevant memo and follow its links back to
-          the source conversation.
-        </p>
-
-        <div class="recall-thread" data-decorative>
-          <div class="recall-meta">
-            <span class="hash">#sprint-planning</span>
-            <span>May 7, two months later</span>
-          </div>
-
-          <div class="recall-list">
-            <Message author="maya" time="09:12">
-              <div class="tl-text"><span class="mention">@ariadne</span> we're picking auth back up this sprint. What was the hold on again?</div>
+            <Message author="sam" time="11:47" class="is-noise">
+              <div class="tl-text">pizza it is, ordering now</div>
             </Message>
-
-            <Message author="ariadne" time="09:12">
-              <div class="tl-text">
-                You paused v3 in March pending Jordan's review of the rotation flow.
-                Wei flagged a related mobile-session concern in April that didn't make
-                the original hold. Worth folding in before the walkthrough.
-              </div>
-
-              <div class="recall-memo-card">
-                <div class="rmc-icon"><svg><use href="#icon-compass"/></svg></div>
-                <div class="rmc-body">
-                  <div class="rmc-kicker"><span class="k-type">decision</span><span class="k-tag">#api-v3</span></div>
-                  <div class="rmc-title">Auth refactor held pending token-rotation review</div>
-                </div>
-                <div class="rmc-meta">Mar 12</div>
-              </div>
-
-              <div class="recall-memo-card">
-                <div class="rmc-icon"><svg><use href="#icon-bookopen"/></svg></div>
-                <div class="rmc-body">
-                  <div class="rmc-kicker"><span class="k-type">context</span><span class="k-tag">#mobile-platform</span></div>
-                  <div class="rmc-title">Session migration needs device-bound refresh handling</div>
-                </div>
-                <div class="rmc-meta">Apr 02</div>
-              </div>
-            </Message>
+            <MemoSaved title="Auth refactor held pending token-rotation review" />
           </div>
-        </div>
-      </div>
-
-    </div>
-  </div>
-</div>
-
-<!-- ============================================================
-     OPEN SOURCE — built in the open, forkable, self-hostable
-     Inspiration: t3.chat, Cal.com, Plausible, Supabase — leading
-     with openness as a feature, not a footnote. Tone is
-     dev-credible (real commands, real claims) without star-count
-     theatre we don't have yet on day one.
-     ============================================================ -->
-<div class="frame warm" id="open-source">
-  <div class="memo-shell">
-    <div class="feature-band media-left">
-      <div class="band-media" data-decorative>
-        <div class="os-terminal" aria-label="Clone and run Threa locally.">
-          <span class="row"><span class="prompt">$</span><span class="cmd">git clone</span> <span class="arg">github.com/threahq/threa.git</span></span>
-          <span class="row"><span class="prompt">$</span><span class="cmd">cd</span> <span class="arg">threa</span> <span class="cmd">&amp;&amp;</span> <span class="cmd">bun install</span></span>
-          <span class="row"><span class="prompt">$</span><span class="cmd">bun run dev</span></span>
-          <span class="out">→ http://localhost:5173</span>
-          <span class="row"><span class="cmt"># your machine. your fork.</span></span>
-        </div>
-
-        <figure class="patch-example" aria-label="Patch Threa by describing the change to your own agent.">
-          <figcaption><span class="file">patch.md</span><span class="hint">describe the change</span></figcaption>
-          <div class="patch-body">
-            <span class="ln md-h"># Compact density toggle</span>
-            <span class="ln md-p">Add a "Compact" option under Settings → Appearance.</span>
-            <span class="ln md-li">- add a `density` pref: comfortable | compact</span>
-            <span class="ln md-li">- compact tightens message-row padding and line-height</span>
-            <span class="ln md-li">- persist per-device; default to comfortable</span>
-            <span class="ln md-li">- apply it in the timeline, threads, and scratchpads</span>
-          </div>
-          <div class="patch-run"><span class="prompt">$</span><span class="cmd">claude</span> -p <span class="arg">"$(cat patch.md)"</span></div>
         </figure>
       </div>
-      <div class="band-copy">
-        <h2>It's open source.</h2>
-        <p class="lede">
-          The frontend, backend, control plane, and infrastructure are all
-          public, and the public repo is the one we deploy. Read exactly how
-          Threa works, fork it, or run it yourself. Do whatever.
-        </p>
+    </section>
 
-        <div class="os-tenets">
-          <div class="os-tenet">
-            <h4>All of it is on GitHub</h4>
-            <p>
-              The code, data model, access checks, model calls, and deployment
-              setup.
-            </p>
+    <!-- BOARD: conversations as cards. -->
+    <section class="section" id="board" aria-labelledby="board-title">
+      <div class="wrap">
+        <div class="split stack-head">
+          <div class="copy">
+            <h2 id="board-title" class="h2">Every conversation gets a card.</h2>
           </div>
-          <div class="os-tenet">
-            <h4>MIT licensed</h4>
-            <p>
-              Fork it, change the product, or run your own version on the same
-              code we ship. I won't take it personally.
+          <div class="media">
+            <p class="lede">
+              A busy channel holds several discussions at once. Threa groups its
+              messages into conversations, each with a title, and the board shows
+              them as cards, newest first. Look across every stream you're in or
+              filter down to one, and open the discussion instead of scrolling
+              for it.
             </p>
-          </div>
-          <div class="os-tenet">
-            <h4>Built in the open</h4>
-            <p>
-              Design docs, implementation plans, and the feature list are
-              public too. Embarrassing drafts included.
-            </p>
+            <p class="fine">Grouping is automatic. When it files a message in the wrong place, you can move it, or rename or split the topic.</p>
           </div>
         </div>
 
-        <a class="os-cta" href="https://github.com/threahq/threa">Browse the source on GitHub</a>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ============================================================
-     BRING YOUR OWN AGENT — data portability + BYO agent
-     The contrarian beat: every other platform is racing to lock
-     you into their built-in agent. Threa ships a good one
-     (Ariadne) AND makes it trivial to walk your memory over to
-     the agent you already pay for. The starter-motor framing is
-     the headline idea.
-     ============================================================ -->
-<div class="frame" id="byo-agent">
-  <div class="memo-shell byo-shell">
-    <div class="byo-copy">
-      <h2>Bring the agent you already use.</h2>
-      <p class="lede">
-        Threa ships with Ariadne, and she's useful from day one. But you probably
-        already have an agent set up the way you like it, with your codebase and
-        your context. Connect that one as a Threa bot instead of starting over
-        with mine. It can even stay on your laptop behind NAT.
-      </p>
-      <p class="lede byo-lede">
-        Mention the bot in a channel and the runtime hands the request to your
-        local agent, then posts the reply under the bot's name. It can search
-        messages by text or meaning, read memos and attachments, and follow a
-        memo back to the conversation it came from. It can also take whole
-        tasks. You delegate, watch it work in the stream, and the finished thing
-        lands where the team can see it.
-      </p>
-      <p class="lede byo-lede">
-        Some of that work shouldn't be readable by anyone but you and your agent.
-        Put it in a <a href="/encryption">sealed scratchpad</a> and it is encrypted
-        on your devices before it ever reaches Threa.
-      </p>
-
-      <p class="byo-works">
-        Works today with Claude Code, Codex, Cursor, OpenCode, Gemini CLI, or a bot
-        you write yourself, through the bot runtime, the CLI, or the MCP server.
-      </p>
-      <a class="os-cta" href="/developers/recipes#local-agent">Connect a local agent</a>
-    </div>
-    <div class="byo-demo" data-decorative>
-      <div class="ad" aria-label="Alex asks their Claude Code bot in #api-v3 whether token rotation still signs out old sessions">
-        <div class="ad-head">
-          <span class="ad-channel">#api-v3</span>
-          <span class="ad-chip" aria-hidden="true">
-            <svg><use href="#spinner-icon"/></svg>
-            <span>Claude Code</span>
-            <span class="ad-chip-steps">· <span class="ad-steps">1 step</span></span>
-          </span>
+        <div class="board-switch" role="group" aria-label="Show #launch as">
+          <input type="radio" name="board-view" id="board-view-stream" />
+          <label for="board-view-stream">Stream</label>
+          <input type="radio" name="board-view" id="board-view-board" checked />
+          <label for="board-view-board">Board</label>
         </div>
 
-        <!-- Bottom-anchored like a real stream: an arriving row appears at the
-             foot and pushes older rows up under the top fade. -->
-        <div class="ad-log">
-          <Message author="maya" time="14:00" ago={14}>
-            <div class="tl-text">v3 release branch is cut, aiming to ship Thursday.</div>
-          </Message>
-
-          <Message author="jordan" time="14:00" ago={11}>
-            <div class="tl-text">changelog draft is up, only the auth section left</div>
-          </Message>
-
-          <Message author="maya" time="14:01" ago={6}>
-            <div class="tl-text">Before we ship v3: does token rotation still sign out sessions issued before the migration?</div>
-          </Message>
-
-          <Message author="jordan" time="14:03" ago={4}>
-            <div class="tl-text">no idea, I'd have to dig through the rotation code again</div>
-          </Message>
-
-          <div class="ad-in" data-beat="sent"><div>
-            <Message author="alex" time="14:07" ago={0}>
-              <div class="tl-text"><span class="mention">@claude-code</span> can you check?</div>
+        <div class="board-compare" aria-label="The #launch channel shown two ways: as a stream in time order, where a launch-date question and a pricing-copy review interleave, and as a board where the same messages sit in two topic cards." role="img">
+          <div class="board-col app-ui is-stream" aria-hidden="true">
+            <div class="board-lens"><span class="k">Stream</span><span class="m">#launch, as it happened</span></div>
+            <Message author="maya" time="14:03">
+              <div class="tl-text">Are we still on for the 14th? Press wants a date by Friday.</div>
             </Message>
-          </div></div>
+            <Message author="sam" time="14:04">
+              <div class="tl-text">pricing page copy is up for review, comments welcome</div>
+              <div class="reactions"><span class="rxn"><span class="em">👀</span><span class="num">2</span></span></div>
+            </Message>
+            <Message author="alex" time="14:05">
+              <div class="tl-text">the embargo note said the 21st, didn't it?</div>
+            </Message>
+            <Message author="maya" time="14:06">
+              <div class="tl-text">right, the 21st. I'll tell press</div>
+            </Message>
+            <Message author="jordan" time="14:07">
+              <div class="tl-text">left two notes on the pricing copy, mostly the annual toggle</div>
+            </Message>
+            <div class="board-composer"><AppComposer /></div>
+          </div>
 
-          <!-- Same card as the app's AgentSessionEvent: a live substep with a
-               pulse dot while running, swapped in place for the summary. -->
-          <div class="ad-in" data-beat="working"><div>
-            <div class="trace-card ad-trace">
-              <div class="trace-icon-slot">
-                <div class="trace-icon trace-icon-running" aria-hidden="true"><svg><use href="#spinner-icon"/></svg></div>
-                <div class="trace-icon trace-icon-done" aria-hidden="true"><svg><use href="#check-icon"/></svg></div>
-              </div>
-              <div class="ad-trace-main">
-                <div class="ad-trace-title">Claude Code is working…</div>
-                <div class="ad-trace-sub">
-                  <span class="ad-pulse" aria-hidden="true"></span>
-                  <span class="ad-substep">Searching messages for “token rotation”</span>
-                  <span class="ad-trace-count">· <span class="ad-steps">1 step</span></span>
+          <div class="board-col app-ui is-board" aria-hidden="true">
+            <div class="board-lens"><span class="k">Board</span><span class="m">filtered to #launch</span></div>
+            <div class="board-list">
+              <div class="board-card">
+                <div class="board-card-title">
+                  <svg class="chev"><use href="#icon-chevron" /></svg>
+                  <span class="title">Launch date: the 14th or the 21st?</span>
+                  <span class="unread-dot"></span>
+                  <span class="board-hbtn"><svg><use href="#icon-panelright" /></svg></span>
+                </div>
+                <div class="board-locator"><span class="board-tile"><svg><use href="#icon-hash" /></svg></span><span class="lstream">launch</span><span>now</span></div>
+                <div class="board-card-body">
+                  <Message author="maya" time="14:03">
+                    <div class="tl-text">Are we still on for the 14th? Press wants a date by Friday.</div>
+                  </Message>
+                  <Message author="alex" time="14:05">
+                    <div class="tl-text">the embargo note said the 21st, didn't it?</div>
+                  </Message>
+                  <Message author="maya" time="14:06">
+                    <div class="tl-text">right, the 21st. I'll tell press</div>
+                  </Message>
                 </div>
               </div>
-              <div class="trace-time" data-ago="0">14:07</div>
+              <div class="board-card">
+                <div class="board-card-title">
+                  <svg class="chev"><use href="#icon-chevron" /></svg>
+                  <span class="title">Pricing page copy review</span>
+                  <span class="dot-slot"></span>
+                  <span class="board-hbtn"><svg><use href="#icon-panelright" /></svg></span>
+                </div>
+                <div class="board-locator"><span class="board-tile"><svg><use href="#icon-hash" /></svg></span><span class="lstream">launch</span><span>2m</span></div>
+                <div class="board-card-body">
+                  <Message author="sam" time="14:04">
+                    <div class="tl-text">pricing page copy is up for review, comments welcome</div>
+                    <div class="reactions"><span class="rxn"><span class="em">👀</span><span class="num">2</span></span></div>
+                  </Message>
+                  <Message author="jordan" time="14:07">
+                    <div class="tl-text">left two notes on the pricing copy, mostly the annual toggle</div>
+                  </Message>
+                </div>
+              </div>
             </div>
-          </div></div>
+          </div>
+        </div>
+      </div>
+    </section>
 
-          <div class="ad-in" data-beat="replied"><div>
-            <Message author="claude-code" time="14:07" ago={0}>
-              <div class="tl-text">Yes. Sessions from before the migration keep their old refresh token, so the first rotation signs them out. Jordan flagged exactly this when v3 was held:</div>
+    <!-- BASICS: prose, not a feature grid. -->
+    <section class="section" id="basics" aria-labelledby="basics-title">
+      <div class="wrap split">
+        <div class="copy">
+          <h2 id="basics-title" class="h2">Threads, quotes and code.</h2>
+          <p class="lede">
+            Threads nest, so a tangent off a tangent gets its own space instead of
+            taking over the parent, and a stray reply can be moved into one after
+            the fact. Quote replies point at the exact line someone wrote. Code
+            keeps its formatting and gets highlighted.
+          </p>
+          <p class="body">
+            The full-screen composer gives a long message room, with no stray
+            Enter sending it early.
+          </p>
+        </div>
+        <figure class="media panel app-ui" aria-label="In #web, Sam posts the line of code that prices the annual plan; a thread under it has three replies. Jordan quote-replies to ask whether the page means two months free or 20% off.">
+          <div aria-hidden="true"><AppStreamHeader title="#web" /></div>
+          <div class="panel-body" aria-hidden="true">
+            <Message author="sam" time="10:14">
+              <div class="tl-text">this is what the annual toggle does now:</div>
+              <div class="code-block">
+                <div class="code-head"><svg><use href="#icon-chevron" /></svg>TypeScript<span>2 lines</span><svg class="code-icon"><use href="#icon-copy" /></svg></div>
+                <pre tabindex="-1"><code><span class="tk-k">const</span> yearly <span class="tk-o">=</span> monthly <span class="tk-o">*</span> <span class="tk-n">10</span>
+<span class="tk-k">return</span> <span class="tk-f">formatPrice</span>(annual <span class="tk-o">?</span> yearly : monthly)</code></pre>
+              </div>
+              <div class="thread-card">
+                <div class="thread-top"><span class="thread-avs"><span class="tl-avatar">JL</span><span class="tl-avatar">MR</span></span><span class="thread-count">3 replies</span><span class="thread-dot">·</span><span class="thread-when">2m</span><svg><use href="#icon-chevronright" /></svg></div>
+                <p class="thread-last"><span>Maya Reyes</span>: two months free, that's what we agreed</p>
+              </div>
+            </Message>
+            <Message author="jordan" time="10:21">
               <div class="quote-card">
-                <div class="qm" aria-hidden="true"><svg><use href="#quote-icon"/></svg></div>
-                <div class="q-author">
-                  <div class="q-avatar av-jordan">JL</div>
-                  <div class="q-name">Jordan Lee</div>
-                  <div class="q-time">Mar 12, 11:42</div>
-                </div>
-                <div class="q-body">hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first.</div>
+                <div class="qm"><svg><use href="#quote-icon" /></svg></div>
+                <div class="q-author"><div class="q-avatar tl-avatar">SP</div><div class="q-name">Sam Patel</div></div>
+                <div class="q-body">this is what the annual toggle does now</div>
               </div>
-              <div class="tl-text ad-after">I pushed a fix that migrates them on first refresh to <span class="ref-pill">auth-rotation</span>.</div>
-              <div class="reactions">
-                <span class="rxn" data-rxn="pray"><span class="em">🙏</span><span class="num"><span>1</span><span>2</span></span></span>
-                <span class="rxn" data-rxn="eyes"><span class="em">👀</span><span class="num"><span>1</span></span></span>
-              </div>
+              <div class="tl-text">the page copy says 20% off. <code>* 10</code> is closer to 17%</div>
             </Message>
-          </div></div>
+          </div>
+        </figure>
+      </div>
+    </section>
+
+    <!-- AGENTS: bring your own. -->
+    <section class="section section-band" id="agents" aria-labelledby="agents-title">
+      <div class="wrap">
+        <div class="split stack-head">
+          <div class="copy">
+            <h2 id="agents-title" class="h2">Bring the agent you already use.</h2>
+          </div>
+          <div class="media">
+            <p class="lede">
+              Threa ships with Ariadne. If you already have an agent set up with
+              your codebase and context, connect it as a Threa bot instead of
+              starting over. It can stay on your laptop, behind NAT.
+            </p>
+            <p class="body">
+              Mention it and your agent picks up the request. It searches
+              messages, reads memos and attachments, and works while you watch.
+              It reads public channels, posts only where it has been added, and
+              can't see a private channel until you add it.
+            </p>
+          </div>
         </div>
 
-        <!-- Composer, trimmed from the app's MessageComposer: typed text, the
-             mention pill committing whole, and the send button arming. -->
-        <div class="composer" aria-hidden="true">
-          <div class="composer-editor">
-            <span class="composer-placeholder">Message #api-v3</span>
-            <span class="composer-mention-wrap"><span class="mention">@claude-code</span></span>
-            <span class="composer-typed" data-trail=" can you check?"></span>
-            <span class="composer-caret"></span>
-          </div>
-          <div class="composer-bar">
-            <div class="composer-actions">
-              <span class="cb cb-aa">Aa</span>
-              <span class="cb cb-emoji"><span>😊</span></span>
-              <span class="cb"><svg><use href="#icon-at"/></svg></span>
-              <span class="cb"><svg><use href="#icon-paperclip"/></svg></span>
+        <div class="agent-stage">
+          <figure class="agent-demo">
+          <div class="ad app-ui" role="img" aria-label="Alex asks the Claude Code bot in #api-v3 whether token rotation still signs out old sessions. The bot searches messages, reads the March 12 memo and the rotation code, pushes a fix, and replies linking the memo.">
+            <div class="ad-head" aria-hidden="true">
+              <AppStreamHeader title="#api-v3">
+                <span class="ad-chip">
+                  <svg><use href="#spinner-icon" /></svg>
+                  <span>Claude Code</span>
+                  <span class="ad-chip-steps">• <span class="ad-steps">1 step</span></span>
+                </span>
+              </AppStreamHeader>
             </div>
-            <span class="composer-send">
-              <svg viewBox="0 0 24 24"><path d="M 12 5 L 12 19 M 6 11 L 12 5 L 18 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </span>
+            <div class="ad-log" aria-hidden="true">
+              <Message author="maya" time="13:30" ago={37}>
+                <div class="tl-text">cutover is this afternoon. I'll drive it, Jordan is on call</div>
+              </Message>
+              <Message author="jordan" time="13:35" ago={32}>
+                <div class="tl-text">v3 is on staging. Webhooks, cursor pagination and the new error shapes are all in.</div>
+              </Message>
+              <Message author="sam" time="13:41" ago={26}>
+                <div class="tl-text">staging database migrated cleanly, took four minutes</div>
+              </Message>
+              <Message author="jordan" time="13:46" ago={21}>
+                <div class="tl-text">SDK tests pass against it. Two flaky ones on retries, both old.</div>
+              </Message>
+              <Message author="alex" time="13:52" ago={15}>
+                <div class="tl-text">release notes draft is in the doc. I'll send the v2 deprecation notice once we flip it</div>
+              </Message>
+              <Message author="maya" time="14:01" ago={6}>
+                <div class="tl-text">Before we ship: does token rotation still sign out sessions issued before the migration?</div>
+              </Message>
+              <div class="ad-in" data-beat="sent"><div>
+                <Message author="alex" time="14:07" ago={0}>
+                  <div class="tl-text"><span class="mention is-bot">@claude-code</span> can you check?</div>
+                </Message>
+              </div></div>
+              <div class="ad-in" data-beat="working"><div>
+                <div class="trace-card ad-trace">
+                  <div class="trace-icon-slot">
+                    <div class="trace-icon trace-icon-running"><svg><use href="#spinner-icon" /></svg></div>
+                    <div class="trace-icon trace-icon-done"><svg><use href="#check-icon" /></svg></div>
+                  </div>
+                  <div class="trace-main">
+                    <div class="trace-title ad-trace-title">Claude Code is working…</div>
+                    <div class="trace-sub ad-trace-sub">
+                      <span class="ad-pulse"></span>
+                      <span class="ad-substep">Searching messages for “token rotation”</span>
+                      <span class="ad-trace-count">• <span class="ad-steps">1 step</span></span>
+                    </div>
+                  </div>
+                  <div class="trace-time" data-ago="0">14:07</div>
+                  <div class="ad-actions">
+                    <span class="ad-action"><svg><use href="#icon-msgplus" /></svg><span>Redirect</span></span>
+                    <span class="ad-action"><svg><use href="#icon-stopcircle" /></svg><span>Stop</span></span>
+                  </div>
+                </div>
+              </div></div>
+              <div class="ad-in" data-beat="replied"><div>
+                <Message author="claude-code" time="14:07" ago={0}>
+                  <div class="tl-text">Yes. Sessions from before the migration keep their old refresh token, so the first rotation signs them out. It's the case Jordan wanted walked through when v3 was held:</div>
+                  <MemoEmbed type="decision" tag="#api-v3" title="Auth refactor held pending token-rotation review" date="Mar 12" />
+                  <div class="tl-text ad-after">I pushed a fix to <code>auth-rotation</code> that migrates them on first refresh.</div>
+                  <div class="reactions">
+                    <span class="rxn" data-rxn="pray"><span class="em">🙏</span><span class="num"><span>1</span><span>2</span></span></span>
+                    <span class="rxn" data-rxn="eyes"><span class="em">👀</span><span class="num"><span>1</span></span></span>
+                  </div>
+                </Message>
+              </div></div>
+            </div>
+            <div class="ad-composer" aria-hidden="true">
+              <AppComposer>
+                <span class="composer-mention-wrap"><span class="mention is-bot">@claude-code</span></span>
+                <span class="composer-typed" data-trail=" can you check?"></span>
+                <span class="composer-caret"></span>
+              </AppComposer>
+            </div>
+          </div>
+          </figure>
+
+          <figure class="trace-panel app-ui" aria-label="The same session opened as a trace">
+            <div class="tp-head" aria-hidden="true">
+              <div>
+                <p class="tp-title">Agent Session Trace</p>
+                <p class="tp-meta">Claude Code • <span data-ago="0">14:07</span><span class="tp-duration"> • 34s</span></p>
+              </div>
+              <svg><use href="#icon-x" /></svg>
+            </div>
+            <details class="tp-details" open>
+            <summary class="tp-summary"><span>Show all five steps</span><svg aria-hidden="true"><use href="#icon-chevron" /></svg></summary>
+            <ol class="tp-steps">
+              <li class="tp-step" style="--hue: 270 60% 50%">
+                <div class="tp-step-head"><span class="tp-chip"><svg><use href="#icon-building" /></svg>Workspace Search</span><span class="tp-time">3s</span></div>
+                <p>Searched messages for “token rotation”. Three matches in #api-v3, the closest from March 12.</p>
+              </li>
+              <li class="tp-step" style="--hue: 200 70% 50%">
+                <div class="tp-step-head"><span class="tp-chip"><svg><use href="#icon-wrench" /></svg>Tool Call</span><span class="tp-time">2s</span></div>
+                <p>Read memo “Auth refactor held pending token-rotation review” and its three source messages.</p>
+              </li>
+              <li class="tp-step" style="--hue: 200 70% 50%">
+                <div class="tp-step-head"><span class="tp-chip"><svg><use href="#icon-wrench" /></svg>Tool Call</span><span class="tp-time">11s</span></div>
+                <p>Read <code>src/auth/rotation.ts</code>. Refresh tokens issued before the migration fail the new signature check.</p>
+              </li>
+              <li class="tp-step" style="--hue: 200 70% 50%">
+                <div class="tp-step-head"><span class="tp-chip"><svg><use href="#icon-wrench" /></svg>Tool Call</span><span class="tp-time">16s</span></div>
+                <p>Pushed a fix to <code>auth-rotation</code> that migrates old tokens on their first refresh.</p>
+              </li>
+              <li class="tp-step" style="--hue: 142 76% 36%">
+                <div class="tp-step-head"><span class="tp-chip"><svg><use href="#icon-message" /></svg>Response</span><span class="tp-time">2s</span></div>
+                <p>Replied in #api-v3, linking the March 12 memo.</p>
+              </li>
+            </ol>
+            </details>
+          </figure>
+        </div>
+        <div class="split agent-more">
+          <div class="copy">
+            <p class="caption">The session as it plays out in the channel, and the trace its card opens: each search, each source it read and what it changed.</p>
+          </div>
+          <div class="media">
+            <p class="fine">Works with Claude Code, Codex, Cursor, OpenCode, Gemini CLI, or a bot you write, through the bot runtime, the CLI or the MCP server.</p>
+            <a class="text-link" href="/developers/recipes#local-agent">Connect a local agent</a>
           </div>
         </div>
       </div>
-    </div>
-  </div>
-</div>
+    </section>
 
-<!-- ============================================================
-     05 · WHY I BUILT THIS — features a developer missed in Slack
-     First-person founder voice. The byline name is a placeholder.
-     ============================================================ -->
-<div class="frame warm" id="why">
-  <div class="memo-shell">
-    <h2>What I wished other tools had.</h2>
-    <p class="lede">
-      Partly I built Threa out of spite. Years of watching decisions disappear
-      into channels, plus a short list of things I wanted from a chat app and
-      never got. So I added them.
-    </p>
-
-    <ul class="missing-grid">
-      <li class="missing-item">
-        <h4>Nested threads</h4>
-        <p>Threads inside threads, so a tangent off a tangent gets its own space instead of taking over the parent.</p>
-      </li>
-      <li class="missing-item">
-        <h4>Move a message into a thread</h4>
-        <p>A stray reply in the channel can be lifted into a thread after the fact, without copy-paste.</p>
-      </li>
-      <li class="missing-item">
-        <h4>Quote replies</h4>
-        <p>Reply to the exact line someone wrote, quoted inline, so the context comes with it.</p>
-      </li>
-      <li class="missing-item">
-        <h4>Markdown and real code blocks</h4>
-        <p>A markdown composer with fenced code and syntax highlighting that doesn't mangle the snippet you paste.</p>
-      </li>
-      <li class="missing-item">
-        <h4>Full-screen composer</h4>
-        <p>Pop the composer out into a full editor for a longer message. Room to draft and edit, with no stray Enter sending it before it's ready.</p>
-      </li>
-      <li class="missing-item">
-        <h4>Stash a message</h4>
-        <p>Save a half-written message without sending it and pick it back up later.</p>
-      </li>
-      <li class="missing-item">
-        <h4>Asides</h4>
-        <p>A private side thread with Ariadne next to the message you're writing. Ask what the conversation actually decided, think out loud, then go back to the draft. Nobody else sees it.</p>
-      </li>
-      <li class="missing-item">
-        <h4>Decisions you can find later</h4>
-        <p>The reasoning behind a call stays in a memo, ready for Ariadne to retrieve when you ask about it again.</p>
-      </li>
-    </ul>
-
-    <p class="missing-sign">Threa is one developer's project, built in the open. <a href="/about">More about why</a>.</p>
-  </div>
-</div>
-
-<!-- ============================================================
-     INSTALL — per-device steps for adding the PWA
-     The app is on another origin, so beforeinstallprompt never fires
-     here. Radios keep the tabs working without JS; panels share one
-     grid cell so switching never changes the height (INV-21).
-     ============================================================ -->
-<div class="frame" id="install">
-  <div class="memo-shell install-shell">
-    <div class="install-copy">
-      <h2>Install Threa.</h2>
-      <p class="lede">
-        There's no App Store or Play Store version. Threa is a web app, and it
-        works offline: it opens without a connection, shows what's already on
-        your device, and sends what you write once you're back online. Install
-        it from your browser and it gets its own icon and opens in its own
-        window, without tabs or an address bar. On iPhone and iPad, installing
-        it is also what lets Threa send you notifications.
-      </p>
-    </div>
-
-    {installTabs.map(({ platform }, i) => (
-      <input class="install-radio" type="radio" name="install-platform" id={`install-${platform}`} value={platform} checked={i === 0} />
-    ))}
-
-    <div class="install-tabs" data-decorative>
-      {installTabs.map(({ platform, label }) => (
-        <label for={`install-${platform}`}>{label}</label>
-      ))}
-    </div>
-
-    <div class="install-panels">
-      <section class="install-panel" data-platform="ios">
-        <h3>iPhone and iPad</h3>
-        <ol class="install-steps">
-          <li>Open <a href={apiBase}>{appHost}</a> in Safari.</li>
-          <li>Tap <span class="ui">Share</span> <span class="glyph" aria-hidden="true"><svg><use href="#icon-share"/></svg></span>. If you don't see it, tap <span class="glyph"><svg aria-hidden="true"><use href="#icon-morehoriz"/></svg><span class="sr">···</span></span> next to the address bar first.</li>
-          <li>Tap <span class="ui">Add to Home Screen</span>. You may need to scroll down or tap <span class="ui">View More</span> to find it.</li>
-          <li>If you see <span class="ui">Open as Web App</span>, leave it on. Tap <span class="ui">Add</span>.</li>
-          <li>Open Threa from your Home Screen and sign in. For notifications, go to <span class="ui">Settings → Notifications</span> and turn on <span class="ui">Push on this device</span>.</li>
-        </ol>
-        <p class="install-note">
-          Notifications need iOS 16.4 or later and only work in the app on your
-          Home Screen, not in a Safari tab. Chrome and Edge on iPhone have
-          <span class="ui">Add to Home Screen</span> in their Share menu too.
-        </p>
-      </section>
-
-      <section class="install-panel" data-platform="android">
-        <h3>Android</h3>
-        <ol class="install-steps">
-          <li>Open <a href={apiBase}>{appHost}</a> in Chrome.</li>
-          <li>Tap the menu <span class="glyph"><svg aria-hidden="true"><use href="#icon-morevert"/></svg><span class="sr">⋮</span></span> next to the address bar.</li>
-          <li>Tap <span class="ui">Add to home screen</span> or <span class="ui">Install app</span>, whichever your menu shows, then tap <span class="ui">Install</span>.</li>
-          <li>Open Threa from your home screen or app list.</li>
-        </ol>
-        <p class="install-note">
-          Once it's installed, Threa shows up in Android's share sheet, so you
-          can send it a photo, link, or file from another app. Samsung Internet,
-          Edge, and Firefox have an install option in their menus too.
-        </p>
-      </section>
-
-      <section class="install-panel" data-platform="chromium">
-        <h3>Chrome or Edge on a computer</h3>
-        <ol class="install-steps">
-          <li>Open <a href={apiBase}>{appHost}</a>.</li>
-          <li>Click <span class="ui">Install</span> <span class="glyph" aria-hidden="true"><svg><use href="#icon-install"/></svg></span> at the right end of the address bar. In Edge it's labeled <span class="ui">App available</span>.</li>
-          <li>Click <span class="ui">Install</span>.</li>
-        </ol>
-        <p class="install-note">
-          No icon in the address bar? In Chrome, open the menu
-          <span class="glyph"><svg aria-hidden="true"><use href="#icon-morevert"/></svg><span class="sr">⋮</span></span> and choose
-          <span class="ui">Cast, save, and share → Install Threa</span>. In Edge,
-          open <span class="glyph"><svg aria-hidden="true"><use href="#icon-morehoriz"/></svg><span class="sr">···</span></span> and
-          choose <span class="ui">Apps → Install Threa</span>. Threa then opens in
-          its own window and sits with your other apps in the Dock, taskbar, or
-          Start menu.
-        </p>
-      </section>
-
-      <section class="install-panel" data-platform="mac-safari">
-        <h3>Safari on a Mac</h3>
-        <ol class="install-steps">
-          <li>Open <a href={apiBase}>{appHost}</a> in Safari.</li>
-          <li>Choose <span class="ui">File → Add to Dock</span>, or click <span class="ui">Share</span> <span class="glyph" aria-hidden="true"><svg><use href="#icon-share"/></svg></span> and choose <span class="ui">Add to Dock</span>.</li>
-          <li>Click <span class="ui">Add</span>.</li>
-        </ol>
-        <p class="install-note">
-          Needs macOS Sonoma (14) or later. On older versions, install it from
-          Chrome or Edge instead.
-        </p>
-      </section>
-
-      <section class="install-panel" data-platform="firefox">
-        <h3>Firefox</h3>
-        <ol class="install-steps">
-          <li>On Windows, open <a href={apiBase}>{appHost}</a> in Firefox.</li>
-          <li>Click <span class="ui">Add to taskbar</span> <span class="glyph" aria-hidden="true"><svg><use href="#icon-install"/></svg></span> at the right end of the address bar.</li>
-          <li>Threa opens in its own window and stays pinned to your taskbar.</li>
-        </ol>
-        <p class="install-note">
-          Firefox on Mac and Linux, and the Microsoft Store version of Firefox,
-          can't install web apps. Threa works in a regular Firefox tab there,
-          and notifications arrive while Firefox is running. For a separate
-          window with its own icon, open <a href={apiBase}>{appHost}</a> in
-          Chrome, Edge, or Safari.
-        </p>
-      </section>
-    </div>
-  </div>
-</div>
-
-<script>
-  import { detectInstallPlatform } from "../lib/install-platform"
-
-  const platform = detectInstallPlatform(navigator.userAgent, navigator.maxTouchPoints)
-  const input = platform && document.getElementById(`install-${platform}`)
-  if (input instanceof HTMLInputElement) input.checked = true
-</script>
-
-<!-- ============================================================
-     WAITLIST CTA
-     ============================================================ -->
-<div class="frame night" id="waitlist">
-  <div class="cta-shell">
-    <div>
-      <h3>Get early access.</h3>
-    </div>
-    <div>
-      <form class="wl-form" id="waitlist-form" novalidate>
-        <div class="form-row">
-          <input
-            type="email"
-            name="email"
-            id="wl-email"
-            placeholder="you@yourdomain.com"
-            autocomplete="email"
-            required
-          />
-          <button type="submit" class="cta" id="wl-submit">Join the waitlist</button>
+    <!-- PRIVACY: what Threa can and can't read. -->
+    <section class="section" id="privacy" aria-labelledby="privacy-title">
+      <div class="wrap split">
+        <div class="copy">
+          <h2 id="privacy-title" class="h2">Some work stays between you and your agent.</h2>
+          <p class="lede">
+            A scratchpad is a conversation that belongs to you alone, for notes
+            and for working with Ariadne or your own agent. That work means
+            pasting commands, diffs and output you wouldn't paste into a group
+            chat. Seal a scratchpad and all of it is encrypted on your devices,
+            including its name. Threa's servers hold the ciphertext and have no
+            way to open it.
+          </p>
+          <p class="body">
+            Not everything private needs sealing. An aside is a side chat with
+            Ariadne next to a channel conversation. It isn't encrypted, but only
+            you see it, and nothing in it reaches the channel until you send it
+            yourself.
+          </p>
+          <a class="text-link" href="/encryption">How sealed scratchpads work</a>
         </div>
-        <!-- Honeypot: off-screen, never shown to humans. Bots that fill every
-             field trip it and the submission is silently dropped server-side. -->
-        <input
-          type="text"
-          name="company"
-          id="wl-hp"
-          class="wl-hp"
-          tabindex="-1"
-          autocomplete="off"
-          aria-hidden="true"
-        />
-      </form>
-      <span class="quiet" id="wl-status" data-decorative aria-live="polite">No spam. One email when your invite is ready.</span>
-    </div>
-  </div>
-</div>
+        <figure class="media panel app-ui" aria-label="A sealed scratchpad called Deploy notes, shared only with Claude Code. Maya pastes a failing deploy log; Claude Code explains that the preview environment is missing a secret.">
+          <div aria-hidden="true">
+            <AppStreamHeader title="Deploy notes">
+              <span class="app-pill app-pill-icon"><svg><use href="#icon-lock" /></svg></span>
+              <span class="app-pill"><svg><use href="#icon-bot" /></svg>Claude Code</span>
+            </AppStreamHeader>
+            <div class="panel-body">
+              <Message author="maya" time="16:40">
+                <div class="tl-text">the preview deploy fails and I can't see why. full log:</div>
+                <div class="code-block">
+                  <div class="code-head"><svg><use href="#icon-chevron" /></svg>Log<span>3 lines</span><svg class="code-icon"><use href="#icon-copy" /></svg></div>
+                  <pre tabindex="-1"><code><span class="tk-del">error: STRIPE_WEBHOOK_SECRET is not set</span>
+<span class="tk-o">    at loadConfig (src/config.ts:41)</span>
+<span class="tk-o">exit code 1</span></code></pre>
+                </div>
+              </Message>
+              <Message author="claude-code" time="16:41">
+                <div class="tl-text">That secret is only set for production. Add it to the preview environment and re-run the deploy. Nothing in the code needs to change.</div>
+              </Message>
+            </div>
+          </div>
+        </figure>
+      </div>
+      <div class="wrap privacy-table">
+        <table class="reads">
+            <caption>What Threa can read</caption>
+            <thead>
+              <tr><th scope="col">Where</th><th scope="col">Searchable and remembered</th><th scope="col">Who can read it</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Channels, DMs, threads</th>
+                <td data-label="Searchable and remembered">Yes. That's how search and memory work.</td>
+                <td data-label="Who can read it">Members, and Threa. Encrypted in transit and at rest.</td>
+              </tr>
+              <tr>
+                <th scope="row"><svg aria-hidden="true"><use href="#icon-lock" /></svg>Sealed scratchpads</th>
+                <td data-label="Searchable and remembered">No. Nothing in one becomes a memo.</td>
+                <td data-label="Who can read it">You and the agents you let in. Not Threa.</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="fine">Lose the passphrase and sealed content is gone. There's no reset, because a reset would mean someone else had the key.</p>
+      </div>
+    </section>
 
-<footer class="footer">
-  <div class="brand" style="gap:10px;">
-    <svg style="width:24px;height:24px;color:hsl(var(--gold));"><use href="#threa-mark"/></svg>
-    <span class="wordmark" style="font-size:18px;">Threa</span>
-    <span class="year">2026</span>
-  </div>
-  <div class="ln">
-    <a href="/">Product</a>
-    <a href="/about">About</a>
-    <a href="/guide">Guide</a>
-    <a href="/developers">Developers</a>
-  </div>
-</footer>
+    <!-- OPEN SOURCE -->
+    <section class="section section-compact" id="open-source" aria-labelledby="os-title">
+      <div class="wrap split is-flipped">
+        <div class="copy">
+          <h2 id="os-title" class="h2">It's open source.</h2>
+          <p class="lede">
+            The frontend, backend, control plane and infrastructure are public,
+            and the public repo is the one we deploy. Read how Threa works, fork
+            it, or run it yourself. MIT licensed, so do whatever. I won't take it
+            personally. The design docs are public too, and so are the
+            <a href="/developers/feature-requests">feature requests</a>.
+          </p>
+        </div>
+        <div class="media os-media">
+          <div class="os-terminal" aria-hidden="true" tabindex="-1">
+            <span class="row"><span class="prompt">$</span><span class="cmd">git clone</span> <span class="arg">https://github.com/threahq/threa.git</span></span>
+            <span class="row"><span class="prompt">$</span><span class="cmd">cd</span> <span class="arg">threa</span> <span class="cmd">&amp;&amp;</span> <span class="cmd">bun install</span></span>
+            <span class="row"><span class="prompt">$</span><span class="cmd">bun run dev</span></span>
+            <span class="row out">Starting PostgreSQL...</span>
+            <span class="row out">Starting MinIO...</span>
+            <span class="row out">PostgreSQL is ready</span>
+            <span class="row out">MinIO is ready</span>
+          </div>
+          <a class="text-link" href="https://github.com/threahq/threa">Browse the source on GitHub</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- INSTALL: per-device steps. The app is on another origin, so
+         beforeinstallprompt never fires here. Radios keep the tabs working
+         without JS; panels share one grid cell so switching never changes the
+         height (INV-21). -->
+    <section class="section section-compact" id="install" aria-labelledby="install-title">
+      <div class="wrap split install-shell">
+        <div class="copy install-copy">
+          <h2 id="install-title" class="h2">Install it on any device.</h2>
+          <p class="lede">
+            There's no App Store or Play Store version. Threa is a web app you
+            install from your browser: it gets its own icon and window, opens
+            without a connection, and sends what you wrote once you're back. On
+            iPhone and iPad, installing is also what turns on notifications.
+          </p>
+          <div class="install-tabs" role="radiogroup" aria-label="Your device">
+            {installTabs.map(({ platform, label }, i) => (
+              <>
+                <input class="install-radio" type="radio" name="install-platform" id={`install-${platform}`} value={platform} checked={i === 0} />
+                <label for={`install-${platform}`}>{label}</label>
+              </>
+            ))}
+          </div>
+        </div>
+        <div class="media install-panels">
+          <section class="install-panel" data-platform="ios">
+            <h3>iPhone and iPad</h3>
+            <ol class="install-steps">
+              <li>Open <a href={apiBase}>{appHost}</a> in Safari.</li>
+              <li>Tap <span class="ui">Share</span> <span class="glyph" aria-hidden="true"><svg><use href="#icon-share" /></svg></span>. If you don't see it, tap <span class="glyph"><svg aria-hidden="true"><use href="#icon-morehoriz" /></svg><span class="sr">More</span></span> first.</li>
+              <li>Tap <span class="ui">Add to Home Screen</span>. You may need to scroll down or tap <span class="ui">View More</span> to find it.</li>
+              <li>If you see <span class="ui">Open as Web App</span>, leave it on. Tap <span class="ui">Add</span>.</li>
+              <li>Open Threa from your Home Screen and sign in. For notifications, go to <span class="ui">Settings → Notifications</span> and turn on <span class="ui">Push on this device</span>.</li>
+            </ol>
+            <p class="install-note">Notifications need iOS 16.4 or later and only work in the app on your Home Screen, not in a Safari tab. Chrome and Edge on iPhone have <span class="ui">Add to Home Screen</span> in their Share menu too.</p>
+          </section>
+          <section class="install-panel" data-platform="android">
+            <h3>Android</h3>
+            <ol class="install-steps">
+              <li>Open <a href={apiBase}>{appHost}</a> in Chrome.</li>
+              <li>Tap the menu <span class="glyph"><svg aria-hidden="true"><use href="#icon-morevert" /></svg><span class="sr">⋮</span></span> next to the address bar.</li>
+              <li>Tap <span class="ui">Add to home screen</span> or <span class="ui">Install app</span>, whichever your menu shows, then tap <span class="ui">Install</span>.</li>
+              <li>Open Threa from your home screen or app list.</li>
+            </ol>
+            <p class="install-note">Once it's installed, Threa shows up in Android's share sheet, so you can send it a photo, link or file from another app. Samsung Internet, Edge and Firefox have an install option in their menus too.</p>
+          </section>
+          <section class="install-panel" data-platform="chromium">
+            <h3>Chrome or Edge on a computer</h3>
+            <ol class="install-steps">
+              <li>Open <a href={apiBase}>{appHost}</a>.</li>
+              <li>Click <span class="ui">Install</span> <span class="glyph" aria-hidden="true"><svg><use href="#icon-install" /></svg></span> at the right end of the address bar. In Edge it's labeled <span class="ui">App available</span>.</li>
+              <li>Click <span class="ui">Install</span>.</li>
+            </ol>
+            <p class="install-note">No icon in the address bar? In Chrome, open the menu <span class="glyph"><svg aria-hidden="true"><use href="#icon-morevert" /></svg><span class="sr">⋮</span></span> and choose <span class="ui">Cast, save, and share → Install Threa</span>. In Edge, open <span class="glyph"><svg aria-hidden="true"><use href="#icon-morehoriz" /></svg><span class="sr">···</span></span> and choose <span class="ui">Apps → Install Threa</span>.</p>
+          </section>
+          <section class="install-panel" data-platform="mac-safari">
+            <h3>Safari on a Mac</h3>
+            <ol class="install-steps">
+              <li>Open <a href={apiBase}>{appHost}</a> in Safari.</li>
+              <li>Choose <span class="ui">File → Add to Dock</span>, or click <span class="ui">Share</span> <span class="glyph" aria-hidden="true"><svg><use href="#icon-share" /></svg></span> and choose <span class="ui">Add to Dock</span>.</li>
+              <li>Click <span class="ui">Add</span>.</li>
+            </ol>
+            <p class="install-note">Needs macOS Sonoma (14) or later. On older versions, install it from Chrome or Edge instead.</p>
+          </section>
+          <section class="install-panel" data-platform="firefox">
+            <h3>Firefox</h3>
+            <ol class="install-steps">
+              <li>On Windows, open <a href={apiBase}>{appHost}</a> in Firefox.</li>
+              <li>Click <span class="ui">Add to taskbar</span> <span class="glyph" aria-hidden="true"><svg><use href="#icon-install" /></svg></span> at the right end of the address bar.</li>
+              <li>Threa opens in its own window and stays pinned to your taskbar.</li>
+            </ol>
+            <p class="install-note">Firefox on Mac and Linux, and the Microsoft Store version of Firefox, can't install web apps. Threa works in a regular Firefox tab there. For a separate window with its own icon, use Chrome, Edge or Safari.</p>
+          </section>
+        </div>
+      </div>
+    </section>
+    <script>
+      import { detectInstallPlatform } from "../lib/install-platform"
+      const platform = detectInstallPlatform(navigator.userAgent, navigator.maxTouchPoints)
+      const input = platform && document.getElementById(`install-${platform}`)
+      if (input instanceof HTMLInputElement) input.checked = true
+    </script>
+
+    <!-- QUESTIONS -->
+    <section class="section section-compact" id="questions" aria-labelledby="questions-title">
+      <div class="wrap">
+        <h2 id="questions-title" class="h2">Questions.</h2>
+        <div class="faq faq-stack">
+          <div class="faq-col">
+            <details>
+              <summary>What does it cost?</summary>
+              <p>Nothing during early access. Pricing isn't set yet, and invites go out from the waitlist.</p>
+            </details>
+            <details>
+              <summary>How is it different from Slack?</summary>
+              <p>Channels, threads and DMs work the way you'd expect. The difference is what happens afterwards: <a href="#memory">decisions become memos</a>, <a href="#board">conversations become cards</a>, and <a href="#agents">your own agent</a> can join in.</p>
+            </details>
+            <details>
+              <summary>Can the AI read everything?</summary>
+              <p>Not what's in a <a href="#privacy">sealed scratchpad</a>. Everywhere else, a memo is only shown to people who can open the conversation it came from.</p>
+            </details>
+          </div>
+          <div class="faq-col">
+            <details id="your-data">
+              <summary>Can I take my data with me?</summary>
+              <p>There's no export button yet. You can edit or delete your own messages, and edit or archive the memos Threa keeps. Messages and memos can be read through the <a href="/developers">public API and the CLI</a>, so a script can copy them out. The code is MIT licensed, so you can also run your own copy from the same repo we deploy.</p>
+              <p>A workspace's data is kept until the workspace is deleted. Deleting one from inside Threa isn't built yet, so during early access, ask and we'll remove anything you want gone.</p>
+            </details>
+            <details>
+              <summary>Is there a phone app?</summary>
+              <p>Threa is an installable web app that works offline. <a href="#install">Install it from your browser</a> on iPhone, Android or a computer.</p>
+            </details>
+            <details>
+              <summary>Who builds it?</summary>
+              <p>One developer, Kristoffer Remback, in the open. <a href="/about">Why he's building it</a>.</p>
+            </details>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <script>
+      const openTarget = () => {
+        const target = location.hash && document.getElementById(location.hash.slice(1))
+        if (target instanceof HTMLDetailsElement) target.open = true
+      }
+      openTarget()
+      addEventListener("hashchange", openTarget)
+    </script>
+
+    <WaitlistBand source="home" />
+  </main>
+
+  <SiteFooter />
 
   <script is:inline>
-  /* The agent-section demo. Plays once, from when it scrolls into view, so
-     visitors see the agent work instead of its end state. Reduced motion shows
-     the finished conversation. */
+  /* The agent demo plays once, from when it scrolls into view, so visitors see
+     the agent work instead of its end state. Reduced motion shows the finished
+     conversation. */
   (function () {
-    const ad = document.querySelector('.byo-demo .ad')
+    const ad = document.querySelector('.agent-demo .ad')
     if (!ad) return
     const $ = (s) => ad.querySelector(s)
-
+    const panel = document.querySelector('.trace-panel')
+    const traceSteps = panel.querySelectorAll('.tp-step')
+    const details = panel.querySelector('.tp-details')
+    const summary = details.querySelector('summary span')
+    const phone = matchMedia('(max-width: 880px)')
+    details.open = !phone.matches
+    phone.addEventListener('change', () => { details.open = !phone.matches })
+    details.addEventListener('toggle', () => {
+      summary.textContent = details.open ? 'Hide the steps' : 'Show all five steps'
+    })
     const now = Date.now()
     const pad = (n) => String(n).padStart(2, '0')
-    ad.querySelectorAll('[data-ago]').forEach((el) => {
+    ad.closest('.agent-stage').querySelectorAll('[data-ago]').forEach((el) => {
       const d = new Date(now - Number(el.dataset.ago) * 60_000)
       el.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}`
     })
-
     const beat = (name) => ad.querySelector(`[data-beat="${name}"]`).classList.add('is-in')
-    const steps = (n) => ad.querySelectorAll('.ad-steps').forEach((el) => { el.textContent = `${n} step${n === 1 ? '' : 's'}` })
+    const steps = (n) => {
+      ad.querySelectorAll('.ad-steps').forEach((el) => { el.textContent = `${n} step${n === 1 ? '' : 's'}` })
+      traceSteps.forEach((el, i) => el.classList.toggle('is-in', i < n))
+    }
     const substep = (text) => {
       const el = $('.ad-substep')
       el.textContent = text
@@ -858,9 +759,10 @@ const schema = [
       ad.classList.remove('is-working')
       ad.classList.add('is-done')
       $('.ad-trace-title').textContent = 'Session complete'
-      $('.ad-trace-sub').textContent = '4 steps • 34s'
+      $('.ad-trace-sub').textContent = '5 steps • 34s'
+      steps(traceSteps.length)
+      panel.querySelector('.tp-duration').textContent = ' • 34s'
     }
-
     const typed = $('.composer-typed')
     const trail = Array.from(typed.dataset.trail)
     let typing = 0
@@ -868,27 +770,25 @@ const schema = [
       typed.textContent = trail.slice(0, i).join('')
       if (i < trail.length) typing = setTimeout(() => typeTrail(i + 1), 70 + Math.random() * 60)
     }
-
     const script = [
-      [600, () => ad.classList.add('is-drafting')],
-      [1300, () => ad.classList.add('has-mention')],
-      [1700, () => typeTrail()],
-      [3500, () => {
+      [300, () => ad.classList.add('is-drafting')],
+      [800, () => ad.classList.add('has-mention')],
+      [1100, () => typeTrail()],
+      [2700, () => {
         clearTimeout(typing)
         ad.classList.remove('is-drafting', 'has-mention')
         typed.textContent = ''
         beat('sent')
       }],
-      [4300, () => { ad.classList.add('is-working'); beat('working') }],
-      [5600, () => { steps(2); substep('Reading memo “Auth refactor held pending token-rotation review”') }],
-      [7200, () => { steps(3); substep('Reading src/auth/rotation.ts') }],
-      [9400, () => { steps(4); substep('Pushing a fix to auth-rotation') }],
-      [11200, () => { finish(); beat('replied') }],
-      [13200, () => react('pray', 1)],
-      [14300, () => react('eyes', 1)],
-      [15100, () => react('pray', 2)],
+      [3200, () => { ad.classList.add('is-working'); beat('working'); steps(1); panel.querySelector('.tp-duration').textContent = ' • running' }],
+      [4500, () => { steps(2); substep('Reading memo “Auth refactor held pending token-rotation review”') }],
+      [6100, () => { steps(3); substep('Reading src/auth/rotation.ts') }],
+      [8300, () => { steps(4); substep('Pushing a fix to auth-rotation') }],
+      [10100, () => { finish(); beat('replied') }],
+      [12100, () => react('pray', 1)],
+      [13200, () => react('eyes', 1)],
+      [14000, () => react('pray', 2)],
     ]
-
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
       ad.classList.add('is-static')
       ad.querySelectorAll('[data-beat]').forEach((el) => el.classList.add('is-in'))
@@ -897,66 +797,14 @@ const schema = [
       react('eyes', 1)
       return
     }
-
+    panel.classList.add('is-live')
+    panel.querySelector('.tp-duration').textContent = ''
     const io = new IntersectionObserver((entries) => {
       if (!entries.some((e) => e.isIntersecting)) return
       io.disconnect()
       script.forEach(([at, fn]) => setTimeout(fn, at))
     }, { threshold: 0.4 })
     io.observe(ad)
-  })()
-  </script>
-
-
-  <script is:inline define:vars={{ apiBase }}>
-  /* Waitlist signup. Validates on the client for fast feedback, then POSTs to
-     the control-plane (via the workspace-router). The server validates
-     authoritatively and dedupes; a repeat email still resolves as success. */
-  (function () {
-    const form = document.getElementById("waitlist-form")
-    if (!form) return
-    const email = document.getElementById("wl-email")
-    const hp = document.getElementById("wl-hp")
-    const submit = document.getElementById("wl-submit")
-    const status = document.getElementById("wl-status")
-    const idle = "No spam. One email when your invite is ready."
-
-    const setStatus = (msg, kind) => {
-      status.textContent = msg
-      status.classList.remove("is-ok", "is-err")
-      if (kind) status.classList.add(kind)
-    }
-
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault()
-      const value = (email.value || "").trim()
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value)) {
-        setStatus("Enter a valid email address.", "is-err")
-        email.focus()
-        return
-      }
-
-      const original = submit.textContent
-      submit.disabled = true
-      submit.textContent = "Joining…"
-      setStatus(idle)
-
-      try {
-        const res = await fetch(apiBase + "/api/waitlist", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: value, source: "home", hp: hp.value || "" }),
-        })
-        if (!res.ok) throw new Error("status " + res.status)
-        form.reset()
-        submit.textContent = "Joined"
-        setStatus("You're on the list.", "is-ok")
-      } catch {
-        submit.disabled = false
-        submit.textContent = original
-        setStatus("Something went wrong. Try again.", "is-err")
-      }
-    })
   })()
   </script>
 </Layout>

@@ -1,0 +1,51 @@
+---
+const columns = [
+  {
+    title: "Product",
+    links: [
+      { href: "/", label: "Overview" },
+      { href: "/#install", label: "Install" },
+      { href: "/encryption", label: "Sealed scratchpads" },
+      { href: "/#questions", label: "Questions" },
+    ],
+  },
+  {
+    title: "Learn",
+    links: [
+      { href: "/guide", label: "User guide" },
+      { href: "/developers", label: "Developers" },
+      { href: "/developers/recipes#local-agent", label: "Connect your agent" },
+    ],
+  },
+  {
+    title: "Project",
+    links: [
+      { href: "/about", label: "About" },
+      { href: "https://github.com/threahq/threa", label: "Source on GitHub" },
+      { href: "/developers/feature-requests", label: "Request a feature" },
+    ],
+  },
+]
+---
+
+<footer class="site-footer">
+  <div class="wrap footer-grid">
+    <div class="footer-brand">
+      <a class="brand" href="/" aria-label="Threa home">
+        <svg aria-hidden="true"><use href="#threa-mark" /></svg>
+        <span class="wordmark">Threa</span>
+      </a>
+      <p>Team chat that keeps its decisions. Open source, MIT licensed.</p>
+    </div>
+    {columns.map((c) => (
+      <nav class="footer-col" aria-label={c.title}>
+        <h2>{c.title}</h2>
+        <ul>
+          {c.links.map((l) => (
+            <li><a href={l.href}>{l.label}</a></li>
+          ))}
+        </ul>
+      </nav>
+    ))}
+  </div>
+</footer>

@@ -1,8 +1,8 @@
 ---
 import Layout from "../layouts/Layout.astro"
 import SvgDefs from "../components/SvgDefs.astro"
-import ThemeToggle from "../components/ThemeToggle.astro"
-import { loginUrl } from "../lib/config"
+import SiteHeader from "../components/SiteHeader.astro"
+import SiteFooter from "../components/SiteFooter.astro"
 
 const schema = [
   {
@@ -22,34 +22,13 @@ const schema = [
 >
   <SvgDefs />
 
-  <!-- ============================================================
-       HERO — the premise, stated for someone who has never read the
-       crypto page. Same masthead as /about.
-       ============================================================ -->
-  <div class="frame">
-    <div class="hero-shell">
-      <div class="hero-inner">
-        <div class="nav-row" data-decorative>
-          <div class="brand">
-            <svg><use href="#threa-mark" /></svg>
-            <span class="wordmark">Threa</span>
-          </div>
-          <nav class="nav-links">
-            <a href="/">Product</a>
-            <a href="/about">About</a>
-            <a href="/guide">Guide</a>
-            <a href="/developers">Developers</a>
-          </nav>
-          <a class="nav-login" href={loginUrl}>Log in</a>
-          <ThemeToggle />
-        </div>
+  <SiteHeader />
 
-        <div class="enc-hero">
-          <h1 class="h-display">
-            Some of it should<br />
-            stay between you<br />
-            and your agent.
-          </h1>
+  <main id="main">
+    <section class="section hero" aria-labelledby="hero-title">
+      <div class="wrap split hero-copy">
+        <h1 id="hero-title" class="h1">Some of it should stay between you and your agent.</h1>
+        <div class="hero-side">
           <p class="lede">
             Working with your own coding agent means pasting commands, diffs and
             output you would not paste into a group chat. A sealed scratchpad
@@ -58,16 +37,12 @@ const schema = [
           </p>
         </div>
       </div>
-    </div>
-  </div>
+    </section>
 
-  <!-- ============================================================
-       01 · WHAT IS SEALED. Three open columns, no cards.
-       ============================================================ -->
-  <div class="frame warm">
-    <div class="memo-shell">
-      <h2>What the server never sees.</h2>
-      <p class="lede enc-lede">
+    <section class="section" aria-labelledby="sealed-title">
+      <div class="wrap">
+      <h2 id="sealed-title" class="h2">What the server never sees.</h2>
+      <p class="lede">
         Encryption covers scratchpads and the threads under them. The key is
         yours. Everything written in one is encrypted in your browser, or on the
         machine your agent runs on, before it is sent.
@@ -102,14 +77,11 @@ const schema = [
         </div>
       </div>
     </div>
-  </div>
+    </section>
 
-  <!-- ============================================================
-       02 · HOW IT WORKS. Three steps in plain order.
-       ============================================================ -->
-  <div class="frame">
-    <div class="memo-shell">
-      <h2>One passphrase, then it's on.</h2>
+    <section class="section" aria-labelledby="how-title">
+      <div class="wrap">
+      <h2 id="how-title" class="h2">One passphrase, then it's on.</h2>
 
       <ol class="enc-steps">
         <li>
@@ -142,51 +114,45 @@ const schema = [
       </ol>
 
       <div class="enc-cta-row">
-        <a class="os-cta" href="/developers/recipes#sealed-agent">Connect an encrypted agent</a>
-        <a class="os-cta" href="/developers/cli#e2e">Read one from the CLI</a>
+        <a class="text-link" href="/developers/recipes#sealed-agent">Connect an encrypted agent</a>
+        <a class="text-link" href="/developers/cli#e2e">Read one from the CLI</a>
       </div>
     </div>
-  </div>
+    </section>
 
-  <!-- ============================================================
-       03 · THE TRADE. Say the cost out loud, before someone finds it.
-       ============================================================ -->
-  <div class="frame warm">
-    <div class="memo-shell">
-      <h2>What it costs.</h2>
-      <p class="lede enc-built-lede">
+    <section class="section" aria-labelledby="cost-title">
+      <div class="wrap">
+      <h2 id="cost-title" class="h2">What it costs.</h2>
+      <p class="body enc-built">
         Anything Threa does by reading your messages stops at the seal. Nothing
         in a sealed scratchpad is searchable and nothing in one becomes a memo,
         so the knowledge base Threa builds from your conversations skips it.
         Scheduled messages and stream briefs are off there for the same reason.
       </p>
-      <p class="lede enc-built-lede">
+      <p class="body enc-built">
         Lose the passphrase and that content is gone for good. There is no reset,
         because a reset would mean someone else had a copy of the key. That is the
         whole point, and it is worth knowing before you turn it on.
       </p>
-      <p class="lede enc-built-lede">
+      <p class="body enc-built">
         Everything outside sealed scratchpads works the usual way. Channels, DMs
         and threads are encrypted in transit and at rest like any other service,
         and Threa can read them, which is how search and memory work at all.
         Encryption is for the scratchpads where you and your agent do the work.
       </p>
     </div>
-  </div>
+    </section>
 
-  <!-- ============================================================
-       CLOSE
-       ============================================================ -->
-  <div class="frame">
-    <div class="memo-shell is-centerpiece enc-close">
-      <h2>Open, and checkable.</h2>
+    <section class="section" aria-labelledby="close-title">
+      <div class="wrap enc-close">
+      <h2 id="close-title" class="h2">Open, and checkable.</h2>
       <p class="lede">
         The crypto is RFC 9180 HPKE with AES-256-GCM, and the code that does it is
         in the public repo. Read it before you trust it.
       </p>
       <div class="actions">
-        <a class="cta" href="/#waitlist">Join the waitlist</a>
-        <a class="os-cta" href="https://github.com/threahq/threa">Read the source</a>
+        <a class="btn btn-primary" href="/#waitlist">Join the waitlist</a>
+        <a class="text-link" href="https://github.com/threahq/threa">Read the source</a>
       </div>
     </div>
   </div>
@@ -197,102 +163,83 @@ const schema = [
       <span class="wordmark" style="font-size:18px;">Threa</span>
       <span class="year">2026</span>
     </div>
-    <div class="ln">
-      <a href="/">Product</a>
-      <a href="/about">About</a>
-      <a href="/guide">Guide</a>
-      <a href="/developers">Developers</a>
-    </div>
-  </footer>
+    </section>
+  </main>
+
+  <SiteFooter />
 
   <style>
-    /* Masthead: headline and framing side by side, same as /about. */
-    .enc-hero {
-      display: grid;
-      grid-template-columns: 1.1fr 0.9fr;
-      gap: 56px;
-      align-items: end;
-    }
-    .enc-hero .lede { max-width: 460px; font-size: 18px; margin: 0 0 6px; }
-    .enc-lede { max-width: 620px; font-size: 17px; margin: 0 0 4px; }
-
     .enc-duo {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 40px;
-      margin-top: 24px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 32px;
+      margin-top: 40px;
     }
-    .enc-q { border-top: 1px solid hsl(var(--line)); padding-top: 20px; }
+    .enc-q {
+      padding-top: 20px;
+      border-top: 1px solid hsl(var(--line));
+    }
     .enc-q h3,
     .enc-steps h3 {
-      margin: 0 0 10px;
+      margin: 0 0 8px;
       font-family: var(--font-display);
-      font-weight: 500;
-      font-size: 19px;
+      font-weight: var(--display-weight);
+      font-size: 20px;
       line-height: 1.3;
-      letter-spacing: -0.01em;
       color: hsl(var(--ink));
     }
     .enc-q p,
     .enc-steps p {
       margin: 0;
-      font-size: 14px;
+      font-size: 15.5px;
       line-height: 1.6;
       color: hsl(var(--ink-soft));
     }
-
-    /* Numbered steps: the count sits in the gutter as a mono gold marker. */
     .enc-steps {
+      display: grid;
+      gap: 28px;
+      max-width: 40em;
+      margin: 32px 0 0;
+      padding: 0;
       list-style: none;
       counter-reset: enc-step;
-      margin: 24px 0 0;
-      padding: 0;
-      display: grid;
-      gap: 26px;
-      max-width: 640px;
     }
     .enc-steps li {
-      counter-increment: enc-step;
       position: relative;
       padding-left: 40px;
+      counter-increment: enc-step;
     }
     .enc-steps li::before {
       content: counter(enc-step);
       position: absolute;
       left: 0;
       top: 1px;
-      font-family: var(--font-mono);
-      font-size: 12px;
-      color: hsl(var(--gold));
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: var(--display-weight);
+      line-height: 1.3;
+      color: hsl(var(--gold-ink));
     }
     .enc-steps code {
       font-family: var(--font-mono);
-      font-size: 13px;
+      font-size: 13.5px;
       color: hsl(var(--ink));
     }
-
-    .enc-built-lede { max-width: 640px; font-size: 17px; }
-    .enc-built-lede + .enc-built-lede { margin-top: 16px; }
     .enc-cta-row {
       display: flex;
       flex-wrap: wrap;
-      gap: 14px 28px;
-      margin-top: 28px;
+      gap: 0 28px;
+      margin-top: 20px;
     }
-    .enc-cta-row .os-cta { margin-top: 0; }
-    .enc-close .actions {
-      display: flex;
-      justify-content: center;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 12px 18px;
-      margin-top: 8px;
+    .enc-built + .enc-built {
+      margin-top: 16px;
     }
-    .enc-close .os-cta { margin-top: 0; }
 
     @media (max-width: 880px) {
-      .enc-hero { grid-template-columns: 1fr; gap: 24px; align-items: start; }
-      .enc-duo { grid-template-columns: 1fr; gap: 28px; }
+      .enc-duo {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 24px;
+      }
     }
   </style>
 </Layout>

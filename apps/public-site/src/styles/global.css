@@ -54,6 +54,10 @@
   --gold: 38 65% 50%; /* === app --primary */
   --gold-soft: 38 65% 62%;
   --gold-dim: 38 28% 38%;
+  /* Gold for text on paper: --gold itself is a fill colour and reads at
+     about 2.4:1 as text. */
+  --gold-ink: 36 72% 31%;
+  --gold-fg: 40 20% 98%; /* === app --primary-foreground */
   --paper: 40 22% 98%; /* app --card / --background */
   --paper-warm: 38 16% 94%; /* app --muted / --secondary */
   --paper-sunk: 40 14% 93%; /* page canvas, just below cards */
@@ -65,9 +69,10 @@
   --night: 26 16% 10%;
   --night-soft: 26 12% 16%;
   --line: 35 15% 88%; /* === app --border */
-  --muted: 30 8% 45%; /* === app --muted-foreground */
+  --muted: 30 8% 40%;
   --emerald: 142 64% 38%;
   --emerald-soft: 142 60% 92%;
+  --emerald-ink: 142 70% 27%;
 
   --font-display: "Cabinet Grotesk", "Switzer", system-ui, -apple-system, sans-serif;
   --display-weight: 600;
@@ -96,6 +101,8 @@
   --gold: 40 62% 56%;
   --gold-soft: 42 70% 68%;
   --gold-dim: 38 35% 58%;
+  --gold-ink: 42 70% 68%;
+  --gold-fg: 30 15% 8%;
   --paper: 26 12% 13%;
   --paper-warm: 26 14% 11%;
   --paper-sunk: 26 15% 9%;
@@ -107,6 +114,7 @@
   --muted: 32 7% 57%;
   --emerald: 142 45% 52%;
   --emerald-soft: 142 28% 16%;
+  --emerald-ink: 142 45% 58%;
 
   /* Dark disabled-primary, sampled from the real app's dark composer:
      olive button rgb(114,96,58) with a NEUTRAL near-white arrow
@@ -315,35 +323,47 @@ body {
 .tl-avatar {
   width: 32px;
   height: 32px;
-  border-radius: 8px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
+  background: hsl(var(--paper-warm));
+  color: hsl(var(--ink));
   font-family: var(--font-body);
-  font-weight: 600;
-  font-size: 12px;
-  letter-spacing: 0.01em;
+  font-weight: 500;
+  font-size: 14px;
   flex-shrink: 0;
 }
-.tl-avatar.av-alex {
-  background: hsl(28 30% 86%);
-  color: hsl(28 30% 26%);
-}
-.tl-avatar.av-jordan {
-  background: hsl(200 35% 84%);
-  color: hsl(200 40% 28%);
-}
-.tl-avatar.av-maya {
-  background: hsl(20 35% 84%);
-  color: hsl(20 40% 28%);
-}
+/* Persona: card fill with an inset gold ring around the Ariadne mark. */
 .tl-avatar.av-ariadne {
-  background: hsl(var(--gold) / 0.16);
+  background: hsl(var(--paper));
   color: hsl(var(--gold));
+  box-shadow: inset 0 0 0 1.5px hsl(var(--gold));
 }
 .tl-avatar.av-ariadne svg {
-  width: 19px;
-  height: 19px;
+  width: 18px;
+  height: 18px;
+}
+
+.tl-row.bot {
+  background-image: linear-gradient(90deg, hsl(var(--emerald) / 0.06) 0%, hsl(var(--emerald) / 0) 75%);
+  box-shadow: inset 3px 0 0 hsl(var(--emerald));
+}
+.tl-row.bot .tl-name {
+  color: hsl(var(--emerald-ink));
+}
+.tl-badge {
+  font-size: 10px;
+  font-weight: 500;
+  color: hsl(var(--emerald-ink));
+}
+.tl-avatar.av-bot {
+  background: hsl(var(--emerald) / 0.1);
+  color: hsl(var(--emerald-ink));
+}
+.tl-avatar.av-bot svg {
+  width: 16px;
+  height: 16px;
 }
 
 .tl-body {
@@ -353,7 +373,7 @@ body {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  margin-bottom: 1px;
+  margin-bottom: 2px;
 }
 .tl-name {
   font-weight: 600;
@@ -361,30 +381,39 @@ body {
   color: hsl(var(--ink));
 }
 .tl-row.persona .tl-name {
-  color: hsl(var(--gold));
+  color: hsl(var(--gold-ink));
 }
 .tl-time {
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   color: hsl(var(--muted));
   font-weight: 400;
 }
 .tl-text {
-  font-size: 14.5px;
-  line-height: 1.5;
+  font-size: 14px;
+  line-height: 1.625;
   color: hsl(var(--ink));
 }
 .tl-text + .tl-text {
-  margin-top: 2px;
+  margin-top: 8px;
 }
 
+/* Mention chips, coloured by who is mentioned, as in the app's
+   lib/markdown/chip-styles.ts. Bare .mention is a persona. */
 .mention {
-  display: inline-block;
-  background: hsl(var(--gold) / 0.13);
-  color: hsl(var(--gold));
-  padding: 1px 6px;
+  display: inline;
+  padding: 1px 4px;
   border-radius: 4px;
   font-weight: 500;
+  background: hsl(var(--gold) / 0.1);
+  color: hsl(var(--gold-ink));
+}
+.mention.is-user {
+  background: hsl(200 70% 50% / 0.1);
+  color: hsl(200 70% 34%);
+}
+.mention.is-bot {
+  background: hsl(142 71% 45% / 0.1);
+  color: hsl(var(--emerald-ink));
 }
 /* Channel reference (e.g. #api-v3) — plain gold-tinted mono text, no chip.
    It reads as a channel handle inline rather than a boxed pill. */
@@ -400,15 +429,21 @@ body {
      that arms to primary while there is content. */
 .composer {
   flex-shrink: 0;
-  margin: 0 12px 12px;
-  border: 1px solid hsl(var(--line));
-  background: hsl(var(--paper));
-  border-radius: 14px;
-  padding: 10px 12px 8px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  box-shadow: 0 6px 18px -12px hsl(28 30% 22% / 0.22);
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid hsl(var(--line));
+  border-radius: 16px;
+  background: hsl(var(--paper));
+  box-shadow:
+    0 8px 24px -14px hsl(28 30% 22% / 0.18),
+    0 2px 6px -2px hsl(28 30% 22% / 0.06);
+}
+[data-theme="dark"] .composer {
+  box-shadow:
+    0 8px 24px -14px rgb(0 0 0 / 0.35),
+    0 2px 6px -2px rgb(0 0 0 / 0.12);
 }
 .composer-editor {
   position: relative;
@@ -416,7 +451,7 @@ body {
   align-items: center;
   min-height: 24px;
   font-size: 14px;
-  line-height: 1.55;
+  line-height: 1.5;
   color: hsl(var(--ink));
   white-space: pre;
 }
@@ -461,18 +496,26 @@ body {
 .composer-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 4px;
+}
+.composer-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: hsl(var(--muted));
 }
 .composer-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
-  margin-left: -4px;
+  gap: 4px;
 }
 .cb {
   width: 28px;
   height: 28px;
-  border-radius: 6px;
+  border-radius: 10px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -485,13 +528,7 @@ body {
 .cb-aa {
   font-weight: 700;
   font-size: 13px;
-  letter-spacing: -0.015em;
-}
-.cb-emoji span {
-  font-size: 14px;
-  line-height: 1;
-  filter: grayscale(1);
-  opacity: 0.75;
+  letter-spacing: -0.025em;
 }
 .composer-send {
   width: 30px;
@@ -523,17 +560,17 @@ body {
        same card transitions in place when the session completes. */
 .trace-card {
   display: grid;
-  grid-template-columns: 24px 1fr auto;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
-  background: hsl(28 8% 92%);
+  background: hsl(var(--paper-warm) / 0.5);
   border: 1px solid hsl(var(--line));
   border-radius: 10px;
-  padding: 9px 14px;
+  padding: 10px 14px;
+  font-size: 13px;
   color: inherit;
 }
 .trace-time {
-  font-family: var(--font-mono);
   font-size: 11px;
   color: hsl(var(--muted));
   align-self: center;
@@ -555,8 +592,8 @@ body {
   justify-content: center;
 }
 .trace-icon svg {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
 }
 .trace-icon-running {
   background: hsl(var(--gold) / 0.16);
@@ -606,22 +643,38 @@ body {
   opacity: 0;
 }
 
-/* ---------- QUOTE CARD (inside Ariadne's reply) ---------- */
+/* A finished session: the done state, with the app's py-3 air. */
+.trace-card.is-static {
+  margin: 12px 0;
+}
+.trace-card.is-static .trace-row-running,
+.trace-card.is-static .trace-icon-running {
+  opacity: 0;
+}
+.trace-card.is-static .trace-row-done,
+.trace-card.is-static .trace-icon-done {
+  opacity: 1;
+}
+
+/* ---------- QUOTE CARD ----------
+     The app's quote reply (lib/markdown/quote-reply-block.tsx): a muted card
+     with a quote mark, the author's small avatar and name, and the quoted
+     text in muted ink. */
 .quote-card {
-  margin-top: 10px;
-  background: hsl(var(--paper));
-  border: 1px solid hsl(var(--line));
-  border-radius: 8px;
-  padding: 12px 14px 12px 16px;
   position: relative;
+  margin: 8px 0;
+  padding: 8px 12px 8px 36px;
+  border: 1px solid hsl(var(--line) / 0.5);
+  border-radius: 6px;
+  background: hsl(var(--paper-warm) / 0.3);
 }
 .quote-card .qm {
   position: absolute;
-  top: 11px;
+  top: 10px;
   left: 12px;
-  width: 12px;
-  height: 12px;
-  color: hsl(var(--muted) / 0.7);
+  width: 16px;
+  height: 16px;
+  color: hsl(var(--muted));
 }
 .quote-card .qm svg {
   width: 100%;
@@ -630,36 +683,28 @@ body {
 .quote-card .q-author {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding-left: 20px;
-  margin-bottom: 6px;
+  gap: 6px;
 }
 .quote-card .q-avatar {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  font-size: 9px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--font-display);
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  font-size: 8px;
+  font-weight: 500;
 }
 .quote-card .q-name {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: hsl(var(--ink));
-}
-.quote-card .q-time {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 12px;
+  font-weight: 500;
   color: hsl(var(--muted));
 }
+.quote-card .q-time {
+  display: none;
+}
 .quote-card .q-body {
-  padding-left: 20px;
-  font-size: 13px;
-  line-height: 1.5;
-  color: hsl(var(--ink-soft));
+  margin-top: 2px;
+  font-size: 14px;
+  line-height: 1.625;
+  color: hsl(var(--muted));
 }
 
 /* ---------- REACTIONS ----------
@@ -670,8 +715,8 @@ body {
      just appear. */
 .reactions {
   display: flex;
-  gap: 6px;
-  margin-top: 10px;
+  gap: 4px;
+  padding-top: 6px;
   flex-wrap: wrap;
 }
 .rxn {
@@ -679,18 +724,18 @@ body {
   align-items: center;
   gap: 4px;
   min-height: 26px;
-  background: hsl(var(--gold) / 0.05);
+  padding: 0 10px 0 8px;
   border: 1px solid transparent;
   border-radius: 999px;
-  padding: 0 9px 0 7px;
+  background: hsl(var(--gold) / 0.05);
+  font-size: 12px;
   color: hsl(var(--muted));
 }
 .rxn .em {
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
 }
 .rxn .num {
-  font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -705,7 +750,7 @@ body {
      the page. In em off a px size so it tracks text-only zoom the way the
      px-sized messages inside it do. */
   font-size: 16px;
-  height: 35em;
+  height: 42em;
   background: hsl(var(--paper));
   border: 1px solid hsl(var(--line));
   border-radius: 16px;
@@ -716,18 +761,6 @@ body {
 }
 .ad-head {
   flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  height: 48px;
-  padding: 0 16px;
-  border-bottom: 1px solid hsl(var(--line));
-}
-.ad-channel {
-  font-size: 14px;
-  font-weight: 600;
-  color: hsl(var(--ink));
 }
 /* AgentRunningChip: the header's "an agent is working here" signal. */
 .ad-chip {
@@ -781,6 +814,15 @@ body {
 .ad-in.is-in:not([data-beat="sent"]) .tl-row {
   animation: ad-flash 2s ease-out;
 }
+/* A bot's row flashes in its own green, not the gold meant for people. */
+.ad-in.is-in .tl-row.bot {
+  animation-name: ad-flash-bot;
+}
+@keyframes ad-flash-bot {
+  from {
+    background-color: hsl(var(--emerald) / 0.18);
+  }
+}
 @keyframes ad-flash {
   from {
     background-color: hsl(var(--gold) / 0.3);
@@ -788,7 +830,7 @@ body {
 }
 
 .ad-trace {
-  margin: 12px;
+  margin: 12px 0;
 }
 .ad-trace-main {
   min-width: 0;
@@ -894,419 +936,6 @@ body {
   animation: none !important;
 }
 
-/* ---------- HERO (Tape Anchored) ---------- */
-.hero-shell {
-  max-width: 1240px;
-  margin: 0 auto;
-  overflow: hidden;
-  position: relative;
-}
-/* Warm atmosphere behind the conversation — a soft gold wash so the hero
-   reads as lit paper instead of a flat white field. */
-.hero-shell::before {
-  content: "";
-  position: absolute;
-  top: -160px;
-  right: -180px;
-  width: 760px;
-  height: 760px;
-  background: radial-gradient(closest-side, hsl(var(--gold) / 0.09), transparent 72%);
-  pointer-events: none;
-}
-.hero-inner {
-  padding: 64px var(--pad-x) 72px;
-  position: relative;
-}
-.hero-inner .nav-row {
-  margin-bottom: 56px;
-  color: hsl(var(--muted));
-}
-.hero-inner .nav-row .brand {
-  color: hsl(var(--ink));
-}
-.hero-inner .nav-row .brand svg {
-  color: hsl(var(--gold));
-}
-.hero-stage {
-  display: grid;
-  grid-template-columns: 0.95fr 1.1fr;
-  gap: 64px;
-  align-items: center;
-  position: relative;
-  overflow: hidden;
-}
-.hero-stage h1 {
-  margin-bottom: 24px;
-}
-.hero-stage .actions {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  margin-top: 8px;
-}
-/* The thread — Mar 12's message, the memo it became, May 7's answer, on
-   one gold rail. Every stop renders in the first frame; the rail draws once
-   (a paper-coloured cover retracting downward) and May 7 fills gold as the
-   rail reaches it. Rail segments live on each stop so the line ends exactly
-   at the last dot whatever the stops' heights. */
-.thread {
-  --gap: 30px;
-  --date: clamp(58px, 6.6vw, 98px);
-  --rail-x: 11px;
-  list-style: none;
-  margin: 0;
-  padding: 0 0 0 44px;
-  display: grid;
-  gap: var(--gap);
-  position: relative;
-}
-.stop {
-  --dot-y: calc(var(--date) * 0.4);
-  position: relative;
-}
-.stop.is-kept {
-  --dot-y: 50%;
-}
-.stop > .tl-row + .tl-row {
-  margin-top: 10px;
-}
-.stop:not(:first-child)::before,
-.stop:not(:last-child)::after {
-  content: "";
-  position: absolute;
-  left: calc(var(--rail-x) - 44px - 1px);
-  width: 2px;
-  background: hsl(var(--gold));
-}
-.stop:not(:first-child)::before {
-  top: calc(-1 * var(--gap));
-  height: calc(var(--gap) + var(--dot-y));
-}
-.stop:not(:last-child)::after {
-  top: var(--dot-y);
-  bottom: 0;
-}
-.stop-head {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 4px 16px;
-  margin: 0 0 10px;
-  position: relative;
-}
-.stop-head::before,
-.stop.is-kept > .memory-card::before {
-  content: "";
-  position: absolute;
-  left: calc(var(--rail-x) - 44px - 7px);
-  top: calc(var(--dot-y) - 7px);
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: hsl(var(--paper));
-  box-shadow: inset 0 0 0 3px hsl(var(--gold));
-  z-index: 1;
-}
-.stop.is-kept > .memory-card::before {
-  /* Positioned from the padding box, inside the card's 2px gold left border. */
-  left: calc(var(--rail-x) - 44px - 7px - 2px);
-  background: hsl(var(--gold));
-}
-.stop-date {
-  font-family: var(--font-display);
-  font-weight: var(--display-weight);
-  font-size: var(--date);
-  line-height: 0.8;
-  letter-spacing: -0.045em;
-  white-space: nowrap;
-}
-/* A faint fill, not an outline: Cabinet's variable outlines overlap, and
-   text-stroke draws every overlap as a seam. */
-.stop.is-then .stop-date {
-  color: hsl(var(--ink) / 0.13);
-}
-.stop.is-now .stop-date {
-  color: hsl(var(--gold));
-  animation: date-fill 0.6s ease-out 1.5s both;
-}
-@keyframes date-fill {
-  from {
-    color: hsl(var(--ink) / 0.13);
-  }
-}
-.stop-where {
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  color: hsl(var(--muted));
-}
-.stop.is-kept > .memory-card {
-  position: relative;
-}
-.stop.is-kept .dm-title {
-  font-size: 17px;
-  font-weight: 700;
-  margin-bottom: 6px;
-}
-.stop.is-kept .dm-body {
-  margin-bottom: 10px;
-}
-.thread::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: calc(var(--rail-x) * 2 + 2px);
-  background: hsl(var(--paper));
-  transform-origin: bottom;
-  animation: rail-draw 1.6s cubic-bezier(0.5, 0, 0.25, 1) 0.2s both;
-  z-index: 2;
-  pointer-events: none;
-}
-@keyframes rail-draw {
-  from {
-    transform: scaleY(1);
-  }
-  to {
-    transform: scaleY(0);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .thread::after {
-    display: none;
-  }
-  .stop.is-now .stop-date {
-    animation: none;
-  }
-}
-
-/* ---------- SECTION SHELL ---------- */
-.memo-shell {
-  max-width: 1240px;
-  margin: 0 auto;
-  padding: 80px var(--pad-x);
-  position: relative;
-  overflow: hidden;
-}
-.memo-shell h2 {
-  font-family: var(--font-display);
-  font-weight: var(--display-weight);
-  font-size: clamp(32px, 3.9vw, 48px);
-  line-height: 1.02;
-  letter-spacing: -0.03em;
-  margin: 0 0 14px;
-  max-width: 720px;
-}
-.memo-shell .lede {
-  max-width: 580px;
-  margin-bottom: 44px;
-}
-
-/* ---------- WHAT YOU GET (under the hero) ---------- */
-.value-shell {
-  padding-top: 8px;
-  padding-bottom: 72px;
-}
-.value-grid {
-  list-style: none;
-  margin: 0;
-  padding: 36px 0 0;
-  border-top: 1px solid hsl(var(--line));
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 32px 40px;
-}
-.value-grid h3 {
-  font-family: var(--font-display);
-  font-weight: 500;
-  font-size: 18px;
-  line-height: 1.3;
-  letter-spacing: -0.01em;
-  color: hsl(var(--ink));
-  margin: 0 0 8px;
-}
-.value-grid p {
-  margin: 0;
-  font-size: 14.5px;
-  line-height: 1.55;
-  color: hsl(var(--ink-soft));
-}
-.value-grid a {
-  color: inherit;
-  text-decoration: underline;
-  text-decoration-color: hsl(var(--gold) / 0.5);
-  text-underline-offset: 3px;
-}
-.value-grid a:hover {
-  text-decoration-color: hsl(var(--gold));
-}
-@media (max-width: 880px) {
-  .value-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-@media (max-width: 560px) {
-  .value-grid {
-    grid-template-columns: 1fr;
-    gap: 24px;
-  }
-}
-
-/* ---------- THREE-PART MEMORY FLOW ---------- */
-.memory-flow {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 32px;
-  align-items: start;
-  position: relative;
-}
-
-.memory-col {
-  min-width: 0;
-  position: relative;
-}
-/* Small right-arrow connectors between panels. Sits in the column gap and
-     points into the following column. Surrounding noise messages in Panel 1
-     do the work of "this slice was picked out"; the arrow just signals flow. */
-.memory-col + .memory-col::before {
-  content: "";
-  position: absolute;
-  left: -26px;
-  top: 220px;
-  width: 22px;
-  height: 12px;
-  background: no-repeat center/contain
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 12' fill='none' stroke='hsl(38 65%25 50%25 / 0.75)' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'><path d='M 1 6 L 21 6 M 21 6 L 16 2 M 21 6 L 16 10'/></svg>");
-  pointer-events: none;
-}
-.memory-col h3.memory-heading {
-  font-family: var(--font-display);
-  font-weight: 500;
-  font-size: 19px;
-  line-height: 1.3;
-  color: hsl(var(--ink));
-  margin: 0 0 8px;
-  letter-spacing: -0.01em;
-}
-.memory-heading .n {
-  display: inline-block;
-  min-width: 1.4em;
-  font-weight: 400;
-  color: hsl(var(--muted));
-}
-/* Short "why this step matters" line under each heading. Sits at a
-     consistent position across all three columns (the headings are one
-     line each), so the explanations align instead of floating at the
-     mismatched bottoms of columns with different content heights. */
-.memory-why {
-  margin: 0 0 20px;
-  font-size: 13px;
-  line-height: 1.55;
-  color: hsl(var(--ink-soft));
-}
-/* The ONE card in this section — reserved for the memo, the only thing
-     that actually persists. The loose messages (capture) and the recall
-     chat are open on the band; this is the artifact, so it gets the box,
-     a gold edge, and a little lift. */
-.memory-card {
-  background: hsl(var(--paper));
-  border: 1px solid hsl(var(--line));
-  border-left: 2px solid hsl(var(--gold));
-  border-radius: 6px;
-  padding: 20px;
-  box-shadow: 0 6px 20px -10px hsl(var(--ink) / 0.18);
-}
-
-/* Part 1 — Capture: 5 messages, the two not worth keeping dimmed. */
-.capture-list {
-  position: relative;
-  padding: 6px 0;
-}
-.capture-list .tl-row.is-noise {
-  opacity: 0.42;
-}
-
-/* Part 2 — Hold: a decision memo with structured fields */
-.decision-memo {
-  border-color: hsl(var(--gold) / 0.55);
-  background: linear-gradient(180deg, hsl(var(--gold) / 0.05), hsl(var(--paper)) 70%);
-  padding: 18px 18px 16px;
-}
-.decision-memo .dm-kicker {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: hsl(var(--gold));
-  margin-bottom: 8px;
-}
-.decision-memo .dm-kicker .dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: hsl(var(--gold));
-}
-.decision-memo .dm-title {
-  font-family: var(--font-display);
-  font-weight: 500;
-  font-size: 16px;
-  line-height: 1.3;
-  color: hsl(var(--ink));
-  letter-spacing: -0.005em;
-  margin-bottom: 14px;
-}
-.decision-memo .dm-field {
-  padding-top: 10px;
-  border-top: 1px solid hsl(var(--line) / 0.7);
-}
-.decision-memo .dm-field + .dm-field {
-  margin-top: 10px;
-}
-.decision-memo .dm-label {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: hsl(var(--muted));
-  margin-bottom: 4px;
-}
-.decision-memo .dm-body {
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: hsl(var(--ink-soft));
-}
-.decision-memo .dm-source {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: hsl(var(--ink-soft));
-}
-.decision-memo .dm-source .ref-pill {
-  font-size: 10.5px;
-}
-
-/* Part 3 — Return: mini-stream where Ariadne lifts the memo */
-.recall-meta {
-  font-size: 12.5px;
-  color: hsl(var(--muted));
-  margin-bottom: 12px;
-  display: flex;
-  gap: 10px;
-  align-items: baseline;
-}
-.recall-meta .hash {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: hsl(var(--ink));
-}
-.recall-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
 /* Memo embed card — mirrors the app's in-message memo embed
      (apps/frontend/src/lib/markdown/memo-embed-block.tsx +
      components/memo-embed/card-body.tsx): neutral paper card with a 2px
@@ -1348,7 +977,7 @@ body {
   min-width: 0;
 }
 .recall-memo-card .rmc-kicker .k-type {
-  color: hsl(var(--gold) / 0.9);
+  color: hsl(var(--gold-ink));
   font-weight: 500;
 }
 .recall-memo-card .rmc-kicker .k-tag {
@@ -1368,743 +997,10 @@ body {
   overflow: hidden;
 }
 .recall-memo-card .rmc-meta {
-  font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   color: hsl(var(--muted));
   white-space: nowrap;
   margin-top: 1px;
-}
-
-@media (max-width: 880px) {
-  .memory-flow {
-    grid-template-columns: 1fr;
-    gap: 44px;
-  }
-  .memory-flow::before,
-  .memory-flow::after {
-    display: none;
-  }
-  /* Stacked columns: the connector points DOWN into the next step, centered
-     in the gap above it, instead of sideways into a column that isn't there. */
-  .memory-col + .memory-col::before {
-    left: 50%;
-    top: -32px;
-    transform: translateX(-50%) rotate(90deg);
-  }
-}
-
-/* ---------- OPEN SOURCE SECTION ---------- */
-.os-tenets {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 28px;
-  margin: 32px 0 28px;
-}
-.os-tenet {
-  min-width: 0;
-}
-.os-tenet h4 {
-  font-family: var(--font-display);
-  font-size: 16px;
-  line-height: 1.3;
-  letter-spacing: -0.005em;
-  color: hsl(var(--ink));
-  margin: 0 0 6px;
-  font-weight: 500;
-}
-.os-tenet p {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.55;
-  color: hsl(var(--ink-soft));
-  max-width: 320px;
-}
-
-/* Shell surfaces follow the theme like the docs code blocks: paper in
-   light mode, night in dark. */
-.os-terminal,
-.patch-example .patch-run {
-  --sh-bg: var(--paper);
-  --sh-border: var(--line);
-  --sh-prompt: var(--gold-dim);
-  --sh-cmd: var(--ink);
-  --sh-arg: var(--ink-soft);
-  --sh-out: var(--muted);
-}
-[data-theme="dark"] .os-terminal,
-[data-theme="dark"] .patch-example .patch-run {
-  --sh-bg: var(--night);
-  --sh-border: 26 12% 20%;
-  --sh-prompt: var(--gold-soft);
-  --sh-cmd: 38 18% 92%;
-  --sh-arg: 35 12% 70%;
-  --sh-out: 35 8% 52%;
-}
-.os-terminal {
-  background: hsl(var(--sh-bg));
-  border: 1px solid hsl(var(--sh-border));
-  border-radius: 6px;
-  padding: 18px 22px;
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  line-height: 1.8;
-  color: hsl(var(--sh-arg));
-  margin-top: 4px;
-  overflow-x: auto;
-  box-shadow: 0 16px 44px -24px hsl(26 30% 6% / 0.35);
-}
-.os-terminal .row {
-  display: block;
-  white-space: pre;
-}
-.os-terminal .prompt {
-  color: hsl(var(--sh-prompt));
-  margin-right: 10px;
-  user-select: none;
-}
-.os-terminal .cmd {
-  color: hsl(var(--sh-cmd));
-}
-.os-terminal .arg {
-  color: hsl(var(--sh-arg));
-}
-.os-terminal .out {
-  color: hsl(var(--sh-out));
-  padding-left: 20px;
-  display: block;
-}
-.os-terminal .cmt {
-  color: hsl(var(--sh-out));
-  font-style: italic;
-  padding-left: 4px;
-}
-
-/* patch.md — the "customize Threa by describing the change to your own
-     agent" example. Open source + bring-your-own-agent in one card. */
-.patch-example {
-  margin: 14px 0 0;
-  border: 1px solid hsl(var(--line));
-  border-radius: 6px;
-  overflow: hidden;
-  background: hsl(var(--paper));
-}
-.patch-example figcaption {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 14px;
-  background: hsl(var(--paper-warm));
-  border-bottom: 1px solid hsl(var(--line));
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-}
-.patch-example .file {
-  color: hsl(var(--gold));
-}
-.patch-example .hint {
-  color: hsl(var(--muted));
-}
-/* patch.md body — rendered as raw markdown source in mono, the way it
-     looks in an editor: literal #, -, and `backticks`, with the heading
-     tinted gold. */
-.patch-example .patch-body {
-  padding: 14px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.6;
-  color: hsl(var(--ink-soft));
-}
-.patch-example .patch-body .ln {
-  display: block;
-  white-space: pre-wrap;
-}
-.patch-example .patch-body .md-h {
-  color: hsl(var(--gold));
-  font-weight: 500;
-  margin-bottom: 6px;
-}
-.patch-example .patch-body .md-p {
-  margin-bottom: 8px;
-}
-.patch-example .patch-body .md-li {
-  color: hsl(var(--ink-soft));
-}
-.patch-example .patch-run {
-  padding: 11px 14px 13px;
-  background: hsl(var(--sh-bg));
-  border-top: 1px solid hsl(var(--sh-border));
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: hsl(var(--sh-arg));
-  white-space: pre;
-  overflow-x: auto;
-}
-.patch-example .patch-run .prompt {
-  color: hsl(var(--sh-prompt));
-  margin-right: 10px;
-}
-.patch-example .patch-run .cmd {
-  color: hsl(var(--sh-cmd));
-}
-.patch-example .patch-run .arg {
-  color: hsl(var(--sh-arg));
-}
-
-.os-cta {
-  display: inline-block;
-  margin-top: 22px;
-  font-size: 15px;
-  font-weight: 500;
-  color: hsl(var(--ink));
-  text-decoration: underline;
-  text-decoration-color: hsl(var(--gold) / 0.5);
-  text-underline-offset: 4px;
-}
-.os-cta:hover {
-  text-decoration-color: hsl(var(--gold));
-}
-
-@media (max-width: 880px) {
-  .os-tenets {
-    grid-template-columns: 1fr;
-    gap: 22px;
-  }
-  .os-terminal {
-    font-size: 11.5px;
-  }
-}
-
-/* ---------- BRING YOUR OWN AGENT SECTION ---------- */
-.byo-shell {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 64px;
-  align-items: center;
-}
-.byo-lede a {
-  color: hsl(var(--ink));
-  text-decoration: underline;
-  text-decoration-color: hsl(var(--gold) / 0.5);
-  text-underline-offset: 4px;
-}
-.byo-lede a:hover {
-  text-decoration-color: hsl(var(--gold));
-}
-.tl-row.bot {
-  background-image: linear-gradient(90deg, hsl(var(--emerald) / 0.06) 0%, hsl(var(--emerald) / 0) 75%);
-  box-shadow: inset 3px 0 0 hsl(var(--emerald));
-}
-.tl-row.bot .tl-name {
-  color: hsl(var(--emerald));
-}
-.tl-badge {
-  font-size: 10px;
-  font-weight: 500;
-  color: hsl(var(--emerald) / 0.7);
-}
-.tl-avatar.av-bot {
-  background: hsl(var(--emerald) / 0.14);
-  color: hsl(var(--emerald));
-}
-.tl-avatar.av-bot svg {
-  width: 18px;
-  height: 18px;
-}
-.byo-shell .os-tenets {
-  max-width: 980px;
-}
-.byo-works {
-  margin: 0;
-  font-size: 15px;
-  line-height: 1.55;
-  color: hsl(var(--ink-soft));
-  max-width: 580px;
-}
-
-/* ---------- WAITLIST CTA STRIP ---------- */
-.cta-shell {
-  max-width: 1240px;
-  margin: 0 auto;
-  padding: 80px var(--pad-x);
-  position: relative;
-  display: grid;
-  grid-template-columns: 1.1fr 0.9fr;
-  gap: 48px;
-  align-items: center;
-}
-.cta-shell h3 {
-  font-family: var(--font-display);
-  font-weight: 300;
-  font-size: clamp(26px, 2.8vw, 34px);
-  line-height: 1.15;
-  letter-spacing: -0.015em;
-  margin: 0;
-}
-.cta-shell .form-row {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-.cta-shell input {
-  flex: 1;
-  background: hsl(var(--paper));
-  border: 1px solid hsl(var(--line));
-  border-radius: 10px;
-  padding: 11px 14px;
-  font-family: var(--font-body);
-  font-size: 15px;
-  color: hsl(var(--ink));
-  outline: none;
-}
-.cta-shell input::placeholder {
-  color: hsl(var(--muted));
-}
-.cta-shell .quiet {
-  margin-top: 12px;
-  display: block;
-}
-/* Night variant — the closing band. Gold becomes the button color (ink-on-ink
-   would vanish) and the input sinks into the dark. */
-.frame.night .cta-shell h3 {
-  color: hsl(38 16% 94%);
-}
-.frame.night .cta {
-  background: hsl(var(--gold));
-  color: hsl(var(--night));
-}
-.frame.night .cta-shell input {
-  background: hsl(var(--night-soft));
-  border-color: hsl(26 10% 24%);
-  color: hsl(38 16% 92%);
-}
-.frame.night .cta-shell input::placeholder {
-  color: hsl(28 8% 48%);
-}
-.frame.night .cta-shell input:focus {
-  border-color: hsl(var(--gold) / 0.6);
-}
-.frame.night .quiet {
-  color: hsl(28 7% 52%);
-}
-.frame.night #wl-status.is-ok {
-  color: hsl(142 50% 56%);
-}
-.frame.night #wl-status.is-err {
-  color: hsl(0 60% 62%);
-}
-/* Honeypot — kept in the layout for bots but pulled off-screen for humans and
-   assistive tech (aria-hidden on the element). */
-.wl-hp {
-  position: absolute;
-  left: -9999px;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-}
-#wl-status.is-ok {
-  color: hsl(var(--emerald));
-}
-#wl-status.is-err {
-  color: hsl(0 60% 48%);
-}
-
-.footer {
-  max-width: 1240px;
-  margin: 0 auto;
-  padding: 32px 48px 56px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  color: hsl(var(--muted));
-  font-size: 13.5px;
-}
-.footer a {
-  color: inherit;
-  text-decoration: none;
-}
-.footer a:hover {
-  color: hsl(var(--ink));
-}
-.footer .year {
-  margin-left: 8px;
-}
-.footer .ln {
-  display: flex;
-  gap: 24px;
-}
-
-/* ---------- FEATURE BANDS (alternating zig-zag) ---------- */
-/* Sections 03/04 render as a two-column band: the section's signature
-     visual on one side, the copy (eyebrow + heading + lede + tenets + cta)
-     on the other. .media-left / .media-right flip which side the visual
-     sits on, so the page zig-zags instead of hugging the left margin. The
-     memory section (02) stays full-bleed as the centerpiece with a centered
-     intro. */
-.feature-band {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 56px;
-  align-items: center;
-}
-.feature-band .band-copy,
-.feature-band .band-media {
-  min-width: 0;
-}
-.feature-band.media-left .band-media {
-  order: 1;
-}
-.feature-band.media-left .band-copy {
-  order: 2;
-}
-
-.feature-band .band-copy .os-tenets {
-  grid-template-columns: 1fr;
-  gap: 16px;
-  margin: 22px 0 26px;
-}
-.feature-band .band-copy .os-tenet p {
-  max-width: none;
-}
-.feature-band .band-copy .lede {
-  max-width: none;
-  margin-bottom: 4px;
-}
-.feature-band .os-terminal {
-  margin: 0;
-}
-
-/* Centerpiece intro (memory section): centered eyebrow, heading, lede. */
-.memo-shell.is-centerpiece {
-  text-align: center;
-}
-.memo-shell.is-centerpiece h2 {
-  max-width: 760px;
-  margin-left: auto;
-  margin-right: auto;
-}
-.memo-shell.is-centerpiece .lede {
-  max-width: 600px;
-  margin-left: auto;
-  margin-right: auto;
-}
-.memo-shell.is-centerpiece .memory-flow {
-  text-align: left;
-}
-
-@media (max-width: 880px) {
-  .feature-band {
-    grid-template-columns: 1fr;
-    gap: 36px;
-  }
-  .feature-band.media-left .band-media,
-  .feature-band.media-left .band-copy {
-    order: initial;
-  }
-}
-
-/* ---------- "MISSING FROM SLACK" FEATURE GRID (section 05) ---------- */
-.missing-grid {
-  list-style: none;
-  margin: 32px 0 26px;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 26px 32px;
-}
-.missing-item {
-  min-width: 0;
-  padding-top: 14px;
-  border-top: 1px solid hsl(var(--line));
-}
-.missing-item h4 {
-  font-family: var(--font-display);
-  font-weight: 500;
-  font-size: 16px;
-  color: hsl(var(--ink));
-  margin: 0 0 6px;
-  letter-spacing: -0.005em;
-}
-.missing-item p {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.55;
-  color: hsl(var(--ink-soft));
-}
-.missing-sign {
-  font-size: 15px;
-  color: hsl(var(--ink-soft));
-  margin: 0;
-}
-.missing-sign a {
-  color: hsl(var(--ink));
-  text-decoration: underline;
-  text-decoration-color: hsl(var(--gold) / 0.5);
-  text-underline-offset: 4px;
-}
-.missing-sign a:hover {
-  text-decoration-color: hsl(var(--gold));
-}
-@media (max-width: 880px) {
-  .missing-grid {
-    grid-template-columns: 1fr;
-    gap: 20px;
-  }
-}
-
-/* ---------- INSTALL ---------- */
-.install-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-  grid-template-areas:
-    "copy panels"
-    "tabs panels";
-  grid-template-rows: auto 1fr;
-  column-gap: 64px;
-}
-.install-copy {
-  grid-area: copy;
-}
-.install-copy .lede {
-  margin-bottom: 28px;
-}
-.install-radio {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: 0;
-  opacity: 0;
-  pointer-events: none;
-}
-.install-tabs {
-  grid-area: tabs;
-  display: flex;
-  flex-wrap: wrap;
-  align-content: flex-start;
-  gap: 8px;
-}
-.install-tabs label {
-  padding: 8px 14px;
-  border: 1px solid hsl(var(--line));
-  border-radius: 999px;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.2;
-  color: hsl(var(--ink-soft));
-  cursor: pointer;
-  user-select: none;
-}
-.install-tabs label:hover {
-  border-color: hsl(var(--muted) / 0.6);
-  color: hsl(var(--ink));
-}
-#install-ios:checked ~ .install-tabs [for="install-ios"],
-#install-android:checked ~ .install-tabs [for="install-android"],
-#install-chromium:checked ~ .install-tabs [for="install-chromium"],
-#install-mac-safari:checked ~ .install-tabs [for="install-mac-safari"],
-#install-firefox:checked ~ .install-tabs [for="install-firefox"] {
-  background: hsl(var(--ink));
-  border-color: hsl(var(--ink));
-  color: hsl(var(--paper));
-}
-#install-ios:focus-visible ~ .install-tabs [for="install-ios"],
-#install-android:focus-visible ~ .install-tabs [for="install-android"],
-#install-chromium:focus-visible ~ .install-tabs [for="install-chromium"],
-#install-mac-safari:focus-visible ~ .install-tabs [for="install-mac-safari"],
-#install-firefox:focus-visible ~ .install-tabs [for="install-firefox"] {
-  box-shadow:
-    0 0 0 2px hsl(var(--paper)),
-    0 0 0 4px hsl(var(--ink) / 0.5);
-}
-.install-panels {
-  grid-area: panels;
-  display: grid;
-}
-.install-panel {
-  grid-area: 1 / 1;
-  align-self: start;
-  visibility: hidden;
-  min-width: 0;
-  padding: 28px 32px;
-  background: hsl(var(--paper-warm));
-  border: 1px solid hsl(var(--line));
-  border-radius: 14px;
-}
-#install-ios:checked ~ .install-panels [data-platform="ios"],
-#install-android:checked ~ .install-panels [data-platform="android"],
-#install-chromium:checked ~ .install-panels [data-platform="chromium"],
-#install-mac-safari:checked ~ .install-panels [data-platform="mac-safari"],
-#install-firefox:checked ~ .install-panels [data-platform="firefox"] {
-  visibility: visible;
-}
-.install-panel h3 {
-  font-family: var(--font-display);
-  font-weight: 500;
-  font-size: 20px;
-  line-height: 1.3;
-  letter-spacing: -0.01em;
-  color: hsl(var(--ink));
-  margin: 0 0 16px;
-}
-.install-steps {
-  list-style: none;
-  counter-reset: install-step;
-  margin: 0;
-  padding: 0;
-}
-.install-steps li {
-  counter-increment: install-step;
-  position: relative;
-  padding-left: 30px;
-  margin: 0 0 12px;
-  font-size: 15px;
-  line-height: 1.6;
-  color: hsl(var(--ink-soft));
-}
-.install-steps li::before {
-  content: counter(install-step);
-  position: absolute;
-  left: 0;
-  top: 0;
-  color: hsl(var(--muted));
-}
-.install-note {
-  margin: 20px 0 0;
-  padding-top: 16px;
-  border-top: 1px solid hsl(var(--line));
-  font-size: 13.5px;
-  line-height: 1.6;
-  color: hsl(var(--muted));
-}
-.install-panel .ui {
-  color: hsl(var(--ink));
-  font-weight: 500;
-}
-.install-panel a {
-  color: hsl(var(--ink));
-  font-weight: 500;
-  text-decoration: underline;
-  text-decoration-color: hsl(var(--gold) / 0.5);
-  text-underline-offset: 3px;
-}
-.install-panel a:hover {
-  text-decoration-color: hsl(var(--gold));
-}
-/* Stands in for the browser button the step names. */
-.install-panel .glyph {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 22px;
-  vertical-align: -5px;
-  border: 1px solid hsl(var(--line));
-  border-radius: 6px;
-  background: hsl(var(--paper));
-  color: hsl(var(--ink));
-}
-.install-panel .glyph svg {
-  width: 14px;
-  height: 14px;
-}
-.install-panel .glyph .sr {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-@media (max-width: 880px) {
-  .install-shell {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas:
-      "copy"
-      "tabs"
-      "panels";
-    grid-template-rows: none;
-  }
-  .install-tabs {
-    margin-bottom: 20px;
-  }
-}
-@media (max-width: 560px) {
-  .install-tabs {
-    gap: 6px;
-  }
-  .install-tabs label {
-    padding: 7px 11px;
-    font-size: 13.5px;
-  }
-  .install-panel {
-    padding: 22px 20px;
-  }
-}
-
-/* ---------- HERO / NAV / CTA / FOOTER RESPONSIVE ----------
-   The hero and waitlist strips are two-column grids by default; without a
-   breakpoint they stay two-up on phones, which crushed the chat demo into a
-   sliver and pushed it off-screen (horizontal scroll). Collapse them to one
-   column, tighten the page gutter, and let the chat demo own a full-width row
-   below the copy. */
-@media (max-width: 880px) {
-  :root {
-    --pad-x: 28px;
-  }
-
-  .hero-inner {
-    padding: 40px var(--pad-x) 56px;
-  }
-  .hero-inner .nav-row {
-    margin-bottom: 40px;
-  }
-
-  .hero-stage {
-    grid-template-columns: 1fr;
-    gap: 40px;
-  }
-  .hero-stage .actions {
-    flex-wrap: wrap;
-  }
-  .byo-shell {
-    grid-template-columns: 1fr;
-    gap: 48px;
-  }
-
-  .cta-shell {
-    grid-template-columns: 1fr;
-    gap: 28px;
-    padding: 56px var(--pad-x);
-  }
-
-  .footer {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 18px;
-    padding: 28px var(--pad-x) 48px;
-  }
-}
-
-@media (max-width: 560px) {
-  .nav-links {
-    gap: 18px;
-    font-size: 13.5px;
-  }
-  .nav-row .nav-login {
-    padding: 8px 15px;
-    font-size: 13px;
-  }
-
-  /* Waitlist form: input over a full-width button instead of side by side. */
-  .cta-shell .form-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
-  }
-  .cta-shell .form-row .cta {
-    width: 100%;
-    justify-content: center;
-  }
 }
 
 /* ---------- THEME TOGGLE ---------- */
@@ -2137,391 +1033,18 @@ body {
 [data-theme="dark"] .theme-toggle .tt-moon {
   display: none;
 }
-/* Marketing nav-row gains extra children; keep the links, the login button,
-   and the toggle hugging together on the right instead of letting
-   space-between spread them apart. */
-.nav-row .nav-links {
-  margin-left: auto;
-}
-/* Underline, not weight: marking the current page must not move its
-   neighbours. */
-.nav-links a[aria-current="page"] {
-  text-decoration: underline;
-  text-decoration-color: hsl(var(--gold));
-  text-decoration-thickness: 2px;
-  text-underline-offset: 7px;
-}
-.nav-row .nav-login {
-  margin-left: 22px;
-}
-.nav-row .theme-toggle {
-  margin-left: 20px;
-}
-/* Phone width can't fit brand + links + login + toggle on one line. Wrap the
-   nav: brand keeps the left, login + toggle hug the right, and the links drop
-   to their own full-width second line. (Placed after the margin rules above so
-   the cascade resolves in its favor at equal specificity.) */
-@media (max-width: 560px) {
-  .nav-row {
-    flex-wrap: wrap;
-  }
-  .nav-row .nav-links {
-    order: 1;
-    flex-basis: 100%;
-    margin-left: 0;
-    margin-top: 18px;
-  }
-  .nav-row .nav-login {
-    margin-left: auto;
-  }
-}
 
 /* ---------- DARK MODE OVERRIDES ----------
    Everything token-based flips automatically; these are the hardcoded
    light-surface values that need explicit dark counterparts. */
 
-/* Chat-demo avatar pastels: same hues, inverted value. */
-[data-theme="dark"] .tl-avatar.av-alex {
-  background: hsl(28 18% 26%);
-  color: hsl(28 28% 80%);
-}
-[data-theme="dark"] .tl-avatar.av-jordan {
-  background: hsl(200 20% 27%);
-  color: hsl(200 30% 80%);
-}
-[data-theme="dark"] .tl-avatar.av-maya {
-  background: hsl(20 22% 27%);
-  color: hsl(20 30% 80%);
-}
-[data-theme="dark"] .tl-avatar.av-sam {
-  background: hsl(150 18% 24%);
-  color: hsl(150 28% 80%);
+[data-theme="dark"] .trace-card {
+  background: hsl(26 10% 17% / 0.6);
 }
 
 /* Black-based shadows: an ink-derived shadow would glow on the inverted palette. */
-[data-theme="dark"] .composer {
-  border-color: hsl(26 10% 26%);
-  box-shadow: 0 6px 18px -12px hsl(0 0% 0% / 0.6);
-}
 [data-theme="dark"] .ad {
   box-shadow:
     0 30px 60px -36px hsl(0 0% 0% / 0.7),
     0 2px 6px -3px hsl(0 0% 0% / 0.3);
-}
-[data-theme="dark"] .trace-card {
-  background: hsl(26 10% 17%);
-}
-[data-theme="dark"] .memory-card {
-  box-shadow: 0 6px 20px -10px hsl(0 0% 0% / 0.55);
-}
-/* Terminal borders lift a step so the sunk panel still has an edge against
-   the dark canvas. */
-[data-theme="dark"] .os-terminal {
-  border-color: hsl(26 12% 26%);
-}
-
-/* ============================================================
-   BOARD SECTION — "the same channel, two ways"
-   A frameless side-by-side: the stream (flat, on the paper, with a
-   floating composer like the hero) vs the board (real conversation
-   cards). Same messages both sides; the board groups the channel's
-   feed into its topics. Reuses the timeline-demo message vocabulary
-   (.tl-row / .tl-avatar / .mention / .reactions / .trace-card /
-   .recall-memo-card / composer parts) so it can't drift from the hero.
-   ============================================================ */
-
-.board-compare {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr);
-  gap: 22px;
-  /* The two panes are different heights (the board's cards run taller than the
-     flat stream); center them against each other. The gutter stretches so its
-     hairline still spans the full height. */
-  align-items: center;
-  margin-top: 6px;
-}
-.board-col {
-  min-width: 0;
-}
-.board-lens {
-  display: flex;
-  align-items: baseline;
-  gap: 9px;
-  padding: 0 4px 16px;
-}
-.board-lens .k {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: hsl(var(--ink));
-}
-.board-lens .m {
-  font-size: 13px;
-  color: hsl(var(--muted));
-}
-
-/* Center gutter: a thin hairline down the middle carrying a "same messages"
-   badge. On mobile it collapses to STAND horizontally between the stacked
-   panes (see the 880px block). Badge bg matches the warm frame so it punches
-   a hole in the line. */
-.board-gutter {
-  position: relative;
-  /* Stretch to the full row height even though the columns are centered, so the
-     hairline spans the taller (board) pane. */
-  align-self: stretch;
-}
-.board-gutter::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 26px;
-  bottom: 26px;
-  width: 1px;
-  transform: translateX(-0.5px);
-  background: linear-gradient(hsl(var(--line) / 0), hsl(var(--line)) 12%, hsl(var(--line)) 88%, hsl(var(--line) / 0));
-}
-.board-badge {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 9px;
-  background: hsl(var(--paper-warm));
-  padding: 12px 0;
-}
-.board-badge .ic {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: 1px solid hsl(var(--line));
-  background: hsl(var(--paper));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: hsl(var(--gold));
-  box-shadow: 0 2px 10px -4px hsl(28 30% 20% / 0.22);
-}
-.board-badge .ic svg {
-  width: 15px;
-  height: 15px;
-}
-.board-badge .lbl {
-  writing-mode: vertical-rl;
-  font-size: 11.5px;
-  color: hsl(var(--muted));
-}
-[data-theme="dark"] .board-badge .ic {
-  box-shadow: 0 2px 12px -4px hsl(0 0% 0% / 0.6);
-}
-
-/* On-message conversation-provenance chip (mirrors the app's
-   ConversationProvenanceChip): a Layers glyph + "continues <topic> · <time>"
-   on the stream row that jumps topic. It names the card that topic becomes. */
-.board-prov {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 5px;
-  min-height: 22px;
-  font-size: 12.5px;
-  color: hsl(var(--muted));
-}
-.board-prov svg {
-  width: 13px;
-  height: 13px;
-  opacity: 0.6;
-  flex-shrink: 0;
-}
-.board-prov .topic {
-  font-weight: 500;
-  color: hsl(var(--ink-soft));
-}
-.board-prov .sep {
-  opacity: 0.4;
-}
-
-/* The board's finished session: the done state, with the app's py-3 air. */
-.trace-card.is-static {
-  margin: 12px 0;
-}
-.trace-card.is-static .trace-row-running,
-.trace-card.is-static .trace-icon-running {
-  opacity: 0;
-}
-.trace-card.is-static .trace-row-done,
-.trace-card.is-static .trace-icon-done {
-  opacity: 1;
-}
-
-/* ---------- board card (mirrors the app board card at rest) ---------- */
-.board-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.board-card {
-  --bc-pad: 16px; /* app board card = p-4 (16px); rows break out by this */
-  position: relative;
-  background: hsl(var(--paper));
-  border: 1px solid hsl(var(--line));
-  border-radius: 14px;
-  padding: var(--bc-pad);
-  box-shadow:
-    0 1px 2px hsl(28 30% 20% / 0.04),
-    0 6px 16px -10px hsl(28 30% 20% / 0.14);
-}
-[data-theme="dark"] .board-card {
-  box-shadow:
-    0 1px 2px hsl(0 0% 0% / 0.4),
-    0 8px 18px -10px hsl(0 0% 0% / 0.55);
-}
-.board-card-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.board-card .chev {
-  width: 15px;
-  height: 15px;
-  color: hsl(var(--muted) / 0.8);
-  flex-shrink: 0;
-}
-.board-card .title {
-  flex: 1;
-  min-width: 0;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.25;
-  color: hsl(var(--ink));
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.board-card .unread-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: hsl(var(--gold));
-  flex-shrink: 0;
-}
-.board-hbtn {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: hsl(var(--muted));
-  flex-shrink: 0;
-}
-.board-hbtn svg {
-  width: 14px;
-  height: 14px;
-}
-.board-locator {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 5px;
-  font-size: 12px;
-  color: hsl(var(--muted));
-}
-/* Reserved (empty) unread-dot footprint so a read card's title line aligns with
-   an unread one — no layout shift (INV-21). */
-.board-card .dot-slot {
-  width: 7px;
-  height: 7px;
-  flex-shrink: 0;
-}
-.board-tile {
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  background: hsl(var(--paper-warm));
-  color: hsl(200 55% 48%);
-}
-[data-theme="dark"] .board-tile {
-  background: hsl(26 10% 22%);
-}
-.board-tile svg {
-  width: 11px;
-  height: 11px;
-}
-.board-locator .lstream {
-  font-weight: 500;
-  color: hsl(var(--ink-soft));
-}
-.board-locator .sep {
-  opacity: 0.5;
-}
-.board-card-body {
-  margin-top: 10px;
-}
-
-/* Card rows break out to the card edge so the persona accent stripe bleeds
-   full-width like the app, then re-pad content to align with the header. */
-.board-card-body .tl-row {
-  margin-left: calc(-1 * var(--bc-pad));
-  margin-right: calc(-1 * var(--bc-pad));
-  padding-left: var(--bc-pad);
-  padding-right: var(--bc-pad);
-}
-
-.tl-avatar.av-sam {
-  background: hsl(150 26% 82%);
-  color: hsl(150 38% 24%);
-}
-
-@media (max-width: 880px) {
-  .board-compare {
-    grid-template-columns: 1fr;
-    gap: 8px;
-  }
-  /* App board card is p-3 (12px) on mobile; the row breakout follows the var. */
-  .board-card {
-    --bc-pad: 12px;
-  }
-  /* Gutter collapses to a horizontal divider standing between the stacked
-     panes (stream above, board below); the swap arrows turn to point down. */
-  .board-gutter {
-    padding: 20px 0;
-  }
-  .board-gutter::before {
-    left: 20px;
-    right: 20px;
-    top: 50%;
-    bottom: auto;
-    width: auto;
-    height: 1px;
-    transform: translateY(-0.5px);
-    background: linear-gradient(
-      90deg,
-      hsl(var(--line) / 0),
-      hsl(var(--line)) 12%,
-      hsl(var(--line)) 88%,
-      hsl(var(--line) / 0)
-    );
-  }
-  .board-badge {
-    position: static;
-    transform: none;
-    flex-direction: row;
-    width: max-content;
-    margin: 0 auto;
-    padding: 0 14px;
-  }
-  .board-badge .ic svg {
-    transform: rotate(90deg);
-  }
-  .board-badge .lbl {
-    writing-mode: horizontal-tb;
-  }
 }

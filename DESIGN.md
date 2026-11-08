@@ -143,6 +143,12 @@ than picking its own.
 - **Color tokens:** lift `--gold`, `--paper`, `--paper-warm`, `--ink`,
   `--ink-soft`, `--night`, `--night-soft`, `--line`, `--muted` from
   `apps/frontend/src/index.css`. Do not introduce competing palettes.
+- **Text on gold:** labels and icons on a gold fill use `--primary-foreground`
+  (the site's `--gold-fg`): near-white in light mode, near-black in dark, as
+  on the app's send button and unread badges. Never dark ink on light-mode
+  gold. This is deliberate: white on light gold measures about 2.5:1, below
+  WCAG AA for body-size text, and the shared identity wins that trade.
+  Keep gold-filled controls short and prominent so the label stays legible.
 - **Tone of copy:** lead with what Threa is and does (capture, hold,
   return). No anti-competitor framing on the home page. AI is described
   as a utility where it appears, never as the headline subject.
