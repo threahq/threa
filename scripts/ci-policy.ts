@@ -46,6 +46,7 @@ export const areas: Area[] = [
       "auto-read",
       "thread-auto-read",
       "unread-marker-open",
+      "unread-marker-short-window",
       "thread-unread-marker-open",
       "stream-switch-",
       "cold-open",

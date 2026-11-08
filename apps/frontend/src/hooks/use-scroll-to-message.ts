@@ -133,6 +133,8 @@ interface UseScrollToMessageOptions {
    */
   userInteractedAtRef: React.MutableRefObject<number>
   programmaticScrollAtRef: React.MutableRefObject<number>
+  /** Fires on the next frame after a refine loop lets go of the viewport, unless a newer loop owns it by then. */
+  onLoopEnd?: () => void
 }
 
 interface ScrollToMessageApi {
@@ -187,12 +189,15 @@ export function useScrollToMessage({
   isFollowingTailRef,
   userInteractedAtRef,
   programmaticScrollAtRef,
+  onLoopEnd,
 }: UseScrollToMessageOptions): ScrollToMessageApi {
   const scrollRetryTimerRef = useRef<number | null>(null)
   const scrollAbortRef = useRef<(() => void) | null>(null)
   const detachedHoldRef = useRef<DetachedHold | null>(null)
   const findLiveIndexRef = useRef(findLiveIndex)
   findLiveIndexRef.current = findLiveIndex
+  const onLoopEndRef = useRef(onLoopEnd)
+  onLoopEndRef.current = onLoopEnd
 
   const scrollToMessage = useCallback(
     (targetId: string, opts?: ScrollToMessageOptions) => {
@@ -267,6 +272,10 @@ export function useScrollToMessage({
         scroller.removeEventListener("touchmove", abort)
         scroller.removeEventListener("keydown", abort)
         scrollAbortRef.current = null
+        // A superseding scrollToMessage aborts this loop before registering its own.
+        requestAnimationFrame(() => {
+          if (scrollAbortRef.current === null) onLoopEndRef.current?.()
+        })
       }
       scrollAbortRef.current = abort
       scroller.addEventListener("wheel", abort, { passive: true })
