@@ -746,7 +746,7 @@ body {
      the page. In em off a px size so it tracks text-only zoom the way the
      px-sized messages inside it do. */
   font-size: 16px;
-  height: 42em;
+  height: 39.5em;
   background: hsl(var(--paper));
   border: 1px solid hsl(var(--line));
   border-radius: 16px;

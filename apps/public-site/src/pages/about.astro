@@ -124,7 +124,7 @@ const schema = [
               <div class="quote-card">
                 <div class="qm"><svg><use href="#quote-icon" /></svg></div>
                 <div class="q-author">
-                  <div class="q-avatar tl-avatar av-sam">SP</div>
+                  <div class="q-avatar tl-avatar">SP</div>
                   <div class="q-name">Sam Patel</div>
                   <div class="q-time">09:41</div>
                 </div>
@@ -215,10 +215,6 @@ const schema = [
   </script>
 
   <style>
-    /* The page keeps the site's 12-column axes, but each section changes
-       shape around them: a headline across the full width, strands that swap
-       sides with a strip of the app sliding in from the page edge, a note
-       signed in the margin. */
     .ab-grid {
       display: grid;
       grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -282,7 +278,6 @@ const schema = [
       font-size: 17px;
     }
 
-    /* A paper strip that bleeds off the side it sits on. */
     .ab-scene {
       position: relative;
       isolation: isolate;
@@ -318,8 +313,6 @@ const schema = [
       color: hsl(var(--ink));
     }
 
-    /* The team section reads as a note: the heading runs into the paragraph
-       at reading size, signed off in the margin. */
     .ab-team {
       align-items: end;
     }

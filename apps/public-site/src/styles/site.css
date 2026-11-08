@@ -1147,9 +1147,6 @@ main a:not([class]) {
   grid-column: 1 / span 6;
   margin: 0;
 }
-.agent-demo .ad {
-  height: 39.5em;
-}
 .trace-panel {
   grid-column: 7 / -1;
   margin: 0;
