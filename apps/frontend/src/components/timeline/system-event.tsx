@@ -8,7 +8,7 @@ export function SystemEvent({ event }: SystemEventProps) {
   const message = getSystemMessage(event)
 
   return (
-    <div className="py-2 px-gutter text-center">
+    <div className="py-2 px-timeline-gutter text-center">
       <p className="text-sm text-muted-foreground">{message}</p>
     </div>
   )

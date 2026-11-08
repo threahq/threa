@@ -10,13 +10,13 @@ export interface MessageRowSkeletonShape {
 
 /**
  * A loading row with a real message row's geometry: the `md` avatar box, `gap-3`, `MESSAGE_ROW_*_PADDING`.
- * The caller passes its surface's horizontal gutter, so the swap to real rows moves nothing (INV-21).
+ * It sits on its surface's content edge; pass `px-timeline-gutter` where the column itself has no padding.
  */
 export function MessageRowSkeleton({
   continuation,
   width,
   className,
-}: MessageRowSkeletonShape & { className: string }) {
+}: MessageRowSkeletonShape & { className?: string }) {
   return (
     <div
       className={cn(

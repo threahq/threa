@@ -14,9 +14,8 @@ export function UnreadDivider({ isDimmed }: UnreadDividerProps) {
       // message) is symmetric.
       //
       // Color, not opacity: the line keeps reserving its row as it settles, so
-      // nothing shifts when it dims (INV-21). Inset by the row gutter so it spans
-      // the same width as DayDivider and message content.
-      className={`absolute inset-x-gutter top-3 -translate-y-1/2 z-10 flex items-center gap-3 pointer-events-none transition-colors duration-500 ${
+      // nothing shifts when it dims (INV-21).
+      className={`absolute inset-x-timeline-gutter top-3 -translate-y-1/2 z-10 flex items-center gap-3 pointer-events-none transition-colors duration-500 ${
         isDimmed ? "text-muted-foreground" : "text-destructive"
       }`}
     >

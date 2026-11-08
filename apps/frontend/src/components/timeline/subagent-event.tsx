@@ -323,7 +323,7 @@ export function SubagentEvent({ event, workspaceId, statusPatch, runFallback, is
   const card = (
     <div
       className={cn(
-        "group reveal-host relative px-gutter py-1.5",
+        "group reveal-host relative px-timeline-gutter py-1.5",
         actionSurface.isTouchInput && "select-none",
         actionSurface.longPress.isPressed && "opacity-70 transition-opacity duration-100"
       )}

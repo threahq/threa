@@ -9,9 +9,9 @@ const ROWS: MessageRowSkeletonShape[] = [
 /** Placeholder rows in the timeline's reading column, for a box that already reserves the scroller's gutter. */
 export function TimelineSkeletonRows() {
   return (
-    <div aria-hidden className="mx-auto w-full min-w-0 max-w-[800px] py-3">
+    <div aria-hidden className="mx-auto w-full min-w-0 max-w-[800px] py-3 sm:py-6">
       {ROWS.map((row, i) => (
-        <MessageRowSkeleton key={i} {...row} className="px-gutter" />
+        <MessageRowSkeleton key={i} {...row} className="px-timeline-gutter" />
       ))}
     </div>
   )

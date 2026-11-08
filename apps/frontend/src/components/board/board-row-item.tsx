@@ -515,7 +515,7 @@ export function BoardEventRowItem(props: BoardEventRowItemProps) {
   // Timeline rows pad themselves by the timeline gutter; the surface (card or
   // panel column) already pads by it, so break out to keep them on its avatar edge.
   return (
-    <div className="-mx-gutter">
+    <div className="-mx-timeline-gutter">
       <BoardEventRowBody {...props} />
     </div>
   )
@@ -532,7 +532,7 @@ function BoardEventRowBody({ row, workspaceId, onRedirectSession }: BoardEventRo
   switch (row.kind) {
     case "session":
       return (
-        <div className="px-gutter">
+        <div className="px-timeline-gutter">
           <BoardAgentSessionRow
             events={row.events as StreamEvent[]}
             workspaceId={workspaceId}
@@ -542,7 +542,7 @@ function BoardEventRowBody({ row, workspaceId, onRedirectSession }: BoardEventRo
       )
     case "command":
       return (
-        <div className="px-gutter">
+        <div className="px-timeline-gutter">
           <CommandEvent events={row.events as StreamEvent[]} workspaceId={workspaceId} />
         </div>
       )

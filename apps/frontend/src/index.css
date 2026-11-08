@@ -304,7 +304,7 @@ html[data-input="mouse"] .message-hover-wash:hover {
     --radius: 0.5rem;
 
     /* Horizontal inset of every timeline row and the composer within the reading
-       column (`px-gutter`). A surface with its own padding, like a board card,
+       column (`px-timeline-gutter`). A surface with its own padding, like a board card,
        overrides it so timeline rows rendered inside line up with its messages. */
     --timeline-gutter: 0.75rem;
 
@@ -349,7 +349,7 @@ html[data-input="mouse"] .message-hover-wash:hover {
     --call-stage-border: 30 10% 20%;
   }
 
-  @media (min-width: 640px) {
+  @screen sm {
     :root {
       --timeline-gutter: 1.5rem;
     }

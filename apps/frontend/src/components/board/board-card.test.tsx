@@ -621,7 +621,7 @@ describe("BoardCard conversation actions", () => {
     const surface = botRow?.querySelector(".reveal-host")
     expect(surface?.className).toContain("from-emerald-500/[0.06]")
     // The row breaks out of the card padding so the accent fills to the edges.
-    expect(botRow?.className).toContain("-mx-3")
+    expect(botRow?.className).toContain("-mx-timeline-gutter")
     // The content block itself stays plain (no indent → aligned with user rows).
     expect(botRow?.querySelector(".message-content")?.className).not.toContain("border-l-2")
   })

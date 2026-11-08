@@ -872,8 +872,8 @@ export function BoardCard({
         conversationRootStreamId={conversation.streamId}
         // Break the row out of the card's p-3/p-4 padding and pad the content back in,
         // so an actor accent fills to the card edges (stream-view look) with rows aligned.
-        surfaceClassName="bg-card px-3 sm:px-4"
-        rowInsetClassName="-mx-3 sm:-mx-4"
+        surfaceClassName="bg-card px-timeline-gutter"
+        rowInsetClassName="-mx-timeline-gutter"
         onNewSubtopic={
           canBranch && !archivedReason ? () => inlineComposer.openNewSubtopic(rowStreamId, message.id) : undefined
         }
@@ -1124,10 +1124,9 @@ export function BoardCard({
           // Type-to-focus routes a keystroke to THIS card's composer when the
           // last click landed anywhere inside it (see use-type-to-focus).
           data-type-capture-scope=""
-          // The timeline gutter follows the card's padding, so timeline rows on the
-          // card (session, memo, dividers) line up with its messages.
           className={cn(
-            "board-card-hover rounded-xl border bg-card p-3 [--timeline-gutter:0.75rem] sm:[--timeline-gutter:1rem] shadow-[0_1px_2px_rgb(0_0_0/0.04),0_4px_14px_-8px_rgb(0_0_0/0.10)] sm:p-4 dark:shadow-[0_1px_2px_rgb(0_0_0/0.4),0_6px_16px_-8px_rgb(0_0_0/0.5)]",
+            "board-card-hover rounded-xl border bg-card shadow-[0_1px_2px_rgb(0_0_0/0.04),0_4px_14px_-8px_rgb(0_0_0/0.10)] dark:shadow-[0_1px_2px_rgb(0_0_0/0.4),0_6px_16px_-8px_rgb(0_0_0/0.5)]",
+            BOARD_CARD_PADDING_CLASS,
             flash && "board-post-flash",
             removed && "opacity-60"
           )}
@@ -1321,6 +1320,9 @@ export function BoardCard({
   )
 }
 
+/** The card's padding and the timeline gutter matched to it, so timeline rows on a card line up with its messages. */
+const BOARD_CARD_PADDING_CLASS = "p-3 [--timeline-gutter:0.75rem] sm:p-4 sm:[--timeline-gutter:1rem]"
+
 /** Head/continuation shape of a placeholder card's message run. */
 const CARD_SKELETON_ROWS: MessageRowSkeletonShape[] = [
   { continuation: false, width: "w-11/12" },
@@ -1328,14 +1330,12 @@ const CARD_SKELETON_ROWS: MessageRowSkeletonShape[] = [
 ]
 
 /**
- * The board's loading shape, defined beside the card it stands in for and built
- * from the card's own chrome (`rounded-xl border bg-card p-3 sm:p-4`, the
- * `-mx-3 sm:-mx-4` row break-out, `MESSAGE_ROW_*_PADDING`, the `md` avatar box)
- * so the swap to a real card moves nothing (INV-21).
+ * The board's loading shape, defined beside the card it stands in for and built from the card's own chrome
+ * (`BOARD_CARD_PADDING_CLASS`, the header break-out) so the swap to a real card moves nothing (INV-21).
  */
 export function BoardCardSkeleton() {
   return (
-    <div aria-hidden className="rounded-xl border bg-card p-3 sm:p-4">
+    <div aria-hidden className={cn("rounded-xl border bg-card", BOARD_CARD_PADDING_CLASS)}>
       <div className="-mx-3 -mt-3 px-3 pt-3 pb-2 sm:-mx-4 sm:-mt-4 sm:px-4 sm:pt-4">
         <div className="flex items-center gap-1.5">
           <div className="h-4 w-4 shrink-0" />
@@ -1346,9 +1346,7 @@ export function BoardCardSkeleton() {
         </div>
       </div>
       {CARD_SKELETON_ROWS.map((row, i) => (
-        <div key={i} className="-mx-3 sm:-mx-4">
-          <MessageRowSkeleton {...row} className="px-3 sm:px-4" />
-        </div>
+        <MessageRowSkeleton key={i} {...row} />
       ))}
     </div>
   )

@@ -125,7 +125,7 @@ const SKELETON_ROWS: MessageRowSkeletonShape[] = [
 ]
 
 /** Reading column shared by the panel's rows, skeleton, and empty states. */
-const PANEL_ROW_WIDTH_CLASS = "mx-auto w-full min-w-0 max-w-[800px] px-gutter"
+const PANEL_ROW_WIDTH_CLASS = "mx-auto w-full min-w-0 max-w-[800px] px-timeline-gutter"
 
 /** Headroom above the first row for its hover toolbar, which floats ~14px above
  *  the row. The stream timeline reserves the same room in its header spacer. */
@@ -137,21 +137,12 @@ const PANEL_TOP_SPACER_PX = 16
  *  it is given and never re-derives them from a later measurement. */
 const PANEL_PROVENANCE_ROW_PX = 28
 
-/**
- * The panel's loading shape, rendered by the same component that renders the
- * rows and built from the same layout constants `MessageItem` uses
- * (`MESSAGE_ROW_*_PADDING`, the `md` avatar box, `gap-3`, and the column's own
- * `px-3 sm:px-6` break-out). Same geometry means the swap to real rows moves
- * nothing (INV-21) — the previous `p-4`/`gap-2` shape pushed the first row down
- * 16px and in 28px.
- */
+/** The panel's loading shape: message-row skeletons in the panel's own column, so the swap to real rows moves nothing (INV-21). */
 function ConversationRowsSkeleton() {
   return (
     <div aria-hidden>
       {SKELETON_ROWS.map((row, i) => (
-        <div key={i} className="-mx-gutter">
-          <MessageRowSkeleton {...row} className="px-gutter" />
-        </div>
+        <MessageRowSkeleton key={i} {...row} />
       ))}
     </div>
   )
@@ -479,7 +470,7 @@ export function ConversationPanel({ workspaceId, className }: ConversationPanelP
         {/* The column's padding, so the placeholder rows sit exactly where the
             real ones will. */}
         <div className="min-h-0 flex-1 [scrollbar-gutter:stable] overflow-y-auto pt-4">
-          <div className="mx-auto w-full min-w-0 max-w-[800px] px-gutter">{body}</div>
+          <div className={PANEL_ROW_WIDTH_CLASS}>{body}</div>
         </div>
       </SidePanelContent>
     </SidePanel>
@@ -879,8 +870,8 @@ function ConversationPanelBody({
         // Break the row out of the column's padding and re-pad it, so an actor
         // accent fills to the column edges (the stream-view look) with content
         // aligned — matching the board card and timeline.
-        surfaceClassName="bg-background px-gutter"
-        rowInsetClassName="-mx-gutter"
+        surfaceClassName="bg-background px-timeline-gutter"
+        rowInsetClassName="-mx-timeline-gutter"
         onNewSubtopic={
           canBranch && !archivedReason ? () => inlineComposer.openNewSubtopic(rowStreamId, message.id) : undefined
         }

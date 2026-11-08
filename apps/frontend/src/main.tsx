@@ -40,6 +40,7 @@ installCrashRecovery()
 // composer's own ResizeObserver overwrites the variable on the editor zone once
 // mounted.
 applyPersistedComposerHeight()
+
 trackScrollbarGutter()
 
 const landOnNotificationTarget = createNotificationLanding({

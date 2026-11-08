@@ -13,7 +13,7 @@ interface DayDividerProps {
  */
 export function DayDivider({ dayStartMs }: DayDividerProps) {
   return (
-    <div className="flex items-center gap-3 px-gutter py-2 select-none">
+    <div className="flex items-center gap-3 px-timeline-gutter py-2 select-none">
       <div className="flex-1 border-t border-border" />
       <span className="rounded-full border bg-background px-3 py-0.5 text-xs font-medium text-muted-foreground">
         {formatDayDivider(new Date(dayStartMs))}

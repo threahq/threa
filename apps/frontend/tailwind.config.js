@@ -10,7 +10,7 @@ export default {
   theme: {
     extend: {
       spacing: {
-        gutter: "var(--timeline-gutter)",
+        "timeline-gutter": "var(--timeline-gutter)",
       },
       fontFamily: {
         sans: ["Switzer", "system-ui", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],

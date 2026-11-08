@@ -416,7 +416,7 @@ function renderRowContent(row: BoardRow, props: BranchedBoardRowProps): ReactNod
     // pads by: break out so their lines span the same width as its messages.
     case "day":
       return (
-        <div key={row.key} className="-mx-gutter">
+        <div key={row.key} className="-mx-timeline-gutter">
           <DayDivider dayStartMs={row.dayStartMs} />
         </div>
       )
@@ -426,7 +426,7 @@ function renderRowContent(row: BoardRow, props: BranchedBoardRowProps): ReactNod
       // cannot be clipped or mismeasured. It dims by colour, so nothing shifts
       // when it settles (INV-21).
       return (
-        <div key={row.key} className="relative -mx-gutter h-6">
+        <div key={row.key} className="relative -mx-timeline-gutter h-6">
           <UnreadDivider isDimmed={row.isDimmed} />
         </div>
       )

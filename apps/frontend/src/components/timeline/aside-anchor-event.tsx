@@ -85,7 +85,7 @@ export function AsideAnchorEvent({ event, workspaceId }: AsideAnchorEventProps) 
       data-state={isOpen ? "open" : "closed"}
       data-attention={attention}
       className={cn(
-        "group flex w-full items-center gap-2 px-gutter py-1.5 text-left text-xs transition-colors",
+        "group flex w-full items-center gap-2 px-timeline-gutter py-1.5 text-left text-xs transition-colors",
         "hover:bg-primary/[0.04] focus-visible:bg-primary/[0.04] focus-visible:outline-none",
         isOpen && "bg-primary/[0.03]"
       )}

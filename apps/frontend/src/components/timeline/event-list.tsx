@@ -1139,7 +1139,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
     <>
       {item.type === "day_divider" && <DayDivider dayStartMs={item.dayStartMs} />}
       {item.type === "command_group" && (
-        <div className="px-gutter" data-event-id={item.events[0]?.id}>
+        <div className="px-timeline-gutter" data-event-id={item.events[0]?.id}>
           <CommandEvent events={item.events} workspaceId={ctx.workspaceId} />
         </div>
       )}
@@ -1155,7 +1155,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         <div
           role="status"
           aria-label="Loading missed messages"
-          className="flex h-8 items-center gap-2 px-gutter text-xs text-muted-foreground"
+          className="flex h-8 items-center gap-2 px-timeline-gutter text-xs text-muted-foreground"
         >
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
           <span>Loading {item.missingCount === 1 ? "a missed message" : `${item.missingCount} missed messages`}…</span>
@@ -1167,11 +1167,11 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         // these rows are purely visual (aria-hidden) and are swapped for the
         // real rows in the same render the page lands.
         <div aria-hidden data-testid="older-skeleton-row">
-          <MessageRowSkeleton continuation={false} width="w-2/3" className="px-gutter" />
+          <MessageRowSkeleton continuation={false} width="w-2/3" className="px-timeline-gutter" />
         </div>
       )}
       {item.type === "session_group" && !ctx.hideSessionCards && (
-        <div className="px-gutter" data-event-id={item.events[0]?.id}>
+        <div className="px-timeline-gutter" data-event-id={item.events[0]?.id}>
           <AgentSessionEvent
             events={item.events}
             workspaceId={ctx.workspaceId}
@@ -1181,7 +1181,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         </div>
       )}
       {item.type === "agent_run_group" && !ctx.hideSessionCards && (
-        <div className="relative px-gutter" data-event-id={item.events[0]?.id}>
+        <div className="relative px-timeline-gutter" data-event-id={item.events[0]?.id}>
           {/* Each member's start event answers to this row: the read scan, the
               unread divider and scroll-to-event all find rows by data-event-id. */}
           {item.sessions.slice(1).map((session) => (

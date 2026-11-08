@@ -57,6 +57,7 @@ interface VirtualizedScrollerProps {
    * it — under a static parent the mask covers the whole app instead.
    */
   mask?: ReactNode
+  /** Shown before rows exist and under the settle mask; it reserves the scrollbar gutter itself (`TimelineSkeleton`). */
   skeleton?: ReactNode
 }
 
@@ -192,8 +193,7 @@ export function VirtualizedScroller({
         <div
           aria-hidden
           data-testid="settle-mask"
-          // A mask stands in for the scroller, so it reserves the same gutter; the
-          // skeleton reserves its own.
+          // A mask stands in for the scroller, so it reserves the same gutter.
           className={cn(
             "pointer-events-none absolute inset-0 z-10 overflow-hidden bg-background",
             mask && "[scrollbar-gutter:stable]"
