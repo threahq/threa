@@ -9,6 +9,9 @@ export default {
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
   theme: {
     extend: {
+      spacing: {
+        "timeline-gutter": "var(--timeline-gutter)",
+      },
       fontFamily: {
         sans: ["Switzer", "system-ui", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],
         mono: ["Commit Mono", "ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "monospace"],

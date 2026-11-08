@@ -25,7 +25,7 @@ export function MembershipEvent({ event, workspaceId }: MembershipEventProps) {
   const action = getAction(event)
 
   return (
-    <div className="py-2 px-3 sm:px-6 text-center">
+    <div className="py-2 px-timeline-gutter text-center">
       <p className="text-sm text-muted-foreground">
         <span className="font-medium">{actorName}</span> {action}
       </p>

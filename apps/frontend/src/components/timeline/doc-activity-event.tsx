@@ -60,7 +60,7 @@ export function DocActivityEvent({ events, workspaceId }: DocActivityEventProps)
     <Link
       to={getPanelUrl(docId)}
       data-doc-id={docId}
-      className="group flex min-h-11 w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-primary/[0.04] focus-visible:bg-primary/[0.04] focus-visible:outline-none sm:min-h-0 sm:px-6"
+      className="group flex min-h-11 w-full items-center gap-2 px-timeline-gutter py-1.5 text-xs text-muted-foreground transition-colors hover:bg-primary/[0.04] focus-visible:bg-primary/[0.04] focus-visible:outline-none sm:min-h-0"
     >
       <DocGlyph className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70 group-hover:text-primary" aria-hidden />
       <span className="shrink-0">

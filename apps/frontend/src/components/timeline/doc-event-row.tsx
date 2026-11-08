@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 import { indexStreams, useWorkspaceStreamsSelect, type CachedStream } from "@/stores/workspace-store"
 
 const ROW_CLASS =
-  "group flex min-h-11 w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground sm:min-h-0 sm:px-6"
+  "group flex min-h-11 w-full items-center gap-2 px-timeline-gutter py-1.5 text-xs text-muted-foreground sm:min-h-0"
 const LINK_CLASS =
   "transition-colors hover:bg-primary/[0.04] focus-visible:bg-primary/[0.04] focus-visible:outline-none"
 

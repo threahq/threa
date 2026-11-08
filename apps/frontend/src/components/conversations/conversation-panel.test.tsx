@@ -1493,7 +1493,7 @@ describe("ConversationPanel", () => {
     await screen.findByText("Opening message body.")
 
     const composer = screen.getByTestId("docked-composer")
-    expect(composer.closest(".absolute.inset-x-0.bottom-0")).toBeTruthy()
+    expect(composer.closest(".absolute.left-0.bottom-0")).toBeTruthy()
     expect(composer.closest(".border-t")).toBeNull()
   })
 

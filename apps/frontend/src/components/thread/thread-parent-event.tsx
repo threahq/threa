@@ -63,7 +63,7 @@ export function ThreadAnchorFrame({ replyCount, children }: { replyCount: number
       </div>
       <Separator />
       <div className="py-2 bg-muted/30 text-xs text-muted-foreground">
-        <div className="px-3 sm:px-6 mx-auto max-w-[800px] w-full min-w-0">
+        <div className="px-timeline-gutter mx-auto max-w-[800px] w-full min-w-0">
           <RollingNumber value={replyCount} /> {replyCount === 1 ? "reply" : "replies"}
         </div>
       </div>

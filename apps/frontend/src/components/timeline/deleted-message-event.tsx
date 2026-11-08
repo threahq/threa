@@ -2,7 +2,7 @@
  *  and the conversation panel, so "was deleted" reads the same on both. */
 export function DeletedMessageEvent() {
   return (
-    <div className="py-0.5 px-3 sm:px-6 text-center">
+    <div className="py-0.5 px-timeline-gutter text-center">
       <p className="text-xs italic text-muted-foreground">This message was deleted</p>
     </div>
   )

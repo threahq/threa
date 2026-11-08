@@ -30,7 +30,7 @@ export function MessagesMovedEvent({ event, workspaceId }: MessagesMovedEventPro
 
   return (
     <>
-      <div className="py-2 px-3 sm:px-6 text-center">
+      <div className="py-2 px-timeline-gutter text-center">
         <button
           type="button"
           onClick={() => setDrawerOpen(true)}

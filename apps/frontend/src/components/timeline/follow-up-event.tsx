@@ -75,7 +75,7 @@ export function FollowUpScheduledEvent({ event, workspaceId, cancelledByEvent = 
   }
 
   return (
-    <div className="px-3 sm:px-6 py-1.5">
+    <div className="px-timeline-gutter py-1.5">
       <div
         className={cn(
           "flex items-center gap-3 rounded-[10px] border px-3 py-2 transition-colors",

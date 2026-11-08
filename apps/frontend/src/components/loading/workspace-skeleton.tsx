@@ -1,6 +1,7 @@
 import { type ReactNode } from "react"
 import { FloatingComposerShell } from "@/components/composer/floating-composer-shell"
 import { Skeleton } from "@/components/ui/skeleton"
+import { TimelineSkeleton } from "@/components/timeline/timeline-skeleton"
 
 interface StreamContentShellProps {
   header: ReactNode
@@ -36,43 +37,11 @@ function HeaderSkeleton() {
   )
 }
 
-function ContentSkeleton() {
-  return (
-    <div className="px-4 pb-4">
-      <div className="h-3 sm:h-6" />
-      <div className="space-y-4">
-        <MessageSkeleton />
-        <MessageSkeleton />
-        <MessageSkeleton />
-        <MessageSkeleton />
-      </div>
-    </div>
-  )
-}
-
-function MessageSkeleton() {
-  return (
-    <div className="flex gap-3">
-      <Skeleton className="h-9 w-9 flex-shrink-0 rounded-full" />
-
-      <div className="flex-1 space-y-2">
-        <div className="flex items-center gap-2">
-          <Skeleton className="h-4 w-24" />
-          <Skeleton className="h-3 w-12" />
-        </div>
-
-        <Skeleton className="h-4 w-full" />
-        <Skeleton className="h-4 w-3/4" />
-      </div>
-    </div>
-  )
-}
-
 function FooterSkeleton() {
   return <Skeleton className="h-[46px] sm:h-24 w-full rounded-[16px] sm:rounded-md" />
 }
 
 /** Guaranteed to have identical structure to real stream content. */
 export function StreamContentSkeleton() {
-  return <StreamContentShell header={<HeaderSkeleton />} content={<ContentSkeleton />} footer={<FooterSkeleton />} />
+  return <StreamContentShell header={<HeaderSkeleton />} content={<TimelineSkeleton />} footer={<FooterSkeleton />} />
 }

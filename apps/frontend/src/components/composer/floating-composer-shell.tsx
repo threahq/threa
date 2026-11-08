@@ -7,6 +7,9 @@ import { type ReactNode, type Ref } from "react"
  * both the main stream `MessageInput` and the draft branch of `StreamPanel`
  * so visual tweaks (shadow, radius, padding, safe-area) stay in one place.
  *
+ * The right edge stops short by `--scrollbar-gutter` because the timeline scroller underneath reserves that
+ * gutter, so the pill centres on the same column as the rows.
+ *
  * When `hidden` is true the wrapper collapses to `display: none` — callers use
  * this while the expand-to-fullscreen overlay is mounted.
  */
@@ -27,9 +30,13 @@ export function FloatingComposerShell({ hidden = false, children, ref, ...rest }
     <div
       ref={ref}
       {...rest}
-      className={hidden ? "hidden" : "pointer-events-none absolute inset-x-0 bottom-0 z-20 will-change-transform"}
+      className={
+        hidden
+          ? "hidden"
+          : "pointer-events-none absolute bottom-0 left-0 right-[var(--scrollbar-gutter,0px)] z-20 will-change-transform"
+      }
     >
-      <div className="pointer-events-auto pt-3 px-3 pb-3 sm:pt-6 sm:px-6 sm:pb-4 mx-auto max-w-[800px] w-full min-w-0">
+      <div className="pointer-events-auto pt-3 px-timeline-gutter pb-3 sm:pt-6 sm:pb-4 mx-auto max-w-[800px] w-full min-w-0">
         {children}
       </div>
     </div>

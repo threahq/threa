@@ -412,15 +412,21 @@ function renderRowContent(row: BoardRow, props: BranchedBoardRowProps): ReactNod
       )
     case "continue-thread":
       return <ContinueThreadRow key={row.key} to={continueThreadTo(row.streamId)} hiddenCount={row.hiddenCount} />
+    // Dividers inset themselves by the timeline gutter, which the surface already
+    // pads by: break out so their lines span the same width as its messages.
     case "day":
-      return <DayDivider key={row.key} dayStartMs={row.dayStartMs} />
+      return (
+        <div key={row.key} className="-mx-timeline-gutter">
+          <DayDivider dayStartMs={row.dayStartMs} />
+        </div>
+      )
     case "unread":
       // UnreadDivider is absolutely positioned inside this box and paints within
       // its 24px — so the box is what a virtualizer measures, and the divider
       // cannot be clipped or mismeasured. It dims by colour, so nothing shifts
       // when it settles (INV-21).
       return (
-        <div key={row.key} className="relative h-6">
+        <div key={row.key} className="relative -mx-timeline-gutter h-6">
           <UnreadDivider isDimmed={row.isDimmed} />
         </div>
       )

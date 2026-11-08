@@ -7,6 +7,7 @@ import { createNotificationLanding } from "./lib/notification-landing"
 import { hasHistoryBeneath } from "./hooks/use-launch-ancestors"
 import { hydrateCollapseCache } from "./lib/markdown/collapse-cache"
 import { applyPersistedComposerHeight } from "./lib/composer-height-storage"
+import { trackScrollbarGutter } from "./lib/scroll-gutter"
 import { installCrashRecovery } from "./lib/crash-recovery"
 import { currentAppInstalledAt } from "./lib/app-build"
 // Side-effect import: attaches the live pointer listener and sets <html data-input>
@@ -39,6 +40,8 @@ installCrashRecovery()
 // composer's own ResizeObserver overwrites the variable on the editor zone once
 // mounted.
 applyPersistedComposerHeight()
+
+trackScrollbarGutter()
 
 const landOnNotificationTarget = createNotificationLanding({
   navigate: (url, options) => router.navigate(url, options),

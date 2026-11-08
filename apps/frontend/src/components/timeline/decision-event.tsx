@@ -212,7 +212,7 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
     : Boolean(terminalLine || deciderName || decidedAgo || shownNote)
 
   return (
-    <div className="px-3 sm:px-6 py-1.5">
+    <div className="px-timeline-gutter py-1.5">
       <div
         className={cn(
           "overflow-hidden rounded-card border bg-card transition-[box-shadow,border-color] duration-200",

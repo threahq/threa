@@ -511,20 +511,28 @@ export function buildBranchedBoardRows(
  * and action wiring), so this only handles the event kinds. A `CachedEvent` is a
  * structural superset of `StreamEvent`, so the rail rows pass straight through.
  */
-export function BoardEventRowItem({
-  row,
-  workspaceId,
-  onRedirectSession,
-}: {
+export function BoardEventRowItem(props: BoardEventRowItemProps) {
+  // Timeline rows pad themselves by the timeline gutter; the surface (card or
+  // panel column) already pads by it, so break out to keep them on its avatar edge.
+  return (
+    <div className="-mx-timeline-gutter">
+      <BoardEventRowBody {...props} />
+    </div>
+  )
+}
+
+interface BoardEventRowItemProps {
   row: BoardEventRow
   workspaceId: string
   /** Open + focus the card's reply composer for a running session's Redirect. */
   onRedirectSession?: () => void
-}) {
+}
+
+function BoardEventRowBody({ row, workspaceId, onRedirectSession }: BoardEventRowItemProps) {
   switch (row.kind) {
     case "session":
       return (
-        <div className="px-3 sm:px-4">
+        <div className="px-timeline-gutter">
           <BoardAgentSessionRow
             events={row.events as StreamEvent[]}
             workspaceId={workspaceId}
@@ -533,10 +541,8 @@ export function BoardEventRowItem({
         </div>
       )
     case "command":
-      // Same horizontal inset the timeline gives the chip (event-list wraps it
-      // in px-3 sm:px-6) — bare, its hover highlight bleeds past the content column.
       return (
-        <div className="px-3 sm:px-6">
+        <div className="px-timeline-gutter">
           <CommandEvent events={row.events as StreamEvent[]} workspaceId={workspaceId} />
         </div>
       )
