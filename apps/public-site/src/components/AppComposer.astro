@@ -1,0 +1,27 @@
+---
+/*
+ * The app's composer card (apps/frontend/src/components/composer): editor over
+ * a toolbar, with the send button that arms to primary while there is content.
+ * The default slot replaces the placeholder, for the agent demo's typing.
+ */
+---
+
+<div class="composer">
+  <div class="composer-editor">
+    <span class="composer-placeholder">Type a message...</span>
+    <slot />
+  </div>
+  <div class="composer-bar">
+    <span class="composer-hint">Select text to format</span>
+    <span class="composer-actions">
+      <span class="cb"><svg><use href="#icon-maximize" /></svg></span>
+      <span class="cb cb-aa">Aa</span>
+      <span class="cb"><svg><use href="#icon-smile" /></svg></span>
+      <span class="cb"><svg><use href="#icon-at" /></svg></span>
+      <span class="cb"><svg><use href="#icon-slash" /></svg></span>
+      <span class="cb"><svg><use href="#icon-paperclip" /></svg></span>
+      <span class="cb"><svg><use href="#icon-mic" /></svg></span>
+    </span>
+    <span class="composer-send"><svg><use href="#icon-arrowup" /></svg></span>
+  </div>
+</div>

@@ -1,0 +1,25 @@
+---
+/*
+ * A finished agent session, after the app's AgentSessionEvent card
+ * (apps/frontend/src/components/timeline/agent-session-event.tsx): status
+ * icon, title, "N steps • duration" subtitle and time. Decorative: it links
+ * nowhere on the marketing site.
+ */
+interface Props {
+  title?: string
+  subtitle: string
+  time: string
+}
+const { title = "Session complete", subtitle, time } = Astro.props
+---
+
+<div class="trace-card is-static">
+  <div class="trace-icon-slot">
+    <div class="trace-icon trace-icon-done" aria-hidden="true"><svg><use href="#check-icon" /></svg></div>
+  </div>
+  <div class="trace-main">
+    <div class="trace-title">{title}</div>
+    <div class="trace-sub">{subtitle}</div>
+  </div>
+  <div class="trace-time">{time}</div>
+</div>

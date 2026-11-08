@@ -1,0 +1,24 @@
+---
+/*
+ * The app's stream header (apps/frontend/src/components/panes/pane-header.tsx
+ * and stream-pane.tsx): title on the left, Aside, search, the side-panel
+ * toggle and the stream menu on the right. The slot holds header chips such
+ * as the running-agent chip. Decorative.
+ */
+interface Props {
+  title: string
+  panelOpen?: boolean
+}
+const { title, panelOpen = false } = Astro.props
+---
+
+<div class="app-head">
+  <span class="app-head-title">{title}</span>
+  <slot />
+  <span class="app-head-actions">
+    <span class="app-aside"><svg><use href="#icon-msgdashed" /></svg>Aside</span>
+    <span class="app-ib"><svg><use href="#icon-search" /></svg></span>
+    <span class:list={["app-ib app-panel-toggle", panelOpen && "is-on"]}><svg><use href="#icon-panelright" /></svg></span>
+    <span class="app-ib"><svg><use href="#icon-morehoriz" /></svg></span>
+  </span>
+</div>

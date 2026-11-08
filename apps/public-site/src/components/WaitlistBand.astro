@@ -1,0 +1,88 @@
+---
+import { apiBase } from "../lib/config"
+
+interface Props {
+  /** Page identifier recorded with the signup. */
+  source: string
+  lede?: string
+}
+const {
+  source,
+  lede = "Threa is early, and invites go out in small batches. Leave your email and you'll get one message when yours is ready.",
+} = Astro.props
+---
+
+<section class="waitlist-band" id="waitlist" aria-labelledby="waitlist-title">
+  <div class="wrap split">
+    <div class="copy">
+      <h2 id="waitlist-title" class="h2">Get early access.</h2>
+      <p class="lede">{lede}</p>
+    </div>
+    <div class="media">
+      <form class="wl-form" id="waitlist-form" novalidate>
+        <label class="wl-label" for="wl-email">Work email</label>
+        <div class="form-row">
+          <input type="email" name="email" id="wl-email" placeholder="you@yourdomain.com" autocomplete="email" required aria-describedby="wl-status" />
+          <button type="submit" class="btn btn-primary" id="wl-submit">Join the waitlist</button>
+        </div>
+        <!-- Honeypot: off-screen, never shown to humans. Bots that fill every
+             field trip it and the submission is silently dropped server-side. -->
+        <input type="text" name="company" id="wl-hp" class="wl-hp" tabindex="-1" autocomplete="off" aria-hidden="true" />
+        <p class="wl-status" id="wl-status" aria-live="polite">No spam. One email when your invite is ready.</p>
+      </form>
+    </div>
+  </div>
+</section>
+
+<script is:inline define:vars={{ apiBase, source }}>
+/* Validates on the client for fast feedback, then POSTs to the control plane
+   (via the workspace-router). The server validates authoritatively and
+   dedupes; a repeat email still resolves as success. */
+(function () {
+  const form = document.getElementById("waitlist-form")
+  if (!form) return
+  const email = document.getElementById("wl-email")
+  const hp = document.getElementById("wl-hp")
+  const submit = document.getElementById("wl-submit")
+  const status = document.getElementById("wl-status")
+  const idle = status.textContent
+
+  const setStatus = (msg, kind) => {
+    status.textContent = msg
+    status.classList.remove("is-ok", "is-err")
+    if (kind) status.classList.add(kind)
+    email.setAttribute("aria-invalid", kind === "is-err" ? "true" : "false")
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault()
+    const value = (email.value || "").trim()
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value)) {
+      setStatus("Enter a valid email address.", "is-err")
+      email.focus()
+      return
+    }
+
+    const original = submit.textContent
+    submit.disabled = true
+    submit.textContent = "Joining…"
+    setStatus(idle)
+
+    try {
+      const res = await fetch(apiBase + "/api/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: value, source, hp: hp.value || "" }),
+      })
+      if (!res.ok) throw new Error("status " + res.status)
+      form.reset()
+      submit.textContent = "Joined"
+      setStatus("You're on the list.", "is-ok")
+    } catch {
+      submit.disabled = false
+      submit.textContent = original
+      setStatus("Something went wrong. Try again.", "is-err")
+    }
+  })
+})()
+</script>

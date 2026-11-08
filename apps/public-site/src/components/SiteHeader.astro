@@ -1,0 +1,44 @@
+---
+import ThemeToggle from "./ThemeToggle.astro"
+import { loginUrl } from "../lib/config"
+
+interface Props {
+  current?: "product" | "about"
+}
+const { current } = Astro.props
+const links = [
+  { href: "/", label: "Product", key: "product" },
+  { href: "/#install", label: "Install", key: "install" },
+  { href: "/about", label: "About", key: "about" },
+  { href: "/guide", label: "Guide", key: "guide" },
+  { href: "/developers", label: "Developers", key: "developers" },
+]
+---
+
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <a class="brand" href="/" aria-label="Threa home">
+    <svg aria-hidden="true"><use href="#threa-mark" /></svg>
+    <span class="wordmark">Threa</span>
+  </a>
+  <div class="header-theme-phone"><ThemeToggle /></div>
+  <nav class="nav-links" aria-label="Site">
+    {links.map((l) => (
+      <a href={l.href} aria-current={l.key === current ? "page" : undefined}>{l.label}</a>
+    ))}
+  </nav>
+  <div class="header-actions">
+    <a class="btn btn-primary btn-sm" href={loginUrl}>Log in</a>
+    <ThemeToggle />
+  </div>
+</header>
+
+<script is:inline>
+  (function () {
+    const nav = document.querySelector(".site-header .nav-links")
+    if (!nav) return
+    const check = () => nav.classList.toggle("is-overflowing", nav.scrollWidth > nav.clientWidth + 1)
+    check()
+    new ResizeObserver(check).observe(nav)
+  })()
+</script>

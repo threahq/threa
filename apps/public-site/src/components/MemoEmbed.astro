@@ -1,0 +1,23 @@
+---
+/*
+ * A memo as it appears inside a message, after the app's memo embed card
+ * (apps/frontend/src/components/memo-embed/card-body.tsx).
+ */
+interface Props {
+  type: "decision" | "context"
+  tag: string
+  title: string
+  date: string
+}
+const { type, tag, title, date } = Astro.props
+const icon = type === "decision" ? "icon-compass" : "icon-bookopen"
+---
+
+<div class="recall-memo-card">
+  <div class="rmc-icon"><svg><use href={`#${icon}`} /></svg></div>
+  <div class="rmc-body">
+    <div class="rmc-kicker"><span class="k-type">{type}</span><span class="k-tag">{tag}</span></div>
+    <div class="rmc-title">{title}</div>
+  </div>
+  <div class="rmc-meta">{date}</div>
+</div>
