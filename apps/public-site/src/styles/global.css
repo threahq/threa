@@ -407,10 +407,6 @@ body {
   background: hsl(var(--gold) / 0.1);
   color: hsl(var(--gold-ink));
 }
-.mention.is-user {
-  background: hsl(200 70% 50% / 0.1);
-  color: hsl(200 70% 34%);
-}
 .mention.is-bot {
   background: hsl(142 71% 45% / 0.1);
   color: hsl(var(--emerald-ink));

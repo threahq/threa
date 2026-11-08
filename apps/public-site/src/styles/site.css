@@ -911,9 +911,6 @@ main a:not([class]) {
   color: hsl(var(--ink) / 0.8);
 }
 
-/* A heading with its lede stacked above full-width content, for sections
-   whose content needs the whole measure. */
-
 /* Questions in two independent columns, so opening one moves only its own
    column. */
 .faq-stack {

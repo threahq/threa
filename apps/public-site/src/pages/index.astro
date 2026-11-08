@@ -46,7 +46,6 @@ const schema = [
   <SiteHeader current="product" />
 
   <main id="main">
-    <!-- HERO: the claim, then the product doing it. -->
     <section class="section hero" aria-labelledby="hero-title">
       <div class="wrap split hero-copy">
         <h1 id="hero-title" class="h1">Chat that remembers the decisions.</h1>
@@ -147,7 +146,6 @@ const schema = [
       </div>
     </section>
 
-    <!-- MEMORY: how capture works, shown at the moment it happens. -->
     <section class="section" id="memory" aria-labelledby="memory-title">
       <div class="wrap split">
         <div class="copy">
@@ -200,7 +198,6 @@ const schema = [
       </div>
     </section>
 
-    <!-- BOARD: conversations as cards. -->
     <section class="section" id="board" aria-labelledby="board-title">
       <div class="wrap">
         <div class="split stack-head">
@@ -295,7 +292,6 @@ const schema = [
       </div>
     </section>
 
-    <!-- BASICS: prose, not a feature grid. -->
     <section class="section" id="basics" aria-labelledby="basics-title">
       <div class="wrap split">
         <div class="copy">
@@ -339,7 +335,6 @@ const schema = [
       </div>
     </section>
 
-    <!-- AGENTS: bring your own. -->
     <section class="section section-band" id="agents" aria-labelledby="agents-title">
       <div class="wrap">
         <div class="split stack-head">
@@ -487,7 +482,6 @@ const schema = [
       </div>
     </section>
 
-    <!-- PRIVACY: what Threa can and can't read. -->
     <section class="section" id="privacy" aria-labelledby="privacy-title">
       <div class="wrap split">
         <div class="copy">
@@ -554,7 +548,6 @@ const schema = [
       </div>
     </section>
 
-    <!-- OPEN SOURCE -->
     <section class="section section-compact" id="open-source" aria-labelledby="os-title">
       <div class="wrap split is-flipped">
         <div class="copy">
@@ -582,10 +575,7 @@ const schema = [
       </div>
     </section>
 
-    <!-- INSTALL: per-device steps. The app is on another origin, so
-         beforeinstallprompt never fires here. Radios keep the tabs working
-         without JS; panels share one grid cell so switching never changes the
-         height (INV-21). -->
+    {/* The app is on another origin, so beforeinstallprompt never fires here. */}
     <section class="section section-compact" id="install" aria-labelledby="install-title">
       <div class="wrap split install-shell">
         <div class="copy install-copy">
@@ -664,7 +654,6 @@ const schema = [
       if (input instanceof HTMLInputElement) input.checked = true
     </script>
 
-    <!-- QUESTIONS -->
     <section class="section section-compact" id="questions" aria-labelledby="questions-title">
       <div class="wrap">
         <h2 id="questions-title" class="h2">Questions.</h2>
