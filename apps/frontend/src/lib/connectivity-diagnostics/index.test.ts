@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import Dexie from "dexie"
 import * as diagnosticsFacade from "./facade"
 import { clearConnectivityConsentTombstone, tombstoneConnectivityAuthorization } from "./consent-cache"
 import {
@@ -705,6 +706,45 @@ describe("connectivity diagnostics persistence", () => {
     expect(connectivityDiagnosticsTestApi.stallTimerCount()).toBe(connectivityDiagnosticsTestApi.MAX_STALL_TIMERS)
     cancel.forEach((stop) => stop())
     expect(connectivityDiagnosticsTestApi.stallTimerCount()).toBe(0)
+  })
+
+  it("should persist an event recorded inside another database's implicit read", async () => {
+    configureConnectivityDiagnostics(scope)
+    await vi.waitFor(async () =>
+      expect((await connectivityDiagnosticsTestApi.db.consent.toCollection().first())?.active).toBe(1)
+    )
+    const zoneErrors: unknown[] = []
+    const onUncaught = (error: unknown) => zoneErrors.push(error)
+    process.on("uncaughtException", onUncaught)
+    const recorder = new Dexie("diagnostics-zone-recorder")
+    recorder.version(1).stores({ rows: "id" })
+    recorder.use({
+      stack: "dbcore",
+      name: "record-on-read",
+      create: (down) => ({
+        ...down,
+        table: (name) => {
+          const table = down.table(name)
+          return {
+            ...table,
+            get: async (request) => {
+              const row = await table.get(request)
+              recordConnectivityEvent("storage_summary")
+              return row
+            },
+          }
+        },
+      }),
+    })
+    try {
+      await recorder.table("rows").get("missing")
+      await vi.waitFor(async () => expect(await connectivityDiagnosticsTestApi.db.events.count()).toBe(1))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(zoneErrors).toEqual([])
+    } finally {
+      process.off("uncaughtException", onUncaught)
+      await recorder.delete()
+    }
   })
 
   it("should back off after a persistence error instead of spinning", async () => {
