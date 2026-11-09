@@ -482,7 +482,14 @@ function takeEligibleRevocation(now: number): RevocationRequest | null {
   return null
 }
 
+// A recorder can sit inside another database's single-operation Dexie zone (a
+// SQLite read recording its summary); a transaction opened there breaks Dexie's
+// zone switching, so storage work starts outside the caller's zone.
 function pumpStorage(): void {
+  Dexie.ignoreTransaction(pumpStorageOutsideCallerZone)
+}
+
+function pumpStorageOutsideCallerZone(): void {
   if (storageTask) return
   if (storageWakeTimer) {
     clearTimeout(storageWakeTimer)
