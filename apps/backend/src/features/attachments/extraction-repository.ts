@@ -1,5 +1,6 @@
 import { sql, type Querier } from "../../db"
 import { detectSearchConfig } from "../../lib/text-search-config"
+import { stripNul, toJsonWithoutNul } from "./extraction-sanitization"
 import type {
   ExtractionContentType,
   ExtractionSourceType,
@@ -117,23 +118,6 @@ const SELECT_FIELDS = `
   (summary_embedding IS NOT NULL) AS summary_embedding,
   created_at, updated_at
 `
-
-// Extracted text comes from model output and parsed documents, which can carry
-// NUL; Postgres rejects it in both text and jsonb.
-function stripNul(value: string): string {
-  return value.replaceAll("\u0000", "")
-}
-
-// Object keys too: extracted tables can use cell text as property names.
-function toJsonWithoutNul(value: unknown): string {
-  return JSON.stringify(value, (_key, propertyValue: unknown) => {
-    if (typeof propertyValue === "string") return stripNul(propertyValue)
-    if (propertyValue === null || typeof propertyValue !== "object" || Array.isArray(propertyValue)) {
-      return propertyValue
-    }
-    return Object.fromEntries(Object.entries(propertyValue).map(([key, entry]) => [stripNul(key), entry]))
-  })
-}
 
 export const AttachmentExtractionRepository = {
   async insert(client: Querier, input: InsertAttachmentExtractionParams): Promise<AttachmentExtraction> {
