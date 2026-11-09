@@ -1,5 +1,6 @@
 import { sql, type Querier } from "../../../db"
 import type { PdfPageClassification, ProcessingStatus } from "@threahq/types"
+import { stripNul, toJsonWithoutNul } from "../extraction-sanitization"
 
 interface PdfPageExtractionRow {
   id: string
@@ -101,12 +102,12 @@ export const PdfPageExtractionRepository = {
         ${params.workspaceId},
         ${params.pageNumber},
         ${params.classification},
-        ${params.rawText ?? null},
-        ${params.ocrText ?? null},
-        ${params.markdownContent ?? null},
-        ${params.embeddedImages ? JSON.stringify(params.embeddedImages) : null},
+        ${stripNul(params.rawText) ?? null},
+        ${stripNul(params.ocrText) ?? null},
+        ${stripNul(params.markdownContent) ?? null},
+        ${params.embeddedImages ? toJsonWithoutNul(params.embeddedImages) : null},
         ${params.processingStatus ?? "pending"},
-        ${params.errorMessage ?? null}
+        ${stripNul(params.errorMessage) ?? null}
       )
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
@@ -131,12 +132,12 @@ export const PdfPageExtractionRepository = {
           ${p.workspaceId},
           ${p.pageNumber},
           ${p.classification},
-          ${p.rawText ?? null},
-          ${p.ocrText ?? null},
-          ${p.markdownContent ?? null},
-          ${p.embeddedImages ? JSON.stringify(p.embeddedImages) : null},
+          ${stripNul(p.rawText) ?? null},
+          ${stripNul(p.ocrText) ?? null},
+          ${stripNul(p.markdownContent) ?? null},
+          ${p.embeddedImages ? toJsonWithoutNul(p.embeddedImages) : null},
           ${p.processingStatus ?? "pending"},
-          ${p.errorMessage ?? null}
+          ${stripNul(p.errorMessage) ?? null}
         )
       `)
       count++
@@ -209,12 +210,12 @@ export const PdfPageExtractionRepository = {
     const result = await client.query<PdfPageExtractionRow>(sql`
       UPDATE pdf_page_extractions
       SET
-        raw_text = ${params.rawText !== undefined ? params.rawText : current.rawText},
-        ocr_text = ${params.ocrText !== undefined ? params.ocrText : current.ocrText},
-        markdown_content = ${params.markdownContent !== undefined ? params.markdownContent : current.markdownContent},
-        embedded_images = ${embeddedImages ? JSON.stringify(embeddedImages) : null},
+        raw_text = ${stripNul(params.rawText !== undefined ? params.rawText : current.rawText)},
+        ocr_text = ${stripNul(params.ocrText !== undefined ? params.ocrText : current.ocrText)},
+        markdown_content = ${stripNul(params.markdownContent !== undefined ? params.markdownContent : current.markdownContent)},
+        embedded_images = ${embeddedImages ? toJsonWithoutNul(embeddedImages) : null},
         processing_status = ${params.processingStatus !== undefined ? params.processingStatus : current.processingStatus},
-        error_message = ${params.errorMessage !== undefined ? params.errorMessage : current.errorMessage},
+        error_message = ${stripNul(params.errorMessage !== undefined ? params.errorMessage : current.errorMessage)},
         updated_at = NOW()
       WHERE workspace_id = ${workspaceId} AND id = ${id}
       RETURNING ${sql.raw(SELECT_FIELDS)}
@@ -233,7 +234,7 @@ export const PdfPageExtractionRepository = {
       const result = await client.query(sql`
         UPDATE pdf_page_extractions
         SET processing_status = ${status},
-            error_message = ${options.errorMessage ?? null},
+            error_message = ${stripNul(options.errorMessage) ?? null},
             updated_at = NOW()
         WHERE workspace_id = ${workspaceId} AND id = ${id} AND processing_status = ANY(${options.onlyIfStatusIn})
       `)
@@ -243,7 +244,7 @@ export const PdfPageExtractionRepository = {
     const result = await client.query(sql`
       UPDATE pdf_page_extractions
       SET processing_status = ${status},
-          error_message = ${options?.errorMessage ?? null},
+          error_message = ${stripNul(options?.errorMessage) ?? null},
           updated_at = NOW()
       WHERE workspace_id = ${workspaceId} AND id = ${id}
     `)

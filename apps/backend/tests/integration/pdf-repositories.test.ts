@@ -59,6 +59,101 @@ describe("PDF Repositories", () => {
   })
 
   describe("PdfPageExtractionRepository", () => {
+    test.each(["insert", "insertMany", "update", "status", "conditionalStatus"] as const)(
+      "should store PDF page content containing NUL through %s",
+      async (operation) => {
+        await withTestTransaction(pool, async (client) => {
+          const attId = attachmentId()
+          const pageId = pdfPageId()
+          await AttachmentRepository.insert(client, {
+            id: attId,
+            workspaceId: testWorkspaceId,
+            streamId: testStreamId,
+            uploadedBy: testUserId,
+            filename: "page-text.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 1024,
+            storagePath: "/test/page-text.pdf",
+          })
+
+          const page = {
+            id: pageId,
+            attachmentId: attId,
+            workspaceId: testWorkspaceId,
+            pageNumber: 1,
+            classification: PdfPageClassifications.TEXT_RICH,
+          }
+          const content = {
+            rawText: "Read\u0000 café\n第二行",
+            ocrText: "OCR\u0000 Å",
+            markdownContent: "# Tit\u0000le\n\nText",
+            embeddedImages: [{ id: "image_1", storagePath: "page.png", caption: "Figure\u0000 résumé" }],
+            errorMessage: "Page\u0000 warning",
+          }
+          const expected = {
+            rawText: "Read café\n第二行",
+            ocrText: "OCR Å",
+            markdownContent: "# Title\n\nText",
+            embeddedImages: [{ id: "image_1", storagePath: "page.png", caption: "Figure résumé" }],
+            errorMessage: "Page warning",
+          }
+
+          if (operation === "insert") {
+            await PdfPageExtractionRepository.insert(client, { ...page, ...content })
+          } else if (operation === "insertMany") {
+            await PdfPageExtractionRepository.insertMany(client, [{ ...page, ...content }])
+          } else {
+            await PdfPageExtractionRepository.insert(client, { ...page, ...expected })
+            if (operation === "update") {
+              await PdfPageExtractionRepository.update(client, testWorkspaceId, pageId, content)
+            } else {
+              await PdfPageExtractionRepository.updateProcessingStatus(
+                client,
+                testWorkspaceId,
+                pageId,
+                ProcessingStatuses.FAILED,
+                {
+                  errorMessage: content.errorMessage,
+                  onlyIfStatusIn: operation === "conditionalStatus" ? [ProcessingStatuses.PENDING] : undefined,
+                }
+              )
+            }
+          }
+
+          const found = await PdfPageExtractionRepository.findById(client, testWorkspaceId, pageId)
+          expect({
+            rawText: found?.rawText,
+            ocrText: found?.ocrText,
+            markdownContent: found?.markdownContent,
+            embeddedImages: found?.embeddedImages,
+            errorMessage: found?.errorMessage,
+          }).toEqual(expected)
+
+          if (operation === "update") {
+            const cleared = await PdfPageExtractionRepository.update(client, testWorkspaceId, pageId, {
+              rawText: null,
+              markdownContent: null,
+              embeddedImages: null,
+              errorMessage: null,
+            })
+            expect({
+              rawText: cleared?.rawText,
+              ocrText: cleared?.ocrText,
+              markdownContent: cleared?.markdownContent,
+              embeddedImages: cleared?.embeddedImages,
+              errorMessage: cleared?.errorMessage,
+            }).toEqual({
+              rawText: null,
+              ocrText: expected.ocrText,
+              markdownContent: null,
+              embeddedImages: null,
+              errorMessage: null,
+            })
+          }
+        })
+      }
+    )
+
     test("inserts and retrieves a page extraction", async () => {
       const attId = attachmentId()
       const pageId = pdfPageId()
