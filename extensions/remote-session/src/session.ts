@@ -81,7 +81,6 @@ const CLAIM_RETRY_CAP_MS = 2 * 60 * 1000
 // cap keeps a long outage from logging a failed load every few seconds.
 const CONTROL_OPTIONS_RETRY_BASE_MS = 2_000
 const CONTROL_OPTIONS_RETRY_CAP_MS = 5 * 60 * 1000
-// Runtimes gain models while connected (a provider ships one, T3 picks it up).
 const CONTROL_OPTIONS_REFRESH_MS = 2 * 60 * 1000
 // Harness preflight can take 10s and replacement verification up to 15s.
 export const RECONNECT_HANDOFF_FALLBACK_MS = 30_000
@@ -591,6 +590,7 @@ export class RemoteSession {
   private readonly bik: BotKeyring
   /** The keyring as last advertised to the server, so a grant only writes presence when it added a key. */
   private advertisedKeyIds = ""
+  private publishedCapabilities: string | undefined
   private readonly hello: BotRuntimeHello
   /** This bot's own id, learned from the `bot:hello` ack — a sealed card's AAD names its requester. */
   private botId: string | undefined
@@ -827,8 +827,6 @@ export class RemoteSession {
   private async loadSessionControlOptions(failures = 0): Promise<void> {
     const control = this.delegate.sessionControl
     if (!control?.loadOptions || this.stopped) return
-    const advertised = () => JSON.stringify(runtimeCapabilitiesFor(this.config.runtimeSessionId, control))
-    const before = advertised()
     try {
       await control.loadOptions()
     } catch (error) {
@@ -842,7 +840,8 @@ export class RemoteSession {
     if (failures > 0) this.log(`session-control options loaded on attempt ${failures + 1}`)
     this.controlOptionsTimer = setTimeout(() => void this.loadSessionControlOptions(), CONTROL_OPTIONS_REFRESH_MS)
     // Unlinked, the link's presence write and the first hello carry the options.
-    if (this.link && advertised() !== before) await this.syncPresence()
+    const advertised = JSON.stringify(runtimeCapabilitiesFor(this.config.runtimeSessionId, control))
+    if (this.link && advertised !== this.publishedCapabilities) await this.syncPresence()
   }
 
   /** Create (or recover) the scratchpad link. Best-effort so a transient Threa outage self-heals on the next poll tick. */
@@ -3550,6 +3549,7 @@ export class RemoteSession {
 
   private async publishPresence(body: PresenceBody): Promise<void> {
     await this.transport.updatePresence(body)
+    this.publishedCapabilities = JSON.stringify(body.capabilities)
     this.reportPresence(body)
   }
 
