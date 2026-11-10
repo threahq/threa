@@ -5980,6 +5980,7 @@ describe("session-control options", () => {
     })
     return {
       session,
+      transport,
       connects: () => connects,
       controlLogs: () => logs.filter((message) => message.startsWith("session-control")),
       pickerOptions: () =>
@@ -6082,6 +6083,92 @@ describe("session-control options", () => {
 
       expect(loads).toBe(1)
     } finally {
+      jest.useRealTimers()
+      h.cleanup()
+    }
+  })
+
+  test("re-loads options every two minutes and republishes presence only when they changed", async () => {
+    jest.useFakeTimers()
+    let catalog = [{ value: "opus", label: "Opus" }]
+    let suggestions: typeof catalog = []
+    let loads = 0
+    const h = makeStartableSession(
+      modelControl(
+        async () => {
+          loads += 1
+          suggestions = catalog
+        },
+        () => suggestions
+      )
+    )
+    try {
+      await h.session.start()
+      await flush()
+      jest.advanceTimersByTime(2 * 60 * 1000)
+      await flush()
+      const afterUnchanged = h.pickerOptions()
+
+      catalog = [...catalog, { value: "fable", label: "Fable" }]
+      jest.advanceTimersByTime(2 * 60 * 1000)
+      await flush()
+
+      const opus = { value: "opus", label: "Opus" }
+      const fable = { value: "fable", label: "Fable" }
+      expect({ loads, afterUnchanged, afterChange: h.pickerOptions() }).toEqual({
+        loads: 3,
+        afterUnchanged: [[opus]],
+        afterChange: [[opus], [opus, fable]],
+      })
+    } finally {
+      await h.session.shutdown()
+      jest.useRealTimers()
+      h.cleanup()
+    }
+  })
+
+  test("a refresh republishes options whose presence write failed", async () => {
+    jest.useFakeTimers()
+    const opus = { value: "opus", label: "Opus" }
+    const fable = { value: "fable", label: "Fable" }
+    let catalog = [opus]
+    let suggestions: typeof catalog = []
+    const h = makeStartableSession(
+      modelControl(
+        async () => {
+          suggestions = catalog
+        },
+        () => suggestions
+      )
+    )
+    const updatePresence = h.transport.updatePresence
+    let failNext = false
+    h.transport.updatePresence = async (body) => {
+      if (failNext) {
+        failNext = false
+        throw new Error("socket timeout")
+      }
+      await updatePresence(body)
+    }
+    try {
+      await h.session.start()
+      await flush()
+
+      catalog = [opus, fable]
+      failNext = true
+      jest.advanceTimersByTime(2 * 60 * 1000)
+      await flush()
+      const afterFailedWrite = h.pickerOptions()
+
+      jest.advanceTimersByTime(2 * 60 * 1000)
+      await flush()
+
+      expect({ afterFailedWrite, afterRefresh: h.pickerOptions() }).toEqual({
+        afterFailedWrite: [[opus]],
+        afterRefresh: [[opus], [opus, fable]],
+      })
+    } finally {
+      await h.session.shutdown()
       jest.useRealTimers()
       h.cleanup()
     }
