@@ -6087,6 +6087,48 @@ describe("session-control options", () => {
     }
   })
 
+  test("re-loads options every two minutes and republishes presence only when they changed", async () => {
+    jest.useFakeTimers()
+    let catalog = [{ value: "opus", label: "Opus" }]
+    let suggestions: typeof catalog = []
+    let loads = 0
+    const h = makeStartableSession(
+      modelControl(
+        async () => {
+          loads += 1
+          suggestions = catalog
+        },
+        () => suggestions
+      )
+    )
+    try {
+      await h.session.start()
+      await flush()
+      const atStart = h.pickerOptions().length
+
+      jest.advanceTimersByTime(2 * 60 * 1000)
+      await flush()
+      const afterUnchanged = h.pickerOptions().length
+
+      catalog = [...catalog, { value: "fable", label: "Fable" }]
+      jest.advanceTimersByTime(2 * 60 * 1000)
+      await flush()
+
+      expect({ loads, writesAfterUnchanged: afterUnchanged - atStart, latest: h.pickerOptions().at(-1) }).toEqual({
+        loads: 3,
+        writesAfterUnchanged: 0,
+        latest: [
+          { value: "opus", label: "Opus" },
+          { value: "fable", label: "Fable" },
+        ],
+      })
+    } finally {
+      await h.session.shutdown()
+      jest.useRealTimers()
+      h.cleanup()
+    }
+  })
+
   test("options loaded before the link ride the link's presence write", async () => {
     const linking = gate()
     const h = makeStartableSession(

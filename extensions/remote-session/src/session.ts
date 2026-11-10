@@ -81,6 +81,8 @@ const CLAIM_RETRY_CAP_MS = 2 * 60 * 1000
 // cap keeps a long outage from logging a failed load every few seconds.
 const CONTROL_OPTIONS_RETRY_BASE_MS = 2_000
 const CONTROL_OPTIONS_RETRY_CAP_MS = 5 * 60 * 1000
+// Runtimes gain models while connected (a provider ships one, T3 picks it up).
+const CONTROL_OPTIONS_REFRESH_MS = 2 * 60 * 1000
 // Harness preflight can take 10s and replacement verification up to 15s.
 export const RECONNECT_HANDOFF_FALLBACK_MS = 30_000
 const MAX_CLAIMS_PER_DRAIN = 20
@@ -211,9 +213,10 @@ export interface SessionControlActuator {
   /**
    * Load the arg pickers' options from the runtime; reject when they could not
    * be loaded. `start()` calls it without waiting for it, and a rejection is
-   * logged and retried with capped backoff. After the first success it is not
-   * called again, and presence is republished so the pickers fill in without
-   * a restart.
+   * logged and retried with capped backoff. After a success it is called again
+   * every few minutes, and presence is republished whenever what it advertises
+   * changed, so a model the runtime gains reaches the pickers without a restart.
+   * A failed refresh must keep the options it last loaded.
    */
   loadOptions?(): Promise<void>
   runCommand(
@@ -824,6 +827,8 @@ export class RemoteSession {
   private async loadSessionControlOptions(failures = 0): Promise<void> {
     const control = this.delegate.sessionControl
     if (!control?.loadOptions || this.stopped) return
+    const advertised = () => JSON.stringify(runtimeCapabilitiesFor(this.config.runtimeSessionId, control))
+    const before = advertised()
     try {
       await control.loadOptions()
     } catch (error) {
@@ -833,9 +838,11 @@ export class RemoteSession {
       this.controlOptionsTimer = setTimeout(() => void this.loadSessionControlOptions(failures + 1), delay)
       return
     }
+    if (this.stopped) return
     if (failures > 0) this.log(`session-control options loaded on attempt ${failures + 1}`)
+    this.controlOptionsTimer = setTimeout(() => void this.loadSessionControlOptions(), CONTROL_OPTIONS_REFRESH_MS)
     // Unlinked, the link's presence write and the first hello carry the options.
-    if (this.link) await this.syncPresence()
+    if (this.link && advertised() !== before) await this.syncPresence()
   }
 
   /** Create (or recover) the scratchpad link. Best-effort so a transient Threa outage self-heals on the next poll tick. */
