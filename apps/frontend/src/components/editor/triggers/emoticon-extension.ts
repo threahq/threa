@@ -1,4 +1,4 @@
-import { Extension, InputRule } from "@tiptap/core"
+import { Extension, InputRule, type Editor } from "@tiptap/core"
 import type { Node as ProseMirrorNode, ResolvedPos } from "@tiptap/pm/model"
 import { Plugin, PluginKey, type EditorState, type Transaction } from "@tiptap/pm/state"
 import { ReplaceStep } from "@tiptap/pm/transform"
@@ -10,6 +10,8 @@ declare module "@tiptap/core" {
     emoticon: {
       /** Convert the emoticon ending at the caret, for input that ends without a space: a new line, a send. */
       commitEmoticon: () => ReturnType
+      /** Keep the emoticon ending at the caret as text, as Escape does. */
+      keepEmoticon: () => ReturnType
     }
   }
 }
@@ -29,6 +31,14 @@ interface EmoticonState {
 }
 
 const EmoticonPluginKey = new PluginKey<EmoticonState>("emoticon")
+
+/**
+ * Escape for a dialog that closes on it: the editor never sees a key the dialog
+ * already claimed, so the dialog asks here first and stays open on true.
+ */
+export function keepEmoticonOnEscape(editor: Editor | null | undefined): boolean {
+  return !!editor && editor.isFocused && editor.commands.keepEmoticon()
+}
 
 /**
  * Text the user typed, as opposed to a paste, an undo, loaded content or a
@@ -113,6 +123,13 @@ export const EmoticonExtension = Extension.create<EmoticonExtensionOptions>({
           if (!state.selection.empty) return false
           return replaceEmoticon(state, tr, state.selection.from, "", toEmoji, dispatch !== undefined)
         },
+      keepEmoticon:
+        () =>
+        ({ state, tr, dispatch }) => {
+          const found = state.selection.empty ? emoticonBefore(state, state.selection.from, toEmoji) : null
+          if (found && dispatch) tr.setMeta(EmoticonPluginKey, found.from)
+          return found !== null
+        },
     }
   },
 
@@ -138,6 +155,9 @@ export const EmoticonExtension = Extension.create<EmoticonExtensionOptions>({
   addProseMirrorPlugins() {
     const editor = this.editor
     const { toEmoji } = this.options
+    // The editors insert most pastes themselves, as transactions that carry no
+    // paste mark, so the paste event is the only place to tell them from typing.
+    let pasting = false
     return [
       new Plugin<EmoticonState>({
         key: EmoticonPluginKey,
@@ -145,7 +165,7 @@ export const EmoticonExtension = Extension.create<EmoticonExtensionOptions>({
           init: () => ({ escaped: null, typedEnd: null }),
           apply(tr, { escaped, typedEnd }, _oldState, newState) {
             const caret = newState.selection.empty ? newState.selection.from : null
-            if (tr.docChanged) typedEnd = isTyping(tr) ? caret : null
+            if (tr.docChanged) typedEnd = !pasting && isTyping(tr) ? caret : null
             else if (typedEnd !== caret) typedEnd = null
 
             const marked = tr.getMeta(EmoticonPluginKey) as number | undefined
@@ -158,6 +178,13 @@ export const EmoticonExtension = Extension.create<EmoticonExtensionOptions>({
           },
         },
         props: {
+          handleDOMEvents: {
+            paste: () => {
+              pasting = true
+              setTimeout(() => (pasting = false))
+              return false
+            },
+          },
           handleKeyDown(view, event) {
             if (event.key === "Enter" && !event.isComposing && !isSuggestionActive(editor)) {
               editor.commands.commitEmoticon()

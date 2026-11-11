@@ -12,6 +12,7 @@ import {
   isDocCreatePending,
 } from "@/components/editor"
 import type { RichEditorHandle } from "@/components/editor"
+import { keepEmoticonOnEscape } from "@/components/editor/triggers/emoticon-extension"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { usePaneCovered } from "@/components/panes/pane-host"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
@@ -209,7 +210,12 @@ export function UnsentMessageEditForm({
           if (!open) setTimeout(() => void handleCancel(), 300)
         }}
       >
-        <DrawerContent className={mobileExpanded ? "!h-[100dvh] rounded-t-none" : "max-h-[85dvh]"}>
+        <DrawerContent
+          className={mobileExpanded ? "!h-[100dvh] rounded-t-none" : "max-h-[85dvh]"}
+          onEscapeKeyDown={(event) => {
+            if (keepEmoticonOnEscape(richEditorRef.current?.getEditor())) event.preventDefault()
+          }}
+        >
           <DrawerTitle className="sr-only">Edit unsent message</DrawerTitle>
           <p id={instructionsId} className="sr-only">
             {screenReaderInstructions}

@@ -5,7 +5,7 @@ import CodeBlock from "@tiptap/extension-code-block"
 import Document from "@tiptap/extension-document"
 import Paragraph from "@tiptap/extension-paragraph"
 import Text from "@tiptap/extension-text"
-import { EmoticonExtension } from "./emoticon-extension"
+import { EmoticonExtension, keepEmoticonOnEscape } from "./emoticon-extension"
 
 const EMOTICONS: Record<string, string> = { ":)": "🙂", ":p": "😛", ":/": "😕", "<3": "❤️" }
 
@@ -123,6 +123,16 @@ describe("emoticon conversion", () => {
       },
     ],
     [
+      "pasted through an editor's own paste handler",
+      () => {
+        const mounted = mount()
+        mounted.setOptions({ editorProps: { handlePaste: () => mounted.commands.insertContent("thanks :)") } })
+        const clipboardData = { getData: (type: string) => (type === "text/plain" ? "thanks :)" : ""), files: [] }
+        const paste = Object.assign(new Event("paste", { bubbles: true, cancelable: true }), { clipboardData })
+        mounted.view.dom.dispatchEvent(paste)
+      },
+    ],
+    [
       "left behind by a deletion",
       () => {
         mount()
@@ -196,6 +206,24 @@ describe("getting the text back", () => {
     press("Escape")
     document.removeEventListener("keydown", listener)
     expect(reached).toEqual(["hi", "hi :)"])
+  })
+
+  it("keeps the emoticon for a dialog that hears Escape first, which then stays open", () => {
+    mount()
+    editor!.view.dom.focus()
+    const stayedOpen: boolean[] = []
+    const dialog = (event: KeyboardEvent) => {
+      const keep = keepEmoticonOnEscape(editor)
+      if (keep) event.preventDefault()
+      stayedOpen.push(keep)
+    }
+    document.addEventListener("keydown", dialog, { capture: true })
+    type("hello :)")
+    press("Escape")
+    press("Escape")
+    document.removeEventListener("keydown", dialog, { capture: true })
+    type(" ")
+    expect({ stayedOpen, text: paragraphs()[0] }).toEqual({ stayedOpen: [true, false], text: "hello :) " })
   })
 
   it("only protects the word Escape was pressed on", () => {
