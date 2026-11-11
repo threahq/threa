@@ -101,6 +101,7 @@ import { botId, eventId } from "../../lib/id"
 import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
+import { setUntrustedContentHeaders } from "../../lib/untrusted-content"
 import {
   AgentSessionRepository,
   hashCallbackToken,
@@ -3207,8 +3208,7 @@ export function createPublicApiHandlers({
 
       res.set("Content-Type", attachment.mimeType)
       res.set("Content-Disposition", buildContentDisposition(attachment.filename))
-      res.set("X-Content-Type-Options", "nosniff")
-      res.set("Content-Security-Policy", "sandbox")
+      setUntrustedContentHeaders(res)
       res.set("Cache-Control", "private, no-store")
       if (object.contentLength !== undefined) res.set("Content-Length", String(object.contentLength))
 

@@ -584,7 +584,7 @@ export {
 } from "./outbound-fetch"
 
 // URL filtering/dedup values shared by the backend link filter and the client projection
-export { BLOCKED_HOSTNAMES, BLOCKED_IP_PATTERNS, TRACKING_PARAMS } from "./url-normalization"
+export { BLOCKED_HOSTNAMES, BLOCKED_IP_PATTERNS, TRACKING_PARAMS, linkFaviconHost } from "./url-normalization"
 
 // Attachment categories (mime → category mapping for the attachment explorer)
 export { ATTACHMENT_CATEGORIES, categoryFromMime, mimePrefixesForCategory } from "./attachment-categories"

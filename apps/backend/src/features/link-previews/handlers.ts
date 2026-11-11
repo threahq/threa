@@ -1,16 +1,29 @@
 import type { Request, Response, NextFunction } from "express"
 import { z } from "zod"
 import { HttpError } from "../../lib/errors"
+import { validateRequest } from "../../lib/validation"
+import { setUntrustedContentHeaders } from "../../lib/untrusted-content"
 import type { LinkPreviewService } from "./service"
+import type { LinkFaviconService } from "./favicon-service"
 
 interface HandlerDeps {
   linkPreviewService: LinkPreviewService
+  linkFaviconService: LinkFaviconService
 }
 
 const resolveByUrlQuerySchema = z.object({ url: z.string().url() })
 
+// `URL.host` is printable ASCII (IDN hosts arrive punycoded); anything else was never a favicon key.
+const faviconParamsSchema = z.object({
+  workspaceId: z.string(),
+  host: z
+    .string()
+    .max(255)
+    .regex(/^[\x21-\x7e]+$/),
+})
+
 export function createLinkPreviewHandlers(deps: HandlerDeps) {
-  const { linkPreviewService } = deps
+  const { linkPreviewService, linkFaviconService } = deps
 
   return {
     /** GET /api/workspaces/:workspaceId/messages/:messageId/link-previews */
@@ -91,6 +104,27 @@ export function createLinkPreviewHandlers(deps: HandlerDeps) {
         }
 
         res.json(data)
+      } catch (err) {
+        next(err)
+      }
+    },
+
+    /** GET /api/workspaces/:workspaceId/link-favicons/:host */
+    async getFavicon(req: Request, res: Response, next: NextFunction) {
+      try {
+        const { workspaceId, host } = validateRequest(faviconParamsSchema, req.params)
+
+        const icon = await linkFaviconService.getIcon(workspaceId, req.user!.id, host)
+        if (!icon) {
+          res.set("Cache-Control", "private, max-age=300")
+          res.status(404).json({ error: "Not found" })
+          return
+        }
+
+        res.set("Cache-Control", "private, max-age=604800")
+        setUntrustedContentHeaders(res)
+        res.set("Content-Type", icon.contentType)
+        res.status(200).send(Buffer.from(icon.bytes))
       } catch (err) {
         next(err)
       }

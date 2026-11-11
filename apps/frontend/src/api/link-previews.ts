@@ -1,4 +1,4 @@
-import { api } from "./client"
+import { api, API_BASE } from "./client"
 import type { LinkPreviewSummary, InAppLinkPreviewData } from "@threahq/types"
 
 export interface LinkPreviewWithDismissed extends LinkPreviewSummary {
@@ -68,4 +68,8 @@ export const linkPreviewsApi = {
     inFlightResolvedInAppUrlRequests.set(key, request)
     return request
   },
+}
+
+export function linkFaviconUrl(workspaceId: string, host: string): string {
+  return `${API_BASE}/api/workspaces/${workspaceId}/link-favicons/${encodeURIComponent(host)}`
 }

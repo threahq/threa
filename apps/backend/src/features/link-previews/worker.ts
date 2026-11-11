@@ -2,6 +2,7 @@ import { logger } from "@threahq/backend-common"
 import type { Job, JobHandler } from "../../lib/queue"
 import type { LinkPreviewExtractJobData } from "../../lib/queue/job-queue"
 import type { LinkPreviewService } from "./service"
+import type { LinkFaviconService } from "./favicon-service"
 import type { LinkPreview, UpdateLinkPreviewParams } from "./repository"
 import { detectContentType, isBlockedUrl, parseGitHubUrl, parseLinearUrl } from "./url-utils"
 import { fetchGitHubPreview } from "./github-preview"
@@ -15,7 +16,7 @@ import {
   MAX_TITLE_LENGTH,
   OEMBED_PROVIDERS,
 } from "./config"
-import { isInAppLinkContentType, isRedditUrl, resolveFetchUserAgent } from "@threahq/types"
+import { isInAppLinkContentType, isRedditUrl, linkFaviconHost, resolveFetchUserAgent } from "@threahq/types"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
 
 const log = logger.child({ module: "link-preview-worker" })
@@ -23,6 +24,7 @@ const TWITTER_IMAGE_FETCH_USER_AGENT = "Twitterbot/1.0"
 
 interface WorkerDeps {
   linkPreviewService: LinkPreviewService
+  linkFaviconService: LinkFaviconService
   workspaceIntegrationService: WorkspaceIntegrationService
 }
 
@@ -632,6 +634,14 @@ export function createLinkPreviewWorker(deps: WorkerDeps): JobHandler<LinkPrevie
         }
 
         const metadata = providerMetadata ?? (await fetchGenericMetadata(p.url))
+
+        if (metadata.status === "completed" && metadata.faviconUrl) {
+          try {
+            await deps.linkFaviconService.ensureForPage(workspaceId, p.url, metadata.faviconUrl)
+          } catch (err) {
+            log.warn({ err, host: linkFaviconHost(p.url) }, "Favicon cache refresh failed")
+          }
+        }
 
         return { id: p.id, metadata, skipped: false, overwrite: existing.status !== "pending" }
       })

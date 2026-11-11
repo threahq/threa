@@ -34,3 +34,12 @@ export const OEMBED_PROVIDERS: ReadonlyArray<{ pattern: RegExp; endpoint: string
     endpoint: "https://publish.twitter.com/oembed",
   },
 ]
+
+export const FAVICON_TTL_MS = 30 * 24 * 60 * 60 * 1000
+
+export const FAVICON_RETRY_TTL_MS = 24 * 60 * 60 * 1000
+
+export const MAX_FAVICON_BYTES = 256 * 1024
+
+/** One deadline for every candidate of a host: the favicon fetch runs before the preview is published, so a slow icon host delays the card. */
+export const FAVICON_FETCH_TIMEOUT_MS = 5_000

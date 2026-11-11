@@ -306,9 +306,11 @@ test.describe("Stream switch stability", () => {
       .then((r) => expectApiOk(r, "Send link message"))
     await seedMessages(page, workspaceId, streamId, 5, prefix, 12)
     // Wait for the preview card to exist so the reload renders it from the start.
-    await expect(page.getByRole("main").locator(".message-item").filter({ hasText: "pull/1873" })).toBeVisible({
-      timeout: 20000,
-    })
+    await expect(page.getByRole("main").locator(".message-item").filter({ hasText: "threahq/threa#1873" })).toBeVisible(
+      {
+        timeout: 20000,
+      }
+    )
     // 10 + 1 link + 5 text messages.
     await waitForConversationsSettled(page, workspaceId, streamId, 16)
 

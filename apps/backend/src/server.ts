@@ -52,6 +52,8 @@ import {
 } from "./features/enclave-runtimes"
 import {
   LinkPreviewService,
+  LinkFaviconService,
+  registerLinkFaviconsBackfill,
   LinkPreviewOutboxHandler,
   createLinkPreviewWorker,
   createLinkPreviewVisibleRefreshWorker,
@@ -941,6 +943,7 @@ export async function startServer(): Promise<ServerInstance> {
     region: config.region,
   })
   const linkPreviewService = new LinkPreviewService({ pool, streamService, memoExplorerService, delegationService })
+  const linkFaviconService = new LinkFaviconService({ pool })
   const giphyService = new GiphyService({ config: config.giphy })
 
   const isProduction = process.env.NODE_ENV === "production"
@@ -1041,6 +1044,7 @@ export async function startServer(): Promise<ServerInstance> {
     apiKeyService,
     botChannelService,
     linkPreviewService,
+    linkFaviconService,
     jobQueue,
     giphyService,
     workspaceIntegrationService,
@@ -1688,7 +1692,11 @@ export async function startServer(): Promise<ServerInstance> {
   })
 
   // Link preview worker — fast HTTP fetch, not LLM-bound
-  const linkPreviewWorker = createLinkPreviewWorker({ linkPreviewService, workspaceIntegrationService })
+  const linkPreviewWorker = createLinkPreviewWorker({
+    linkPreviewService,
+    linkFaviconService,
+    workspaceIntegrationService,
+  })
   jobQueue.registerHandler(JobQueues.LINK_PREVIEW_EXTRACT, linkPreviewWorker, {
     tier: QueueTiers.LIGHT,
     fairness: QueueFairness.NONE,
@@ -1776,6 +1784,7 @@ export async function startServer(): Promise<ServerInstance> {
   registerMessageEmbeddingBackfill({ embeddingService })
   registerConversationEmbeddingBackfill({ embeddingService })
   registerGithubInstallationBackfill({ workspaceIntegrationService })
+  registerLinkFaviconsBackfill({ linkFaviconService })
   jobQueue.registerHandler(JobQueues.BACKFILL_PLAN, createBackfillPlanWorker({ pool }), {
     tier: QueueTiers.LIGHT,
     fairness: QueueFairness.NONE,

@@ -16,9 +16,11 @@ export const BLOCKED_IP_PATTERNS: readonly RegExp[] = [
   /^169\.254\./, // link-local
   /^0\./, // current network
   /^\[?::1\]?$/, // IPv6 loopback
+  /^\[?::\]?$/, // IPv6 unspecified: connects to this host
   /^\[?fe80:/i, // IPv6 link-local
   /^\[?fc00:/i, // IPv6 unique local
   /^\[?fd/i, // IPv6 unique local
+  /^\[?::ffff:/i, // IPv4-mapped IPv6: reaches any IPv4 address, loopback and private included
 ]
 
 /** Hostnames that must not be fetched (cloud metadata endpoints). */
@@ -40,3 +42,14 @@ export const TRACKING_PARAMS: readonly string[] = [
   "ref",
   "source",
 ]
+
+/** Key for a link's favicon: `URL.host` (lowercased, punycoded, non-default port kept). Null for non-http(s). */
+export function linkFaviconHost(url: string): string | null {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null
+    return parsed.host || null
+  } catch {
+    return null
+  }
+}
