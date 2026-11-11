@@ -353,7 +353,6 @@ export function useMessageQueue(workspaceId: string): void {
               e2eVersion: next.e2eVersion,
               attachmentIds: next.attachmentIds,
               clientMessageId: next.clientId,
-              composeTrace: next.composeTrace,
               ...(next.enqueue && { enqueue: true }),
             })
           } else {
@@ -364,7 +363,6 @@ export function useMessageQueue(workspaceId: string): void {
               attachmentIds: next.attachmentIds,
               clientMessageId: next.clientId,
               confirmedPrivacyWarning: next.confirmedPrivacyWarning,
-              composeTrace: next.composeTrace,
               ...(next.enqueue && { enqueue: true }),
               // A board reply declares its conversation so the send attaches it
               // synchronously (in the message's transaction) instead of waiting on

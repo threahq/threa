@@ -38,10 +38,8 @@ export type { ResolveMessageReferencesResult, ReferenceContent } from "./referen
 export { registerMessageSearchConfigBackfill, MESSAGE_SEARCH_CONFIG_BACKFILL_NAME } from "./search-config-backfill"
 
 export { EventService } from "./event-service"
-export type { ConversationAssigner, GetComposeTraceMode } from "./event-service"
+export type { ConversationAssigner } from "./event-service"
 export { applyCopyChanges, insertFileCopies } from "./replica"
-export { MessageComposeTraceRepository } from "./compose-trace-repository"
-export type { MessageComposeTrace } from "./compose-trace-repository"
 export type {
   MessageCreatedPayload,
   MessageEditedPayload,

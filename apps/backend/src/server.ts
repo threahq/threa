@@ -399,9 +399,7 @@ export async function startServer(): Promise<ServerInstance> {
   const avatarService = new AvatarService(storage)
   const streamService = new StreamService(pool)
   const featureFlagService = new FeatureFlagService(pool)
-  const eventService = new EventService(pool, conversationAssigner, (workspaceId) =>
-    featureFlagService.getWorkspaceFlag(workspaceId, "composeTraces")
-  )
+  const eventService = new EventService(pool, conversationAssigner)
   const authService = config.useStubAuth ? new StubAuthService() : new WorkosAuthService(config.workos)
 
   const malwareScanner = createMalwareScanner(storage, config.attachments)
