@@ -1195,29 +1195,10 @@ main a:not([class]) {
 .tp-step:last-child {
   border-bottom: 0;
 }
-/* While the demo plays, each step appears when the session reaches it. Space
-   is held so the panel never changes height. */
-/* Steps the session hasn't reached rest as the app's loading skeleton. */
+/* While the demo plays, each step appears when the session reaches it, as
+   in the app. Space is held so the panel never changes height. */
 .trace-panel.is-live .tp-step:not(.is-in) {
-  position: relative;
-  background: none;
-}
-.trace-panel.is-live .tp-step:not(.is-in) > * {
   visibility: hidden;
-}
-.trace-panel.is-live .tp-step:not(.is-in)::before {
-  content: "";
-  position: absolute;
-  inset: 22px 20px;
-  background:
-    linear-gradient(hsl(var(--line)), hsl(var(--line))) 0 0 / 104px 22px no-repeat,
-    linear-gradient(hsl(var(--line)), hsl(var(--line))) 0 34px / 72% 12px no-repeat;
-  animation: tp-pulse 2s ease-in-out infinite;
-}
-@keyframes tp-pulse {
-  50% {
-    opacity: 0.5;
-  }
 }
 .trace-panel.is-live .tp-step.is-in {
   animation: ad-fade 0.25s ease-out;
