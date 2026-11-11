@@ -548,7 +548,7 @@ export const SETTINGS = {
   emoticons: {
     section: "composer",
     label: "Turn emoticons into emoji",
-    description: ":) becomes 🙂 when you finish the word. Backspace right after brings the text back.",
+    description: ":) becomes 🙂 when you finish the word. Press Escape on the word to keep it as text.",
     keywords: ["emoticon", "smiley", "text face", ":)", ":p", ":D", "<3", "auto convert", "autocorrect"],
   },
   shortcuts: {

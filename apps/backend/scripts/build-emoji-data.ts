@@ -76,7 +76,8 @@ const EMOTICONS: Record<string, string[]> = {
   "😆": ["xD"],
   "😉": [";)", ";-)"],
   "😞": [":(", ":-("],
-  "😢": [":'("],
+  // The second is what a phone's smart punctuation makes of the first.
+  "😢": [":'(", ":’("],
   "😛": [":p", ":P", ":-p", ":-P"],
   "😜": [";p", ";P", ";-p", ";-P"],
   "😮": [":o", ":O", ":-o", ":-O"],

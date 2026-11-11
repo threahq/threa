@@ -106,6 +106,50 @@ describe("emoticon conversion", () => {
     expect(paragraphs()).toEqual(["x :) "])
   })
 
+  it("stays out of inline code that is still being typed", () => {
+    mount()
+    type("`x :/ y` and `n <3 ")
+    // The closing backtick turns the first span into a code mark; the second is still open.
+    expect(paragraphs()).toEqual(["x :/ y and `n <3 "])
+  })
+
+  it.each([
+    ["loaded with the editor", () => mount("<p>thanks :)</p>")],
+    [
+      "pasted",
+      () => {
+        mount()
+        editor!.view.dispatch(editor!.state.tr.insertText("thanks :)").setMeta("paste", true))
+      },
+    ],
+    [
+      "left behind by a deletion",
+      () => {
+        mount()
+        type("thanks :))")
+        editor!.commands.deleteRange({ from: 10, to: 11 })
+      },
+    ],
+  ])("leaves an emoticon the user did not just type alone: %s", (_case, arrange) => {
+    arrange()
+    const escape = press("Escape")
+    press("Enter")
+    editor!.commands.commitEmoticon()
+    expect({ text: paragraphs()[0], escapeSpent: escape.defaultPrevented }).toEqual({
+      text: "thanks :)",
+      escapeSpent: false,
+    })
+  })
+
+  it("leaves a typed emoticon alone once the caret has been elsewhere", () => {
+    mount()
+    type("thanks :)")
+    editor!.commands.setTextSelection(1)
+    editor!.commands.focus("end")
+    type(" ")
+    expect(paragraphs()).toEqual(["thanks :) "])
+  })
+
   it("converts nothing when the lookup knows no emoticons", () => {
     mount("<p></p>", () => null)
     type("hello :) ")

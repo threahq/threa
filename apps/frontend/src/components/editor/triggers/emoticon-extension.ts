@@ -1,7 +1,9 @@
 import { Extension, InputRule } from "@tiptap/core"
 import type { Node as ProseMirrorNode, ResolvedPos } from "@tiptap/pm/model"
 import { Plugin, PluginKey, type EditorState, type Transaction } from "@tiptap/pm/state"
+import { ReplaceStep } from "@tiptap/pm/transform"
 import { isSuggestionActive } from "../editor-behaviors"
+import { getParentTextBefore } from "../markdown-guards"
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -19,8 +21,30 @@ export interface EmoticonExtensionOptions {
   toEmoji: EmoticonLookup
 }
 
-/** Start of the word the user pressed Escape on; an emoticon starting there stays text. */
-const EmoticonPluginKey = new PluginKey<number | null>("emoticon")
+interface EmoticonState {
+  /** Start of the word the user pressed Escape on; an emoticon starting there stays text. */
+  escaped: number | null
+  /** Where the caret was left by the user's own typing, while it is still there. */
+  typedEnd: number | null
+}
+
+const EmoticonPluginKey = new PluginKey<EmoticonState>("emoticon")
+
+/**
+ * Text the user typed, as opposed to a paste, an undo, loaded content or a
+ * collaborator's edit. Only a word that ends in typing converts, so finishing a
+ * line someone else wrote leaves their `:)` alone.
+ */
+function isTyping(tr: Transaction): boolean {
+  if (tr.getMeta("paste") || tr.getMeta("uiEvent") || tr.getMeta("history$")) return false
+  let inserted = false
+  for (const step of tr.steps) {
+    if (!(step instanceof ReplaceStep)) return false
+    if (step.slice.content.content.some((node) => !node.isText)) return false
+    inserted ||= step.slice.size > 0
+  }
+  return inserted
+}
 
 const SPACE = /[ \u00a0]/
 
@@ -41,16 +65,23 @@ function startsWord($pos: ResolvedPos): boolean {
   return !/\S/.test(before) && /\S/.test(after)
 }
 
-/** The emoticon that is the whole word ending at `pos`, unless it sits in code or was escaped. */
+/**
+ * The emoticon the user just typed as the whole word ending at `pos`, unless it
+ * sits in code or was escaped.
+ */
 function emoticonBefore(
   state: EditorState,
   pos: number,
   toEmoji: EmoticonLookup
 ): { from: number; emoji: string } | null {
+  const { escaped, typedEnd } = EmoticonPluginKey.getState(state) ?? { escaped: null, typedEnd: null }
+  if (typedEnd !== state.selection.from) return null
   const $pos = state.doc.resolve(pos)
   if ($pos.parent.type.spec.code || $pos.marks().some((mark) => mark.type.spec.code)) return null
+  // Inline code still being typed is plain text until its closing backtick.
+  if ((getParentTextBefore($pos).split("`").length - 1) % 2 === 1) return null
   const word = wordBefore($pos)
-  if (!word || word.from === EmoticonPluginKey.getState(state)) return null
+  if (!word || word.from === escaped) return null
   const emoji = toEmoji(word.text)
   return emoji ? { from: word.from, emoji } : null
 }
@@ -108,17 +139,22 @@ export const EmoticonExtension = Extension.create<EmoticonExtensionOptions>({
     const editor = this.editor
     const { toEmoji } = this.options
     return [
-      new Plugin<number | null>({
+      new Plugin<EmoticonState>({
         key: EmoticonPluginKey,
         state: {
-          init: () => null,
-          apply(tr, escaped, _oldState, newState) {
+          init: () => ({ escaped: null, typedEnd: null }),
+          apply(tr, { escaped, typedEnd }, _oldState, newState) {
+            const caret = newState.selection.empty ? newState.selection.from : null
+            if (tr.docChanged) typedEnd = isTyping(tr) ? caret : null
+            else if (typedEnd !== caret) typedEnd = null
+
             const marked = tr.getMeta(EmoticonPluginKey) as number | undefined
-            if (marked !== undefined) return marked
-            if (escaped === null || !tr.docChanged) return escaped
-            const mapped = tr.mapping.mapResult(escaped, 1)
-            if (mapped.deleted) return null
-            return startsWord(newState.doc.resolve(mapped.pos)) ? mapped.pos : null
+            if (marked !== undefined) return { escaped: marked, typedEnd }
+            if (escaped !== null && tr.docChanged) {
+              const mapped = tr.mapping.mapResult(escaped, 1)
+              escaped = !mapped.deleted && startsWord(newState.doc.resolve(mapped.pos)) ? mapped.pos : null
+            }
+            return { escaped, typedEnd }
           },
         },
         props: {

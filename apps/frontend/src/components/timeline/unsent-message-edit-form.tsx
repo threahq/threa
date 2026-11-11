@@ -281,6 +281,7 @@ export function UnsentMessageEditForm({
       </p>
       <div data-inline-edit className="[&_.tiptap]:!pt-0 [&_.tiptap_p]:!leading-relaxed">
         <RichEditor
+          ref={richEditorRef}
           value={contentJson}
           onChange={setContentJson}
           onSubmit={handleSave}
