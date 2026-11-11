@@ -16,6 +16,7 @@ export const BLOCKED_IP_PATTERNS: readonly RegExp[] = [
   /^169\.254\./, // link-local
   /^0\./, // current network
   /^\[?::1\]?$/, // IPv6 loopback
+  /^\[?::\]?$/, // IPv6 unspecified: connects to this host
   /^\[?fe80:/i, // IPv6 link-local
   /^\[?fc00:/i, // IPv6 unique local
   /^\[?fd/i, // IPv6 unique local

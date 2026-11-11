@@ -13,7 +13,14 @@ interface HandlerDeps {
 
 const resolveByUrlQuerySchema = z.object({ url: z.string().url() })
 
-const faviconParamsSchema = z.object({ workspaceId: z.string(), host: z.string().min(1).max(255) })
+// `URL.host` is printable ASCII (IDN hosts arrive punycoded); anything else was never a favicon key.
+const faviconParamsSchema = z.object({
+  workspaceId: z.string(),
+  host: z
+    .string()
+    .max(255)
+    .regex(/^[\x21-\x7e]+$/),
+})
 
 export function createLinkPreviewHandlers(deps: HandlerDeps) {
   const { linkPreviewService, linkFaviconService } = deps

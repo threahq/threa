@@ -89,6 +89,7 @@ describe("GET /api/workspaces/:workspaceId/link-favicons/:host", () => {
       memberOutsideTheStream: await answer(member, workspace.id, "private-notes.example"),
       guestOutsideTheStream: await answer(guest, workspace.id, "private-notes.example"),
       memberUnknownHost: await answer(member, workspace.id, "never-linked.example"),
+      hostThatWasNeverAKey: (await answer(owner, workspace.id, "\u0000")).status,
     }).toEqual({
       owner: icon,
       revalidated: 304,
@@ -97,6 +98,7 @@ describe("GET /api/workspaces/:workspaceId/link-favicons/:host", () => {
       memberOutsideTheStream: notFound,
       guestOutsideTheStream: notFound,
       memberUnknownHost: notFound,
+      hostThatWasNeverAKey: 400,
     })
   })
 })

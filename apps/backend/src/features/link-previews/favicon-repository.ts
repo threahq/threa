@@ -43,7 +43,8 @@ export const LinkFaviconRepository = {
   /**
    * Whether the user can read an undeleted message that links to this host. A preview is on a host
    * exactly when its normalized URL starts with `scheme://host/`: normalization keeps the host and the
-   * root slash.
+   * root slash. Access is checked once per linking stream, not per message, so the cost follows the
+   * host's link count and never the size of the streams the user reads.
    */
   async isHostLinkedInReadableStream(
     querier: Querier,
@@ -55,14 +56,17 @@ export const LinkFaviconRepository = {
     const result = await querier.query<{ readable: boolean }>(
       composeSql`SELECT EXISTS (
         SELECT 1
-        FROM link_previews lp
-        JOIN message_link_previews mlp
-          ON mlp.workspace_id = lp.workspace_id AND mlp.link_preview_id = lp.id
-        JOIN messages m ON m.workspace_id = mlp.workspace_id AND m.id = mlp.message_id
-        WHERE lp.workspace_id = ${workspaceId}
-          AND (lp.normalized_url LIKE ${httpPrefix} OR lp.normalized_url LIKE ${httpsPrefix})
-          AND m.deleted_at IS NULL
-          AND ${streamAccessPredicateSql(workspaceId, userId, "m.stream_id")}
+        FROM (
+          SELECT DISTINCT m.stream_id
+          FROM link_previews lp
+          JOIN message_link_previews mlp
+            ON mlp.workspace_id = lp.workspace_id AND mlp.link_preview_id = lp.id
+          JOIN messages m ON m.workspace_id = mlp.workspace_id AND m.id = mlp.message_id
+          WHERE lp.workspace_id = ${workspaceId}
+            AND (lp.normalized_url LIKE ${httpPrefix} OR lp.normalized_url LIKE ${httpsPrefix})
+            AND m.deleted_at IS NULL
+        ) linked
+        WHERE ${streamAccessPredicateSql(workspaceId, userId, "linked.stream_id")}
       ) AS readable`
     )
     return result.rows[0].readable
