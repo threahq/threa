@@ -6,6 +6,9 @@ export type { LinkPreviewServiceDeps } from "./service"
 
 export { createLinkPreviewHandlers } from "./handlers"
 
+export { LinkFaviconService } from "./favicon-service"
+export { LinkFaviconRepository } from "./favicon-repository"
+
 export { createLinkPreviewWorker } from "./worker"
 
 export { LinkPreviewOutboxHandler } from "./outbox-handler"

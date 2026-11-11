@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test"
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
 import {
   createLinkPreviewWorker,
   decodeHtmlBytes,
@@ -334,6 +334,39 @@ function streamingHtmlResponse(chunks: string[]): Response {
   return new Response(stream, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } })
 }
 
+const noopFaviconService = { ensureForPage: mock(async () => {}) } as any
+
+/** Build a link-preview service mock for a single pending preview of `url`. */
+function pendingServiceMock(id: string, url: string, completePreviewsAndPublish: ReturnType<typeof mock>) {
+  return {
+    extractAndCreatePending: mock(async () => [{ id, url }]),
+    getPreviewById: mock(async () => ({
+      id,
+      workspaceId: "ws_123",
+      url,
+      normalizedUrl: url,
+      title: null,
+      description: null,
+      imageUrl: null,
+      faviconUrl: null,
+      siteName: null,
+      contentType: "website",
+      status: "pending",
+      previewType: null,
+      previewData: null,
+      targetWorkspaceId: null,
+      targetStreamId: null,
+      targetMessageId: null,
+      fetchedAt: null,
+      expiresAt: null,
+      createdAt: new Date("2026-07-01T10:00:00.000Z"),
+    })),
+    completePreviewsAndPublish,
+    replacePreviewsForMessage: mock(async () => []),
+    publishEmptyPreviews: mock(async () => {}),
+  } as any
+}
+
 describe("createLinkPreviewWorker", () => {
   const originalFetch = globalThis.fetch
 
@@ -363,6 +396,7 @@ describe("createLinkPreviewWorker", () => {
 
     const completePreviewsAndPublish = mock(async () => {})
     const worker = createLinkPreviewWorker({
+      linkFaviconService: noopFaviconService,
       linkPreviewService: {
         extractAndCreatePending: mock(async () => [
           { id: "lp_900", url: "https://www.anthropic.com/news/claude-opus-4-8" },
@@ -445,6 +479,7 @@ describe("createLinkPreviewWorker", () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
     const worker = createLinkPreviewWorker({
+      linkFaviconService: noopFaviconService,
       linkPreviewService: {
         extractAndCreatePending: mock(async () => [{ id: "lp_ua", url: "https://shop.example.com/dp/ABC123" }]),
         getPreviewById: mock(async () => ({
@@ -505,6 +540,7 @@ describe("createLinkPreviewWorker", () => {
 
     const completePreviewsAndPublish = mock(async () => {})
     const worker = createLinkPreviewWorker({
+      linkFaviconService: noopFaviconService,
       linkPreviewService: {
         extractAndCreatePending: mock(async () => [{ id: "lp_503", url: "https://blocked.example.com/page" }]),
         getPreviewById: mock(async () => ({
@@ -574,6 +610,7 @@ describe("createLinkPreviewWorker", () => {
 
     const completePreviewsAndPublish = mock(async () => {})
     const worker = createLinkPreviewWorker({
+      linkFaviconService: noopFaviconService,
       linkPreviewService: {
         extractAndCreatePending: mock(async () => [{ id: "lp_901", url: "https://example.com/article" }]),
         getPreviewById: mock(async () => ({
@@ -642,6 +679,7 @@ describe("createLinkPreviewWorker", () => {
 
     const completePreviewsAndPublish = mock(async () => {})
     const worker = createLinkPreviewWorker({
+      linkFaviconService: noopFaviconService,
       linkPreviewService: {
         extractAndCreatePending: mock(async () => [
           { id: "lp_123", url: "https://github.com/octocat/hello-world/pull/42" },
@@ -728,6 +766,7 @@ describe("createLinkPreviewWorker", () => {
   test("upgrades cached generic GitHub previews to rich previews when integration is available", async () => {
     const completePreviewsAndPublish = mock(async () => {})
     const worker = createLinkPreviewWorker({
+      linkFaviconService: noopFaviconService,
       linkPreviewService: {
         extractAndCreatePending: mock(async () => [
           { id: "lp_123", url: "https://github.com/octocat/hello-world/tree/main" },
@@ -844,6 +883,7 @@ describe("createLinkPreviewWorker", () => {
 
     const completePreviewsAndPublish = mock(async () => {})
     const worker = createLinkPreviewWorker({
+      linkFaviconService: noopFaviconService,
       linkPreviewService: {
         extractAndCreatePending: mock(async () => [
           { id: "lp_123", url: "https://x.com/steipete/status/2047957234664030380" },
@@ -948,6 +988,7 @@ describe("createLinkPreviewWorker", () => {
 
     const completePreviewsAndPublish = mock(async () => {})
     const worker = createLinkPreviewWorker({
+      linkFaviconService: noopFaviconService,
       linkPreviewService: {
         extractAndCreatePending: mock(async () => [
           { id: "lp_124", url: "https://x.com/tranmautritam/status/2047744367549612456" },
@@ -1014,37 +1055,6 @@ describe("createLinkPreviewWorker", () => {
     )
   })
 
-  /** Build a link-preview service mock for a single pending preview of `url`. */
-  function pendingServiceMock(id: string, url: string, completePreviewsAndPublish: ReturnType<typeof mock>) {
-    return {
-      extractAndCreatePending: mock(async () => [{ id, url }]),
-      getPreviewById: mock(async () => ({
-        id,
-        workspaceId: "ws_123",
-        url,
-        normalizedUrl: url,
-        title: null,
-        description: null,
-        imageUrl: null,
-        faviconUrl: null,
-        siteName: null,
-        contentType: "website",
-        status: "pending",
-        previewType: null,
-        previewData: null,
-        targetWorkspaceId: null,
-        targetStreamId: null,
-        targetMessageId: null,
-        fetchedAt: null,
-        expiresAt: null,
-        createdAt: new Date("2026-07-01T10:00:00.000Z"),
-      })),
-      completePreviewsAndPublish,
-      replacePreviewsForMessage: mock(async () => []),
-      publishEmptyPreviews: mock(async () => {}),
-    } as any
-  }
-
   test("classifies a YouTube link as a video preview with an embed URL built from the parsed id", async () => {
     // The oEmbed `html` deliberately points its iframe at an attacker origin; the stored embedUrl
     // must be reconstructed from the video id against youtube-nocookie.com, never lifted from html.
@@ -1071,6 +1081,7 @@ describe("createLinkPreviewWorker", () => {
     const completePreviewsAndPublish = mock(async () => {})
     const url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     const worker = createLinkPreviewWorker({
+      linkFaviconService: noopFaviconService,
       linkPreviewService: pendingServiceMock("lp_yt", url, completePreviewsAndPublish),
       workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
     })
@@ -1123,6 +1134,7 @@ describe("createLinkPreviewWorker", () => {
     const completePreviewsAndPublish = mock(async () => {})
     const url = "https://www.twitch.tv/videos/123456789"
     const worker = createLinkPreviewWorker({
+      linkFaviconService: noopFaviconService,
       linkPreviewService: pendingServiceMock("lp_tw", url, completePreviewsAndPublish),
       workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
     })
@@ -1184,6 +1196,7 @@ describe("createLinkPreviewWorker", () => {
     const completePreviewsAndPublish = mock(async () => {})
     const url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     const worker = createLinkPreviewWorker({
+      linkFaviconService: noopFaviconService,
       linkPreviewService: {
         extractAndCreatePending: mock(async () => [{ id: "lp_ttl", url }]),
         getPreviewById: mock(async () => ({
@@ -1260,6 +1273,7 @@ describe("createLinkPreviewWorker", () => {
     const completePreviewsAndPublish = mock(async () => {})
     const url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     const worker = createLinkPreviewWorker({
+      linkFaviconService: noopFaviconService,
       linkPreviewService: {
         extractAndCreatePending: mock(async () => [{ id: "lp_up", url }]),
         getPreviewById: mock(async () => ({
@@ -1324,6 +1338,7 @@ describe("createLinkPreviewWorker", () => {
     const completePreviewsAndPublish = mock(async () => {})
     const url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     const worker = createLinkPreviewWorker({
+      linkFaviconService: noopFaviconService,
       linkPreviewService: {
         extractAndCreatePending: mock(async () => [{ id: "lp_fail", url }]),
         getPreviewById: mock(async () => ({
@@ -1419,6 +1434,7 @@ describe("createLinkPreviewWorker", () => {
 
     const completePreviewsAndPublish = mock(async () => {})
     const worker = createLinkPreviewWorker({
+      linkFaviconService: noopFaviconService,
       linkPreviewService: redditServiceMock(url, completePreviewsAndPublish),
       workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
     })
@@ -1468,6 +1484,7 @@ describe("createLinkPreviewWorker", () => {
 
     const completePreviewsAndPublish = mock(async () => {})
     const worker = createLinkPreviewWorker({
+      linkFaviconService: noopFaviconService,
       linkPreviewService: redditServiceMock(url, completePreviewsAndPublish),
       workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
     })
@@ -1512,6 +1529,7 @@ describe("createLinkPreviewWorker", () => {
 
     const completePreviewsAndPublish = mock(async () => {})
     const worker = createLinkPreviewWorker({
+      linkFaviconService: noopFaviconService,
       linkPreviewService: redditServiceMock(url, completePreviewsAndPublish),
       workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
     })
@@ -1527,6 +1545,89 @@ describe("createLinkPreviewWorker", () => {
       "stream_123",
       "msg_reddit",
       [expect.objectContaining({ id: "lp_reddit", metadata: expect.objectContaining({ status: "failed" }) })],
+      { forcePublish: undefined }
+    )
+  })
+})
+
+describe("createLinkPreviewWorker favicon cache", () => {
+  const url = "https://blog.example.com/post"
+  const html = '<html><head><title>Post</title><link rel="icon" href="/static/icon.png"></head><body></body></html>'
+
+  afterEach(() => {
+    mock.restore()
+  })
+
+  const job = {
+    id: "job_fav",
+    name: "link_preview.extract",
+    data: { workspaceId: "ws_123", streamId: "stream_123", messageId: "msg_fav", contentMarkdown: url },
+  } as any
+
+  test("should ensure the host favicon with the page url and candidate before publishing when hydration completes", async () => {
+    spyOn(globalThis, "fetch").mockImplementation(
+      (async () =>
+        new Response(html, {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        })) as unknown as typeof fetch
+    )
+    const order: string[] = []
+    const ensureForPage = mock(async (_workspaceId: string, _pageUrl: string, _candidateUrl: string) => {
+      order.push("ensure")
+    })
+    const completePreviewsAndPublish = mock(async () => {
+      order.push("publish")
+    })
+    const worker = createLinkPreviewWorker({
+      linkPreviewService: pendingServiceMock("lp_fav", url, completePreviewsAndPublish),
+      linkFaviconService: { ensureForPage } as any,
+      workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
+    })
+
+    await worker(job)
+
+    expect({ calls: ensureForPage.mock.calls, order }).toEqual({
+      calls: [["ws_123", url, "https://blog.example.com/static/icon.png"]],
+      order: ["ensure", "publish"],
+    })
+  })
+
+  test("should still publish the preview when the favicon ensure throws", async () => {
+    spyOn(globalThis, "fetch").mockImplementation(
+      (async () =>
+        new Response(html, {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        })) as unknown as typeof fetch
+    )
+    const completePreviewsAndPublish = mock(async () => {})
+    const worker = createLinkPreviewWorker({
+      linkPreviewService: pendingServiceMock("lp_fav", url, completePreviewsAndPublish),
+      linkFaviconService: {
+        ensureForPage: mock(async () => {
+          throw new Error("db down")
+        }),
+      } as any,
+      workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
+    })
+
+    await worker(job)
+
+    expect(completePreviewsAndPublish).toHaveBeenCalledWith(
+      "ws_123",
+      "stream_123",
+      "msg_fav",
+      [
+        expect.objectContaining({
+          id: "lp_fav",
+          skipped: false,
+          metadata: expect.objectContaining({
+            status: "completed",
+            faviconUrl: "https://blog.example.com/static/icon.png",
+          }),
+        }),
+      ],
       { forcePublish: undefined }
     )
   })

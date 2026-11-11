@@ -288,6 +288,7 @@ export const ACCESS_LOG_OPERATIONS = [
   "link_previews.dismiss",
   "link_previews.resolve_in_app",
   "link_previews.resolve_in_app_by_id",
+  "link_favicons.get",
   // Giphy
   "giphy.get_config",
   "giphy.search",

@@ -1,16 +1,29 @@
 import type { Request, Response, NextFunction } from "express"
+import { createHash } from "node:crypto"
 import { z } from "zod"
 import { HttpError } from "../../lib/errors"
+import { setUntrustedContentHeaders } from "../../lib/untrusted-content"
 import type { LinkPreviewService } from "./service"
+import type { LinkFaviconService } from "./favicon-service"
 
 interface HandlerDeps {
   linkPreviewService: LinkPreviewService
+  linkFaviconService: LinkFaviconService
 }
 
 const resolveByUrlQuerySchema = z.object({ url: z.string().url() })
 
+const faviconParamsSchema = z.object({
+  workspaceId: z.string(),
+  host: z
+    .string()
+    .min(1)
+    .max(255)
+    .regex(/^(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(:\d{1,5})?$/i),
+})
+
 export function createLinkPreviewHandlers(deps: HandlerDeps) {
-  const { linkPreviewService } = deps
+  const { linkPreviewService, linkFaviconService } = deps
 
   return {
     /** GET /api/workspaces/:workspaceId/messages/:messageId/link-previews */
@@ -91,6 +104,37 @@ export function createLinkPreviewHandlers(deps: HandlerDeps) {
         }
 
         res.json(data)
+      } catch (err) {
+        next(err)
+      }
+    },
+
+    /** GET /api/workspaces/:workspaceId/link-favicons/:host */
+    async getFavicon(req: Request, res: Response, next: NextFunction) {
+      try {
+        const parsed = faviconParamsSchema.safeParse(req.params)
+        if (!parsed.success) {
+          throw new HttpError("Invalid host", { status: 400, code: "VALIDATION_ERROR" })
+        }
+
+        const icon = await linkFaviconService.getIcon(parsed.data.workspaceId, parsed.data.host)
+        if (!icon) {
+          res.set("Cache-Control", "private, max-age=300")
+          res.status(404).json({ error: "Not found" })
+          return
+        }
+
+        const etag = `"${createHash("sha256").update(icon.bytes).digest("base64url")}"`
+        res.set("Cache-Control", "private, max-age=604800")
+        res.set("ETag", etag)
+        setUntrustedContentHeaders(res)
+        if (req.headers["if-none-match"] === etag) {
+          res.status(304).end()
+          return
+        }
+
+        res.set("Content-Type", icon.contentType)
+        res.status(200).send(Buffer.from(icon.bytes))
       } catch (err) {
         next(err)
       }

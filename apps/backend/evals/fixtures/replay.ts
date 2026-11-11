@@ -34,7 +34,12 @@ import {
   createMemoService,
 } from "../../src/features/memos"
 import { DelegationService } from "../../src/features/delegations"
-import { LinkPreviewOutboxHandler, LinkPreviewService, createLinkPreviewWorker } from "../../src/features/link-previews"
+import {
+  LinkFaviconService,
+  LinkPreviewOutboxHandler,
+  LinkPreviewService,
+  createLinkPreviewWorker,
+} from "../../src/features/link-previews"
 import { EventService } from "../../src/features/messaging"
 import { StreamService } from "../../src/features/streams"
 import { WorkspaceIntegrationService } from "../../src/features/workspace-integrations"
@@ -177,7 +182,11 @@ export async function startReplayPipeline(deps: {
   )
   jobQueue.registerHandler(
     JobQueues.LINK_PREVIEW_EXTRACT,
-    createLinkPreviewWorker({ linkPreviewService, workspaceIntegrationService }),
+    createLinkPreviewWorker({
+      linkPreviewService,
+      linkFaviconService: new LinkFaviconService({ pool }),
+      workspaceIntegrationService,
+    }),
     light
   )
 

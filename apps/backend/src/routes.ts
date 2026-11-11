@@ -149,7 +149,7 @@ import type { SidebarConfigService } from "./features/sidebar-config"
 import type { UserE2eKeysService } from "./features/user-e2e-keys"
 import type { AvatarService } from "./features/workspaces"
 import type { BotChannelService } from "./features/api-keys"
-import type { LinkPreviewService } from "./features/link-previews"
+import type { LinkFaviconService, LinkPreviewService } from "./features/link-previews"
 import type { QueueManager } from "./lib/queue"
 import type { GiphyService } from "./features/giphy"
 import type { WorkspaceIntegrationService } from "./features/workspace-integrations"
@@ -230,6 +230,7 @@ interface Dependencies {
   apiKeyService: ApiKeyService
   botChannelService: BotChannelService
   linkPreviewService: LinkPreviewService
+  linkFaviconService: LinkFaviconService
   jobQueue: QueueManager
   giphyService: GiphyService
   workspaceIntegrationService: WorkspaceIntegrationService
@@ -319,6 +320,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     apiKeyService,
     botChannelService,
     linkPreviewService,
+    linkFaviconService,
     jobQueue,
     giphyService,
     workspaceIntegrationService,
@@ -462,7 +464,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const botAccessRequests = createBotAccessRequestHandlers({ botAccessRequestService, streamService })
   const decisions = createDecisionHandlers({ decisionService })
   const contextBag = createContextBagHandlers({ pool, ai })
-  const linkPreview = createLinkPreviewHandlers({ linkPreviewService })
+  const linkPreview = createLinkPreviewHandlers({ linkPreviewService, linkFaviconService })
   const giphy = createGiphyHandlers({ giphyService })
   const workspaceIntegration = createWorkspaceIntegrationHandlers({
     workspaceIntegrationService,
@@ -1980,6 +1982,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...authed,
     audit("link_previews.resolve_in_app_by_id", "read"),
     linkPreview.resolveInAppLink
+  )
+  app.get(
+    "/api/workspaces/:workspaceId/link-favicons/:host",
+    ...authed,
+    audit("link_favicons.get", "read"),
+    linkPreview.getFavicon
   )
 
   // Giphy picker — backend proxy keeps the API key server-side. `config` reports

@@ -20,6 +20,7 @@ import type { StorageProvider } from "../../lib/storage/s3-client"
 import { attachmentId as generateAttachmentId } from "../../lib/id"
 import { MAX_FILE_SIZE } from "../../middleware/upload"
 import { HttpError } from "../../lib/errors"
+import { setUntrustedContentHeaders } from "../../lib/untrusted-content"
 import { ATTACHMENT_CATEGORIES, StreamConnectionErrorCodes, type AttachmentCategory } from "@threahq/types"
 
 declare module "express" {
@@ -349,10 +350,7 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       const cacheControl = resolved.ready ? "private, max-age=31536000, immutable" : "private, no-store"
 
       res.set("Cache-Control", cacheControl)
-      res.set("X-Content-Type-Options", "nosniff")
-      // User-authored bytes served from the app origin must never execute as a
-      // document (HTML/SVG navigated to directly).
-      res.set("Content-Security-Policy", "sandbox")
+      setUntrustedContentHeaders(res)
       if (resolved.ready) res.set("ETag", etag)
 
       if (resolved.ready && req.headers["if-none-match"] === etag) {

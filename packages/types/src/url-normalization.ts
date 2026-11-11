@@ -40,3 +40,14 @@ export const TRACKING_PARAMS: readonly string[] = [
   "ref",
   "source",
 ]
+
+/** Key for a link's favicon: `URL.host` (lowercased, punycoded, non-default port kept). Null for non-http(s). */
+export function linkFaviconHost(url: string): string | null {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null
+    return parsed.host || null
+  } catch {
+    return null
+  }
+}
