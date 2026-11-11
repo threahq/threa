@@ -101,6 +101,7 @@ const SETTING_DEFAULTS: Partial<Record<SettingId, SettingDefault>> = {
   "send-key": preference("messageSendMode"),
   "send-side": accessibility("composerActionSide"),
   "file-insert": preference("mobileInlineAttachments"),
+  emoticons: preference("convertEmoticons"),
   // A binding stored as its own default changes nothing.
   shortcuts: {
     read: (preferences) =>

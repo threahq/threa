@@ -261,6 +261,7 @@ export function summarizeSettings(input: SettingsSummaryInput): SettingsSummarie
     values["send-key"] = SETTING_CHOICE_LABELS["send-key"][p.messageSendMode]
     values["send-side"] = SETTING_CHOICE_LABELS["send-side"][p.accessibility.composerActionSide]
     values["file-insert"] = onOff(p.mobileInlineAttachments)
+    values.emoticons = onOff(p.convertEmoticons)
     const rebound = SHORTCUT_ACTIONS.filter((action) => isCustomBinding(action, p.keyboardShortcuts ?? {})).length
     values.shortcuts = rebound === 0 ? "Defaults" : count(rebound, "changed", "changed")
     pages.keyboard = `Enter: ${values["send-key"].toLowerCase()} · ${values["send-side"].toLowerCase()}`

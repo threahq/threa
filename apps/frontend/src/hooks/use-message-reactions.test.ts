@@ -30,6 +30,7 @@ beforeEach(async () => {
     emojis: [],
     emojiWeights: {},
     toEmoji: () => null,
+    fromEmoticon: () => null,
     toShortcode: () => null,
     getEmoji: () => undefined,
   })

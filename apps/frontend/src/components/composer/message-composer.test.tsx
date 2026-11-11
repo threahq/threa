@@ -36,6 +36,7 @@ let realEditor: Editor | null = null
 type MockEditorInstance = {
   id: string
   getJSON: () => JSONContent
+  commands: { commitEmoticon: () => boolean }
   isActive: () => boolean
   on: () => void
   off: () => void
@@ -80,6 +81,7 @@ const MockRichEditor = forwardRef<
         setEditorInstance({
           id: "mock-editor",
           getJSON: () => valueRef.current,
+          commands: { commitEmoticon: () => false },
           isActive: () => false,
           on: () => undefined,
           off: () => undefined,

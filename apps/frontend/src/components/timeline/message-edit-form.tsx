@@ -188,7 +188,9 @@ export function MessageEditForm({
     setFormatOpen(false)
     setMobileExpanded(false)
     setMobileLinkPopoverOpen(false)
-    void saveEdit(contentRef.current, options?.confirmedPrivacyWarning)
+    // The Save button never reaches the editor's Enter path, where an emoticon at the caret converts.
+    const content = editor?.commands.commitEmoticon() ? editor.getJSON() : contentRef.current
+    void saveEdit(content, options?.confirmedPrivacyWarning)
   })
 
   const handleSubmit = useCallback(() => {

@@ -241,7 +241,9 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
   // Snapshot the live editor content + materialized attachments — shared by
   // Save and Send now so both ship exactly what the user currently sees.
   const collectEditorContent = useCallback(() => {
-    const liveJson = (editorRef.current?.getEditor()?.getJSON() as JSONContent | undefined) ?? contentJson
+    const editor = editorRef.current?.getEditor()
+    editor?.commands.commitEmoticon()
+    const liveJson = (editor?.getJSON() as JSONContent | undefined) ?? contentJson
     const materialized = materializePendingAttachmentReferences(
       liveJson,
       attachmentsHook.getPendingAttachmentsSnapshot()

@@ -15,7 +15,13 @@ import * as contextsModule from "@/contexts"
 import { RichEditor, type RichEditorHandle } from "./rich-editor"
 
 const NO_MENTIONABLES = { mentionables: [], isLoading: false }
-const NO_EMOJI = { emojis: [], emojiWeights: {}, toEmoji: () => null, toShortcode: () => null }
+const NO_EMOJI = {
+  emojis: [],
+  emojiWeights: {},
+  toEmoji: () => null,
+  toShortcode: () => null,
+  fromEmoticon: () => null,
+}
 const NO_PREFERENCES = { preferences: {} }
 
 beforeEach(() => {

@@ -6,6 +6,7 @@ import {
   buildQuickEmojis,
   buildShortcodeIndex,
   filterBySearch,
+  filterForColonTrigger,
   fitEmojiListHeight,
   recentSectionFits,
   stripShortcodeColons,
@@ -121,6 +122,51 @@ describe("filterBySearch", () => {
   it("tolerates entries with no keywords field (emoji list cached before keywords shipped)", () => {
     const legacy = { ...smile, keywords: undefined } as unknown as EmojiEntry
     expect(filterBySearch([legacy], "smile").map((e) => e.shortcode)).toEqual(["smile"])
+  })
+})
+
+describe("filterForColonTrigger", () => {
+  const tongue = { ...make("stuck_out_tongue", "smileys", 1), emoticons: [":p", ":P"] }
+  const slight = { ...make("slightly_smiling_face", "smileys", 2), emoticons: [":)"] }
+  const pleading = make("pleading_face", "smileys", 3)
+  const pensive = make("pensive", "smileys", 4)
+  const partying = make("partying_face", "smileys", 5)
+  const pray = make("pray", "people", 1)
+  // 🅿️ carries the bare letter as a keyword, an exact match for the query "p".
+  const parking = make("parking", "symbols", 1, ["parking", "p_button"], ["button", "p"])
+  const emojis = [tongue, slight, pleading, pensive, partying, pray, parking]
+  const shortcodes = (entries: EmojiEntry[]) => entries.map((entry) => entry.shortcode)
+
+  it.each(["p", "P"])("leads `:%s` with the emoticon's emoji, ahead of an exact keyword match", (query) => {
+    expect(shortcodes(filterForColonTrigger(emojis, query))).toEqual([
+      "stuck_out_tongue",
+      "parking",
+      "pleading_face",
+      "pensive",
+      "partying_face",
+      "pray",
+    ])
+  })
+
+  it.each([
+    ["pl", "pleading_face"],
+    ["pe", "pensive"],
+    ["pr", "pray"],
+    ["pa", "partying_face"],
+  ])("leaves `:%s` to the search, which is no longer the emoticon", (query, first) => {
+    const found = shortcodes(filterForColonTrigger(emojis, query))
+    expect({ first: found[0], tongue: found.includes("stuck_out_tongue") }).toEqual({ first, tongue: false })
+  })
+
+  it("stays empty for an emoticon no search matches, so `:)` opens no picker", () => {
+    expect(filterForColonTrigger(emojis, ")")).toEqual([])
+  })
+
+  it("leads a recents section with the emoticon's emoji only when the section has matches", () => {
+    expect({
+      matching: shortcodes(filterForColonTrigger([pray], "p", emojis)),
+      empty: filterForColonTrigger([], "p", emojis),
+    }).toEqual({ matching: ["stuck_out_tongue", "pray"], empty: [] })
   })
 })
 

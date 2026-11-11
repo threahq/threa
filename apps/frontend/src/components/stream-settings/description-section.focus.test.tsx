@@ -15,7 +15,13 @@ import * as currentUserModule from "@/hooks/use-current-workspace-user-id"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { DescriptionSection } from "./description-section"
 
-const NO_EMOJI = { emojis: [], emojiWeights: {}, toEmoji: () => null, toShortcode: () => null }
+const NO_EMOJI = {
+  emojis: [],
+  emojiWeights: {},
+  toEmoji: () => null,
+  toShortcode: () => null,
+  fromEmoticon: () => null,
+}
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true })

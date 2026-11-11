@@ -341,6 +341,11 @@ export function KeyboardSettings({
           checked={preferences?.mobileInlineAttachments ?? DEFAULT_USER_PREFERENCES.mobileInlineAttachments}
           onCheckedChange={(checked) => updatePreference("mobileInlineAttachments", checked)}
         />
+        <SwitchSetting
+          setting="emoticons"
+          checked={preferences?.convertEmoticons ?? DEFAULT_USER_PREFERENCES.convertEmoticons}
+          onCheckedChange={(checked) => updatePreference("convertEmoticons", checked)}
+        />
       </SettingsSection>
 
       <div {...FOCUS_SCOPE} id={SHORTCUT_LIST_ID} className="space-y-8">

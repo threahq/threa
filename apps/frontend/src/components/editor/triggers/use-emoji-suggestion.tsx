@@ -6,7 +6,7 @@ import type { EmojiEntry } from "@threahq/types"
 import {
   DESKTOP_GRID_COLUMNS,
   MAX_RECENTLY_USED_ROWS,
-  filterBySearch,
+  filterForColonTrigger,
   pickRecentlyUsed,
   sortByDefaultOrder,
 } from "@/lib/emoji-picker"
@@ -88,13 +88,13 @@ export function useEmojiSuggestion(config: UseEmojiSuggestionConfig): UseEmojiSu
   // TipTap's items(query) drives popupVisible. Return the "all" section filtered
   // by the query so the popup hides only when nothing matches anywhere.
   const getSuggestionItems = useCallback(
-    ({ query }: { query: string }) => filterBySearch(allSortedRef.current, query),
+    ({ query }: { query: string }) => filterForColonTrigger(allSortedRef.current, query),
     []
   )
 
   const computeSections = useCallback(
     (query: string, allFiltered: EmojiEntry[]) => ({
-      recent: filterBySearch(recentBaseRef.current, query),
+      recent: filterForColonTrigger(recentBaseRef.current, query, allSortedRef.current),
       all: allFiltered,
     }),
     []

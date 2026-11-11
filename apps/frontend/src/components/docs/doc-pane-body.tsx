@@ -38,7 +38,7 @@ import { useMediaGallery } from "@/contexts/media-gallery-context"
 import { usePreferences } from "@/contexts"
 import { useRevealReady } from "@/contexts/coordinated-loading-context"
 import { useMentionables, useMarkdownTriggerLookups } from "@/hooks/use-mentionables"
-import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
+import { useEmoticonConversion, useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import type { EffectiveArchived } from "@/hooks/use-effective-archived"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { useAttachments } from "@/hooks/use-attachments"
@@ -160,7 +160,8 @@ function DocEditor({
   const { getMentionType, isKnownChannel } = useMarkdownTriggerLookups(mentionables)
   const { suggestionConfig: mentionConfig, renderMentionList } = useMentionSuggestion()
   const { suggestionConfig: channelConfig, renderChannelList } = useChannelSuggestion()
-  const { emojis, emojiWeights, toEmoji } = useWorkspaceEmoji(workspaceId)
+  const { emojis, emojiWeights, toEmoji, fromEmoticon } = useWorkspaceEmoji(workspaceId)
+  const emoticonToEmoji = useEmoticonConversion(fromEmoticon)
   const { suggestionConfig: emojiConfig, renderEmojiGrid } = useEmojiSuggestion({ emojis, emojiWeights })
   const docHost = useWorkspaceStream(workspaceId, docId, pickDocHost)?.parentStreamId ?? undefined
   const { suggestionConfig: docConfig, renderDocList } = useDocSuggestion(docHost, docId)
@@ -232,10 +233,11 @@ function DocEditor({
         docSearchSuggestion: docConfig,
         docCreate: docCreateOptions,
         toEmoji,
+        emoticonToEmoji,
       }),
       EditorBehaviors.configure({ sendModeRef: DOC_SEND_MODE, onSubmitRef: NO_SUBMIT, keyBindingsRef }),
     ],
-    [ydoc, awareness, mentionConfig, channelConfig, emojiConfig, docConfig, docCreateOptions, toEmoji]
+    [ydoc, awareness, mentionConfig, channelConfig, emojiConfig, docConfig, docCreateOptions, toEmoji, emoticonToEmoji]
   )
 
   const editor = useEditor({

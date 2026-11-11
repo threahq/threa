@@ -545,6 +545,12 @@ export const SETTINGS = {
     keywords: ["attachments", "images inline", "mobile", "upload"],
     appliesOn: "phones",
   },
+  emoticons: {
+    section: "composer",
+    label: "Turn emoticons into emoji",
+    description: ":) becomes 🙂 when you finish the word. Backspace right after brings the text back.",
+    keywords: ["emoticon", "smiley", "text face", ":)", ":p", ":D", "<3", "auto convert", "autocorrect"],
+  },
   shortcuts: {
     section: "shortcuts",
     label: "Key bindings",

@@ -1802,6 +1802,12 @@ export interface EmojiEntry {
    * written before keywords shipped sees entries without it.
    */
   keywords?: string[]
+  /**
+   * Text faces (`:)`, `:p`) the composer turns into this emoji once the word
+   * is finished. Each belongs to one emoji. Absent on most entries, and on
+   * every entry of a list cached before emoticons shipped.
+   */
+  emoticons?: string[]
 }
 
 export const CommandKinds = {

@@ -56,6 +56,8 @@ export interface WorkspaceEmojiIndexes {
   toEmoji: (shortcode: string) => string | null
   getEmoji: (shortcode: string) => EmojiEntry | undefined
   toShortcode: (emoji: string) => string | null
+  /** Emoji a text emoticon (`:)`) stands for. Null when it is not one. */
+  fromEmoticon: (emoticon: string) => string | null
 }
 
 /**
@@ -85,6 +87,7 @@ const EMPTY_EMOJI_INDEXES: WorkspaceEmojiIndexes = {
   getEmoji: () => undefined,
   toEmoji: () => null,
   toShortcode: () => null,
+  fromEmoticon: () => null,
 }
 
 /**
@@ -145,7 +148,11 @@ export function getWorkspaceEmojiIndexes(
   const stopTimer = perfCapture.getPerfCapture().time("actors.lookupBuild")
   const shortcodeIndex = emojiPicker.buildShortcodeIndex(emojis)
   const reverseIndex = new Map<string, string>()
-  for (const entry of emojis) reverseIndex.set(entry.emoji, entry.shortcode)
+  const emoticonIndex = new Map<string, string>()
+  for (const entry of emojis) {
+    reverseIndex.set(entry.emoji, entry.shortcode)
+    for (const emoticon of entry.emoticons ?? []) emoticonIndex.set(emoticon, entry.emoji)
+  }
   stopTimer()
 
   const getEmoji = (shortcode: string): EmojiEntry | undefined =>
@@ -157,6 +164,7 @@ export function getWorkspaceEmojiIndexes(
     getEmoji,
     toEmoji: (shortcode: string) => getEmoji(shortcode)?.emoji ?? null,
     toShortcode: (emoji: string) => reverseIndex.get(emoji) ?? null,
+    fromEmoticon: (emoticon: string) => emoticonIndex.get(emoticon) ?? null,
   }
   emojiIndexes.set(emojis, indexes)
   return indexes

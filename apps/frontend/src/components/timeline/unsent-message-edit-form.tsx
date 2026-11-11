@@ -124,7 +124,8 @@ export function UnsentMessageEditForm({
       onDone()
       return
     }
-    await saveEdit(contentJson)
+    // The Save button never reaches the editor's Enter path, where an emoticon at the caret converts.
+    await saveEdit(editor?.commands.commitEmoticon() ? editor.getJSON() : contentJson)
   }, [contentJson, initialMarkdown, messageId, saveEdit, cancelEditing, onDone])
 
   const handleDelete = useCallback(async () => {
