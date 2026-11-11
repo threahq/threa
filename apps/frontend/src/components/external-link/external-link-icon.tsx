@@ -52,8 +52,9 @@ interface ExternalLinkIconProps {
 
 export function ExternalLinkIcon(props: ExternalLinkIconProps) {
   return (
-    // The generated word joiner keeps the icon on the line of the link's first character without entering copied text.
-    <span aria-hidden="true" className="whitespace-nowrap after:content-['\2060']">
+    // The generated word joiner keeps the icon on the line of the link's first character without entering copied text;
+    // select-none keeps the icon itself out of a copied selection.
+    <span aria-hidden="true" className="select-none whitespace-nowrap after:content-['\2060']">
       <span className="relative mr-[0.28em] inline-block size-[1em] align-[-0.14em]">
         <SlotContent {...props} />
       </span>

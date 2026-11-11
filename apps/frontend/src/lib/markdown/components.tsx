@@ -420,7 +420,8 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
   // inside an <a href> (via deferToNativeLinks: true), so long-press here gets
   // the native browser menu (e.g. "Open in Firefox", "Copy link") instead of
   // the message drawer.
-  const external = href ? describeExternalLink(href) : null
+  // Only inside a message: the provider is what knows which hosts have a cached icon.
+  const external = href && linkPreviewContext ? describeExternalLink(href) : null
   if (href && external) {
     return (
       <ExternalLink

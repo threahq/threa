@@ -14,19 +14,16 @@ function preview(url: string, faviconUrl: string | null): LinkPreviewSummary {
   return { url, faviconUrl } as LinkPreviewSummary
 }
 
-function renderMarkdown(content: string, previews: LinkPreviewSummary[] = []) {
+function renderMarkdown(content: string, previews: LinkPreviewSummary[] | null = []) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const markdown = <MarkdownContent content={content} />
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={["/w/ws_1/s/stream_here"]}>
         <Routes>
           <Route
             path="/w/:workspaceId/s/:streamId"
-            element={
-              <LinkPreviewProvider previews={previews}>
-                <MarkdownContent content={content} />
-              </LinkPreviewProvider>
-            }
+            element={previews ? <LinkPreviewProvider previews={previews}>{markdown}</LinkPreviewProvider> : markdown}
           />
         </Routes>
       </MemoryRouter>
@@ -108,6 +105,20 @@ describe("MarkdownContent external links", () => {
     expect(links()).toEqual([
       { href: "https://docs.example.com/a", target: "_blank", text: "the docs", icon: "globe", img: null },
     ])
+  })
+
+  it("should leave the link as it was when the markdown is not a message's", () => {
+    renderMarkdown("https://github.com/threahq/threa/pull/2977", null)
+
+    const anchor = document.querySelector("a")!
+    expect({ ...describeLink(anchor), underlined: anchor.classList.contains("underline") }).toEqual({
+      href: "https://github.com/threahq/threa/pull/2977",
+      target: "_blank",
+      text: "https://github.com/threahq/threa/pull/2977",
+      icon: null,
+      img: null,
+      underlined: true,
+    })
   })
 
   it("should render the Linear mark when a Linear link is labelled", () => {
