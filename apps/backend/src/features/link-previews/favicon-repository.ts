@@ -1,4 +1,6 @@
-import { sql, type Querier } from "@threahq/backend-common"
+import { composeSql, sql, type Querier } from "../../db"
+import { escapeLikePattern } from "../../lib/sql-filters"
+import { streamAccessPredicateSql } from "../streams"
 
 export interface LinkFavicon {
   workspaceId: string
@@ -36,6 +38,34 @@ export const LinkFaviconRepository = {
       [workspaceId, host]
     )
     return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
+  /**
+   * Whether the user can read an undeleted message that links to this host. A preview is on a host
+   * exactly when its normalized URL starts with `scheme://host/`: normalization keeps the host and the
+   * root slash.
+   */
+  async isHostLinkedInReadableStream(
+    querier: Querier,
+    workspaceId: string,
+    userId: string,
+    host: string
+  ): Promise<boolean> {
+    const [httpPrefix, httpsPrefix] = ["http", "https"].map((scheme) => `${escapeLikePattern(`${scheme}://${host}/`)}%`)
+    const result = await querier.query<{ readable: boolean }>(
+      composeSql`SELECT EXISTS (
+        SELECT 1
+        FROM link_previews lp
+        JOIN message_link_previews mlp
+          ON mlp.workspace_id = lp.workspace_id AND mlp.link_preview_id = lp.id
+        JOIN messages m ON m.workspace_id = mlp.workspace_id AND m.id = mlp.message_id
+        WHERE lp.workspace_id = ${workspaceId}
+          AND (lp.normalized_url LIKE ${httpPrefix} OR lp.normalized_url LIKE ${httpsPrefix})
+          AND m.deleted_at IS NULL
+          AND ${streamAccessPredicateSql(workspaceId, userId, "m.stream_id")}
+      ) AS readable`
+    )
+    return result.rows[0].readable
   },
 
   async storeIcon(

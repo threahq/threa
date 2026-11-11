@@ -19,6 +19,7 @@ export const BLOCKED_IP_PATTERNS: readonly RegExp[] = [
   /^\[?fe80:/i, // IPv6 link-local
   /^\[?fc00:/i, // IPv6 unique local
   /^\[?fd/i, // IPv6 unique local
+  /^\[?::ffff:/i, // IPv4-mapped IPv6: reaches any IPv4 address, loopback and private included
 ]
 
 /** Hostnames that must not be fetched (cloud metadata endpoints). */

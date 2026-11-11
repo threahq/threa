@@ -32,8 +32,11 @@ function imageResponse(bytes: Uint8Array, url: string, contentType = "image/png"
   return response
 }
 
-function spyRepo(existing: LinkFavicon | null) {
+function spyRepo(existing: LinkFavicon | null, readable = true) {
   return {
+    isHostLinkedInReadableStream: spyOn(LinkFaviconRepository, "isHostLinkedInReadableStream").mockResolvedValue(
+      readable
+    ),
     find: spyOn(LinkFaviconRepository, "find").mockResolvedValue(existing),
     storeIcon: spyOn(LinkFaviconRepository, "storeIcon").mockResolvedValue(),
     recordMiss: spyOn(LinkFaviconRepository, "recordMiss").mockResolvedValue(),
@@ -58,11 +61,11 @@ describe("LinkFaviconService.ensureForPage", () => {
     })
   })
 
-  test("should fetch and store the candidate with the 30 day TTL when the row has expired", async () => {
+  test("should fetch and store the icon with the 30 day TTL when the row has expired", async () => {
     setSystemTime(NOW)
     const repo = spyRepo(row(new Date(NOW.getTime() - 1000)))
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
-      fetchImpl(async () => imageResponse(PNG, "https://example.com/i.png"))
+      fetchImpl(async (input) => imageResponse(PNG, String(input)))
     )
 
     await new LinkFaviconService({ pool }).ensureForPage("ws_1", "https://example.com/a", "https://example.com/i.png")
@@ -72,7 +75,7 @@ describe("LinkFaviconService.ensureForPage", () => {
       fetched: fetchSpy.mock.calls.map((c) => String(c[0])),
       stored: { ...stored, bytes: Array.from(stored.bytes) },
     }).toEqual({
-      fetched: ["https://example.com/i.png"],
+      fetched: ["https://example.com/favicon.ico"],
       stored: {
         workspaceId: "ws_1",
         host: "example.com",
@@ -83,12 +86,12 @@ describe("LinkFaviconService.ensureForPage", () => {
     })
   })
 
-  test("should fall back to /favicon.ico when the first candidate is SVG or HTML", async () => {
+  test("should fall back to the declared icon when the host's /favicon.ico is not a raster image", async () => {
     const repo = spyRepo(null)
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
       fetchImpl(async (input) => {
         const url = String(input)
-        if (url.endsWith(".svg")) return imageResponse(SVG, url, "image/png")
+        if (url.endsWith("/favicon.ico")) return imageResponse(SVG, url, "image/png")
         return imageResponse(ICO, url, "text/html")
       })
     )
@@ -96,16 +99,34 @@ describe("LinkFaviconService.ensureForPage", () => {
     await new LinkFaviconService({ pool }).ensureForPage(
       "ws_1",
       "https://Example.com:8443/a",
-      "https://cdn.example.com/i.svg"
+      "https://cdn.example.com/i.ico"
     )
 
     expect({
       fetched: fetchSpy.mock.calls.map((c) => String(c[0])),
       stored: repo.storeIcon.mock.calls.map((c) => [c[1].host, c[1].contentType]),
     }).toEqual({
-      fetched: ["https://cdn.example.com/i.svg", "https://example.com:8443/favicon.ico"],
+      fetched: ["https://example.com:8443/favicon.ico", "https://cdn.example.com/i.ico"],
       stored: [["example.com:8443", "image/x-icon"]],
     })
+  })
+
+  test("should store the link host's own icon when its page redirected to another site", async () => {
+    const repo = spyRepo(null)
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      fetchImpl(async (input) => imageResponse(PNG, String(input)))
+    )
+
+    await new LinkFaviconService({ pool }).ensureForPage(
+      "ws_1",
+      "https://sho.rt/abc",
+      "https://destination.example/icon.png"
+    )
+
+    expect({
+      fetched: fetchSpy.mock.calls.map((c) => String(c[0])),
+      stored: repo.storeIcon.mock.calls.map((c) => c[1].host),
+    }).toEqual({ fetched: ["https://sho.rt/favicon.ico"], stored: ["sho.rt"] })
   })
 
   test("should reject the body and record a miss when it exceeds the size cap", async () => {
@@ -122,20 +143,22 @@ describe("LinkFaviconService.ensureForPage", () => {
     })
   })
 
-  test("should never fetch a blocked candidate when it points at an internal address", async () => {
-    spyRepo(null)
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
-      fetchImpl(async (input) => imageResponse(PNG, String(input)))
-    )
+  test.each(["http://169.254.169.254/i.png", "http://[::ffff:7f00:1]/i.png", "file:///etc/hostname"])(
+    "should never fetch the declared icon %s when it is not a public web address",
+    async (candidate) => {
+      const repo = spyRepo(null)
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+        fetchImpl(async () => new Response("nope", { status: 404 }))
+      )
 
-    await new LinkFaviconService({ pool }).ensureForPage(
-      "ws_1",
-      "https://example.com/a",
-      "http://169.254.169.254/i.png"
-    )
+      await new LinkFaviconService({ pool }).ensureForPage("ws_1", "https://example.com/a", candidate)
 
-    expect(fetchSpy.mock.calls.map((c) => String(c[0]))).toEqual(["https://example.com/favicon.ico"])
-  })
+      expect({
+        fetched: fetchSpy.mock.calls.map((c) => String(c[0])),
+        misses: repo.recordMiss.mock.calls.length,
+      }).toEqual({ fetched: ["https://example.com/favicon.ico"], misses: 1 })
+    }
+  )
 
   test("should record a miss with the retry TTL when every candidate fails", async () => {
     setSystemTime(NOW)
@@ -188,7 +211,7 @@ describe("LinkFaviconService.ensureForPage", () => {
     expect({
       fetched: fetchSpy.mock.calls.map((c) => String(c[0])),
       stores: repo.storeIcon.mock.calls.length,
-    }).toEqual({ fetched: ["https://example.com/i.png"], stores: 1 })
+    }).toEqual({ fetched: ["https://example.com/favicon.ico"], stores: 1 })
   })
 })
 
@@ -224,6 +247,14 @@ describe("LinkFaviconService.getIcon", () => {
 
   test("should return null when the row has no bytes", async () => {
     spyRepo({ ...row(new Date()), contentType: null, bytes: null })
-    expect(await new LinkFaviconService({ pool }).getIcon("ws_1", "example.com")).toBeNull()
+    expect(await new LinkFaviconService({ pool }).getIcon("ws_1", "usr_1", "example.com")).toBeNull()
+  })
+
+  test("should return null without reading the icon when the user cannot read a message linking the host", async () => {
+    const repo = spyRepo(row(new Date()), false)
+
+    const icon = await new LinkFaviconService({ pool }).getIcon("ws_1", "usr_1", "example.com")
+
+    expect({ icon, reads: repo.find.mock.calls.length }).toEqual({ icon: null, reads: 0 })
   })
 })

@@ -1,10 +1,12 @@
 import { linkFaviconHost } from "@threahq/types"
 import { sql } from "../../db"
-import { registerBackfill, type BackfillContext } from "../../lib/backfill"
+import { chunkIds, registerBackfill, type BackfillContext } from "../../lib/backfill"
 import type { LinkFaviconService } from "./favicon-service"
 
 export const LINK_FAVICONS_BACKFILL_NAME = "link-favicons"
-const CHUNK_SIZE = 20
+// Hosts in a chunk are fetched one at a time, each bounded by the 5 s fetch deadline: ten keeps a
+// chunk of dead hosts under the queue's 60 s stuck-token warning.
+const CHUNK_SIZE = 10
 
 export type LinkFaviconsChunk = { items: Array<{ pageUrl: string; faviconUrl: string }> }
 
@@ -28,12 +30,7 @@ export async function plan(ctx: BackfillContext, workspaceId: string): Promise<L
     latestByHost.set(host, { pageUrl: row.page_url, faviconUrl: row.favicon_url })
   }
 
-  const items = [...latestByHost.values()]
-  const chunks: LinkFaviconsChunk[] = []
-  for (let i = 0; i < items.length; i += CHUNK_SIZE) {
-    chunks.push({ items: items.slice(i, i + CHUNK_SIZE) })
-  }
-  return chunks
+  return chunkIds([...latestByHost.values()], CHUNK_SIZE).map((items) => ({ items }))
 }
 
 export interface LinkFaviconsBackfillContext extends BackfillContext {

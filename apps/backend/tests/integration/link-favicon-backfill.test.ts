@@ -101,8 +101,8 @@ describe("link-favicons backfill against the real schema", () => {
 
     expect(result).toEqual({ processed: 2 })
     expect(fetchSpy.mock.calls.map((call) => String(call[0]))).toEqual([
-      "https://shop.example.com:8443/icon.png",
-      "https://docs.example.com/new.png",
+      "https://shop.example.com:8443/favicon.ico",
+      "https://docs.example.com/favicon.ico",
     ])
     const stored = await Promise.all(
       ["docs.example.com", "shop.example.com:8443"].map((host) => LinkFaviconRepository.find(pool, wsA, host))

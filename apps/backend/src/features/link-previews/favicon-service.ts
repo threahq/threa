@@ -1,8 +1,11 @@
 import type { Pool } from "pg"
+import { logger } from "@threahq/backend-common"
 import { linkFaviconHost, resolveFetchUserAgent } from "@threahq/types"
 import { LinkFaviconRepository } from "./favicon-repository"
 import { isBlockedUrl } from "./url-utils"
 import { FAVICON_FETCH_TIMEOUT_MS, FAVICON_RETRY_TTL_MS, FAVICON_TTL_MS, MAX_FAVICON_BYTES } from "./config"
+
+const log = logger.child({ module: "link-favicon-service" })
 
 export interface LinkFaviconServiceDeps {
   pool: Pool
@@ -45,7 +48,10 @@ async function readCapped(response: Response): Promise<Uint8Array | null> {
 }
 
 async function fetchIcon(url: string, signal: AbortSignal): Promise<LinkFaviconIcon | null> {
-  if (isBlockedUrl(url)) return null
+  if (!linkFaviconHost(url) || isBlockedUrl(url)) {
+    log.debug({ url }, "Favicon candidate skipped: not a fetchable address")
+    return null
+  }
   try {
     const response = await fetch(url, {
       method: "GET",
@@ -53,15 +59,25 @@ async function fetchIcon(url: string, signal: AbortSignal): Promise<LinkFaviconI
       signal,
       redirect: "follow",
     })
-    if ((response.url && isBlockedUrl(response.url)) || !response.ok) {
+    if (response.url && isBlockedUrl(response.url)) {
       response.body?.cancel()
+      log.warn({ url, redirectedTo: response.url }, "Favicon candidate redirected to a blocked address")
+      return null
+    }
+    if (!response.ok) {
+      response.body?.cancel()
+      log.debug({ url, status: response.status }, "Favicon candidate answered with an error status")
       return null
     }
     const bytes = await readCapped(response)
-    if (!bytes) return null
-    const contentType = sniffFaviconType(bytes)
-    return contentType ? { contentType, bytes } : null
-  } catch {
+    const contentType = bytes && sniffFaviconType(bytes)
+    if (!bytes || !contentType) {
+      log.debug({ url, oversize: !bytes }, "Favicon candidate is not a supported image within the size cap")
+      return null
+    }
+    return { contentType, bytes }
+  } catch (err) {
+    log.debug({ err, url }, "Favicon candidate fetch failed")
     return null
   }
 }
@@ -93,7 +109,9 @@ export class LinkFaviconService {
     if (existing && existing.expiresAt.getTime() > Date.now()) return
 
     const signal = AbortSignal.timeout(FAVICON_FETCH_TIMEOUT_MS)
-    const candidates = [...new Set([candidateUrl, `${new URL(pageUrl).origin}/favicon.ico`])]
+    // The host's own icon first: a redirecting host (a link shortener) hands us its destination's
+    // declared icon, which would otherwise be cached under the shortener's name.
+    const candidates = [...new Set([`${new URL(pageUrl).origin}/favicon.ico`, candidateUrl])]
     for (const candidate of candidates) {
       const icon = await fetchIcon(candidate, signal)
       if (icon) {
@@ -115,7 +133,12 @@ export class LinkFaviconService {
     })
   }
 
-  async getIcon(workspaceId: string, host: string): Promise<LinkFaviconIcon | null> {
+  /**
+   * The access check runs first and alone, so a host the user cannot see and a host nobody linked
+   * take the same path to the same answer.
+   */
+  async getIcon(workspaceId: string, userId: string, host: string): Promise<LinkFaviconIcon | null> {
+    if (!(await LinkFaviconRepository.isHostLinkedInReadableStream(this.pool, workspaceId, userId, host))) return null
     const row = await LinkFaviconRepository.find(this.pool, workspaceId, host)
     if (!row?.bytes || !row.contentType) return null
     return { contentType: row.contentType, bytes: row.bytes }

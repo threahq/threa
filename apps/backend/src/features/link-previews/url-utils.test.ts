@@ -274,6 +274,11 @@ describe("isBlockedUrl", () => {
     expect(isBlockedUrl("http://169.254.169.254/latest/meta-data/")).toBe(true)
   })
 
+  test("blocks IPv4-mapped IPv6 addresses", () => {
+    expect(isBlockedUrl("http://[::ffff:127.0.0.1]/")).toBe(true)
+    expect(isBlockedUrl("http://[::ffff:a9fe:a9fe]/latest/meta-data/")).toBe(true)
+  })
+
   test("blocks cloud metadata hostnames", () => {
     expect(isBlockedUrl("http://metadata.google.internal/")).toBe(true)
   })

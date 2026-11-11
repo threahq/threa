@@ -122,7 +122,7 @@ describe("MarkdownContent", () => {
     it("should style links with primary color", () => {
       render(<MarkdownContent content="[Link](https://example.com)" />)
       const link = screen.getByRole("link")
-      expect(link).toHaveClass("text-primary", "no-underline")
+      expect(link).toHaveClass("text-primary", "underline")
     })
 
     it("should auto-linkify bare URLs", () => {
@@ -462,9 +462,7 @@ Second paragraph`
     // What third-party HTML could use to run code, load remote content, restyle
     // the app, clobber globals, or pose as a Threa pointer. Tag and attribute
     // checks skip KaTeX output, which styles its own spans and draws with
-    // svg/MathML; links are checked everywhere. Element checks also skip Threa's
-    // own aria-hidden icons: the schema drops aria-hidden, so pasted HTML cannot
-    // claim that exemption. The <kbd> marker proves the HTML
+    // svg/MathML; links are checked everywhere. The <kbd> marker proves the HTML
     // was parsed at all, so a payload escaped to text cannot pass vacuously.
     const exposure = (container: HTMLElement) => {
       const outsideKatex = (selector: string) =>
@@ -474,9 +472,7 @@ Second paragraph`
         htmlRendered: container.querySelector("kbd") !== null,
         elements: outsideKatex(
           "script,iframe,frame,object,embed,form,video,audio,source,track,style,link,meta,base,svg,math,noscript,template"
-        )
-          .filter((el) => !el.closest("[aria-hidden='true']"))
-          .map((el) => el.tagName.toLowerCase()),
+        ).map((el) => el.tagName.toLowerCase()),
         handlers: all.flatMap((el) => el.getAttributeNames().filter((name) => name.startsWith("on"))),
         styled: outsideKatex("[style]").map((el) => el.tagName.toLowerCase()),
         remoteLoads: outsideKatex("[src],[srcset],[poster],[data],[action],[formaction],[background]").map((el) =>
@@ -632,7 +628,8 @@ Some **bold** and *italic* text with \`code\`.
       const longUrl = "https://example.com/" + "averyverylongsegment".repeat(20)
       render(<MarkdownContent content={longUrl} />)
       const link = screen.getByRole("link")
-      expect(link.lastElementChild).toHaveClass("[overflow-wrap:anywhere]")
+      // break-all allows breaking unbreakable URL text mid-token.
+      expect(link).toHaveClass("break-all")
     })
 
     it("should break long inline code at arbitrary points", () => {
