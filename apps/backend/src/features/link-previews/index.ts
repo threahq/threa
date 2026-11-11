@@ -8,6 +8,7 @@ export { createLinkPreviewHandlers } from "./handlers"
 
 export { LinkFaviconService } from "./favicon-service"
 export { LinkFaviconRepository } from "./favicon-repository"
+export { registerLinkFaviconsBackfill } from "./favicon-backfill"
 
 export { createLinkPreviewWorker } from "./worker"
 

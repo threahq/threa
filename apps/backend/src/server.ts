@@ -53,6 +53,7 @@ import {
 import {
   LinkPreviewService,
   LinkFaviconService,
+  registerLinkFaviconsBackfill,
   LinkPreviewOutboxHandler,
   createLinkPreviewWorker,
   createLinkPreviewVisibleRefreshWorker,
@@ -1783,6 +1784,7 @@ export async function startServer(): Promise<ServerInstance> {
   registerMessageEmbeddingBackfill({ embeddingService })
   registerConversationEmbeddingBackfill({ embeddingService })
   registerGithubInstallationBackfill({ workspaceIntegrationService })
+  registerLinkFaviconsBackfill({ linkFaviconService })
   jobQueue.registerHandler(JobQueues.BACKFILL_PLAN, createBackfillPlanWorker({ pool }), {
     tier: QueueTiers.LIGHT,
     fairness: QueueFairness.NONE,
