@@ -1027,7 +1027,10 @@ export function MessageComposer({
     // editor (so the tail lands in the message) and drops the polish toggle +
     // warnings before we snapshot the content below.
     micRef.current?.prepareSendAsIs()
-    onSubmit(richEditorRef.current?.getEditor()?.getJSON() as JSONContent | undefined, options)
+    const editor = richEditorRef.current?.getEditor()
+    // The send button never reaches the editor's Enter path, where an emoticon at the caret converts.
+    editor?.commands.commitEmoticon()
+    onSubmit(editor?.getJSON() as JSONContent | undefined, options)
   })
 
   const handleSubmit = useCallback(() => {

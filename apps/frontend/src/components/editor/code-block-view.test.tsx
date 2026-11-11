@@ -19,7 +19,13 @@ import { DecorationSet } from "@tiptap/pm/view"
 import { codeBlockHighlightKey } from "./code-block-highlight"
 
 const NO_MENTIONABLES = { mentionables: [], isLoading: false }
-const NO_EMOJI = { emojis: [], emojiWeights: {}, toEmoji: () => null, toShortcode: () => null }
+const NO_EMOJI = {
+  emojis: [],
+  emojiWeights: {},
+  toEmoji: () => null,
+  toShortcode: () => null,
+  fromEmoticon: () => null,
+}
 const NO_PREFERENCES = { preferences: {} }
 
 beforeEach(() => {

@@ -18,6 +18,7 @@ import {
 } from "@/components/editor"
 import type { RichEditorHandle } from "@/components/editor"
 import { inAppLinkMarksToNodes } from "@/components/editor/in-app-link-marks"
+import { keepEmoticonOnEscape } from "@/components/editor/triggers/emoticon-extension"
 import { AskOverlay, SendAskRow, SendWarningBadge } from "@/components/composer/send-ask"
 import { useEditorSendAsk } from "@/components/composer/use-editor-send-ask"
 import type { ComposerSubmitOptions } from "@/components/composer"
@@ -188,7 +189,9 @@ export function MessageEditForm({
     setFormatOpen(false)
     setMobileExpanded(false)
     setMobileLinkPopoverOpen(false)
-    void saveEdit(contentRef.current, options?.confirmedPrivacyWarning)
+    // The Save button never reaches the editor's Enter path, where an emoticon at the caret converts.
+    const content = editor?.commands.commitEmoticon() ? editor.getJSON() : contentRef.current
+    void saveEdit(content, options?.confirmedPrivacyWarning)
   })
 
   const handleSubmit = useCallback(() => {
@@ -309,7 +312,10 @@ export function MessageEditForm({
       >
         <DrawerContent
           ref={drawerContentRef}
-          onEscapeKeyDown={escapeQuestion}
+          onEscapeKeyDown={(event) => {
+            if (!escapeQuestion(event) && keepEmoticonOnEscape(richEditorRef.current?.getEditor()))
+              event.preventDefault()
+          }}
           onPointerDownOutside={(e) => {
             // The "Save anyway" toast lives outside the drawer; pressing it must not close the edit.
             if ((e.target as HTMLElement).closest("[data-sonner-toaster]")) e.preventDefault()

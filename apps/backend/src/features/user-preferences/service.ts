@@ -76,6 +76,7 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "sidebarCollapsed",
     "messageSendMode",
     "mobileInlineAttachments",
+    "convertEmoticons",
     "linkPreviewDefault",
     "linkPreviewOpenCount",
     "linkPreviewTypeOverrides",

@@ -1,6 +1,8 @@
 import { useWorkspaceMetadata } from "@/stores/workspace-store"
 import { getWorkspaceEmojiIndexes } from "@/stores/actor-lookup"
-import type { EmojiEntry } from "@threahq/types"
+import { usePreferencesOptional } from "@/contexts/preferences-context"
+import { useStableCallback } from "@/hooks/use-stable-callback"
+import { DEFAULT_USER_PREFERENCES, type EmojiEntry } from "@threahq/types"
 
 interface WorkspaceEmojiData {
   /** All available emojis in the workspace */
@@ -13,6 +15,8 @@ interface WorkspaceEmojiData {
   getEmoji: (shortcode: string) => EmojiEntry | undefined
   /** Reverse lookup: emoji character → shortcode (no colons). Null when unknown. */
   toShortcode: (emoji: string) => string | null
+  /** Emoji a text emoticon (`:)`) stands for. Null when it is not one. */
+  fromEmoticon: (emoticon: string) => string | null
 }
 
 const EMPTY_EMOJIS: EmojiEntry[] = []
@@ -29,4 +33,16 @@ export function useWorkspaceEmoji(workspaceId: string): WorkspaceEmojiData {
   const emojis = (metadata?.emojis ?? EMPTY_EMOJIS) as EmojiEntry[]
   const emojiWeights = metadata?.emojiWeights ?? EMPTY_WEIGHTS
   return getWorkspaceEmojiIndexes(workspaceId, emojis, emojiWeights)
+}
+
+/**
+ * The emoticon lookup an editor converts with: `fromEmoticon`, or null for
+ * everything once the user has turned conversion off. Stable, so it never
+ * rebuilds the editor.
+ */
+export function useEmoticonConversion(
+  fromEmoticon: WorkspaceEmojiData["fromEmoticon"]
+): (emoticon: string) => string | null {
+  const enabled = usePreferencesOptional()?.preferences?.convertEmoticons ?? DEFAULT_USER_PREFERENCES.convertEmoticons
+  return useStableCallback((emoticon: string) => (enabled ? fromEmoticon(emoticon) : null))
 }

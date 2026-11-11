@@ -168,6 +168,21 @@ export function filterBySearch(emojis: EmojiEntry[], query: string): EmojiEntry[
 }
 
 /**
+ * `filterBySearch` for the composer's `:` trigger, where the query may be the
+ * tail of an emoticon: `:p` means 😛 before it is a search for "p", which
+ * 🅿️ would otherwise win on its "p" keyword.
+ */
+export function filterForColonTrigger(emojis: EmojiEntry[], query: string, all: EmojiEntry[] = emojis): EmojiEntry[] {
+  const matches = filterBySearch(emojis, query)
+  const emoticon = `:${query}`
+  const lead = query ? all.find((entry) => entry.emoticons?.includes(emoticon)) : undefined
+  // No hits, no list to lead: for the whole picker that is no popup (`:-)`
+  // converts without one), for empty recents the main grid is first anyway.
+  if (!lead || matches.length === 0) return matches
+  return [lead, ...matches.filter((entry) => entry !== lead)]
+}
+
+/**
  * Index every emoji by its primary shortcode *and* its aliases, because the
  * backend accepts any alias in `:shortcode:` markdown — a primary-only index
  * leaves `:smiley_cat:` rendering as literal text.

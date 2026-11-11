@@ -93,6 +93,7 @@ export function DescriptionSection({
         className={cn("relative", SETTING_INPUT_FRAME)}
         onBlur={(event) => {
           if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+          editorRef.current?.getEditor()?.commands.commitEmoticon()
           void field.save()
         }}
         onClick={(event) => {

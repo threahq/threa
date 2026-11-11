@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect, useCallback, useContext, useMemo, forwardRef, useImperativeHandle } from "react"
 import { isAndroid, isiOS } from "@tiptap/core"
-import { useEditor, EditorContent } from "@tiptap/react"
+import { flushSync } from "react-dom"
+import { useEditor, EditorContent, type Editor } from "@tiptap/react"
 import { GapCursor } from "@tiptap/pm/gapcursor"
 import type { ResolvedPos } from "@tiptap/pm/model"
 import { Selection, type PluginKey } from "@tiptap/pm/state"
@@ -52,7 +53,7 @@ import {
   insertPastedText,
 } from "./multiline-blocks"
 import { useMentionables, useMarkdownTriggerLookups } from "@/hooks/use-mentionables"
-import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
+import { useEmoticonConversion, useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useGiphyEnabled } from "@/hooks/use-giphy-enabled"
 import { GiphyPickerDialog } from "./giphy-picker-dialog"
 import { SnippetEditorDialog } from "./snippet-editor-dialog"
@@ -272,6 +273,15 @@ function hasNoTypedText(editor: import("@tiptap/react").Editor | null | undefine
   return onlyWhitespace && (hasReference || block.content.size === 0)
 }
 
+/**
+ * An emoticon still at the caret converts before the send. Synchronously,
+ * because a host that submits from `value` only sees it after re-rendering.
+ */
+function submitFromKeyboard(editor: Editor | null, onSubmitRef: { current: () => void }) {
+  if (editor) flushSync(() => editor.commands.commitEmoticon())
+  onSubmitRef.current()
+}
+
 function emojiAtomToEditableText(node: JSONContent, toEmoji?: (shortcode: string) => string | null): JSONContent {
   if (node.type === "emoji") {
     const shortcode = typeof node.attrs?.shortcode === "string" ? node.attrs.shortcode : ""
@@ -443,7 +453,8 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       tryInsertInAppLinkChip(editor, text, at)
   )
 
-  const { emojis, emojiWeights, toEmoji } = useWorkspaceEmoji(workspaceId ?? "")
+  const { emojis, emojiWeights, toEmoji, fromEmoticon } = useWorkspaceEmoji(workspaceId ?? "")
+  const emoticonToEmoji = useEmoticonConversion(fromEmoticon)
   const { suggestionConfig: emojiConfig, renderEmojiGrid } = useEmojiSuggestion({ emojis, emojiWeights })
 
   // Ref to avoid stale closure in TipTap paste handler
@@ -569,6 +580,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         docSearchSuggestion: enableDocEmbed ? docConfig : undefined,
         docCreate: enableDocEmbed ? docCreateOptions : undefined,
         toEmoji: enableEmoji ? toEmoji : undefined,
+        emoticonToEmoji: enableEmoji ? emoticonToEmoji : undefined,
       }),
       EditorBehaviors.configure({
         sendModeRef: messageSendModeRef,
@@ -587,6 +599,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       docConfig,
       docCreateOptions,
       toEmoji,
+      emoticonToEmoji,
       enableMentions,
       enableChannels,
       enableCommands,
@@ -966,7 +979,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
 
         // A surface that already spent this Escape (closing a question) keeps the editor focused.
         if (event.key === "Escape" && blurOnEscape && !event.defaultPrevented) {
-          if (currentEditor && isSuggestionActive(currentEditor)) {
+          if (currentEditor && (isSuggestionActive(currentEditor) || currentEditor.can().commitEmoticon())) {
             return false
           }
           event.preventDefault()
@@ -1012,7 +1025,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         // Cmd/Ctrl+Enter: always send (regardless of mode or active suggestions)
         if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.shiftKey) {
           event.preventDefault()
-          onSubmitRef.current()
+          submitFromKeyboard(currentEditor, onSubmitRef)
           return true
         }
         // The page's pane-focus shortcut (⌥Enter by default) is neither a new line nor a send here.
@@ -1030,7 +1043,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
             return true
           }
           event.preventDefault()
-          onSubmitRef.current()
+          submitFromKeyboard(currentEditor, onSubmitRef)
           return true
         }
         // Shift+Cmd/Ctrl+V to paste as plain text (no mention parsing)

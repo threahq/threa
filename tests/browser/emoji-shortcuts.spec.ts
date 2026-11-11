@@ -256,20 +256,49 @@ test.describe("Emoji Shortcuts", () => {
     await expect(editor).toHaveText("ratio x: 5")
   })
 
-  test("should send message with Enter when emoji query has no matches (e.g. :) smiley)", async ({ page }) => {
+  test("`:p` leads the picker with the tongue, so Enter inserts it", async ({ page }) => {
+    const editor = await setupComposerEditor(page)
+
+    await page.keyboard.type(":p")
+    await expect(page.locator("[data-emoji-grid]")).toBeVisible({ timeout: 2000 })
+    await page.keyboard.press("Enter")
+
+    await expect(editor).toHaveText(/^😛\s?$/u)
+  })
+
+  test("a finished emoticon becomes its emoji, and Backspace brings the text back", async ({ page }) => {
+    const editor = await setupComposerEditor(page)
+
+    await page.keyboard.type(":p and :/ and <3 ")
+    await expect(editor).toHaveText(/^😛 and 😕 and ❤️\s?$/u)
+
+    await page.keyboard.press("Backspace")
+    await expect(editor).toHaveText(/^😛 and 😕 and <3\s?$/u)
+  })
+
+  test("Escape on an emoticon keeps it as text", async ({ page }) => {
+    const editor = await setupComposerEditor(page)
+
+    await page.keyboard.type(":)")
+    await page.keyboard.press("Escape")
+    await page.keyboard.type(" ok :) ")
+
+    await expect(editor).toBeFocused()
+    await expect(editor).toHaveText(/^:\) ok 🙂\s?$/u)
+  })
+
+  test("should send a message ending in an emoticon as its emoji (e.g. :) smiley)", async ({ page }) => {
     const editor = await setupWorkspaceWithEditor(page)
 
-    // Type "hello :)" — the colon triggers the emoji picker, but ")" has no matches
+    // The colon triggers the emoji picker, but ")" has no matches
     await page.keyboard.type("hello :)")
-
-    // Emoji grid should NOT be visible (no matches for ")")
     await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
 
     // Press Enter — should send the message, not insert a newline
     await page.keyboard.press("Enter")
 
     // Message should appear in the stream (scoped to main to avoid matching sidebar preview)
-    await expect(page.getByRole("main").getByText("hello :)")).toBeVisible({ timeout: 5000 })
+    await expect(page.getByRole("main").getByText("hello 🙂")).toBeVisible({ timeout: 5000 })
   })
 
   test("should send message with Enter after dismissing emoji picker with Escape", async ({ page }) => {

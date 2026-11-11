@@ -33,7 +33,8 @@
       "shortcodes": ["smile", "grinning_face_with_closed_eyes", "grinning_face_with_smiling_eyes"],
       "group": "smileys",
       "order": 2,
-      "keywords": ["eye", "eyes", "face", "grin", "grinning", "happy", "laugh", "lol", "mouth", "open", "smiling"]
+      "keywords": ["eye", "eyes", "face", "grin", "grinning", "happy", "laugh", "lol", "mouth", "open", "smiling"],
+      "emoticons": [":D", ":-D", "=D"]
     },
     {
       "emoji": "😁",
@@ -63,7 +64,8 @@
         "smile",
         "smiling",
         "squinting"
-      ]
+      ],
+      "emoticons": ["xD"]
     },
     {
       "emoji": "😅",
@@ -134,7 +136,8 @@
       "shortcodes": ["slightly_smiling_face", "smile_face", "slight_smile"],
       "group": "smileys",
       "order": 8,
-      "keywords": ["face", "happy", "slightly", "smile", "smiling"]
+      "keywords": ["face", "happy", "slightly", "smile", "smiling"],
+      "emoticons": [":)", ":-)", "=)"]
     },
     {
       "emoji": "🙃",
@@ -167,7 +170,8 @@
       "shortcodes": ["wink", "winking_face"],
       "group": "smileys",
       "order": 11,
-      "keywords": ["face", "flirt", "heartbreaker", "sexy", "slide", "tease", "winking", "winks"]
+      "keywords": ["face", "flirt", "heartbreaker", "sexy", "slide", "tease", "winking", "winks"],
+      "emoticons": [";)", ";-)"]
     },
     {
       "emoji": "😊",
@@ -274,7 +278,8 @@
         "smooch",
         "xoxo",
         "you"
-      ]
+      ],
+      "emoticons": [":*", ":-*"]
     },
     {
       "emoji": "😗",
@@ -383,7 +388,8 @@
       "shortcodes": ["stuck_out_tongue", "face_with_tongue"],
       "group": "smileys",
       "order": 24,
-      "keywords": ["awesome", "cool", "face", "nice", "party", "stuck-out", "sweet", "tongue"]
+      "keywords": ["awesome", "cool", "face", "nice", "party", "stuck-out", "sweet", "tongue"],
+      "emoticons": [":p", ":P", ":-p", ":-P"]
     },
     {
       "emoji": "😜",
@@ -407,7 +413,8 @@
         "wink",
         "winking",
         "yolo"
-      ]
+      ],
+      "emoticons": [";p", ";P", ";-p", ";-P"]
     },
     {
       "emoji": "🤪",
@@ -582,7 +589,8 @@
         "unhappy",
         "unimpressed",
         "whatever"
-      ]
+      ],
+      "emoticons": [":|", ":-|"]
     },
     {
       "emoji": "😑",
@@ -987,7 +995,8 @@
       "shortcodes": ["confused", "confused_face"],
       "group": "smileys",
       "order": 76,
-      "keywords": ["befuddled", "confusing", "dunno", "face", "frown", "hm", "meh", "not", "sad", "sorry", "sure"]
+      "keywords": ["befuddled", "confusing", "dunno", "face", "frown", "hm", "meh", "not", "sad", "sorry", "sure"],
+      "emoticons": [":/", ":-/", ":\\", ":-\\"]
     },
     {
       "emoji": "🫤",
@@ -1063,7 +1072,8 @@
         "whoa",
         "wow",
         "you"
-      ]
+      ],
+      "emoticons": [":o", ":O", ":-o", ":-O"]
     },
     {
       "emoji": "😯",
@@ -1193,7 +1203,8 @@
       "shortcodes": ["cry", "crying_face"],
       "group": "smileys",
       "order": 93,
-      "keywords": ["awful", "crying", "face", "feels", "miss", "sad", "tear", "triste", "unhappy"]
+      "keywords": ["awful", "crying", "face", "feels", "miss", "sad", "tear", "triste", "unhappy"],
+      "emoticons": [":'(", ":’("]
     },
     {
       "emoji": "😭",
@@ -1228,7 +1239,8 @@
       "shortcodes": ["disappointed", "disappointed_face"],
       "group": "smileys",
       "order": 98,
-      "keywords": ["awful", "blame", "dejected", "face", "fail", "losing", "sad", "unhappy"]
+      "keywords": ["awful", "blame", "dejected", "face", "fail", "losing", "sad", "unhappy"],
+      "emoticons": [":(", ":-("]
     },
     {
       "emoji": "😓",
@@ -1328,7 +1340,8 @@
         "shade",
         "unhappy",
         "upset"
-      ]
+      ],
+      "emoticons": [">:(", ">:-("]
     },
     {
       "emoji": "🤬",
@@ -1738,7 +1751,8 @@
       "shortcodes": ["broken_heart"],
       "group": "smileys",
       "order": 141,
-      "keywords": ["break", "broken", "crushed", "emotion", "heart", "heartbroken", "lonely", "sad"]
+      "keywords": ["break", "broken", "crushed", "emotion", "heart", "heartbroken", "lonely", "sad"],
+      "emoticons": ["</3"]
     },
     {
       "emoji": "❤️‍🔥",
@@ -1759,7 +1773,8 @@
       "shortcodes": ["heart", "red_heart"],
       "group": "smileys",
       "order": 144,
-      "keywords": ["emotion", "love", "red"]
+      "keywords": ["emotion", "love", "red"],
+      "emoticons": ["<3"]
     },
     {
       "emoji": "🩷",

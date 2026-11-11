@@ -67,6 +67,7 @@ const updatePreferencesSchema = z.object({
   sidebarCollapsed: z.boolean().optional(),
   messageSendMode: z.enum(MESSAGE_SEND_MODE_OPTIONS).optional(),
   mobileInlineAttachments: z.boolean().optional(),
+  convertEmoticons: z.boolean().optional(),
   linkPreviewDefault: z.enum(LINK_PREVIEW_DEFAULT_OPTIONS).optional(),
   linkPreviewOpenCount: z.union([z.number().int().min(1).max(Number.MAX_SAFE_INTEGER), z.literal("all")]).optional(),
   linkPreviewTypeOverrides: z

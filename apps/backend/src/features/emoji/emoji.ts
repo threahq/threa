@@ -107,9 +107,10 @@ export interface EmojiEntry {
   order: number
   aliases: string[]
   keywords: string[]
+  emoticons?: string[]
 }
 
-const emojiList: EmojiEntry[] = emojiData.emojis.map(({ emoji, shortcodes, group, order, keywords }) => ({
+const emojiList: EmojiEntry[] = emojiData.emojis.map(({ emoji, shortcodes, group, order, keywords, emoticons }) => ({
   shortcode: shortcodes[0],
   emoji,
   type: "native" as const,
@@ -117,6 +118,7 @@ const emojiList: EmojiEntry[] = emojiData.emojis.map(({ emoji, shortcodes, group
   order: order ?? 9999,
   aliases: shortcodes,
   keywords: keywords ?? [],
+  ...(emoticons ? { emoticons } : {}),
 }))
 
 /** All emojis in API response format, each with its primary shortcode, aliases and search keywords. */

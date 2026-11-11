@@ -1003,6 +1003,7 @@ export interface CachedWorkspaceMetadata {
     aliases: string[]
     /** Absent on rows cached before search keywords shipped. */
     keywords?: string[]
+    emoticons?: string[]
   }>
   emojiWeights: Record<string, number>
   /**

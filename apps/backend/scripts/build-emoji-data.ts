@@ -21,6 +21,10 @@
  *   are deliberately shared across emoji and would make `:face:` ambiguous if
  *   they were shortcodes.
  *
+ * `emoticons` are a third kind of name, and the only hand-written one: the text
+ * faces (`:)`, `:p`) the composer converts once the word is finished. See
+ * EMOTICONS below for what may go in.
+ *
  * `shortcodes[0]` is never touched for an emoji already in the file: it is the
  * canonical form already persisted in message content and reactions.
  */
@@ -59,6 +63,32 @@ const SHORTCODE_OVERRIDES: Record<string, string> = {
   "🧒": "kid",
 }
 
+/**
+ * Text emoticons per emoji. Hand-curated rather than taken from emojibase's
+ * `emoticon` field: a conversion fires on any whole word, so every entry has to
+ * be something nobody types meaning anything else. That rules out `8)` (the
+ * eighth list item), `D:` (a drive letter), `xp`, `XD` (the design tool), and
+ * the mirrored `(:`, which opens a parenthesised `(:shortcode:)`.
+ */
+const EMOTICONS: Record<string, string[]> = {
+  "🙂": [":)", ":-)", "=)"],
+  "😄": [":D", ":-D", "=D"],
+  "😆": ["xD"],
+  "😉": [";)", ";-)"],
+  "😞": [":(", ":-("],
+  // The second is what a phone's smart punctuation makes of the first.
+  "😢": [":'(", ":’("],
+  "😛": [":p", ":P", ":-p", ":-P"],
+  "😜": [";p", ";P", ";-p", ";-P"],
+  "😮": [":o", ":O", ":-o", ":-O"],
+  "😕": [":/", ":-/", ":\\", ":-\\"],
+  "😐": [":|", ":-|"],
+  "😘": [":*", ":-*"],
+  "😠": [">:(", ">:-("],
+  "❤️": ["<3"],
+  "💔": ["</3"],
+}
+
 /** Unicode group name -> our group name. Component is dropped entirely. */
 const GROUPS: Record<string, string> = {
   "Smileys & Emotion": "smileys",
@@ -85,6 +115,7 @@ interface EmojiEntry {
   group: string
   order: number
   keywords: string[]
+  emoticons?: string[]
 }
 
 interface EmojibaseEmoji {
@@ -302,6 +333,12 @@ async function main() {
       entry.keywords.push(keyword)
       keywordCount++
     }
+  }
+
+  for (const [emoji, emoticons] of Object.entries(EMOTICONS)) {
+    const entry = entries.find((candidate) => normalizeEmoji(candidate.emoji) === normalizeEmoji(emoji))
+    if (!entry) throw new Error(`EMOTICONS names ${emoji}, which Emoji ${EXPECTED_EMOJI_VERSION} does not list`)
+    entry.emoticons = emoticons
   }
 
   const nameless = entries.filter((entry) => entry.shortcodes.length === 0)

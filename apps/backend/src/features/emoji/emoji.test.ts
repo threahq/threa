@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test"
-import { toShortcode, toEmoji, isValidShortcode, getShortcodeNames, normalizeMessage } from "./emoji"
+import { toShortcode, toEmoji, isValidShortcode, getShortcodeNames, normalizeMessage, getEmojiList } from "./emoji"
 import emojiData from "./emoji-data.json"
 
 describe("Emoji Library", () => {
@@ -140,6 +140,21 @@ describe("Emoji Library", () => {
         .filter(([, emojis]) => emojis.length > 1)
         .map(([shortcode, emojis]) => `${shortcode} -> ${emojis.join(", ")}`)
       expect(collisions).toEqual([])
+    })
+
+    test("every emoticon is one word owned by one emoji", () => {
+      // The composer converts an emoticon when it is the whole word before the
+      // caret, so one containing whitespace could never match, and one listed
+      // twice would convert to whichever emoji the index saw last.
+      const owners = new Map<string, string[]>()
+      for (const { emoji, emoticons } of getEmojiList()) {
+        for (const emoticon of emoticons ?? []) owners.set(emoticon, [...(owners.get(emoticon) ?? []), emoji])
+      }
+      const invalid = Array.from(owners.entries())
+        .filter(([emoticon, emojis]) => emojis.length > 1 || !/^\S+$/.test(emoticon))
+        .map(([emoticon, emojis]) => `${emoticon} -> ${emojis.join(", ")}`)
+      expect(invalid).toEqual([])
+      expect(owners.get(":p")).toEqual(["😛"])
     })
 
     test("every shortcode satisfies the wire-format regex", () => {

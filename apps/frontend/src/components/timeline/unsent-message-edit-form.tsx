@@ -12,6 +12,7 @@ import {
   isDocCreatePending,
 } from "@/components/editor"
 import type { RichEditorHandle } from "@/components/editor"
+import { keepEmoticonOnEscape } from "@/components/editor/triggers/emoticon-extension"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { usePaneCovered } from "@/components/panes/pane-host"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
@@ -124,7 +125,8 @@ export function UnsentMessageEditForm({
       onDone()
       return
     }
-    await saveEdit(contentJson)
+    // The Save button never reaches the editor's Enter path, where an emoticon at the caret converts.
+    await saveEdit(editor?.commands.commitEmoticon() ? editor.getJSON() : contentJson)
   }, [contentJson, initialMarkdown, messageId, saveEdit, cancelEditing, onDone])
 
   const handleDelete = useCallback(async () => {
@@ -208,7 +210,12 @@ export function UnsentMessageEditForm({
           if (!open) setTimeout(() => void handleCancel(), 300)
         }}
       >
-        <DrawerContent className={mobileExpanded ? "!h-[100dvh] rounded-t-none" : "max-h-[85dvh]"}>
+        <DrawerContent
+          className={mobileExpanded ? "!h-[100dvh] rounded-t-none" : "max-h-[85dvh]"}
+          onEscapeKeyDown={(event) => {
+            if (keepEmoticonOnEscape(richEditorRef.current?.getEditor())) event.preventDefault()
+          }}
+        >
           <DrawerTitle className="sr-only">Edit unsent message</DrawerTitle>
           <p id={instructionsId} className="sr-only">
             {screenReaderInstructions}
@@ -280,6 +287,7 @@ export function UnsentMessageEditForm({
       </p>
       <div data-inline-edit className="[&_.tiptap]:!pt-0 [&_.tiptap_p]:!leading-relaxed">
         <RichEditor
+          ref={richEditorRef}
           value={contentJson}
           onChange={setContentJson}
           onSubmit={handleSave}

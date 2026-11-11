@@ -178,6 +178,7 @@ describe("DocPaneBody", () => {
       emojis: [],
       emojiWeights: new Map(),
       toEmoji: () => null,
+      fromEmoticon: () => null,
     } as unknown as ReturnType<typeof workspaceEmojiModule.useWorkspaceEmoji>)
     vi.spyOn(triggersModule, "useMentionSuggestion").mockReturnValue({
       suggestionConfig: null,

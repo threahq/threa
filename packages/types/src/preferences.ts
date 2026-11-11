@@ -387,6 +387,8 @@ export interface UserPreferences {
   messageSendMode: MessageSendMode
   /** Whether files picked on mobile are also inserted into the message body at the caret. */
   mobileInlineAttachments: boolean
+  /** Whether a typed emoticon (`:)`) becomes its emoji once the word is finished. */
+  convertEmoticons: boolean
   linkPreviewDefault: LinkPreviewDefault
   linkPreviewOpenCount: LinkPreviewLimit
   linkPreviewTypeOverrides: LinkPreviewTypeOverrides
@@ -555,6 +557,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   sidebarCollapsed: false,
   messageSendMode: "enter",
   mobileInlineAttachments: true,
+  convertEmoticons: true,
   linkPreviewDefault: "open",
   linkPreviewOpenCount: DEFAULT_LINK_PREVIEW_OPEN_COUNT,
   linkPreviewTypeOverrides: {},
@@ -616,6 +619,7 @@ export interface UpdateUserPreferencesInput {
   sidebarCollapsed?: boolean
   messageSendMode?: MessageSendMode
   mobileInlineAttachments?: boolean
+  convertEmoticons?: boolean
   linkPreviewDefault?: LinkPreviewDefault
   linkPreviewOpenCount?: LinkPreviewLimit
   linkPreviewTypeOverrides?: LinkPreviewTypeOverrides

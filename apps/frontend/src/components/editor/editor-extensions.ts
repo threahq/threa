@@ -38,6 +38,7 @@ import { MemoEmbedExtension } from "./memo-embed-extension"
 import { DocEmbedExtension } from "./doc-embed-extension"
 import { InAppLinkExtension } from "./in-app-link-extension"
 import { GiphyEmbedExtension } from "./giphy-embed-extension"
+import { EmoticonExtension } from "./triggers/emoticon-extension"
 import { MemoSearchExtension, type MemoSearchOptions } from "./triggers/memo-search-extension"
 import { DocSearchExtension, type DocSearchOptions } from "./triggers/doc-search-extension"
 import { DocCreateExtension, type DocCreateOptions } from "./triggers/doc-create-extension"
@@ -59,6 +60,8 @@ interface ContentExtensionsOptions {
   docCreate?: DocCreateOptions
   /** Look up emoji by shortcode - used for input rule auto-convert */
   toEmoji?: (shortcode: string) => string | null
+  /** Look up the emoji a typed emoticon converts to (`useEmoticonConversion`). */
+  emoticonToEmoji?: (emoticon: string) => string | null
 }
 
 interface CreateEditorExtensionsOptions extends ContentExtensionsOptions {
@@ -196,6 +199,7 @@ function buildExtensions(config: Partial<CreateEditorExtensionsOptions>, surface
     config.emojiSuggestion && config.toEmoji
       ? EmojiExtension.configure({ suggestion: config.emojiSuggestion, toEmoji: config.toEmoji })
       : EmojiExtension,
+    config.emoticonToEmoji ? EmoticonExtension.configure({ toEmoji: config.emoticonToEmoji }) : EmoticonExtension,
     ...composerOnly(
       config.memoSearchSuggestion
         ? MemoSearchExtension.configure({ suggestion: config.memoSearchSuggestion })

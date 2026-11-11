@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest"
 import { renderHook } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createElement, type ReactNode } from "react"
-import { useWorkspaceEmoji } from "./use-workspace-emoji"
+import { useEmoticonConversion, useWorkspaceEmoji } from "./use-workspace-emoji"
+import * as preferencesModule from "@/contexts/preferences-context"
 import type { CachedWorkspaceMetadata } from "@/db"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 
@@ -173,6 +174,43 @@ describe("useWorkspaceEmoji", () => {
         wrapper: createTestWrapper(queryClient),
       })
       expect(result.current.emojiWeights).toEqual({ thumbsup: 5, heart: 3 })
+    })
+  })
+
+  describe("emoticons", () => {
+    const tongue = {
+      shortcode: "stuck_out_tongue",
+      emoji: "😛",
+      type: "native" as const,
+      group: "smileys",
+      order: 0,
+      aliases: [],
+      emoticons: [":p", ":P"],
+    }
+    const withPreference = (convertEmoticons: boolean) =>
+      vi.spyOn(preferencesModule, "usePreferencesOptional").mockReturnValue({
+        preferences: { convertEmoticons },
+      } as unknown as ReturnType<typeof preferencesModule.usePreferencesOptional>)
+
+    it("converts by the workspace emoji list, and stops when the preference is switched off", () => {
+      mockMetadata = { id: workspaceId, workspaceId, emojis: [tongue] } as unknown as CachedWorkspaceMetadata
+      withPreference(true)
+      const { result, rerender } = renderHook(
+        () => useEmoticonConversion(useWorkspaceEmoji(workspaceId).fromEmoticon),
+        { wrapper: createTestWrapper(queryClient) }
+      )
+      // The editor keeps the first callback for its lifetime, so that is the one that has to follow the preference.
+      const toEmoji = result.current
+      const on = [toEmoji(":p"), toEmoji(":P"), toEmoji(":pray")]
+
+      withPreference(false)
+      rerender()
+
+      expect({ on, off: toEmoji(":p"), stable: result.current === toEmoji }).toEqual({
+        on: ["😛", "😛", null],
+        off: null,
+        stable: true,
+      })
     })
   })
 })

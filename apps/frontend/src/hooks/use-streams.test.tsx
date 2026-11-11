@@ -82,6 +82,7 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
       notificationLevel: "all",
       sidebarCollapsed: false,
       mobileInlineAttachments: true,
+      convertEmoticons: true,
       linkPreviewDefault: "open",
       linkPreviewOpenCount: 3,
       linkPreviewTypeOverrides: {},

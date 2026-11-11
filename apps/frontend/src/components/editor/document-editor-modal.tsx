@@ -35,7 +35,7 @@ import { serializeClipboardSlice } from "./clipboard-copy"
 import { insertPlainText, isPlainTextPaste } from "./plain-text-paste"
 import { useMentionSuggestion, useChannelSuggestion, useEmojiSuggestion } from "./triggers"
 import { useMentionables, useMarkdownTriggerLookups, type MentionStreamContext } from "@/hooks/use-mentionables"
-import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
+import { useEmoticonConversion, useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { LinkEditor } from "./link-editor"
 import { insertPastedText, toggleMultilineBlock } from "./multiline-blocks"
 import { cn } from "@/lib/utils"
@@ -73,7 +73,8 @@ export function DocumentEditorModal({
   const { suggestionConfig: channelConfig, renderChannelList } = useChannelSuggestion()
 
   const { workspaceId } = useParams<{ workspaceId: string }>()
-  const { emojis, emojiWeights, toEmoji } = useWorkspaceEmoji(workspaceId ?? "")
+  const { emojis, emojiWeights, toEmoji, fromEmoticon } = useWorkspaceEmoji(workspaceId ?? "")
+  const emoticonToEmoji = useEmoticonConversion(fromEmoticon)
   const { suggestionConfig: emojiConfig, renderEmojiGrid } = useEmojiSuggestion({ emojis, emojiWeights })
 
   const initContentRef = useRef(initialContent)
@@ -111,6 +112,7 @@ export function DocumentEditorModal({
         channelSuggestion: channelConfig,
         emojiSuggestion: emojiConfig,
         toEmoji,
+        emoticonToEmoji,
       }),
       EditorBehaviors.configure({
         sendModeRef: { current: "cmdEnter" }, // Use cmdEnter mode in modal
@@ -118,7 +120,7 @@ export function DocumentEditorModal({
         keyBindingsRef: keyBindingsRef,
       }),
     ],
-    [mentionConfig, channelConfig, emojiConfig, toEmoji]
+    [mentionConfig, channelConfig, emojiConfig, toEmoji, emoticonToEmoji]
   )
 
   const editor = useEditor({
@@ -184,6 +186,7 @@ export function DocumentEditorModal({
 
   const handleSubmit = useCallback(() => {
     if (!editorRef.current) return
+    editorRef.current.commands.commitEmoticon()
     const markdown = serializeToMarkdown(editorRef.current.getJSON())
     if (markdown.trim()) {
       onSend(markdown)

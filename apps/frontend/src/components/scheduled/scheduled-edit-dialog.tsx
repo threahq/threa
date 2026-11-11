@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { RichEditor, EditorActionBar, EditorToolbar } from "@/components/editor"
 import type { RichEditorHandle } from "@/components/editor"
 import { handleMobileInlineAttachmentPicker } from "@/components/editor/mobile-inline-attachment-picker"
+import { keepEmoticonOnEscape } from "@/components/editor/triggers/emoticon-extension"
 import { PendingAttachments } from "@/components/timeline/pending-attachments"
 import { countAttachmentReferences } from "@/components/editor/attachment-reference-counts"
 import { DateTimeField } from "@/components/forms/date-time-field"
@@ -241,7 +242,9 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
   // Snapshot the live editor content + materialized attachments — shared by
   // Save and Send now so both ship exactly what the user currently sees.
   const collectEditorContent = useCallback(() => {
-    const liveJson = (editorRef.current?.getEditor()?.getJSON() as JSONContent | undefined) ?? contentJson
+    const editor = editorRef.current?.getEditor()
+    editor?.commands.commitEmoticon()
+    const liveJson = (editor?.getJSON() as JSONContent | undefined) ?? contentJson
     const materialized = materializePendingAttachmentReferences(
       liveJson,
       attachmentsHook.getPendingAttachmentsSnapshot()
@@ -461,6 +464,10 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
     />
   ) : null
 
+  const handleEscapeKeyDown = (event: KeyboardEvent) => {
+    if (!escapeQuestion(event) && keepEmoticonOnEscape(editorRef.current?.getEditor())) event.preventDefault()
+  }
+
   if (isMobile) {
     return (
       <Drawer
@@ -470,7 +477,7 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
         }}
       >
         <DrawerContent
-          onEscapeKeyDown={escapeQuestion}
+          onEscapeKeyDown={handleEscapeKeyDown}
           className={mobileExpanded ? "!h-[100dvh] rounded-t-none" : "min-h-[75dvh] max-h-[85dvh]"}
         >
           <DrawerTitle className="sr-only">{title}</DrawerTitle>
@@ -554,7 +561,7 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
         // lets TipTap own initial focus uncontested; subsequent clicks then
         // route normally.
         onOpenAutoFocus={(e) => e.preventDefault()}
-        onEscapeKeyDown={escapeQuestion}
+        onEscapeKeyDown={handleEscapeKeyDown}
       >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>

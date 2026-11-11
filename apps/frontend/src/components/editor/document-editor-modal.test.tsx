@@ -40,6 +40,7 @@ describe("DocumentEditorModal", () => {
       emojis: [],
       emojiWeights: new Map(),
       toEmoji: () => null,
+      fromEmoticon: () => null,
     } as unknown as ReturnType<typeof workspaceEmojiModule.useWorkspaceEmoji>)
     vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
       preferences: mockPreferences,

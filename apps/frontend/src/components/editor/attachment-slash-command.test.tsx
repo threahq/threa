@@ -28,7 +28,13 @@ const TRAY: PendingAttachment[] = [
 // Stable across renders: RichEditor re-derives its content from these, and a
 // fresh object each render would re-apply the (empty) external value mid-test.
 const NO_MENTIONABLES = { mentionables: [], isLoading: false }
-const NO_EMOJI = { emojis: [], emojiWeights: {}, toEmoji: () => null, toShortcode: () => null }
+const NO_EMOJI = {
+  emojis: [],
+  emojiWeights: {},
+  toEmoji: () => null,
+  toShortcode: () => null,
+  fromEmoticon: () => null,
+}
 const NO_PREFERENCES = { preferences: {} }
 
 beforeEach(() => {
