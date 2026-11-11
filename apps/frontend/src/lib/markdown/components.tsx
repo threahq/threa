@@ -16,6 +16,8 @@ import { cn } from "@/lib/utils"
 import { resolveInternalAppPath } from "@/lib/internal-url"
 import { buildConversationPanelPath } from "@/lib/stream-links"
 import { classifyDraftLink } from "@/lib/in-app-links"
+import { describeExternalLink } from "@/lib/external-links"
+import { ExternalLink } from "@/components/external-link/external-link"
 import {
   InAppLinkInline,
   ConversationLinkInline,
@@ -418,6 +420,21 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
   // inside an <a href> (via deferToNativeLinks: true), so long-press here gets
   // the native browser menu (e.g. "Open in Firefox", "Copy link") instead of
   // the message drawer.
+  const external = href ? describeExternalLink(href) : null
+  if (href && external) {
+    return (
+      <ExternalLink
+        href={href}
+        link={external}
+        bare={extractTextFromChildren(children) === href}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+      >
+        <ProcessedChildren>{children}</ProcessedChildren>
+      </ExternalLink>
+    )
+  }
+
   return (
     // break-all so long URLs wrap inside the message column instead of
     // forcing horizontal overflow (URLs rarely contain whitespace).

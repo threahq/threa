@@ -5,6 +5,7 @@ import {
   type LinkPreviewSummary,
   type UserPreferences,
 } from "@threahq/types"
+import { externalLinkProviderForHost } from "@/lib/external-links"
 
 export function classifyLinkPreview(preview: LinkPreviewSummary): LinkPreviewCategory {
   if (preview.contentType === "image" || preview.contentType === "pdf" || preview.contentType === "video") {
@@ -15,13 +16,10 @@ export function classifyLinkPreview(preview: LinkPreviewSummary): LinkPreviewCat
   if (type?.startsWith("linear_")) return "linear"
   if (type === "video") return "video"
   try {
-    const host = new URL(preview.url).hostname.toLowerCase()
-    if (host === "github.com" || host === "www.github.com") return "github"
-    if (host === "linear.app" || host === "www.linear.app") return "linear"
+    return externalLinkProviderForHost(new URL(preview.url).hostname) ?? "website"
   } catch {
     return "website"
   }
-  return "website"
 }
 
 export function resolveLinkPreviewDefaults(

@@ -706,7 +706,7 @@ export function MessageItem({
   // open the media gallery / download via AttachmentList.
   const body = (
     <>
-      <LinkPreviewProvider>
+      <LinkPreviewProvider previews={message.linkPreviews}>
         {attachments.length > 0 ? (
           <AttachmentProvider
             workspaceId={workspaceId}

@@ -612,7 +612,7 @@ function MessageLayout({
   const messageCollapse = useMessageCollapseSettings()
   const runFold = useRunFoldBody(payload.messageId)
   const messageBody = children ?? (
-    <LinkPreviewProvider>
+    <LinkPreviewProvider previews={payload.linkPreviews}>
       <AttachmentProvider
         workspaceId={workspaceId}
         attachments={payload.attachments ?? NO_ATTACHMENTS}
