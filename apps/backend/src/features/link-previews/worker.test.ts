@@ -1573,7 +1573,7 @@ describe("createLinkPreviewWorker favicon cache", () => {
         })) as unknown as typeof fetch
     )
     const order: string[] = []
-    const ensureForPage = mock(async (_workspaceId: string, _pageUrl: string, _candidateUrl: string) => {
+    const ensureForPage = mock(async (_workspaceId: string, _pageUrl: string, _declaredIconUrl: string | null) => {
       order.push("ensure")
     })
     const completePreviewsAndPublish = mock(async () => {

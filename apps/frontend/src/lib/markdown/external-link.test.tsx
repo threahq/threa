@@ -33,13 +33,12 @@ function renderMarkdown(content: string, previews: LinkPreviewSummary[] | null =
 
 function describeLink(anchor: HTMLAnchorElement) {
   const slot = anchor.querySelector('[aria-hidden="true"]')
-  const mark = slot?.querySelector("svg")
-  const lucideName = mark?.getAttribute("class")?.match(/lucide-(github|globe)/)?.[1]
+  const markClass = slot?.querySelector(".external-link-mark")?.getAttribute("class")
   return {
     href: anchor.getAttribute("href"),
     target: anchor.getAttribute("target"),
     text: anchor.textContent,
-    icon: lucideName ?? (mark ? "linear" : null),
+    icon: markClass?.match(/external-link-icon-(github|linear|globe)/)?.[1] ?? null,
     img: slot?.querySelector("img")?.getAttribute("src") ?? null,
   }
 }

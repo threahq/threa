@@ -37,6 +37,7 @@ import { SharedMessageExtension } from "./shared-message-extension"
 import { MemoEmbedExtension } from "./memo-embed-extension"
 import { DocEmbedExtension } from "./doc-embed-extension"
 import { InAppLinkExtension } from "./in-app-link-extension"
+import { ExternalLinkIconDecoration } from "./external-link-icon-extension"
 import { GiphyEmbedExtension } from "./giphy-embed-extension"
 import { EmoticonExtension } from "./triggers/emoticon-extension"
 import { MemoSearchExtension, type MemoSearchOptions } from "./triggers/memo-search-extension"
@@ -62,6 +63,8 @@ interface ContentExtensionsOptions {
   toEmoji?: (shortcode: string) => string | null
   /** Look up the emoji a typed emoticon converts to (`useEmoticonConversion`). */
   emoticonToEmoji?: (emoticon: string) => string | null
+  /** The workspace whose cached favicons external links show; without one they show bundled marks and the globe. */
+  workspaceId?: string | null
 }
 
 interface CreateEditorExtensionsOptions extends ContentExtensionsOptions {
@@ -156,6 +159,8 @@ function buildExtensions(config: Partial<CreateEditorExtensionsOptions>, surface
         class: "text-primary underline underline-offset-2 hover:text-primary/80",
       },
     }),
+
+    ExternalLinkIconDecoration.configure({ workspaceId: config.workspaceId ?? null }),
 
     AttachmentReferenceExtension,
 

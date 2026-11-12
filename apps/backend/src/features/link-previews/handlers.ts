@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express"
 import { z } from "zod"
+import { LINK_FAVICON_HOST_MAX_LENGTH } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import { setUntrustedContentHeaders } from "../../lib/untrusted-content"
@@ -18,7 +19,7 @@ const faviconParamsSchema = z.object({
   workspaceId: z.string(),
   host: z
     .string()
-    .max(255)
+    .max(LINK_FAVICON_HOST_MAX_LENGTH)
     .regex(/^[\x21-\x7e]+$/),
 })
 
@@ -116,7 +117,8 @@ export function createLinkPreviewHandlers(deps: HandlerDeps) {
 
         const icon = await linkFaviconService.getIcon(workspaceId, req.user!.id, host)
         if (!icon) {
-          res.set("Cache-Control", "private, max-age=300")
+          // Editors ask before a host is cached: a remembered miss would keep the globe after the icon arrives.
+          res.set("Cache-Control", "no-store")
           res.status(404).json({ error: "Not found" })
           return
         }

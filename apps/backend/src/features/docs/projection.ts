@@ -1,10 +1,16 @@
-import { collectDocEmbedIds, serializeToMarkdown } from "@threahq/prosemirror"
+import { collectDocEmbedIds, collectExternalLinkOrigins, serializeToMarkdown } from "@threahq/prosemirror"
 import type { DocSection, JSONContent } from "@threahq/types"
 
-/** A block of a doc embedding another doc, projected on every write. */
+/**
+ * What a doc block points at, projected on every write: `doc` = an embedded doc's id,
+ * `link_origin` = the origin (`https://host[:port]`) of an external link, keying favicon access and hydration.
+ */
+export const DocReferenceTypes = { DOC: "doc", LINK_ORIGIN: "link_origin" } as const
+type DocReferenceType = (typeof DocReferenceTypes)[keyof typeof DocReferenceTypes]
+
 export interface DocReference {
   blockId: string
-  refType: "doc"
+  refType: DocReferenceType
   refId: string
 }
 
@@ -31,11 +37,14 @@ export function projectDoc(json: JSONContent, docId: string): DocProjection {
       contentJson: block,
     }
   })
-  const references = sections.flatMap((section) =>
-    collectDocEmbedIds(section.contentJson)
+  const references = sections.flatMap((section): DocReference[] => [
+    ...collectDocEmbedIds(section.contentJson)
       .filter((refId) => refId !== docId)
-      .map((refId): DocReference => ({ blockId: section.blockId, refType: "doc", refId }))
-  )
+      .map((refId): DocReference => ({ blockId: section.blockId, refType: DocReferenceTypes.DOC, refId })),
+    ...collectExternalLinkOrigins(section.contentJson).map(
+      (refId): DocReference => ({ blockId: section.blockId, refType: DocReferenceTypes.LINK_ORIGIN, refId })
+    ),
+  ])
   return { bodyMarkdown: serializeToMarkdown(json), bodyJson: json, sections, references }
 }
 

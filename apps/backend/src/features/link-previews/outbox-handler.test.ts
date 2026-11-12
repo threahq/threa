@@ -3,6 +3,7 @@ import type { OutboxEvent } from "../../lib/outbox"
 import { JobQueues } from "../../lib/queue"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { StreamRepository } from "../streams"
+import * as faviconEnsure from "./favicon-ensure"
 import { LinkPreviewOutboxHandler } from "./outbox-handler"
 
 class TestableLinkPreviewOutboxHandler extends LinkPreviewOutboxHandler {
@@ -59,6 +60,32 @@ describe("LinkPreviewOutboxHandler — shared copies", () => {
       contentMarkdown: "see https://example.com",
       contentJson: null,
       isEdit: false,
+    })
+  })
+})
+
+describe("LinkPreviewOutboxHandler — doc updates", () => {
+  it("should hand a doc update's touched blocks to the favicon ensure fan-out", async () => {
+    const { handler, send } = createHandler(false)
+    const enqueue = spyOn(faviconEnsure, "enqueueDocLinkFaviconEnsures").mockResolvedValue()
+
+    await handler.run({
+      id: 2n,
+      eventType: "doc:updated",
+      payload: {
+        workspaceId: "ws_test",
+        streamId: "stream_doc",
+        seq: 3,
+        touchedBlockIds: ["blk_1"],
+        actorId: "usr_a",
+        actorType: "user",
+      },
+      createdAt: new Date(),
+    } as unknown as OutboxEvent)
+
+    expect({ enqueued: enqueue.mock.calls.map((call) => call[1]), sends: send.mock.calls.length }).toEqual({
+      enqueued: [{ workspaceId: "ws_test", docId: "stream_doc", blockIds: ["blk_1"] }],
+      sends: 0,
     })
   })
 })

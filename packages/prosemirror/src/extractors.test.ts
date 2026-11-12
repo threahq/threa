@@ -5,6 +5,7 @@ import {
   collectInlineAttachmentIds,
   collectChannelStreamIds,
   collectDocEmbedIds,
+  collectExternalLinkOrigins,
   collectGiphyEmbeds,
   collectLinkUrls,
   collectMemoEmbedIds,
@@ -915,5 +916,48 @@ describe("collectDocEmbedIds", () => {
       ],
     }
     expect(collectDocEmbedIds(doc)).toEqual(["stream_a", "stream_b"])
+  })
+})
+
+describe("collectExternalLinkOrigins", () => {
+  const link = (href: string): JSONContent => ({ type: "text", text: "x", marks: [{ type: "link", attrs: { href } }] })
+
+  it("collects distinct http(s) origins, including nested links, ignoring hrefs with no favicon host", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            link("https://example.com/a?b=1"),
+            link("mailto:someone@example.com"),
+            link("/relative/path"),
+            link("attachment:attach_1"),
+            link(`https://${"a".repeat(300)}.example/`),
+            link("https://EXAMPLE.com/other"),
+          ],
+        },
+        {
+          type: "bulletList",
+          content: [{ type: "listItem", content: [{ type: "paragraph", content: [link("http://example.com/x")] }] }],
+        },
+        {
+          type: "table",
+          content: [
+            {
+              type: "tableRow",
+              content: [
+                { type: "tableCell", content: [{ type: "paragraph", content: [link("https://dev.test:8443/p")] }] },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+    expect(collectExternalLinkOrigins(doc)).toEqual([
+      "https://example.com",
+      "http://example.com",
+      "https://dev.test:8443",
+    ])
   })
 })

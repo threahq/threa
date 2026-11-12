@@ -1,5 +1,5 @@
 export { DocRepository } from "./repository"
-export { projectDoc } from "./projection"
+export { projectDoc, DocReferenceTypes } from "./projection"
 export { loadDocState, ydocToContentJson, writeContentJson, encodeUpdateBase64, decodeUpdateBase64 } from "./yjs"
 export { DocService, DOC_SNAPSHOT_INTERVAL } from "./service"
 export { createDocHandlers } from "./handlers"
