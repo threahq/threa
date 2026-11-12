@@ -5,9 +5,12 @@ import type { DocSection, JSONContent } from "@threahq/types"
  * What a doc block points at, projected on every write: `doc` = an embedded doc's id,
  * `link_origin` = the origin (`https://host[:port]`) of an external link, keying favicon access and hydration.
  */
+export const DocReferenceTypes = { DOC: "doc", LINK_ORIGIN: "link_origin" } as const
+type DocReferenceType = (typeof DocReferenceTypes)[keyof typeof DocReferenceTypes]
+
 export interface DocReference {
   blockId: string
-  refType: "doc" | "link_origin"
+  refType: DocReferenceType
   refId: string
 }
 
@@ -37,9 +40,9 @@ export function projectDoc(json: JSONContent, docId: string): DocProjection {
   const references = sections.flatMap((section): DocReference[] => [
     ...collectDocEmbedIds(section.contentJson)
       .filter((refId) => refId !== docId)
-      .map((refId): DocReference => ({ blockId: section.blockId, refType: "doc", refId })),
+      .map((refId): DocReference => ({ blockId: section.blockId, refType: DocReferenceTypes.DOC, refId })),
     ...collectExternalLinkOrigins(section.contentJson).map(
-      (refId): DocReference => ({ blockId: section.blockId, refType: "link_origin", refId })
+      (refId): DocReference => ({ blockId: section.blockId, refType: DocReferenceTypes.LINK_ORIGIN, refId })
     ),
   ])
   return { bodyMarkdown: serializeToMarkdown(json), bodyJson: json, sections, references }

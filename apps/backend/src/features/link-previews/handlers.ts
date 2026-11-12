@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express"
 import { z } from "zod"
+import { LINK_FAVICON_HOST_MAX_LENGTH } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import { setUntrustedContentHeaders } from "../../lib/untrusted-content"
@@ -18,7 +19,7 @@ const faviconParamsSchema = z.object({
   workspaceId: z.string(),
   host: z
     .string()
-    .max(255)
+    .max(LINK_FAVICON_HOST_MAX_LENGTH)
     .regex(/^[\x21-\x7e]+$/),
 })
 

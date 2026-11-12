@@ -1,6 +1,6 @@
 import { StreamTypes, type AuthorType, type DocSection, type JSONContent } from "@threahq/types"
 import type { QueryConfig } from "pg"
-import type { DocReference } from "./projection"
+import { DocReferenceTypes, type DocReference } from "./projection"
 import { composeSql, sql, type Querier } from "../../db"
 import { archiveStatusSql } from "../../lib/sql-filters"
 
@@ -317,7 +317,7 @@ export const DocRepository = {
   ): Promise<{ docId: string; blockIds: string[] }[]> {
     const result = await db.query<{ doc_id: string; block_ids: string[] }>(sql`
       SELECT doc_id, array_agg(block_id ORDER BY block_id) AS block_ids FROM doc_references
-      WHERE workspace_id = ${workspaceId} AND ref_type = 'doc' AND ref_id = ${docId}
+      WHERE workspace_id = ${workspaceId} AND ref_type = ${DocReferenceTypes.DOC} AND ref_id = ${docId}
       GROUP BY doc_id
     `)
     return result.rows.map((row) => ({ docId: row.doc_id, blockIds: row.block_ids }))

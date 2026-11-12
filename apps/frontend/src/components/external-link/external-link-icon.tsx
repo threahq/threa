@@ -5,9 +5,9 @@ const MARK_CLASS = "absolute inset-0 size-full"
 const GLYPH_CLASS = `${MARK_CLASS} external-link-mark`
 
 const GLYPH_CLASSES = {
-  github: `${GLYPH_CLASS} [--external-link-glyph:var(--external-link-glyph-github)] text-foreground`,
-  linear: `${GLYPH_CLASS} [--external-link-glyph:var(--external-link-glyph-linear)] text-foreground`,
-  globe: `${GLYPH_CLASS} [--external-link-glyph:var(--external-link-glyph-globe)] text-muted-foreground`,
+  github: `${GLYPH_CLASS} external-link-icon-github text-foreground`,
+  linear: `${GLYPH_CLASS} external-link-icon-linear text-foreground`,
+  globe: `${GLYPH_CLASS} external-link-icon-globe text-muted-foreground`,
 } satisfies Record<ExternalLinkProvider | "globe", string>
 
 function Favicon({ src }: { src: string }) {

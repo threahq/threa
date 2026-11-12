@@ -1,5 +1,6 @@
 import { composeSql, sql, type Querier } from "../../db"
 import { escapeLikePattern } from "../../lib/sql-filters"
+import { DocReferenceTypes } from "../docs"
 import { streamAccessPredicateSql } from "../streams"
 
 export interface LinkFavicon {
@@ -53,7 +54,8 @@ export const LinkFaviconRepository = {
     userId: string,
     host: string
   ): Promise<boolean> {
-    const [httpPrefix, httpsPrefix] = ["http", "https"].map((scheme) => `${escapeLikePattern(`${scheme}://${host}/`)}%`)
+    const origins = ["http", "https"].map((scheme) => `${scheme}://${host}`)
+    const [httpPrefix, httpsPrefix] = origins.map((origin) => `${escapeLikePattern(`${origin}/`)}%`)
     const result = await querier.query<{ readable: boolean }>(
       composeSql`SELECT EXISTS (
         SELECT 1
@@ -74,8 +76,8 @@ export const LinkFaviconRepository = {
           SELECT DISTINCT dr.doc_id
           FROM doc_references dr
           WHERE dr.workspace_id = ${workspaceId}
-            AND dr.ref_type = 'link_origin'
-            AND dr.ref_id IN (${`http://${host}`}, ${`https://${host}`})
+            AND dr.ref_type = ${DocReferenceTypes.LINK_ORIGIN}
+            AND dr.ref_id = ANY(${origins})
         ) linked_docs
         WHERE ${streamAccessPredicateSql(workspaceId, userId, "linked_docs.doc_id")}
       ) AS readable`
@@ -98,7 +100,7 @@ export const LinkFaviconRepository = {
           FROM (
             SELECT split_part(dr.ref_id, '://', 2) AS host, dr.ref_id AS origin
             FROM doc_references dr
-            WHERE dr.workspace_id = $1 AND dr.doc_id = $2 AND dr.ref_type = 'link_origin'
+            WHERE dr.workspace_id = $1 AND dr.doc_id = $2 AND dr.ref_type = $4
               AND dr.block_id = ANY($3::text[])
           ) linked
           WHERE NOT EXISTS (
@@ -106,7 +108,7 @@ export const LinkFaviconRepository = {
             WHERE lf.workspace_id = $1 AND lf.host = linked.host AND lf.expires_at > NOW()
           )
           ORDER BY linked.host, (linked.origin LIKE 'https://%') DESC`,
-      [workspaceId, docId, [...blockIds]]
+      [workspaceId, docId, [...blockIds], DocReferenceTypes.LINK_ORIGIN]
     )
     return result.rows
   },

@@ -38,7 +38,7 @@ function describeLink(anchor: HTMLAnchorElement) {
     href: anchor.getAttribute("href"),
     target: anchor.getAttribute("target"),
     text: anchor.textContent,
-    icon: markClass?.match(/--external-link-glyph-(github|linear|globe)/)?.[1] ?? null,
+    icon: markClass?.match(/external-link-icon-(github|linear|globe)/)?.[1] ?? null,
     img: slot?.querySelector("img")?.getAttribute("src") ?? null,
   }
 }

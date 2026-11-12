@@ -922,7 +922,7 @@ describe("collectDocEmbedIds", () => {
 describe("collectExternalLinkOrigins", () => {
   const link = (href: string): JSONContent => ({ type: "text", text: "x", marks: [{ type: "link", attrs: { href } }] })
 
-  it("collects distinct http(s) origins, including nested links, ignoring non-web hrefs", () => {
+  it("collects distinct http(s) origins, including nested links, ignoring hrefs with no favicon host", () => {
     const doc: JSONContent = {
       type: "doc",
       content: [
@@ -933,6 +933,7 @@ describe("collectExternalLinkOrigins", () => {
             link("mailto:someone@example.com"),
             link("/relative/path"),
             link("attachment:attach_1"),
+            link(`https://${"a".repeat(300)}.example/`),
             link("https://EXAMPLE.com/other"),
           ],
         },

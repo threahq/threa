@@ -1,5 +1,5 @@
 import type { Querier } from "../../db"
-import { JobQueues, type Job, type JobHandler, type QueueManager } from "../../lib/queue"
+import { JobQueues, QueueRepository, type Job, type JobHandler } from "../../lib/queue"
 import type { LinkFaviconEnsureJobData } from "../../lib/queue/job-queue"
 import { getAppOrigins } from "./config"
 import { LinkFaviconRepository } from "./favicon-repository"
@@ -18,24 +18,31 @@ export function linkFaviconEnsureQueueId(workspaceId: string, host: string, nowM
 }
 
 export async function enqueueDocLinkFaviconEnsures(
-  deps: { db: Querier; jobQueue: Pick<QueueManager, "send"> },
+  db: Querier,
   params: { workspaceId: string; docId: string; blockIds: string[] }
 ): Promise<void> {
   const { workspaceId, docId, blockIds } = params
   if (blockIds.length === 0) return
 
-  const uncached = await LinkFaviconRepository.listUncachedDocLinkOrigins(deps.db, workspaceId, docId, blockIds)
+  const uncached = await LinkFaviconRepository.listUncachedDocLinkOrigins(db, workspaceId, docId, blockIds)
   // Links to the app itself draw no site icon.
   const appOrigins = new Set(getAppOrigins())
   const external = uncached.filter(({ origin }) => !appOrigins.has(origin)).slice(0, MAX_ENSURES_PER_DOC_UPDATE)
   const now = Date.now()
-  for (const { host, origin } of external) {
-    await deps.jobQueue.send(
-      JobQueues.LINK_FAVICON_ENSURE,
-      { workspaceId, pageUrl: `${origin}/` },
-      { messageId: linkFaviconEnsureQueueId(workspaceId, host, now) }
-    )
-  }
+  await QueueRepository.batchInsert(
+    db,
+    external.map(({ host, origin }) => {
+      const payload: LinkFaviconEnsureJobData = { workspaceId, pageUrl: `${origin}/` }
+      return {
+        id: linkFaviconEnsureQueueId(workspaceId, host, now),
+        queueName: JobQueues.LINK_FAVICON_ENSURE,
+        workspaceId,
+        payload,
+        processAfter: new Date(now),
+        insertedAt: new Date(now),
+      }
+    })
+  )
 }
 
 export function createLinkFaviconEnsureWorker(deps: {

@@ -11,6 +11,7 @@ import * as Y from "yjs"
 import type { DocCreatedEventPayload, JSONContent, Stream } from "@threahq/types"
 import {
   DOC_SNAPSHOT_INTERVAL,
+  DocReferenceTypes,
   DocRepository,
   DocService,
   decodeUpdateBase64,
@@ -846,32 +847,28 @@ describe("DocService doc_references link origins", () => {
     const host = await createChannel("private")
     const doc = await createDoc(host.id)
     const client = await openClient(doc.id, owner)
-    const json = ydocToContentJson(client.ydoc)
+    const original = ydocToContentJson(client.ydoc)
     const block = blockId()
-    const linked: JSONContent = {
-      ...json,
-      content: [
-        ...(json.content ?? []),
-        {
-          type: "paragraph",
-          attrs: { blockId: block },
-          content: [
-            { type: "text", text: "site", marks: [{ type: "link", attrs: { href: "https://example.com/page" } }] },
-          ],
-        },
-      ],
-    }
     const linkOriginRows = async () =>
       (
         await pool.query<{ block_id: string; ref_id: string }>(
-          `SELECT block_id, ref_id FROM doc_references WHERE workspace_id = $1 AND doc_id = $2 AND ref_type = 'link_origin'`,
-          [wsId, doc.id]
+          `SELECT block_id, ref_id FROM doc_references WHERE workspace_id = $1 AND doc_id = $2 AND ref_type = $3`,
+          [wsId, doc.id, DocReferenceTypes.LINK_ORIGIN]
         )
       ).rows
 
-    await post(doc.id, encodeUpdateBase64(writeContentJson(client.ydoc, linked)))
+    await post(
+      doc.id,
+      appendBlock(client.ydoc, {
+        type: "paragraph",
+        attrs: { blockId: block },
+        content: [
+          { type: "text", text: "site", marks: [{ type: "link", attrs: { href: "https://example.com/page" } }] },
+        ],
+      })
+    )
     const before = await linkOriginRows()
-    await post(doc.id, encodeUpdateBase64(writeContentJson(client.ydoc, { ...linked, content: json.content ?? [] })))
+    await post(doc.id, encodeUpdateBase64(writeContentJson(client.ydoc, original)))
 
     expect({ before, after: await linkOriginRows() }).toEqual({
       before: [{ block_id: block, ref_id: "https://example.com" }],

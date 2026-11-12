@@ -22,8 +22,8 @@ export class LinkPreviewOutboxHandler extends DebouncedOutboxHandler {
 
   protected async processEvent(event: OutboxEvent): Promise<void> {
     if (isOutboxEventType(event, "doc:updated")) {
-      const { workspaceId, streamId: docId, touchedBlockIds: blockIds } = event.payload
-      await enqueueDocLinkFaviconEnsures({ db: this.db, jobQueue: this.jobQueue }, { workspaceId, docId, blockIds })
+      const { workspaceId, streamId, touchedBlockIds } = event.payload
+      await enqueueDocLinkFaviconEnsures(this.db, { workspaceId, docId: streamId, blockIds: touchedBlockIds })
       return
     }
     if (!LINK_PREVIEW_EVENT_TYPES.has(event.eventType)) {

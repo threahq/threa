@@ -43,12 +43,19 @@ export const TRACKING_PARAMS: readonly string[] = [
   "source",
 ]
 
-/** Key for a link's favicon: `URL.host` (lowercased, punycoded, non-default port kept). Null for non-http(s). */
+/** A DNS name is at most 253 characters; a longer host is no site, and it would not fit the indexes keyed on it. */
+export const LINK_FAVICON_HOST_MAX_LENGTH = 255
+
+/**
+ * Key for a link's favicon: `URL.host` (lowercased, punycoded, non-default port kept). Null for non-http(s), for an
+ * over-long host, and for a host of dots alone, which would be a path segment of its own in the favicon URL.
+ */
 export function linkFaviconHost(url: string): string | null {
   try {
-    const parsed = new URL(url)
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null
-    return parsed.host || null
+    const { protocol, host } = new URL(url)
+    if (protocol !== "http:" && protocol !== "https:") return null
+    if (!host || host.length > LINK_FAVICON_HOST_MAX_LENGTH || /^\.+$/.test(host)) return null
+    return host
   } catch {
     return null
   }

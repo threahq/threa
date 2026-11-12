@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { Editor, type JSONContent } from "@tiptap/core"
+import { Editor, type Extensions, type JSONContent } from "@tiptap/core"
 import { linkFaviconUrl } from "@/api"
 import { createDocumentExtensions, createEditorExtensions } from "./editor-extensions"
 import { serializeToMarkdown } from "./editor-markdown"
+import { ExternalLinkIconDecoration } from "./external-link-icon-extension"
 import * as Y from "yjs"
 
 const editors: Editor[] = []
 let faviconRequests: HTMLImageElement[] = []
 
 beforeEach(() => {
+  vi.useFakeTimers()
   faviconRequests = []
   // jsdom never loads images, so the test settles each favicon request itself.
   vi.stubGlobal("Image", function () {
@@ -32,23 +34,28 @@ function paragraph(...content: JSONContent[]): JSONContent {
   return { type: "doc", content: [{ type: "paragraph", content }] }
 }
 
-function openEditor(content: JSONContent, workspaceId: string | null = "ws_1", withIcons = true) {
+function mountEditor(extensions: Extensions, content?: JSONContent) {
   const el = document.createElement("div")
   document.body.appendChild(el)
-  const extensions = createEditorExtensions({ placeholder: "x", workspaceId }).filter(
-    (extension) => withIcons || extension.name !== "externalLinkIconDecoration"
-  )
   const editor = new Editor({ element: el, extensions, content })
   editor.on("destroy", () => el.remove())
   editors.push(editor)
   return editor
 }
 
+function openEditor(content: JSONContent, options: { workspaceId?: string | null; icons?: boolean } = {}) {
+  const { workspaceId = "ws_1", icons = true } = options
+  const extensions = createEditorExtensions({ placeholder: "x", workspaceId }).filter(
+    (extension) => icons || extension.name !== ExternalLinkIconDecoration.name
+  )
+  return mountEditor(extensions, content)
+}
+
 function icons(editor: Editor) {
   return Array.from(editor.view.dom.querySelectorAll<HTMLElement>(".editor-link-icon")).map((icon) => ({
     link: icon.closest("a")?.getAttribute("href") ?? null,
-    icon: icon.className.match(/editor-link-icon-(\w+)/)?.[1] ?? null,
-    favicon: icon.style.getPropertyValue("--editor-link-favicon") || null,
+    icon: icon.className.match(/external-link-icon-(\w+)/)?.[1] ?? null,
+    favicon: icon.style.getPropertyValue("--external-link-glyph") || null,
   }))
 }
 
@@ -56,19 +63,26 @@ function requestedFavicons() {
   return faviconRequests.map((image) => image.getAttribute("src"))
 }
 
+function settle(request: number, outcome: "load" | "error") {
+  faviconRequests[request].dispatchEvent(new Event(outcome))
+}
+
+const docsLink = link("docs", "https://docs.example.com/a")
 const docsFavicon = linkFaviconUrl("ws_1", "docs.example.com")
 
 describe("ExternalLinkIconDecoration", () => {
-  it("should mark each external link's icon inside its anchor and none for mailto", () => {
+  it("should mark each external link's icon inside its anchor and none for mailto or the app's own links", () => {
     const editor = openEditor(
       paragraph(
         link("pr", "https://github.com/threahq/threa/pull/1"),
         { type: "text", text: " " },
         link("ticket", "https://linear.app/threa/issue/THR-51"),
         { type: "text", text: " " },
-        link("docs", "https://docs.example.com/a"),
+        docsLink,
         { type: "text", text: " " },
-        link("mail", "mailto:someone@example.com")
+        link("mail", "mailto:someone@example.com"),
+        { type: "text", text: " " },
+        link("stream", `${window.location.origin}/w/ws_1/s/stream_1`)
       )
     )
 
@@ -89,7 +103,7 @@ describe("ExternalLinkIconDecoration", () => {
         link(" rest", "https://a.example.com/"),
         link("next", "https://b.example.com/")
       ),
-      null
+      { workspaceId: null }
     )
 
     expect(icons(editor).map((icon) => icon.link)).toEqual(["https://a.example.com/", "https://b.example.com/"])
@@ -100,7 +114,7 @@ describe("ExternalLinkIconDecoration", () => {
       { type: "text", text: "see " },
       link("pr", "https://github.com/threahq/threa/pull/1"),
       { type: "text", text: " and " },
-      link("docs", "https://docs.example.com/a")
+      docsLink
     )
     const read = (editor: Editor) => ({
       json: editor.getJSON(),
@@ -110,71 +124,91 @@ describe("ExternalLinkIconDecoration", () => {
     })
 
     const decorated = openEditor(content)
-    const plain = openEditor(content, "ws_1", false)
+    const plain = openEditor(content, { icons: false })
 
     expect({ icons: icons(decorated).length, ...read(decorated) }).toEqual({ icons: 2, ...read(plain) })
   })
 
-  it("should draw the favicon once it has loaded", () => {
-    const editor = openEditor(paragraph(link("docs", "https://docs.example.com/a")))
+  it("should draw favicons that load in the same frame with one redraw", () => {
+    const editor = openEditor(paragraph(docsLink, { type: "text", text: " " }, link("b", "https://b.example.com/")))
+    let redraws = 0
+    editor.on("transaction", () => redraws++)
 
-    faviconRequests[0].dispatchEvent(new Event("load"))
+    settle(0, "load")
+    settle(1, "load")
+    const beforeFrame = icons(editor).map((icon) => icon.icon)
+    vi.advanceTimersToNextFrame()
 
-    expect(icons(editor)).toEqual([
-      { link: "https://docs.example.com/a", icon: "favicon", favicon: `url("${docsFavicon}")` },
-    ])
-  })
-
-  it("should keep the globe after a failed favicon and ask again only after thirty seconds", () => {
-    vi.useFakeTimers({ toFake: ["Date"] })
-    const editor = openEditor(paragraph(link("docs", "https://docs.example.com/a")))
-    const addLink = (text: string) =>
-      editor.commands.insertContentAt(editor.state.doc.content.size - 1, [
-        { type: "text", text: " " },
-        link(text, `https://docs.example.com/${text}`),
-      ])
-
-    faviconRequests[0].dispatchEvent(new Event("error"))
-    vi.advanceTimersByTime(29_000)
-    addLink("b")
-    const requestedWithinWindow = requestedFavicons()
-    vi.advanceTimersByTime(1_000)
-    addLink("c")
-
-    expect({
-      icons: icons(editor).map((icon) => icon.icon),
-      requestedWithinWindow,
-      requested: requestedFavicons(),
-    }).toEqual({
-      icons: ["globe", "globe", "globe"],
-      requestedWithinWindow: [docsFavicon],
-      requested: [docsFavicon, docsFavicon],
+    expect({ beforeFrame, redraws, icons: icons(editor) }).toEqual({
+      beforeFrame: ["globe", "globe"],
+      redraws: 1,
+      icons: [
+        { link: "https://docs.example.com/a", icon: null, favicon: `url("${docsFavicon}")` },
+        { link: "https://b.example.com/", icon: null, favicon: `url("${linkFaviconUrl("ws_1", "b.example.com")}")` },
+      ],
     })
   })
 
-  it("should ask once more for a failed favicon after thirty seconds without an edit", () => {
-    vi.useFakeTimers()
-    const editor = openEditor(paragraph(link("docs", "https://docs.example.com/a")))
+  it("should not ask again for a failed favicon while its link stays in the text", () => {
+    const editor = openEditor(paragraph(docsLink))
 
-    faviconRequests[0].dispatchEvent(new Event("error"))
-    vi.advanceTimersByTime(30_000)
-    const requestedAfterFirstMiss = requestedFavicons()
-    faviconRequests[1].dispatchEvent(new Event("error"))
+    settle(0, "error")
+    vi.advanceTimersByTime(29_000)
+    editor.commands.insertContentAt(1, "typing ")
+    const requestedBeforeRetry = requestedFavicons()
+    vi.advanceTimersByTime(1_000)
+    settle(1, "error")
     vi.advanceTimersByTime(120_000)
+    editor.commands.insertContentAt(1, "more typing ")
 
     expect({
       icons: icons(editor).map((icon) => icon.icon),
-      requestedAfterFirstMiss,
+      requestedBeforeRetry,
       requested: requestedFavicons(),
     }).toEqual({
       icons: ["globe"],
-      requestedAfterFirstMiss: [docsFavicon, docsFavicon],
+      requestedBeforeRetry: [docsFavicon],
       requested: [docsFavicon, docsFavicon],
     })
   })
 
+  it("should ask again for a failed favicon when its link returns after thirty seconds", () => {
+    const editor = openEditor(paragraph(docsLink))
+    const retype = () => {
+      editor.commands.clearContent()
+      editor.commands.setContent(paragraph(docsLink))
+    }
+
+    settle(0, "error")
+    vi.advanceTimersByTime(29_000)
+    retype()
+    const requestedWithinWindow = requestedFavicons()
+    vi.advanceTimersByTime(1_000)
+    settle(1, "error")
+    vi.advanceTimersByTime(30_000)
+    retype()
+
+    expect({ requestedWithinWindow, requested: requestedFavicons() }).toEqual({
+      requestedWithinWindow: [docsFavicon],
+      requested: [docsFavicon, docsFavicon, docsFavicon],
+    })
+  })
+
+  it("should drop the timed retry when the link left the text or the editor closed", () => {
+    const removed = openEditor(paragraph(docsLink))
+    const closed = openEditor(paragraph(link("b", "https://b.example.com/")))
+
+    settle(0, "error")
+    settle(1, "error")
+    removed.commands.clearContent()
+    closed.destroy()
+    vi.advanceTimersByTime(60_000)
+
+    expect(requestedFavicons()).toEqual([docsFavicon, linkFaviconUrl("ws_1", "b.example.com")])
+  })
+
   it("should request no favicon without a workspace", () => {
-    const editor = openEditor(paragraph(link("docs", "https://docs.example.com/a")), null)
+    const editor = openEditor(paragraph(docsLink), { workspaceId: null })
 
     expect({ icons: icons(editor), requested: requestedFavicons() }).toEqual({
       icons: [{ link: "https://docs.example.com/a", icon: "globe", favicon: null }],
@@ -183,14 +217,7 @@ describe("ExternalLinkIconDecoration", () => {
   })
 
   it("should draw icons in the collaborative document editor", () => {
-    const el = document.createElement("div")
-    document.body.appendChild(el)
-    const editor = new Editor({
-      element: el,
-      extensions: createDocumentExtensions({ ydoc: new Y.Doc(), awareness: null, workspaceId: "ws_1" }),
-    })
-    editor.on("destroy", () => el.remove())
-    editors.push(editor)
+    const editor = mountEditor(createDocumentExtensions({ ydoc: new Y.Doc(), awareness: null, workspaceId: "ws_1" }))
 
     editor.commands.setContent(paragraph(link("pr", "https://github.com/threahq/threa/pull/1")))
 
