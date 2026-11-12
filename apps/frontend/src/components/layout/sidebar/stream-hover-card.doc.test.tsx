@@ -41,8 +41,10 @@ describe("StreamHoverCard on a doc", () => {
     } as DocState)
     renderCard()
 
-    expect(await screen.findByRole("heading", { name: "Keys to rotate" })).toBeInTheDocument()
-    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Stripe", "OpenRouter"])
+    const heading = await screen.findByRole("heading", { name: "Keys to rotate" })
+    const items = screen.getAllByRole("listitem")
+    expect(items.map((item) => item.textContent)).toEqual(["Stripe", "OpenRouter"])
+    expect(heading.compareDocumentPosition(items[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.getByRole("link", { name: "Open" })).toHaveAttribute("href", `/w/${WS}/s/${DOC.id}`)
     expect(docsApi.get).toHaveBeenCalledWith(WS, DOC.id)
   })
