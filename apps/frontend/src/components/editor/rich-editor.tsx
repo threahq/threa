@@ -581,6 +581,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         docCreate: enableDocEmbed ? docCreateOptions : undefined,
         toEmoji: enableEmoji ? toEmoji : undefined,
         emoticonToEmoji: enableEmoji ? emoticonToEmoji : undefined,
+        workspaceId,
       }),
       EditorBehaviors.configure({
         sendModeRef: messageSendModeRef,
@@ -606,6 +607,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       enableEmoji,
       enableMemoEmbed,
       enableDocEmbed,
+      workspaceId,
     ]
   )
 

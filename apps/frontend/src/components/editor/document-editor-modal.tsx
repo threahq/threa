@@ -113,6 +113,7 @@ export function DocumentEditorModal({
         emojiSuggestion: emojiConfig,
         toEmoji,
         emoticonToEmoji,
+        workspaceId,
       }),
       EditorBehaviors.configure({
         sendModeRef: { current: "cmdEnter" }, // Use cmdEnter mode in modal
@@ -120,7 +121,7 @@ export function DocumentEditorModal({
         keyBindingsRef: keyBindingsRef,
       }),
     ],
-    [mentionConfig, channelConfig, emojiConfig, toEmoji, emoticonToEmoji]
+    [mentionConfig, channelConfig, emojiConfig, toEmoji, emoticonToEmoji, workspaceId]
   )
 
   const editor = useEditor({

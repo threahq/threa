@@ -234,10 +234,22 @@ function DocEditor({
         docCreate: docCreateOptions,
         toEmoji,
         emoticonToEmoji,
+        workspaceId,
       }),
       EditorBehaviors.configure({ sendModeRef: DOC_SEND_MODE, onSubmitRef: NO_SUBMIT, keyBindingsRef }),
     ],
-    [ydoc, awareness, mentionConfig, channelConfig, emojiConfig, docConfig, docCreateOptions, toEmoji, emoticonToEmoji]
+    [
+      ydoc,
+      awareness,
+      mentionConfig,
+      channelConfig,
+      emojiConfig,
+      docConfig,
+      docCreateOptions,
+      toEmoji,
+      emoticonToEmoji,
+      workspaceId,
+    ]
   )
 
   const editor = useEditor({
