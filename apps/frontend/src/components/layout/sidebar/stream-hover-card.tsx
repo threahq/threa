@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
+import { useQuery } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { Check, CheckCheck, ExternalLink, MessagesSquare, SmilePlus } from "lucide-react"
 import { ENCRYPTED_MESSAGE_PREVIEW_LABEL, StreamTypes, type StreamWithPreview } from "@threahq/types"
+import { docKeys, docsApi } from "@/api/docs"
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
+import { MarkdownContent } from "@/components/ui/markdown-content"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -28,6 +31,7 @@ import { cn } from "@/lib/utils"
 
 const OPEN_DELAY_MS = 450
 const CLOSE_DELAY_MS = 150
+const DOC_SECTION_LIMIT = 12
 type Reactions = Record<string, string[]>
 
 /**
@@ -133,10 +137,19 @@ interface HoverCardContentProps {
   onClearFromInbox?: () => void
 }
 
-/** Mounts the popover once the local read resolves (a few ms), so the card opens with its messages in place. */
-function HoverCardContent({ hover, side, ...props }: HoverCardContentProps) {
-  const messages = useHoverCardMessages(props.workspaceId, props.stream.id)
-  if (messages === undefined) return null
+function HoverCardContent(props: HoverCardContentProps) {
+  return props.stream.type === StreamTypes.DOC ? (
+    <DocHoverCardContent {...props} />
+  ) : (
+    <MessagesHoverCardContent {...props} />
+  )
+}
+
+function HoverCardPopover({
+  hover,
+  side,
+  children,
+}: Pick<HoverCardContentProps, "hover" | "side"> & { children: ReactNode }) {
   return (
     <PopoverContent
       side={side}
@@ -149,8 +162,107 @@ function HoverCardContent({ hover, side, ...props }: HoverCardContentProps) {
       onPointerEnter={hover.onPointerEnter}
       onPointerLeave={hover.onPointerLeave}
     >
-      <HoverCardBody {...props} messages={messages} onNavigate={hover.close} />
+      <div className="flex max-h-[min(28rem,var(--radix-popover-content-available-height))] flex-col">{children}</div>
     </PopoverContent>
+  )
+}
+
+interface HoverCardHeaderProps {
+  workspaceId: string
+  stream: StreamWithPreview
+  title: string
+  onMarkRead?: () => void
+  onClearFromInbox?: () => void
+  onNavigate: () => void
+}
+
+function HoverCardHeader({
+  workspaceId,
+  stream,
+  title,
+  onMarkRead,
+  onClearFromInbox,
+  onNavigate,
+}: HoverCardHeaderProps) {
+  return (
+    <div className="flex items-center gap-1 border-b px-3 py-2">
+      <span className="min-w-0 flex-1 truncate text-sm font-semibold">{title}</span>
+      {onMarkRead && (
+        <CardAction label="Mark read" onClick={onMarkRead}>
+          <CheckCheck />
+        </CardAction>
+      )}
+      {onClearFromInbox && (
+        <CardAction label="Settle" onClick={onClearFromInbox}>
+          <Check />
+        </CardAction>
+      )}
+      {stream.type !== StreamTypes.THREAD && (
+        <CardLink label="Threads" to={streamThreadsHref(workspaceId, stream.id)} onNavigate={onNavigate}>
+          <MessagesSquare />
+        </CardLink>
+      )}
+      <CardLink label="Open" to={`/w/${workspaceId}/s/${stream.id}`} onNavigate={onNavigate}>
+        <ExternalLink />
+      </CardLink>
+    </div>
+  )
+}
+
+/**
+ * A doc has no messages: the card shows its opening sections instead. Mounts once the
+ * doc's sections load, so the card opens with them in place.
+ */
+function DocHoverCardContent({ hover, side, workspaceId, stream, title, onClearFromInbox }: HoverCardContentProps) {
+  const { data: sections, isError } = useQuery({
+    queryKey: docKeys.state(workspaceId, stream.id),
+    queryFn: () => docsApi.get(workspaceId, stream.id),
+    select: (doc) => doc.sections.filter((section) => section.markdown.trim()).slice(0, DOC_SECTION_LIMIT),
+    staleTime: 30_000,
+  })
+  if (!sections && !isError) return null
+
+  let body: ReactNode
+  if (!sections) body = <p className="py-1 text-xs text-muted-foreground">Couldn't load this doc</p>
+  else if (sections.length === 0) body = <p className="py-1 text-xs text-muted-foreground">Empty doc</p>
+  else
+    body = sections.map((section) => (
+      <MarkdownContent
+        key={section.blockId}
+        content={section.markdown}
+        className="text-[13px] leading-[18px] [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_h1]:text-[15px] [&_h2]:text-sm [&_h3]:text-[13px]"
+      />
+    ))
+
+  return (
+    <HoverCardPopover hover={hover} side={side}>
+      <HoverCardHeader
+        workspaceId={workspaceId}
+        stream={stream}
+        title={title}
+        onClearFromInbox={onClearFromInbox}
+        onNavigate={hover.close}
+      />
+      <div
+        className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 py-3"
+        onClick={(event) => {
+          if ((event.target as Element).closest("a")) hover.close()
+        }}
+      >
+        {body}
+      </div>
+    </HoverCardPopover>
+  )
+}
+
+/** Mounts the popover once the local read resolves (a few ms), so the card opens with its messages in place. */
+function MessagesHoverCardContent({ hover, side, ...props }: HoverCardContentProps) {
+  const messages = useHoverCardMessages(props.workspaceId, props.stream.id)
+  if (messages === undefined) return null
+  return (
+    <HoverCardPopover hover={hover} side={side}>
+      <HoverCardBody {...props} messages={messages} onNavigate={hover.close} />
+    </HoverCardPopover>
   )
 }
 
@@ -198,28 +310,15 @@ function HoverCardBody({
   const streamHref = `/w/${workspaceId}/s/${stream.id}`
 
   return (
-    <div className="flex max-h-[min(28rem,var(--radix-popover-content-available-height))] flex-col">
-      <div className="flex items-center gap-1 border-b px-3 py-2">
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold">{title}</span>
-        {unreadCount > 0 && latest && (
-          <CardAction label="Mark read" onClick={() => void markAsRead(stream.id, latest.event.id)}>
-            <CheckCheck />
-          </CardAction>
-        )}
-        {onClearFromInbox && (
-          <CardAction label="Settle" onClick={onClearFromInbox}>
-            <Check />
-          </CardAction>
-        )}
-        {stream.type !== StreamTypes.THREAD && (
-          <CardLink label="Threads" to={streamThreadsHref(workspaceId, stream.id)} onNavigate={onNavigate}>
-            <MessagesSquare />
-          </CardLink>
-        )}
-        <CardLink label="Open" to={streamHref} onNavigate={onNavigate}>
-          <ExternalLink />
-        </CardLink>
-      </div>
+    <>
+      <HoverCardHeader
+        workspaceId={workspaceId}
+        stream={stream}
+        title={title}
+        onMarkRead={unreadCount > 0 && latest ? () => void markAsRead(stream.id, latest.event.id) : undefined}
+        onClearFromInbox={onClearFromInbox}
+        onNavigate={onNavigate}
+      />
 
       <div
         ref={scrollerRef}
@@ -254,7 +353,7 @@ function HoverCardBody({
           </div>
         ))}
       </div>
-    </div>
+    </>
   )
 }
 
