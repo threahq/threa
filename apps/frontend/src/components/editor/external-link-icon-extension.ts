@@ -40,6 +40,12 @@ export const ExternalLinkIconDecoration = Extension.create<ExternalLinkIconDecor
     const loadedFavicons = new Set<string>()
     const faviconRequestedAt = new Map<string, number>()
     const wantedFavicons = new Set<string>()
+    const timedRetries = new Set<string>()
+    const retryTimers = new Set<ReturnType<typeof setTimeout>>()
+
+    const rebuild = (view: EditorView) => {
+      if (!view.isDestroyed) view.dispatch(view.state.tr.setMeta(pluginKey, true))
+    }
 
     const iconAttrs = (href: string): Record<string, string> | null => {
       const link = describeExternalLink(href)
@@ -81,7 +87,17 @@ export const ExternalLinkIconDecoration = Extension.create<ExternalLinkIconDecor
         const image = new Image()
         image.addEventListener("load", () => {
           loadedFavicons.add(src)
-          if (!view.isDestroyed) view.dispatch(view.state.tr.setMeta(pluginKey, true))
+          rebuild(view)
+        })
+        image.addEventListener("error", () => {
+          // One timed retry per host, so an idle editor still picks up the icon; any later retry rides on an edit.
+          if (timedRetries.has(src)) return
+          timedRetries.add(src)
+          const timer = setTimeout(() => {
+            retryTimers.delete(timer)
+            rebuild(view)
+          }, FAVICON_RETRY_MS)
+          retryTimers.add(timer)
         })
         image.src = src
       }
@@ -100,7 +116,7 @@ export const ExternalLinkIconDecoration = Extension.create<ExternalLinkIconDecor
         },
         view: (view) => {
           requestWantedFavicons(view)
-          return { update: requestWantedFavicons }
+          return { update: requestWantedFavicons, destroy: () => retryTimers.forEach(clearTimeout) }
         },
       }),
     ]

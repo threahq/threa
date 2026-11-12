@@ -152,6 +152,27 @@ describe("ExternalLinkIconDecoration", () => {
     })
   })
 
+  it("should ask once more for a failed favicon after thirty seconds without an edit", () => {
+    vi.useFakeTimers()
+    const editor = openEditor(paragraph(link("docs", "https://docs.example.com/a")))
+
+    faviconRequests[0].dispatchEvent(new Event("error"))
+    vi.advanceTimersByTime(30_000)
+    const requestedAfterFirstMiss = requestedFavicons()
+    faviconRequests[1].dispatchEvent(new Event("error"))
+    vi.advanceTimersByTime(120_000)
+
+    expect({
+      icons: icons(editor).map((icon) => icon.icon),
+      requestedAfterFirstMiss,
+      requested: requestedFavicons(),
+    }).toEqual({
+      icons: ["globe"],
+      requestedAfterFirstMiss: [docsFavicon, docsFavicon],
+      requested: [docsFavicon, docsFavicon],
+    })
+  })
+
   it("should request no favicon without a workspace", () => {
     const editor = openEditor(paragraph(link("docs", "https://docs.example.com/a")), null)
 
