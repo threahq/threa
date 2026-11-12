@@ -116,7 +116,8 @@ export function createLinkPreviewHandlers(deps: HandlerDeps) {
 
         const icon = await linkFaviconService.getIcon(workspaceId, req.user!.id, host)
         if (!icon) {
-          res.set("Cache-Control", "private, max-age=300")
+          // Editors ask before a host is cached: a remembered miss would keep the globe after the icon arrives.
+          res.set("Cache-Control", "no-store")
           res.status(404).json({ error: "Not found" })
           return
         }

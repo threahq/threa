@@ -58,6 +58,7 @@ export const JobQueues = {
   GITHUB_WEBHOOK_PROCESS: "github_webhook.process",
   GITHUB_PREVIEW_REFRESH: "github_preview.refresh",
   LINK_PREVIEW_VISIBLE_REFRESH: "link_preview.visible-refresh",
+  LINK_FAVICON_ENSURE: "link_favicon.ensure",
   PUSH_DELIVER: "push.deliver",
   PUSH_SESSION_EXPIRED: "push.session_expired",
   STREAM_CONNECTION_PULL: "stream_connection.pull",
@@ -474,6 +475,15 @@ export interface LinkPreviewVisibleRefreshJobData {
 }
 
 /**
+ * Caches the favicon of a page linked outside messages (doc links). Senders key the
+ * queue-message id on workspace, host and a time bucket so repeat edits collapse.
+ */
+export interface LinkFaviconEnsureJobData {
+  workspaceId: string
+  pageUrl: string
+}
+
+/**
  * Folds a doc's edits since the last roll-up into one `doc:activity` row on its
  * host. Senders key the queue-message id on a quiet-window time bucket so a burst
  * of flushes collapses into one job per doc per window. `hop` counts the worker's
@@ -537,6 +547,7 @@ export interface JobDataMap {
   [JobQueues.GITHUB_WEBHOOK_PROCESS]: GithubWebhookProcessJobData
   [JobQueues.GITHUB_PREVIEW_REFRESH]: GithubPreviewRefreshJobData
   [JobQueues.LINK_PREVIEW_VISIBLE_REFRESH]: LinkPreviewVisibleRefreshJobData
+  [JobQueues.LINK_FAVICON_ENSURE]: LinkFaviconEnsureJobData
   [JobQueues.STREAM_CONNECTION_PULL]: StreamConnectionPullJobData
   [JobQueues.STREAM_CONNECTION_SWEEP]: StreamConnectionSweepJobData
   [JobQueues.STREAM_CONNECTION_COPY_ATTACHMENT]: StreamConnectionCopyAttachmentJobData

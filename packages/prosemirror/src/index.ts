@@ -73,6 +73,7 @@ export {
   collectMemoEmbedIds,
   collectDocEmbeds,
   collectDocEmbedIds,
+  collectExternalLinkOrigins,
   collectMentionActorRefs,
   collectMentionSlugs,
   collectChannelStreamIds,

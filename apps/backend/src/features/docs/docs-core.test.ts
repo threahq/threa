@@ -93,6 +93,34 @@ describe("doc projection", () => {
     ])
   })
 
+  test("should emit one link_origin reference per block and origin when blocks link externally", () => {
+    const link = (href: string): JSONContent => ({
+      type: "text",
+      text: "x",
+      marks: [{ type: "link", attrs: { href } }],
+    })
+    const json: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          attrs: { blockId: id(1) },
+          content: [link("https://example.com/a"), link("https://example.com/b"), link("mailto:a@example.com")],
+        },
+        {
+          type: "paragraph",
+          attrs: { blockId: id(2) },
+          content: [docEmbed("stream_b"), link("http://other.test:8080/x")],
+        },
+      ],
+    }
+    expect(projectDoc(json, DOC_ID).references).toEqual([
+      { blockId: id(1), refType: "link_origin", refId: "https://example.com" },
+      { blockId: id(2), refType: "doc", refId: "stream_b" },
+      { blockId: id(2), refType: "link_origin", refId: "http://other.test:8080" },
+    ])
+  })
+
   test("refuses a top-level block without a block id", () => {
     expect(() => projectDoc({ type: "doc", content: [paragraph("No id")] }, DOC_ID)).toThrow("has no blockId")
   })

@@ -11,6 +11,7 @@ export { LinkFaviconRepository } from "./favicon-repository"
 export { registerLinkFaviconsBackfill } from "./favicon-backfill"
 
 export { createLinkPreviewWorker } from "./worker"
+export { createLinkFaviconEnsureWorker } from "./favicon-ensure"
 
 export { LinkPreviewOutboxHandler } from "./outbox-handler"
 

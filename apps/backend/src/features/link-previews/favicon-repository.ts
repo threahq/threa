@@ -41,10 +41,11 @@ export const LinkFaviconRepository = {
   },
 
   /**
-   * Whether the user can read an undeleted message that links to this host. A preview is on a host
-   * exactly when its normalized URL starts with `scheme://host/`: normalization keeps the host and the
-   * root slash. Access is checked once per linking stream, not per message, so the cost follows the
-   * host's link count and never the size of the streams the user reads.
+   * Whether the user can read an undeleted message or a doc that links to this host. A preview is on a
+   * host exactly when its normalized URL starts with `scheme://host/`: normalization keeps the host and
+   * the root slash. A doc links a host through its `link_origin` references (`scheme://host`). Access is
+   * checked once per linking stream or doc, not per message or block, so the cost follows the host's
+   * link count and never the size of the streams the user reads.
    */
   async isHostLinkedInReadableStream(
     querier: Querier,
@@ -67,9 +68,47 @@ export const LinkFaviconRepository = {
             AND m.deleted_at IS NULL
         ) linked
         WHERE ${streamAccessPredicateSql(workspaceId, userId, "linked.stream_id")}
+      ) OR EXISTS (
+        SELECT 1
+        FROM (
+          SELECT DISTINCT dr.doc_id
+          FROM doc_references dr
+          WHERE dr.workspace_id = ${workspaceId}
+            AND dr.ref_type = 'link_origin'
+            AND dr.ref_id IN (${`http://${host}`}, ${`https://${host}`})
+        ) linked_docs
+        WHERE ${streamAccessPredicateSql(workspaceId, userId, "linked_docs.doc_id")}
       ) AS readable`
     )
     return result.rows[0].readable
+  },
+
+  /**
+   * Hosts linked on the given doc blocks that have no unexpired icon or miss, each with the origin to fetch:
+   * https when the doc links the host under both schemes.
+   */
+  async listUncachedDocLinkOrigins(
+    querier: Querier,
+    workspaceId: string,
+    docId: string,
+    blockIds: readonly string[]
+  ): Promise<Array<{ host: string; origin: string }>> {
+    const result = await querier.query<{ host: string; origin: string }>(
+      sql`SELECT DISTINCT ON (linked.host) linked.host, linked.origin
+          FROM (
+            SELECT split_part(dr.ref_id, '://', 2) AS host, dr.ref_id AS origin
+            FROM doc_references dr
+            WHERE dr.workspace_id = $1 AND dr.doc_id = $2 AND dr.ref_type = 'link_origin'
+              AND dr.block_id = ANY($3::text[])
+          ) linked
+          WHERE NOT EXISTS (
+            SELECT 1 FROM link_favicons lf
+            WHERE lf.workspace_id = $1 AND lf.host = linked.host AND lf.expires_at > NOW()
+          )
+          ORDER BY linked.host, (linked.origin LIKE 'https://%') DESC`,
+      [workspaceId, docId, [...blockIds]]
+    )
+    return result.rows
   },
 
   async storeIcon(

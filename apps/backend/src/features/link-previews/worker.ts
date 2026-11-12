@@ -212,7 +212,7 @@ async function fetchOEmbedFallbackImage(url: string): Promise<string | null> {
  * Tries oEmbed first for known providers, then falls back to HTML parsing.
  * Runs outside of any DB transaction (INV-41).
  */
-async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParams> {
+export async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParams> {
   // Defense-in-depth SSRF check (primary filter is in extractUrls)
   if (isBlockedUrl(url)) {
     log.warn({ url }, "Blocked SSRF attempt in fetchMetadata")

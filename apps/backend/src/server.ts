@@ -53,6 +53,7 @@ import {
 import {
   LinkPreviewService,
   LinkFaviconService,
+  createLinkFaviconEnsureWorker,
   registerLinkFaviconsBackfill,
   LinkPreviewOutboxHandler,
   createLinkPreviewWorker,
@@ -1734,6 +1735,11 @@ export async function startServer(): Promise<ServerInstance> {
     workspaceIntegrationService,
   })
   jobQueue.registerHandler(JobQueues.LINK_PREVIEW_VISIBLE_REFRESH, linkPreviewVisibleRefreshWorker, {
+    tier: QueueTiers.LIGHT,
+    fairness: QueueFairness.NONE,
+  })
+
+  jobQueue.registerHandler(JobQueues.LINK_FAVICON_ENSURE, createLinkFaviconEnsureWorker({ linkFaviconService }), {
     tier: QueueTiers.LIGHT,
     fairness: QueueFairness.NONE,
   })

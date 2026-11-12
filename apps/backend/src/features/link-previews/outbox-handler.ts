@@ -1,11 +1,12 @@
 import type { Pool } from "pg"
-import { parseMessagePayload } from "../../lib/outbox"
+import { isOutboxEventType, parseMessagePayload } from "../../lib/outbox"
 import { JobQueues } from "../../lib/queue"
 import type { QueueManager } from "../../lib/queue"
 import { logger } from "@threahq/backend-common"
 import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig, type OutboxEvent } from "../../lib/outbox"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { StreamRepository } from "../streams"
+import { enqueueDocLinkFaviconEnsures } from "./favicon-ensure"
 
 const LINK_PREVIEW_EVENT_TYPES = new Set(["message:created", "message:edited"])
 
@@ -20,6 +21,11 @@ export class LinkPreviewOutboxHandler extends DebouncedOutboxHandler {
   }
 
   protected async processEvent(event: OutboxEvent): Promise<void> {
+    if (isOutboxEventType(event, "doc:updated")) {
+      const { workspaceId, streamId: docId, touchedBlockIds: blockIds } = event.payload
+      await enqueueDocLinkFaviconEnsures({ db: this.db, jobQueue: this.jobQueue }, { workspaceId, docId, blockIds })
+      return
+    }
     if (!LINK_PREVIEW_EVENT_TYPES.has(event.eventType)) {
       return
     }

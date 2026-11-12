@@ -840,3 +840,42 @@ describe("DocService.listBacklinks", () => {
     }).toEqual({ before: [docA.id], after: [] })
   })
 })
+
+describe("DocService doc_references link origins", () => {
+  test("should project a link_origin reference for an external link and drop it when the link is removed", async () => {
+    const host = await createChannel("private")
+    const doc = await createDoc(host.id)
+    const client = await openClient(doc.id, owner)
+    const json = ydocToContentJson(client.ydoc)
+    const block = blockId()
+    const linked: JSONContent = {
+      ...json,
+      content: [
+        ...(json.content ?? []),
+        {
+          type: "paragraph",
+          attrs: { blockId: block },
+          content: [
+            { type: "text", text: "site", marks: [{ type: "link", attrs: { href: "https://example.com/page" } }] },
+          ],
+        },
+      ],
+    }
+    const linkOriginRows = async () =>
+      (
+        await pool.query<{ block_id: string; ref_id: string }>(
+          `SELECT block_id, ref_id FROM doc_references WHERE workspace_id = $1 AND doc_id = $2 AND ref_type = 'link_origin'`,
+          [wsId, doc.id]
+        )
+      ).rows
+
+    await post(doc.id, encodeUpdateBase64(writeContentJson(client.ydoc, linked)))
+    const before = await linkOriginRows()
+    await post(doc.id, encodeUpdateBase64(writeContentJson(client.ydoc, { ...linked, content: json.content ?? [] })))
+
+    expect({ before, after: await linkOriginRows() }).toEqual({
+      before: [{ block_id: block, ref_id: "https://example.com" }],
+      after: [],
+    })
+  })
+})

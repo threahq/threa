@@ -91,27 +91,33 @@ export class LinkFaviconService {
   }
 
   /** Concurrent calls for one host share a single refresh: links in a message hydrate in parallel. */
-  async ensureForPage(workspaceId: string, pageUrl: string, candidateUrl: string): Promise<void> {
+  async ensureForPage(workspaceId: string, pageUrl: string, declaredIconUrl: string | null): Promise<void> {
     const host = linkFaviconHost(pageUrl)
     if (!host) return
 
     const key = `${workspaceId} ${host}`
     let refresh = this.refreshes.get(key)
     if (!refresh) {
-      refresh = this.refresh(workspaceId, host, pageUrl, candidateUrl).finally(() => this.refreshes.delete(key))
+      refresh = this.refresh(workspaceId, host, pageUrl, declaredIconUrl).finally(() => this.refreshes.delete(key))
       this.refreshes.set(key, refresh)
     }
     await refresh
   }
 
-  private async refresh(workspaceId: string, host: string, pageUrl: string, candidateUrl: string): Promise<void> {
+  private async refresh(
+    workspaceId: string,
+    host: string,
+    pageUrl: string,
+    declaredIconUrl: string | null
+  ): Promise<void> {
     const existing = await LinkFaviconRepository.find(this.pool, workspaceId, host)
     if (existing && existing.expiresAt.getTime() > Date.now()) return
 
     const signal = AbortSignal.timeout(FAVICON_FETCH_TIMEOUT_MS)
     // The host's own icon first: a redirecting host (a link shortener) hands us its destination's
     // declared icon, which would otherwise be cached under the shortener's name.
-    const candidates = [...new Set([`${new URL(pageUrl).origin}/favicon.ico`, candidateUrl])]
+    const candidates = new Set([`${new URL(pageUrl).origin}/favicon.ico`])
+    if (declaredIconUrl) candidates.add(declaredIconUrl)
     for (const candidate of candidates) {
       const icon = await fetchIcon(candidate, signal)
       if (icon) {

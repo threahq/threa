@@ -6,6 +6,7 @@ import { LinkFaviconRepository, LinkFaviconService } from "../../src/features/li
 import { EventService, MessageRepository } from "../../src/features/messaging"
 import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { WorkspaceRepository } from "../../src/features/workspaces"
+import { DocRepository } from "../../src/features/docs"
 import { streamId, workspaceId } from "../../src/lib/id"
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 255, 1])
@@ -213,5 +214,148 @@ describe("LinkFaviconService.getIcon access", () => {
         "never-linked.example": false,
       },
     })
+  })
+})
+
+describe("LinkFaviconRepository doc links", () => {
+  let pool: Pool
+
+  beforeAll(async () => {
+    pool = await setupTestDatabase()
+  })
+
+  afterAll(async () => {
+    await pool.end()
+  })
+
+  async function seedWorkspace() {
+    const ws = workspaceId()
+    const owner = (await addTestMember(pool, ws, `owner_${ws}`)).id
+    const reader = (await addTestMember(pool, ws, `reader_${ws}`)).id
+    await WorkspaceRepository.insert(pool, { id: ws, name: "Doc Icons WS", slug: `doc-icons-${ws}`, createdBy: owner })
+    return { ws, owner, reader }
+  }
+
+  async function channel(ws: string, createdBy: string, members: string[]) {
+    const stream = await StreamRepository.insert(pool, {
+      id: streamId(),
+      workspaceId: ws,
+      type: StreamTypes.CHANNEL,
+      slug: `c-${streamId().slice(-8).toLowerCase()}`,
+      visibility: Visibilities.PRIVATE,
+      createdBy,
+    })
+    await StreamMemberRepository.insertMany(pool, ws, stream.id, members)
+    return stream
+  }
+
+  async function createDoc(ws: string, hostId: string, createdBy: string) {
+    return StreamRepository.insert(pool, {
+      id: streamId(),
+      workspaceId: ws,
+      type: StreamTypes.DOC,
+      displayName: "A doc",
+      parentStreamId: hostId,
+      rootStreamId: hostId,
+      createdBy,
+    })
+  }
+
+  async function linkOrigins(ws: string, docId: string, origins: string[]) {
+    await DocRepository.replaceReferences(
+      pool,
+      ws,
+      docId,
+      origins.map((refId, i) => ({ blockId: `blk_${i}`, refType: "link_origin" as const, refId }))
+    )
+  }
+
+  test("should treat a host as readable only when it is linked in a doc the user can read", async () => {
+    const { ws, owner, reader } = await seedWorkspace()
+    const shared = await channel(ws, owner, [owner, reader])
+    const ownersOnly = await channel(ws, owner, [owner])
+    const sharedDoc = await createDoc(ws, shared.id, owner)
+    const ownersDoc = await createDoc(ws, ownersOnly.id, owner)
+    const embedDoc = await createDoc(ws, shared.id, owner)
+    await linkOrigins(ws, sharedDoc.id, ["https://hosted.example", "http://dev.example:8080"])
+    await linkOrigins(ws, ownersDoc.id, ["https://secret.example"])
+    await DocRepository.replaceReferences(pool, ws, embedDoc.id, [
+      { blockId: "blk_0", refType: "doc", refId: "https://embed-only.example" },
+    ])
+
+    const hosts = ["hosted.example", "dev.example:8080", "secret.example", "embed-only.example", "dev.example"]
+    async function readable(userId: string) {
+      const entries = await Promise.all(
+        hosts.map(
+          async (host) =>
+            [host, await LinkFaviconRepository.isHostLinkedInReadableStream(pool, ws, userId, host)] as const
+        )
+      )
+      return Object.fromEntries(entries)
+    }
+
+    expect({ reader: await readable(reader), owner: await readable(owner) }).toEqual({
+      reader: {
+        "hosted.example": true,
+        "dev.example:8080": true,
+        "secret.example": false,
+        "embed-only.example": false,
+        "dev.example": false,
+      },
+      owner: {
+        "hosted.example": true,
+        "dev.example:8080": true,
+        "secret.example": true,
+        "embed-only.example": false,
+        "dev.example": false,
+      },
+    })
+  })
+
+  test("should list each host on the given blocks that has no unexpired row, preferring its https origin", async () => {
+    const { ws, owner } = await seedWorkspace()
+    const host = await channel(ws, owner, [owner])
+    const doc = await createDoc(ws, host.id, owner)
+    const origins = [
+      "https://fresh-icon.example",
+      "https://fresh-miss.example",
+      "https://expired.example",
+      "https://absent.example:8443",
+      "http://both-schemes.example",
+      "https://both-schemes.example",
+    ]
+    await DocRepository.replaceReferences(pool, ws, doc.id, [
+      ...origins.map((refId) => ({ blockId: "blk_a", refType: "link_origin" as const, refId })),
+      { blockId: "blk_b", refType: "link_origin" as const, refId: "https://absent.example:8443" },
+      { blockId: "blk_c", refType: "link_origin" as const, refId: "https://untouched.example" },
+      { blockId: "blk_a", refType: "doc" as const, refId: "stream_other" },
+    ])
+    const future = new Date(Date.now() + 3_600_000)
+    await LinkFaviconRepository.storeIcon(pool, {
+      workspaceId: ws,
+      host: "fresh-icon.example",
+      contentType: "image/png",
+      bytes: PNG,
+      expiresAt: future,
+    })
+    await LinkFaviconRepository.recordMiss(pool, { workspaceId: ws, host: "fresh-miss.example", expiresAt: future })
+    await LinkFaviconRepository.recordMiss(pool, {
+      workspaceId: ws,
+      host: "expired.example",
+      expiresAt: new Date(Date.now() - 1000),
+    })
+    await LinkFaviconRepository.storeIcon(pool, {
+      workspaceId: workspaceId(),
+      host: "absent.example:8443",
+      contentType: "image/png",
+      bytes: PNG,
+      expiresAt: future,
+    })
+
+    expect(await LinkFaviconRepository.listUncachedDocLinkOrigins(pool, ws, doc.id, ["blk_a", "blk_b"])).toEqual([
+      { host: "absent.example:8443", origin: "https://absent.example:8443" },
+      { host: "both-schemes.example", origin: "https://both-schemes.example" },
+      { host: "expired.example", origin: "https://expired.example" },
+    ])
   })
 })

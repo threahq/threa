@@ -77,7 +77,7 @@ describe("GET /api/workspaces/:workspaceId/link-favicons/:host", () => {
       csp: "sandbox",
       etag: expect.stringMatching(/./),
     }
-    const notFound = { status: 404, cacheControl: "private, max-age=300", body: { error: "Not found" } }
+    const notFound = { status: 404, cacheControl: "no-store", body: { error: "Not found" } }
 
     expect({
       owner: served,

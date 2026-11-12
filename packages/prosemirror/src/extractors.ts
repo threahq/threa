@@ -4,7 +4,13 @@
  * checks and projection writes.
  */
 
-import { type JSONContent, actorTypeFromMentionId, isResolvedChannelLinkId, isResolvedMentionId } from "@threahq/types"
+import {
+  type JSONContent,
+  actorTypeFromMentionId,
+  isResolvedChannelLinkId,
+  isResolvedMentionId,
+  linkFaviconHost,
+} from "@threahq/types"
 
 /**
  * Resolved actor references for CONSUMERS (notifications, agent/bot dispatch).
@@ -463,4 +469,20 @@ export function collectDocEmbeds(content: JSONContent): DocEmbedRef[] {
 /** Doc ids from inline `docEmbed` nodes, de-duplicated in first-seen order. */
 export function collectDocEmbedIds(content: JSONContent): string[] {
   return collectDocEmbeds(content).map((ref) => ref.docId)
+}
+
+/** Origins of http(s) `link` mark hrefs, de-duplicated in first-seen order. */
+export function collectExternalLinkOrigins(content: JSONContent): string[] {
+  const origins = new Set<string>()
+
+  const walk = (node: JSONContent): void => {
+    for (const mark of node.marks ?? []) {
+      const href = mark.type === "link" ? mark.attrs?.href : undefined
+      if (typeof href === "string" && linkFaviconHost(href)) origins.add(new URL(href).origin)
+    }
+    for (const child of node.content ?? []) walk(child)
+  }
+
+  walk(content)
+  return [...origins]
 }
