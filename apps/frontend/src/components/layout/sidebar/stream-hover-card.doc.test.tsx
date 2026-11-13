@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryRouter } from "react-router-dom"
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { QueryClientProvider, onlineManager } from "@tanstack/react-query"
 import type { DocSection, DocState, StreamWithPreview } from "@threahq/types"
 import { render, screen } from "@/test"
 import { docsApi } from "@/api/docs"
+import { makeQueryClient } from "@/contexts/query-client"
 import { StreamHoverCard, type SidebarHoverIntent } from "./stream-hover-card"
 
 const WS = "ws_1"
@@ -16,7 +17,7 @@ function section(position: number, kind: string, markdown: string): DocSection {
 function renderCard() {
   const hover = { enabled: true, open: true, setOpen: vi.fn(), close: vi.fn() } as unknown as SidebarHoverIntent
   render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider client={makeQueryClient()}>
       <MemoryRouter>
         <StreamHoverCard hover={hover} workspaceId={WS} stream={DOC} unreadCount={0}>
           <button type="button">row</button>
@@ -26,12 +27,19 @@ function renderCard() {
   )
 }
 
+function precedes(a: Element, b: Element): boolean {
+  return !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+}
+
 describe("StreamHoverCard on a doc", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
   })
+  afterEach(() => {
+    onlineManager.setOnline(true)
+  })
 
-  it("should show the doc's sections in order, skipping blank ones", async () => {
+  it("should show the doc's sections in order under the stream header, skipping blank ones", async () => {
     vi.spyOn(docsApi, "get").mockResolvedValue({
       sections: [
         section(0, "heading", "## Keys to rotate"),
@@ -43,9 +51,11 @@ describe("StreamHoverCard on a doc", () => {
 
     const heading = await screen.findByRole("heading", { name: "Keys to rotate" })
     const items = screen.getAllByRole("listitem")
-    expect(items.map((item) => item.textContent)).toEqual(["Stripe", "OpenRouter"])
-    expect(heading.compareDocumentPosition(items[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(screen.getByRole("link", { name: "Open" })).toHaveAttribute("href", `/w/${WS}/s/${DOC.id}`)
+    expect({
+      items: items.map((item) => item.textContent),
+      headingFirst: precedes(heading, items[0]),
+      openHref: screen.getByRole("link", { name: "Open" }).getAttribute("href"),
+    }).toEqual({ items: ["Stripe", "OpenRouter"], headingFirst: true, openHref: `/w/${WS}/s/${DOC.id}` })
     expect(docsApi.get).toHaveBeenCalledWith(WS, DOC.id)
   })
 
@@ -54,5 +64,13 @@ describe("StreamHoverCard on a doc", () => {
     renderCard()
 
     expect(await screen.findByText("Empty doc")).toBeInTheDocument()
+  })
+
+  it("should say the doc couldn't load when the fetch fails offline", async () => {
+    onlineManager.setOnline(false)
+    vi.spyOn(docsApi, "get").mockRejectedValue(new TypeError("Failed to fetch"))
+    renderCard()
+
+    expect(await screen.findByText("Couldn't load this doc")).toBeInTheDocument()
   })
 })

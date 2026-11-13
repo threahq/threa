@@ -214,13 +214,14 @@ function HoverCardHeader({
  * doc's sections load, so the card opens with them in place.
  */
 function DocHoverCardContent({ hover, side, workspaceId, stream, title, onClearFromInbox }: HoverCardContentProps) {
-  const { data: sections, isError } = useQuery({
+  const { data: sections, isPending } = useQuery({
     queryKey: docKeys.state(workspaceId, stream.id),
     queryFn: () => docsApi.get(workspaceId, stream.id),
     select: (doc) => doc.sections.filter((section) => section.markdown.trim()).slice(0, DOC_SECTION_LIMIT),
-    staleTime: 30_000,
+    // Offline, fail into the error card instead of pausing with no card at all.
+    networkMode: "always",
   })
-  if (!sections && !isError) return null
+  if (isPending) return null
 
   let body: ReactNode
   if (!sections) body = <p className="py-1 text-xs text-muted-foreground">Couldn't load this doc</p>
