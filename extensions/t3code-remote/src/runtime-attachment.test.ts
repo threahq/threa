@@ -1,9 +1,7 @@
 import { expect, test } from "bun:test"
 import { RemoteSession, ThreaClient, type RuntimeOriginClaimedInvocation } from "@threahq/remote-session"
 import { T3CODE_RUNTIME, T3TurnRunner } from "./run-bridge"
-import { fakeT3, item, until } from "./t3.test-support"
-
-type Transport = NonNullable<ConstructorParameters<typeof RemoteSession>[0]["transport"]>
+import { fakeT3, fakeTransport, item, sessionConfig, until } from "./t3.test-support"
 
 test.each([
   ["completed", "Done."],
@@ -56,38 +54,15 @@ test.each([
         deliveryOrder.push("fail")
       },
     } as unknown as ThreaClient
-    const transport = {
-      socketConnected: false,
-      connect: async () => {},
-      disconnect: () => {},
-      sendHello: () => {},
-      updatePresence: async () => {},
+    const transport = fakeTransport({
       recordSteps: async (id: string, _token: string, frames: unknown[]) => {
         traces.push({ id, frames })
         return true
       },
-      observeClaim: (_params: Parameters<Transport["observeClaim"]>[0]) => ({
-        sync: async () => {},
-        unregister: () => {},
-        dispose: () => {},
-      }),
-    } as unknown as Transport
+    })
     let deliveries = 0
     const session = new RemoteSession({
-      config: {
-        baseUrl: "https://example.test",
-        workspaceId: "ws_test",
-        apiKey: "synthetic",
-        displayName: "Test",
-        instanceId: "test",
-        runtimeSessionId: "rts_test",
-        permissionRelay: false,
-        pollMs: 3000,
-        idleTimeoutMs: 3600000,
-        keyScope: "host",
-        sealedFullTrace: false,
-        traceMode: "commands",
-      },
+      config: sessionConfig(),
       client,
       transport,
       runtime: T3CODE_RUNTIME,

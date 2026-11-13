@@ -3,6 +3,8 @@ import {
   type DecisionOutcome,
   type DecisionRequestInput,
   type DeliveredTurn,
+  type RemoteSession,
+  type RemoteSessionConfig,
   type StepFrame,
 } from "@threahq/remote-session"
 import { TERMINAL_RUN_STATUSES, type BridgeSession } from "./run-bridge"
@@ -11,6 +13,7 @@ import {
   type ModelOptionDescriptor,
   type ModelSelection,
   type PendingQuestion,
+  type ProviderInfo,
   type T3Client,
   type T3ToolName,
   type T3Tools,
@@ -94,6 +97,33 @@ export function fakeT3() {
   const ended = new Map<string, string>()
   // A run waiting on the user has finished its provider turn, so it takes no steer.
   const waiting = new Set<string>()
+  const providers: ProviderInfo[] = [
+    {
+      providerInstanceId: "codex",
+      displayName: "Codex",
+      models: [
+        {
+          id: "gpt-5.5",
+          label: "GPT-5.5",
+          options: [effortOption("reasoningEffort", ["low", "medium", "high", "xhigh"])],
+        },
+        { id: "gpt-5.5-mini" },
+      ],
+    },
+    {
+      providerInstanceId: "claudeAgent",
+      displayName: "Claude",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          options: [
+            effortOption("effort", ["low", "medium", "high", "max"]),
+            { id: "fastMode", values: [false, true] },
+          ],
+        },
+      ],
+    },
+  ]
 
   const pendingRequest = (tool: T3ToolName, requestId: string) => {
     const request = pending.get(requestId)
@@ -266,35 +296,7 @@ export function fakeT3() {
       items.set(targetThreadId, inherited)
       return { targetThreadId }
     },
-    orchestrator_capabilities: () => ({
-      providers: [
-        {
-          providerInstanceId: "codex",
-          displayName: "Codex",
-          models: [
-            {
-              id: "gpt-5.5",
-              label: "GPT-5.5",
-              options: [effortOption("reasoningEffort", ["low", "medium", "high", "xhigh"])],
-            },
-            { id: "gpt-5.5-mini" },
-          ],
-        },
-        {
-          providerInstanceId: "claudeAgent",
-          displayName: "Claude",
-          models: [
-            {
-              id: "claude-opus-5-5",
-              options: [
-                effortOption("effort", ["low", "medium", "high", "max"]),
-                { id: "fastMode", values: [false, true] },
-              ],
-            },
-          ],
-        },
-      ],
-    }),
+    orchestrator_capabilities: () => ({ providers: structuredClone(providers) }),
     t3_pending_request: (args) => {
       if (args.action === "list")
         return {
@@ -368,6 +370,9 @@ export function fakeT3() {
     continueText: (itemId: string, fullText: string) => continuations.set(itemId, fullText),
     /** How T3 answers the next steers: folded into the run, or started or queued as their own run. */
     steerAs: (delivery: typeof steerDelivery) => (steerDelivery = delivery),
+    /** Offer one more model, as T3 does when a provider ships one. */
+    addModel: (providerInstanceId: string, model: ProviderInfo["models"][number]) =>
+      providers.find((provider) => provider.providerInstanceId === providerInstanceId)!.models.push(model),
     /** Put a thread on a model, as when the user configures it in T3. */
     threadModel: (threadId: string, selection: ModelSelection) => models.set(threadId, selection),
     /** Archive a thread in T3 itself. */
@@ -520,6 +525,40 @@ export function turn(overrides: Partial<DeliveredTurn> = {}): DeliveredTurn {
     content: "Fix the flaky test",
     attachments: [],
     sealed: false,
+    ...overrides,
+  }
+}
+
+type Transport = NonNullable<ConstructorParameters<typeof RemoteSession>[0]["transport"]>
+
+/** A socketless transport for a real `RemoteSession`; `overrides` record what a test watches. */
+export function fakeTransport(overrides: Partial<Record<keyof Transport, unknown>> = {}): Transport {
+  return {
+    socketConnected: false,
+    connect: async () => {},
+    disconnect: () => {},
+    sendHello: () => {},
+    updatePresence: async () => {},
+    recordSteps: async () => true,
+    observeClaim: () => ({ sync: async () => {}, unregister: () => {}, dispose: () => {} }),
+    ...overrides,
+  } as unknown as Transport
+}
+
+export function sessionConfig(overrides: Partial<RemoteSessionConfig> = {}): RemoteSessionConfig {
+  return {
+    baseUrl: "https://example.test",
+    workspaceId: "ws_test",
+    apiKey: "synthetic",
+    displayName: "Test",
+    instanceId: "test",
+    runtimeSessionId: "rts_test",
+    permissionRelay: false,
+    pollMs: 3000,
+    idleTimeoutMs: 3_600_000,
+    keyScope: "host",
+    sealedFullTrace: false,
+    traceMode: "commands",
     ...overrides,
   }
 }
