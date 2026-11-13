@@ -16,6 +16,7 @@ export const docKeys = {
   /** Prefix of both lists, so invalidating it refreshes the archived one too. */
   list: (workspaceId: string) => ["docList", workspaceId] as const,
   archivedList: (workspaceId: string) => [...docKeys.list(workspaceId), "archived"] as const,
+  state: (workspaceId: string, docId: string) => ["docState", workspaceId, docId] as const,
   threads: (workspaceId: string, docId: string) => ["docThreads", workspaceId, docId] as const,
   section: (workspaceId: string, docId: string, blockId: string) =>
     ["docSection", workspaceId, docId, blockId] as const,
