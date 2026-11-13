@@ -234,7 +234,7 @@ describe("provisional conversation attach", () => {
 
   describe("window measured on the injected clock", () => {
     const sendAt = async (clock: Date, text: string) => {
-      const clocked = new EventService(pool, conversationAssigner, undefined, () => clock)
+      const clocked = new EventService(pool, conversationAssigner, () => clock)
       return clocked.createMessageReturningConversationInternal({
         workspaceId: testWorkspaceId,
         streamId: testStreamId,

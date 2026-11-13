@@ -70,7 +70,6 @@ export const FEATURE_FLAGS = {
     default: "off",
   }),
   callsP2p: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "off" }),
-  composeTraces: defineFlag({ values: ["off", "capture"], scopes: ["workspace"], default: "off" }),
   // Opt-in search query logging: "on" stores each message-search request and
   // the result the user opened (`search_query_log`) to seed a retrieval eval
   // set. Off writes nothing; the search response says whether a row exists.
@@ -106,7 +105,6 @@ export const FEATURE_FLAG_COPY: { [K in FeatureFlagKey]: { label: string; descri
   },
   sqliteStorage: { label: "SQLite storage", description: "Keeps this device's data in SQLite." },
   callsP2p: { label: "Direct calls", description: "Calls connect straight between people when they can." },
-  composeTraces: { label: "Composer traces", description: "Records send timings to help fix slow sends." },
   searchQueryLog: {
     label: "Search logging",
     description: "Keeps your searches and what you opened, to improve search.",
@@ -117,7 +115,6 @@ export const FEATURE_FLAG_COPY: { [K in FeatureFlagKey]: { label: string; descri
 export const FEATURE_FLAG_VALUE_LABELS: Record<FeatureFlagValue, string> = {
   off: "Off",
   on: "On",
-  capture: "Capturing",
   shadow: "Shadow copy",
   "read-only": "Reads from SQLite",
   "read-write": "Reads and writes SQLite",

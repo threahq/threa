@@ -10,7 +10,7 @@ import {
 } from "../../src/features/agents"
 import { AttachmentReferenceRepository, VideoTranscodeJobRepository } from "../../src/features/attachments"
 import { BoardExclusionRepository, MessageConversationStateRepository } from "../../src/features/conversations"
-import { MessageComposeTraceRepository, MessageRepository } from "../../src/features/messaging"
+import { MessageRepository } from "../../src/features/messaging"
 import {
   ReadStateRepository,
   SparseReadRepository,
@@ -459,23 +459,6 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
       landsAs: (ws, ids) => ({ workspace_id: ws, user_id: ids.member, emoji: "👍" }),
       write: (ws, ids) => MessageRepository.addReaction(pool, ws, ids.message, "👍", ids.member),
       read: firstRow("workspace_id, user_id, emoji", "reactions", "message"),
-    },
-    {
-      name: "a compose trace",
-      landsAs: (ws) =>
-        expect.objectContaining({ workspaceId: ws, openedAtSequence: "1", sentAtSequence: "2", resumedDraft: true }),
-      write: (ws, ids, writer) =>
-        MessageComposeTraceRepository.insert(pool, {
-          messageId: ids.message,
-          workspaceId: ws,
-          streamId: ids.stream,
-          horizonStreamId: ids.stream,
-          openedAt: "2026-10-03T10:00:00.000Z",
-          openedAtSequence: writer,
-          sentAtSequence: writer + 1,
-          resumedDraft: writer === 1,
-        }),
-      read: (ws, ids) => MessageComposeTraceRepository.findByMessageId(pool, ws, ids.message),
     },
     {
       name: "a provisional conversation placement",
