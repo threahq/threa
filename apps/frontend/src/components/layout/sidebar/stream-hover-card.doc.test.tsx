@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClientProvider, onlineManager } from "@tanstack/react-query"
 import type { DocSection, DocState, StreamWithPreview } from "@threahq/types"
-import { render, screen } from "@/test"
+import { act, render, screen } from "@/test"
 import { docsApi } from "@/api/docs"
 import { makeQueryClient } from "@/contexts/query-client"
 import { StreamHoverCard, type SidebarHoverIntent } from "./stream-hover-card"
@@ -66,11 +66,15 @@ describe("StreamHoverCard on a doc", () => {
     expect(await screen.findByText("Empty doc")).toBeInTheDocument()
   })
 
-  it("should say the doc couldn't load when the fetch fails offline", async () => {
+  it("should say the doc couldn't load while offline, and show it once the connection returns", async () => {
     onlineManager.setOnline(false)
-    vi.spyOn(docsApi, "get").mockRejectedValue(new TypeError("Failed to fetch"))
+    vi.spyOn(docsApi, "get")
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValue({ sections: [section(0, "paragraph", "Back online")] } as DocState)
     renderCard()
 
     expect(await screen.findByText("Couldn't load this doc")).toBeInTheDocument()
+    act(() => onlineManager.setOnline(true))
+    expect(await screen.findByText("Back online")).toBeInTheDocument()
   })
 })

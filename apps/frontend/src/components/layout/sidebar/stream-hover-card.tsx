@@ -220,6 +220,7 @@ function DocHoverCardContent({ hover, side, workspaceId, stream, title, onClearF
     select: (doc) => doc.sections.filter((section) => section.markdown.trim()).slice(0, DOC_SECTION_LIMIT),
     // Offline, fail into the error card instead of pausing with no card at all.
     networkMode: "always",
+    refetchOnReconnect: true,
   })
   if (isPending) return null
 
