@@ -115,8 +115,7 @@ export const StreamEventRepository = {
    * `messages` in one upsert, returning the first value of each allocated
    * range. A single statement keeps the counters race-safe under concurrent
    * writers (INV-20) — the broadcast order always matches the global order
-   * because both ranges are claimed together. A NULL ordinal (not yet
-   * counted by the backfill) stays NULL.
+   * because both ranges are claimed together.
    */
   async allocateSequences(
     db: Querier,
@@ -906,9 +905,10 @@ export const StreamEventRepository = {
    * Count unread and total message_created events per stream for a user.
    * Unread = events with sequence > lastReadEventId's sequence.
    * If lastReadEventId is null, all messages in that stream are unread.
-   * Total is the stream's message ordinal at read time — clients derive
-   * unread as latestOrdinal - lastReadOrdinal from absolute counter payloads,
-   * and this total seeds that baseline at bootstrap.
+   * Total is the stream's stored message ordinal, read in the same statement
+   * as the unread count — clients derive unread as latestOrdinal -
+   * lastReadOrdinal from absolute counter payloads, and this total seeds that
+   * baseline at bootstrap. A stream without a sequence row has no events.
    */
   async countUnreadByStreamBatch(
     db: Querier,
@@ -947,12 +947,14 @@ export const StreamEventRepository = {
             ),
           0
         )::text as unread_count,
-        c.total::text as total_count
+        COALESCE(q.message_ordinal, 0)::text as total_count
       FROM memberships m
+      LEFT JOIN stream_sequences q ON q.workspace_id = $4 AND q.stream_id = m.stream_id
       CROSS JOIN LATERAL (
-        SELECT COUNT(*) FILTER (WHERE e.sequence > m.last_read_seq) AS above_watermark, COUNT(*) AS total
+        SELECT COUNT(*) AS above_watermark
         FROM stream_events e
         WHERE e.workspace_id = $4 AND e.stream_id = m.stream_id AND e.event_type = 'message_created'
+          AND e.sequence > m.last_read_seq
       ) c
     `,
       [streamIds, memberIds, lastReadEventIds, workspaceId]
@@ -970,7 +972,8 @@ export const StreamEventRepository = {
 
   /**
    * Batch {@link countMessagesThrough}: each stream's message ordinal at its
-   * given sequence. Streams absent from the result have no messages at or below it.
+   * given sequence, derived the same way. Streams absent from the result have
+   * no messages at or below it.
    */
   async countMessagesThroughBatch(
     db: Querier,
@@ -983,40 +986,56 @@ export const StreamEventRepository = {
         SELECT unnest(${[...sequences.keys()]}::text[]) AS stream_id,
                unnest(${[...sequences.values()]}::bigint[]) AS sequence
       )
-      SELECT i.stream_id, COUNT(*)::text AS count
+      SELECT i.stream_id, (q.message_ordinal - above.count)::text AS count
       FROM input i
-      JOIN stream_events e ON e.stream_id = i.stream_id
-      WHERE e.workspace_id = ${workspaceId}
-        AND e.event_type = 'message_created'
-        AND e.sequence <= i.sequence
-      GROUP BY i.stream_id
+      JOIN stream_sequences q ON q.workspace_id = ${workspaceId} AND q.stream_id = i.stream_id
+      CROSS JOIN LATERAL (
+        SELECT COUNT(*) AS count
+        FROM stream_events e
+        WHERE e.workspace_id = ${workspaceId}
+          AND e.stream_id = i.stream_id
+          AND e.event_type = 'message_created'
+          AND e.sequence > i.sequence
+      ) above
+      WHERE q.message_ordinal - above.count > 0
     `)
     return new Map(result.rows.map((row) => [row.stream_id, parseInt(row.count, 10)]))
   },
 
   /**
    * Count message_created events at or below a sequence — the message's
-   * ordinal position in its stream. Exact under concurrency: the stream's
-   * sequence allocator row lock serializes message inserts per stream until
-   * commit, so every lower-sequence message is committed and visible.
+   * ordinal position in its stream — as the stream's stored message ordinal
+   * minus the messages above the sequence, so the cost scales with what
+   * follows the position rather than the stream's history. One statement
+   * reads both, so they come from one snapshot and agree under concurrent
+   * writers. A stream without a sequence row has no events.
    */
   async countMessagesThrough(db: Querier, workspaceId: string, streamId: string, sequence: bigint): Promise<number> {
     const result = await db.query<{ count: string }>(sql`
-      SELECT COUNT(*)::text AS count
-      FROM stream_events
-      WHERE workspace_id = ${workspaceId}
-        AND stream_id = ${streamId}
-        AND event_type = 'message_created'
-        AND sequence <= ${sequence.toString()}
+      SELECT (
+        COALESCE(
+          (SELECT message_ordinal FROM stream_sequences WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}),
+          0
+        )
+        - (
+          SELECT COUNT(*)
+          FROM stream_events
+          WHERE workspace_id = ${workspaceId}
+            AND stream_id = ${streamId}
+            AND event_type = 'message_created'
+            AND sequence > ${sequence.toString()}
+        )
+      )::text AS count
     `)
     return parseInt(result.rows[0].count, 10)
   },
 
   /**
    * An event's sequence plus the stream's message ordinal at that position
-   * (count of message_created events with sequence ≤ the event's). Returns
-   * null when the event doesn't exist in the stream — callers mirror the
-   * unread query's COALESCE(sequence, 0) convention for missing events.
+   * (count of message_created events with sequence ≤ the event's), derived
+   * like {@link countMessagesThrough}. Returns null when the event doesn't
+   * exist in the stream — callers mirror the unread query's
+   * COALESCE(sequence, 0) convention for missing events.
    */
   async getMessageOrdinalForEvent(
     db: Querier,
@@ -1028,14 +1047,18 @@ export const StreamEventRepository = {
       SELECT
         se.sequence,
         (
-          SELECT COUNT(*)
-          FROM stream_events e
-          WHERE e.workspace_id = se.workspace_id
-            AND e.stream_id = se.stream_id
-            AND e.event_type = 'message_created'
-            AND e.sequence <= se.sequence
+          q.message_ordinal
+          - (
+            SELECT COUNT(*)
+            FROM stream_events e
+            WHERE e.workspace_id = se.workspace_id
+              AND e.stream_id = se.stream_id
+              AND e.event_type = 'message_created'
+              AND e.sequence > se.sequence
+          )
         )::text AS message_ordinal
       FROM stream_events se
+      JOIN stream_sequences q ON q.workspace_id = se.workspace_id AND q.stream_id = se.stream_id
       WHERE se.workspace_id = ${workspaceId}
         AND se.id = ${eventId}
         AND se.stream_id = ${streamId}

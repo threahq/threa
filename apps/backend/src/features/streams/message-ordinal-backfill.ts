@@ -14,10 +14,10 @@ export async function plan(ctx: BackfillContext, workspaceId: string): Promise<S
 }
 
 /**
- * Recounts every stream, not only uncounted ones, so a rerun also heals a
- * count an old-code replica left stale during rollout. One transaction per
- * stream holds a single sequence row and waits on nothing else while holding
- * it, so it can't deadlock with a move, which takes two in its own order.
+ * Recounts every stream so a rerun also heals a count an old-code replica
+ * left stale during rollout. One transaction per stream holds a single
+ * sequence row and waits on nothing else while holding it, so it can't
+ * deadlock with a move, which takes two in its own order.
  */
 export async function processChunk(
   ctx: BackfillContext,
