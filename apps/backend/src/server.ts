@@ -82,7 +82,12 @@ import { WorkosOrgServiceImpl, StubWorkosOrgService } from "@threahq/backend-com
 import { PartitionMaintenanceWorker } from "@threahq/backend-common"
 import { loadGuideArticles } from "@threahq/user-guide"
 import { AccessLogService, createAiAccessLogSink, DEFAULT_SUBSCRIBE_COALESCE_MS } from "./features/access-log"
-import { StreamService, StreamBriefService, registerStreamMessageCountBackfill } from "./features/streams"
+import {
+  StreamService,
+  StreamBriefService,
+  registerStreamMessageCountBackfill,
+  registerStreamMessageOrdinalBackfill,
+} from "./features/streams"
 import {
   EventService,
   registerMessageReferencePinsBackfill,
@@ -1785,6 +1790,7 @@ export async function startServer(): Promise<ServerInstance> {
   registerMessageReferencePinsBackfill()
   registerMessageSearchConfigBackfill()
   registerStreamMessageCountBackfill()
+  registerStreamMessageOrdinalBackfill()
   registerMemoSearchConfigBackfill()
   registerMemoDeletedSourcesBackfill()
   registerMemoSourceSpanBackfill()
