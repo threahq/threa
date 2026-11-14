@@ -7,7 +7,14 @@ import pinoHttp from "pino-http"
 import { randomUUID } from "crypto"
 import { THREA_VERSION_HEADER, isPushRequestPath } from "@threahq/types"
 import { logger } from "./lib/logger"
-import { bigIntReplacer, requestLogLevel, requestLogSerializers, sanitizeRoutePath } from "@threahq/backend-common"
+import {
+  bigIntReplacer,
+  createQueryTimingMiddleware,
+  type QueryCounter,
+  requestLogLevel,
+  requestLogSerializers,
+  sanitizeRoutePath,
+} from "@threahq/backend-common"
 import { createMetricsMiddleware } from "./middleware/metrics"
 import type { ApiVersionLog } from "./middleware/api-version"
 import { createCorsOriginChecker } from "./lib/cors"
@@ -35,6 +42,8 @@ function anonymousRequestMessage(req: Request, statusCode: number): string {
 interface CreateAppOptions {
   corsAllowedOrigins: string[]
   isProduction: boolean
+  /** Present only where the instance reports per-request query counts. */
+  queryCounter?: QueryCounter
 }
 
 export function createApp(options: CreateAppOptions): Express {
@@ -135,6 +144,7 @@ export function createApp(options: CreateAppOptions): Express {
   const ownsBodyParser = (req: Request) => isInboundWebhookUrl(req.url) || isPushReceiptPath(req.path)
   app.use((req, res, next) => (ownsBodyParser(req) ? next() : jsonParser(req, res, next)))
   app.use((req, res, next) => (ownsBodyParser(req) ? next() : urlencodedParser(req, res, next)))
+  if (options.queryCounter) app.use(createQueryTimingMiddleware(options.queryCounter))
 
   app.get("/health", (_, res) => res.json({ status: "ok" }))
 

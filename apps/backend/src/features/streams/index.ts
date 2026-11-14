@@ -63,6 +63,7 @@ export { publishThreadUpdated } from "./thread-updated"
 export type { ThreadUpdatedSource } from "./thread-updated"
 export { adjustStreamMessageCount, lockMessageCountStreams } from "./message-count"
 export { registerStreamMessageCountBackfill } from "./message-count-backfill"
+export { registerStreamMessageOrdinalBackfill } from "./message-ordinal-backfill"
 
 export { NOTIFICATION_CONFIG, isAllowedLevel } from "./notification-config"
 

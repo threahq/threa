@@ -110,26 +110,28 @@ function parseAgentSessionRerunContext(value: unknown): AgentSessionRerunContext
 
 export const StreamEventRepository = {
   /**
-   * Atomically bump the stream's global counter by `total` and its dense
-   * broadcast counter (INV-61) by `broadcast` in one upsert, returning the
-   * first value of each allocated range. A single statement keeps the two
-   * counters race-safe under concurrent writers (INV-20) — the broadcast
-   * order always matches the global order because both ranges are claimed
-   * together.
+   * Atomically bump the stream's global counter by `total`, its dense
+   * broadcast counter (INV-61) by `broadcast`, and its message ordinal by
+   * `messages` in one upsert, returning the first value of each allocated
+   * range. A single statement keeps the counters race-safe under concurrent
+   * writers (INV-20) — the broadcast order always matches the global order
+   * because both ranges are claimed together. A NULL ordinal (not yet
+   * counted by the backfill) stays NULL.
    */
   async allocateSequences(
     db: Querier,
     workspaceId: string,
     streamId: string,
-    counts: { total: number; broadcast: number }
+    counts: { total: number; broadcast: number; messages: number }
   ): Promise<{ firstSequence: bigint; firstBroadcastSequence: bigint }> {
-    const { total, broadcast } = counts
+    const { total, broadcast, messages } = counts
     const result = await db.query<{ first_sequence: string; first_broadcast_sequence: string }>(sql`
-      INSERT INTO stream_sequences (workspace_id, stream_id, next_sequence, next_broadcast_sequence)
-      VALUES (${workspaceId}, ${streamId}, ${total + 1}, ${broadcast + 1})
+      INSERT INTO stream_sequences (workspace_id, stream_id, next_sequence, next_broadcast_sequence, message_ordinal)
+      VALUES (${workspaceId}, ${streamId}, ${total + 1}, ${broadcast + 1}, ${messages})
       ON CONFLICT (workspace_id, stream_id) DO UPDATE
         SET next_sequence = stream_sequences.next_sequence + ${total},
-            next_broadcast_sequence = stream_sequences.next_broadcast_sequence + ${broadcast}
+            next_broadcast_sequence = stream_sequences.next_broadcast_sequence + ${broadcast},
+            message_ordinal = stream_sequences.message_ordinal + ${messages}
       RETURNING next_sequence - ${total} AS first_sequence,
                 next_broadcast_sequence - ${broadcast} AS first_broadcast_sequence
     `)
@@ -139,23 +141,60 @@ export const StreamEventRepository = {
     }
   },
 
+  /** The source side of a move: lowers the stream's message ordinal by the `count` message_created events that left it. */
+  async removeFromMessageOrdinal(db: Querier, workspaceId: string, streamId: string, count: number): Promise<void> {
+    await db.query(sql`
+      UPDATE stream_sequences
+      SET message_ordinal = message_ordinal - ${count}
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
+    `)
+  },
+
   /**
-   * Allocate `count` (sequence, broadcastSequence) pairs for events that are
+   * Set a stream's message ordinal to its message_created count, returning
+   * whether it changed. Run in a transaction. Every writer of a stream's
+   * message_created set holds its sequence row, so locking the row before the
+   * counting statement makes the count exact against concurrent writers.
+   */
+  async recountMessageOrdinal(db: Querier, workspaceId: string, streamId: string): Promise<boolean> {
+    await db.query(sql`
+      SELECT 1 FROM stream_sequences
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
+      FOR UPDATE
+    `)
+    const result = await db.query(sql`
+      UPDATE stream_sequences q
+      SET message_ordinal = c.count
+      FROM (
+        SELECT COUNT(*)::int AS count FROM stream_events
+        WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND event_type = 'message_created'
+      ) c
+      WHERE q.workspace_id = ${workspaceId} AND q.stream_id = ${streamId}
+        AND q.message_ordinal IS DISTINCT FROM c.count
+    `)
+    return (result.rowCount ?? 0) > 0
+  },
+
+  /**
+   * Allocate `total` (sequence, broadcastSequence) pairs for events that are
    * all broadcast timeline types — used by the move flow when relocating
-   * message/agent-session events into a destination stream.
+   * message/agent-session events into a destination stream. `messages` of
+   * them are message_created events, added to the stream's message ordinal.
    */
   async getNextSequencePairs(
     db: Querier,
     workspaceId: string,
     streamId: string,
-    count: number
+    counts: { total: number; messages: number }
   ): Promise<Array<{ sequence: bigint; broadcastSequence: bigint }>> {
-    if (count <= 0) return []
+    const { total, messages } = counts
+    if (total <= 0) return []
     const { firstSequence, firstBroadcastSequence } = await this.allocateSequences(db, workspaceId, streamId, {
-      total: count,
-      broadcast: count,
+      total,
+      broadcast: total,
+      messages,
     })
-    return Array.from({ length: count }, (_, i) => ({
+    return Array.from({ length: total }, (_, i) => ({
       sequence: firstSequence + BigInt(i),
       broadcastSequence: firstBroadcastSequence + BigInt(i),
     }))
@@ -170,6 +209,7 @@ export const StreamEventRepository = {
       {
         total: 1,
         broadcast: isBroadcast ? 1 : 0,
+        messages: params.eventType === "message_created" ? 1 : 0,
       }
     )
     const broadcastSequence = isBroadcast ? firstBroadcastSequence : null
@@ -205,6 +245,7 @@ export const StreamEventRepository = {
     const { firstSequence, firstBroadcastSequence } = await this.allocateSequences(db, workspaceId, streamId, {
       total: paramsList.length,
       broadcast: broadcastCount,
+      messages: paramsList.filter((p) => p.eventType === "message_created").length,
     })
 
     // Broadcast slots are handed out in list order so the broadcast chain's

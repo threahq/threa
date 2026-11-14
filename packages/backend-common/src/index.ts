@@ -39,6 +39,8 @@ export { HttpError, isUniqueViolation, safeErrorCode } from "./errors"
 export { createErrorHandler, sanitizeRoutePath } from "./middleware/error-handler"
 export { createInternalAuthMiddleware, INTERNAL_API_KEY_HEADER } from "./middleware/internal-auth"
 export { createRateLimit, getClientIp } from "./middleware/rate-limit"
+export { createQueryTimingMiddleware } from "./middleware/query-timing"
+export { QueryCounter } from "./db/query-scope"
 export { requestLogSerializers, requestLogLevel, redactHookSecret } from "./middleware/request-log"
 export type { RateLimitOptions, RateLimitRejection } from "./middleware/rate-limit"
 

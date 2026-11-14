@@ -1955,7 +1955,7 @@ export class EventService {
         client,
         params.workspaceId,
         destinationThread.id,
-        movableEvents.length
+        { total: movableEvents.length, messages: sourceEvents.length }
       )
       const updates: MoveMessageSequenceUpdate[] = []
       const agentSessionEventUpdates: MoveEventIdSequenceUpdate[] = []
@@ -2183,6 +2183,14 @@ export class EventService {
         destinationStreamDisplayName: destinationThread.displayName,
         messages: movedMessagePreviews,
       }
+      // Locks the source's sequence row; keep it after the destination's allocation
+      // above, the order every move takes both rows in.
+      await StreamEventRepository.removeFromMessageOrdinal(
+        client,
+        params.workspaceId,
+        params.sourceStreamId,
+        sourceEvents.length
+      )
       // Pin both tombstones AND the per-message `movedFrom.movedAt` to the
       // same `movedAt` value so the badge tooltip and the tombstone summary
       // line render identical timestamps for the same move (otherwise app
