@@ -421,10 +421,11 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   // Mouse layout: the same chrome fades after the pointer rests on the media
   // for CHROME_IDLE_MS and returns on the next move or key press. It stays up
   // while the pointer sits on a control, a menu from the bar is open, or
-  // the user has tabbed into the bar.
+  // the user has tabbed onto a control.
   const actionBarRef = useRef<HTMLDivElement>(null)
   const chromeIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const keyboardDrivenRef = useRef(false)
+  const pointerOnChromeRef = useRef(false)
   const cancelChromeIdle = useCallback(() => {
     if (chromeIdleRef.current) {
       clearTimeout(chromeIdleRef.current)
@@ -436,12 +437,12 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     chromeIdleRef.current = setTimeout(() => {
       chromeIdleRef.current = null
       const bar = actionBarRef.current
-      if (bar?.querySelector('[data-state="open"]')) return
-      const focusInBar = !!bar?.contains(document.activeElement)
-      if (focusInBar && keyboardDrivenRef.current) return
+      if (pointerOnChromeRef.current || bar?.querySelector('[data-state="open"]')) return
+      const focusOnChrome = !!document.activeElement?.closest("[data-gallery-chrome]")
+      if (focusOnChrome && keyboardDrivenRef.current) return
       // Same focus ejection hazard as the touch toggle below: inert would push
       // focus to <body> and close the dialog, so park it on the dialog first.
-      if (focusInBar) {
+      if (focusOnChrome) {
         bar?.closest<HTMLElement>('[role="dialog"]')?.focus({ preventScroll: true })
       }
       setChromeVisible(false)
@@ -451,11 +452,11 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     (e: React.PointerEvent) => {
       if (e.pointerType !== "mouse") return
       keyboardDrivenRef.current = false
+      pointerOnChromeRef.current = !!(e.target as HTMLElement).closest("[data-gallery-chrome]")
       setChromeVisible(true)
-      if ((e.target as HTMLElement).closest("[data-gallery-chrome]")) cancelChromeIdle()
-      else scheduleChromeIdle()
+      scheduleChromeIdle()
     },
-    [cancelChromeIdle, scheduleChromeIdle]
+    [scheduleChromeIdle]
   )
   // containerWidth drives both slide sizing and strip transform calculations on mobile
   const [containerWidth, setContainerWidth] = useState(0)
@@ -1166,6 +1167,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                 onMouseEnter={() => setShowArrows(true)}
                 onMouseLeave={() => {
                   setShowArrows(false)
+                  pointerOnChromeRef.current = false
                   scheduleChromeIdle()
                 }}
                 onPointerMove={handleMousePointerMove}

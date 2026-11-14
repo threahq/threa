@@ -94,17 +94,26 @@ describe("MediaGallery desktop chrome", () => {
     fireEvent.pointerMove(closeButton(), { pointerType: "mouse" })
     idle()
     expect(chromeHidden()).toBe(false)
+    fireEvent.keyDown(dialog(), { key: "Shift" })
+    idle()
+    expect(chromeHidden()).toBe(false)
 
     fireEvent.pointerMove(media(), { pointerType: "mouse" })
     idle()
     expect(chromeHidden()).toBe(true)
   })
 
-  it("stays up while a control has keyboard focus", async () => {
+  it("stays up while a control has keyboard focus, arrows included", async () => {
     const user = await openGallery()
     await user.tab()
     expect(closeButton().closest("[data-gallery-chrome]")).toContainElement(document.activeElement as HTMLElement)
     idle()
     expect(chromeHidden()).toBe(false)
+
+    const next = within(dialog()).getByRole("button", { name: "Next" })
+    while (document.activeElement !== next) await user.tab()
+    idle()
+    expect(chromeHidden()).toBe(false)
+    expect(next).toHaveFocus()
   })
 })
