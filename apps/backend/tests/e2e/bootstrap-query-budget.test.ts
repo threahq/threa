@@ -1,4 +1,5 @@
 import { describe, test, expect, setDefaultTimeout } from "bun:test"
+import { QUERY_COUNT_REQUEST_HEADER } from "@threahq/backend-common"
 import {
   TestClient,
   loginAs,
@@ -23,7 +24,7 @@ const STREAM_BOOTSTRAP_QUERY_CEILING = 28
 /** The second of two calls, so first-touch work (lazy upserts, cache fills) is out of the count. */
 async function warmQueryCount(client: TestClient, path: string): Promise<number> {
   await client.get(path)
-  const { status, headers } = await client.get(path)
+  const { status, headers } = await client.request("GET", path, undefined, { [QUERY_COUNT_REQUEST_HEADER]: "1" })
   expect(status).toBe(200)
   return queryCount(headers)
 }

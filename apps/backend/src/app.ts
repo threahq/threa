@@ -42,7 +42,7 @@ function anonymousRequestMessage(req: Request, statusCode: number): string {
 interface CreateAppOptions {
   corsAllowedOrigins: string[]
   isProduction: boolean
-  /** Present only where the instance reports per-request query counts. */
+  /** Present only where the instance reports query counts to requests that ask. */
   queryCounter?: QueryCounter
 }
 

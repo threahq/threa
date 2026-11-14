@@ -753,7 +753,7 @@ export async function getWorkspaceBootstrap(client: TestClient, workspaceId: str
   return data.data
 }
 
-/** Database queries the response reports in its non-production `Server-Timing` header. */
+/** Database queries a response reports in `Server-Timing` when its request sent `QUERY_COUNT_REQUEST_HEADER`. */
 export function queryCount(headers: Headers): number {
   const match = headers.get("server-timing")?.match(/\bdb;[^,]*desc="(\d+) queries"/)
   if (!match) throw new Error(`Response has no db Server-Timing entry: ${headers.get("server-timing")}`)
