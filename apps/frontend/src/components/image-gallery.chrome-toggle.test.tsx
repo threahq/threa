@@ -31,6 +31,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.unstubAllGlobals()
   if (offsetWidthSpy) Object.defineProperty(HTMLElement.prototype, "offsetWidth", offsetWidthSpy)
 })
 
@@ -180,5 +181,33 @@ describe("MediaGallery touch chrome toggle", () => {
     // Zooming all the way back out re-shows the chrome immediately.
     fireEvent.dblClick(zoomContainer(), { clientX: 100, clientY: 100 })
     await waitFor(() => expect(chromeHidden()).toBe(false))
+  })
+
+  it("closing while zoomed leaves the next open swipeable", async () => {
+    // The swipe reads the strip's live offset; jsdom has no DOMMatrix.
+    vi.stubGlobal(
+      "DOMMatrix",
+      class {
+        m41 = 0
+      }
+    )
+    const user = userEvent.setup()
+    renderGallery()
+
+    await user.click(await screen.findByRole("button", { name: /photo2\.png/i }))
+    await waitFor(() => zoomContainer())
+    fireEvent.dblClick(zoomContainer(), { clientX: 100, clientY: 100 })
+    fireEvent.click(closeButton())
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument())
+
+    await user.click(await screen.findByRole("button", { name: /photo2\.png/i }))
+    await waitFor(() => expect(screen.getByText("2 / 3")).toBeInTheDocument())
+    const surface = tapContainer()
+    const start = { clientX: 300, clientY: 400 }
+    const end = { clientX: 60, clientY: 405 }
+    fireEvent.touchStart(surface, { touches: [start], changedTouches: [start] })
+    fireEvent.touchMove(surface, { touches: [end], changedTouches: [end] })
+    fireEvent.touchEnd(surface, { touches: [], changedTouches: [end] })
+    await waitFor(() => expect(screen.getByText("3 / 3")).toBeInTheDocument())
   })
 })

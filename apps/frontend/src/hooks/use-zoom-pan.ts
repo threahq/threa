@@ -135,6 +135,16 @@ export function useZoomPan({ containerRef, contentRef, onZoomChange, onScaleChan
     [applyTransform]
   )
 
+  // A zoomed viewport can unmount without zooming out (gallery closed while
+  // zoomed). Report the zoom-out so a consumer that outlives it isn't left
+  // believing it is still zoomed.
+  useEffect(
+    () => () => {
+      if (isZoomedRef.current) onZoomChangeRef.current?.(false)
+    },
+    []
+  )
+
   const reset = useCallback(
     (opts?: { transition?: boolean }) => {
       commit(IDENTITY, { transition: opts?.transition ?? true })
