@@ -1193,7 +1193,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                         "h-10 w-10 rounded-full bg-black/50 flex items-center justify-center",
                         "text-white hover:bg-black/70 transition-opacity duration-200",
                         !hasPrev && "invisible",
-                        showArrows && !chromeHidden ? "opacity-100" : "opacity-0",
+                        showArrows && !chromeHidden ? "opacity-100" : "opacity-0 focus-visible:opacity-100",
                         chromeHidden && "pointer-events-none"
                       )}
                       data-gallery-chrome=""
@@ -1210,7 +1210,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                         "h-10 w-10 rounded-full bg-black/50 flex items-center justify-center",
                         "text-white hover:bg-black/70 transition-opacity duration-200",
                         !hasNext && "invisible",
-                        showArrows && !chromeHidden ? "opacity-100" : "opacity-0",
+                        showArrows && !chromeHidden ? "opacity-100" : "opacity-0 focus-visible:opacity-100",
                         chromeHidden && "pointer-events-none"
                       )}
                       data-gallery-chrome=""
