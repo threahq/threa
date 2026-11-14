@@ -1915,6 +1915,7 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
       },
     ] as any)
     spyOn(StreamEventRepository, "moveEventsById").mockResolvedValue([])
+    spyOn(StreamEventRepository, "removeFromMessageOrdinal").mockResolvedValue(undefined)
     spyOn(MessageRepository, "moveToStream").mockResolvedValue(undefined as any)
     spyOn(SparseReadRepository, "rehomeReads").mockResolvedValue(undefined as any)
     spyOn(ReadStateRepository, "repointForMovedEvents").mockResolvedValue(undefined as any)

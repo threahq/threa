@@ -103,8 +103,16 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     const ws = workspaceId()
     const stream = streamId()
 
-    const first = await StreamEventRepository.allocateSequences(pool, ws, stream, { total: 2, broadcast: 1 })
-    const second = await StreamEventRepository.allocateSequences(pool, ws, stream, { total: 3, broadcast: 2 })
+    const first = await StreamEventRepository.allocateSequences(pool, ws, stream, {
+      total: 2,
+      broadcast: 1,
+      messages: 0,
+    })
+    const second = await StreamEventRepository.allocateSequences(pool, ws, stream, {
+      total: 3,
+      broadcast: 2,
+      messages: 0,
+    })
 
     const rows = await pool.query<{ next_sequence: string; next_broadcast_sequence: string }>(
       "SELECT next_sequence, next_broadcast_sequence FROM stream_sequences WHERE workspace_id = $1 AND stream_id = $2",
@@ -371,7 +379,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
       name: "a sequence counter",
       landsAs: (ws) => ({ workspace_id: ws, next_sequence: "4", next_broadcast_sequence: "2" }),
       write: (ws, ids, writer) =>
-        StreamEventRepository.allocateSequences(pool, ws, ids.stream, { total: writer + 2, broadcast: 1 }),
+        StreamEventRepository.allocateSequences(pool, ws, ids.stream, { total: writer + 2, broadcast: 1, messages: 0 }),
       read: firstRow("workspace_id, next_sequence, next_broadcast_sequence", "stream_sequences"),
     },
     {

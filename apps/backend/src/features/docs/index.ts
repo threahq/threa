@@ -1,8 +1,5 @@
-export { DocRepository } from "./repository"
-export { projectDoc, DocReferenceTypes } from "./projection"
-export { loadDocState, ydocToContentJson, writeContentJson, encodeUpdateBase64, decodeUpdateBase64 } from "./yjs"
-export { DocService, DOC_SNAPSHOT_INTERVAL } from "./service"
-export { createDocHandlers } from "./handlers"
+// First on purpose: the modules below reach agent tools that read these
+// limits while this barrel is still loading.
 export {
   DOC_ACTIVITY_QUIET_MS,
   DOC_MENTION_QUIET_MS,
@@ -11,6 +8,11 @@ export {
   DOC_PUBLIC_MARKDOWN_MAX_CHARS,
   DOC_REASON_MAX_CHARS,
 } from "./config"
+export { DocRepository } from "./repository"
+export { projectDoc, DocReferenceTypes } from "./projection"
+export { loadDocState, ydocToContentJson, writeContentJson, encodeUpdateBase64, decodeUpdateBase64 } from "./yjs"
+export { DocService, DOC_SNAPSHOT_INTERVAL } from "./service"
+export { createDocHandlers } from "./handlers"
 export { DocActivityService } from "./activity-service"
 export { DocActivityOutboxHandler } from "./activity-outbox-handler"
 export { createDocActivityWorker } from "./activity-worker"
