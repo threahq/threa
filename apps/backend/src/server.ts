@@ -21,6 +21,7 @@ import {
   PostHogAnalyticsReporter,
   DisabledAnalyticsReporter,
   attachPostHogLogShipping,
+  QueryCounter,
   type AnalyticsReporter,
 } from "@threahq/backend-common"
 import { BotChannelService } from "./features/api-keys"
@@ -357,6 +358,9 @@ export async function startServer(): Promise<ServerInstance> {
   // realtime (broadcast + push, reserved capacity).
   const pools = createDatabasePools(config.databaseUrl)
   const pool = pools.main
+  const isProduction = process.env.NODE_ENV === "production"
+  const queryCounter = isProduction ? undefined : new QueryCounter()
+  queryCounter?.instrument(pool)
 
   const poolMonitor = new PoolMonitor(
     { main: pools.main, listen: pools.listen, realtime: pools.realtime },
@@ -947,7 +951,6 @@ export async function startServer(): Promise<ServerInstance> {
   const linkFaviconService = new LinkFaviconService({ pool })
   const giphyService = new GiphyService({ config: config.giphy })
 
-  const isProduction = process.env.NODE_ENV === "production"
   const logShipper = config.posthog
     ? attachPostHogLogShipping({
         config: config.posthog,
@@ -956,7 +959,7 @@ export async function startServer(): Promise<ServerInstance> {
         environment: process.env.NODE_ENV || "development",
       })
     : null
-  const app = createApp({ corsAllowedOrigins: config.corsAllowedOrigins, isProduction })
+  const app = createApp({ corsAllowedOrigins: config.corsAllowedOrigins, isProduction, queryCounter })
   const server = createServer(app)
   // Node closes idle keep-alive connections after 5s by default; a client that
   // pools connections (Bun's fetch, an upstream proxy) and reuses one after a
