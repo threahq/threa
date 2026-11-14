@@ -72,6 +72,8 @@ const GALLERY_TYPE_LABELS: Record<GalleryItem["type"], string> = {
   text: "Text document",
 }
 
+const CHROME_IDLE_MS = 2500
+
 // Copy means different things per slide: the rendered image bytes vs. the
 // underlying text. Plain text isn't "source" the way markdown/html are.
 function copyLabelForType(type: GalleryItem["type"] | undefined): string {
@@ -416,6 +418,46 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
       pendingChromeToggleRef.current = null
     }
   }, [])
+  // Mouse layout: the same chrome fades after the pointer rests on the media
+  // for CHROME_IDLE_MS and returns on the next move or key press. It stays up
+  // while the pointer sits on a control, a menu from the bar is open, or
+  // the user has tabbed onto a control.
+  const actionBarRef = useRef<HTMLDivElement>(null)
+  const chromeIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const keyboardDrivenRef = useRef(false)
+  const pointerOnChromeRef = useRef(false)
+  const cancelChromeIdle = useCallback(() => {
+    if (chromeIdleRef.current) {
+      clearTimeout(chromeIdleRef.current)
+      chromeIdleRef.current = null
+    }
+  }, [])
+  const scheduleChromeIdle = useCallback(() => {
+    cancelChromeIdle()
+    chromeIdleRef.current = setTimeout(() => {
+      chromeIdleRef.current = null
+      const bar = actionBarRef.current
+      if (pointerOnChromeRef.current || bar?.querySelector('[data-state="open"]')) return
+      const focusOnChrome = !!document.activeElement?.closest("[data-gallery-chrome]")
+      if (focusOnChrome && keyboardDrivenRef.current) return
+      // Same focus ejection hazard as the touch toggle below: inert would push
+      // focus to <body> and close the dialog, so park it on the dialog first.
+      if (focusOnChrome) {
+        bar?.closest<HTMLElement>('[role="dialog"]')?.focus({ preventScroll: true })
+      }
+      setChromeVisible(false)
+    }, CHROME_IDLE_MS)
+  }, [cancelChromeIdle])
+  const handleMousePointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (e.pointerType !== "mouse") return
+      keyboardDrivenRef.current = false
+      pointerOnChromeRef.current = !!(e.target as HTMLElement).closest("[data-gallery-chrome]")
+      setChromeVisible(true)
+      scheduleChromeIdle()
+    },
+    [scheduleChromeIdle]
+  )
   // containerWidth drives both slide sizing and strip transform calculations on mobile
   const [containerWidth, setContainerWidth] = useState(0)
 
@@ -495,6 +537,8 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
       setCurrentIndex(initialIndex)
       cancelPendingChromeToggle()
       setChromeVisible(true)
+      pointerOnChromeRef.current = false
+      keyboardDrivenRef.current = false
       justOpened.current = true
     }
     prevOpen.current = isOpen
@@ -527,6 +571,12 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     viewedIdRef.current = items[currentIndex]?.attachmentId ?? null
     viewedIndexRef.current = currentIndex
   }, [items, isOpen, currentIndex, initialIndex, touchCapable, containerWidth])
+
+  useEffect(() => {
+    if (!isOpen || inputModeTouch) return
+    scheduleChromeIdle()
+    return cancelChromeIdle
+  }, [isOpen, inputModeTouch, scheduleChromeIdle, cancelChromeIdle])
 
   // Scroll active thumbnail into view when index changes
   useEffect(() => {
@@ -719,6 +769,11 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
       // must not flip slides.
       const owner = e.target instanceof Element ? e.target.closest('[role="dialog"],[role="menu"]') : null
       if (owner && !owner.hasAttribute("data-media-gallery")) return
+      if (!inputModeTouch) {
+        if (e.key === "Tab") keyboardDrivenRef.current = true
+        setChromeVisible(true)
+        scheduleChromeIdle()
+      }
       if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
         e.preventDefault()
         goTo(currentIndex - 1)
@@ -729,7 +784,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [isOpen, currentIndex, goTo])
+  }, [isOpen, currentIndex, goTo, inputModeTouch, scheduleChromeIdle])
 
   // All touch handlers manipulate the DOM directly (no setState) so the gesture
   // stays at 60fps without React rendering in the hot path.
@@ -935,9 +990,11 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   // panel chrome; the 0.75rem offsets (bumped by safe-area insets on notched
   // devices) give the pill visible breathing room from the screen edge instead
   // of kissing it.
-  const chromeHidden = inputModeTouch && !chromeVisible
+  const chromeHidden = !chromeVisible
   const actionBar = (
     <div
+      ref={actionBarRef}
+      data-gallery-chrome=""
       className={cn(
         "absolute top-[max(0.75rem,env(safe-area-inset-top))] right-[max(0.75rem,env(safe-area-inset-right))] z-10 flex items-center gap-1 rounded-full bg-black/55 px-1 py-0.5 shadow-lg backdrop-blur-sm",
         "transition-opacity duration-200",
@@ -1110,7 +1167,12 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
               <div
                 className="relative flex-1 min-w-0 min-h-0 flex items-center justify-center"
                 onMouseEnter={() => setShowArrows(true)}
-                onMouseLeave={() => setShowArrows(false)}
+                onMouseLeave={() => {
+                  setShowArrows(false)
+                  pointerOnChromeRef.current = false
+                  scheduleChromeIdle()
+                }}
+                onPointerMove={handleMousePointerMove}
               >
                 {actionBar}
 
@@ -1133,8 +1195,11 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                         "h-10 w-10 rounded-full bg-black/50 flex items-center justify-center",
                         "text-white hover:bg-black/70 transition-opacity duration-200",
                         !hasPrev && "invisible",
-                        showArrows ? "opacity-100" : "opacity-0"
+                        showArrows && !chromeHidden ? "opacity-100" : "opacity-0 focus-visible:opacity-100",
+                        chromeHidden && "pointer-events-none"
                       )}
+                      data-gallery-chrome=""
+                      inert={chromeHidden || undefined}
                       onClick={goPrev}
                       aria-label="Previous"
                     >
@@ -1147,8 +1212,11 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                         "h-10 w-10 rounded-full bg-black/50 flex items-center justify-center",
                         "text-white hover:bg-black/70 transition-opacity duration-200",
                         !hasNext && "invisible",
-                        showArrows ? "opacity-100" : "opacity-0"
+                        showArrows && !chromeHidden ? "opacity-100" : "opacity-0 focus-visible:opacity-100",
+                        chromeHidden && "pointer-events-none"
                       )}
+                      data-gallery-chrome=""
+                      inert={chromeHidden || undefined}
                       onClick={goNext}
                       aria-label="Next"
                     >
@@ -1157,7 +1225,14 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                   </>
                 )}
 
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
+                <div
+                  className={cn(
+                    "absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4",
+                    "transition-opacity duration-200",
+                    chromeHidden && "opacity-0"
+                  )}
+                  aria-hidden={chromeHidden || undefined}
+                >
                   <span className="text-sm text-white">{current.filename}</span>
                 </div>
               </div>
