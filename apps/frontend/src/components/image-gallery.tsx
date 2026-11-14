@@ -537,6 +537,8 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
       setCurrentIndex(initialIndex)
       cancelPendingChromeToggle()
       setChromeVisible(true)
+      pointerOnChromeRef.current = false
+      keyboardDrivenRef.current = false
       justOpened.current = true
     }
     prevOpen.current = isOpen

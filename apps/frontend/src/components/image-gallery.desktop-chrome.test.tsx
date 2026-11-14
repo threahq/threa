@@ -103,6 +103,19 @@ describe("MediaGallery desktop chrome", () => {
     expect(chromeHidden()).toBe(true)
   })
 
+  it("fades on the next open after closing from a hovered or tabbed-to control", async () => {
+    const user = await openGallery()
+    await user.tab()
+    fireEvent.pointerMove(closeButton(), { pointerType: "mouse" })
+    fireEvent.click(closeButton())
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument())
+
+    await user.click(await screen.findByRole("button", { name: /photo1\.png/i }))
+    await waitFor(() => expect(dialog()).toBeInTheDocument())
+    idle()
+    expect(chromeHidden()).toBe(true)
+  })
+
   it("stays up while a control has keyboard focus, arrows included", async () => {
     const user = await openGallery()
     await user.tab()
