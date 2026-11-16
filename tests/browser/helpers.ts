@@ -88,7 +88,10 @@ export async function devLogin(
   name: string,
   options?: { intent?: "add" }
 ): Promise<DevLoginUser> {
-  const loginResponse = await page.request.post("/api/dev/login", {
+  const controlPlanePort = process.env.PLAYWRIGHT_CONTROL_PLANE_PORT
+  if (!controlPlanePort) throw new Error("Browser login fixture requires PLAYWRIGHT_CONTROL_PLANE_PORT")
+  // Fixture login must not depend on Wrangler's reloadable dev proxy.
+  const loginResponse = await page.request.post(`http://localhost:${controlPlanePort}/api/dev/login`, {
     data: options?.intent ? { email, name, intent: options.intent } : { email, name },
   })
   await expectApiOk(loginResponse, options?.intent === "add" ? "Stub auth add-account" : "Stub auth login")
