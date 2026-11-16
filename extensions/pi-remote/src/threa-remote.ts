@@ -57,6 +57,8 @@ import {
   type DecryptedHistoryItem,
   type SealedReplyBody,
   type SealingState,
+  NO_RESPONSE_SENTINEL,
+  reactionTurnPrompt,
 } from "@threahq/bot-runtime-client"
 import {
   discardSpawnBrief,
@@ -120,7 +122,6 @@ const E2E_KEY_STORE_DEFAULT: E2eKeyStoreKind | undefined = isTestEntrypoint() ? 
 // is wiped and only disk state crosses the boundary.
 let PENDING_SNAPSHOT_DIRECTORY = DEFAULT_STORAGE_DIRECTORY
 const STATUS_KEY = "threa-remote"
-const NO_RESPONSE_MARKER = "THREA_NO_RESPONSE"
 const FETCH_TIMEOUT_MS = 30_000
 const ATTACHMENT_DOWNLOAD_TIMEOUT_MS = 60_000
 const MAX_FAILURE_POLL_MS = 60_000
@@ -154,6 +155,7 @@ const CONTRIBUTOR_FAIL_RETRY_COOLDOWN_MS = 30_000
 const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
 const SESSION_CONTROL_CAPABILITY = "session-control"
 const QUEUED_MESSAGE_CAPABILITY = "queued-message"
+const REACTION_CAPABILITY = "reaction"
 /** Composer-only: its messages arrive as queued-message claims, never as commands. */
 const ENQUEUE_COMMAND = "enqueue"
 const RELOAD_HANDOFF_COMMAND = "threa-remote-reload"
@@ -964,6 +966,31 @@ async function readRequestBody<T>(response: Response): Promise<T> {
   return (await response.json()) as T
 }
 
+interface ReactToolParams {
+  emoji: string
+  messageId?: string
+  remove?: boolean
+}
+
+async function reactToMessage(params: ReactToolParams): Promise<string> {
+  if (!config) throw new Error("Pi is not linked to Threa.")
+  const turnMessageIds = [
+    ...new Set(
+      [pending, ...steeredInvocations.map((item) => item.invocation)].flatMap((item) => item?.sourceMessageId ?? [])
+    ),
+  ]
+  if (!params.messageId && turnMessageIds.length > 1)
+    throw new Error(`This turn answers several Threa messages (${turnMessageIds.join(", ")}): pass messageId.`)
+  const messageId = params.messageId ?? turnMessageIds[0]
+  if (!messageId)
+    throw new Error("No Threa message to react to: pass messageId, or call this while answering a Threa message.")
+  await request(
+    `/api/v1/workspaces/${config.workspaceId}/messages/${encodeURIComponent(messageId)}/reactions/${encodeURIComponent(params.emoji)}`,
+    { method: params.remove ? "DELETE" : "PUT" }
+  )
+  return `${params.remove ? "Removed" : "Added"} ${params.emoji} on ${messageId}.`
+}
+
 function buildModelSuggestions(ctx: ExtensionContext): Array<{ value: string; label: string }> {
   const preferred = new Set((config?.preferredModels ?? []).map((value) => value.toLowerCase()))
   const ordered = ctx.modelRegistry
@@ -1019,6 +1046,7 @@ function buildRuntimeCapabilities(
     supportsActiveScratchpad: true,
     supportsPersistentSessions: true,
     supportsMentionInvocations: true,
+    supportsReactions: true,
     supportsSessionControlCommands: true,
     sessionControlCommands: [...SESSION_CONTROL_COMMANDS, ENQUEUE_COMMAND].filter((command) => {
       // Commands routed through the harnessd entrypoint need this session's tmux
@@ -2955,8 +2983,15 @@ async function fetchInvocationContext(
         )
       ).data
   sourceIncluded = messages.some((message) => message.id === invocation.sourceMessageId)
-  if (strict && !sourceIncluded) throw new Error("source message missing from invocation context")
-  const orderedMessages = [...messages].sort((a, b) => (BigInt(a.sequence) < BigInt(b.sequence) ? -1 : 1))
+  if (strict && invocation.trigger !== "reaction" && !sourceIncluded)
+    throw new Error("source message missing from invocation context")
+  const orderedMessages = [...messages]
+    .sort((a, b) => (BigInt(a.sequence) < BigInt(b.sequence) ? -1 : 1))
+    .map((message) =>
+      invocation.trigger === "reaction" && message.id === invocation.sourceMessageId
+        ? { ...message, attachments: [] }
+        : message
+    )
   const downloadedAttachments = await downloadContextAttachments(orderedMessages, invocation, cwd, strict, signal)
   throwIfAborted(signal)
 
@@ -2973,7 +3008,7 @@ interface ClaimCapabilityOptions {
 }
 
 function claimCapabilities(options?: ClaimCapabilityOptions): string[] {
-  const capabilities = ["active-scratchpad", "mentionable"]
+  const capabilities = ["active-scratchpad", "mentionable", REACTION_CAPABILITY]
   if (options?.includeQueuedMessage) capabilities.push(QUEUED_MESSAGE_CAPABILITY)
   if (options?.includeSessionControl) capabilities.push(SESSION_CONTROL_CAPABILITY)
   return capabilities
@@ -3024,12 +3059,30 @@ async function claimNextInvocation(ctx: ExtensionContext): Promise<ClaimedInvoca
     if (!body.data) return null
     consecutiveQuietPolls = 0
     const claimed = { ...body.data, claimedInstanceId: getSessionInstanceId(ctx) }
-    if (claimed.sealedContext === undefined) return claimed
-    return hydrateSealedClaim(claimed, ctx)
+    const opened = claimed.sealedContext === undefined ? claimed : await hydrateSealedClaim(claimed, ctx)
+    return opened ? await renderReactionClaim(opened, ctx) : null
   } catch (error) {
     emitPollDebug(ctx, `failed after ${Date.now() - startedAt}ms: ${summarizeError(error)}`)
     throw error
   }
+}
+
+/**
+ * A reaction claim's prompt becomes the rendered reaction turn, and the reacted message's own
+ * attachments are not announced as just received. Bad metadata fails the claim loudly.
+ */
+async function renderReactionClaim(
+  claimed: ClaimedInvocation,
+  ctx: ExtensionContext
+): Promise<ClaimedInvocation | null> {
+  if (claimed.trigger !== "reaction") return claimed
+  const prompt = reactionTurnPrompt(claimed)
+  if (prompt === null) {
+    emitPollDebug(ctx, `reaction claim ${claimed.id} has malformed metadata`)
+    await failClaimedInvocation(claimed, "Reaction turn failed: malformed reaction metadata")
+    return null
+  }
+  return { ...claimed, promptMarkdown: prompt, sealedSourceAttachmentRefs: [] }
 }
 
 /**
@@ -3109,17 +3162,22 @@ async function prepareSealedClaim(invocation: ClaimedInvocation, ctx: ExtensionC
   applySealedAttachmentContext(invocation, attachments)
 }
 
-/** Fail an invocation with a generic, scrubbed reason — the sealed-path variant of {@link failInvocation}. */
-async function failInvocationScrubbed(invocation: ClaimedInvocation, reason: string): Promise<void> {
+/** Fail a just-claimed invocation (not yet observed) with a static reason. */
+async function failClaimedInvocation(invocation: ClaimedInvocation, errorMessage: string): Promise<void> {
   if (!config) return
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/fail`, {
     method: "POST",
     body: JSON.stringify({
       instanceId: getInvocationInstanceId(invocation),
       claimToken: invocation.claimToken,
-      errorMessage: `Sealed turn failed: ${reason}`.slice(0, 200),
+      errorMessage,
     }),
   }).catch(() => undefined)
+}
+
+/** Fail an invocation with a generic, scrubbed reason — the sealed-path variant of {@link failInvocation}. */
+async function failInvocationScrubbed(invocation: ClaimedInvocation, reason: string): Promise<void> {
+  await failClaimedInvocation(invocation, `Sealed turn failed: ${reason}`.slice(0, 200))
 }
 
 /**
@@ -4241,7 +4299,7 @@ async function runStopCommand(
   const droppedRetry = isWaitingForRetry
   if (wasBusy) ctx.abort()
   if (hadPendingRemoteInvocation) {
-    await completePending(NO_RESPONSE_MARKER, ctx)
+    await completePending(NO_RESPONSE_SENTINEL, ctx)
   }
   if (!isCurrent()) return
   const stoppedNote = droppedRetry
@@ -5092,7 +5150,8 @@ async function completeSealedWithMarkdown(
   if (!config) return
   const revision = invocation.sourceRevision
   const extracted = extractAttachmentDirectives(markdown.trim())
-  const noResponse = extracted.markdown === NO_RESPONSE_MARKER || (!extracted.markdown && extracted.paths.length === 0)
+  const noResponse =
+    extracted.markdown === NO_RESPONSE_SENTINEL || (!extracted.markdown && extracted.paths.length === 0)
   if (noResponse) {
     await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/sealed-complete`, {
       method: "POST",
@@ -5171,7 +5230,7 @@ async function completePending(
         (expected && promptEpoch !== expected.epoch)
       )
         return
-      const noResponse = finalMarkdown === NO_RESPONSE_MARKER || finalMarkdown.length === 0
+      const noResponse = finalMarkdown === NO_RESPONSE_SENTINEL || finalMarkdown.length === 0
       await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
         method: "POST",
         body: JSON.stringify({
@@ -5435,6 +5494,7 @@ export const __testing = {
   WS_BACKSTOP_POLL_MS,
   CLAIM_TTL_SECONDS,
   beginPendingInvocation,
+  buildInvocationPrompt,
   clearPendingForTesting: () => {
     releaseAllObservations()
     clearContributorTerminalWrites()
@@ -5449,10 +5509,6 @@ export const __testing = {
   },
   NO_SOCKET_POLL_CAP_MS,
   nextQuietPollMs,
-  reactToMessage,
-  setPendingForTesting: (value: ClaimedInvocation | undefined) => {
-    pending = value
-  },
   completeInvocationWithMarkdown,
   completeInvocationWithSummary,
   claimNextInvocation,
@@ -5476,22 +5532,11 @@ export const __testing = {
   handleTransportDisconnected,
 }
 
-async function reactToMessage(params: { emoji: string; messageId?: string; remove?: boolean }): Promise<string> {
-  if (!config) throw new Error("Pi is not linked to Threa.")
-  const messageId = params.messageId ?? pending?.sourceMessageId
-  if (!messageId)
-    throw new Error("No Threa message to react to: pass messageId, or call this while answering a Threa message.")
-  await request(
-    `/api/v1/workspaces/${config.workspaceId}/messages/${encodeURIComponent(messageId)}/reactions/${encodeURIComponent(params.emoji)}`,
-    { method: params.remove ? "DELETE" : "PUT" }
-  )
-  return `${params.remove ? "Removed" : "Added"} ${params.emoji} on ${messageId}.`
-}
-
+// Plain JSON Schema: Pi types `parameters` as a TypeBox schema, which this package does not import at runtime.
 const REACT_TOOL_PARAMETERS = {
   type: "object",
   properties: {
-    emoji: { type: "string", description: "Unicode emoji or shortcode, e.g. 👍 or thumbsup" },
+    emoji: { type: "string", description: "Unicode emoji or shortcode, e.g. 👍 or :thumbsup:" },
     messageId: { type: "string", description: "Target message id; defaults to the message you are answering" },
     remove: { type: "boolean", description: "Remove your reaction instead of adding it" },
   },
@@ -5505,8 +5550,8 @@ export default function (pi: ExtensionAPI): void {
     description:
       "React to a Threa message with an emoji as yourself (the bot), or remove your reaction. Without messageId it targets the message you are currently answering. Side effect only; does not end the turn.",
     parameters: REACT_TOOL_PARAMETERS,
-    execute: async (_toolCallId, params) => {
-      const text = await reactToMessage(params as { emoji: string; messageId?: string; remove?: boolean })
+    execute: async (_toolCallId, params: ReactToolParams) => {
+      const text = await reactToMessage(params)
       return { content: [{ type: "text", text }], details: undefined }
     },
   })
@@ -5829,7 +5874,7 @@ export default function (pi: ExtensionAPI): void {
         // record `message_sent` for the fallback paths (provider error, event
         // error, non-assistant text) where there is no preceding thinking step.
         if (output.assistantTexts.length === 0) {
-          const traceFinalText = extractAttachmentDirectives(finalText).markdown || NO_RESPONSE_MARKER
+          const traceFinalText = extractAttachmentDirectives(finalText).markdown || NO_RESPONSE_SENTINEL
           await recordTraceStep(
             "message_sent",
             `Final response:\n\n${sanitizeTraceText(traceFinalText)}`,

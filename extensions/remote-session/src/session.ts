@@ -36,6 +36,7 @@ import {
   type ObservedClaimHandle,
   type SealedReplyBody,
   type StepFrame,
+  reactionTurnPrompt,
 } from "@threahq/bot-runtime-client"
 import {
   downloadInboundAttachments,
@@ -60,8 +61,8 @@ import { RouteRevokedError, TurnRoute, type CloseRequest, type PostIntent, type 
 
 /** Plain messages: what a running turn may take in, and the base of every idle claim. */
 const MESSAGE_CAPABILITIES = ["active-scratchpad", "mentionable"] as const
+const REACTION_CAPABILITY = "reaction"
 export const QUEUED_MESSAGE_CAPABILITY = "queued-message"
-export const SUPPORTED_CAPABILITIES = [...MESSAGE_CAPABILITIES, QUEUED_MESSAGE_CAPABILITY] as const
 export const SESSION_CONTROL_CAPABILITY = "session-control"
 /** Advertised by every runtime with an actuator, because every one claims `queued-message` when idle. */
 const ENQUEUE_COMMAND = "enqueue"
@@ -273,6 +274,12 @@ export interface RemoteSessionDelegate {
    * does not stop the session from connecting or claiming meanwhile.
    */
   onLinked?(link: RuntimeSessionLink): Promise<void> | void
+  /**
+   * Opt in to reaction invocations: claims ask for `reaction` and presence
+   * advertises `supportsReactions`. Off by default so a connector that runs a
+   * fixed command per turn is never re-run by an emoji.
+   */
+  reactions?: boolean
   /** Present iff the connector can drive the runtime. Gates advertising session control (fail-safe). */
   sessionControl?: SessionControlActuator
   /**
@@ -408,8 +415,19 @@ export function buildSteerContent(parts: string[]): string {
 }
 
 /** Capabilities advertised in hello + presence. Session control only when the connector can drive the runtime. */
-export function supportedCapabilitiesFor(sessionControlEnabled: boolean): string[] {
-  return sessionControlEnabled ? [...SUPPORTED_CAPABILITIES, SESSION_CONTROL_CAPABILITY] : [...SUPPORTED_CAPABILITIES]
+export function supportedCapabilitiesFor({
+  sessionControl = false,
+  reactions = false,
+}: { sessionControl?: boolean; reactions?: boolean } = {}): string[] {
+  return [
+    ...messageCapabilitiesFor(reactions),
+    QUEUED_MESSAGE_CAPABILITY,
+    ...(sessionControl ? [SESSION_CONTROL_CAPABILITY] : []),
+  ]
+}
+
+function messageCapabilitiesFor(reactions: boolean): string[] {
+  return reactions ? [...MESSAGE_CAPABILITIES, REACTION_CAPABILITY] : [...MESSAGE_CAPABILITIES]
 }
 
 export function effectiveRuntimeManifest(
@@ -433,21 +451,30 @@ export type ClaimMode = "idle" | "busy" | "running-turn"
  * (callers must not claim in that state). Running-turn: plain messages only,
  * never `/enqueue`d ones, which wait for idle.
  */
-export function claimCapabilitiesFor(mode: ClaimMode, sessionControlEnabled: boolean, held = false): string[] {
-  if (mode === "running-turn") return [...MESSAGE_CAPABILITIES]
-  if (mode === "busy") return sessionControlEnabled ? [SESSION_CONTROL_CAPABILITY] : []
-  const supported = supportedCapabilitiesFor(sessionControlEnabled)
+export function claimCapabilitiesFor(
+  mode: ClaimMode,
+  {
+    sessionControl = false,
+    held = false,
+    reactions = false,
+  }: { sessionControl?: boolean; held?: boolean; reactions?: boolean } = {}
+): string[] {
+  if (mode === "running-turn") return messageCapabilitiesFor(reactions)
+  if (mode === "busy") return sessionControl ? [SESSION_CONTROL_CAPABILITY] : []
+  const supported = supportedCapabilitiesFor({ sessionControl, reactions })
   return held ? supported.filter((capability) => capability !== QUEUED_MESSAGE_CAPABILITY) : supported
 }
 
 export function runtimeCapabilitiesFor(
   runtimeSessionId: string,
-  actuator: SessionControlActuator | undefined
+  actuator: SessionControlActuator | undefined,
+  { reactions = false }: { reactions?: boolean } = {}
 ): Record<string, unknown> {
   return {
     runtimeSessionId,
     supportsActiveScratchpad: true,
     supportsPersistentSessions: true,
+    ...(reactions ? { supportsReactions: true } : {}),
     ...(actuator
       ? {
           supportsSessionControlCommands: true,
@@ -677,7 +704,10 @@ export class RemoteSession {
     // key fields assigned into it at start() (after ensure()) ride every one.
     this.hello = {
       ...this.presenceBody("available"),
-      supportedCapabilities: supportedCapabilitiesFor(this.sessionControlEnabled),
+      supportedCapabilities: supportedCapabilitiesFor({
+        sessionControl: this.sessionControlEnabled,
+        reactions: this.reactionsEnabled,
+      }),
     }
     this.transport =
       options.transport ??
@@ -714,6 +744,10 @@ export class RemoteSession {
       })
   }
 
+  private get reactionsEnabled(): boolean {
+    return this.delegate.reactions === true
+  }
+
   private get sessionControlEnabled(): boolean {
     return Boolean(this.delegate.sessionControl)
   }
@@ -742,7 +776,10 @@ export class RemoteSession {
     else if (this.reconnectHandoff || this.atCapacity) status = "busy"
     const body = this.presenceBody(status)
     Object.assign(this.hello, body)
-    this.hello.supportedCapabilities = supportedCapabilitiesFor(this.sessionControlEnabled)
+    this.hello.supportedCapabilities = supportedCapabilitiesFor({
+      sessionControl: this.sessionControlEnabled,
+      reactions: this.reactionsEnabled,
+    })
     this.reportPresence(body)
   }
 
@@ -840,7 +877,9 @@ export class RemoteSession {
     if (failures > 0) this.log(`session-control options loaded on attempt ${failures + 1}`)
     this.controlOptionsTimer = setTimeout(() => void this.loadSessionControlOptions(), CONTROL_OPTIONS_REFRESH_MS)
     // Unlinked, the link's presence write and the first hello carry the options.
-    const advertised = JSON.stringify(runtimeCapabilitiesFor(this.config.runtimeSessionId, control))
+    const advertised = JSON.stringify(
+      runtimeCapabilitiesFor(this.config.runtimeSessionId, control, { reactions: this.reactionsEnabled })
+    )
     if (this.link && advertised !== this.publishedCapabilities) await this.syncPresence()
   }
 
@@ -1206,6 +1245,23 @@ export class RemoteSession {
     await this.claimDrainTask
   }
 
+  /** Claim one invocation; a reaction's prompt becomes its rendered turn, and malformed metadata fails the claim loudly. */
+  private async claimInvocation(
+    mode: ClaimMode,
+    responseStreamId?: string,
+    excludeResponseStreamIds: string[] = []
+  ): Promise<ClaimedInvocation | null> {
+    const invocation = await this.claimAndHydrate(mode, responseStreamId, excludeResponseStreamIds)
+    if (!invocation || invocation.trigger !== "reaction") return invocation
+    const prompt = reactionTurnPrompt(invocation)
+    if (prompt === null) {
+      this.log(`reaction claim ${invocation.id} has malformed metadata`)
+      await this.failFencedInvocation(invocation, "Reaction turn failed: malformed reaction metadata")
+      return null
+    }
+    return { ...invocation, promptMarkdown: prompt }
+  }
+
   /**
    * Claim one invocation and, when it arrives sealed, hydrate it in place: open
    * the SSK wraps with this install's BIK, decrypt the trigger + history, and
@@ -1365,7 +1421,7 @@ export class RemoteSession {
     excludeResponseStreamIds: string[] = []
   ): Promise<ClaimedInvocation | null> {
     const lifecycle = this.lifecycle
-    const invocation = await this.claimAndHydrate(mode, responseStreamId, excludeResponseStreamIds)
+    const invocation = await this.claimInvocation(mode, responseStreamId, excludeResponseStreamIds)
     if (!invocation || this.stopped || this.archive.detached || lifecycle !== this.lifecycle) return null
     await this.observeInvocation(invocation)
     return this.isClaimCancelled(invocation) ? null : invocation
@@ -2296,6 +2352,8 @@ export class RemoteSession {
     options: { strictAttachments?: boolean; signal?: AbortSignal; sourceOnly?: boolean } = {}
   ): Promise<DownloadedAttachment[]> {
     if (options.signal?.aborted) throw options.signal.reason
+    // The reacted message is the bot's own: its attachments are not something the user just sent.
+    if (invocation.trigger === "reaction") return []
     // A sealed turn's attachments come from the refs hydration opened out of the
     // sealed payloads — the plaintext message list only holds ciphertext
     // placeholders, so there is nothing to scan there. The S3 object is opaque
@@ -3078,7 +3136,7 @@ export class RemoteSession {
   }): Promise<{ messageId: string }> {
     let messageId = input.messageId
     if (!messageId) {
-      const route = input.invocationId ? this.route(input.invocationId) : this.routeForReaction(input.streamId)
+      const route = input.invocationId ? this.route(input.invocationId) : this.unscopedRoute(input.streamId)
       if (!route) throw new Error("Cannot react: no active turn; pass messageId.")
       messageId = route.invocation.sourceMessageId ?? undefined
       if (!messageId) throw new Error("Cannot react: this turn has no source message; pass messageId.")
@@ -3087,13 +3145,19 @@ export class RemoteSession {
     return { messageId }
   }
 
-  private routeForReaction(streamId: string | undefined): TurnRoute | undefined {
-    if (streamId) return this.routeForStream(streamId)
-    if (this.parallel && this.inflightStreams().size > 1) {
-      throw new Error("Cannot react: turns are running in several streams; pass streamId or invocationId.")
-    }
-    const resolved = (this.parallel ? [...this.inflightStreams()][0] : undefined) ?? this.activeTurnStream
+  private unscopedRoute(streamId: string | undefined): TurnRoute | undefined {
+    const resolved = this.actingStream(
+      streamId,
+      "Cannot react: turns are running in several streams; pass streamId or invocationId."
+    )
     return resolved ? this.routeForStream(resolved) : undefined
+  }
+
+  /** The stream a call acts on: the named one, else the only in-flight turn's, else the active turn's. Throws `ambiguous` when several run. */
+  private actingStream(streamId: string | undefined, ambiguous: string): string | undefined {
+    if (streamId) return streamId
+    if (this.parallel && this.inflightStreams().size > 1) throw new Error(ambiguous)
+    return (this.parallel ? [...this.inflightStreams()][0] : undefined) ?? this.activeTurnStream
   }
 
   // --- Decisions ------------------------------------------------------------
@@ -3105,11 +3169,11 @@ export class RemoteSession {
    * on the socket backstop cadence as the missed-push insurance.
    */
   async requestDecision(input: DecisionRequestInput, opts: { signal?: AbortSignal } = {}): Promise<DecisionOutcome> {
-    if (!input.streamId && this.parallel && this.inflightStreams().size > 1) {
-      throw new Error("Cannot open a decision: turns are running in several streams; pass streamId.")
-    }
-    const onlyStream = this.parallel ? [...this.inflightStreams()][0] : undefined
-    const streamId = input.streamId ?? onlyStream ?? this.activeTurnStream ?? this.link?.rootStreamId
+    const streamId =
+      this.actingStream(
+        input.streamId,
+        "Cannot open a decision: turns are running in several streams; pass streamId."
+      ) ?? this.link?.rootStreamId
     if (!streamId) throw new Error("Cannot open a decision: this session has no active turn and no linked scratchpad.")
     const route = this.routeForStream(streamId)
     const invocationId = input.invocationId ?? route?.invocation.id
@@ -3610,7 +3674,9 @@ export class RemoteSession {
       // Full capabilities on EVERY presence update: the server replaces stored
       // capabilities on a presence:update (it doesn't merge), so omitting the
       // session-control keys here would wipe what bot:hello advertised.
-      capabilities: runtimeCapabilitiesFor(this.config.runtimeSessionId, this.delegate.sessionControl),
+      capabilities: runtimeCapabilitiesFor(this.config.runtimeSessionId, this.delegate.sessionControl, {
+        reactions: this.reactionsEnabled,
+      }),
       manifest: effectiveRuntimeManifest(this.runtime.manifest, this.delegate.sessionControl),
       ...(statusText ? { statusText } : {}),
       // The keyring must ride every presence write too — an advertised set
@@ -3624,7 +3690,11 @@ export class RemoteSession {
       runtimeKind: this.runtime.kind,
       instanceId: this.config.instanceId,
       runtimeSessionId: this.config.runtimeSessionId,
-      supportedCapabilities: claimCapabilitiesFor(mode, this.sessionControlEnabled, this.held),
+      supportedCapabilities: claimCapabilitiesFor(mode, {
+        sessionControl: this.sessionControlEnabled,
+        held: this.held,
+        reactions: this.reactionsEnabled,
+      }),
       claimTtlSeconds: CLAIM_TTL_SECONDS,
       ...(mode === "idle" && excludeResponseStreamIds.length > 0 ? { excludeResponseStreamIds } : {}),
     }

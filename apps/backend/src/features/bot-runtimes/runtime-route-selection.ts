@@ -2,6 +2,19 @@ import { HttpError } from "@threahq/backend-common"
 import type { Querier } from "../../db"
 import { BotRuntimeSessionLinkRepository, StreamActiveActorRepository } from "./repository"
 
+/** The bot's link on the stream itself, else the one on its root. */
+export async function findBotLinkCoveringStream(
+  db: Querier,
+  params: { workspaceId: string; botId: string; rootStreamId: string; activeStreamId: string }
+) {
+  const onStream = await BotRuntimeSessionLinkRepository.findActiveByStreamForShare(db, params)
+  if (onStream || params.activeStreamId === params.rootStreamId) return onStream
+  return BotRuntimeSessionLinkRepository.findActiveByStreamForShare(db, {
+    ...params,
+    activeStreamId: params.rootStreamId,
+  })
+}
+
 export async function resolveLinkedRuntimeRouteTarget(
   db: Querier,
   params: { workspaceId: string; rootStreamId: string; activeStreamId: string }
@@ -21,17 +34,6 @@ export async function resolveLinkedRuntimeRouteTarget(
   const active = await StreamActiveActorRepository.findByRootStream(db, params.workspaceId, params.rootStreamId)
   if (!active || active.actorType !== "bot") return null
 
-  let link = await BotRuntimeSessionLinkRepository.findActiveByStreamForShare(db, {
-    ...params,
-    botId: active.actorId,
-  })
-  if (!link && params.activeStreamId !== params.rootStreamId) {
-    link = await BotRuntimeSessionLinkRepository.findActiveByStreamForShare(db, {
-      workspaceId: params.workspaceId,
-      botId: active.actorId,
-      rootStreamId: params.rootStreamId,
-      activeStreamId: params.rootStreamId,
-    })
-  }
+  const link = await findBotLinkCoveringStream(db, { ...params, botId: active.actorId })
   return { botId: active.actorId, link }
 }

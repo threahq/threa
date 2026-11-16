@@ -376,23 +376,36 @@ describe("capability selection", () => {
   }
 
   test("advertises session-control only when an actuator is present", () => {
-    expect(supportedCapabilitiesFor(true)).toContain("session-control")
-    expect(supportedCapabilitiesFor(false)).not.toContain("session-control")
+    expect(supportedCapabilitiesFor({ sessionControl: true })).toContain("session-control")
+    expect(supportedCapabilitiesFor()).not.toContain("session-control")
   })
 
   test("claims per mode: everything idle, queued-message withheld while held, control only when busy, plain messages for a running turn", () => {
     expect({
-      idle: claimCapabilitiesFor("idle", true),
-      held: claimCapabilitiesFor("idle", true, true),
-      busy: claimCapabilitiesFor("busy", true),
-      busyWithoutControl: claimCapabilitiesFor("busy", false),
-      runningTurn: claimCapabilitiesFor("running-turn", true, true),
+      idle: claimCapabilitiesFor("idle", { sessionControl: true }),
+      held: claimCapabilitiesFor("idle", { sessionControl: true, held: true }),
+      busy: claimCapabilitiesFor("busy", { sessionControl: true }),
+      busyWithoutControl: claimCapabilitiesFor("busy"),
+      runningTurn: claimCapabilitiesFor("running-turn", { sessionControl: true, held: true }),
     }).toEqual({
       idle: ["active-scratchpad", "mentionable", "queued-message", "session-control"],
       held: ["active-scratchpad", "mentionable", "session-control"],
       busy: ["session-control"],
       busyWithoutControl: [],
       runningTurn: ["active-scratchpad", "mentionable"],
+    })
+  })
+
+  test("claims ask for reaction only when the connector opts in", () => {
+    const options = { sessionControl: true, reactions: true }
+    expect({
+      idle: claimCapabilitiesFor("idle", options),
+      held: claimCapabilitiesFor("idle", { ...options, held: true }),
+      runningTurn: claimCapabilitiesFor("running-turn", options),
+    }).toEqual({
+      idle: ["active-scratchpad", "mentionable", "reaction", "queued-message", "session-control"],
+      held: ["active-scratchpad", "mentionable", "reaction", "session-control"],
+      runningTurn: ["active-scratchpad", "mentionable", "reaction"],
     })
   })
 
@@ -413,6 +426,13 @@ describe("capability selection", () => {
     ])
     expect(enabled.spawnDefaultRuntime).toBe("claude")
     expect(enabled.runtimeSessionId).toBe("rts_1")
+    expect({
+      default: enabled.supportsReactions,
+      optedIn: runtimeCapabilitiesFor("rts_1", undefined, { reactions: true }).supportsReactions,
+    }).toEqual({
+      default: undefined,
+      optedIn: true,
+    })
 
     const disabled = runtimeCapabilitiesFor("rts_1", undefined)
     expect(disabled.supportsSessionControlCommands).toBeUndefined()
@@ -3247,6 +3267,28 @@ const controlCommand = (id: string, streamId: string, name: string, args = "") =
     promptMarkdown: `/${name} ${args}`.trim(),
     metadata: { command: { executionKind: "bot-runtime", id: `cmd_${id}`, name, args } },
   })
+const reactionMessage = (id: string, streamId: string, metadata: Record<string, unknown> | null = reactionMetadata) =>
+  makeInvocation({
+    id,
+    responseStreamId: streamId,
+    sourceMessageId: `msg_${id}`,
+    trigger: "reaction",
+    requiredCapability: "reaction",
+    promptMarkdown: "All checks green.",
+    metadata: metadata ?? {},
+  })
+const reactionMetadata = {
+  reaction: { events: [{ action: "added", emoji: ":white_check_mark:", reactorId: "usr_1", reactorName: "Kris" }] },
+}
+const renderedReaction = (id: string) =>
+  [
+    `Kris reacted :white_check_mark: to your message msg_${id}.`,
+    "",
+    "Your message:",
+    "> All checks green.",
+    "",
+    "This is a reaction, not a message. Reply only if it calls for one. To stay silent, reply exactly THREA_NO_RESPONSE.",
+  ].join("\n")
 const steerOk = () => true
 
 /**
@@ -3258,6 +3300,7 @@ function makeQueuedSession(
   options: {
     maxConcurrentTurns?: number
     serverIgnoresExclusion?: boolean
+    reactions?: boolean
     steer?: SessionControlActuator["steer"]
   } = {}
 ) {
@@ -3294,6 +3337,7 @@ function makeQueuedSession(
         delivered.push(turn.invocationId)
         contents.push(turn.content)
       },
+      reactions: options.reactions,
       sessionControl: {
         commands: ["stop"],
         interrupt: (streamId) => {
@@ -3376,6 +3420,69 @@ describe("messages to a running turn (steer by default, /enqueue waits)", () => 
       })
     })
   }
+
+  test("an idle claim delivers a reaction as the rendered prompt", async () => {
+    const h = makeQueuedSession([reactionMessage("binv_r", "stream_a")], { steer: steerOk, reactions: true })
+
+    await claimDrain(h.session)
+
+    expect({ delivered: h.delivered, contents: h.contents }).toEqual({
+      delivered: ["binv_r"],
+      contents: [renderedReaction("binv_r")],
+    })
+  })
+
+  test("a reaction turn does not list the reacted message's attachments as just received", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "remote-reaction-attach-"))
+    const h = makeQueuedSession([reactionMessage("binv_r", "stream_a")], { steer: steerOk, reactions: true })
+    Object.assign(h.client as unknown as Record<string, unknown>, {
+      listStreamMessages: async () => [
+        {
+          id: "msg_binv_r",
+          attachments: [{ id: "att_img", filename: "shot.png", mimeType: "image/png", sizeBytes: 4 }],
+        },
+      ],
+      getAttachmentDownloadUrl: async (id: string) => `https://signed.example/${id}`,
+    })
+    const cwdSpy = spyOn(process, "cwd").mockReturnValue(dir)
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      (async () => new Response("png!")) as unknown as typeof fetch
+    )
+
+    try {
+      await claimDrain(h.session)
+    } finally {
+      cwdSpy.mockRestore()
+      fetchSpy.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+
+    expect(h.contents).toEqual([renderedReaction("binv_r")])
+  })
+
+  test("a reaction during a running turn is steered in as the rendered prompt", async () => {
+    const h = makeQueuedSession([plainMessage("binv_a", "stream_a")], { steer: steerOk, reactions: true })
+    await claimDrain(h.session)
+    h.queue.push(reactionMessage("binv_r", "stream_a"))
+
+    await claimDrain(h.session)
+
+    expect({ delivered: h.delivered, steers: h.steers }).toMatchObject({
+      delivered: ["binv_a"],
+      steers: [{ text: renderedReaction("binv_r"), streamId: "stream_a" }],
+    })
+  })
+
+  test("a reaction claim with malformed metadata fails loudly and delivers nothing", async () => {
+    const h = makeQueuedSession([reactionMessage("binv_r", "stream_a", null)], { steer: steerOk, reactions: true })
+
+    await claimDrain(h.session)
+
+    expect({ delivered: h.delivered, failed: h.calls.fail.map((call) => call.id) }).toEqual({
+      delivered: [],
+      failed: ["binv_r"],
+    })
+  })
 
   test("a steered message carries the manifest of its own attachments, not its history's", async () => {
     const dir = mkdtempSync(join(tmpdir(), "remote-steer-attach-"))
@@ -5536,7 +5643,7 @@ describe("parallel turns across streams", () => {
   const makeParallelSession = (queue: ClaimedInvocation[], options: Parameters<typeof makeQueuedSession>[1] = {}) =>
     makeQueuedSession(queue, { maxConcurrentTurns: 2, ...options })
 
-  const FULL_CAPS = claimCapabilitiesFor("idle", true)
+  const FULL_CAPS = claimCapabilitiesFor("idle", { sessionControl: true })
 
   test("rejects a maxConcurrentTurns that is not a positive integer", () => {
     const { client } = makeFakeClient()
@@ -5557,10 +5664,10 @@ describe("parallel turns across streams", () => {
 
   test("the serial capability table is unchanged", () => {
     expect([
-      claimCapabilitiesFor("idle", true),
-      claimCapabilitiesFor("busy", true),
-      claimCapabilitiesFor("busy", false),
-    ]).toEqual([supportedCapabilitiesFor(true), ["session-control"], []])
+      claimCapabilitiesFor("idle", { sessionControl: true }),
+      claimCapabilitiesFor("busy", { sessionControl: true }),
+      claimCapabilitiesFor("busy"),
+    ]).toEqual([supportedCapabilitiesFor({ sessionControl: true }), ["session-control"], []])
   })
 
   test("messages in two streams are both claimed and delivered, the second claim excluding the first stream", async () => {
@@ -6595,7 +6702,10 @@ describe("react", () => {
     const internals = session as any
     const addRoute = (id: string, streamId: string, sourceMessageId: string | null) =>
       internals.inflight.set(id, { state: "open", invocation: { id, responseStreamId: streamId, sourceMessageId } })
-    return { session, reactions, internals, addRoute }
+    const activate = (streamId: string) => {
+      internals.activeTurnStream = streamId
+    }
+    return { session, reactions, addRoute, activate }
   }
 
   test("defaults to the source message of the named invocation", async () => {
@@ -6613,10 +6723,10 @@ describe("react", () => {
   })
 
   test("falls back to the only in-flight turn, and an explicit messageId needs no turn", async () => {
-    const { session, reactions, addRoute } = reactSession()
+    const { session, reactions, addRoute, activate } = reactSession()
     await session.react({ emoji: "👍", messageId: "msg_x" })
     addRoute("binv_1", "stream_1", "msg_src")
-    internalsActive(session, "stream_1")
+    activate("stream_1")
     await expect(session.react({ emoji: "👍" })).resolves.toEqual({ messageId: "msg_src" })
     expect(reactions.map((r) => r.messageId)).toEqual(["msg_x", "msg_src"])
   })
@@ -6628,8 +6738,3 @@ describe("react", () => {
     await expect(session.react({ emoji: "👍", invocationId: "binv_rt" })).rejects.toThrow("no source message")
   })
 })
-
-function internalsActive(session: RemoteSession, streamId: string): void {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ;(session as any).activeTurnStream = streamId
-}

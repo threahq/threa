@@ -6,6 +6,7 @@ import {
   OutboxRepository,
   parseMessagePayload,
   type OutboxHandler,
+  type ReactionOutboxPayload,
   type StreamArchivedOutboxPayload,
   type StreamUnarchivedOutboxPayload,
 } from "../../lib/outbox"
@@ -74,6 +75,10 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
           await this.processMessageMutation(event.payload)
         } else if (event.eventType === "message:deleted") {
           await this.processMessageDeleted(event.payload)
+        } else if (event.eventType === "reaction:added") {
+          await this.processReaction("added", event.payload as ReactionOutboxPayload)
+        } else if (event.eventType === "reaction:removed") {
+          await this.processReaction("removed", event.payload as ReactionOutboxPayload)
         } else if (event.eventType === "agent_session:started") {
           await this.processAgentSessionStarted(event.payload)
         } else if (event.eventType === "stream:archived") {
@@ -113,6 +118,19 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
     await this.service.restoreSessionsForUnarchivedStream({
       workspaceId: payload.workspaceId,
       streamIds: [payload.streamId, ...(payload.threadStreamIds ?? [])],
+    })
+  }
+
+  private async processReaction(change: "added" | "removed", payload: ReactionOutboxPayload): Promise<void> {
+    if (payload.actorType && payload.actorType !== AuthorTypes.USER) return
+    // A shared copy mirrors another workspace's channel; its automation runs there.
+    if (await StreamRepository.isSharedCopy(this.pool, payload.workspaceId, payload.streamId)) return
+    await this.service.recordReactionChange({
+      workspaceId: payload.workspaceId,
+      messageId: payload.messageId,
+      emoji: payload.emoji,
+      reactorId: payload.userId,
+      change,
     })
   }
 

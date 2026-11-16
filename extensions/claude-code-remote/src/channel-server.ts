@@ -781,6 +781,7 @@ export class ChannelServer {
       },
       delegate: {
         deliverTurn: (turn) => this.deliverToClaude(turn),
+        reactions: true,
         sessionControl: createClaudeSessionControl(
           () => this.carryOn,
           config.runtimeSessionId,

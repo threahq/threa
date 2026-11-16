@@ -210,13 +210,13 @@ describe("Pi remote trace safety", () => {
       runtimeKind: "pi-local",
       instanceId: "pi-host-123",
       runtimeSessionId: "pi-session-abc",
-      supportedCapabilities: ["active-scratchpad", "mentionable"],
+      supportedCapabilities: ["active-scratchpad", "mentionable", "reaction"],
       claimTtlSeconds: 120,
     })
     expect(
       __testing.buildClaimInvocationPayload("pi-host-123", "pi-session-abc", { includeSessionControl: true })
     ).toMatchObject({
-      supportedCapabilities: ["active-scratchpad", "mentionable", "session-control"],
+      supportedCapabilities: ["active-scratchpad", "mentionable", "reaction", "session-control"],
     })
     expect(
       __testing.buildClaimInvocationPayload("pi-host-123", "pi-session-abc", {
@@ -224,7 +224,7 @@ describe("Pi remote trace safety", () => {
         includeQueuedMessage: true,
       })
     ).toMatchObject({
-      supportedCapabilities: ["active-scratchpad", "mentionable", "queued-message", "session-control"],
+      supportedCapabilities: ["active-scratchpad", "mentionable", "reaction", "queued-message", "session-control"],
     })
   })
 
@@ -2477,6 +2477,132 @@ describe("claim drain serialization", () => {
     }
   })
 
+  test("advertises reaction support", () => {
+    expect(__testing.buildRuntimeCapabilities(undefined, undefined, () => PI_ONLY)).toMatchObject({
+      supportsReactions: true,
+    })
+  })
+
+  describe("reaction claims", () => {
+    const claimReaction = async (metadata: Record<string, unknown>) => {
+      __testing.setConfigForTesting({
+        baseUrl: "https://app.threa.io",
+        workspaceId: "ws_123",
+        apiKey: "threa_bk_test",
+        linkedSessions: { runtime: { enabled: true, instanceId: "pi-instance", runtimeSessionId: "runtime" } },
+      })
+      const failures: Array<{ url: string; body: Record<string, unknown> }> = []
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+        const url = String(input)
+        if (url.endsWith("/claim")) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                id: "binv_r",
+                activeStreamId: "stream_1",
+                sourceMessageId: "msg_9",
+                sourceRevision: 1,
+                promptMarkdown: "All checks green.",
+                claimToken: "claim",
+                claimExpiresAt: null,
+                trigger: "reaction",
+                requiredCapability: "reaction",
+                metadata,
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          )
+        }
+        failures.push({ url, body: JSON.parse(String(init?.body)) })
+        return new Response(JSON.stringify({ data: {} }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      })
+      const ctx = {
+        sessionManager: { getSessionId: () => "runtime" },
+        isIdle: () => true,
+        cwd: "/tmp",
+        modelRegistry: { getAvailable: () => [] },
+        ui: { notify: () => {}, setStatus: () => {}, theme: { fg: (_tone: string, text: string) => text } },
+      } as never
+      try {
+        return { claimed: await __testing.claimNextInvocation(ctx), failures }
+      } finally {
+        fetchSpy.mockRestore()
+        __testing.setConfigForTesting(undefined)
+      }
+    }
+
+    test("rewrites the prompt into the rendered reaction turn", async () => {
+      const { claimed } = await claimReaction({
+        reaction: { events: [{ action: "added", emoji: ":tada:", reactorId: "usr_1", reactorName: "Kris" }] },
+      })
+      expect(claimed?.promptMarkdown).toBe(
+        [
+          "Kris reacted :tada: to your message msg_9.",
+          "",
+          "Your message:",
+          "> All checks green.",
+          "",
+          "This is a reaction, not a message. Reply only if it calls for one. To stay silent, reply exactly THREA_NO_RESPONSE.",
+        ].join("\n")
+      )
+      expect(claimed && __testing.resolveSessionControlCommand(claimed)).toBeNull()
+    })
+
+    test("builds a strict reaction prompt without its source in the context window or its attachments", async () => {
+      __testing.setConfigForTesting({ baseUrl: "https://app.threa.io", workspaceId: "ws_123", apiKey: "threa_bk_test" })
+      const urls: string[] = []
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
+        urls.push(String(input))
+        return new Response(
+          JSON.stringify({
+            data: [
+              { id: "msg_new", sequence: "5", content: "later", createdAt: "2026-01-01T00:00:01Z", authorType: "user" },
+              {
+                id: "msg_9",
+                sequence: "4",
+                content: "All checks green.",
+                createdAt: "2026-01-01T00:00:00Z",
+                authorType: "bot",
+                attachments: [{ id: "att_1", filename: "a.png", mimeType: "image/png", sizeBytes: 1 }],
+              },
+            ].filter((message) => !String(input).includes("limit=12") || message.id !== "msg_9"),
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      }) as typeof fetch)
+      const ctx = {
+        sessionManager: { getSessionId: () => "runtime" },
+        cwd: "/tmp",
+        ui: { notify: () => {} },
+      } as never
+      const reaction = { ...invocation("binv_r"), sourceMessageId: "msg_9", trigger: "reaction" } as never
+      try {
+        const built = await __testing.buildInvocationPrompt(reaction, ctx, true)
+        expect({
+          context: built.context,
+          attachmentFetches: urls.filter((url) => url.includes("/attachments/")),
+        }).toEqual({
+          context: "Recent Threa stream context (oldest first):\n- user: later",
+          attachmentFetches: [],
+        })
+      } finally {
+        fetchSpy.mockRestore()
+        __testing.setConfigForTesting(undefined)
+      }
+    })
+
+    test("fails the claim loudly on malformed metadata", async () => {
+      const { claimed, failures } = await claimReaction({})
+      expect({ claimed, failures }).toMatchObject({
+        claimed: null,
+        failures: [{ url: expect.stringContaining("/bot-invocations/binv_r/fail"), body: { claimToken: "claim" } }],
+      })
+    })
+  })
+
   test("claims queued-message only when idle, with no turn pending and no retry wait", async () => {
     __testing.setConfigForTesting({
       baseUrl: "https://app.threa.io",
@@ -2515,10 +2641,10 @@ describe("claim drain serialization", () => {
       const turnPending = await claimedWith(true)
 
       expect({ idle, busy, retryWait, turnPending }).toEqual({
-        idle: ["active-scratchpad", "mentionable", "queued-message", "session-control"],
-        busy: ["active-scratchpad", "mentionable"],
-        retryWait: ["active-scratchpad", "mentionable", "session-control"],
-        turnPending: ["active-scratchpad", "mentionable"],
+        idle: ["active-scratchpad", "mentionable", "reaction", "queued-message", "session-control"],
+        busy: ["active-scratchpad", "mentionable", "reaction"],
+        retryWait: ["active-scratchpad", "mentionable", "reaction", "session-control"],
+        turnPending: ["active-scratchpad", "mentionable", "reaction"],
       })
     } finally {
       fetchSpy.mockRestore()
@@ -5475,7 +5601,7 @@ describe("Pi threa_react tool", () => {
   test("reacts to the current turn's source message with PUT", async () => {
     const tool = registerTool()
     configure()
-    __testing.setPendingForTesting(invocation("binv_react") as never)
+    __testing.beginPendingInvocation(invocation("binv_react") as never)
     const { calls, spy } = spyFetch()
     try {
       await tool.execute("call_1", { emoji: "👍" })
@@ -5493,14 +5619,38 @@ describe("Pi threa_react tool", () => {
   test("remove uses DELETE and an explicit messageId overrides the turn", async () => {
     const tool = registerTool()
     configure()
-    __testing.setPendingForTesting(invocation("binv_react") as never)
+    __testing.beginPendingInvocation(invocation("binv_react") as never)
     const { calls, spy } = spyFetch()
     try {
-      await tool.execute("call_1", { emoji: "thumbsup", messageId: "msg_other", remove: true })
+      await tool.execute("call_1", { emoji: ":thumbsup:", messageId: "msg_other", remove: true })
       expect(calls).toEqual([
         {
-          url: "https://example.test/api/v1/workspaces/ws_123/messages/msg_other/reactions/thumbsup",
+          url: `https://example.test/api/v1/workspaces/ws_123/messages/msg_other/reactions/${encodeURIComponent(":thumbsup:")}`,
           method: "DELETE",
+        },
+      ])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test("requires messageId when a steered message joined the turn", async () => {
+    const tool = registerTool()
+    configure()
+    __testing.beginPendingInvocation(invocation("binv_react") as never)
+    __testing.setPendingRuntimeForTesting({
+      steered: [{ invocation: invocation("binv_steer") as never, retryPrompt: "steer" }],
+    })
+    const { calls, spy } = spyFetch()
+    try {
+      await expect(tool.execute("call_1", { emoji: "👍" })).rejects.toThrow(
+        "This turn answers several Threa messages (msg_binv_react, msg_binv_steer): pass messageId."
+      )
+      await tool.execute("call_2", { emoji: "👍", messageId: "msg_binv_steer" })
+      expect(calls).toEqual([
+        {
+          url: `https://example.test/api/v1/workspaces/ws_123/messages/msg_binv_steer/reactions/${encodeURIComponent("👍")}`,
+          method: "PUT",
         },
       ])
     } finally {

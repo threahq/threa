@@ -234,6 +234,7 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
           dormant.touch()
           return runner.deliverTurn(turn)
         },
+        reactions: true,
         sessionControl,
         onLinked: () => hibernation?.linked(),
         onArchived: ({ rootStreamId }) => {
