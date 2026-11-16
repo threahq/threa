@@ -36,6 +36,8 @@ export async function timeHandleAcquisition<T>(
 }
 
 function summarize(spans: Array<{ startedAt: number; endedAt: number }>): HandleTimings {
+  // A pool already installed in this worker resolves without acquiring any.
+  if (spans.length === 0) return { handleCount: 0, handleMinMs: 0, handleMaxMs: 0, handleSpanMs: 0 }
   const durations = spans.map((span) => span.endedAt - span.startedAt)
   const firstStart = Math.min(...spans.map((span) => span.startedAt))
   const lastEnd = Math.max(...spans.map((span) => span.endedAt))

@@ -29,6 +29,11 @@ describe("timeHandleAcquisition", () => {
     expect(opener.createSyncAccessHandle).toBe(original)
   })
 
+  it("reports zeros for an install that acquires no handles", async () => {
+    const { handles } = await timeHandleAcquisition(fakeOpener([]), async () => "cached pool")
+    expect(handles).toEqual({ handleCount: 0, handleMinMs: 0, handleMaxMs: 0, handleSpanMs: 0 })
+  })
+
   it("restores the opener when the install fails", async () => {
     const opener = fakeOpener([1])
     const original = opener.createSyncAccessHandle
