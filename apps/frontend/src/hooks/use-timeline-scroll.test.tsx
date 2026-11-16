@@ -62,26 +62,35 @@ function makeScrollerDiv(metrics: { scrollHeight: number; clientHeight: number; 
   return el
 }
 
-const opts = (overrides: Partial<Options> & Pick<Options, "itemCount" | "getFirstKey">): Options => ({
+const opts = (overrides: Partial<Options> & Pick<Options, "rowKeys">): Options => ({
   resetKey: "stream_1",
-  getLastKey: () => null,
   ...overrides,
 })
 
+/**
+ * Keys for a window of `count` rows from `first` to `last`. Inner rows are named
+ * after the first row, so a window whose first row changes reads as every row
+ * moving: the older-page prepend or start trim these cases describe.
+ */
+function rows(count: number, first: string, last = "tail"): string[] {
+  if (count === 0) return []
+  return [first, ...Array.from({ length: Math.max(count - 2, 0) }, (_, i) => `${first}:${i + 1}`), last].slice(0, count)
+}
+
 describe("useTimelineScroll — shift (prepend) detection", () => {
   it("does not shift on the initial populated render", () => {
-    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
-    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const harness = renderScrollHook(opts({ rowKeys: [] }))
+    harness.rerender(opts({ rowKeys: rows(50, "e10") }))
     expect(harness.current.shift).toBe(false)
   })
 
   it("shifts when an older page is prepended while reading history", () => {
-    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
-    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const harness = renderScrollHook(opts({ rowKeys: [] }))
+    harness.rerender(opts({ rowKeys: rows(50, "e10") }))
     // Leave the live tail (reading history).
     act(() => harness.current.disableAutoScroll())
     // Older page lands: the first row's identity changes from e10 to e0.
-    harness.rerender(opts({ itemCount: 60, getFirstKey: () => "e0" }))
+    harness.rerender(opts({ rowKeys: rows(60, "e0") }))
     expect(harness.current.shift).toBe(true)
   })
 
@@ -92,72 +101,105 @@ describe("useTimelineScroll — shift (prepend) detection", () => {
     // compensation — the viewport jumped on every older-page prepend. The
     // baseline now updates in a layout effect (once per commit), so both passes
     // compare against the same prior-commit value.
-    const harness = renderScrollHookStrict(opts({ itemCount: 0, getFirstKey: () => null }))
-    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const harness = renderScrollHookStrict(opts({ rowKeys: [] }))
+    harness.rerender(opts({ rowKeys: rows(50, "e10") }))
     act(() => harness.current.disableAutoScroll())
-    harness.rerender(opts({ itemCount: 60, getFirstKey: () => "e0" }))
+    harness.rerender(opts({ rowKeys: rows(60, "e0") }))
     expect(harness.current.shift).toBe(true)
   })
 
   it("does not shift on appends at the bottom (first row unchanged)", () => {
-    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
-    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const harness = renderScrollHook(opts({ rowKeys: [] }))
+    harness.rerender(opts({ rowKeys: rows(50, "e10") }))
     act(() => harness.current.disableAutoScroll())
     // A live message appended at the end leaves the first row untouched.
-    harness.rerender(opts({ itemCount: 51, getFirstKey: () => "e10" }))
+    harness.rerender(opts({ rowKeys: rows(51, "e10") }))
     expect(harness.current.shift).toBe(false)
   })
 
   it("does not shift while following when the tail moves", () => {
-    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
-    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10", getLastKey: () => "e59" }))
+    const harness = renderScrollHook(opts({ rowKeys: [] }))
+    harness.rerender(opts({ rowKeys: rows(50, "e10", "e59") }))
     // Still following (default). New rows below the old last row are end-side
     // growth — we scroll to the bottom anyway.
-    harness.rerender(opts({ itemCount: 60, getFirstKey: () => "e10", getLastKey: () => "e69" }))
+    harness.rerender(opts({ rowKeys: rows(60, "e10", "e69") }))
     expect(harness.current.shift).toBe(false)
   })
 
   it("shifts while following when an older page is prepended", () => {
-    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
-    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10", getLastKey: () => "e59" }))
-    harness.rerender(opts({ itemCount: 60, getFirstKey: () => "e0", getLastKey: () => "e59" }))
+    const harness = renderScrollHook(opts({ rowKeys: [] }))
+    harness.rerender(opts({ rowKeys: rows(50, "e10", "e59") }))
+    harness.rerender(opts({ rowKeys: rows(60, "e0", "e59") }))
     expect(harness.current.shift).toBe(true)
   })
 
   it("does not shift while following when rows leave above an unchanged last row", () => {
-    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
-    harness.rerender(opts({ itemCount: 40, getFirstKey: () => "e1", getLastKey: () => "e40" }))
-    harness.rerender(opts({ itemCount: 39, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    const harness = renderScrollHook(opts({ rowKeys: [] }))
+    harness.rerender(opts({ rowKeys: rows(40, "e1", "e40") }))
+    harness.rerender(opts({ rowKeys: rows(39, "e1", "e40") }))
     expect(harness.current.shift).toBe(false)
   })
 
   it("does not shift while following when rows land between an unchanged first and last row", () => {
-    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    const harness = renderScrollHook(opts({ rowKeys: [] }))
     // The panel's cached rail: the opening row plus the newest few.
-    harness.rerender(opts({ itemCount: 6, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    harness.rerender(opts({ rowKeys: rows(6, "e1", "e40") }))
 
     // The server page fills the 34 rows between them; first and last rows hold.
-    harness.rerender(opts({ itemCount: 40, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    harness.rerender(opts({ rowKeys: rows(40, "e1", "e40") }))
+
+    expect(harness.current.shift).toBe(false)
+  })
+
+  it("shifts when the start trims while rows append below a reader in history", () => {
+    const harness = renderScrollHook(opts({ rowKeys: [] }))
+    harness.rerender(opts({ rowKeys: ["a", "b", "c", "d", "e"] }))
+    act(() => harness.current.disableAutoScroll())
+
+    harness.rerender(opts({ rowKeys: ["c", "d", "e", "f"] }))
+
+    expect(harness.current.shift).toBe(true)
+  })
+
+  it("does not shift when the first row is relabelled in place while rows append", () => {
+    // A run group at the top loses its first session to the window floor: same
+    // row, new key. Every row keeps its index, so a shift would hand each one
+    // its predecessor's measured height.
+    const harness = renderScrollHook(opts({ rowKeys: [] }))
+    harness.rerender(opts({ rowKeys: ["run_a", "msg_tall", "run_c"] }))
+    act(() => harness.current.disableAutoScroll())
+
+    harness.rerender(opts({ rowKeys: ["run_b", "msg_tall", "run_c", "msg_new"] }))
+
+    expect(harness.current.shift).toBe(false)
+  })
+
+  it("does not shift when the start trims while a row lands mid-window", () => {
+    const harness = renderScrollHook(opts({ rowKeys: [] }))
+    harness.rerender(opts({ rowKeys: ["a", "b", "c", "tall", "d"] }))
+    act(() => harness.current.disableAutoScroll())
+
+    harness.rerender(opts({ rowKeys: ["b", "c", "landed", "tall", "d", "e"] }))
 
     expect(harness.current.shift).toBe(false)
   })
 
   it("resets the prepend baseline on stream switch", () => {
-    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
-    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const harness = renderScrollHook(opts({ rowKeys: [] }))
+    harness.rerender(opts({ rowKeys: rows(50, "e10") }))
     act(() => harness.current.disableAutoScroll())
     // New stream: first window must not be mis-detected as a prepend.
-    harness.rerender(opts({ resetKey: "stream_2", itemCount: 60, getFirstKey: () => "e0" }))
+    harness.rerender(opts({ resetKey: "stream_2", rowKeys: rows(60, "e0") }))
     expect(harness.current.shift).toBe(false)
   })
 
   it("resetShiftBaseline clears detection so the next window isn't a prepend", () => {
-    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
-    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const harness = renderScrollHook(opts({ rowKeys: [] }))
+    harness.rerender(opts({ rowKeys: rows(50, "e10") }))
     act(() => harness.current.disableAutoScroll())
     act(() => harness.current.resetShiftBaseline())
     // exitJumpMode swaps the window wholesale; baseline was cleared so no shift.
-    harness.rerender(opts({ itemCount: 30, getFirstKey: () => "e90" }))
+    harness.rerender(opts({ rowKeys: rows(30, "e90") }))
     expect(harness.current.shift).toBe(false)
   })
 })
@@ -165,18 +207,18 @@ describe("useTimelineScroll — shift (prepend) detection", () => {
 describe("useTimelineScroll — tail replace", () => {
   it("requests the last index before paint when the tail row changes under a following reader", () => {
     const scrollToIndex = vi.fn()
-    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    const harness = renderScrollHook(opts({ rowKeys: [] }))
     harness.current.scrollerRef.current = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800 })
     harness.current.listRef.current = { scrollToIndex } as unknown as VirtualizerHandle
-    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10", getLastKey: () => "e59" }))
+    harness.rerender(opts({ rowKeys: rows(50, "e10", "e59") }))
     scrollToIndex.mockClear()
 
     // A single live append at the tail is not a replace.
-    harness.rerender(opts({ itemCount: 51, getFirstKey: () => "e10", getLastKey: () => "e60" }))
+    harness.rerender(opts({ rowKeys: rows(51, "e10", "e60") }))
     expect(scrollToIndex).not.toHaveBeenCalled()
 
     // A sweep lands a gap: several rows arrive below the old tail at once.
-    harness.rerender(opts({ itemCount: 55, getFirstKey: () => "e10", getLastKey: () => "e70" }))
+    harness.rerender(opts({ rowKeys: rows(55, "e10", "e70") }))
     expect(scrollToIndex).toHaveBeenCalledWith(54, expect.objectContaining({ align: "end" }))
   })
 
@@ -185,13 +227,13 @@ describe("useTimelineScroll — tail replace", () => {
     // plus the few newest — so the server page arrives in the MIDDLE and both
     // the first and the last key are unchanged.
     const scrollToIndex = vi.fn()
-    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    const harness = renderScrollHook(opts({ rowKeys: [] }))
     harness.current.scrollerRef.current = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800 })
     harness.current.listRef.current = { scrollToIndex } as unknown as VirtualizerHandle
-    harness.rerender(opts({ itemCount: 6, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    harness.rerender(opts({ rowKeys: rows(6, "e1", "e40") }))
     scrollToIndex.mockClear()
 
-    harness.rerender(opts({ itemCount: 40, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    harness.rerender(opts({ rowKeys: rows(40, "e1", "e40") }))
     expect(scrollToIndex).toHaveBeenCalledWith(39, expect.objectContaining({ align: "end" }))
   })
 
@@ -201,13 +243,13 @@ describe("useTimelineScroll — tail replace", () => {
     // the append carve-out used to swallow it — leaving virtua an estimate
     // where it now has a real row.
     const scrollToIndex = vi.fn()
-    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    const harness = renderScrollHook(opts({ rowKeys: [] }))
     harness.current.scrollerRef.current = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800 })
     harness.current.listRef.current = { scrollToIndex } as unknown as VirtualizerHandle
-    harness.rerender(opts({ itemCount: 40, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    harness.rerender(opts({ rowKeys: rows(40, "e1", "e40") }))
     scrollToIndex.mockClear()
 
-    harness.rerender(opts({ itemCount: 41, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    harness.rerender(opts({ rowKeys: rows(41, "e1", "e40") }))
     expect(harness.current.shift).toBe(false)
     expect(scrollToIndex).toHaveBeenCalledWith(40, expect.objectContaining({ align: "end" }))
   })
@@ -219,28 +261,28 @@ describe("useTimelineScroll — tail replace", () => {
     // index only lands virtua's deferred scroll a few px above the true bottom
     // (the send bounce).
     const scrollToIndex = vi.fn()
-    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    const harness = renderScrollHook(opts({ rowKeys: [] }))
     harness.current.scrollerRef.current = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800 })
     harness.current.listRef.current = { scrollToIndex } as unknown as VirtualizerHandle
-    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10", getLastKey: () => "e59" }))
+    harness.rerender(opts({ rowKeys: rows(50, "e10", "e59") }))
     // The optimistic row appends.
-    harness.rerender(opts({ itemCount: 51, getFirstKey: () => "e10", getLastKey: () => "client_abc" }))
+    harness.rerender(opts({ rowKeys: rows(51, "e10", "client_abc") }))
     scrollToIndex.mockClear()
 
-    harness.rerender(opts({ itemCount: 51, getFirstKey: () => "e10", getLastKey: () => "e60" }))
+    harness.rerender(opts({ rowKeys: rows(51, "e10", "e60") }))
     expect(scrollToIndex).not.toHaveBeenCalled()
   })
 
   it("does not re-request the tail for a reader who scrolled away", () => {
     const scrollToIndex = vi.fn()
-    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    const harness = renderScrollHook(opts({ rowKeys: [] }))
     harness.current.scrollerRef.current = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800 })
     harness.current.listRef.current = { scrollToIndex } as unknown as VirtualizerHandle
-    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10", getLastKey: () => "e59" }))
+    harness.rerender(opts({ rowKeys: rows(50, "e10", "e59") }))
     act(() => harness.current.disableAutoScroll())
     scrollToIndex.mockClear()
 
-    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10", getLastKey: () => "e70" }))
+    harness.rerender(opts({ rowKeys: rows(50, "e10", "e70") }))
     expect(scrollToIndex).not.toHaveBeenCalled()
   })
 })
@@ -251,7 +293,7 @@ describe("useTimelineScroll — scroll position", () => {
     // the composer footer spacer below virtua's items, so the last message sits
     // above the composer (not behind it). Deliberately not virtua's
     // scrollToIndex, which aligns to the item and ignores the trailing spacer.
-    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10") }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 1000 })
     harness.current.scrollerRef.current = el
     act(() => harness.current.scrollToBottom({ force: true }))
@@ -263,7 +305,7 @@ describe("useTimelineScroll — scroll position", () => {
     // syncs the scroll-up baseline in the same write, so the `scroll` event it
     // triggers reads top === prevTop and never disarms follow. This is what
     // replaces the old programmatic time-window: no window, no arbitration.
-    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10") }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 0 })
     harness.current.scrollerRef.current = el
     act(() => harness.current.scrollToBottom({ force: true }))
@@ -279,7 +321,7 @@ describe("useTimelineScroll — scroll position", () => {
     // scrollHeight drops and the browser clamps scrollTop down on its own. That
     // is NOT a user scroll-up — follow must stay armed so the freshly-sent
     // message still pins above the composer instead of hiding behind it.
-    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10") }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 4200 })
     harness.current.scrollerRef.current = el
     act(() => harness.current.handleScroll())
@@ -301,7 +343,7 @@ describe("useTimelineScroll — scroll position", () => {
     // keyboard-height above the tail). The clamp lands exactly AT the new
     // bottom, which a genuine scroll-up never does — follow must stay armed.
     const userInteractedAtRef = { current: 0 }
-    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+    const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10"), userInteractedAtRef }))
     const el = makeScrollerDiv({ scrollHeight: 5220, clientHeight: 388, scrollTop: 4832 })
     harness.current.scrollerRef.current = el
     // Pinned at the keyboard-open bottom.
@@ -322,7 +364,7 @@ describe("useTimelineScroll — scroll position", () => {
     // wheel/touch/pointer on the scroller, so the gesture stamp stays 0. Follow
     // must still disarm from the scrollTop decrease itself — otherwise it stays
     // armed and the next composer resize snaps the user back to the bottom.
-    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10") }))
     const el = makeScrollerDiv({ scrollHeight: 11122, clientHeight: 991, scrollTop: 10131 })
     harness.current.scrollerRef.current = el
     // Establish the baseline at the bottom (re-arms follow).
@@ -341,7 +383,7 @@ describe("useTimelineScroll — scroll position", () => {
     // ResizeObserver stopped re-pinning and the view stranded above the tail.
     // A drop that coincides with a height change is content reflow, not the
     // user — follow must stay armed so the tail re-pins to the true bottom.
-    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10") }))
     const el = makeScrollerDiv({ scrollHeight: 4961, clientHeight: 852, scrollTop: 4109 })
     harness.current.scrollerRef.current = el
     act(() => harness.current.handleScroll())
@@ -361,7 +403,7 @@ describe("useTimelineScroll — scroll position", () => {
     // scrollTop drop from the pinned bottom is itself the signal; the gesture
     // stamp is a redundant confirmation here.
     const userInteractedAtRef = { current: 0 }
-    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+    const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10"), userInteractedAtRef }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 0 })
     harness.current.scrollerRef.current = el
     act(() => harness.current.scrollToBottom({ force: true }))
@@ -378,9 +420,7 @@ describe("useTimelineScroll — scroll position", () => {
     // from the offset of its last scroll event, restoring the pre-pin position
     // minus the shrink, and both writes coalesce into one scroll event: a
     // height-stable, gesture-less drop that is not the user.
-    const harness = renderScrollHook(
-      opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef: { current: 0 } })
-    )
+    const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10"), userInteractedAtRef: { current: 0 } }))
     const metrics = { scrollHeight: 2303, clientHeight: 452, scrollTop: 1851 }
     const el = makeScrollerDiv(metrics)
     harness.current.scrollerRef.current = el
@@ -402,9 +442,7 @@ describe("useTimelineScroll — scroll position", () => {
   })
 
   it("disarms follow when a scrollbar drag keeps landing before the re-pin's scroll event", () => {
-    const harness = renderScrollHook(
-      opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef: { current: 0 } })
-    )
+    const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10"), userInteractedAtRef: { current: 0 } }))
     const metrics = { scrollHeight: 2303, clientHeight: 452, scrollTop: 1851 }
     const el = makeScrollerDiv(metrics)
     harness.current.scrollerRef.current = el
@@ -420,7 +458,7 @@ describe("useTimelineScroll — scroll position", () => {
 
   it("handleScroll shows Jump-to-latest when the user scrolls far from the bottom and hides it near it", () => {
     const userInteractedAtRef = { current: 0 }
-    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+    const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10"), userInteractedAtRef }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 1000 })
     harness.current.scrollerRef.current = el
 
@@ -442,7 +480,7 @@ describe("useTimelineScroll — scroll position", () => {
     // with no gesture; follow must stay armed so the ResizeObserver re-pins,
     // instead of disarming and stranding the tail.
     const userInteractedAtRef = { current: 0 }
-    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+    const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10"), userInteractedAtRef }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 4200 })
     harness.current.scrollerRef.current = el
     act(() => harness.current.handleScroll())
@@ -461,7 +499,7 @@ describe("useTimelineScroll — scroll position", () => {
     // disarm — otherwise the initial scroll strands ~a composer height short and
     // keyboard-follow (gated on follow) breaks.
     const userInteractedAtRef = { current: 0 }
-    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+    const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10"), userInteractedAtRef }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 4130 })
     el.style.setProperty("--composer-height", "70px")
     harness.current.scrollerRef.current = el
@@ -482,7 +520,7 @@ describe("useTimelineScroll — scroll position", () => {
     // can't scroll up a little to read. Gesture-gated so keyboard-driven scroll
     // changes (no scroller gesture) never count as a user scroll-up.
     const userInteractedAtRef = { current: 0 }
-    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+    const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10"), userInteractedAtRef }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 4170 })
     el.style.setProperty("--composer-height", "70px")
     harness.current.scrollerRef.current = el
@@ -506,7 +544,7 @@ describe("useTimelineScroll — scroll position", () => {
     // user's finger. The gesture's own direction (touch finger delta) must
     // disarm follow regardless of height stability.
     const userInteractedAtRef = { current: 0 }
-    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+    const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10"), userInteractedAtRef }))
     let height = 5000
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 4200 })
     Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => height })
@@ -529,7 +567,7 @@ describe("useTimelineScroll — scroll position", () => {
     // The same small scrollTop move with NO gesture (reflow jitter, momentum
     // settle) must keep follow armed — only a deliberate gesture detaches.
     const userInteractedAtRef = { current: 0 }
-    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+    const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10"), userInteractedAtRef }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 4170 })
     el.style.setProperty("--composer-height", "70px")
     harness.current.scrollerRef.current = el
@@ -542,9 +580,7 @@ describe("useTimelineScroll — scroll position", () => {
   })
 
   it("does not re-arm follow at the bottom while in jump mode", () => {
-    const harness = renderScrollHook(
-      opts({ itemCount: 50, getFirstKey: () => "e10", isJumpMode: true, skipInitialScroll: true })
-    )
+    const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10"), isJumpMode: true, skipInitialScroll: true }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 4200 })
     harness.current.scrollerRef.current = el
     act(() => harness.current.handleScroll())
@@ -574,7 +610,7 @@ describe("useTimelineScroll — observer attaches when the scroller mounts late"
     }
     vi.stubGlobal("ResizeObserver", MockResizeObserver)
     try {
-      const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+      const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10") }))
       // First commit: scroller not mounted yet (skeleton), so nothing observed.
       expect(observers).toHaveLength(0)
 
@@ -621,7 +657,7 @@ describe("useTimelineScroll — observer attaches when the scroller mounts late"
     }
     vi.stubGlobal("ResizeObserver", MockResizeObserver)
     try {
-      const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+      const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10") }))
       const content = document.createElement("div")
       harness.current.contentRef.current = content
       const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 2000 })
@@ -655,7 +691,7 @@ describe("useTimelineScroll — gesture stamp attaches when the scroller mounts 
     // so userGestured was always false and a deliberate scroll-up inside the band
     // could never disarm follow, snapping the user back to the tail on any reflow.
     const userInteractedAtRef = { current: 0 }
-    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+    const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10"), userInteractedAtRef }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 1000 })
 
     // Not registered yet: no listener, so a stray wheel can't stamp.
@@ -698,7 +734,7 @@ describe("useTimelineScroll — deferred re-check after a resize skipped for an 
     vi.useFakeTimers()
     try {
       const userInteractedAtRef = { current: 0 }
-      const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+      const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10"), userInteractedAtRef }))
       const content = document.createElement("div")
       harness.current.contentRef.current = content
       const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 800 })
@@ -748,7 +784,7 @@ describe("useTimelineScroll — deferred re-check after a resize skipped for an 
     vi.useFakeTimers()
     try {
       const userInteractedAtRef = { current: 0 }
-      const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+      const harness = renderScrollHook(opts({ rowKeys: rows(50, "e10"), userInteractedAtRef }))
       const content = document.createElement("div")
       harness.current.contentRef.current = content
       const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 800 })
@@ -788,7 +824,7 @@ describe("useTimelineScroll — release near the bottom", () => {
       cb(performance.now())
       return 0
     })
-    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null, userInteractedAtRef, ...overrides }))
+    const harness = renderScrollHook(opts({ rowKeys: [], userInteractedAtRef, ...overrides }))
     const content = document.createElement("div")
     harness.current.contentRef.current = content
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800 })
@@ -797,7 +833,7 @@ describe("useTimelineScroll — release near the bottom", () => {
     // First window lands: the initial pin + cold-load settle converge
     // synchronously under the immediate-rAF mock and reveal the content,
     // exactly like the real flow.
-    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef, ...overrides }))
+    harness.rerender(opts({ rowKeys: rows(50, "e10"), userInteractedAtRef, ...overrides }))
     raf.mockRestore()
     expect(harness.current.isInitialSettling).toBe(false)
     // The mock scroller doesn't browser-clamp the pin's scrollTop=scrollHeight
@@ -908,7 +944,7 @@ describe("useTimelineScroll — cold-load settle across a stream switch", () => 
     const caf = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {})
     const runFrame = () => act(() => rafCallbacks.shift()?.(performance.now()))
     try {
-      const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null, resetKey: "stream_a" }))
+      const harness = renderScrollHook(opts({ rowKeys: [], resetKey: "stream_a" }))
       const content = document.createElement("div")
       harness.current.contentRef.current = content
       let height = 1000
@@ -917,7 +953,7 @@ describe("useTimelineScroll — cold-load settle across a stream switch", () => 
       act(() => harness.current.registerScroller(el))
 
       // Stream A's first window lands — the cold-load settle starts, masked.
-      harness.rerender(opts({ itemCount: 10, getFirstKey: () => "a1", resetKey: "stream_a" }))
+      harness.rerender(opts({ rowKeys: rows(10, "a1"), resetKey: "stream_a" }))
       expect(harness.current.isInitialSettling).toBe(true)
 
       // One frame in: height is still moving (virtua still measuring) — not
@@ -928,7 +964,7 @@ describe("useTimelineScroll — cold-load settle across a stream switch", () => 
       expect(rafCallbacks).toHaveLength(1)
 
       // Navigate away to stream B before stream A's settle ever converged.
-      harness.rerender(opts({ itemCount: 5, getFirstKey: () => "b1", resetKey: "stream_b" }))
+      harness.rerender(opts({ rowKeys: rows(5, "b1"), resetKey: "stream_b" }))
 
       // Stream B's own settle just started, superseding A's stale one — still
       // masked, since it hasn't run a single frame of its own convergence yet.
@@ -953,13 +989,13 @@ describe("useTimelineScroll — cold-load settle across a stream switch", () => 
     const caf = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {})
     const runFrame = () => act(() => rafCallbacks.shift()?.(performance.now()))
     try {
-      const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null, resetKey: "stream_a" }))
+      const harness = renderScrollHook(opts({ rowKeys: [], resetKey: "stream_a" }))
       const content = document.createElement("div")
       harness.current.contentRef.current = content
       const el = makeScrollerDiv({ scrollHeight: 1000, clientHeight: 800 })
       act(() => harness.current.registerScroller(el))
 
-      harness.rerender(opts({ itemCount: 10, getFirstKey: () => "a1", resetKey: "stream_a" }))
+      harness.rerender(opts({ rowKeys: rows(10, "a1"), resetKey: "stream_a" }))
       expect(harness.current.isInitialSettling).toBe(true)
 
       act(() => harness.current.holdSettleForRestore())
@@ -995,15 +1031,13 @@ describe("useTimelineScroll — cold-load settle across a stream switch", () => 
     const runFrame = () => act(() => rafCallbacks.shift()?.(performance.now()))
     try {
       const landingPendingRef = { current: true }
-      const harness = renderScrollHook(
-        opts({ itemCount: 0, getFirstKey: () => null, resetKey: "stream_a", landingPendingRef })
-      )
+      const harness = renderScrollHook(opts({ rowKeys: [], resetKey: "stream_a", landingPendingRef }))
       const content = document.createElement("div")
       harness.current.contentRef.current = content
       const el = makeScrollerDiv({ scrollHeight: 1000, clientHeight: 800 })
       act(() => harness.current.registerScroller(el))
 
-      harness.rerender(opts({ itemCount: 10, getFirstKey: () => "a1", resetKey: "stream_a", landingPendingRef }))
+      harness.rerender(opts({ rowKeys: rows(10, "a1"), resetKey: "stream_a", landingPendingRef }))
       expect(harness.current.isInitialSettling).toBe(true)
 
       // Stable height → the settle converges within SETTLE_STABLE_FRAMES
@@ -1039,8 +1073,7 @@ describe("useTimelineScroll — parked reveal while the landing target is missin
     const landingTargetMissingRef = { current: true }
     const settled = (itemCount: number) =>
       opts({
-        itemCount,
-        getFirstKey: () => (itemCount ? "a1" : null),
+        rowKeys: rows(itemCount, "a1"),
         resetKey: "stream_a",
         landingPendingRef,
         landingTargetMissingRef,
@@ -1102,11 +1135,11 @@ describe("useTimelineScroll — parked reveal while the landing target is missin
 
 describe("useTimelineScroll — cold-load settle mask", () => {
   it("masks the settle by default and re-masks on a stream switch", () => {
-    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    const harness = renderScrollHook(opts({ rowKeys: [] }))
     expect(harness.current.isInitialSettling).toBe(true)
     act(() => harness.current.revealSettle())
     expect(harness.current.isInitialSettling).toBe(false)
-    harness.rerender(opts({ resetKey: "stream_2", itemCount: 3, getFirstKey: () => "e0" }))
+    harness.rerender(opts({ resetKey: "stream_2", rowKeys: rows(3, "e0") }))
     expect(harness.current.isInitialSettling).toBe(true)
   })
 })
@@ -1122,7 +1155,7 @@ describe("useTimelineScroll — reserved composer height", () => {
    */
   function landWith(composerHeightVar?: string): number | undefined {
     const scrollToIndex = vi.fn()
-    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null, composerHeightVar }))
+    const harness = renderScrollHook(opts({ rowKeys: [], composerHeightVar }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800 })
     el.style.setProperty("--composer-height", "144px")
     el.style.setProperty("--floating-composer-height", "56px")
@@ -1130,7 +1163,7 @@ describe("useTimelineScroll — reserved composer height", () => {
     try {
       harness.current.scrollerRef.current = el
       harness.current.listRef.current = { scrollToIndex } as unknown as VirtualizerHandle
-      harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10", composerHeightVar }))
+      harness.rerender(opts({ rowKeys: rows(50, "e10"), composerHeightVar }))
       return scrollToIndex.mock.calls.at(-1)?.[1]?.offset
     } finally {
       el.remove()

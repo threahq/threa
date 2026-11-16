@@ -946,6 +946,10 @@ function ConversationPanelBody({
   // viewer made in the previous one.
   const userInteractedAtRef = useRef(0)
   const programmaticScrollAtRef = useRef(0)
+  // "No rows on screen yet" — not the backfill's status (rows now reveal
+  // while it is in flight) and not `revealed` alone (the reveal-timeout path
+  // mounts with zero rows, and the pin would land against an empty list).
+  const rowKeys = revealed ? rows.map((row) => row.key) : []
 
   const {
     listRef,
@@ -963,12 +967,7 @@ function ConversationPanelBody({
     revealSettle,
     releaseDeferredReveal,
   } = useTimelineScroll({
-    // "No rows on screen yet" — not the backfill's status (rows now reveal
-    // while it is in flight) and not `revealed` alone (the reveal-timeout path
-    // mounts with zero rows, and the pin would land against an empty list).
-    itemCount: revealed ? rows.length : 0,
-    getFirstKey: () => rows[0]?.key ?? null,
-    getLastKey: () => rows.at(-1)?.key ?? null,
+    rowKeys,
     resetKey: conversation.id,
     landingPendingRef,
     landingTargetMissingRef,
