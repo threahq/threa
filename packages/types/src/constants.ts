@@ -1823,6 +1823,7 @@ export const BOT_INVOCATION_TRIGGERS = [
   "session-control",
   "brief",
   "runtime-origin",
+  "reaction",
 ] as const
 export type BotInvocationTrigger = (typeof BOT_INVOCATION_TRIGGERS)[number]
 
@@ -1832,6 +1833,7 @@ export const BotInvocationTriggers = {
   SESSION_CONTROL: "session-control",
   RUNTIME_ORIGIN: "runtime-origin",
   BRIEF: "brief",
+  REACTION: "reaction",
 } as const satisfies Record<string, BotInvocationTrigger>
 
 /**
@@ -1844,6 +1846,7 @@ export const UNROUTED_BOT_INVOCATION_TRIGGERS: readonly BotInvocationTrigger[] =
   "session-control",
   "brief",
   "runtime-origin",
+  "reaction",
 ]
 
 export const BOT_INVOCATION_CAPABILITIES = [
@@ -1851,6 +1854,7 @@ export const BOT_INVOCATION_CAPABILITIES = [
   "active-scratchpad",
   "session-control",
   "queued-message",
+  "reaction",
 ] as const
 export type BotInvocationCapability = (typeof BOT_INVOCATION_CAPABILITIES)[number]
 
@@ -1859,6 +1863,7 @@ export const BotInvocationCapabilities = {
   ACTIVE_SCRATCHPAD: "active-scratchpad",
   SESSION_CONTROL: "session-control",
   QUEUED_MESSAGE: "queued-message",
+  REACTION: "reaction",
 } as const satisfies Record<string, BotInvocationCapability>
 
 export function botHasCapability(

@@ -1547,7 +1547,7 @@ export const BotInvocationRepository = {
             AND terminal.status IN ('completed', 'failed', 'parked', 'expired')
             AND terminal.source_message_revision >= ${params.sourceMessageRevision}
         )
-        ON CONFLICT (workspace_id, source_message_id, actor_type, actor_id, trigger) WHERE status IN ('pending', 'claimed') DO UPDATE SET
+        ON CONFLICT (workspace_id, source_message_id, actor_type, actor_id, trigger) WHERE status IN ('pending', 'claimed') AND trigger <> 'reaction' DO UPDATE SET
           prompt_markdown = CASE
             WHEN bot_invocations.status = 'pending' OR bot_invocations.claimed_input_update_mode = 'live' THEN EXCLUDED.prompt_markdown
             ELSE bot_invocations.prompt_markdown

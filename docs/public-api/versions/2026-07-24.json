@@ -2352,7 +2352,13 @@
                                 "trigger": { "type": "string", "const": "runtime-origin" },
                                 "requiredCapability": {
                                   "type": "string",
-                                  "enum": ["mentionable", "active-scratchpad", "session-control", "queued-message"]
+                                  "enum": [
+                                    "mentionable",
+                                    "active-scratchpad",
+                                    "session-control",
+                                    "queued-message",
+                                    "reaction"
+                                  ]
                                 },
                                 "promptMarkdown": { "type": "string" },
                                 "sourceRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
@@ -2639,7 +2645,7 @@
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "enum": ["mentionable", "active-scratchpad", "session-control", "queued-message"]
+                      "enum": ["mentionable", "active-scratchpad", "session-control", "queued-message", "reaction"]
                     }
                   },
                   "claimTtlSeconds": { "default": 60, "type": "integer", "minimum": 15, "maximum": 300 },
@@ -2689,11 +2695,17 @@
                             },
                             "trigger": {
                               "type": "string",
-                              "enum": ["mention", "active-scratchpad", "session-control", "brief"]
+                              "enum": ["mention", "active-scratchpad", "session-control", "brief", "reaction"]
                             },
                             "requiredCapability": {
                               "type": "string",
-                              "enum": ["mentionable", "active-scratchpad", "session-control", "queued-message"]
+                              "enum": [
+                                "mentionable",
+                                "active-scratchpad",
+                                "session-control",
+                                "queued-message",
+                                "reaction"
+                              ]
                             },
                             "promptMarkdown": { "type": "string" },
                             "sourceRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
