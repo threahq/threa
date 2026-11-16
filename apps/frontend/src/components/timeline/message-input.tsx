@@ -20,7 +20,6 @@ import {
 import { useIsMobile } from "@/hooks/use-mobile"
 import { relocateLoadedDraft, stashLoadedDraft } from "@/hooks/use-draft-message"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
-import { useComposeTrace } from "@/lib/compose-trace"
 import { DraftPromotionAbortedError, getDraftPromotionSource } from "@/lib/draft-promotions"
 import { GUEST_DM_CLOSED_REASON, isGuestDmPolicyError } from "@/lib/guest-dm-policy"
 import { isPrivacyConfirmationError } from "@/lib/share-privacy-toast"
@@ -466,14 +465,6 @@ function MessageInputComponent({
   // Imperative handle for programmatic focus from outside (e.g. quote reply insertion)
   const composerFocusRef = useRef<ComposerControlHandle | null>(null)
 
-  const { onComposerFocus, takeComposeTrace } = useComposeTrace({
-    workspaceId,
-    scopeId: streamId,
-    horizonStreamId: streamId,
-    hasDraftContent: () => hasDocContent(composerRef.current.content),
-    draftReady: composer.isLoaded,
-  })
-
   // Register with QuoteReplyContext to insert quote reply nodes into the composer.
   // Stable deps: quoteReplyCtx is from context, composerRef is a ref.
   useEffect(() => {
@@ -679,13 +670,6 @@ function MessageInputComponent({
     composer.setIsSending(true)
     setError(null)
 
-    // Ends the compose session for every submit that leaves the composer, not
-    // just the flat send below: a command dispatch or a hand-off to the panel
-    // finishes what the author was writing here, so the next send must start
-    // from a fresh horizon rather than inherit this one's `openedAt`. Never
-    // awaited here: its IndexedDB read must stand neither between pressing
-    // send and the composer clearing nor between clearing and the row appearing.
-    const composeTrace = takeComposeTrace()
     if (sendPlan?.kind === "command") {
       // Clear input immediately for responsiveness — same reset the server
       // path does. The dispatch consumes the command, so the user shouldn't
@@ -746,7 +730,6 @@ function MessageInputComponent({
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         attachments: attachments.length > 0 ? attachments : undefined,
         ...(enqueuePlan && { enqueue: true as const }),
-        composeTrace,
         confirmedPrivacyWarning: options?.confirmedPrivacyWarning,
         // Armed by "Reply in conversation": file this send into the
         // conversation synchronously (Mechanism C). Cleared only on success —
@@ -1005,7 +988,6 @@ function MessageInputComponent({
     hasFailed: composer.hasFailed,
     placeholder: composerPlaceholder,
     messageSendMode,
-    onComposerFocus,
     onMobileChromeOpenChange: handleMobileChromeOpenChange,
     onMobileTypingChange,
     scopeId: streamId,

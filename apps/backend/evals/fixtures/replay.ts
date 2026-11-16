@@ -117,7 +117,7 @@ export async function startReplayPipeline(deps: {
   const aiResidency = new WorkspaceAIResidencyPolicy({ pool })
   const decisionsAvailability = new DecisionsAvailability()
   const embeddingService = new EmbeddingService({ ai })
-  const eventService = new EventService(pool, conversationAssigner, undefined, clock.now)
+  const eventService = new EventService(pool, conversationAssigner, clock.now)
   const streamService = new StreamService(pool)
   const boundaryExtractionService = new BoundaryExtractionService(
     pool,

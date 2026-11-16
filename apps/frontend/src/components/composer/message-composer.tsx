@@ -223,13 +223,6 @@ export interface MessageComposerProps {
    */
   onEscapeBlur?: () => void
 
-  /**
-   * Called when the editor gains focus. Fires on every focus (clicks, tab-backs),
-   * so a consumer that only wants the FIRST focus of a session must dedupe —
-   * see `useComposeTrace`.
-   */
-  onComposerFocus?: () => void
-
   /** Called when the desktop expand button is clicked — opens fullscreen document editor */
   onExpandClick?: () => void
   /** Where the expand button navigates instead, when the expanded editor lives at a URL. */
@@ -314,7 +307,6 @@ export function MessageComposer({
   scopeId,
   onEditLastMessage,
   onEscapeBlur,
-  onComposerFocus,
   onExpandClick,
   expandHref,
   sideHref,
@@ -345,8 +337,7 @@ export function MessageComposer({
       hasCapturedComposerOpenRef.current = true
       capture("composer_opened")
     }
-    onComposerFocus?.()
-  }, [onComposerFocus])
+  }, [])
 
   const mobileRootRef = useRef<HTMLDivElement>(null)
   const mobileEditorScrollRef = useRef<HTMLDivElement>(null)

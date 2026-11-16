@@ -765,9 +765,6 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
       }
 
       try {
-        // The trace's own IndexedDB read finishes here, behind the published
-        // row, never ahead of it.
-        const composeTrace = await input.composeTrace
         await persistSend(clientId, () =>
           db.transaction("rw", [db.pendingMessages, db.events], async () => {
             const [anchorSequence, allocatedSequence] = await Promise.all([
@@ -783,7 +780,6 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
               contentJson: input.contentJson,
               attachmentIds: input.attachmentIds,
               conversation: input.conversation,
-              composeTrace,
               enqueue: input.enqueue,
               confirmedPrivacyWarning: input.confirmedPrivacyWarning,
               createdAt: Date.now(),

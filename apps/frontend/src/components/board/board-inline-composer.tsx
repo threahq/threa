@@ -23,8 +23,7 @@ import { useHoldFeedRow } from "@/components/board/feed-row-hold"
 import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { appendQuoteReplyNode, type QuoteReplyData } from "@/components/timeline/quote-reply-context"
-import { useDraftComposer, useScheduleMessage, useStashComposer, useStashedDraftOrigins, hasDocContent } from "@/hooks"
-import { useComposeTrace, type ComposeTraceInput } from "@/lib/compose-trace"
+import { useDraftComposer, useScheduleMessage, useStashComposer, useStashedDraftOrigins } from "@/hooks"
 import { relocateLoadedDraft } from "@/hooks/use-draft-message"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { usePreferences } from "@/contexts"
@@ -35,7 +34,7 @@ import { useStreamFromStore } from "@/stores/stream-store"
 import { EMPTY_DOC, isEmptyContent } from "@/lib/prosemirror-utils"
 import { extractUploadedAttachments, materializePendingAttachmentReferences } from "@/components/timeline/message-input"
 import type { AttachmentSummary } from "@/hooks/create-optimistic-bootstrap"
-import type { ComposeTrace, JSONContent } from "@threahq/types"
+import type { JSONContent } from "@threahq/types"
 
 // Focus moving into one of these means a composer popover is open (inline
 // suggestion lists are `[role="listbox"]`; emoji/format/link popovers are Radix
@@ -48,14 +47,6 @@ export interface InlineComposerSubmit {
   contentJson: JSONContent
   attachmentIds?: string[]
   attachments?: AttachmentSummary[]
-  /**
-   * Compose-session provenance for this send (see {@link ComposeTrace}).
-   * Captured here rather than per call site so every inline surface this core
-   * backs — board card reply, branch tail reply, new sub-topic, panel footer —
-   * reports the same thing. Absent unless the workspace is capturing. Handed
-   * over still pending: the send must not wait on its IndexedDB read.
-   */
-  composeTrace?: ComposeTraceInput
   /** Queue for the linked session's next turn — set when the author wrote `/enqueue`. */
   enqueue?: true
 }
@@ -196,19 +187,6 @@ export function InlineComposerForm({
   const hostIsE2e = hostStream?.e2eEnabled === true || idbHostStream?.e2eEnabled === true
 
   const composer = useDraftComposer({ workspaceId, draftKey, scopeId: draftKey })
-  const composerContentRef = useRef(composer.content)
-  composerContentRef.current = composer.content
-  // The host stream — the surface the author is reading — is what the horizon is
-  // measured against, whatever stream `onSubmit` ends up routing the send into.
-  // The prop is the authority: a thread host is absent from the workspace cache,
-  // so resolving it there would leave branch and panel replies unmeasured.
-  const { onComposerFocus, takeComposeTrace } = useComposeTrace({
-    workspaceId,
-    scopeId: draftKey,
-    horizonStreamId: streamId,
-    hasDraftContent: () => hasDocContent(composerContentRef.current),
-    draftReady: composer.isLoaded,
-  })
   const syncEngine = useOptionalSyncEngine()
   // "Save for later" pile scoped to this reply target — the same pointer-move
   // stash the timeline composer has, so a half-written inline reply survives
@@ -489,9 +467,6 @@ export function InlineComposerForm({
       return
     }
     if (sendPlan?.kind === "command") {
-      // A dispatch finishes the composition like a send does — end the session
-      // so the next one can't inherit this one's openedAt/horizon.
-      void takeComposeTrace()
       composer.setIsSending(true)
       composer.setContent(EMPTY_DOC)
       try {
@@ -523,7 +498,6 @@ export function InlineComposerForm({
         contentJson: messageContent,
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         attachments: attachments.length > 0 ? attachments : undefined,
-        composeTrace: takeComposeTrace(),
         ...(enqueuePlan && { enqueue: true as const }),
       })
       await composer.resolveDraft()
@@ -564,10 +538,6 @@ export function InlineComposerForm({
 
     composer.setIsSending(true)
     composer.setContent(EMPTY_DOC)
-    // A schedule finishes the composition like a send does — end the session so
-    // the next one can't inherit this one's openedAt/horizon. Trace discarded:
-    // scheduled sends carry none by design.
-    void takeComposeTrace()
     try {
       await scheduleMessage.mutateAsync({
         streamId: scheduleTarget.streamId,
@@ -594,12 +564,7 @@ export function InlineComposerForm({
     drafts: stash.drafts,
     originById: stashOrigins,
     canStashCurrent: composer.canSend,
-    // Stashing disposes of the current composition — end the compose session so
-    // the next one can't inherit its openedAt/horizon (trace discarded).
-    onStashCurrent: () => {
-      void takeComposeTrace()
-      return stash.handleStashDraft()
-    },
+    onStashCurrent: stash.handleStashDraft,
     onRestore: stash.handleRestoreStashed,
     onDelete: stash.handleDeleteStashed,
     onOpenChange: stash.setPileOpen,
@@ -665,7 +630,6 @@ export function InlineComposerForm({
     onFileUpload: composer.uploadFile,
     imageCount: composer.imageCount,
     onSubmit: handleSubmit,
-    onComposerFocus,
     canSubmit,
     isSubmitting: composer.isSending,
     hasFailed: composer.hasFailed,

@@ -14,7 +14,6 @@ import { serializeToMarkdown } from "@threahq/prosemirror"
 import {
   StreamTypes,
   Visibilities,
-  type ComposeTrace,
   type ConversationDirective,
   type JSONContent,
   type StreamEvent,
@@ -26,7 +25,6 @@ import { sealOutgoingMessage, type SealOutgoingMessageResult } from "@/lib/crypt
 import { reviveStaleActorWraps } from "@/lib/crypto/stream-key-cache"
 import { generateClientId } from "./use-stream-or-draft"
 import { publishOptimisticRailEvent, revokeOptimisticRailEvent } from "./use-board-card-messages"
-import type { ComposeTraceInput } from "@/lib/compose-trace"
 import type { AttachmentSummary } from "./create-optimistic-bootstrap"
 
 export interface QueueDraftMessageInput {
@@ -34,12 +32,6 @@ export interface QueueDraftMessageInput {
   attachmentIds?: string[]
   /** Full attachment info for optimistic UI - required when attachmentIds is provided */
   attachments?: AttachmentSummary[]
-  /**
-   * Compose-session provenance for this send (see {@link ComposeTrace}).
-   * Omitted when the workspace isn't capturing, and by every send the author
-   * didn't compose live (scheduled sends, retries, slash-command dispatch).
-   */
-  composeTrace?: ComposeTraceInput
   /** Queue for the linked session's next turn instead of delivering now (`/enqueue`). */
   enqueue?: true
   confirmedPrivacyWarning?: boolean
@@ -204,9 +196,6 @@ export function useQueueDraftMessage(workspaceId: string) {
       })
 
       try {
-        // The trace's own IndexedDB read finishes here, behind the published
-        // row, never ahead of it.
-        const composeTrace = await input.composeTrace
         const { database } = account
         await database.transaction("rw", [database.pendingMessages, database.events], async () => {
           // Both helpers read `events`, and both default to the *active*
@@ -228,7 +217,6 @@ export function useQueueDraftMessage(workspaceId: string) {
             contentFormat: "markdown",
             contentJson: input.contentJson,
             attachmentIds: input.attachmentIds,
-            composeTrace,
             enqueue: input.enqueue,
             confirmedPrivacyWarning: input.confirmedPrivacyWarning,
             createdAt: Date.now(),

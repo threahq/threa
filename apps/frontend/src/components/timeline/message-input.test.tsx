@@ -25,7 +25,6 @@ import { queueSnippetRequest, resetSnippetRequestStoreCache } from "@/stores/sni
 import * as composerModule from "@/components/composer"
 import * as streamContextBagModule from "@/hooks/use-stream-context-bag"
 import * as streamCommandsModule from "@/hooks/use-stream-commands"
-import * as composeTraceModule from "@/lib/compose-trace"
 import * as openAsideModule from "@/hooks/use-open-aside"
 import { spyOnExport } from "@/test"
 import { ComposeSlotsProvider } from "@/components/panes"
@@ -426,9 +425,6 @@ function Wrapper({ children }: { children: React.ReactNode }) {
     block: () => () => {},
   }
   return (
-    // The composer reads the workspace's `composeTraces` flag out of the
-    // bootstrap query cache, so it needs a client here as it has one everywhere
-    // it mounts in the app. Inside `Wrapper` so `rerender(<Wrapper>…)` keeps it.
     <QueryClientProvider client={queryClient}>
       <PendingMessagesProvider>
         <Router
@@ -585,22 +581,6 @@ describe("MessageInput", () => {
         attachmentIds: undefined,
         attachments: undefined,
       })
-    })
-
-    it("hands the send off before the compose trace's IndexedDB read resolves", async () => {
-      const helloContent = makeDoc("Hello world")
-      mockComposerState.canSend = true
-      mockComposerState.content = helloContent
-      const composeTrace = new Promise<undefined>(() => {})
-      spyOnExport(composeTraceModule, "useComposeTrace").mockReturnValue((() => ({
-        onComposerFocus: () => {},
-        takeComposeTrace: () => composeTrace,
-      })) as never)
-
-      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
-      await userEvent.click(screen.getByRole("button", { name: /send/i }))
-
-      expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({ contentJson: helloContent, composeTrace }))
     })
 
     it("should send /enqueue mid-message as an enqueued message without the directive", async () => {
