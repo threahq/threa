@@ -1,5 +1,6 @@
 import sqlite3InitModule from "@sqlite.org/sqlite-wasm"
 import { createMirrorHandler } from "./handler"
+import { timeHandleAcquisition } from "./handle-timings"
 import type { WorkerEnvelope, WorkerResponse } from "./protocol"
 
 const DATABASE_FILE = "/mirror.sqlite3"
@@ -26,7 +27,10 @@ async function installPool(sqlite3: Awaited<typeof sqlite3Ready>["sqlite3"], idb
   const options = { name, directory: `.${name}`, preserveOnInitFailure: true, forceReinitIfPreviouslyFailed: true }
   for (let attempt = 1; ; attempt++) {
     try {
-      return { pool: await sqlite3.installOpfsSAHPoolVfs(options), attempts: attempt }
+      const { result: pool, handles } = await timeHandleAcquisition(FileSystemFileHandle.prototype, () =>
+        sqlite3.installOpfsSAHPoolVfs(options)
+      )
+      return { pool, handles, attempts: attempt }
     } catch (error) {
       if (attempt === INSTALL_ATTEMPTS) throw error
       await new Promise((resolve) => setTimeout(resolve, FIRST_RETRY_MS * 2 ** (attempt - 1)))
@@ -37,7 +41,7 @@ async function installPool(sqlite3: Awaited<typeof sqlite3Ready>["sqlite3"], idb
 const handler = createMirrorHandler(async (idbName) => {
   const { sqlite3, wasmMs } = await sqlite3Ready
   const installStartedAt = performance.now()
-  const { pool, attempts } = await installPool(sqlite3, idbName)
+  const { pool, handles, attempts } = await installPool(sqlite3, idbName)
   const connectStartedAt = performance.now()
   const installMs = Math.round(connectStartedAt - installStartedAt)
   const db = new pool.OpfsSAHPoolDb(DATABASE_FILE)
@@ -57,6 +61,7 @@ const handler = createMirrorHandler(async (idbName) => {
       wasmMs,
       installMs,
       installAttempts: attempts,
+      ...handles,
       connectMs: Math.round(performance.now() - connectStartedAt),
     },
   }

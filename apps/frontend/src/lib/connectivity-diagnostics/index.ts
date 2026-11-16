@@ -110,6 +110,10 @@ export interface DiagnosticFields {
   wasmMs?: number
   installMs?: number
   installAttempts?: number
+  handleCount?: number
+  handleMinMs?: number
+  handleMaxMs?: number
+  handleSpanMs?: number
   connectMs?: number
   schemaMs?: number
   rangeP50Ms?: number
@@ -776,6 +780,9 @@ function projectFields(fields: DiagnosticFields): DiagnosticFields {
     "openMs",
     "wasmMs",
     "installMs",
+    "handleMinMs",
+    "handleMaxMs",
+    "handleSpanMs",
     "connectMs",
     "schemaMs",
     "rangeP50Ms",
@@ -783,7 +790,7 @@ function projectFields(fields: DiagnosticFields): DiagnosticFields {
   ] as const) {
     if (boundedInteger(fields[key], 86_400_000)) result[key] = fields[key]
   }
-  for (const key of ["count", "failed", "interrupted", "installAttempts"] as const) {
+  for (const key of ["count", "failed", "interrupted", "installAttempts", "handleCount"] as const) {
     if (boundedInteger(fields[key], 100_000)) result[key] = fields[key]
   }
   if (oneOf(fields.storageMode, STORAGE_MODES)) result.storageMode = fields.storageMode

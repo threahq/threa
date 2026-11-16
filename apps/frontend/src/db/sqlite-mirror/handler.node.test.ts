@@ -21,7 +21,16 @@ afterEach(() => {
   db.close()
 })
 
-const timings = { wasmMs: 300, installMs: 40, installAttempts: 2, connectMs: 7 }
+const timings = {
+  wasmMs: 300,
+  installMs: 40,
+  installAttempts: 2,
+  handleCount: 6,
+  handleMinMs: 3,
+  handleMaxMs: 30,
+  handleSpanMs: 31,
+  connectMs: 7,
+}
 const openDatabase = async () => ({ db, close: () => {}, timings })
 
 async function openHandler(options?: { txIdleMs?: number }) {
