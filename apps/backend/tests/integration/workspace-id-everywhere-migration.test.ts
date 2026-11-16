@@ -39,7 +39,7 @@ const CHILDREN: Child[] = [
     columns: "stream_id, persona_id, added_by",
     values: "'stream_b', 'persona_b', 'usr_b'",
   },
-  { table: "stream_sequences", columns: "stream_id", values: "'stream_b'" },
+  { table: "stream_sequences", columns: "stream_id, message_ordinal", values: "'stream_b', 1" },
   {
     table: "agent_sessions",
     columns: "id, stream_id, persona_id, trigger_message_id, status",
