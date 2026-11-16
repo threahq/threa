@@ -6573,3 +6573,63 @@ describe("runtime run adoption", () => {
     }
   })
 })
+
+describe("react", () => {
+  function reactSession() {
+    const reactions: Array<{ messageId: string; emoji: string; present: boolean }> = []
+    const { client } = makeFakeClient()
+    Object.assign(client as unknown as Record<string, unknown>, {
+      setReaction: async (messageId: string, emoji: string, present: boolean) => {
+        reactions.push({ messageId, emoji, present })
+      },
+    })
+    const { transport } = makeFakeTransport()
+    const session = new RemoteSession({
+      config: makeConfig(),
+      client,
+      delegate: { deliverTurn: async () => {} },
+      runtime: RUNTIME,
+      transport,
+    })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internals = session as any
+    const addRoute = (id: string, streamId: string, sourceMessageId: string | null) =>
+      internals.inflight.set(id, { state: "open", invocation: { id, responseStreamId: streamId, sourceMessageId } })
+    return { session, reactions, internals, addRoute }
+  }
+
+  test("defaults to the source message of the named invocation", async () => {
+    const { session, reactions, addRoute } = reactSession()
+    addRoute("binv_1", "stream_1", "msg_src")
+    addRoute("binv_2", "stream_2", "msg_other")
+    await expect(session.react({ emoji: ":tada:", invocationId: "binv_2" })).resolves.toEqual({
+      messageId: "msg_other",
+    })
+    await session.react({ emoji: ":tada:", invocationId: "binv_1", remove: true })
+    expect(reactions).toEqual([
+      { messageId: "msg_other", emoji: ":tada:", present: true },
+      { messageId: "msg_src", emoji: ":tada:", present: false },
+    ])
+  })
+
+  test("falls back to the only in-flight turn, and an explicit messageId needs no turn", async () => {
+    const { session, reactions, addRoute } = reactSession()
+    await session.react({ emoji: "👍", messageId: "msg_x" })
+    addRoute("binv_1", "stream_1", "msg_src")
+    internalsActive(session, "stream_1")
+    await expect(session.react({ emoji: "👍" })).resolves.toEqual({ messageId: "msg_src" })
+    expect(reactions.map((r) => r.messageId)).toEqual(["msg_x", "msg_src"])
+  })
+
+  test("refuses to guess without a source message or a turn", async () => {
+    const { session, addRoute } = reactSession()
+    await expect(session.react({ emoji: "👍" })).rejects.toThrow("no active turn")
+    addRoute("binv_rt", "stream_1", null)
+    await expect(session.react({ emoji: "👍", invocationId: "binv_rt" })).rejects.toThrow("no source message")
+  })
+})
+
+function internalsActive(session: RemoteSession, streamId: string): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(session as any).activeTurnStream = streamId
+}

@@ -344,6 +344,13 @@ export class ThreaClient {
     return result.data
   }
 
+  /** Add or remove the bot's reaction on a message. Idempotent. Requires `messages:write`. */
+  async setReaction(messageId: string, emoji: string, present: boolean): Promise<void> {
+    await this.request(this.workspacePath(`/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`), {
+      method: present ? "PUT" : "DELETE",
+    })
+  }
+
   /** Read one decision this bot opened. 404 once it is out of the caller's scope. */
   async getDecision(decisionId: string): Promise<DecisionRequest> {
     const result = await this.request<{ data: DecisionRequest }>(this.workspacePath(`/decisions/${decisionId}`))

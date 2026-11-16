@@ -161,3 +161,29 @@ it("should post runtime adoption identity and preserve terminal response", async
     body,
   })
 })
+
+describe("setReaction", () => {
+  const client = new ThreaClient({ baseUrl: "https://example.test", workspaceId: "ws_1", apiKey: "key" })
+
+  for (const [present, method] of [
+    [true, "PUT"],
+    [false, "DELETE"],
+  ] as const) {
+    it(`${method} the url-encoded emoji route and tolerates 204`, async () => {
+      const seen: Array<{ url: string; method?: string }> = []
+      fetchSpy.mockImplementation((async (url: string, init?: RequestInit) => {
+        seen.push({ url, method: init?.method })
+        return new Response(null, { status: 204 })
+      }) as unknown as typeof fetch)
+      await client.setReaction("msg_1", "👍", present)
+      expect(seen).toEqual([
+        { url: "https://example.test/api/v1/workspaces/ws_1/messages/msg_1/reactions/%F0%9F%91%8D", method },
+      ])
+    })
+  }
+
+  it("surfaces API errors as ThreaApiError", async () => {
+    fetchSpy.mockImplementation((async () => new Response("nope", { status: 404 })) as unknown as typeof fetch)
+    await expect(client.setReaction("msg_x", ":tada:", true)).rejects.toBeInstanceOf(ThreaApiError)
+  })
+})

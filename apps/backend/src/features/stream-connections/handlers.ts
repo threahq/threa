@@ -15,9 +15,8 @@ import {
   streamConnectionSnapshotSchema,
 } from "@threahq/types"
 import { setAuditSubjects } from "../access-log"
-import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
-import { toShortcode } from "../emoji"
+import { requireShortcode } from "../emoji"
 import { connectionNotFound } from "./errors"
 import type { StreamConnectionExportService } from "./export"
 import type { StreamConnectionImportService } from "./import"
@@ -352,12 +351,6 @@ export function createStreamConnectionBridgeHandlers({
       res.status(204).end()
     },
   }
-}
-
-function requireShortcode(emoji: string): string {
-  const shortcode = toShortcode(emoji)
-  if (!shortcode) throw new HttpError("Invalid emoji", { status: 400, code: "INVALID_EMOJI" })
-  return shortcode
 }
 
 /** The workspace the request names itself as, recorded as the access log's actor. */

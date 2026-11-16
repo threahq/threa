@@ -243,8 +243,8 @@ describe("same-id copies across workspaces", () => {
         created: writes.threadAgain.created,
       },
       messageAgain: { id: writes.messageAgain.id, contentMarkdown: writes.messageAgain.contentMarkdown },
-      reactionAgain: writes.reactionAgain?.reactions,
-      reactionAdded: writes.reactionAdded?.reactions,
+      reactionAgain: writes.reactionAgain.message?.reactions,
+      reactionAdded: writes.reactionAdded.message?.reactions,
       memberAgain: writes.memberAgain.notificationLevel,
     }).toEqual({
       threadAgain: { id: ids.thread, workspaceId: wsB, created: false },

@@ -3068,6 +3068,34 @@ export class RemoteSession {
     }
   }
 
+  /** React to a message as the bot. Defaults to the source message of the turn being worked on. */
+  async react(input: {
+    emoji: string
+    messageId?: string
+    remove?: boolean
+    invocationId?: string
+    streamId?: string
+  }): Promise<{ messageId: string }> {
+    let messageId = input.messageId
+    if (!messageId) {
+      const route = input.invocationId ? this.route(input.invocationId) : this.routeForReaction(input.streamId)
+      if (!route) throw new Error("Cannot react: no active turn; pass messageId.")
+      messageId = route.invocation.sourceMessageId ?? undefined
+      if (!messageId) throw new Error("Cannot react: this turn has no source message; pass messageId.")
+    }
+    await this.client.setReaction(messageId, input.emoji, !input.remove)
+    return { messageId }
+  }
+
+  private routeForReaction(streamId: string | undefined): TurnRoute | undefined {
+    if (streamId) return this.routeForStream(streamId)
+    if (this.parallel && this.inflightStreams().size > 1) {
+      throw new Error("Cannot react: turns are running in several streams; pass streamId or invocationId.")
+    }
+    const resolved = (this.parallel ? [...this.inflightStreams()][0] : undefined) ?? this.activeTurnStream
+    return resolved ? this.routeForStream(resolved) : undefined
+  }
+
   // --- Decisions ------------------------------------------------------------
 
   /**

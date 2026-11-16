@@ -1201,6 +1201,7 @@ describe("Pi reload session control", () => {
     const commands = new Map<string, { handler: (args: string, ctx: any) => Promise<void> }>()
     const followUps: Array<{ text: string; options: unknown }> = []
     const pi = {
+      registerTool: () => {},
       registerCommand: (name: string, options: { handler: (args: string, ctx: any) => Promise<void> }) =>
         commands.set(name, options),
       on: () => {},
@@ -2891,6 +2892,7 @@ describe("session-scoped lifecycle isolation", () => {
   test("closes a claim returned after shutdown before teardown completes", async () => {
     const shutdownHandlers: Array<(event: unknown, ctx: unknown) => Promise<void>> = []
     threaRemote({
+      registerTool: () => {},
       registerCommand: () => {},
       on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<void>) => {
         if (event === "session_shutdown") shutdownHandlers.push(handler)
@@ -2954,6 +2956,7 @@ describe("session-scoped lifecycle isolation", () => {
   test("child shutdown preserves the parent claim while parent shutdown clears it without touching other storage", async () => {
     const shutdownHandlers: Array<(event: unknown, ctx: unknown) => Promise<void>> = []
     threaRemote({
+      registerTool: () => {},
       registerCommand: () => {},
       on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<void>) => {
         if (event === "session_shutdown") shutdownHandlers.push(handler)
@@ -3040,6 +3043,7 @@ describe("reload claim continuity", () => {
   test("starts transport and polling even when the session-start heartbeat fails", async () => {
     const handlers = new Map<string, (event: unknown, ctx: any) => Promise<void>>()
     const pi = {
+      registerTool: () => {},
       registerCommand: () => {},
       on: (event: string, handler: (event: unknown, ctx: any) => Promise<void>) => handlers.set(event, handler),
       sendUserMessage: () => {},
@@ -3109,6 +3113,7 @@ describe("reload claim continuity", () => {
     // start before the dial it backs up.
     const handlers = new Map<string, (event: unknown, ctx: any) => Promise<void>>()
     const pi = {
+      registerTool: () => {},
       registerCommand: () => {},
       on: (event: string, handler: (event: unknown, ctx: any) => Promise<void>) => handlers.set(event, handler),
       sendUserMessage: () => {},
@@ -3178,6 +3183,7 @@ describe("reload claim continuity", () => {
     const commands = new Map<string, { handler: (args: string, ctx: any) => Promise<void> }>()
     const deliveries: Array<{ text: string; options?: unknown }> = []
     const pi = {
+      registerTool: () => {},
       registerCommand: (name: string, options: { handler: (args: string, ctx: any) => Promise<void> }) =>
         commands.set(name, options),
       on: (event: string, handler: (event: unknown, ctx: any) => Promise<void>) => handlers.set(event, handler),
@@ -3292,6 +3298,7 @@ describe("reload claim continuity", () => {
   test("restores, observes, and completes the in-flight claim after the extension cache is cleared", async () => {
     const handlers = new Map<string, (event: unknown, ctx: any) => Promise<void>>()
     const pi = {
+      registerTool: () => {},
       registerCommand: () => {},
       on: (event: string, handler: (event: unknown, ctx: any) => Promise<void>) => handlers.set(event, handler),
       sendUserMessage: () => {},
@@ -4634,6 +4641,7 @@ describe("invocation edit regressions", () => {
     const handlers = new Map<string, (event: any, ctx: any) => Promise<void>>()
     const sends: string[] = []
     const pi = {
+      registerTool: () => {},
       registerCommand: () => {},
       on: (event: string, handler: (event: any, ctx: any) => Promise<void>) => handlers.set(event, handler),
       sendUserMessage: (text: string) => sends.push(text),
@@ -4682,6 +4690,7 @@ describe("invocation edit regressions", () => {
     const ctx = context({ idle: false })
     const handlers = new Map<string, (event: any, ctx: any) => Promise<void>>()
     const pi = {
+      registerTool: () => {},
       registerCommand: () => {},
       on: (event: string, handler: (event: any, ctx: any) => Promise<void>) => handlers.set(event, handler),
       sendUserMessage: () => {},
@@ -4721,6 +4730,7 @@ describe("invocation edit regressions", () => {
     const ctx = context()
     const handlers = new Map<string, (event: any, ctx: any) => Promise<void>>()
     const pi = {
+      registerTool: () => {},
       registerCommand: () => {},
       on: (event: string, handler: (event: any, ctx: any) => Promise<void>) => handlers.set(event, handler),
       sendUserMessage: () => {},
@@ -5434,6 +5444,80 @@ describe("invocation edit regressions", () => {
       }).toEqual({ wrote: false, unregisters: 1 })
     } finally {
       fetchSpy.mockRestore()
+    }
+  })
+})
+
+describe("Pi threa_react tool", () => {
+  const registerTool = () => {
+    const tools = new Map<string, { execute: (id: string, params: unknown) => Promise<unknown> }>()
+    threaRemote({
+      registerCommand: () => {},
+      on: () => {},
+      registerTool: (tool: { name: string }) => tools.set(tool.name, tool as never),
+    } as never)
+    return tools.get("threa_react")!
+  }
+  const configure = () =>
+    __testing.setConfigForTesting({ baseUrl: "https://example.test", workspaceId: "ws_123", apiKey: "threa_bk_test" })
+  const spyFetch = () => {
+    const calls: Array<{ url: string; method?: string }> = []
+    const spy = spyOn(globalThis, "fetch").mockImplementation((async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      calls.push({ url: String(input), method: init?.method })
+      return new Response(null, { status: 204 })
+    }) as typeof fetch)
+    return { calls, spy }
+  }
+
+  test("reacts to the current turn's source message with PUT", async () => {
+    const tool = registerTool()
+    configure()
+    __testing.setPendingForTesting(invocation("binv_react") as never)
+    const { calls, spy } = spyFetch()
+    try {
+      await tool.execute("call_1", { emoji: "👍" })
+      expect(calls).toEqual([
+        {
+          url: `https://example.test/api/v1/workspaces/ws_123/messages/msg_binv_react/reactions/${encodeURIComponent("👍")}`,
+          method: "PUT",
+        },
+      ])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test("remove uses DELETE and an explicit messageId overrides the turn", async () => {
+    const tool = registerTool()
+    configure()
+    __testing.setPendingForTesting(invocation("binv_react") as never)
+    const { calls, spy } = spyFetch()
+    try {
+      await tool.execute("call_1", { emoji: "thumbsup", messageId: "msg_other", remove: true })
+      expect(calls).toEqual([
+        {
+          url: "https://example.test/api/v1/workspaces/ws_123/messages/msg_other/reactions/thumbsup",
+          method: "DELETE",
+        },
+      ])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test("errors without a turn or messageId, and when unlinked", async () => {
+    const tool = registerTool()
+    const { calls, spy } = spyFetch()
+    try {
+      await expect(tool.execute("call_1", { emoji: "👍", messageId: "msg_1" })).rejects.toThrow("not linked")
+      configure()
+      await expect(tool.execute("call_2", { emoji: "👍" })).rejects.toThrow("No Threa message to react to")
+      expect(calls).toEqual([])
+    } finally {
+      spy.mockRestore()
     }
   })
 })

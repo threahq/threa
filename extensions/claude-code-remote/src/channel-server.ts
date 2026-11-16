@@ -158,6 +158,25 @@ const REPLY_INPUT_SCHEMA = {
   required: ["invocation_id", "text"],
 }
 
+const REACT_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    invocation_id: {
+      type: "string",
+      minLength: 1,
+      description: "The invocation_id from the <channel> event you are working on.",
+    },
+    emoji: { type: "string", minLength: 1, description: "A unicode emoji or a shortcode such as :tada:." },
+    message_id: {
+      type: "string",
+      description:
+        "The message to react to. Defaults to the message you are answering (the event's source_message_id).",
+    },
+    remove: { type: "boolean", description: "Remove your reaction instead of adding it." },
+  },
+  required: ["invocation_id", "emoji"],
+}
+
 /**
  * Schemas help validating clients; runtime validation remains authoritative.
  * In hook mode Claude's own stop closes the request, so `reply` only posts.
@@ -177,6 +196,12 @@ export function channelTools(hookMode: boolean) {
         ? "Post your answer to the Threa scratchpad. It does not close the request — that happens by itself when you finish your turn. For a delegation task, reply posts the result and completes the delegation."
         : "Post your final answer to the Threa scratchpad and close the request. Call once per invocation_id, last.",
       inputSchema: REPLY_INPUT_SCHEMA,
+    },
+    {
+      name: "react",
+      description:
+        "React to a Threa message with an emoji. Defaults to the message you are answering; pass message_id for another. Does not close the request.",
+      inputSchema: REACT_INPUT_SCHEMA,
     },
   ]
 }
@@ -252,6 +277,8 @@ export function buildInstructions({
           "- When you are finished, call the `reply` tool exactly once with the `invocation_id` and your final answer. `reply` posts the message AND closes the request on Threa, so call it last. If you have nothing to add after your `send` messages, still call `reply` (a short 'Done.' is fine) to close cleanly.",
           "- One `reply` per invocation_id. If several events arrive together, answer each by its own id.",
         ]),
+    "",
+    "To react to a message with an emoji, use the `react` tool (it reacts to the message you are answering; pass `message_id` to target another).",
     "",
     "Attachments. If a message has attachments, the channel downloads them into the working directory and lists each local path under the event — read them from those paths. To send a local file back, add a line `THREA_ATTACH: path/to/file` to your reply text (one per file; paths resolve against the working directory); the channel uploads it and replaces the line with an attachment link.",
   ]
@@ -1008,6 +1035,7 @@ export class ChannelServer {
     }))
 
     this.mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
+      if (req.params.name === "react") return toToolResult(await this.handleReact(req.params.arguments ?? {}))
       if (req.params.name !== "reply" && req.params.name !== "send") {
         return { isError: true, content: [{ type: "text", text: `Unknown tool: ${req.params.name}` }] }
       }
@@ -1034,6 +1062,24 @@ export class ChannelServer {
     if (!result.closedTurn) return
     this.tracer.endTurn(invocationId)
     this.carryOn?.onTurnClosed(invocationId)
+  }
+
+  async handleReact(args: Record<string, unknown>): Promise<SendResult> {
+    const { invocation_id: invocationId, emoji, message_id: messageId, remove } = args
+    if (typeof invocationId !== "string" || !invocationId || typeof emoji !== "string" || !emoji.trim()) {
+      return { ok: false, message: "react requires a non-empty invocation_id and emoji." }
+    }
+    try {
+      const reacted = await this.session.react({
+        emoji: emoji.trim(),
+        invocationId,
+        ...(typeof messageId === "string" && messageId ? { messageId } : {}),
+        ...(remove === true ? { remove: true } : {}),
+      })
+      return { ok: true, message: `${remove === true ? "Removed" : "Added"} ${emoji.trim()} on ${reacted.messageId}.` }
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) }
+    }
   }
 
   async handleToolCall(name: "send" | "reply", invocationId: string, text: string): Promise<SendResult> {

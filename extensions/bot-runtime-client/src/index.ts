@@ -23,6 +23,7 @@ export {
   type AttachmentUploader,
   type UploadedAttachment,
 } from "./reply-files"
+export { parseReactDirectives, type ReactDirective } from "./react-directives"
 export { parseWsHint, buildBotSocketUrl, isObject, type WsHint } from "./ws-hint"
 export type {
   BotWriteAck,

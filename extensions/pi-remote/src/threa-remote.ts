@@ -960,6 +960,7 @@ async function readRequestBody<T>(response: Response): Promise<T> {
       errorCode
     )
   }
+  if (response.status === 204) return undefined as T
   return (await response.json()) as T
 }
 
@@ -3394,6 +3395,7 @@ async function buildInvocationPrompt(
       sealed
         ? "This scratchpad is end-to-end encrypted. To attach a local file to your reply, add a line exactly like `THREA_ATTACH: path/to/file`; the extension encrypts it locally and uploads only ciphertext."
         : "To attach a local file to your reply, add a line exactly like `THREA_ATTACH: path/to/file`; the extension will upload it and replace it with an attachment link.",
+      "To react to a Threa message with an emoji, use the `threa_react` tool.",
       context ? `\n${context}` : "",
       "\nSource message prompt:",
       invocation.promptMarkdown,
@@ -5447,6 +5449,10 @@ export const __testing = {
   },
   NO_SOCKET_POLL_CAP_MS,
   nextQuietPollMs,
+  reactToMessage,
+  setPendingForTesting: (value: ClaimedInvocation | undefined) => {
+    pending = value
+  },
   completeInvocationWithMarkdown,
   completeInvocationWithSummary,
   claimNextInvocation,
@@ -5470,7 +5476,41 @@ export const __testing = {
   handleTransportDisconnected,
 }
 
+async function reactToMessage(params: { emoji: string; messageId?: string; remove?: boolean }): Promise<string> {
+  if (!config) throw new Error("Pi is not linked to Threa.")
+  const messageId = params.messageId ?? pending?.sourceMessageId
+  if (!messageId)
+    throw new Error("No Threa message to react to: pass messageId, or call this while answering a Threa message.")
+  await request(
+    `/api/v1/workspaces/${config.workspaceId}/messages/${encodeURIComponent(messageId)}/reactions/${encodeURIComponent(params.emoji)}`,
+    { method: params.remove ? "DELETE" : "PUT" }
+  )
+  return `${params.remove ? "Removed" : "Added"} ${params.emoji} on ${messageId}.`
+}
+
+const REACT_TOOL_PARAMETERS = {
+  type: "object",
+  properties: {
+    emoji: { type: "string", description: "Unicode emoji or shortcode, e.g. 👍 or thumbsup" },
+    messageId: { type: "string", description: "Target message id; defaults to the message you are answering" },
+    remove: { type: "boolean", description: "Remove your reaction instead of adding it" },
+  },
+  required: ["emoji"],
+} as never
+
 export default function (pi: ExtensionAPI): void {
+  pi.registerTool({
+    name: "threa_react",
+    label: "Threa react",
+    description:
+      "React to a Threa message with an emoji as yourself (the bot), or remove your reaction. Without messageId it targets the message you are currently answering. Side effect only; does not end the turn.",
+    parameters: REACT_TOOL_PARAMETERS,
+    execute: async (_toolCallId, params) => {
+      const text = await reactToMessage(params as { emoji: string; messageId?: string; remove?: boolean })
+      return { content: [{ type: "text", text }], details: undefined }
+    },
+  })
+
   pi.registerCommand(RELOAD_HANDOFF_COMMAND, {
     description: "Complete a Threa reload handoff",
     handler: async (_args, ctx) => {

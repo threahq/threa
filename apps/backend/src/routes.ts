@@ -2526,6 +2526,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     findMessagesByMetadata: publicApi.findMessagesByMetadata,
     updateMessage: publicApi.updateMessage,
     deleteMessage: publicApi.deleteMessage,
+    addMessageReaction: publicApi.addMessageReaction,
+    removeMessageReaction: publicApi.removeMessageReaction,
     listUsers: publicApi.listUsers,
     listLabels: publicApi.listLabels,
     createLabel: publicApi.createLabel,

@@ -14,7 +14,7 @@ import {
 import { serializeBigInt, HttpError } from "@threahq/backend-common"
 import { MessageNotFoundError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
-import { toShortcode, normalizeMessage, toEmoji } from "../emoji"
+import { requireShortcode, normalizeMessage, toEmoji } from "../emoji"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threahq/prosemirror"
 import { deriveContentMarkdown } from "./content"
 import { contentJsonSchema } from "./content-json-schema"
@@ -603,10 +603,7 @@ export function createMessageHandlers({
 
       const data = validateRequest(addReactionSchema, req.body)
 
-      const shortcode = toShortcode(data.emoji)
-      if (!shortcode) {
-        throw new HttpError("Invalid emoji", { status: 400, code: "INVALID_EMOJI" })
-      }
+      const shortcode = requireShortcode(data.emoji)
 
       const existing = await eventService.getMessageById(workspaceId, messageId)
       if (!existing) {
@@ -657,10 +654,7 @@ export function createMessageHandlers({
       const workspaceId = req.workspaceId!
       const { messageId, emoji } = req.params
 
-      const shortcode = toShortcode(emoji)
-      if (!shortcode) {
-        throw new HttpError("Invalid emoji", { status: 400, code: "INVALID_EMOJI" })
-      }
+      const shortcode = requireShortcode(emoji)
 
       const existing = await eventService.getMessageById(workspaceId, messageId)
       if (!existing) {

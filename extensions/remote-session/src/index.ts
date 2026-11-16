@@ -86,4 +86,9 @@ export {
   type DelegationExecutorContext,
 } from "./delegation-runner"
 export { toolTraceContent, type ToolTraceSection, type ToolTraceSectionLabel } from "./tool-trace"
-export { redactAttachDirectives, type DecisionRequest, type StepFrame } from "@threahq/bot-runtime-client"
+export {
+  parseReactDirectives,
+  redactAttachDirectives,
+  type DecisionRequest,
+  type StepFrame,
+} from "@threahq/bot-runtime-client"

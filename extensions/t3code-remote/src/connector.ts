@@ -138,6 +138,7 @@ export function createT3Connector(config: T3RemoteConfig, options: T3ConnectorOp
       isEncrypted: async (streamId) => (await client.getStream(streamId)).e2eEnabled,
       failTurn: (id, message) => session.failTurn(id, message),
       requestDecision: (input, opts) => session.requestDecision(input, opts),
+      react: (input) => session.react(input),
       keepAlive: (streamId) => session.keepAlive(streamId),
     },
     access: config.t3.access,

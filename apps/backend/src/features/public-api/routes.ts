@@ -923,6 +923,14 @@ const messageIdParam = {
   description: "Message ID (prefixed ULID)",
 }
 
+const emojiParam = {
+  name: "emoji",
+  in: "path" as const,
+  required: true,
+  schema: { type: "string" as const },
+  description: "Unicode emoji or shortcode (e.g. `:+1:`), URL-encoded",
+}
+
 const conversationIdParam = {
   name: "conversationId",
   in: "path" as const,
@@ -1044,6 +1052,8 @@ export type OperationId =
   | "findMessagesByMetadata"
   | "updateMessage"
   | "deleteMessage"
+  | "addMessageReaction"
+  | "removeMessageReaction"
   | "listUsers"
   | "listLabels"
   | "createLabel"
@@ -1062,7 +1072,7 @@ export type OperationId =
   | "getMyE2eKey"
 
 export interface PublicApiRoute {
-  method: "get" | "post" | "patch" | "delete"
+  method: "get" | "post" | "put" | "patch" | "delete"
   path: string
   operationId: OperationId
   summary: string
@@ -1932,6 +1942,33 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     tags: ["Messages"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.MESSAGES_WRITE],
     parameters: [workspaceIdParam, messageIdParam],
+    responseSchema: z.void(),
+    successStatus: 204,
+    canReturn404: true,
+  },
+  {
+    method: "put",
+    path: "/api/v1/workspaces/{workspaceId}/messages/{messageId}/reactions/{emoji}",
+    operationId: "addMessageReaction",
+    summary: "Add a reaction",
+    description:
+      "React to a message with an emoji as the key's actor (the bot for a bot key, the owner for a user key). Idempotent.",
+    tags: ["Messages"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.MESSAGES_WRITE],
+    parameters: [workspaceIdParam, messageIdParam, emojiParam],
+    responseSchema: z.void(),
+    successStatus: 204,
+    canReturn404: true,
+  },
+  {
+    method: "delete",
+    path: "/api/v1/workspaces/{workspaceId}/messages/{messageId}/reactions/{emoji}",
+    operationId: "removeMessageReaction",
+    summary: "Remove a reaction",
+    description: "Remove the key's actor's reaction from a message. Idempotent.",
+    tags: ["Messages"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.MESSAGES_WRITE],
+    parameters: [workspaceIdParam, messageIdParam, emojiParam],
     responseSchema: z.void(),
     successStatus: 204,
     canReturn404: true,
