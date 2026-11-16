@@ -136,7 +136,16 @@ export function inProcessTransport(sqlite: Database, log: MirrorRequest["type"][
   const handler = createMirrorHandler(async () => ({
     db: sqlite,
     close: () => {},
-    timings: { wasmMs: 0, installMs: 0, installAttempts: 1, connectMs: 0 },
+    timings: {
+      wasmMs: 0,
+      installMs: 0,
+      installAttempts: 1,
+      handleCount: 0,
+      handleMinMs: 0,
+      handleMaxMs: 0,
+      handleSpanMs: 0,
+      connectMs: 0,
+    },
   }))
   let heardAt = 0
   return {

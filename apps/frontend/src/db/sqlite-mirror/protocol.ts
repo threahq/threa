@@ -1,3 +1,4 @@
+import type { HandleTimings } from "./handle-timings"
 import type { EncodedRange } from "./key-codec"
 import type { CommitLedger, MirrorEntry, MirrorQuery, MirrorRow, MirrorStoreSchema, MirrorWrite } from "./mirror-store"
 
@@ -33,7 +34,7 @@ export type MirrorRequest =
   | MirrorReadRequest
 
 /** Where an open's time went, in whole milliseconds; `wasmMs` counts from the worker's start. */
-export interface OpenTimings {
+export interface OpenTimings extends HandleTimings {
   wasmMs: number
   installMs: number
   installAttempts: number
