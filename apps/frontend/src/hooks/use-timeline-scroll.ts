@@ -48,13 +48,24 @@ function readComposerHeight(el: HTMLElement, varName: string): number {
   return Number.isFinite(px) ? px : 0
 }
 
+/**
+ * True when a shifted update would leave a row on the index it held before
+ * while the count changes: virtua would hand that row a neighbour's cached
+ * height and never re-measure it. Happens when the window's start and its
+ * middle change in one update (top trimmed while a row lands mid-window, a run
+ * group relabelled at the top while rows append).
+ */
+function strandsRowHeight(prev: readonly string[], next: readonly string[]): boolean {
+  if (prev.length === next.length) return false
+  for (let i = 0; i < Math.min(prev.length, next.length); i++) {
+    if (prev[i] === next[i]) return true
+  }
+  return false
+}
+
 interface UseTimelineScrollOptions {
-  /** Total item count of the virtualized list. */
-  itemCount: number
-  /** Stable key of the item at index 0, or null when empty. Drives prepend detection. */
-  getFirstKey: () => string | null
-  /** Stable key of the last item, or null when empty. Drives tail-replace detection. */
-  getLastKey: () => string | null
+  /** Stable key of every row in the virtualized list, in order. Drives prepend and tail-replace detection. */
+  rowKeys: readonly string[]
   /** When this key changes, all scroll state resets (e.g. streamId). */
   resetKey?: string
   /**
@@ -204,9 +215,7 @@ interface UseTimelineScrollReturn {
  * viewport when rows land above it, via its `shift` prop.
  */
 export function useTimelineScroll({
-  itemCount,
-  getFirstKey,
-  getLastKey,
+  rowKeys,
   resetKey,
   skipInitialScroll = false,
   isJumpMode = false,
@@ -255,12 +264,10 @@ export function useTimelineScroll({
   // snap to bottom before the jump positions on its target.
   const isFollowingTailRef = useRef(!skipInitialScroll)
 
-  // Prepend detection. Comparing the first row's key across renders tells us an
-  // older page landed (or the window trimmed from the start); virtua's `shift`
-  // then holds the viewport from the end.
-  const prevFirstKeyRef = useRef<string | null>(null)
-  const prevLastKeyRef = useRef<string | null>(null)
-  const prevCountRef = useRef(0)
+  // Prepend detection. Comparing the row keys across renders tells us an older
+  // page landed (or the window trimmed from the start); virtua's `shift` then
+  // holds the viewport from the end.
+  const prevRowKeysRef = useRef<readonly string[]>([])
   const lastResetKeyRef = useRef(resetKey)
   const didInitialScrollRef = useRef(false)
 
@@ -317,9 +324,7 @@ export function useTimelineScroll({
   // real stream switches, not the initial mount.
   if (lastResetKeyRef.current !== resetKey) {
     lastResetKeyRef.current = resetKey
-    prevFirstKeyRef.current = null
-    prevLastKeyRef.current = null
-    prevCountRef.current = 0
+    prevRowKeysRef.current = []
     prevScrollTopRef.current = 0
     prevScrollHeightRef.current = 0
     didInitialScrollRef.current = false
@@ -340,18 +345,19 @@ export function useTimelineScroll({
   // Compute `shift` for this render: true tells virtua the count change happened
   // at the start. It moves its whole size cache by that delta and re-measures a
   // row only when its index or box changes, so a row that keeps its index across
-  // a shifted update (an arrival sorted above your own in-flight send, a hole
-  // filled mid-window) keeps its predecessor's height for good and the rows
-  // below draw over it. So shift only when the first row changed. While
-  // following, also require growth under a held last row: a moved tail is
-  // end-side growth, re-landed by `tailReplaced` below.
-  const firstKey = itemCount > 0 ? getFirstKey() : null
-  const lastKey = itemCount > 0 ? getLastKey() : null
-  const windowStartHeld = firstKey === prevFirstKeyRef.current
-  const tailMoved = lastKey !== prevLastKeyRef.current
+  // a shifted update keeps a neighbour's height for good and the rows below draw
+  // over it. So shift only when the first row changed, and never when a row
+  // keeps its index (see `strandsRowHeight`). While following, also require
+  // growth under a held last row: a moved tail is end-side growth, re-landed by
+  // `tailReplaced` below.
+  const prevRowKeys = prevRowKeysRef.current
+  const itemCount = rowKeys.length
+  const prevCount = prevRowKeys.length
+  const windowStartHeld = rowKeys[0] === prevRowKeys[0]
+  const tailMoved = rowKeys.at(-1) !== prevRowKeys.at(-1)
   let shift = false
-  if (itemCount > 0 && prevCountRef.current > 0 && prevFirstKeyRef.current !== null && !windowStartHeld) {
-    shift = !isFollowingTailRef.current || (itemCount > prevCountRef.current && !tailMoved)
+  if (itemCount > 0 && prevCount > 0 && !windowStartHeld && !strandsRowHeight(prevRowKeys, rowKeys)) {
+    shift = !isFollowingTailRef.current || (itemCount > prevCount && !tailMoved)
   }
   // While following the tail, a window whose row count or last row changed —
   // and that is not a single live append (a sweep landing a gap, a window
@@ -369,16 +375,11 @@ export function useTimelineScroll({
   // virtua's deferred scroll after our pin, a few px above the true bottom. An
   // append always moves the last key, so requiring that here keeps a ONE-row
   // insert in the middle — a single-slot hole backfill — on the re-take path.
-  const appendedOneRow = itemCount === prevCountRef.current + 1 && windowStartHeld && tailMoved
-  const swappedTailInPlace = itemCount === prevCountRef.current && windowStartHeld
-  const windowChanged = itemCount !== prevCountRef.current || tailMoved
+  const appendedOneRow = itemCount === prevCount + 1 && windowStartHeld && tailMoved
+  const swappedTailInPlace = itemCount === prevCount && windowStartHeld
+  const windowChanged = itemCount !== prevCount || tailMoved
   const tailReplaced =
-    isFollowingTailRef.current &&
-    prevCountRef.current > 0 &&
-    prevLastKeyRef.current !== null &&
-    windowChanged &&
-    !appendedOneRow &&
-    !swappedTailInPlace
+    isFollowingTailRef.current && prevCount > 0 && windowChanged && !appendedOneRow && !swappedTailInPlace
   // Record the baseline once per commit, in a layout effect — not during
   // render. React may render this component twice before committing (StrictMode
   // in dev, a concurrent re-render in prod); a during-render write would let a
@@ -389,9 +390,7 @@ export function useTimelineScroll({
   // reset above stays in render — it must zero the baseline before this render's
   // shift check — and is idempotent across the double render.
   useLayoutEffect(() => {
-    prevFirstKeyRef.current = firstKey
-    prevLastKeyRef.current = lastKey
-    prevCountRef.current = itemCount
+    prevRowKeysRef.current = rowKeys
   })
 
   // The single pin. Go to the absolute bottom: scrollTop = scrollHeight is
@@ -454,8 +453,7 @@ export function useTimelineScroll({
   }, [])
 
   const resetShiftBaseline = useCallback(() => {
-    prevFirstKeyRef.current = null
-    prevCountRef.current = 0
+    prevRowKeysRef.current = []
   }, [])
 
   const holdSettleForRestore = useCallback(() => {

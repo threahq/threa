@@ -1512,6 +1512,11 @@ export function StreamContent({
     [useVirtualized, timelineItems, frontierSequence]
   )
 
+  const rowKeys = useMemo(
+    () => (useVirtualized ? visibleItems.map(getTimelineItemKey) : []),
+    [useVirtualized, visibleItems]
+  )
+
   const visibleItemCount = visibleItems.length
   useEffect(() => {
     getPerfCapture().mark("timeline.windowItems", visibleItemCount)
@@ -1638,10 +1643,7 @@ export function StreamContent({
     revealSettle,
     releaseDeferredReveal,
   } = useTimelineScroll({
-    itemCount: useVirtualized ? visibleItems.length : 0,
-    getFirstKey: () => (useVirtualized && visibleItems.length > 0 ? getTimelineItemKey(visibleItems[0]) : null),
-    getLastKey: () =>
-      useVirtualized && visibleItems.length > 0 ? getTimelineItemKey(visibleItems[visibleItems.length - 1]) : null,
+    rowKeys,
     resetKey: streamId,
     skipInitialScroll,
     isJumpMode,
