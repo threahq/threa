@@ -1153,14 +1153,14 @@ describe("T3TurnRunner", () => {
     expect(session.decisions.map(({ input }) => input.externalRef)).toEqual(["req_1"])
   })
 
-  test("a message typed while a card is up answers it, and the turn follows the run the answer starts", async () => {
+  test("a message typed while a card is up answers it with its own text, and the turn follows the run the answer starts", async () => {
     const { t3, session, runner } = setup()
     t3.ask("thread_1", "req_1", [question("runner")], true)
     t3.script("run_1", [{ status: "completed", items: [asking()] }])
     await runner.deliverTurn(turn())
     await idle()
 
-    expect(await runner.steer(" Use Bun ", "stream_root", [])).toBe(true)
+    expect(await runner.steer("Message msg_1:\nUse Bun", "stream_root", [], { answer: " Use Bun " })).toBe(true)
     await idle()
     t3.script("run_2", [
       {

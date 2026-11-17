@@ -545,11 +545,11 @@ export class T3TurnRunner {
     text: string,
     streamId: string,
     attachments: DownloadedAttachment[],
-    options?: { edit?: boolean }
+    options?: { edit?: boolean; answer?: string }
   ): Promise<boolean> {
     const run = this.openRuns().find((open) => open.streamId === streamId)
     if (!run) return false
-    if (!options?.edit && attachments.length === 0 && run.asking?.answerTyped?.(text)) return true
+    if (!options?.edit && attachments.length === 0 && run.asking?.answerTyped?.(options?.answer ?? text)) return true
     const steering = this.steerInto(run, text, attachments, options?.edit === true)
     run.steers.add(steering)
     try {

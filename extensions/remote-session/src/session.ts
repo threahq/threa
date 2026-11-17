@@ -195,13 +195,15 @@ export interface SessionControlActuator {
    * but a runtime declaring `maxConcurrentTurns > 1` must steer only that
    * stream's turn. `edit` is set when the text corrects a message the turn
    * already took (an edited source message), so a runtime can tell a correction
-   * from a new message.
+   * from a new message. `answer` is the message's own text, without the id
+   * header or attachment manifest `text` may carry, for a runtime that takes a
+   * steered message as the answer to a question it has open.
    */
   steer?(
     text: string,
     streamId: string,
     attachments: DownloadedAttachment[],
-    options?: { edit?: boolean }
+    options?: { edit?: boolean; answer?: string }
   ): Promise<boolean> | boolean
   /**
    * A provider quota hold is on and the turn in flight will resume by itself.
@@ -2111,7 +2113,9 @@ export class RemoteSession {
     let steered: boolean
     try {
       steered =
-        (await this.delegate.sessionControl?.steer?.(content, invocation.responseStreamId, attachments)) === true
+        (await this.delegate.sessionControl?.steer?.(content, invocation.responseStreamId, attachments, {
+          answer: invocation.promptMarkdown.trim(),
+        })) === true
     } catch (error) {
       await this.failInvocation(invocation, `Steer failed: ${this.summarize(error)}`)
       return

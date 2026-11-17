@@ -5851,8 +5851,8 @@ describe("parallel turns across streams", () => {
       interrupts: h.interrupts,
     }).toEqual({
       steers: [
-        { text: "a follow-up", streamId: "stream_a" },
-        { text: "b follow-up", streamId: "stream_b" },
+        { text: "a follow-up", streamId: "stream_a", answer: "a follow-up" },
+        { text: "b follow-up", streamId: "stream_b", answer: "b follow-up" },
       ],
       steppedOn: ["binv_a", "binv_b"],
       pending: [],
