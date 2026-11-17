@@ -34,13 +34,12 @@ async function seedMessages(
   // Sequential, so a row's msg number is its position: parallel posts land out of label order, and the
   // ±1-row tolerances below would then admit (or reject) a jump of several rows.
   for (let i = 1; i <= count; i++) {
-    await sendApiOk(
-      () =>
-        page.request.post(`/api/workspaces/${workspaceId}/messages`, {
-          data: { streamId, content: `${prefix} msg-${String(i).padStart(3, "0")}` },
-        }),
-      `Send message ${i}`
-    )
+    const data = {
+      streamId,
+      content: `${prefix} msg-${String(i).padStart(3, "0")}`,
+      clientMessageId: crypto.randomUUID(),
+    }
+    await sendApiOk(() => page.request.post(`/api/workspaces/${workspaceId}/messages`, { data }), `Send message ${i}`)
   }
 }
 

@@ -20,10 +20,8 @@ export async function expectApiOk(response: APIResponse, action: string): Promis
 }
 
 /**
- * Sends a write and asserts it succeeded, resending when `wrangler dev` dropped it.
- * Wrangler's dev proxy answers any network error on its hop to the router worker
- * with this 503 and retries only GET/HEAD itself; the request never reached the
- * router, so resending a POST cannot duplicate it.
+ * Retries Wrangler's restart 503. Write callbacks need a stable idempotency key:
+ * a lost response does not prove the server skipped the write.
  */
 export async function sendApiOk(send: () => Promise<APIResponse>, action: string): Promise<APIResponse> {
   for (let attempt = 1; ; attempt++) {
