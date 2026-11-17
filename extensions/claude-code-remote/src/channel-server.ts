@@ -161,20 +161,15 @@ const REPLY_INPUT_SCHEMA = {
 const REACT_INPUT_SCHEMA = {
   type: "object",
   properties: {
-    invocation_id: {
-      type: "string",
-      minLength: 1,
-      description: "The invocation_id from the <channel> event you are working on.",
-    },
-    emoji: { type: "string", minLength: 1, description: "A unicode emoji or a shortcode such as :tada:." },
     message_id: {
       type: "string",
-      description:
-        "The message to react to. Defaults to the message you are answering (the event's source_message_id).",
+      minLength: 1,
+      description: "The message to react to: the id each message in the event is headed or listed with.",
     },
+    emoji: { type: "string", minLength: 1, description: "A unicode emoji or a shortcode such as :tada:." },
     remove: { type: "boolean", description: "Remove your reaction instead of adding it." },
   },
-  required: ["invocation_id", "emoji"],
+  required: ["message_id", "emoji"],
 }
 
 /**
@@ -199,8 +194,7 @@ export function channelTools(hookMode: boolean) {
     },
     {
       name: "react",
-      description:
-        "React to a Threa message with an emoji. Defaults to the message you are answering; pass message_id for another. Does not close the request.",
+      description: "React to a Threa message with an emoji, or remove your reaction. Does not close the request.",
       inputSchema: REACT_INPUT_SCHEMA,
     },
   ]
@@ -278,7 +272,7 @@ export function buildInstructions({
           "- One `reply` per invocation_id. If several events arrive together, answer each by its own id.",
         ]),
     "",
-    "To react to a message with an emoji, use the `react` tool (it reacts to the message you are answering; pass `message_id` to target another).",
+    "To react to a message with an emoji, use the `react` tool with the message's id (each message in an event is headed or listed with its id).",
     "",
     "Attachments. If a message has attachments, the channel downloads them into the working directory and lists each local path under the event — read them from those paths. To send a local file back, add a line `THREA_ATTACH: path/to/file` to your reply text (one per file; paths resolve against the working directory); the channel uploads it and replaces the line with an attachment link.",
   ]
@@ -1066,18 +1060,13 @@ export class ChannelServer {
   }
 
   async handleReact(args: Record<string, unknown>): Promise<SendResult> {
-    const { invocation_id: invocationId, emoji, message_id: messageId, remove } = args
-    if (typeof invocationId !== "string" || !invocationId || typeof emoji !== "string" || !emoji.trim()) {
-      return { ok: false, message: "react requires a non-empty invocation_id and emoji." }
+    const { emoji, message_id: messageId, remove } = args
+    if (typeof messageId !== "string" || !messageId || typeof emoji !== "string" || !emoji.trim()) {
+      return { ok: false, message: "react requires a non-empty message_id and emoji." }
     }
     try {
-      const reacted = await this.session.react({
-        emoji: emoji.trim(),
-        invocationId,
-        ...(typeof messageId === "string" && messageId ? { messageId } : {}),
-        ...(remove === true ? { remove: true } : {}),
-      })
-      return { ok: true, message: `${remove === true ? "Removed" : "Added"} ${emoji.trim()} on ${reacted.messageId}.` }
+      await this.session.react({ emoji: emoji.trim(), messageId, ...(remove === true ? { remove: true } : {}) })
+      return { ok: true, message: `${remove === true ? "Removed" : "Added"} ${emoji.trim()} on ${messageId}.` }
     } catch (error) {
       return { ok: false, message: error instanceof Error ? error.message : String(error) }
     }

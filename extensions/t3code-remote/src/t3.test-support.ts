@@ -403,7 +403,7 @@ export function fakeSession(rootStreamId = "stream_root") {
   const replyResults: Array<Awaited<ReturnType<BridgeSession["reply"]>>> = []
   const interimResults: Array<Awaited<ReturnType<BridgeSession["sendInterim"]>>> = []
   const postFailures: Error[] = []
-  const reactions: Array<{ emoji: string; messageId?: string; remove?: boolean; invocationId: string }> = []
+  const reactions: Array<{ emoji: string; messageId: string; remove?: boolean }> = []
   const failingReactions = new Map<string, Error>()
   const encrypted = new Set<string>()
   const fails: Array<{ invocationId: string; errorMessage: string }> = []
@@ -459,7 +459,6 @@ export function fakeSession(rootStreamId = "stream_root") {
       const failure = failingReactions.get(input.emoji)
       if (failure) throw failure
       reactions.push(input)
-      return { messageId: input.messageId ?? "msg_source" }
     },
     failTurn: async (invocationId, errorMessage) => {
       fails.push({ invocationId, errorMessage })

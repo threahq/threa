@@ -968,27 +968,18 @@ async function readRequestBody<T>(response: Response): Promise<T> {
 
 interface ReactToolParams {
   emoji: string
-  messageId?: string
+  messageId: string
   remove?: boolean
 }
 
 async function reactToMessage(params: ReactToolParams): Promise<string> {
   if (!config) throw new Error("Pi is not linked to Threa.")
-  const turnMessageIds = [
-    ...new Set(
-      [pending, ...steeredInvocations.map((item) => item.invocation)].flatMap((item) => item?.sourceMessageId ?? [])
-    ),
-  ]
-  if (!params.messageId && turnMessageIds.length > 1)
-    throw new Error(`This turn answers several Threa messages (${turnMessageIds.join(", ")}): pass messageId.`)
-  const messageId = params.messageId ?? turnMessageIds[0]
-  if (!messageId)
-    throw new Error("No Threa message to react to: pass messageId, or call this while answering a Threa message.")
+  if (!params.messageId) throw new Error("threa_react requires messageId.")
   await request(
-    `/api/v1/workspaces/${config.workspaceId}/messages/${encodeURIComponent(messageId)}/reactions/${encodeURIComponent(params.emoji)}`,
+    `/api/v1/workspaces/${config.workspaceId}/messages/${encodeURIComponent(params.messageId)}/reactions/${encodeURIComponent(params.emoji)}`,
     { method: params.remove ? "DELETE" : "PUT" }
   )
-  return `${params.remove ? "Removed" : "Added"} ${params.emoji} on ${messageId}.`
+  return `${params.remove ? "Removed" : "Added"} ${params.emoji} on ${params.messageId}.`
 }
 
 function buildModelSuggestions(ctx: ExtensionContext): Array<{ value: string; label: string }> {
@@ -2804,7 +2795,7 @@ function formatInvocationContext(
       const attachments = (message.attachments ?? [])
         .map((attachment) => describeContextAttachment(attachment, downloadedAttachments))
         .join("; ")
-      return `- ${author}: ${message.content}${attachments ? `\n  Attachments: ${attachments}` : ""}`
+      return `- ${author} (${message.id}): ${message.content}${attachments ? `\n  Attachments: ${attachments}` : ""}`
     })
   const sourceAttachmentLines = (
     orderedMessages.find((message) => message.id === sourceMessageId)?.attachments ?? []
@@ -2817,8 +2808,14 @@ function formatInvocationContext(
     .join("\n\n")
 }
 
-function formatSteerPrompt(promptMarkdown: string, attachmentContext = ""): string {
-  return [promptMarkdown.trim() || "(empty message)", attachmentContext].filter(Boolean).join("\n\n")
+/** A steered message, headed by its id for `threa_react`; a reaction claim's prompt names its (the bot's own) message itself. */
+function formatSteerPrompt(
+  invocation: Pick<ClaimedInvocation, "sourceMessageId" | "promptMarkdown" | "trigger">,
+  attachmentContext = ""
+): string {
+  const text = invocation.promptMarkdown.trim() || "(empty message)"
+  const prompt = invocation.trigger === "reaction" ? text : `Message ${invocation.sourceMessageId}:\n${text}`
+  return [prompt, attachmentContext].filter(Boolean).join("\n\n")
 }
 
 function formatSteerAttachmentContext(
@@ -3445,7 +3442,7 @@ async function buildInvocationPrompt(
   return {
     context,
     cursor,
-    steerPrompt: formatSteerPrompt(invocation.promptMarkdown, steerContext),
+    steerPrompt: formatSteerPrompt(invocation, steerContext),
     prompt: [
       `Remote Threa invocation ${invocation.id}.`,
       `Source message: ${invocation.sourceMessageId}`,
@@ -3453,7 +3450,7 @@ async function buildInvocationPrompt(
       sealed
         ? "This scratchpad is end-to-end encrypted. To attach a local file to your reply, add a line exactly like `THREA_ATTACH: path/to/file`; the extension encrypts it locally and uploads only ciphertext."
         : "To attach a local file to your reply, add a line exactly like `THREA_ATTACH: path/to/file`; the extension will upload it and replace it with an attachment link.",
-      "To react to a Threa message with an emoji, use the `threa_react` tool.",
+      "To react to a Threa message with an emoji, use the `threa_react` tool with the message's id (the source message above, or an id listed in the context).",
       context ? `\n${context}` : "",
       "\nSource message prompt:",
       invocation.promptMarkdown,
@@ -5537,10 +5534,10 @@ const REACT_TOOL_PARAMETERS = {
   type: "object",
   properties: {
     emoji: { type: "string", description: "Unicode emoji or shortcode, e.g. 👍 or :thumbsup:" },
-    messageId: { type: "string", description: "Target message id; defaults to the message you are answering" },
+    messageId: { type: "string", description: "Target message id, as each Threa message is headed or listed with" },
     remove: { type: "boolean", description: "Remove your reaction instead of adding it" },
   },
-  required: ["emoji"],
+  required: ["emoji", "messageId"],
 } as never
 
 export default function (pi: ExtensionAPI): void {
@@ -5548,7 +5545,7 @@ export default function (pi: ExtensionAPI): void {
     name: "threa_react",
     label: "Threa react",
     description:
-      "React to a Threa message with an emoji as yourself (the bot), or remove your reaction. Without messageId it targets the message you are currently answering. Side effect only; does not end the turn.",
+      "React to a Threa message with an emoji as yourself (the bot), or remove your reaction. Side effect only; does not end the turn.",
     parameters: REACT_TOOL_PARAMETERS,
     execute: async (_toolCallId, params: ReactToolParams) => {
       const text = await reactToMessage(params)

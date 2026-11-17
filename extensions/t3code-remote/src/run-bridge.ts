@@ -48,12 +48,7 @@ export interface BridgeSession {
   isEncrypted(streamId: string): Promise<boolean>
   failTurn(invocationId: string, errorMessage: string): Promise<boolean>
   requestDecision(input: DecisionRequestInput, opts?: { signal?: AbortSignal }): Promise<DecisionOutcome>
-  react(input: {
-    emoji: string
-    messageId?: string
-    remove?: boolean
-    invocationId: string
-  }): Promise<{ messageId: string }>
+  react(input: { emoji: string; messageId: string; remove?: boolean }): Promise<void>
   /** Hold the stream's open turns past their idle timeout. */
   keepAlive(streamId: string): void
 }
@@ -160,7 +155,7 @@ const PREAMBLE = [
   "To attach a file to the reply, put a line `THREA_ATTACH: /absolute/path/to/file` in it. Local paths and file: links are not downloadable links in Threa.",
   `To stay silent, reply exactly ${NO_RESPONSE_SENTINEL}.`,
   `Your messages before the final one are not posted, except one that starts with ${UPDATE_PREFIX}, which is posted right away: use it to keep the user posted on longer work.`,
-  "To react to a message with an emoji, put a line `THREA_REACT: :emoji:` in any message: it reacts to the message you are answering, `THREA_REACT: msg_id :emoji:` targets another, and `THREA_UNREACT:` removes.",
+  "To react to a message with an emoji, put a line `THREA_REACT: msg_id :emoji:` in any message, with the id each message is headed or listed with; `THREA_UNREACT: msg_id :emoji:` removes it.",
   "A run that starts without a message from Threa, such as one started when background work finishes, has its final message posted there too.",
 ].join(" ")
 
@@ -1337,7 +1332,7 @@ export class T3TurnRunner {
               ? void batcher.addNow(frame, trace.statusText)
               : batcher.add(frame, trace.statusText)
           )
-          await this.reactToFinished(run, invocationId)
+          await this.reactToFinished(run)
           await this.postUpdates(run, async (item, text) => {
             if (signal.aborted) return
             if (run.runtimeOrigin) {
@@ -1634,7 +1629,7 @@ export class T3TurnRunner {
         }
         if (text === undefined) {
           const full = trace.held ? await this.fullText(run.threadId, trace.held) : ""
-          await this.applyReactions(invocationId, trace.held, full)
+          await this.applyReactions(trace.held, full)
           text = withoutUpdatePrefix(full)
         }
         if (run.abort.signal.aborted) return false
@@ -1664,10 +1659,10 @@ export class T3TurnRunner {
   }
 
   /** Reactions are best-effort: a failed one is logged and never fails the turn. */
-  private async applyReactions(invocationId: string, item: ThreadItem | undefined, text: string): Promise<void> {
+  private async applyReactions(item: ThreadItem | undefined, text: string): Promise<void> {
     for (const reaction of parseReactDirectives(text).reactions) {
       try {
-        await this.session.react({ ...reaction, invocationId })
+        await this.session.react(reaction)
       } catch (error) {
         this.log(`reaction ${reaction.emoji} from ${item?.itemId} not applied: ${errorText(error)}`)
       }
@@ -1675,11 +1670,11 @@ export class T3TurnRunner {
   }
 
   /** Applies finished messages' reactions in the order the agent wrote them. The text is read in full, as a directive can sit past the page's cap. */
-  private async reactToFinished(run: Pick<OpenRun, "threadId" | "trace">, invocationId: string): Promise<void> {
+  private async reactToFinished(run: Pick<OpenRun, "threadId" | "trace">): Promise<void> {
     const { finished } = run.trace
     for (let item = finished.shift(); item; item = finished.shift()) {
       try {
-        await this.applyReactions(invocationId, item, await this.fullText(run.threadId, item))
+        await this.applyReactions(item, await this.fullText(run.threadId, item))
       } catch (error) {
         this.log(`reactions from ${item.itemId} not read: ${errorText(error)}`)
       }

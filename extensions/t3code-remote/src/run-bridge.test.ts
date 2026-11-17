@@ -326,7 +326,7 @@ describe("T3TurnRunner", () => {
       {
         status: "running",
         items: [
-          item(1, "assistant_message", { text: "Looking.\nTHREA_REACT: :eyes:" }),
+          item(1, "assistant_message", { text: "Looking.\nTHREA_REACT: msg_1 :eyes:" }),
           item(2, "assistant_message", { text: "THREA_UPDATE: Halfway.\nTHREA_REACT: msg_9 :tada:" }),
           item(3, "command_execution", { status: "running", text: "$ bun test" }),
         ],
@@ -340,7 +340,7 @@ describe("T3TurnRunner", () => {
         status: "completed",
         items: [
           item(3, "command_execution", { text: "$ bun test" }),
-          item(4, "assistant_message", { text: "Fixed.\nTHREA_UNREACT: :eyes:" }),
+          item(4, "assistant_message", { text: "Fixed.\nTHREA_UNREACT: msg_1 :eyes:" }),
         ],
       },
     ])
@@ -349,8 +349,8 @@ describe("T3TurnRunner", () => {
 
     expect({ reactions: session.reactions, interims: session.interims, replies: session.replies }).toEqual({
       reactions: [
-        { emoji: ":eyes:", invocationId: "binv_1" },
-        { emoji: ":eyes:", remove: true, invocationId: "binv_1" },
+        { emoji: ":eyes:", messageId: "msg_1" },
+        { emoji: ":eyes:", messageId: "msg_1", remove: true },
       ],
       interims: [{ invocationId: "binv_1", text: "Halfway." }],
       replies: [{ invocationId: "binv_1", text: "Fixed." }],
@@ -366,8 +366,8 @@ describe("T3TurnRunner", () => {
       {
         status: "completed",
         items: [
-          item(1, "assistant_message", { text: "Looking.\nTHREA_REACT: :eyes:" }),
-          item(2, "assistant_message", { text: "THREA_UPDATE: Halfway.\nTHREA_UNREACT: :eyes:" }),
+          item(1, "assistant_message", { text: "Looking.\nTHREA_REACT: msg_1 :eyes:" }),
+          item(2, "assistant_message", { text: "THREA_UPDATE: Halfway.\nTHREA_UNREACT: msg_1 :eyes:" }),
           item(3, "command_execution", { text: "$ bun test" }),
           item(4, "assistant_message", { text: "Done." }),
         ],
@@ -377,21 +377,21 @@ describe("T3TurnRunner", () => {
     await session.settled()
 
     expect(session.reactions).toEqual([
-      { emoji: ":eyes:", invocationId: "binv_1" },
-      { emoji: ":eyes:", remove: true, invocationId: "binv_1" },
+      { emoji: ":eyes:", messageId: "msg_1" },
+      { emoji: ":eyes:", messageId: "msg_1", remove: true },
     ])
   })
 
   test("drops a message whose text cannot be read for reactions without failing the turn or the other reactions", async () => {
     const { t3, session, runner, logs } = setup()
-    t3.continueText("long", "Long narration. THREA_REACT: :lost:")
+    t3.continueText("long", "Long narration. THREA_REACT: msg_1 :lost:")
     t3.failNext("t3_thread_read", new Error("T3 is down"), (args) => "textOffset" in args)
     t3.script("run_1", [
       {
         status: "completed",
         items: [
           item(1, "assistant_message", { itemId: "long", text: "Long narration.", nextTextOffset: 15 }),
-          item(2, "assistant_message", { text: "Next.\nTHREA_REACT: :ok:" }),
+          item(2, "assistant_message", { text: "Next.\nTHREA_REACT: msg_1 :ok:" }),
           item(3, "command_execution", { text: "$ bun test" }),
           item(4, "assistant_message", { text: "Done." }),
         ],
@@ -407,7 +407,7 @@ describe("T3TurnRunner", () => {
       continuationReads: t3.callsOf("t3_thread_read").filter((args) => "textOffset" in args).length,
       logged: logs.some((line) => line.includes("reactions from long not read")),
     }).toEqual({
-      reactions: [{ emoji: ":ok:", invocationId: "binv_1" }],
+      reactions: [{ emoji: ":ok:", messageId: "msg_1" }],
       fails: [],
       replies: [{ invocationId: "binv_1", text: "Done." }],
       continuationReads: 1,
@@ -421,7 +421,7 @@ describe("T3TurnRunner", () => {
       {
         status: "completed",
         items: [
-          item(1, "assistant_message", { text: "THREA_REACT: :eyes:\nTHREA_UPDATE: Halfway." }),
+          item(1, "assistant_message", { text: "THREA_REACT: msg_1 :eyes:\nTHREA_UPDATE: Halfway." }),
           item(2, "command_execution", { text: "$ bun test" }),
           item(3, "assistant_message", { text: "Done." }),
         ],
@@ -436,7 +436,7 @@ describe("T3TurnRunner", () => {
       thinking: session.frames().filter((frame) => frame.stepType === "thinking"),
     }).toEqual({
       interims: [{ invocationId: "binv_1", text: "Halfway." }],
-      reactions: [{ emoji: ":eyes:", invocationId: "binv_1" }],
+      reactions: [{ emoji: ":eyes:", messageId: "msg_1" }],
       thinking: [],
     })
   })
@@ -1955,7 +1955,7 @@ describe("runs T3 starts by itself", () => {
     const { t3, session, runner } = setup({ state: LINKED })
     t3.startInT3("thread_1")
     t3.addItems("thread_1", [
-      item(1, "assistant_message", { text: "Before.\nTHREA_REACT: :old:" }),
+      item(1, "assistant_message", { text: "Before.\nTHREA_REACT: msg_1 :old:" }),
       item(2, "command_execution", { title: "bun test" }),
     ])
     t3.script("run_1", [{ status: "running" }])
@@ -1965,7 +1965,7 @@ describe("runs T3 starts by itself", () => {
       {
         status: "completed",
         items: [
-          item(3, "assistant_message", { text: "Now.\nTHREA_REACT: :new:" }),
+          item(3, "assistant_message", { text: "Now.\nTHREA_REACT: msg_1 :new:" }),
           item(4, "command_execution", { title: "git push" }),
           item(5, "assistant_message", { text: "Pushed." }),
         ],
