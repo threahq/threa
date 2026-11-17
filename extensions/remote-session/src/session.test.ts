@@ -3352,7 +3352,7 @@ function makeQueuedSession(
   const contents: string[] = []
   const claims: Array<Record<string, unknown>> = []
   const interrupts: Array<string | undefined> = []
-  const steers: Array<{ text: string; streamId: string; edit?: boolean }> = []
+  const steers: Array<{ text: string; streamId: string; edit?: boolean; answer?: string }> = []
   const steeredAttachments: DownloadedAttachment[][] = []
   const held = { value: false }
   const { client, calls } = makeFakeClient()
@@ -3394,7 +3394,7 @@ function makeQueuedSession(
                 text: string,
                 streamId: string,
                 attachments: DownloadedAttachment[],
-                steerOptions?: { edit?: boolean }
+                steerOptions?: { edit?: boolean; answer?: string }
               ) => {
                 steers.push({ text, streamId, ...steerOptions })
                 steeredAttachments.push(attachments)
