@@ -481,3 +481,55 @@ describe("BotInvocationOutboxHandler stream lifecycle", () => {
     })
   })
 })
+
+describe("BotInvocationOutboxHandler reactions", () => {
+  const reaction = {
+    workspaceId: "ws_1",
+    streamId: "stream_1",
+    messageId: "msg_1",
+    emoji: ":+1:",
+    userId: "usr_1",
+  }
+  const processReaction = (handler: BotInvocationOutboxHandler, change: "added" | "removed", payload: unknown) =>
+    (handler as unknown as { processReaction(change: string, payload: unknown): Promise<void> }).processReaction(
+      change,
+      payload
+    )
+
+  beforeEach(() => {
+    spyOn(StreamRepository, "isSharedCopy").mockResolvedValue(false)
+  })
+
+  it("records a human reaction, treating a missing actor type as a user", async () => {
+    const record = spyOn(BotRuntimeService.prototype, "recordReactionChange").mockResolvedValue()
+    const handler = new BotInvocationOutboxHandler(pool, new BotRuntimeService({ pool }))
+
+    await processReaction(handler, "added", reaction)
+    await processReaction(handler, "removed", { ...reaction, actorType: AuthorTypes.USER })
+
+    expect(record.mock.calls.map(([params]) => params)).toEqual([
+      { workspaceId: "ws_1", messageId: "msg_1", emoji: ":+1:", reactorId: "usr_1", change: "added" },
+      { workspaceId: "ws_1", messageId: "msg_1", emoji: ":+1:", reactorId: "usr_1", change: "removed" },
+    ])
+  })
+
+  it("never wakes an agent for a bot or persona reaction", async () => {
+    const record = spyOn(BotRuntimeService.prototype, "recordReactionChange").mockResolvedValue()
+    const handler = new BotInvocationOutboxHandler(pool, new BotRuntimeService({ pool }))
+
+    await processReaction(handler, "added", { ...reaction, actorType: AuthorTypes.BOT })
+    await processReaction(handler, "added", { ...reaction, actorType: AuthorTypes.PERSONA })
+
+    expect(record).not.toHaveBeenCalled()
+  })
+
+  it("should not record a reaction in a shared copy", async () => {
+    spyOn(StreamRepository, "isSharedCopy").mockResolvedValue(true)
+    const record = spyOn(BotRuntimeService.prototype, "recordReactionChange").mockResolvedValue()
+    const handler = new BotInvocationOutboxHandler(pool, new BotRuntimeService({ pool }))
+
+    await processReaction(handler, "added", reaction)
+
+    expect(record).not.toHaveBeenCalled()
+  })
+})

@@ -319,6 +319,128 @@ describe("T3TurnRunner", () => {
     })
   })
 
+  test("applies THREA_REACT lines once per message, strips them from the posts, and survives a failed reaction", async () => {
+    const { t3, session, runner } = setup()
+    session.failingReactions.set(":tada:", new Error("boom"))
+    t3.script("run_1", [
+      {
+        status: "running",
+        items: [
+          item(1, "assistant_message", { text: "Looking.\nTHREA_REACT: :eyes:" }),
+          item(2, "assistant_message", { text: "THREA_UPDATE: Halfway.\nTHREA_REACT: msg_9 :tada:" }),
+          item(3, "command_execution", { status: "running", text: "$ bun test" }),
+        ],
+      },
+    ])
+    const delivered = runner.deliverTurn(turn())
+    await until(() => session.interims.length > 0)
+
+    t3.script("run_1", [
+      {
+        status: "completed",
+        items: [
+          item(3, "command_execution", { text: "$ bun test" }),
+          item(4, "assistant_message", { text: "Fixed.\nTHREA_UNREACT: :eyes:" }),
+        ],
+      },
+    ])
+    await delivered
+    await session.settled()
+
+    expect({ reactions: session.reactions, interims: session.interims, replies: session.replies }).toEqual({
+      reactions: [
+        { emoji: ":eyes:", invocationId: "binv_1" },
+        { emoji: ":eyes:", remove: true, invocationId: "binv_1" },
+      ],
+      interims: [{ invocationId: "binv_1", text: "Halfway." }],
+      replies: [{ invocationId: "binv_1", text: "Fixed." }],
+    })
+    expect(session.frames().filter((frame) => frame.stepType === "thinking")).toEqual([
+      { stepType: "thinking", content: "Looking." },
+    ])
+  })
+
+  test("applies reactions in the order the agent wrote them, narration before the update after it", async () => {
+    const { t3, session, runner } = setup()
+    t3.script("run_1", [
+      {
+        status: "completed",
+        items: [
+          item(1, "assistant_message", { text: "Looking.\nTHREA_REACT: :eyes:" }),
+          item(2, "assistant_message", { text: "THREA_UPDATE: Halfway.\nTHREA_UNREACT: :eyes:" }),
+          item(3, "command_execution", { text: "$ bun test" }),
+          item(4, "assistant_message", { text: "Done." }),
+        ],
+      },
+    ])
+    await runner.deliverTurn(turn())
+    await session.settled()
+
+    expect(session.reactions).toEqual([
+      { emoji: ":eyes:", invocationId: "binv_1" },
+      { emoji: ":eyes:", remove: true, invocationId: "binv_1" },
+    ])
+  })
+
+  test("drops a message whose text cannot be read for reactions without failing the turn or the other reactions", async () => {
+    const { t3, session, runner, logs } = setup()
+    t3.continueText("long", "Long narration. THREA_REACT: :lost:")
+    t3.failNext("t3_thread_read", new Error("T3 is down"), (args) => "textOffset" in args)
+    t3.script("run_1", [
+      {
+        status: "completed",
+        items: [
+          item(1, "assistant_message", { itemId: "long", text: "Long narration.", nextTextOffset: 15 }),
+          item(2, "assistant_message", { text: "Next.\nTHREA_REACT: :ok:" }),
+          item(3, "command_execution", { text: "$ bun test" }),
+          item(4, "assistant_message", { text: "Done." }),
+        ],
+      },
+    ])
+    await runner.deliverTurn(turn())
+    await session.settled()
+
+    expect({
+      reactions: session.reactions,
+      fails: session.fails,
+      replies: session.replies,
+      continuationReads: t3.callsOf("t3_thread_read").filter((args) => "textOffset" in args).length,
+      logged: logs.some((line) => line.includes("reactions from long not read")),
+    }).toEqual({
+      reactions: [{ emoji: ":ok:", invocationId: "binv_1" }],
+      fails: [],
+      replies: [{ invocationId: "binv_1", text: "Done." }],
+      continuationReads: 1,
+      logged: true,
+    })
+  })
+
+  test("posts an update that starts with a reaction line as an update, not narration", async () => {
+    const { t3, session, runner } = setup()
+    t3.script("run_1", [
+      {
+        status: "completed",
+        items: [
+          item(1, "assistant_message", { text: "THREA_REACT: :eyes:\nTHREA_UPDATE: Halfway." }),
+          item(2, "command_execution", { text: "$ bun test" }),
+          item(3, "assistant_message", { text: "Done." }),
+        ],
+      },
+    ])
+    await runner.deliverTurn(turn())
+    await session.settled()
+
+    expect({
+      interims: session.interims,
+      reactions: session.reactions,
+      thinking: session.frames().filter((frame) => frame.stepType === "thinking"),
+    }).toEqual({
+      interims: [{ invocationId: "binv_1", text: "Halfway." }],
+      reactions: [{ emoji: ":eyes:", invocationId: "binv_1" }],
+      thinking: [],
+    })
+  })
+
   test("keeps an update a post failed on, and posts it and the ones after it in order", async () => {
     const { t3, session, runner } = setup()
     session.interimResults.push({ ok: false, retryable: true, message: "Input update is still in progress" })
@@ -1827,6 +1949,31 @@ describe("runs T3 starts by itself", () => {
       reply: { invocationId: "binv_1", text: "Done." },
       posts: [],
     })
+  })
+
+  test("does not apply the reactions of messages a cut-off turn already read", async () => {
+    const { t3, session, runner } = setup({ state: LINKED })
+    t3.startInT3("thread_1")
+    t3.addItems("thread_1", [
+      item(1, "assistant_message", { text: "Before.\nTHREA_REACT: :old:" }),
+      item(2, "command_execution", { title: "bun test" }),
+    ])
+    t3.script("run_1", [{ status: "running" }])
+    await runner.watch()
+    await idle()
+    t3.script("run_1", [
+      {
+        status: "completed",
+        items: [
+          item(3, "assistant_message", { text: "Now.\nTHREA_REACT: :new:" }),
+          item(4, "command_execution", { title: "git push" }),
+          item(5, "assistant_message", { text: "Pushed." }),
+        ],
+      },
+    ])
+    await until(() => !runner.busy)
+
+    expect(session.reactions.map((reaction) => reaction.emoji)).toEqual([":new:"])
   })
 
   test("posts an update the cut-off run finished after the first look", async () => {

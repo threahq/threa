@@ -42,6 +42,11 @@ describe("buildInstructions", () => {
     expect(text).toContain("invocation_id")
   })
 
+  test("documents the react tool", () => {
+    expect(buildInstructions({ permissionRelay: false })).toContain("`react`")
+    expect(channelTools(false).map((tool) => tool.name)).toEqual(["send", "reply", "react"])
+  })
+
   test("mentions permission forwarding only when relay is enabled", () => {
     expect(buildInstructions({ permissionRelay: true }).toLowerCase()).toContain("approv")
     expect(buildInstructions({ permissionRelay: false }).toLowerCase()).not.toContain("approv")
@@ -303,6 +308,44 @@ describe("ChannelServer delegations", () => {
     const result = await server.handleToolCall("reply", "dlg_1", "Done.")
     expect(result.ok).toBe(false)
     expect(sessionReply).toHaveBeenCalled()
+  })
+})
+
+describe("react tool", () => {
+  function reactServer() {
+    const config = makeConfig()
+    const server = new ChannelServer(config, new ThreaClient(config), makeFakeTransport())
+    return { server, react: spyOn(server.session, "react") }
+  }
+
+  test("reacts through the session for the invocation and names the message", async () => {
+    const { server, react } = reactServer()
+    react.mockResolvedValue({ messageId: "msg_src" })
+    const added = await server.handleReact({ invocation_id: "binv_1", emoji: ":tada:" })
+    const removed = await server.handleReact({
+      invocation_id: "binv_1",
+      emoji: ":tada:",
+      message_id: "msg_2",
+      remove: true,
+    })
+    expect({ added, removed, calls: react.mock.calls }).toEqual({
+      added: { ok: true, message: "Added :tada: on msg_src." },
+      removed: { ok: true, message: "Removed :tada: on msg_src." },
+      calls: [
+        [{ emoji: ":tada:", invocationId: "binv_1" }],
+        [{ emoji: ":tada:", invocationId: "binv_1", messageId: "msg_2", remove: true }],
+      ],
+    })
+  })
+
+  test("returns session errors and missing arguments as tool errors", async () => {
+    const { server, react } = reactServer()
+    react.mockRejectedValue(new Error("Cannot react: this turn has no source message; pass messageId."))
+    expect(await server.handleReact({ invocation_id: "binv_1", emoji: "👍" })).toEqual({
+      ok: false,
+      message: "Cannot react: this turn has no source message; pass messageId.",
+    })
+    expect((await server.handleReact({ emoji: "👍" })).ok).toBe(false)
   })
 })
 

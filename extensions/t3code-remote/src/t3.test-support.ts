@@ -403,6 +403,8 @@ export function fakeSession(rootStreamId = "stream_root") {
   const replyResults: Array<Awaited<ReturnType<BridgeSession["reply"]>>> = []
   const interimResults: Array<Awaited<ReturnType<BridgeSession["sendInterim"]>>> = []
   const postFailures: Error[] = []
+  const reactions: Array<{ emoji: string; messageId?: string; remove?: boolean; invocationId: string }> = []
+  const failingReactions = new Map<string, Error>()
   const encrypted = new Set<string>()
   const fails: Array<{ invocationId: string; errorMessage: string }> = []
   const decisions: Array<{ input: DecisionRequestInput; signal?: AbortSignal }> = []
@@ -453,6 +455,12 @@ export function fakeSession(rootStreamId = "stream_root") {
     },
     isEncrypted: async (streamId) => encrypted.has(streamId),
     keepAlive: (streamId) => keptAlive.push(streamId),
+    react: async (input) => {
+      const failure = failingReactions.get(input.emoji)
+      if (failure) throw failure
+      reactions.push(input)
+      return { messageId: input.messageId ?? "msg_source" }
+    },
     failTurn: async (invocationId, errorMessage) => {
       fails.push({ invocationId, errorMessage })
       settle()
@@ -490,6 +498,9 @@ export function fakeSession(rootStreamId = "stream_root") {
     /** Streams Threa reports as end-to-end encrypted. */
     encrypted,
     keptAlive,
+    reactions,
+    /** What reacting with an emoji throws; unset, it applies. */
+    failingReactions,
     fails,
     decisions,
     /** Answer the open card, or the next one asked. */

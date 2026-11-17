@@ -17,6 +17,7 @@ import {
   endsWithNoResponse,
   isTerminalPostError,
   StepBatcher,
+  parseReactDirectives,
   redactAttachDirectives,
   toolTraceContent,
 } from "@threahq/remote-session"
@@ -47,6 +48,12 @@ export interface BridgeSession {
   isEncrypted(streamId: string): Promise<boolean>
   failTurn(invocationId: string, errorMessage: string): Promise<boolean>
   requestDecision(input: DecisionRequestInput, opts?: { signal?: AbortSignal }): Promise<DecisionOutcome>
+  react(input: {
+    emoji: string
+    messageId?: string
+    remove?: boolean
+    invocationId: string
+  }): Promise<{ messageId: string }>
   /** Hold the stream's open turns past their idle timeout. */
   keepAlive(streamId: string): void
 }
@@ -137,11 +144,15 @@ const RUN_STATE_TEXT: Partial<Record<RunStatus | "idle", string>> = {
 const UPDATE_PREFIX = "THREA_UPDATE:"
 
 function isUpdate(text: string | null | undefined): boolean {
-  return (text ?? "").trimStart().startsWith(UPDATE_PREFIX)
+  return parseReactDirectives(text ?? "")
+    .text.trimStart()
+    .startsWith(UPDATE_PREFIX)
 }
 
+/** A finished message as posted: its reaction directives and update prefix removed. */
 function withoutUpdatePrefix(text: string): string {
-  return isUpdate(text) ? text.trimStart().slice(UPDATE_PREFIX.length).trim() : text
+  const stripped = parseReactDirectives(text).text
+  return isUpdate(stripped) ? stripped.trimStart().slice(UPDATE_PREFIX.length).trim() : stripped
 }
 
 const PREAMBLE = [
@@ -149,6 +160,7 @@ const PREAMBLE = [
   "To attach a file to the reply, put a line `THREA_ATTACH: /absolute/path/to/file` in it. Local paths and file: links are not downloadable links in Threa.",
   `To stay silent, reply exactly ${NO_RESPONSE_SENTINEL}.`,
   `Your messages before the final one are not posted, except one that starts with ${UPDATE_PREFIX}, which is posted right away: use it to keep the user posted on longer work.`,
+  "To react to a message with an emoji, put a line `THREA_REACT: :emoji:` in any message: it reacts to the message you are answering, `THREA_REACT: msg_id :emoji:` targets another, and `THREA_UNREACT:` removes.",
   "A run that starts without a message from Threa, such as one started when background work finishes, has its final message posted there too.",
 ].join(" ")
 
@@ -230,6 +242,8 @@ export class RunTrace {
   held?: ThreadItem
   /** Finished `THREA_UPDATE:` messages, and requests only T3 Code can answer, not yet posted. */
   readonly updates: ThreadItem[] = []
+  /** Finished assistant messages, in the order the agent wrote them, whose `THREA_REACT:` lines are not applied yet. */
+  readonly finished: ThreadItem[] = []
   /** The item ids of questions still waiting on an answer. */
   readonly questions = new Set<string>()
   /** The item ids of requests still waiting on an answer given in T3 Code. */
@@ -264,9 +278,16 @@ export class RunTrace {
     if (this.emitted.get(item.itemId) === "final") return []
     const frames: StepFrame[] = []
     if (this.held && item.position > this.held.position) {
+      const cutOff = this.postedItems.has(item.itemId)
       if (isUpdate(this.held.text)) {
-        if (!this.postedItems.has(item.itemId)) this.updates.push(this.held)
-      } else frames.push({ stepType: "thinking", content: redactAttachDirectives(this.held.text ?? "") })
+        if (!cutOff) this.updates.push(this.held)
+      } else {
+        frames.push({
+          stepType: "thinking",
+          content: redactAttachDirectives(parseReactDirectives(this.held.text ?? "").text),
+        })
+      }
+      if (!cutOff) this.finished.push(this.held)
       this.emitted.set(this.held.itemId, "final")
       this.held = undefined
     }
@@ -1316,6 +1337,7 @@ export class T3TurnRunner {
               ? void batcher.addNow(frame, trace.statusText)
               : batcher.add(frame, trace.statusText)
           )
+          await this.reactToFinished(run, invocationId)
           await this.postUpdates(run, async (item, text) => {
             if (signal.aborted) return
             if (run.runtimeOrigin) {
@@ -1610,7 +1632,11 @@ export class T3TurnRunner {
           }
           return true
         }
-        text ??= trace.held ? await this.replyText(run.threadId, trace.held) : ""
+        if (text === undefined) {
+          const full = trace.held ? await this.fullText(run.threadId, trace.held) : ""
+          await this.applyReactions(invocationId, trace.held, full)
+          text = withoutUpdatePrefix(full)
+        }
         if (run.abort.signal.aborted) return false
         // Nobody is waiting on a runtime-started run, so narration before a closing sentinel is noise.
         if (run.runtimeOrigin && text.trim() && !endsWithNoResponse(text)) {
@@ -1635,6 +1661,29 @@ export class T3TurnRunner {
 
   private async replyText(threadId: string, item: ThreadItem): Promise<string> {
     return withoutUpdatePrefix(await this.fullText(threadId, item))
+  }
+
+  /** Reactions are best-effort: a failed one is logged and never fails the turn. */
+  private async applyReactions(invocationId: string, item: ThreadItem | undefined, text: string): Promise<void> {
+    for (const reaction of parseReactDirectives(text).reactions) {
+      try {
+        await this.session.react({ ...reaction, invocationId })
+      } catch (error) {
+        this.log(`reaction ${reaction.emoji} from ${item?.itemId} not applied: ${errorText(error)}`)
+      }
+    }
+  }
+
+  /** Applies finished messages' reactions in the order the agent wrote them. The text is read in full, as a directive can sit past the page's cap. */
+  private async reactToFinished(run: Pick<OpenRun, "threadId" | "trace">, invocationId: string): Promise<void> {
+    const { finished } = run.trace
+    for (let item = finished.shift(); item; item = finished.shift()) {
+      try {
+        await this.applyReactions(invocationId, item, await this.fullText(run.threadId, item))
+      } catch (error) {
+        this.log(`reactions from ${item.itemId} not read: ${errorText(error)}`)
+      }
+    }
   }
 
   /** A wait notice quotes what T3 asks, as its prompt or command, in a code block, where no link uploads and no mention notifies. */

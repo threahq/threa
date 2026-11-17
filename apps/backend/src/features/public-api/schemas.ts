@@ -553,6 +553,11 @@ export const updateMessageSchema = z.object({
   content: z.string().min(1, "content is required"),
 })
 
+export const messageReactionParamsSchema = z.object({
+  messageId: z.string().min(1),
+  emoji: z.string().min(1).max(100),
+})
+
 export const updateStreamSchema = z.object({
   // Markdown, parsed server-side to the canonical ProseMirror description (same
   // wire format as message `content`). An empty string clears the description.

@@ -94,7 +94,7 @@ import {
 import { HttpError, isUniqueViolation } from "@threahq/backend-common"
 import { invocationClaimNotFound, invocationInputStale } from "./errors"
 import { validateRequest } from "../../lib/validation"
-import { normalizeMessage, toEmoji } from "../emoji"
+import { normalizeMessage, requireShortcode, toEmoji } from "../emoji"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threahq/prosemirror"
 import { randomUUID } from "crypto"
 import { botId, eventId } from "../../lib/id"
@@ -156,6 +156,7 @@ import {
   listConversationMessagesSchema,
   sendMessageSchema,
   updateMessageSchema,
+  messageReactionParamsSchema,
   updateStreamSchema,
   listMembersSchema,
   listUsersSchema,
@@ -1310,6 +1311,21 @@ export function createPublicApiHandlers({
     const invocation = await botRuntimeService.findCompletedInvocationForReplay(client, params)
     if (!invocation || invocation.responseStreamId !== snapshot.responseStreamId) return null
     return loadCompletedInvocationReplay(client, invocation, params.botId, params.claimToken)
+  }
+
+  /** The emoji is validated before the actor lookup so a malformed request never reveals whether the message exists. */
+  async function resolveMessageReaction(req: Request) {
+    const { messageId, emoji } = validateRequest(messageReactionParamsSchema, req.params)
+    const shortcode = requireShortcode(emoji)
+    const { message: existing, actorId, actorType } = await resolveMessageMutation(messageId, req)
+    return {
+      workspaceId: req.workspaceId!,
+      messageId,
+      streamId: existing?.streamId ?? "stream_missing",
+      emoji: shortcode,
+      userId: actorId,
+      actorType,
+    }
   }
 
   /** Resolve mutation actor independently; message snapshot is only a placement hint. */
@@ -3754,6 +3770,24 @@ export function createPublicApiHandlers({
         throw new HttpError("Message not found or was deleted", { status: 404, code: "NOT_FOUND" })
       }
 
+      res.status(204).send()
+    },
+
+    async addMessageReaction(req: Request, res: Response) {
+      const message = await eventService.addReactionForPrincipal(
+        apiKeyPrincipal(req),
+        await resolveMessageReaction(req)
+      )
+      if (!message) throw new HttpError("Message not found or was deleted", { status: 404, code: "NOT_FOUND" })
+      res.status(204).send()
+    },
+
+    async removeMessageReaction(req: Request, res: Response) {
+      const message = await eventService.removeReactionForPrincipal(
+        apiKeyPrincipal(req),
+        await resolveMessageReaction(req)
+      )
+      if (!message) throw new HttpError("Message not found or was deleted", { status: 404, code: "NOT_FOUND" })
       res.status(204).send()
     },
 

@@ -1,5 +1,8 @@
 import {
+  AuthorTypes,
   BOT_INVOCATION_CAPABILITIES,
+  BotInvocationCapabilities,
+  BotInvocationTriggers,
   BOT_INVOCATION_STATUSES,
   BOT_INVOCATION_TRIGGERS,
   BOT_RUNTIME_KINDS,
@@ -1544,6 +1547,7 @@ export const BotInvocationRepository = {
             AND terminal.source_message_id = ${params.sourceMessageId}
             AND terminal.actor_type = ${params.actorType}
             AND terminal.actor_id = ${params.actorId}
+            AND terminal.trigger <> 'reaction'
             AND terminal.status IN ('completed', 'failed', 'parked', 'expired')
             AND terminal.source_message_revision >= ${params.sourceMessageRevision}
         )
@@ -1600,7 +1604,7 @@ export const BotInvocationRepository = {
           AND actor_type = ${params.actorType} AND actor_id = ${params.actorId}
           AND (
             (trigger = ${params.trigger} AND status IN ('pending', 'claimed'))
-            OR status IN ('completed', 'failed', 'parked', 'expired')
+            OR (trigger <> 'reaction' AND status IN ('completed', 'failed', 'parked', 'expired'))
           )
         ORDER BY CASE WHEN status IN ('pending', 'claimed') THEN 0 ELSE 1 END, created_at DESC
         LIMIT 1
@@ -1613,6 +1617,118 @@ export const BotInvocationRepository = {
         routingDestinationChanged: false,
       }
     })
+  },
+
+  /**
+   * Everything the agent has been, or is about to be, told about reactions on
+   * this message. Takes the actor-source lock first and row-locks the pending
+   * invocation so a concurrent claim skips it while the caller rewrites it.
+   * `delivered` is every invocation a runtime ever claimed (so one whose turn
+   * ended cancelled or parked still counts as seen), oldest first.
+   */
+  async findReactionHistoryForUpdate(
+    db: Querier,
+    params: { workspaceId: string; sourceMessageId: string; botId: string }
+  ): Promise<{ pending: BotInvocation | null; delivered: BotInvocation[] }> {
+    await acquireActorSourceLocks(db, [
+      {
+        workspaceId: params.workspaceId,
+        sourceMessageId: params.sourceMessageId,
+        actorType: AuthorTypes.BOT,
+        actorId: params.botId,
+      },
+    ])
+    const pendingResult = await db.query<BotInvocationRow>(sql`
+      SELECT * FROM bot_invocations
+      WHERE workspace_id = ${params.workspaceId} AND source_message_id = ${params.sourceMessageId}
+        AND actor_type = ${AuthorTypes.BOT} AND actor_id = ${params.botId}
+        AND trigger = ${BotInvocationTriggers.REACTION} AND status = 'pending'
+      FOR UPDATE
+    `)
+    const deliveredResult = await db.query<BotInvocationRow>(sql`
+      SELECT * FROM bot_invocations
+      WHERE workspace_id = ${params.workspaceId} AND source_message_id = ${params.sourceMessageId}
+        AND actor_type = ${AuthorTypes.BOT} AND actor_id = ${params.botId}
+        AND trigger = ${BotInvocationTriggers.REACTION} AND status <> 'pending' AND attempts > 0
+      ORDER BY created_at, id
+    `)
+    return {
+      pending: pendingResult.rows[0] ? mapInvocation(pendingResult.rows[0]) : null,
+      delivered: deliveredResult.rows.map(mapInvocation),
+    }
+  },
+
+  async insertPendingReaction(
+    db: Querier,
+    params: {
+      id: string
+      workspaceId: string
+      rootStreamId: string
+      activeStreamId: string
+      sourceMessageId: string
+      responseStreamId: string
+      actorId: string
+      promptMarkdown: string
+      sourceMessageRevision: number
+      authorUserId: string
+      targetInstanceId: string
+      targetRuntimeSessionId: string
+      metadata: Record<string, unknown>
+    }
+  ): Promise<BotInvocation> {
+    const result = await db.query<BotInvocationRow>(sql`
+      INSERT INTO bot_invocations (id, workspace_id, root_stream_id, active_stream_id, source_message_id, response_stream_id, actor_type, actor_id, trigger, required_capability, prompt_markdown, author_user_id, target_instance_id, target_runtime_session_id, metadata, source_message_revision)
+      VALUES (${params.id}, ${params.workspaceId}, ${params.rootStreamId}, ${params.activeStreamId}, ${params.sourceMessageId}, ${params.responseStreamId}, ${AuthorTypes.BOT}, ${params.actorId}, ${BotInvocationTriggers.REACTION}, ${BotInvocationCapabilities.REACTION}, ${params.promptMarkdown}, ${params.authorUserId}, ${params.targetInstanceId}, ${params.targetRuntimeSessionId}, ${params.metadata}, ${params.sourceMessageRevision})
+      RETURNING *
+    `)
+    return mapInvocation(result.rows[0])
+  },
+
+  /**
+   * Rewrites the events and re-points the invocation at the runtime session that
+   * covers the stream now, so a relink never leaves it claimable only by a
+   * session that is gone. Pinned to the invocation id and `pending`: a row
+   * claimed meanwhile is left untouched.
+   */
+  async replacePendingReaction(
+    db: Querier,
+    params: {
+      workspaceId: string
+      invocationId: string
+      metadata: Record<string, unknown>
+      rootStreamId: string
+      activeStreamId: string
+      responseStreamId: string
+      targetInstanceId: string
+      targetRuntimeSessionId: string
+    }
+  ): Promise<BotInvocation | null> {
+    const result = await db.query<BotInvocationRow>(sql`
+      UPDATE bot_invocations
+      SET metadata = ${params.metadata}, root_stream_id = ${params.rootStreamId},
+          active_stream_id = ${params.activeStreamId}, response_stream_id = ${params.responseStreamId},
+          target_instance_id = ${params.targetInstanceId}, target_runtime_session_id = ${params.targetRuntimeSessionId},
+          updated_at = NOW()
+      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId}
+        AND trigger = ${BotInvocationTriggers.REACTION} AND status = 'pending'
+      RETURNING *
+    `)
+    return result.rows[0] ? mapInvocation(result.rows[0]) : null
+  },
+
+  /** Pinned to the invocation id and `pending`, like `replacePendingReaction`. */
+  async cancelPendingReaction(
+    db: Querier,
+    params: { workspaceId: string; invocationId: string; reason: BotInvocationCancellationReason }
+  ): Promise<BotInvocation | null> {
+    const result = await db.query<BotInvocationRow>(sql`
+      UPDATE bot_invocations
+      SET status = 'cancelled', cancellation_reason = ${params.reason}, updated_at = NOW()
+      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId}
+        AND trigger = ${BotInvocationTriggers.REACTION} AND status = 'pending'
+      RETURNING *
+    `)
+    return result.rows[0] ? mapInvocation(result.rows[0]) : null
   },
 
   async findNextClaimable(

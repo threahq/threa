@@ -66,6 +66,9 @@ import {
   emitRewrapSocketNudge,
 } from "../e2e-streams"
 import { MessageRepository, type InvocationSourceState } from "../messaging"
+import { UserRepository } from "../workspaces"
+import { parseReactionEvents, planReactionChange, reactionMetadata } from "./reaction-events"
+import { findBotLinkCoveringStream } from "./runtime-route-selection"
 import {
   buildCanonicalInvocationPrompt,
   resolveCanonicalInvocationRoutes,
@@ -100,6 +103,11 @@ export function isSupervisorHeld(capabilities: Record<string, unknown> | undefin
 }
 
 const DELETED_SOURCE_SESSION_REPAIR_BATCH_SIZE = 100
+
+/** The pending reaction row is locked FOR UPDATE and claims skip locked rows, so a pinned write cannot miss. */
+function pendingReactionVanished(invocationId: string): Error {
+  return new Error(`Pending reaction invocation ${invocationId} changed while its row was locked`)
+}
 
 function serializeBotForOutbox(bot: Bot) {
   const common = {
@@ -1031,6 +1039,133 @@ export class BotRuntimeService {
       }
       return { invocation }
     })
+  }
+
+  /**
+   * A human reacted to, or un-reacted from, a bot's own message. The runtime
+   * session linked to that stream is told what a person watching would notice:
+   * a reaction still waiting in a pending invocation is withdrawn silently, one
+   * the agent already received is reported as removed, and one it never heard
+   * of changes nothing. Only runtimes advertising `supportsReactions` take part.
+   */
+  async recordReactionChange(params: {
+    workspaceId: string
+    messageId: string
+    emoji: string
+    reactorId: string
+    change: "added" | "removed"
+  }): Promise<void> {
+    await withTransaction(this.pool, async (db) => {
+      const source = await MessageRepository.findInvocationSourceStateForShare(db, {
+        workspaceId: params.workspaceId,
+        messageId: params.messageId,
+      })
+      if (!source || source.deleted || source.authorType !== AuthorTypes.BOT) return
+      const botId = source.authorId
+      const target = await this.findReactionTargetInTransaction(db, source, botId)
+      if (!target) return
+
+      const history = await BotInvocationRepository.findReactionHistoryForUpdate(db, {
+        workspaceId: params.workspaceId,
+        sourceMessageId: params.messageId,
+        botId,
+      })
+      const plan = planReactionChange(
+        history.delivered.flatMap((invocation) => parseReactionEvents(invocation.metadata)),
+        history.pending && { id: history.pending.id, events: parseReactionEvents(history.pending.metadata) },
+        { action: params.change, emoji: params.emoji, reactorId: params.reactorId }
+      )
+      if (plan.kind === "unchanged") return
+
+      if (plan.kind === "cancel") {
+        const cancelled = await BotInvocationRepository.cancelPendingReaction(db, {
+          workspaceId: params.workspaceId,
+          invocationId: plan.invocationId,
+          reason: "routing_changed",
+        })
+        if (!cancelled) throw pendingReactionVanished(plan.invocationId)
+        await this.emitCancellationHints(db, [cancelled])
+        return
+      }
+
+      const reactor = (await UserRepository.findByIds(db, params.workspaceId, [params.reactorId]))[0]
+      const event = {
+        action: params.change,
+        emoji: params.emoji,
+        reactorId: params.reactorId,
+        reactorName: reactor?.name ?? null,
+      }
+      if (plan.kind === "replace") {
+        const replaced = await BotInvocationRepository.replacePendingReaction(db, {
+          workspaceId: params.workspaceId,
+          invocationId: plan.invocationId,
+          metadata: reactionMetadata(plan.append ? [...plan.retained, event] : plan.retained),
+          rootStreamId: target.rootStreamId,
+          activeStreamId: source.streamId,
+          responseStreamId: source.streamId,
+          targetInstanceId: target.link.instanceId,
+          targetRuntimeSessionId: target.link.runtimeSessionId,
+        })
+        if (!replaced) throw pendingReactionVanished(plan.invocationId)
+        return
+      }
+      const invocation = await BotInvocationRepository.insertPendingReaction(db, {
+        id: botInvocationId(),
+        workspaceId: params.workspaceId,
+        rootStreamId: target.rootStreamId,
+        activeStreamId: source.streamId,
+        sourceMessageId: params.messageId,
+        responseStreamId: source.streamId,
+        actorId: botId,
+        promptMarkdown: source.contentMarkdown,
+        sourceMessageRevision: source.revision,
+        authorUserId: params.reactorId,
+        targetInstanceId: target.link.instanceId,
+        targetRuntimeSessionId: target.link.runtimeSessionId,
+        metadata: reactionMetadata([event]),
+      })
+      await this.emitAvailabilityHint(db, invocation)
+    })
+  }
+
+  /**
+   * The runtime session that covers the stream a bot's message sits in: a link
+   * on that thread itself, else the link on its root. Null unless the bot can
+   * still write there and its instance advertises reaction turns.
+   */
+  private async findReactionTargetInTransaction(
+    db: Querier,
+    source: InvocationSourceState,
+    botId: string
+  ): Promise<{ link: BotRuntimeSessionLink; rootStreamId: string } | null> {
+    const stream = await StreamRepository.findById(db, source.workspaceId, source.streamId)
+    if (!stream) return null
+    const rootStreamId = stream.rootStreamId ?? stream.id
+    const link = await findBotLinkCoveringStream(db, {
+      workspaceId: source.workspaceId,
+      botId,
+      rootStreamId,
+      activeStreamId: stream.id,
+    })
+    if (!link) return null
+    const instance = await BotRuntimeInstanceRepository.findByInstance(db, {
+      workspaceId: source.workspaceId,
+      botId,
+      instanceId: link.instanceId,
+    })
+    if (instance?.capabilities.supportsReactions !== true) return null
+    try {
+      await assertStreamWritable(db, {
+        workspaceId: source.workspaceId,
+        streamId: source.streamId,
+        principal: { kind: "bot", botId },
+      })
+    } catch (error) {
+      const denial = error as { code?: string }
+      if (denial.code === "STREAM_READ_ONLY" || denial.code === "STREAM_NOT_FOUND") return null
+      throw error
+    }
+    return { link, rootStreamId }
   }
 
   private async linkedBriefTargetInTransaction(

@@ -1610,6 +1610,11 @@ export {
   type BridgeProfiles,
   type ConnectedWorkspace,
 } from "./stream-connections"
+export {
+  botInvocationReactionMetadataSchema,
+  type BotInvocationReactionEvent,
+  type BotInvocationReactionMetadata,
+} from "./bot-invocation-reaction"
 
 // In-app links (`app:` hrefs) for agents and the user guide
 export {

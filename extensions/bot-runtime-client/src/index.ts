@@ -23,6 +23,9 @@ export {
   type AttachmentUploader,
   type UploadedAttachment,
 } from "./reply-files"
+export { parseReactDirectives, type ReactDirective } from "./react-directives"
+export { reactionTurnPrompt } from "./reaction-turn"
+export { NO_RESPONSE_SENTINEL } from "./no-response"
 export { parseWsHint, buildBotSocketUrl, isObject, type WsHint } from "./ws-hint"
 export type {
   BotWriteAck,

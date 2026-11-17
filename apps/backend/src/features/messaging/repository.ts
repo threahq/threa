@@ -809,36 +809,38 @@ export const MessageRepository = {
     `)
   },
 
+  /** `changed` is false when the reaction was already there. */
   async addReaction(
     db: Querier,
     workspaceId: string,
     messageId: string,
     emoji: string,
     userId: string
-  ): Promise<Message | null> {
-    await db.query(sql`
+  ): Promise<{ message: Message | null; changed: boolean }> {
+    const result = await db.query(sql`
       INSERT INTO reactions (workspace_id, message_id, user_id, emoji)
       VALUES (${workspaceId}, ${messageId}, ${userId}, ${emoji})
       ON CONFLICT (workspace_id, message_id, user_id, emoji) DO NOTHING
     `)
-    return this.findById(db, workspaceId, messageId)
+    return { message: await this.findById(db, workspaceId, messageId), changed: result.rowCount === 1 }
   },
 
+  /** `changed` is false when the reaction was not there. */
   async removeReaction(
     db: Querier,
     workspaceId: string,
     messageId: string,
     emoji: string,
     userId: string
-  ): Promise<Message | null> {
-    await db.query(sql`
+  ): Promise<{ message: Message | null; changed: boolean }> {
+    const result = await db.query(sql`
       DELETE FROM reactions
       WHERE workspace_id = ${workspaceId}
         AND message_id = ${messageId}
         AND user_id = ${userId}
         AND emoji = ${emoji}
     `)
-    return this.findById(db, workspaceId, messageId)
+    return { message: await this.findById(db, workspaceId, messageId), changed: result.rowCount === 1 }
   },
 
   async getNamingStats(

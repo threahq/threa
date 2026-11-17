@@ -2405,27 +2405,28 @@ export class EventService {
           const existing = await MessageRepository.findByIdForUpdate(client, params.workspaceId, params.messageId)
           if (!existing || existing.deletedAt) return { kind: "done" as const, value: null }
           if (existing.streamId !== streamId) return { kind: "retry" as const, streamId: existing.streamId }
-          await StreamEventRepository.insert(client, {
-            id: eventId(),
-            workspaceId: params.workspaceId,
-            streamId: params.streamId,
-            eventType: "reaction_added",
-            payload: {
-              messageId: params.messageId,
-              emoji: params.emoji,
-              userId: params.userId,
-            } satisfies ReactionPayload,
-            actorId: params.userId,
-            actorType,
-          })
-
-          const message = await MessageRepository.addReaction(
+          const { message, changed } = await MessageRepository.addReaction(
             client,
             params.workspaceId,
             params.messageId,
             params.emoji,
             params.userId
           )
+          if (changed) {
+            await StreamEventRepository.insert(client, {
+              id: eventId(),
+              workspaceId: params.workspaceId,
+              streamId: params.streamId,
+              eventType: "reaction_added",
+              payload: {
+                messageId: params.messageId,
+                emoji: params.emoji,
+                userId: params.userId,
+              } satisfies ReactionPayload,
+              actorId: params.userId,
+              actorType,
+            })
+          }
 
           if (message && actorType === AuthorTypes.USER) {
             // Reacting is engagement: a provisional conversation placement the
@@ -2443,7 +2444,7 @@ export class EventService {
             }
           }
 
-          if (message) {
+          if (changed) {
             await OutboxRepository.insert(client, "reaction:added", {
               workspaceId: params.workspaceId,
               streamId: params.streamId,
@@ -2501,29 +2502,30 @@ export class EventService {
           const existing = await MessageRepository.findByIdForUpdate(client, params.workspaceId, params.messageId)
           if (!existing || existing.deletedAt) return { kind: "done" as const, value: null }
           if (existing.streamId !== streamId) return { kind: "retry" as const, streamId: existing.streamId }
-          await StreamEventRepository.insert(client, {
-            id: eventId(),
-            workspaceId: params.workspaceId,
-            streamId: params.streamId,
-            eventType: "reaction_removed",
-            payload: {
-              messageId: params.messageId,
-              emoji: params.emoji,
-              userId: params.userId,
-            } satisfies ReactionPayload,
-            actorId: params.userId,
-            actorType,
-          })
-
-          const message = await MessageRepository.removeReaction(
+          const { message, changed } = await MessageRepository.removeReaction(
             client,
             params.workspaceId,
             params.messageId,
             params.emoji,
             params.userId
           )
+          if (changed) {
+            await StreamEventRepository.insert(client, {
+              id: eventId(),
+              workspaceId: params.workspaceId,
+              streamId: params.streamId,
+              eventType: "reaction_removed",
+              payload: {
+                messageId: params.messageId,
+                emoji: params.emoji,
+                userId: params.userId,
+              } satisfies ReactionPayload,
+              actorId: params.userId,
+              actorType,
+            })
+          }
 
-          if (message) {
+          if (changed) {
             await OutboxRepository.insert(client, "reaction:removed", {
               workspaceId: params.workspaceId,
               streamId: params.streamId,

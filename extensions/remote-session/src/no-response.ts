@@ -1,5 +1,4 @@
-/** What a connector tells its agent to reply to stay silent; the connector then closes the turn with an empty reply. */
-export const NO_RESPONSE_SENTINEL = "THREA_NO_RESPONSE"
+import { NO_RESPONSE_SENTINEL } from "@threahq/bot-runtime-client"
 
 const TRAILING_SENTINEL = new RegExp(`(^|\\n)[ \\t]*${NO_RESPONSE_SENTINEL}\\s*$`)
 

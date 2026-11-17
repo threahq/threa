@@ -1197,7 +1197,7 @@ describe("EventService.addReactionInternal inbox clear mode", () => {
       callback({})) as any)
     spyOn(MessageRepository, "findByIdForUpdate").mockResolvedValue({ id: "msg_1", streamId: "stream_1" } as any)
     spyOn(StreamEventRepository, "insert").mockResolvedValue({} as any)
-    spyOn(MessageRepository, "addReaction").mockResolvedValue({ id: "msg_1" } as any)
+    spyOn(MessageRepository, "addReaction").mockResolvedValue({ message: { id: "msg_1" }, changed: true } as any)
     spyOn(MessageConversationStateRepository, "settle").mockResolvedValue([])
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
   })

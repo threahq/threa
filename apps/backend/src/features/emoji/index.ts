@@ -8,3 +8,4 @@ export type { EmojiUsageHandlerConfig } from "./usage-outbox-handler"
 
 export { toShortcode, toEmoji, isValidShortcode, getShortcodeNames, normalizeMessage, getEmojiList } from "./emoji"
 export type { EmojiEntry } from "./emoji"
+export { requireShortcode } from "./require-shortcode"
