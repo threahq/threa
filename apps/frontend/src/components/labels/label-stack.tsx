@@ -1,7 +1,8 @@
-import { memo } from "react"
+import { memo, type CSSProperties } from "react"
 import { Link } from "react-router-dom"
 import type { LabelableResourceType } from "@threahq/types"
 import { cn } from "@/lib/utils"
+import { hexToRgba } from "@/lib/labels"
 import { useResourceLabelAssignments } from "@/hooks"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
@@ -22,8 +23,9 @@ interface LabelStackProps {
 /**
  * Display-only stack of the labels on a resource (a stream's top bar, a message
  * row). Shows up to {@link VISIBLE_CAP} overlapping glyphs + a `+N` overflow
- * count; the full set fans out as tinted name-pills on mouse hover (an overlay —
- * no layout shift, INV-21) or in a bottom drawer on touch tap. Editing lives in
+ * count. Mouse hover spreads the marks like a hand of cards and shows the full
+ * set as tinted name-pills in a hover card; a touch tap opens them in a bottom
+ * drawer. Both are overlays — no layout shift (INV-21). Editing lives in
  * `LabelPicker`.
  *
  * Resource-generic: `resourceType` + `resourceId` are the only per-resource
@@ -43,6 +45,7 @@ export const LabelStack = memo(function LabelStack({
 
   if (labels.length === 0) return null
 
+  const visible = labels.slice(0, VISIBLE_CAP)
   const overflow = labels.length - VISIBLE_CAP
   // Names go in the accessible name (not just the count) so keyboard / screen
   // reader users get the full set — the visual fan-out is hover/tap only.
@@ -55,14 +58,28 @@ export const LabelStack = memo(function LabelStack({
       // Negative margin keeps the glyphs visually aligned with neighbouring
       // controls while the padding gives a comfortable tap target.
       className={cn(
-        "-m-1 flex items-center rounded-md p-1 transition-colors hover:bg-muted/60",
+        "group -m-1 flex items-center rounded-md p-1 transition-colors hover:bg-muted/60",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         className
       )}
     >
-      <span className="flex -space-x-1">
-        {labels.slice(0, VISIBLE_CAP).map((label) => (
-          <LabelGlyph key={label.id} label={label} className="h-4 w-4 ring-1 ring-background" />
+      <span className="flex -space-x-0.5">
+        {visible.map((label, index) => (
+          // Opaque base under the translucent tint so overlapping marks never
+          // bleed into each other.
+          <span
+            key={label.id}
+            className={cn(
+              "rounded bg-background transition-transform duration-150 ease-out [transform-origin:50%_160%] motion-reduce:transition-none",
+              "group-hover:[transform:translateX(calc(var(--fan)*3px))_rotate(calc(var(--fan)*9deg))]",
+              index > 0 && "shadow-[-1px_0_2px_rgb(0_0_0/0.35)]"
+            )}
+            style={
+              { "--fan": index - (visible.length - 1) / 2, "--edge": hexToRgba(label.color, 0.3) } as CSSProperties
+            }
+          >
+            <LabelGlyph label={label} className="ring-1 ring-inset ring-[color:var(--edge)]" />
+          </span>
         ))}
       </span>
       {overflow > 0 && <span className="ml-1 text-xs font-medium text-muted-foreground">+{overflow}</span>}
