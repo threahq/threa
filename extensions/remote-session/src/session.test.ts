@@ -1573,6 +1573,7 @@ describe("RemoteSession terminal route writes", () => {
         rootStreamId: "stream_channel",
         sourceMessageId: expect.any(String),
         content: "Hello",
+        messageText: "Do the thing",
         attachments: [],
         sealed: false,
       },
@@ -6735,5 +6736,24 @@ describe("runtime run adoption", () => {
     } finally {
       await f.session.shutdown()
     }
+  })
+})
+
+describe("RemoteSession.react", () => {
+  test("sets the named message's reaction, and clears it on remove", async () => {
+    const { client } = makeFakeClient()
+    const reactions: Array<{ messageId: string; emoji: string; present: boolean }> = []
+    Object.assign(client as unknown as Record<string, unknown>, {
+      setReaction: async (messageId: string, emoji: string, present: boolean) => {
+        reactions.push({ messageId, emoji, present })
+      },
+    })
+    const session = makeSession(client, makeFakeTransport().transport)
+    await session.react({ emoji: ":tada:", messageId: "msg_1" })
+    await session.react({ emoji: ":tada:", messageId: "msg_2", remove: true })
+    expect(reactions).toEqual([
+      { messageId: "msg_1", emoji: ":tada:", present: true },
+      { messageId: "msg_2", emoji: ":tada:", present: false },
+    ])
   })
 })

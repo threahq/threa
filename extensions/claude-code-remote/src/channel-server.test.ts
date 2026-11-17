@@ -379,6 +379,7 @@ function stubbedTurnServer(config: RemoteSessionConfig, stopHooks?: StopHookList
       rootStreamId: "stream_root",
       sourceMessageId: `msg_${invocationId}`,
       content: "Do the thing",
+      messageText: "Do the thing",
       attachments: [],
       sealed,
     })

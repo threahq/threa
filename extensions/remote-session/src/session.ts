@@ -141,6 +141,8 @@ export interface DeliveredTurn {
   rootStreamId: string
   sourceMessageId: string
   content: string
+  /** The source message's own text, without the id header, history or manifest `content` adds: for display, such as a thread title. */
+  messageText: string
   /** The files `content`'s attachment manifest lists, for a runtime that takes some of them natively. */
   attachments: DownloadedAttachment[]
   /**
@@ -1852,6 +1854,7 @@ export class RemoteSession {
       rootStreamId: invocation.rootStreamId,
       sourceMessageId: invocation.sourceMessageId,
       content: input.content,
+      messageText: invocation.promptMarkdown.trim(),
       attachments: input.attachments,
       sealed: invocation.sealing !== undefined,
     })

@@ -1129,13 +1129,13 @@ export class T3TurnRunner {
           action: "fork",
           threadId: rootThread,
           sourcePoint: { type: "latest_stable" },
-          title: titleFor(turn.content),
+          title: titleFor(turn.messageText),
         })
         .catch((error) => this.unlessGone(error, turn.rootStreamId, rootThread))
       this.saveState({ ...this.state, threads: { ...this.state.threads, [turn.streamId]: fork.targetThreadId } })
       return this.send(fork.targetThreadId, turn)
     }
-    return this.launch(turn, titleFor(turn.content), this.state.model)
+    return this.launch(turn, titleFor(turn.messageText), this.state.model)
   }
 
   /**
@@ -1746,8 +1746,8 @@ function adopt(run: OpenRun, runId: string): void {
   run.trace.runIds.add(runId)
 }
 
-function titleFor(content: string): string {
-  const line = firstLine(content) || "Threa"
+function titleFor(text: string): string {
+  const line = firstLine(text) || "Threa"
   return line.length <= 80 ? line : `${line.slice(0, 79)}…`
 }
 

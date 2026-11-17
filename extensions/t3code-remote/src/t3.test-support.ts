@@ -528,6 +528,7 @@ export function turn(overrides: Partial<DeliveredTurn> = {}): DeliveredTurn {
     rootStreamId: "stream_root",
     sourceMessageId: "msg_1",
     content: "Fix the flaky test",
+    messageText: "Fix the flaky test",
     attachments: [],
     sealed: false,
     ...overrides,

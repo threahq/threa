@@ -559,7 +559,9 @@ describe("T3TurnRunner", () => {
     const { t3, session, saved, runner } = setup({ state: { threads: { stream_root: "thread_root" } } })
     t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "On it" })] }])
 
-    await runner.deliverTurn(turn({ streamId: "stream_thread", content: "Branch off here" }))
+    await runner.deliverTurn(
+      turn({ streamId: "stream_thread", content: "Message msg_1:\nBranch off here", messageText: "Branch off here" })
+    )
     await session.settled()
 
     expect(t3.callsOf("t3_thread_transfer")).toEqual([
