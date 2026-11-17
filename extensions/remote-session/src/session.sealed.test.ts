@@ -484,7 +484,7 @@ describe("sealed claim hydration + delivery", () => {
 
       expect(steered).toEqual([
         [
-          "Message msg_trigger:\nPlease refactor the auth module",
+          "Please refactor the auth module",
           "",
           "Attachments saved into this session's working directory — read them from these paths:",
           `- spec.md (text/markdown, 15 bytes) → ${join(cwd, ".threa-attachments", "binv_sealed_2", "att_in_1", "spec.md")} [attached to the message you just received]`,

@@ -445,17 +445,56 @@ describe("capability selection", () => {
 })
 
 describe("formatInvocationContent", () => {
-  test("returns just the prompt, headed by its message id, when there is no prior context", () => {
-    expect(formatInvocationContent(makeInvocation({ promptMarkdown: "Fix the bug" }))).toBe("Message src:\nFix the bug")
+  test("returns just the prompt when there is no prior context", () => {
+    expect(formatInvocationContent(makeInvocation({ promptMarkdown: "Fix the bug" }))).toBe("Fix the bug")
   })
 
   test("falls back to a placeholder for an empty prompt", () => {
-    expect(formatInvocationContent(makeInvocation({ promptMarkdown: "   " }))).toBe("Message src:\n(empty message)")
+    expect(formatInvocationContent(makeInvocation({ promptMarkdown: "   " }))).toBe("(empty message)")
   })
 
-  test("leaves a reaction prompt unheaded: its source is the bot's own reacted message", () => {
-    const prompt = "Kris reacted :tada: to your message src."
-    expect(formatInvocationContent(makeInvocation({ trigger: "reaction", promptMarkdown: prompt }))).toBe(prompt)
+  test("heads the prompt and history with message ids for a runtime that reacts, but not a reaction's prompt", () => {
+    const history = {
+      kind: "inline" as const,
+      messages: [
+        {
+          messageId: "m1",
+          role: "user" as const,
+          authorId: "u",
+          authorType: "user",
+          authorDisplayName: "Alice",
+          contentMarkdown: "did X",
+          createdAt: "t1",
+        },
+        {
+          messageId: "sealed-7",
+          role: "user" as const,
+          authorId: "",
+          authorType: "user",
+          contentMarkdown: "sealed note",
+          createdAt: "",
+        },
+      ],
+    }
+    const reactionPrompt = "Alice reacted :tada: to your message src."
+    expect({
+      message: formatInvocationContent(makeInvocation({ promptMarkdown: "Now do Y", context: history }), {
+        messageIds: true,
+      }),
+      reaction: formatInvocationContent(makeInvocation({ trigger: "reaction", promptMarkdown: reactionPrompt }), {
+        messageIds: true,
+      }),
+    }).toEqual({
+      message: [
+        "Message src:",
+        "Now do Y",
+        "",
+        "Earlier in this scratchpad (oldest first, for context):",
+        "- Alice (m1): did X",
+        "- user: sealed note",
+      ].join("\n"),
+      reaction: reactionPrompt,
+    })
   })
 
   test("appends history but excludes the source message itself", () => {
@@ -490,7 +529,7 @@ describe("formatInvocationContent", () => {
     )
     expect(content).toContain("Now do Y")
     expect(content).toContain("Earlier in this scratchpad")
-    expect(content).toContain("- Alice (m1): did X")
+    expect(content).toContain("- Alice: did X")
     // the source message must not be duplicated into the history block
     expect(content.match(/Now do Y/g)?.length).toBe(1)
   })
@@ -3416,8 +3455,8 @@ describe("messages to a running turn (steer by default, /enqueue waits)", () => 
         contributor: h.calls.complete.find((call) => call.id === "binv_b")?.body.noResponse,
       }).toMatchObject({
         delivered: ["binv_a"],
-        steers: [{ text: "Message src_binv_b:\nalso do b", streamId: "stream_a" }],
-        steps: [{ invocationId: "binv_a", frames: [{ stepType: "steer", content: "Message src_binv_b:\nalso do b" }] }],
+        steers: [{ text: "also do b", streamId: "stream_a" }],
+        steps: [{ invocationId: "binv_a", frames: [{ stepType: "steer", content: "also do b" }] }],
         scopedClaim: { supportedCapabilities: ["active-scratchpad", "mentionable"], responseStreamId: "stream_a" },
         closedBefore: [],
         owner: "done",
@@ -3425,6 +3464,19 @@ describe("messages to a running turn (steer by default, /enqueue waits)", () => 
       })
     })
   }
+
+  test("a runtime that reacts gets each message headed by its id, the steered one included", async () => {
+    const h = makeQueuedSession([plainMessage("binv_a", "stream_a", "do a")], { steer: steerOk, reactions: true })
+    await claimDrain(h.session)
+    h.queue.push(plainMessage("binv_b", "stream_a", "also do b"))
+    await claimDrain(h.session)
+
+    expect({ contents: h.contents, steers: h.steers.map((steer) => steer.text) }).toEqual({
+      contents: ["Message src_binv_a:\ndo a"],
+      steers: ["Message src_binv_b:\nalso do b"],
+    })
+    await h.session.shutdown()
+  })
 
   test("an idle claim delivers a reaction as the rendered prompt", async () => {
     const h = makeQueuedSession([reactionMessage("binv_r", "stream_a")], { steer: steerOk, reactions: true })
@@ -3536,7 +3588,6 @@ describe("messages to a running turn (steer by default, /enqueue waits)", () => 
     }
 
     const text = [
-      "Message src_binv_b:",
       "look at this",
       "",
       "Attachments saved into this session's working directory — read them from these paths:",
@@ -3696,7 +3747,7 @@ describe("messages to a running turn (steer by default, /enqueue waits)", () => 
         afterRefusal: { delivered: ["binv_a"], steps: [], fail: [] },
         whileClosing: ["binv_a"],
         delivered: ["binv_a", "binv_b"],
-        content: "Message src_binv_b:\nalso do b",
+        content: "also do b",
         inflight: true,
         fail: [],
       })
@@ -3743,9 +3794,9 @@ describe("messages to a running turn (steer by default, /enqueue waits)", () => 
       content: h.contents[1],
     }).toEqual({
       edit: "applied",
-      steers: ["Message src_binv_b:\nbinv_b"],
+      steers: ["binv_b"],
       delivered: ["binv_a", "binv_b"],
-      content: buildSteerContent(["Message src_binv_b:\nb edited", "Message src_binv_c:\nbinv_c"]),
+      content: buildSteerContent(["b edited", "binv_c"]),
     })
   })
 
@@ -3763,9 +3814,7 @@ describe("messages to a running turn (steer by default, /enqueue waits)", () => 
   })
 
   test("a deleted waiting message no longer holds back steering for its stream", async () => {
-    const h = makeQueuedSession([plainMessage("binv_a", "stream_a")], {
-      steer: (text) => text !== "Message src_binv_b:\nbinv_b",
-    })
+    const h = makeQueuedSession([plainMessage("binv_a", "stream_a")], { steer: (text) => text !== "binv_b" })
     await claimDrain(h.session)
     h.queue.push(plainMessage("binv_b", "stream_a"))
     await claimDrain(h.session)
@@ -3781,8 +3830,8 @@ describe("messages to a running turn (steer by default, /enqueue waits)", () => 
       left: h.queue.map((item) => item.id),
       disposed: h.fake.observations.get("binv_b")!.disposed,
     }).toEqual({
-      steers: ["Message src_binv_b:\nbinv_b", "Message src_binv_c:\nbinv_c"],
-      steps: [{ invocationId: "binv_a", content: "Message src_binv_c:\nbinv_c" }],
+      steers: ["binv_b", "binv_c"],
+      steps: [{ invocationId: "binv_a", content: "binv_c" }],
       delivered: ["binv_a"],
       left: [],
       disposed: true,
@@ -3844,10 +3893,10 @@ describe("messages to a running turn (steer by default, /enqueue waits)", () => 
     }).toEqual({
       outcome: "applied",
       ownerRunning: true,
-      steers: ["Message src_binv_b:\ndo b", "Message src_binv_b:\ndo b2"],
+      steers: ["do b", "do b2"],
       steps: [
-        { invocationId: "binv_a", content: "Message src_binv_b:\ndo b" },
-        { invocationId: "binv_a", content: "Message src_binv_b:\ndo b2" },
+        { invocationId: "binv_a", content: "do b" },
+        { invocationId: "binv_a", content: "do b2" },
       ],
       interrupts: [],
       completed: ["binv_a", "binv_b"],
@@ -4673,7 +4722,7 @@ describe("invocation source controls", () => {
 
     expect({ disposition, delivered, steered, revision: calls.complete.at(-1)?.body.sourceRevision }).toEqual({
       disposition: "applied",
-      delivered: [{ invocationId: "binv_bootstrap_update", content: "Message src:\ncanonical before start" }],
+      delivered: [{ invocationId: "binv_bootstrap_update", content: "canonical before start" }],
       steered: [],
       revision: 2,
     })
@@ -4702,11 +4751,11 @@ describe("invocation source controls", () => {
 
     await claimDrain(session)
     const observed = fake.observations.get("binv_live")!
-    expect(delivered).toEqual([{ invocationId: "binv_live", content: "Message src:\none" }])
+    expect(delivered).toEqual([{ invocationId: "binv_live", content: "one" }])
 
     expect(await observed.update(plaintextUpdate({ promptMarkdown: "two" }))).toBe("applied")
     expect(await observed.update(plaintextUpdate({ sourceRevision: 3, promptMarkdown: "three" }))).toBe("applied")
-    expect(steered).toEqual(["Message src:\ntwo", "Message src:\nthree"])
+    expect(steered).toEqual(["two", "three"])
 
     expect(await session.reply("binv_live", "done")).toEqual({ ok: true, message: "sent", closedTurn: true })
     expect(calls.complete.at(-1)?.body.sourceRevision).toBe(3)
@@ -4760,7 +4809,7 @@ describe("invocation source controls", () => {
 
     await claimDrain(session)
 
-    expect(delivered).toEqual([{ invocationId: "binv_initial_attach", content: "Message src:\nkeep going" }])
+    expect(delivered).toEqual([{ invocationId: "binv_initial_attach", content: "keep going" }])
     await session.shutdown()
   })
 
@@ -5802,8 +5851,8 @@ describe("parallel turns across streams", () => {
       interrupts: h.interrupts,
     }).toEqual({
       steers: [
-        { text: "Message src_binv_a2:\na follow-up", streamId: "stream_a" },
-        { text: "Message src_binv_b2:\nb follow-up", streamId: "stream_b" },
+        { text: "a follow-up", streamId: "stream_a" },
+        { text: "b follow-up", streamId: "stream_b" },
       ],
       steppedOn: ["binv_a", "binv_b"],
       pending: [],
@@ -5914,7 +5963,7 @@ describe("parallel turns across streams", () => {
       "applied"
     )
 
-    expect(h.steers).toEqual([{ text: "Message src_binv_a:\na edited", streamId: "stream_a", edit: true }])
+    expect(h.steers).toEqual([{ text: "a edited", streamId: "stream_a", edit: true }])
   })
 
   test("a plain message for an idle stream at capacity stays queued rather than steering another stream", async () => {
@@ -6430,7 +6479,7 @@ describe("runtime run adoption", () => {
         pendingClaim.open()
         await draining
         expect({ deliveries: f.deliveries, failed: f.calls.fail }).toEqual({ deliveries: [], failed: [] })
-        expect(steers).toEqual(mode === "enqueue" ? [] : ["Message src_binv_input:\nbinv_input"])
+        expect(steers).toEqual(mode === "enqueue" ? [] : ["binv_input"])
         await f.session.reply(f.invocation.id, "Attached work finished")
         await flush()
         if (mode === "steer") {

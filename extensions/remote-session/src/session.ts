@@ -383,8 +383,11 @@ export function isSessionControlInvocation(invocation: ClaimedInvocation): boole
  * Turn a claimed invocation into the body the runtime reads. The source message
  * is the request; any hydrated history follows as compact context.
  */
-export function formatInvocationContent(invocation: ClaimedInvocation): string {
-  const prompt = formatSourcePrompt(invocation)
+export function formatInvocationContent(
+  invocation: ClaimedInvocation,
+  { messageIds = false }: { messageIds?: boolean } = {}
+): string {
+  const prompt = formatSourcePrompt(invocation, messageIds)
   const history = (invocation.context?.messages ?? [])
     .filter((message) => message.messageId !== invocation.sourceMessageId)
     .slice(-MAX_CONTEXT_MESSAGES)
@@ -392,7 +395,7 @@ export function formatInvocationContent(invocation: ClaimedInvocation): string {
       const author = message.authorDisplayName?.trim() || message.role
       const content = message.contentMarkdown.trim().slice(0, MAX_MESSAGE_CHARS)
       // A sealed history message carries no id on the wire, only its sequence.
-      const id = message.messageId.startsWith(SEALED_HISTORY_ID_PREFIX) ? "" : ` (${message.messageId})`
+      const id = !messageIds || message.messageId.startsWith(SEALED_HISTORY_ID_PREFIX) ? "" : ` (${message.messageId})`
       return `- ${author}${id}: ${content}`
     })
 
@@ -401,12 +404,12 @@ export function formatInvocationContent(invocation: ClaimedInvocation): string {
 }
 
 /**
- * The source message's text, headed by its id so the runtime can name it (reactions
- * take a message id). A reaction claim's prompt names the reacted message itself.
+ * The source message's text, headed by its id when the runtime reacts (a reaction
+ * names its message). A reaction claim's prompt names the reacted message itself.
  */
-function formatSourcePrompt(invocation: ClaimedInvocation): string {
+function formatSourcePrompt(invocation: ClaimedInvocation, messageIds: boolean): string {
   const prompt = invocation.promptMarkdown.trim() || "(empty message)"
-  if (invocation.trigger === REACTION_CAPABILITY || !invocation.sourceMessageId) return prompt
+  if (!messageIds || invocation.trigger === REACTION_CAPABILITY || !invocation.sourceMessageId) return prompt
   return `Message ${invocation.sourceMessageId}:\n${prompt}`
 }
 
@@ -2340,7 +2343,10 @@ export class RemoteSession {
     invocation: ClaimedInvocation,
     options: { strictAttachments?: boolean; signal?: AbortSignal } = {}
   ): Promise<TurnInput> {
-    return turnInput(formatInvocationContent(invocation), await this.inboundAttachments(invocation, options))
+    return turnInput(
+      formatInvocationContent(invocation, { messageIds: this.reactionsEnabled }),
+      await this.inboundAttachments(invocation, options)
+    )
   }
 
   /**
@@ -2353,7 +2359,7 @@ export class RemoteSession {
     options: { strictAttachments?: boolean; signal?: AbortSignal } = {}
   ): Promise<TurnInput> {
     return turnInput(
-      formatSourcePrompt(invocation),
+      formatSourcePrompt(invocation, this.reactionsEnabled),
       await this.inboundAttachments(invocation, { ...options, sourceOnly: true })
     )
   }
