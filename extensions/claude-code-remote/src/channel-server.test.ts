@@ -318,34 +318,30 @@ describe("react tool", () => {
     return { server, react: spyOn(server.session, "react") }
   }
 
-  test("reacts through the session for the invocation and names the message", async () => {
+  test("reacts to the named message through the session", async () => {
     const { server, react } = reactServer()
-    react.mockResolvedValue({ messageId: "msg_src" })
-    const added = await server.handleReact({ invocation_id: "binv_1", emoji: ":tada:" })
-    const removed = await server.handleReact({
-      invocation_id: "binv_1",
-      emoji: ":tada:",
-      message_id: "msg_2",
-      remove: true,
-    })
+    react.mockResolvedValue()
+    const added = await server.handleReact({ message_id: "msg_1", emoji: ":tada:" })
+    const removed = await server.handleReact({ message_id: "msg_2", emoji: ":tada:", remove: true })
     expect({ added, removed, calls: react.mock.calls }).toEqual({
-      added: { ok: true, message: "Added :tada: on msg_src." },
-      removed: { ok: true, message: "Removed :tada: on msg_src." },
-      calls: [
-        [{ emoji: ":tada:", invocationId: "binv_1" }],
-        [{ emoji: ":tada:", invocationId: "binv_1", messageId: "msg_2", remove: true }],
-      ],
+      added: { ok: true, message: "Added :tada: on msg_1." },
+      removed: { ok: true, message: "Removed :tada: on msg_2." },
+      calls: [[{ emoji: ":tada:", messageId: "msg_1" }], [{ emoji: ":tada:", messageId: "msg_2", remove: true }]],
     })
   })
 
-  test("returns session errors and missing arguments as tool errors", async () => {
+  test("rejects a reaction without a message id, and returns session errors as tool errors", async () => {
     const { server, react } = reactServer()
-    react.mockRejectedValue(new Error("Cannot react: this turn has no source message; pass messageId."))
-    expect(await server.handleReact({ invocation_id: "binv_1", emoji: "👍" })).toEqual({
-      ok: false,
-      message: "Cannot react: this turn has no source message; pass messageId.",
+    react.mockRejectedValue(new Error("not found"))
+    expect({
+      blank: await server.handleReact({ emoji: "👍" }),
+      failed: await server.handleReact({ message_id: "msg_1", emoji: "👍" }),
+      calls: react.mock.calls.length,
+    }).toEqual({
+      blank: { ok: false, message: "react requires a non-empty message_id and emoji." },
+      failed: { ok: false, message: "not found" },
+      calls: 1,
     })
-    expect((await server.handleReact({ emoji: "👍" })).ok).toBe(false)
   })
 })
 
@@ -383,6 +379,7 @@ function stubbedTurnServer(config: RemoteSessionConfig, stopHooks?: StopHookList
       rootStreamId: "stream_root",
       sourceMessageId: `msg_${invocationId}`,
       content: "Do the thing",
+      messageText: "Do the thing",
       attachments: [],
       sealed,
     })

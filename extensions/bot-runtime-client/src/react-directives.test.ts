@@ -7,25 +7,25 @@ describe("parseReactDirectives", () => {
       parseReactDirectives(
         [
           "Done.",
-          "THREA_REACT: :tada:",
+          "THREA_REACT: msg_1 :tada:",
           "  THREA_REACT: msg_1 👍",
-          "THREA_UNREACT: :eyes:",
+          "THREA_UNREACT: msg_2 :eyes:",
           "THREA_UNREACT: msg_2 :x:",
         ].join("\n")
       )
     ).toEqual({
       text: "Done.",
       reactions: [
-        { emoji: ":tada:" },
+        { emoji: ":tada:", messageId: "msg_1" },
         { emoji: "👍", messageId: "msg_1" },
-        { emoji: ":eyes:", remove: true },
+        { emoji: ":eyes:", messageId: "msg_2", remove: true },
         { emoji: ":x:", messageId: "msg_2", remove: true },
       ],
     })
   })
 
   it("collapses the blank run a directive leaves behind", () => {
-    expect(parseReactDirectives("a\n\nTHREA_REACT: :ok:\n\nb").text).toBe("a\n\nb")
+    expect(parseReactDirectives("a\n\nTHREA_REACT: msg_1 :ok:\n\nb").text).toBe("a\n\nb")
   })
 
   it("leaves directives inside code fences alone", () => {
@@ -33,8 +33,8 @@ describe("parseReactDirectives", () => {
     expect(parseReactDirectives(text)).toEqual({ text, reactions: [] })
   })
 
-  it("keeps a line that names no single emoji as text", () => {
-    const text = "THREA_REACT: is how you react\nTHREA_REACT: msg_1\nTHREA_UNREACT: msg_1 :x: :y:"
+  it("keeps a line that names no message id and single emoji as text", () => {
+    const text = "THREA_REACT: is how you react\nTHREA_REACT: msg_1\nTHREA_UNREACT: msg_1 :x: :y:\nTHREA_REACT: :tada:"
     expect(parseReactDirectives(text)).toEqual({ text, reactions: [] })
   })
 
@@ -47,12 +47,12 @@ describe("parseReactDirectives", () => {
   })
 
   it("keeps blank runs and indentation inside code and elsewhere when it strips a directive", () => {
-    const text = "Intro\n\n```py\ndef f():\n\n\n\n    return 1\n```\n    indented\nTHREA_REACT: :ok:"
+    const text = "Intro\n\n```py\ndef f():\n\n\n\n    return 1\n```\n    indented\nTHREA_REACT: msg_1 :ok:"
     expect(parseReactDirectives(text).text).toBe("Intro\n\n```py\ndef f():\n\n\n\n    return 1\n```\n    indented")
   })
 
   it("keeps the leading indentation of the first line it keeps", () => {
-    expect(parseReactDirectives("THREA_REACT: :ok:\n\n    code").text).toBe("    code")
+    expect(parseReactDirectives("THREA_REACT: msg_1 :ok:\n\n    code").text).toBe("    code")
   })
 
   it("closes a fence only on the same character, at least as long, without an info string", () => {
@@ -64,16 +64,16 @@ describe("parseReactDirectives", () => {
       "~~~~",
       "THREA_REACT: :b:",
       "````",
-      "THREA_REACT: :c:",
+      "THREA_REACT: msg_1 :c:",
     ].join("\n")
     expect(parseReactDirectives(text)).toEqual({
       text: ["````md", "```", "THREA_REACT: :a:", "```js", "~~~~", "THREA_REACT: :b:", "````"].join("\n"),
-      reactions: [{ emoji: ":c:" }],
+      reactions: [{ emoji: ":c:", messageId: "msg_1" }],
     })
   })
 
   it("does not read a line indented four spaces as a directive", () => {
-    const text = "    THREA_REACT: :ok:"
+    const text = "    THREA_REACT: msg_1 :ok:"
     expect(parseReactDirectives(text)).toEqual({ text, reactions: [] })
   })
 })

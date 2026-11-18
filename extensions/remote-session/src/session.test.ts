@@ -453,6 +453,50 @@ describe("formatInvocationContent", () => {
     expect(formatInvocationContent(makeInvocation({ promptMarkdown: "   " }))).toBe("(empty message)")
   })
 
+  test("heads the prompt and history with message ids for a runtime that reacts, but not a reaction's prompt", () => {
+    const history = {
+      kind: "inline" as const,
+      messages: [
+        {
+          messageId: "m1",
+          role: "user" as const,
+          authorId: "u",
+          authorType: "user",
+          authorDisplayName: "Alice",
+          contentMarkdown: "did X",
+          createdAt: "t1",
+        },
+        {
+          messageId: "sealed-7",
+          role: "user" as const,
+          authorId: "",
+          authorType: "user",
+          contentMarkdown: "sealed note",
+          createdAt: "",
+        },
+      ],
+    }
+    const reactionPrompt = "Alice reacted :tada: to your message src."
+    expect({
+      message: formatInvocationContent(makeInvocation({ promptMarkdown: "Now do Y", context: history }), {
+        messageIds: true,
+      }),
+      reaction: formatInvocationContent(makeInvocation({ trigger: "reaction", promptMarkdown: reactionPrompt }), {
+        messageIds: true,
+      }),
+    }).toEqual({
+      message: [
+        "Message src:",
+        "Now do Y",
+        "",
+        "Earlier in this scratchpad (oldest first, for context):",
+        "- Alice (m1): did X",
+        "- user: sealed note",
+      ].join("\n"),
+      reaction: reactionPrompt,
+    })
+  })
+
   test("appends history but excludes the source message itself", () => {
     const content = formatInvocationContent(
       makeInvocation({
@@ -1529,6 +1573,7 @@ describe("RemoteSession terminal route writes", () => {
         rootStreamId: "stream_channel",
         sourceMessageId: expect.any(String),
         content: "Hello",
+        messageText: "Do the thing",
         attachments: [],
         sealed: false,
       },
@@ -3308,7 +3353,7 @@ function makeQueuedSession(
   const contents: string[] = []
   const claims: Array<Record<string, unknown>> = []
   const interrupts: Array<string | undefined> = []
-  const steers: Array<{ text: string; streamId: string; edit?: boolean }> = []
+  const steers: Array<{ text: string; streamId: string; edit?: boolean; answer?: string }> = []
   const steeredAttachments: DownloadedAttachment[][] = []
   const held = { value: false }
   const { client, calls } = makeFakeClient()
@@ -3350,7 +3395,7 @@ function makeQueuedSession(
                 text: string,
                 streamId: string,
                 attachments: DownloadedAttachment[],
-                steerOptions?: { edit?: boolean }
+                steerOptions?: { edit?: boolean; answer?: string }
               ) => {
                 steers.push({ text, streamId, ...steerOptions })
                 steeredAttachments.push(attachments)
@@ -3420,6 +3465,19 @@ describe("messages to a running turn (steer by default, /enqueue waits)", () => 
       })
     })
   }
+
+  test("a runtime that reacts gets each message headed by its id, the steered one included", async () => {
+    const h = makeQueuedSession([plainMessage("binv_a", "stream_a", "do a")], { steer: steerOk, reactions: true })
+    await claimDrain(h.session)
+    h.queue.push(plainMessage("binv_b", "stream_a", "also do b"))
+    await claimDrain(h.session)
+
+    expect({ contents: h.contents, steers: h.steers.map((steer) => steer.text) }).toEqual({
+      contents: ["Message src_binv_a:\ndo a"],
+      steers: ["Message src_binv_b:\nalso do b"],
+    })
+    await h.session.shutdown()
+  })
 
   test("an idle claim delivers a reaction as the rendered prompt", async () => {
     const h = makeQueuedSession([reactionMessage("binv_r", "stream_a")], { steer: steerOk, reactions: true })
@@ -5794,8 +5852,8 @@ describe("parallel turns across streams", () => {
       interrupts: h.interrupts,
     }).toEqual({
       steers: [
-        { text: "a follow-up", streamId: "stream_a" },
-        { text: "b follow-up", streamId: "stream_b" },
+        { text: "a follow-up", streamId: "stream_a", answer: "a follow-up" },
+        { text: "b follow-up", streamId: "stream_b", answer: "b follow-up" },
       ],
       steppedOn: ["binv_a", "binv_b"],
       pending: [],
@@ -6681,60 +6739,21 @@ describe("runtime run adoption", () => {
   })
 })
 
-describe("react", () => {
-  function reactSession() {
-    const reactions: Array<{ messageId: string; emoji: string; present: boolean }> = []
+describe("RemoteSession.react", () => {
+  test("sets the named message's reaction, and clears it on remove", async () => {
     const { client } = makeFakeClient()
+    const reactions: Array<{ messageId: string; emoji: string; present: boolean }> = []
     Object.assign(client as unknown as Record<string, unknown>, {
       setReaction: async (messageId: string, emoji: string, present: boolean) => {
         reactions.push({ messageId, emoji, present })
       },
     })
-    const { transport } = makeFakeTransport()
-    const session = new RemoteSession({
-      config: makeConfig(),
-      client,
-      delegate: { deliverTurn: async () => {} },
-      runtime: RUNTIME,
-      transport,
-    })
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const internals = session as any
-    const addRoute = (id: string, streamId: string, sourceMessageId: string | null) =>
-      internals.inflight.set(id, { state: "open", invocation: { id, responseStreamId: streamId, sourceMessageId } })
-    const activate = (streamId: string) => {
-      internals.activeTurnStream = streamId
-    }
-    return { session, reactions, addRoute, activate }
-  }
-
-  test("defaults to the source message of the named invocation", async () => {
-    const { session, reactions, addRoute } = reactSession()
-    addRoute("binv_1", "stream_1", "msg_src")
-    addRoute("binv_2", "stream_2", "msg_other")
-    await expect(session.react({ emoji: ":tada:", invocationId: "binv_2" })).resolves.toEqual({
-      messageId: "msg_other",
-    })
-    await session.react({ emoji: ":tada:", invocationId: "binv_1", remove: true })
+    const session = makeSession(client, makeFakeTransport().transport)
+    await session.react({ emoji: ":tada:", messageId: "msg_1" })
+    await session.react({ emoji: ":tada:", messageId: "msg_2", remove: true })
     expect(reactions).toEqual([
-      { messageId: "msg_other", emoji: ":tada:", present: true },
-      { messageId: "msg_src", emoji: ":tada:", present: false },
+      { messageId: "msg_1", emoji: ":tada:", present: true },
+      { messageId: "msg_2", emoji: ":tada:", present: false },
     ])
-  })
-
-  test("falls back to the only in-flight turn, and an explicit messageId needs no turn", async () => {
-    const { session, reactions, addRoute, activate } = reactSession()
-    await session.react({ emoji: "👍", messageId: "msg_x" })
-    addRoute("binv_1", "stream_1", "msg_src")
-    activate("stream_1")
-    await expect(session.react({ emoji: "👍" })).resolves.toEqual({ messageId: "msg_src" })
-    expect(reactions.map((r) => r.messageId)).toEqual(["msg_x", "msg_src"])
-  })
-
-  test("refuses to guess without a source message or a turn", async () => {
-    const { session, addRoute } = reactSession()
-    await expect(session.react({ emoji: "👍" })).rejects.toThrow("no active turn")
-    addRoute("binv_rt", "stream_1", null)
-    await expect(session.react({ emoji: "👍", invocationId: "binv_rt" })).rejects.toThrow("no source message")
   })
 })

@@ -1,10 +1,10 @@
 export interface ReactDirective {
   emoji: string
-  messageId?: string
+  messageId: string
   remove?: boolean
 }
 
-/** Lines `THREA_REACT: [msg_id] <emoji>` and `THREA_UNREACT: [msg_id] <emoji>` ask the runtime to react to (or un-react from) a message. */
+/** Lines `THREA_REACT: msg_id <emoji>` and `THREA_UNREACT: msg_id <emoji>` ask the runtime to react to (or un-react from) a message. A line without a message id is not a directive and stays in the text. */
 const REACT_DIRECTIVE_RE = /^ {0,3}THREA_(UN)?REACT:\s*(.*?)\s*$/
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/
 
@@ -65,7 +65,7 @@ export function parseReactDirectives(text: string): { text: string; reactions: R
 }
 
 function toDirective(remove: boolean, rest: string): ReactDirective | null {
-  const match = rest.match(/^(?:(msg_\S+)\s+)?(\S+)$/)
+  const match = rest.match(/^(msg_\S+)\s+(\S+)$/)
   if (!match || match[2]!.startsWith("msg_")) return null
-  return { emoji: match[2]!, ...(match[1] ? { messageId: match[1] } : {}), ...(remove ? { remove: true } : {}) }
+  return { emoji: match[2]!, messageId: match[1]!, ...(remove ? { remove: true } : {}) }
 }

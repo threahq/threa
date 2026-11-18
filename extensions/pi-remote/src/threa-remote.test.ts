@@ -308,16 +308,23 @@ describe("Pi remote trace safety", () => {
     })
   })
 
-  test("formats Pi mid-turn steers like normal user messages", () => {
-    expect(__testing.formatSteerPrompt("I want option 2")).toBe("I want option 2")
+  test("formats Pi mid-turn steers headed by their message id", () => {
+    const steer = { sourceMessageId: "msg_1", promptMarkdown: "I want option 2", trigger: "active-scratchpad" }
+    expect(__testing.formatSteerPrompt(steer)).toBe("Message msg_1:\nI want option 2")
     expect(
       __testing.formatSteerPrompt(
-        "Look at this image",
+        { ...steer, promptMarkdown: "Look at this image" },
         "Attachments saved into this session's working directory — read them from these paths:\n- image.png → /tmp/image.png"
       )
     ).toBe(
-      "Look at this image\n\nAttachments saved into this session's working directory — read them from these paths:\n- image.png → /tmp/image.png"
+      "Message msg_1:\nLook at this image\n\nAttachments saved into this session's working directory — read them from these paths:\n- image.png → /tmp/image.png"
     )
+    const reaction = {
+      sourceMessageId: "msg_bot",
+      promptMarkdown: "Kris reacted 👍 to your message msg_bot.",
+      trigger: "reaction",
+    }
+    expect(__testing.formatSteerPrompt(reaction)).toBe(reaction.promptMarkdown)
   })
 
   test("leaves the source message out of the stream context so its text ships once", () => {
@@ -351,7 +358,11 @@ describe("Pi remote trace safety", () => {
     const context = __testing.formatInvocationContext(messages as never, "msg_3", new Map())
 
     expect(context).toBe(
-      ["Recent Threa stream context (oldest first):", "- Kris: earlier note", "- Pi: earlier answer"].join("\n")
+      [
+        "Recent Threa stream context (oldest first):",
+        "- Kris (msg_1): earlier note",
+        "- Pi (msg_2): earlier answer",
+      ].join("\n")
     )
     expect(context).not.toContain("run the migration")
   })
@@ -392,7 +403,7 @@ describe("Pi remote trace safety", () => {
     expect(context).toBe(
       [
         "Recent Threa stream context (oldest first):",
-        "- user: context first",
+        "- user (msg_1): context first",
         "  Attachments: [att_old] notes.txt (text/plain, 7 bytes, downloaded to /cwd/.threa-attachments/binv_1/att_old-notes.txt)",
         "",
         "Attachments on the source message:",
@@ -2585,7 +2596,7 @@ describe("claim drain serialization", () => {
           context: built.context,
           attachmentFetches: urls.filter((url) => url.includes("/attachments/")),
         }).toEqual({
-          context: "Recent Threa stream context (oldest first):\n- user: later",
+          context: "Recent Threa stream context (oldest first):\n- user (msg_new): later",
           attachmentFetches: [],
         })
       } finally {
@@ -2860,7 +2871,7 @@ describe("claim drain serialization", () => {
         claimRequests: 13,
         firstDeliveryEndsWithPrompt: true,
         deliveryOptions: [undefined, ...Array.from({ length: 11 }, () => ({ deliverAs: "steer" }))],
-        steeredTexts: expectedMessages.slice(1),
+        steeredTexts: expectedMessages.slice(1).map((message) => `Message msg_${message}:\n${message}`),
       })
     } finally {
       fetchSpy.mockRestore()
@@ -4284,7 +4295,9 @@ describe("invocation edit regressions", () => {
       ).toBe(true)
       expect(__testing.pendingRuntimeState()).toMatchObject({
         waitingForRetry: true,
-        steered: [{ id: contributor.id, sourceRevision: 3, retryPrompt: "queued source" }],
+        steered: [
+          { id: contributor.id, sourceRevision: 3, retryPrompt: "Message msg_binv_wait_plain:\nqueued source" },
+        ],
       })
       expect(terminalWrites).toEqual([])
       expect(await callbacks.get(contributor.id).onInputUpdated(plaintextUpdate(contributor, 4, "queued edited"))).toBe(
@@ -4406,7 +4419,10 @@ describe("invocation edit regressions", () => {
       expect(await preparation).toBe(true)
       expect(sends).toEqual([
         expect.objectContaining({ text: expect.stringContaining("primary retry prompt"), options: undefined }),
-        expect.objectContaining({ text: "contributor", options: { deliverAs: "steer" } }),
+        expect.objectContaining({
+          text: "Message msg_binv_wait_race_contributor:\ncontributor",
+          options: { deliverAs: "steer" },
+        }),
       ])
       expect(__testing.pendingRuntimeState()).toMatchObject({
         waitingForRetry: false,
@@ -5598,13 +5614,12 @@ describe("Pi threa_react tool", () => {
     return { calls, spy }
   }
 
-  test("reacts to the current turn's source message with PUT", async () => {
+  test("reacts to the named message with PUT", async () => {
     const tool = registerTool()
     configure()
-    __testing.beginPendingInvocation(invocation("binv_react") as never)
     const { calls, spy } = spyFetch()
     try {
-      await tool.execute("call_1", { emoji: "👍" })
+      await tool.execute("call_1", { emoji: "👍", messageId: "msg_binv_react" })
       expect(calls).toEqual([
         {
           url: `https://example.test/api/v1/workspaces/ws_123/messages/msg_binv_react/reactions/${encodeURIComponent("👍")}`,
@@ -5616,10 +5631,9 @@ describe("Pi threa_react tool", () => {
     }
   })
 
-  test("remove uses DELETE and an explicit messageId overrides the turn", async () => {
+  test("remove uses DELETE", async () => {
     const tool = registerTool()
     configure()
-    __testing.beginPendingInvocation(invocation("binv_react") as never)
     const { calls, spy } = spyFetch()
     try {
       await tool.execute("call_1", { emoji: ":thumbsup:", messageId: "msg_other", remove: true })
@@ -5634,37 +5648,13 @@ describe("Pi threa_react tool", () => {
     }
   })
 
-  test("requires messageId when a steered message joined the turn", async () => {
-    const tool = registerTool()
-    configure()
-    __testing.beginPendingInvocation(invocation("binv_react") as never)
-    __testing.setPendingRuntimeForTesting({
-      steered: [{ invocation: invocation("binv_steer") as never, retryPrompt: "steer" }],
-    })
-    const { calls, spy } = spyFetch()
-    try {
-      await expect(tool.execute("call_1", { emoji: "👍" })).rejects.toThrow(
-        "This turn answers several Threa messages (msg_binv_react, msg_binv_steer): pass messageId."
-      )
-      await tool.execute("call_2", { emoji: "👍", messageId: "msg_binv_steer" })
-      expect(calls).toEqual([
-        {
-          url: `https://example.test/api/v1/workspaces/ws_123/messages/msg_binv_steer/reactions/${encodeURIComponent("👍")}`,
-          method: "PUT",
-        },
-      ])
-    } finally {
-      spy.mockRestore()
-    }
-  })
-
-  test("errors without a turn or messageId, and when unlinked", async () => {
+  test("errors without a messageId, and when unlinked", async () => {
     const tool = registerTool()
     const { calls, spy } = spyFetch()
     try {
       await expect(tool.execute("call_1", { emoji: "👍", messageId: "msg_1" })).rejects.toThrow("not linked")
       configure()
-      await expect(tool.execute("call_2", { emoji: "👍" })).rejects.toThrow("No Threa message to react to")
+      await expect(tool.execute("call_2", { emoji: "👍" })).rejects.toThrow("threa_react requires messageId.")
       expect(calls).toEqual([])
     } finally {
       spy.mockRestore()

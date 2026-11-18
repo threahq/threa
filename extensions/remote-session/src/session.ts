@@ -62,6 +62,7 @@ import { RouteRevokedError, TurnRoute, type CloseRequest, type PostIntent, type 
 /** Plain messages: what a running turn may take in, and the base of every idle claim. */
 const MESSAGE_CAPABILITIES = ["active-scratchpad", "mentionable"] as const
 const REACTION_CAPABILITY = "reaction"
+const SEALED_HISTORY_ID_PREFIX = "sealed-"
 export const QUEUED_MESSAGE_CAPABILITY = "queued-message"
 export const SESSION_CONTROL_CAPABILITY = "session-control"
 /** Advertised by every runtime with an actuator, because every one claims `queued-message` when idle. */
@@ -140,6 +141,8 @@ export interface DeliveredTurn {
   rootStreamId: string
   sourceMessageId: string
   content: string
+  /** The source message's own text, without the id header, history or manifest `content` adds: for display, such as a thread title. */
+  messageText: string
   /** The files `content`'s attachment manifest lists, for a runtime that takes some of them natively. */
   attachments: DownloadedAttachment[]
   /**
@@ -194,13 +197,15 @@ export interface SessionControlActuator {
    * but a runtime declaring `maxConcurrentTurns > 1` must steer only that
    * stream's turn. `edit` is set when the text corrects a message the turn
    * already took (an edited source message), so a runtime can tell a correction
-   * from a new message.
+   * from a new message. `answer` is the message's own text, without the id
+   * header or attachment manifest `text` may carry, for a runtime that takes a
+   * steered message as the answer to a question it has open.
    */
   steer?(
     text: string,
     streamId: string,
     attachments: DownloadedAttachment[],
-    options?: { edit?: boolean }
+    options?: { edit?: boolean; answer?: string }
   ): Promise<boolean> | boolean
   /**
    * A provider quota hold is on and the turn in flight will resume by itself.
@@ -382,19 +387,34 @@ export function isSessionControlInvocation(invocation: ClaimedInvocation): boole
  * Turn a claimed invocation into the body the runtime reads. The source message
  * is the request; any hydrated history follows as compact context.
  */
-export function formatInvocationContent(invocation: ClaimedInvocation): string {
-  const prompt = invocation.promptMarkdown.trim() || "(empty message)"
+export function formatInvocationContent(
+  invocation: ClaimedInvocation,
+  { messageIds = false }: { messageIds?: boolean } = {}
+): string {
+  const prompt = formatSourcePrompt(invocation, messageIds)
   const history = (invocation.context?.messages ?? [])
     .filter((message) => message.messageId !== invocation.sourceMessageId)
     .slice(-MAX_CONTEXT_MESSAGES)
     .map((message) => {
       const author = message.authorDisplayName?.trim() || message.role
       const content = message.contentMarkdown.trim().slice(0, MAX_MESSAGE_CHARS)
-      return `- ${author}: ${content}`
+      // A sealed history message carries no id on the wire, only its sequence.
+      const id = !messageIds || message.messageId.startsWith(SEALED_HISTORY_ID_PREFIX) ? "" : ` (${message.messageId})`
+      return `- ${author}${id}: ${content}`
     })
 
   if (history.length === 0) return prompt
   return [prompt, "", "Earlier in this scratchpad (oldest first, for context):", ...history].join("\n")
+}
+
+/**
+ * The source message's text, headed by its id when the runtime reacts (a reaction
+ * names its message). A reaction claim's prompt names the reacted message itself.
+ */
+function formatSourcePrompt(invocation: ClaimedInvocation, messageIds: boolean): string {
+  const prompt = invocation.promptMarkdown.trim() || "(empty message)"
+  if (!messageIds || invocation.trigger === REACTION_CAPABILITY || !invocation.sourceMessageId) return prompt
+  return `Message ${invocation.sourceMessageId}:\n${prompt}`
 }
 
 /** What one or more messages hand the runtime: text with the attachment manifest appended, and the files it lists. */
@@ -1308,7 +1328,7 @@ export class RemoteSession {
       // Wraps and the message AAD bind to the ROOT stream that owns the E2E key.
       const opened = await openSealedTurnContext({ sealed, identities, streamId: invocation.rootStreamId })
       const messages: ExternalHistoryMessage[] = opened.history.map((item) => ({
-        messageId: `sealed-${item.sequence}`,
+        messageId: `${SEALED_HISTORY_ID_PREFIX}${item.sequence}`,
         role: item.role,
         authorId: "",
         authorType: item.role === "assistant" ? "bot" : "user",
@@ -1834,6 +1854,7 @@ export class RemoteSession {
       rootStreamId: invocation.rootStreamId,
       sourceMessageId: invocation.sourceMessageId,
       content: input.content,
+      messageText: invocation.promptMarkdown.trim(),
       attachments: input.attachments,
       sealed: invocation.sealing !== undefined,
     })
@@ -2095,7 +2116,9 @@ export class RemoteSession {
     let steered: boolean
     try {
       steered =
-        (await this.delegate.sessionControl?.steer?.(content, invocation.responseStreamId, attachments)) === true
+        (await this.delegate.sessionControl?.steer?.(content, invocation.responseStreamId, attachments, {
+          answer: invocation.promptMarkdown.trim(),
+        })) === true
     } catch (error) {
       await this.failInvocation(invocation, `Steer failed: ${this.summarize(error)}`)
       return
@@ -2327,7 +2350,10 @@ export class RemoteSession {
     invocation: ClaimedInvocation,
     options: { strictAttachments?: boolean; signal?: AbortSignal } = {}
   ): Promise<TurnInput> {
-    return turnInput(formatInvocationContent(invocation), await this.inboundAttachments(invocation, options))
+    return turnInput(
+      formatInvocationContent(invocation, { messageIds: this.reactionsEnabled }),
+      await this.inboundAttachments(invocation, options)
+    )
   }
 
   /**
@@ -2339,8 +2365,10 @@ export class RemoteSession {
     invocation: ClaimedInvocation,
     options: { strictAttachments?: boolean; signal?: AbortSignal } = {}
   ): Promise<TurnInput> {
-    const prompt = invocation.promptMarkdown.trim() || "(empty message)"
-    return turnInput(prompt, await this.inboundAttachments(invocation, { ...options, sourceOnly: true }))
+    return turnInput(
+      formatSourcePrompt(invocation, this.reactionsEnabled),
+      await this.inboundAttachments(invocation, { ...options, sourceOnly: true })
+    )
   }
 
   /**
@@ -3126,31 +3154,9 @@ export class RemoteSession {
     }
   }
 
-  /** React to a message as the bot. Defaults to the source message of the turn being worked on. */
-  async react(input: {
-    emoji: string
-    messageId?: string
-    remove?: boolean
-    invocationId?: string
-    streamId?: string
-  }): Promise<{ messageId: string }> {
-    let messageId = input.messageId
-    if (!messageId) {
-      const route = input.invocationId ? this.route(input.invocationId) : this.unscopedRoute(input.streamId)
-      if (!route) throw new Error("Cannot react: no active turn; pass messageId.")
-      messageId = route.invocation.sourceMessageId ?? undefined
-      if (!messageId) throw new Error("Cannot react: this turn has no source message; pass messageId.")
-    }
-    await this.client.setReaction(messageId, input.emoji, !input.remove)
-    return { messageId }
-  }
-
-  private unscopedRoute(streamId: string | undefined): TurnRoute | undefined {
-    const resolved = this.actingStream(
-      streamId,
-      "Cannot react: turns are running in several streams; pass streamId or invocationId."
-    )
-    return resolved ? this.routeForStream(resolved) : undefined
+  /** React to a message as the bot, or remove the reaction. */
+  async react(input: { emoji: string; messageId: string; remove?: boolean }): Promise<void> {
+    await this.client.setReaction(input.messageId, input.emoji, !input.remove)
   }
 
   /** The stream a call acts on: the named one, else the only in-flight turn's, else the active turn's. Throws `ambiguous` when several run. */
