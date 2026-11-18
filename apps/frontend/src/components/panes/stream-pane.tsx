@@ -888,9 +888,12 @@ export function StreamPane({
               paint under the search/panel actions — the strip scrolls instead,
               same recipe as PageHeaderTabs' tab strip. On mobile the chips live
               in the stream sheet; the strip only renders when there is no sheet
-              to hold them (drafts, archived non-scratchpads). */}
+              to hold them (drafts, archived non-scratchpads). A scroller clips
+              both axes, so the padding (cancelled by the negative margin) is
+              the room the label stack's hover state paints into: its fan reaches
+              up to 12px right. */}
             {(!isMobile || !canOpenSheet) && !tabbed && (
-              <div className="flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-none">
+              <div className="-my-1.5 -ml-2 -mr-4 flex min-w-0 items-center gap-2 overflow-x-auto py-1.5 pl-2 pr-4 scrollbar-none">
                 {stream && !isDraft && (
                   <LabelStack
                     workspaceId={workspaceId}

@@ -2,12 +2,11 @@ import { memo, type CSSProperties } from "react"
 import { Link } from "react-router-dom"
 import type { LabelableResourceType } from "@threahq/types"
 import { cn } from "@/lib/utils"
-import { hexToRgba } from "@/lib/labels"
 import { useResourceLabelAssignments } from "@/hooks"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
-import { LabelChip, LabelGlyph } from "./label-chip"
+import { LabelChip, LabelGlyphStack, labelFanReach } from "./label-chip"
 
 /** Collapsed marks shown before the "+N" overflow indicator. */
 const VISIBLE_CAP = 3
@@ -58,31 +57,20 @@ export const LabelStack = memo(function LabelStack({
       // Negative margin keeps the glyphs visually aligned with neighbouring
       // controls while the padding gives a comfortable tap target.
       className={cn(
-        "group -m-1 flex items-center rounded-md p-1 transition-colors hover:bg-muted/60",
+        "group/label-stack -m-1 flex items-center rounded-md p-1 transition-colors hover:bg-muted/60",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         className
       )}
     >
-      <span className="flex -space-x-0.5">
-        {visible.map((label, index) => (
-          // Opaque base under the translucent tint so overlapping marks never
-          // bleed into each other.
-          <span
-            key={label.id}
-            className={cn(
-              "rounded bg-background transition-transform duration-150 ease-out [transform-origin:50%_160%] motion-reduce:transition-none",
-              "group-hover:[transform:translateX(calc(var(--fan)*3px))_rotate(calc(var(--fan)*9deg))]",
-              index > 0 && "shadow-[-1px_0_2px_rgb(0_0_0/0.35)]"
-            )}
-            style={
-              { "--fan": index - (visible.length - 1) / 2, "--edge": hexToRgba(label.color, 0.3) } as CSSProperties
-            }
-          >
-            <LabelGlyph label={label} className="ring-1 ring-inset ring-[color:var(--edge)]" />
-          </span>
-        ))}
-      </span>
-      {overflow > 0 && <span className="ml-1 text-xs font-medium text-muted-foreground">+{overflow}</span>}
+      <LabelGlyphStack labels={visible} size="md" fan />
+      {overflow > 0 && (
+        <span
+          className="ml-1 text-xs font-medium text-muted-foreground transition-transform duration-200 ease-out motion-reduce:transition-none group-hover/label-stack:translate-x-[var(--fan-reach)]"
+          style={{ "--fan-reach": `${labelFanReach(visible.length, "md")}px` } as CSSProperties}
+        >
+          +{overflow}
+        </span>
+      )}
     </button>
   )
 
