@@ -55,21 +55,18 @@ export const LabelStack = memo(function LabelStack({
       type="button"
       aria-label={ariaLabel}
       // Negative margin keeps the glyphs visually aligned with neighbouring
-      // controls while the padding gives a comfortable tap target.
+      // controls while the padding gives a comfortable tap target. The hover
+      // state is the fan itself (`.label-fan`, index.css), so no hover fill.
       className={cn(
-        "group/label-stack -m-1 flex items-center rounded-md p-1 transition-colors hover:bg-muted/60",
+        "label-fan -m-1 flex items-center rounded-md p-1",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         className
       )}
+      style={{ "--label-fan-reach": `${labelFanReach(visible.length, "md")}px` } as CSSProperties}
     >
-      <LabelGlyphStack labels={visible} size="md" fan />
+      <LabelGlyphStack labels={visible} size="md" />
       {overflow > 0 && (
-        <span
-          className="ml-1 text-xs font-medium text-muted-foreground transition-transform duration-200 ease-out motion-reduce:transition-none group-hover/label-stack:translate-x-[var(--fan-reach)]"
-          style={{ "--fan-reach": `${labelFanReach(visible.length, "md")}px` } as CSSProperties}
-        >
-          +{overflow}
-        </span>
+        <span className="label-fan-shift ml-1 text-xs font-medium text-muted-foreground">+{overflow}</span>
       )}
     </button>
   )
