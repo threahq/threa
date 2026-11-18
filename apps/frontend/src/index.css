@@ -87,7 +87,7 @@
    two glyphs: it turns the glyphs after the joint around a pivot shared by the
    whole stack — a hand of cards opening — and slides the cutout on the glyph
    before it by the same amount, so the cutout stays on its neighbour's edge
-   through the stagger and the overshoot. Not inherited: each box takes its
+   through the stagger. Not inherited: each box takes its
    parent's value explicitly, and every joint animates its own. */
 @property --label-fan {
   syntax: "<number>";
@@ -210,7 +210,7 @@
     transform: rotate(calc(var(--label-fan, 0) * var(--label-fan-tilt)));
   }
   .label-fan-cut {
-    mask-position: min(0px, calc((var(--label-fan, 0) - 1) * var(--label-fan-travel))) 0;
+    mask-position: calc((var(--label-fan, 0) - 1) * var(--label-fan-travel)) 0;
   }
   .label-fan-shift {
     transform: translateX(calc(var(--label-fan, 0) * var(--label-fan-reach)));
@@ -224,37 +224,10 @@
   html[data-input="mouse"] .label-fan:is(:hover, [data-state="open"]):not(:focus-visible),
   html[data-input="mouse"] .label-fan:is(:hover, [data-state="open"]):not(:focus-visible) .label-fan-joint {
     --label-fan: 1;
-    /* A spring with ~9% overshoot, settled by 500ms. Each joint opens 40ms after
-       the one before it; the 30ms lead keeps a pointer passing over from firing it. */
-    transition: --label-fan 500ms
-      linear(
-        0,
-        0.058,
-        0.197,
-        0.374,
-        0.555,
-        0.72,
-        0.856,
-        0.959,
-        1.03,
-        1.072,
-        1.092,
-        1.094,
-        1.086,
-        1.071,
-        1.054,
-        1.037,
-        1.022,
-        1.01,
-        1.001,
-        0.996,
-        0.992,
-        0.991,
-        0.991,
-        0.992,
-        1
-      )
-      calc(30ms + var(--label-fan-order, 0) * 40ms);
+    /* No overshoot: on a standard-density screen the settle shows as a one-pixel
+       snap back. Each joint opens 40ms after the one before it; the 30ms lead
+       keeps a pointer passing over from firing it. */
+    transition: --label-fan 240ms cubic-bezier(0.2, 0, 0.4, 1) calc(30ms + var(--label-fan-order, 0) * 40ms);
   }
   /* The app's own Reduce Motion class only shortens durations, which would
      leave the stagger delays stepping the joints open one by one. */
