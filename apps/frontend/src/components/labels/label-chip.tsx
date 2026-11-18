@@ -1,3 +1,4 @@
+import type { CSSProperties, ReactNode } from "react"
 import { Tag } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { badgeVariants } from "@/components/ui/badge"
@@ -22,10 +23,12 @@ export interface LabelChipLabel {
 export function LabelGlyph({
   label,
   className,
+  style,
   fallback = "dot",
 }: {
   label: LabelChipLabel
   className?: string
+  style?: CSSProperties
   fallback?: "dot" | "tag"
 }) {
   // One tinted-disc box for every case (emoji / tag / dot) so marks share a
@@ -41,7 +44,7 @@ export function LabelGlyph({
   return (
     <span
       className={cn("flex h-4 w-4 shrink-0 items-center justify-center rounded text-[11px] leading-none", className)}
-      style={{ backgroundColor: hexToRgba(label.color, 0.15), color: label.color }}
+      style={{ ...style, backgroundColor: hexToRgba(label.color, 0.15), color: label.color }}
       aria-hidden
     >
       {mark}
@@ -65,6 +68,123 @@ export function LabelChip({ label, className }: { label: LabelChipLabel; classNa
     >
       <LabelGlyph label={label} />
       <span className="truncate">{label.name}</span>
+    </span>
+  )
+}
+
+const STACK_SIZES = {
+  sm: { glyph: "h-3.5 w-3.5", px: 14, overlap: 3.5 },
+  md: { glyph: "h-4 w-4", px: 16, overlap: 4 },
+} as const
+type StackSize = keyof typeof STACK_SIZES
+/** Clearance between a tucked glyph and the one in front of it. */
+const CUT_GAP = 1.5
+/** Space between glyphs once the stack is fanned out. */
+const FAN_GAP = 2
+/** Angle between neighbouring glyphs once the stack is fanned out. */
+const FAN_TILT_DEG = 7
+/** LabelGlyph's `rounded` corner, so the cutout traces the front glyph's outline. */
+const GLYPH_RADIUS = 4
+
+/** Glyph boxes are rem-sized (`h-4`), so the stack's geometry scales with the text-size preference too. */
+function rem(px: number): string {
+  return `${px / 16}rem`
+}
+
+/** How far a glyph moves away from the one before it when the stack fans out. */
+function fanTravel(size: StackSize): number {
+  return STACK_SIZES[size].overlap + FAN_GAP
+}
+
+/** How far a fanned stack of `count` glyphs reaches past each side of its resting box. */
+export function labelFanReach(count: number, size: StackSize): string {
+  return rem(((count - 1) / 2) * fanTravel(size))
+}
+
+/**
+ * A mask that hides the part of a glyph sitting under its right-hand neighbour:
+ * a rounded cutout tracing that neighbour's outline plus `CUT_GAP`. Tints never
+ * blend and no surface color is assumed, so it reads the same on a hovered or
+ * active row. The image is `travel` wider than the glyph, so sliding it right as
+ * the neighbour fans away carries the cutout clear of the glyph.
+ */
+function cutoutMask(px: number, overlap: number, travel: number): string {
+  const side = px + CUT_GAP * 2
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${px + travel} ${px}">` +
+    `<mask id="m"><rect width="100%" height="100%" fill="white"/>` +
+    `<rect x="${travel + px - overlap - CUT_GAP}" y="${-CUT_GAP}" width="${side}" height="${side}" rx="${GLYPH_RADIUS + CUT_GAP}" fill="black"/></mask>` +
+    `<rect width="100%" height="100%" mask="url(#m)"/></svg>`
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
+}
+
+/**
+ * Collapsed label marks: glyphs overlapping left to right, each tucked behind
+ * the next, so the last one sits whole at the right edge.
+ *
+ * Inside a `.label-fan` trigger, hovering spreads them like a hand of cards
+ * (the `.label-fan-*` rules in index.css). Every glyph turns around one pivot
+ * under the stack's centre, so the spread is symmetric: it reaches
+ * `labelFanReach` past each side and the container must leave that room to
+ * paint. Transforms only, so nothing around the stack moves (INV-21). The
+ * glyphs nest — each joint holds its glyph and everything after it — because a
+ * joint's progress has to drive both the turn of what follows and the cutout
+ * on its own glyph.
+ */
+export function LabelGlyphStack({
+  labels,
+  size,
+  className,
+}: {
+  labels: readonly (LabelChipLabel & { id: string })[]
+  size: StackSize
+  className?: string
+}) {
+  const { glyph, px, overlap } = STACK_SIZES[size]
+  const travel = fanTravel(size)
+  const pitch = px - overlap
+  const last = labels.length - 1
+  // Far enough below the glyphs that one tilt step moves a glyph by `travel`.
+  const pivotX = (px + last * pitch) / 2
+  const pivotY = px / 2 + travel / ((FAN_TILT_DEG * Math.PI) / 180)
+  const pivotFrom = (index: number) => `${rem(pivotX - index * pitch)} ${rem(pivotY)}`
+  const cutout: CSSProperties = {
+    maskImage: cutoutMask(px, overlap, travel),
+    maskSize: `${rem(px + travel)} ${rem(px)}`,
+    maskRepeat: "no-repeat",
+  }
+
+  const chain = labels.reduceRight<ReactNode>(
+    (rest, label, index) =>
+      rest === null ? (
+        <LabelGlyph label={label} className={glyph} />
+      ) : (
+        <span className="label-fan-joint flex items-center" style={{ "--label-fan-order": index } as CSSProperties}>
+          <LabelGlyph label={label} className={cn(glyph, "label-fan-cut")} style={cutout} />
+          <span
+            className="label-fan-rest flex items-center"
+            style={{ marginLeft: rem(-overlap), transformOrigin: pivotFrom(index + 1) }}
+          >
+            {rest}
+          </span>
+        </span>
+      ),
+    null
+  )
+
+  return (
+    <span
+      className={cn("label-fan-hand flex items-center", className)}
+      style={
+        {
+          "--label-fan-travel": rem(travel),
+          "--label-fan-tilt": `${FAN_TILT_DEG}deg`,
+          "--label-fan-lean": `${(-last / 2) * FAN_TILT_DEG}deg`,
+          transformOrigin: pivotFrom(0),
+        } as CSSProperties
+      }
+    >
+      {chain}
     </span>
   )
 }

@@ -83,6 +83,18 @@
   initial-value: 1;
 }
 
+/* Label stack hover fan (LabelGlyphStack). One progress number per joint between
+   two glyphs: it turns the glyphs after the joint around a pivot shared by the
+   whole stack — a hand of cards opening — and slides the cutout on the glyph
+   before it by the same amount, so the cutout stays on its neighbour's edge
+   through the stagger and the overshoot. Not inherited: each box takes its
+   parent's value explicitly, and every joint animates its own. */
+@property --label-fan {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -183,6 +195,78 @@
   html[data-input="mouse"] .reveal-host:hover:has([data-reveal-over]) .reveal-yield,
   .reveal-host:has([data-reveal-over]:focus-within) .reveal-yield {
     opacity: 0;
+  }
+
+  .label-fan-hand,
+  .label-fan-rest,
+  .label-fan-cut,
+  .label-fan-shift {
+    --label-fan: inherit;
+  }
+  .label-fan-hand {
+    transform: rotate(calc(var(--label-fan, 0) * var(--label-fan-lean)));
+  }
+  .label-fan-rest {
+    transform: rotate(calc(var(--label-fan, 0) * var(--label-fan-tilt)));
+  }
+  .label-fan-cut {
+    mask-position: min(0px, calc((var(--label-fan, 0) - 1) * var(--label-fan-travel))) 0;
+  }
+  .label-fan-shift {
+    transform: translateX(calc(var(--label-fan, 0) * var(--label-fan-reach)));
+  }
+
+  .label-fan,
+  .label-fan-joint {
+    transition: --label-fan 180ms cubic-bezier(0.3, 0, 0.2, 1);
+  }
+  /* Keyboard focus keeps the stack closed, so the focus ring stays clear of it. */
+  html[data-input="mouse"] .label-fan:is(:hover, [data-state="open"]):not(:focus-visible),
+  html[data-input="mouse"] .label-fan:is(:hover, [data-state="open"]):not(:focus-visible) .label-fan-joint {
+    --label-fan: 1;
+    /* A spring with ~9% overshoot, settled by 500ms. Each joint opens 40ms after
+       the one before it; the 30ms lead keeps a pointer passing over from firing it. */
+    transition: --label-fan 500ms
+      linear(
+        0,
+        0.058,
+        0.197,
+        0.374,
+        0.555,
+        0.72,
+        0.856,
+        0.959,
+        1.03,
+        1.072,
+        1.092,
+        1.094,
+        1.086,
+        1.071,
+        1.054,
+        1.037,
+        1.022,
+        1.01,
+        1.001,
+        0.996,
+        0.992,
+        0.991,
+        0.991,
+        0.992,
+        1
+      )
+      calc(30ms + var(--label-fan-order, 0) * 40ms);
+  }
+  /* The app's own Reduce Motion class only shortens durations, which would
+     leave the stagger delays stepping the joints open one by one. */
+  .reduced-motion .label-fan,
+  .reduced-motion .label-fan-joint {
+    transition: none !important;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .label-fan,
+    .label-fan-joint {
+      transition: none !important;
+    }
   }
 
   .resize-handle-touch-target::after {
