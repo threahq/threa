@@ -86,14 +86,19 @@ const FAN_TILT_DEG = 7
 /** LabelGlyph's `rounded` corner, so the cutout traces the front glyph's outline. */
 const GLYPH_RADIUS = 4
 
+/** Glyph boxes are rem-sized (`h-4`), so the stack's geometry scales with the text-size preference too. */
+function rem(px: number): string {
+  return `${px / 16}rem`
+}
+
 /** How far a glyph moves away from the one before it when the stack fans out. */
 function fanTravel(size: StackSize): number {
   return STACK_SIZES[size].overlap + FAN_GAP
 }
 
 /** How far a fanned stack of `count` glyphs reaches past each side of its resting box. */
-export function labelFanReach(count: number, size: StackSize): number {
-  return ((count - 1) / 2) * fanTravel(size)
+export function labelFanReach(count: number, size: StackSize): string {
+  return rem(((count - 1) / 2) * fanTravel(size))
 }
 
 /**
@@ -106,7 +111,7 @@ export function labelFanReach(count: number, size: StackSize): number {
 function cutoutMask(px: number, overlap: number, travel: number): string {
   const side = px + CUT_GAP * 2
   const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${px + travel}" height="${px}">` +
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${px + travel} ${px}">` +
     `<mask id="m"><rect width="100%" height="100%" fill="white"/>` +
     `<rect x="${travel + px - overlap - CUT_GAP}" y="${-CUT_GAP}" width="${side}" height="${side}" rx="${GLYPH_RADIUS + CUT_GAP}" fill="black"/></mask>` +
     `<rect width="100%" height="100%" mask="url(#m)"/></svg>`
@@ -142,10 +147,10 @@ export function LabelGlyphStack({
   // Far enough below the glyphs that one tilt step moves a glyph by `travel`.
   const pivotX = (px + last * pitch) / 2
   const pivotY = px / 2 + travel / ((FAN_TILT_DEG * Math.PI) / 180)
-  const pivotFrom = (index: number) => `${pivotX - index * pitch}px ${pivotY}px`
+  const pivotFrom = (index: number) => `${rem(pivotX - index * pitch)} ${rem(pivotY)}`
   const cutout: CSSProperties = {
     maskImage: cutoutMask(px, overlap, travel),
-    maskSize: `${px + travel}px ${px}px`,
+    maskSize: `${rem(px + travel)} ${rem(px)}`,
     maskRepeat: "no-repeat",
   }
 
@@ -158,7 +163,7 @@ export function LabelGlyphStack({
           <LabelGlyph label={label} className={cn(glyph, "label-fan-cut")} style={cutout} />
           <span
             className="label-fan-rest flex items-center"
-            style={{ marginLeft: -overlap, transformOrigin: pivotFrom(index + 1) }}
+            style={{ marginLeft: rem(-overlap), transformOrigin: pivotFrom(index + 1) }}
           >
             {rest}
           </span>
@@ -172,7 +177,7 @@ export function LabelGlyphStack({
       className={cn("label-fan-hand flex items-center", className)}
       style={
         {
-          "--label-fan-travel": `${travel}px`,
+          "--label-fan-travel": rem(travel),
           "--label-fan-tilt": `${FAN_TILT_DEG}deg`,
           "--label-fan-lean": `${(-last / 2) * FAN_TILT_DEG}deg`,
           transformOrigin: pivotFrom(0),

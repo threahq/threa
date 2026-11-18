@@ -62,7 +62,7 @@ export const LabelStack = memo(function LabelStack({
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         className
       )}
-      style={{ "--label-fan-reach": `${labelFanReach(visible.length, "md")}px` } as CSSProperties}
+      style={{ "--label-fan-reach": labelFanReach(visible.length, "md") } as CSSProperties}
     >
       <LabelGlyphStack labels={visible} size="md" />
       {overflow > 0 && (

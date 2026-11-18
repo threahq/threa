@@ -256,6 +256,12 @@
       )
       calc(30ms + var(--label-fan-order, 0) * 40ms);
   }
+  /* The app's own Reduce Motion class only shortens durations, which would
+     leave the stagger delays stepping the joints open one by one. */
+  .reduced-motion .label-fan,
+  .reduced-motion .label-fan-joint {
+    transition: none !important;
+  }
   @media (prefers-reduced-motion: reduce) {
     .label-fan,
     .label-fan-joint {
