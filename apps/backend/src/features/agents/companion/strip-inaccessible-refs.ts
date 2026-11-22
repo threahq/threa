@@ -1,7 +1,7 @@
 import type { Pool } from "pg"
 import { collectDocEmbedIds, serializeToMarkdown } from "@threahq/prosemirror"
 import { AttachmentSafetyStatuses, StreamTypes, type JSONContent } from "@threahq/types"
-import { MessageRepository } from "../../messaging"
+import { MessageRepository, locateSnippetRange, sliceReferenceContent } from "../../messaging"
 import { AttachmentRepository, AttachmentReferenceRepository } from "../../attachments"
 import { MemoRepository } from "../../memos"
 import { StreamRepository, scopeReadsDocWithoutGrant } from "../../streams"
@@ -78,9 +78,13 @@ export interface StripParams {
  * one that is not a doc in the workspace or that the agent can't read; it is
  * dropped in both cases.
  *
- * Same-stream `quoteReply` is left alone — it's purely presentational, has
- * no DB write path, and writing a same-stream quote with a stale id is
- * already a graceful UX failure at click time.
+ * Every `quoteReply` must name a message in the workspace. One in the target
+ * stream needs no scope (scheduled turns pass an empty one); one that names the
+ * target stream but lives elsewhere is kept when in scope, because event-service
+ * corrects the stream. A quote with no `version`/`range` whose snippet is not in
+ * the source becomes a quote of the whole source message, since event-service
+ * rejects unlocatable wording; when that source is deleted the quote is dropped,
+ * so a misquote never republishes deleted text.
  */
 export async function stripInaccessibleAgentRefs(params: StripParams): Promise<StripResult> {
   const { pool, workspaceId, targetStreamId, contentJson } = params
@@ -96,11 +100,7 @@ export async function stripInaccessibleAgentRefs(params: StripParams): Promise<S
       if (id) messageIdsToCheck.add(id)
     } else if (node.type === "quoteReply") {
       const id = (node.attrs?.messageId as string | undefined) ?? null
-      const streamId = (node.attrs?.streamId as string | undefined) ?? null
-      if (id && streamId && streamId !== targetStreamId) {
-        // Only validate cross-stream quotes (same path event-service walks).
-        messageIdsToCheck.add(id)
-      }
+      if (id) messageIdsToCheck.add(id)
     } else if (node.type === "attachmentReference") {
       const id = (node.attrs?.id as string | undefined) ?? null
       if (id) attachmentIdsToCheck.add(id)
@@ -175,6 +175,7 @@ export async function stripInaccessibleAgentRefs(params: StripParams): Promise<S
 
   // Pass 2: walk and rewrite, recording drops.
   const dropped: DroppedRef[] = []
+  const widenedQuotes: Array<{ messageId: string; streamId: string }> = []
   const cleanedJson = rewrite(contentJson, {
     onSharedMessage: (node) => {
       const messageId = node.attrs?.messageId as string | undefined
@@ -202,11 +203,9 @@ export async function stripInaccessibleAgentRefs(params: StripParams): Promise<S
     },
     onQuoteReply: (node) => {
       const messageId = node.attrs?.messageId as string | undefined
-      const streamId = node.attrs?.streamId as string | undefined
-      // Same-stream: not validated against the share path; pass through.
-      if (!streamId || streamId === targetStreamId) return node
+      const streamId = (node.attrs?.streamId as string | undefined) ?? ""
       if (!messageId) {
-        dropped.push({ type: "quoteReply", reason: "message-not-found", ids: { messageId: messageId ?? "" } })
+        dropped.push({ type: "quoteReply", reason: "message-not-found", ids: { messageId: "" } })
         return null
       }
       const msg = messageMap.get(messageId)
@@ -214,15 +213,25 @@ export async function stripInaccessibleAgentRefs(params: StripParams): Promise<S
         dropped.push({ type: "quoteReply", reason: "message-not-found", ids: { messageId, streamId } })
         return null
       }
-      if (msg.streamId !== streamId) {
+      if (streamId && streamId !== targetStreamId && msg.streamId !== streamId) {
         dropped.push({ type: "quoteReply", reason: "stream-mismatch", ids: { messageId, streamId } })
         return null
       }
-      if (!accessibleSet.has(streamId)) {
+      if (msg.streamId !== targetStreamId && !accessibleSet.has(msg.streamId)) {
         dropped.push({ type: "quoteReply", reason: "stream-out-of-scope", ids: { messageId, streamId } })
         return null
       }
-      return node
+      if (node.attrs?.version != null || node.attrs?.range != null) return node
+      if (locateSnippetRange(msg.contentJson, node.attrs?.snippet) !== null) return node
+      if (msg.deletedAt) {
+        dropped.push({ type: "quoteReply", reason: "message-not-found", ids: { messageId, streamId } })
+        return null
+      }
+      widenedQuotes.push({ messageId, streamId: msg.streamId })
+      return {
+        ...node,
+        attrs: { ...node.attrs, snippet: sliceReferenceContent(msg.contentJson, null).contentMarkdown },
+      }
     },
     onAttachmentReference: (node) => {
       const id = node.attrs?.id as string | undefined
@@ -282,6 +291,13 @@ export async function stripInaccessibleAgentRefs(params: StripParams): Promise<S
     logger.warn(
       { workspaceId, targetStreamId, droppedCount: dropped.length, dropped },
       "Stripped inaccessible refs from agent message"
+    )
+  }
+
+  if (widenedQuotes.length > 0) {
+    logger.warn(
+      { workspaceId, targetStreamId, widenedCount: widenedQuotes.length, widenedQuotes },
+      "Widened unlocatable agent quotes to the whole source message"
     )
   }
 
