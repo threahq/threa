@@ -72,6 +72,11 @@ interface TraceStepProps {
   onRedirectSession?: () => void
 }
 
+const MODEL_SWITCH_CAUSE_LABELS = new Map<unknown, string>([
+  ["subagent", "Delegated Model"],
+  ["provider_failed", "Fallback Model"],
+])
+
 export function TraceStep({
   step,
   collapsible = false,
@@ -110,10 +115,11 @@ export function TraceStep({
   // lateral — calling that "Stronger Model" is a claim the trace cannot make.
   // The cause lives in the step's own content, so the chip is resolved here
   // rather than in the step-type-keyed config.
-  const headerConfig =
-    step.stepType === "model_escalated" && parseStructuredContent(effectiveContent)?.cause === "subagent"
-      ? { ...config, label: "Delegated Model" }
-      : config
+  const causeLabel =
+    step.stepType === "model_escalated"
+      ? MODEL_SWITCH_CAUSE_LABELS.get(parseStructuredContent(effectiveContent)?.cause)
+      : undefined
+  const headerConfig = causeLabel ? { ...config, label: causeLabel } : config
 
   // A guarded call's step opens BEFORE the guardian decides, so for the whole
   // review window `isInProgress` is true while the action has not started and
@@ -892,6 +898,11 @@ function renderStepContent(
               <div className="text-[11px] text-muted-foreground">
                 The previous attempt could not produce a response that passed validation, so this turn runs a stronger
                 model.
+              </div>
+            )}
+            {structured.cause === "provider_failed" && from && (
+              <div className="text-[11px] text-muted-foreground">
+                The call to {from} failed, so this turn ran on {to}.
               </div>
             )}
           </div>

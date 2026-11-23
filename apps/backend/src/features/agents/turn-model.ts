@@ -11,6 +11,8 @@ export interface ResolvedTurnModel {
   model: string
   /** True when an escalation rule fired (renders as a `model_escalated` trace step). */
   escalated: boolean
+  /** The model the turn would have run had the firing rule not applied. Present when escalated. */
+  fromModel?: string
   /** Which rule fired, for the trace step's label. Absent when nothing escalated. */
   cause?: TurnModelEscalationCause
 }
@@ -20,7 +22,15 @@ export interface ResolvedTurnModel {
  * the supersede-rerun rule; `subagent` means the turn is running inside a
  * subagent thread and is bound to that run's delegated model.
  */
-export type TurnModelEscalationCause = "previous_attempt_failed_validation" | "subagent"
+export type TurnModelEscalationCause = "previous_attempt_failed_validation" | "subagent" | "provider_failed"
+
+const PRIMARY_FALLBACK_MODEL = "openrouter:anthropic/claude-haiku-5.5"
+const SECONDARY_FALLBACK_MODEL = "openrouter:openai/gpt-6-luna"
+
+/** The model a turn falls back to when `model` cannot run for it. */
+export function fallbackModelFor(model: string): string {
+  return model === PRIMARY_FALLBACK_MODEL ? SECONDARY_FALLBACK_MODEL : PRIMARY_FALLBACK_MODEL
+}
 
 export interface TurnModelContext {
   /** The turn's EFFECTIVE purpose (a degraded supersede rerun never escalates). */
@@ -35,6 +45,8 @@ export interface TurnModelContext {
    * thread of, when there is one. Null/absent for every ordinary turn.
    */
   activeSubagentModel?: string | null
+  /** The model this session's previous attempt failed on with a provider error, if it did. */
+  providerFailedModel: string | null
 }
 
 /**
@@ -49,10 +61,22 @@ export interface TurnModelContext {
  *    repeatedly failed the response validator runs on the persona's
  *    `escalationModel`.
  *
- * Everything else runs `persona.model`. A binding that lands on `persona.model`
- * reports `escalated: false`, so the trace never shows a no-op escalation step.
+ * Everything else runs `persona.model`. When the session's previous attempt
+ * failed on the chosen model's provider, this attempt runs `fallbackModelFor`
+ * it, so after the fallback fails too the next attempt is back on the first
+ * model. A binding that lands on `persona.model` reports `escalated: false`,
+ * so the trace never shows a no-op escalation step.
  */
 export function resolveTurnModel(
+  persona: { model: string; escalationModel: string | null },
+  turnContext: TurnModelContext
+): ResolvedTurnModel {
+  const chosen = resolveRuleModel(persona, turnContext)
+  if (turnContext.providerFailedModel !== chosen.model) return chosen
+  return { model: fallbackModelFor(chosen.model), escalated: true, fromModel: chosen.model, cause: "provider_failed" }
+}
+
+function resolveRuleModel(
   persona: { model: string; escalationModel: string | null },
   turnContext: TurnModelContext
 ): ResolvedTurnModel {
@@ -60,7 +84,7 @@ export function resolveTurnModel(
   if (activeSubagentModel) {
     return activeSubagentModel === persona.model
       ? { model: persona.model, escalated: false }
-      : { model: activeSubagentModel, escalated: true, cause: "subagent" }
+      : { model: activeSubagentModel, escalated: true, fromModel: persona.model, cause: "subagent" }
   }
   if (
     purpose.kind === "supersede_rerun" &&
@@ -68,7 +92,12 @@ export function resolveTurnModel(
     persona.escalationModel !== null &&
     persona.escalationModel !== persona.model
   ) {
-    return { model: persona.escalationModel, escalated: true, cause: "previous_attempt_failed_validation" }
+    return {
+      model: persona.escalationModel,
+      escalated: true,
+      fromModel: persona.model,
+      cause: "previous_attempt_failed_validation",
+    }
   }
   return { model: persona.model, escalated: false }
 }

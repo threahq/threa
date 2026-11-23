@@ -103,8 +103,9 @@ describe("pinned model", () => {
         purpose: kickoffPurpose,
         supersededSession: null,
         activeSubagentModel: kickoffRun?.model ?? null,
+        providerFailedModel: null,
       })
-    ).toEqual({ model: DELEGATED_MODEL, escalated: true, cause: "subagent" })
+    ).toEqual({ model: DELEGATED_MODEL, escalated: true, fromModel: PERSONA_MODEL, cause: "subagent" })
 
     // The user answers in the thread: an ordinary catch-up turn, same binding.
     const replyRun = await loadActiveSubagentRun(threadStreamId)
@@ -113,8 +114,9 @@ describe("pinned model", () => {
         purpose: { kind: "catch_up" },
         supersededSession: null,
         activeSubagentModel: replyRun?.model ?? null,
+        providerFailedModel: null,
       })
-    ).toEqual({ model: DELEGATED_MODEL, escalated: true, cause: "subagent" })
+    ).toEqual({ model: DELEGATED_MODEL, escalated: true, fromModel: PERSONA_MODEL, cause: "subagent" })
   })
 
   test("once the run reports back the thread falls back to the persona's own model", async () => {
@@ -133,6 +135,7 @@ describe("pinned model", () => {
         purpose: { kind: "catch_up" },
         supersededSession: null,
         activeSubagentModel: settledRun?.model ?? null,
+        providerFailedModel: null,
       })
     ).toEqual({ model: PERSONA_MODEL, escalated: false })
   })
@@ -147,6 +150,7 @@ describe("pinned model", () => {
         purpose: { kind: "catch_up" },
         supersededSession: null,
         activeSubagentModel: run?.model ?? null,
+        providerFailedModel: null,
       })
     ).toEqual({ model: PERSONA_MODEL, escalated: false })
   })

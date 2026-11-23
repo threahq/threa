@@ -480,6 +480,9 @@ export class AgentRuntime {
           telemetry: this.config.telemetry,
           context: this.config.costContext,
           abortSignal: this.config.runAbortSignal,
+          // One quick retry: a provider that fails twice is left for the
+          // session's next queue attempt, which runs the fallback model.
+          maxRetries: 1,
           // The loop re-sends tools + system prompt + conversation once per
           // iteration, so from the second iteration onward the prefix is read
           // back rather than reprocessed.
