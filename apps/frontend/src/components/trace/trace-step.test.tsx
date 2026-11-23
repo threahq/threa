@@ -107,6 +107,31 @@ describe("TraceStep", () => {
     expect(screen.queryByText(/Switched to/)).not.toBeInTheDocument()
   })
 
+  it("should label a provider fallback and say which model's call failed", () => {
+    render(
+      <MemoryRouter>
+        <TraceStep
+          step={createStep({
+            stepType: "model_escalated",
+            content: JSON.stringify({
+              fromModel: "openrouter:anthropic/claude-sonnet-4.6",
+              toModel: "openrouter:anthropic/claude-haiku-5.5",
+              cause: "provider_failed",
+              personaId: "persona_ariadne",
+            }),
+          })}
+          workspaceId="ws_1"
+          streamId="stream_1"
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText("Fallback Model")).toBeInTheDocument()
+    expect(screen.queryByText("Stronger Model")).not.toBeInTheDocument()
+    expect(screen.getByText(/Switched to/)).toBeInTheDocument()
+    expect(screen.getByText(/The call to .* failed, so this turn ran on /)).toBeInTheDocument()
+  })
+
   it("indicates edited messages in reconsideration context", () => {
     render(
       <MemoryRouter>

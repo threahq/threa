@@ -121,6 +121,7 @@ function makeSession(overrides?: Partial<AgentSession>): AgentSession {
     contextMessageIds: [],
     episodeSummary: null,
     responseValidationFailed: false,
+    providerFailedModel: null,
     reflectiveCapturedAt: null,
     createdAt: new Date("2026-02-19T12:00:00Z"),
     completedAt: null,
@@ -190,6 +191,8 @@ async function runSupersedeRerun(params: {
   subagentRun?: SubagentRun
   finalText?: string
   extraDeps?: Partial<PersonaAgentDeps>
+  /** The model the resumed session's previous attempt failed on with a provider error. */
+  providerFailedModel?: string
 }) {
   const supersededSession = makeSession({
     id: SUPERSEDED_SESSION_ID,
@@ -197,7 +200,10 @@ async function runSupersedeRerun(params: {
     responseValidationFailed: params.supersededFailedValidation,
     completedAt: new Date("2026-02-19T11:59:00Z"),
   })
-  const runningSession = makeSession({ supersedesSessionId: SUPERSEDED_SESSION_ID })
+  const runningSession = makeSession({
+    supersedesSessionId: SUPERSEDED_SESSION_ID,
+    providerFailedModel: params.providerFailedModel ?? null,
+  })
 
   spyOn(dbModule, "withClient").mockImplementation(async (_pool, callback: any) => callback(emptyDb))
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback: any) => callback(emptyDb))
@@ -627,6 +633,24 @@ describe("PersonaAgent per-turn model resolution (roadmap 2.3)", () => {
     expect(markResponseValidationFailed).not.toHaveBeenCalled()
   })
 
+  it("should run the fallback model when the session's previous attempt failed on the chosen model's provider", async () => {
+    const { result, capturedModelStrings, escalationSteps } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      providerFailedModel: SONNET,
+    })
+
+    expect(result.status).toBe("completed")
+    expect(capturedModelStrings).toEqual(["openrouter:anthropic/claude-haiku-5.5"])
+    expect(escalationSteps.map((call) => JSON.parse((call[2] as { content: string }).content))).toEqual([
+      {
+        fromModel: SONNET,
+        toModel: "openrouter:anthropic/claude-haiku-5.5",
+        cause: "provider_failed",
+        personaId: PERSONA_ID,
+      },
+    ])
+  })
+
   it("runs the persona model when the superseded attempt passed validation", async () => {
     const { result, capturedModelStrings, escalationSteps } = await runSupersedeRerun({
       supersededFailedValidation: false,
@@ -705,6 +729,7 @@ describe("PersonaAgent per-turn model resolution (roadmap 2.3)", () => {
       SessionStatuses.FAILED,
       {
         error: "HttpError: read only",
+        providerFailedModel: null,
       }
     )
     expect(result).toMatchObject({ status: "failed", retryable: false, messagesSent: 0, sentMessageIds: [] })

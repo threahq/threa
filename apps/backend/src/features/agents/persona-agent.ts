@@ -853,7 +853,7 @@ export class PersonaAgent {
 
     const result = await withCompanionSession(
       sessionOptions(sessionStreamId, isChannelMention ? BigInt(0) : initialSequence),
-      async (session, db) => {
+      async (session, db, reportTurnModel) => {
         const trace = traceEmitter.forSession({
           sessionId: session.id,
           workspaceId,
@@ -1048,12 +1048,14 @@ export class PersonaAgent {
           purpose: effectivePurpose,
           supersededSession: supersededMessagePlan?.supersededSession ?? null,
           activeSubagentModel: activeSubagentRun?.model ?? null,
+          providerFailedModel: session.providerFailedModel,
         })
+        reportTurnModel(turnModel.model)
         if (turnModel.escalated) {
           const escalationStep = await trace.startStep({
             stepType: AgentStepTypes.MODEL_ESCALATED,
             content: JSON.stringify({
-              fromModel: persona.model,
+              fromModel: turnModel.fromModel,
               toModel: turnModel.model,
               cause: turnModel.cause,
               // Who delegated: a subagent turn runs the SAME persona on another

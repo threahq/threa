@@ -218,6 +218,8 @@ export interface GenerateTextWithToolsOptions {
   context: CostContext
   /** Abort signal for graceful cancellation / per-call timeouts */
   abortSignal?: AbortSignal
+  /** AI SDK retries after the first failed call; absent keeps the SDK default. */
+  maxRetries?: number
   /**
    * Place Anthropic prompt-cache breakpoints on this request. Caching is a
    * prefix match over `tools` → `system` → `messages`, so one breakpoint on the
@@ -983,6 +985,7 @@ export function createAI(config: AIConfig): AI {
         maxOutputTokens: options.maxTokens,
         ...(options.modelString === LUNA ? {} : { temperature: options.temperature }),
         abortSignal: options.abortSignal,
+        maxRetries: options.maxRetries,
         experimental_telemetry: buildTelemetry(options.telemetry),
       })
 

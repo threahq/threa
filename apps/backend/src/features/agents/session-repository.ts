@@ -39,6 +39,7 @@ interface SessionRow {
   context_message_ids: string[] | null
   episode_summary: string | null
   response_validation_failed: boolean
+  provider_failed_model: string | null
   reflective_captured_at: Date | null
   created_at: Date
   completed_at: Date | null
@@ -120,6 +121,12 @@ export interface AgentSession {
    * `escalationModel` (roadmap 2.3).
    */
   responseValidationFailed: boolean
+  /**
+   * The model the latest failed attempt ran when it failed on a model provider
+   * error; NULL when that failure was something else. The next attempt runs the
+   * fallback model instead (`resolveTurnModel`).
+   */
+  providerFailedModel: string | null
   /**
    * When the reflective session-capture job ran for this session (roadmap 6.3),
    * or NULL if it hasn't. CAS-set once so a re-delivered job is a no-op — see
@@ -254,6 +261,7 @@ function mapRowToSession(row: SessionRow): AgentSession {
     contextMessageIds: row.context_message_ids ?? [],
     episodeSummary: row.episode_summary,
     responseValidationFailed: row.response_validation_failed,
+    providerFailedModel: row.provider_failed_model,
     reflectiveCapturedAt: row.reflective_captured_at,
     createdAt: row.created_at,
     completedAt: row.completed_at,
@@ -289,7 +297,7 @@ const SESSION_SELECT_FIELDS = `
   status, current_step, current_step_type, server_id, callback_token_hash, reply_key_generation, heartbeat_at,
   abort_requested_at, response_message_id, error, last_seen_sequence,
   sent_message_ids, context_message_ids, episode_summary, response_validation_failed,
-  reflective_captured_at, created_at, completed_at
+  provider_failed_model, reflective_captured_at, created_at, completed_at
 `
 
 const STEP_SELECT_FIELDS = `
@@ -508,6 +516,8 @@ export const AgentSessionRepository = {
       responseMessageId?: string
       sentMessageIds?: string[]
       error?: string
+      /** Set (including to NULL) only when present; absent leaves the column as is. */
+      providerFailedModel?: string | null
       onlyIfStatus?: SessionStatus
       onlyIfStatusIn?: SessionStatus[]
     }
@@ -537,6 +547,8 @@ export const AgentSessionRepository = {
       completedAt,
       workspaceId,
       id,
+      extras?.providerFailedModel !== undefined,
+      extras?.providerFailedModel ?? null,
     ]
 
     let statusClause = ""
@@ -559,7 +571,8 @@ export const AgentSessionRepository = {
         sent_message_ids = COALESCE($5, sent_message_ids),
         error = COALESCE($6, error),
         current_step_type = CASE WHEN $7 THEN NULL ELSE current_step_type END,
-        completed_at = $8
+        completed_at = $8,
+        provider_failed_model = CASE WHEN $11::boolean THEN $12::text ELSE provider_failed_model END
       WHERE workspace_id = $9 AND id = $10${statusClause}
       RETURNING ${SESSION_SELECT_FIELDS}
       ), ${CLOSE_OPEN_STEPS_CTE}

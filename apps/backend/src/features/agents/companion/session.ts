@@ -1,4 +1,4 @@
-import { APICallError } from "ai"
+import { APICallError, RetryError } from "ai"
 import { AISpendDeniedError } from "@threahq/agent-runtime"
 import type { Pool } from "pg"
 import type { AgentSessionRerunContext } from "@threahq/types"
@@ -9,6 +9,14 @@ import { OutboxRepository } from "../../../lib/outbox"
 import { StreamEventRepository } from "../../streams"
 import { eventId, sessionId } from "../../../lib/id"
 import { logger } from "../../../lib/logger"
+
+/**
+ * Whether `err` is a model provider call failure: an AI SDK `APICallError`, or
+ * the `RetryError` the SDK throws once its retries of one run out.
+ */
+function isProviderCallError(err: unknown): boolean {
+  return APICallError.isInstance(err) || (RetryError.isInstance(err) && APICallError.isInstance(err.lastError))
+}
 
 export type WithSessionResult =
   | { status: "skipped"; sessionId: string | null; reason: string }
@@ -69,7 +77,9 @@ export async function withCompanionSession(
   },
   work: (
     session: AgentSession,
-    pool: Pool
+    pool: Pool,
+    /** Names the model this attempt runs, so a provider failure records it on the row. */
+    reportTurnModel: (model: string) => void
   ) => Promise<{ messagesSent: number; sentMessageIds: string[]; lastSeenSequence: bigint }>
 ): Promise<WithSessionResult> {
   const {
@@ -180,6 +190,7 @@ export async function withCompanionSession(
 
   // Phase 2: Run work WITHOUT holding connection
   let heartbeatInterval: ReturnType<typeof setInterval> | undefined
+  let attemptModel: string | null = null
 
   try {
     heartbeatInterval = setInterval(async () => {
@@ -190,7 +201,9 @@ export async function withCompanionSession(
       }
     }, 15_000)
 
-    const { messagesSent, sentMessageIds, lastSeenSequence } = await work(session, pool)
+    const { messagesSent, sentMessageIds, lastSeenSequence } = await work(session, pool, (model) => {
+      attemptModel = model
+    })
 
     // Phase 3: Complete session + emit completed event atomically
     let completionCommitted = false
@@ -288,21 +301,26 @@ export async function withCompanionSession(
     // `retryable: false` is the provider's own verdict (an AI SDK APICallError that
     // says don't retry) — repeating a deterministic rejection only burns tokens. It
     // is not the same as `willRetry: false`, which also covers the last attempt of
-    // an ordinary failure.
+    // an ordinary failure. The one exception is the session's first provider
+    // failure: the next attempt runs the fallback model, which may accept what
+    // this one rejected.
     const errorCode =
       typeof err === "object" && err !== null && "code" in err && typeof err.code === "string" ? err.code : null
     const authorityDenial = errorCode === "STREAM_READ_ONLY" || errorCode === "STREAM_NOT_FOUND"
+    const providerFailedModel = isProviderCallError(err) ? attemptModel : null
+    const nextAttemptSwitchesModel = providerFailedModel !== null && session.providerFailedModel === null
     // A spend limit holds until the month resets or an admin raises it, so a
     // retry minutes later is denied the same way.
     const retryable =
       !authorityDenial &&
       !(err instanceof AISpendDeniedError) &&
-      !(APICallError.isInstance(err) && err.isRetryable === false)
+      !(APICallError.isInstance(err) && err.isRetryable === false && !nextAttemptSwitchesModel)
     const willRetry = retryable && attempt !== undefined && maxAttempts !== undefined && attempt + 1 < maxAttempts
 
     await withTransaction(pool, async (db) => {
       const failed = await AgentSessionRepository.updateStatus(db, workspaceId, session.id, SessionStatuses.FAILED, {
         error: String(err),
+        providerFailedModel,
       })
       if (failed) {
         const steps = await AgentSessionRepository.findStepsBySession(db, workspaceId, session.id)

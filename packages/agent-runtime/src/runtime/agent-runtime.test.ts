@@ -237,12 +237,13 @@ describe("AgentRuntime message counting", () => {
     expect(result.responseValidationFailed).toBeFalsy()
   })
 
-  it("forwards model config and cost context to generateTextWithTools", async () => {
+  it("should forward model config, cost context and a single SDK retry to generateTextWithTools", async () => {
     const captured: Array<{
       modelString?: string
       context?: Record<string, unknown>
       maxTokens?: number
       temperature?: number
+      maxRetries?: number
     }> = []
     const generateTextWithTools = mock(
       async (opts: {
@@ -250,12 +251,14 @@ describe("AgentRuntime message counting", () => {
         context?: Record<string, unknown>
         maxTokens?: number
         temperature?: number
+        maxRetries?: number
       }) => {
         captured.push({
           modelString: opts.modelString,
           context: opts.context,
           maxTokens: opts.maxTokens,
           temperature: opts.temperature,
+          maxRetries: opts.maxRetries,
         })
         return {
           text: "All done.",
@@ -293,6 +296,7 @@ describe("AgentRuntime message counting", () => {
       modelString: "openrouter:anthropic/claude-haiku-4.5",
       maxTokens: 500,
       temperature: 0.2,
+      maxRetries: 1,
       context: {
         workspaceId: "ws_abc",
         userId: "user_xyz",
