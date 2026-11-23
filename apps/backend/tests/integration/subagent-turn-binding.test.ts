@@ -103,7 +103,6 @@ describe("pinned model", () => {
         purpose: kickoffPurpose,
         supersededSession: null,
         activeSubagentModel: kickoffRun?.model ?? null,
-        providerFailedModel: null,
       })
     ).toEqual({ model: DELEGATED_MODEL, escalated: true, fromModel: PERSONA_MODEL, cause: "subagent" })
 
@@ -114,7 +113,6 @@ describe("pinned model", () => {
         purpose: { kind: "catch_up" },
         supersededSession: null,
         activeSubagentModel: replyRun?.model ?? null,
-        providerFailedModel: null,
       })
     ).toEqual({ model: DELEGATED_MODEL, escalated: true, fromModel: PERSONA_MODEL, cause: "subagent" })
   })
@@ -135,7 +133,6 @@ describe("pinned model", () => {
         purpose: { kind: "catch_up" },
         supersededSession: null,
         activeSubagentModel: settledRun?.model ?? null,
-        providerFailedModel: null,
       })
     ).toEqual({ model: PERSONA_MODEL, escalated: false })
   })
@@ -150,7 +147,6 @@ describe("pinned model", () => {
         purpose: { kind: "catch_up" },
         supersededSession: null,
         activeSubagentModel: run?.model ?? null,
-        providerFailedModel: null,
       })
     ).toEqual({ model: PERSONA_MODEL, escalated: false })
   })

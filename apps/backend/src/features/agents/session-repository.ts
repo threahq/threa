@@ -122,9 +122,9 @@ export interface AgentSession {
    */
   responseValidationFailed: boolean
   /**
-   * The model the latest attempt ran when that attempt failed on a model
-   * provider error; NULL when it did not. The next attempt runs the fallback
-   * model instead (`resolveTurnModel`).
+   * The model the latest failed attempt ran when it failed on a model provider
+   * error; NULL when that failure was something else. The next attempt runs the
+   * fallback model instead (`resolveTurnModel`).
    */
   providerFailedModel: string | null
   /**

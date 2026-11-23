@@ -1055,7 +1055,7 @@ export class PersonaAgent {
           const escalationStep = await trace.startStep({
             stepType: AgentStepTypes.MODEL_ESCALATED,
             content: JSON.stringify({
-              fromModel: turnModel.fromModel ?? persona.model,
+              fromModel: turnModel.fromModel,
               toModel: turnModel.model,
               cause: turnModel.cause,
               // Who delegated: a subagent turn runs the SAME persona on another

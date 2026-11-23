@@ -7,15 +7,17 @@ import type { TurnPurpose } from "./turn-purpose"
  * (roadmap 2.3): the persona's model is the default, and per-turn escalation
  * rules may pick the persona's `escalationModel` instead.
  */
-export interface ResolvedTurnModel {
-  model: string
-  /** True when an escalation rule fired (renders as a `model_escalated` trace step). */
-  escalated: boolean
-  /** The model the turn would have run had the firing rule not applied. Present when escalated. */
-  fromModel?: string
-  /** Which rule fired, for the trace step's label. Absent when nothing escalated. */
-  cause?: TurnModelEscalationCause
-}
+export type ResolvedTurnModel =
+  | { model: string; escalated: false }
+  | {
+      model: string
+      /** An escalation rule fired (renders as a `model_escalated` trace step). */
+      escalated: true
+      /** The model the turn would have run had the firing rule not applied. */
+      fromModel: string
+      /** Which rule fired, for the trace step's label. */
+      cause: TurnModelEscalationCause
+    }
 
 /**
  * Why this turn left `persona.model`. `previous_attempt_failed_validation` is
@@ -46,7 +48,7 @@ export interface TurnModelContext {
    */
   activeSubagentModel?: string | null
   /** The model this session's previous attempt failed on with a provider error, if it did. */
-  providerFailedModel: string | null
+  providerFailedModel?: string | null
 }
 
 /**
@@ -61,10 +63,9 @@ export interface TurnModelContext {
  *    repeatedly failed the response validator runs on the persona's
  *    `escalationModel`.
  *
- * Everything else runs `persona.model`. When the session's previous attempt
- * failed on the chosen model's provider, this attempt runs `fallbackModelFor`
- * it, so after the fallback fails too the next attempt is back on the first
- * model. A binding that lands on `persona.model` reports `escalated: false`,
+ * Everything else runs `persona.model`. A provider failure on the chosen model
+ * in the session's previous attempt swaps in `fallbackModelFor` it for this
+ * attempt. A binding that lands on `persona.model` reports `escalated: false`,
  * so the trace never shows a no-op escalation step.
  */
 export function resolveTurnModel(

@@ -118,6 +118,20 @@ describe("a session attempt that fails on a model provider", () => {
     expect(await recordedModel(first.outcome.sessionId!)).toBe(SONNET)
   })
 
+  test("should keep retrying, as before, a RetryError that ends on a non-retryable provider error", async () => {
+    const attempt = sessionAttempts()
+
+    const first = await attempt(0, () => {
+      throw new RetryError({
+        message: "Failed after 2 attempts",
+        reason: "errorNotRetryable",
+        errors: [providerError(true), providerError(false)],
+      })
+    })
+    expect(first.outcome).toMatchObject({ status: "failed", willRetry: true, retryable: true })
+    expect(await recordedModel(first.outcome.sessionId!)).toBeNull()
+  })
+
   test("should stay terminal as before when the attempt failed before naming its model", async () => {
     const attempt = sessionAttempts()
 

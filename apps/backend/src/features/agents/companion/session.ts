@@ -11,14 +11,11 @@ import { eventId, sessionId } from "../../../lib/id"
 import { logger } from "../../../lib/logger"
 
 /**
- * The provider's own error when `err` is a model provider call failure: an AI
- * SDK `APICallError`, or the `RetryError` the SDK throws once its retries of
- * one run out.
+ * Whether `err` is a model provider call failure: an AI SDK `APICallError`, or
+ * the `RetryError` the SDK throws once its retries of one run out.
  */
-function providerCallError(err: unknown): APICallError | null {
-  if (APICallError.isInstance(err)) return err
-  if (RetryError.isInstance(err) && APICallError.isInstance(err.lastError)) return err.lastError
-  return null
+function isProviderCallError(err: unknown): boolean {
+  return APICallError.isInstance(err) || (RetryError.isInstance(err) && APICallError.isInstance(err.lastError))
 }
 
 export type WithSessionResult =
@@ -310,15 +307,14 @@ export async function withCompanionSession(
     const errorCode =
       typeof err === "object" && err !== null && "code" in err && typeof err.code === "string" ? err.code : null
     const authorityDenial = errorCode === "STREAM_READ_ONLY" || errorCode === "STREAM_NOT_FOUND"
-    const providerError = providerCallError(err)
-    const providerFailedModel = providerError ? attemptModel : null
+    const providerFailedModel = isProviderCallError(err) ? attemptModel : null
     const nextAttemptSwitchesModel = providerFailedModel !== null && session.providerFailedModel === null
     // A spend limit holds until the month resets or an admin raises it, so a
     // retry minutes later is denied the same way.
     const retryable =
       !authorityDenial &&
       !(err instanceof AISpendDeniedError) &&
-      !(providerError?.isRetryable === false && !nextAttemptSwitchesModel)
+      !(APICallError.isInstance(err) && err.isRetryable === false && !nextAttemptSwitchesModel)
     const willRetry = retryable && attempt !== undefined && maxAttempts !== undefined && attempt + 1 < maxAttempts
 
     await withTransaction(pool, async (db) => {

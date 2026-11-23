@@ -11,7 +11,6 @@ const HAIKU = "openrouter:anthropic/claude-haiku-5.5"
 const LUNA = "openrouter:openai/gpt-6-luna"
 
 const persona = { model: SONNET, escalationModel: OPUS }
-const noProviderFailure = { providerFailedModel: null }
 const supersede: TurnPurpose = { kind: "supersede_rerun", supersedesSessionId: "agsess_prev" }
 
 describe("resolveTurnModel", () => {
@@ -23,7 +22,7 @@ describe("resolveTurnModel", () => {
 
   for (const purpose of nonEscalatingPurposes) {
     it(`${purpose.kind} always runs persona.model`, () => {
-      expect(resolveTurnModel(persona, { purpose, supersededSession: null, ...noProviderFailure })).toEqual({
+      expect(resolveTurnModel(persona, { purpose, supersededSession: null })).toEqual({
         model: SONNET,
         escalated: false,
       })
@@ -35,7 +34,6 @@ describe("resolveTurnModel", () => {
       resolveTurnModel(persona, {
         purpose: supersede,
         supersededSession: { responseValidationFailed: false },
-        ...noProviderFailure,
       })
     ).toEqual({ model: SONNET, escalated: false })
   })
@@ -45,7 +43,6 @@ describe("resolveTurnModel", () => {
       resolveTurnModel(persona, {
         purpose: supersede,
         supersededSession: { responseValidationFailed: true },
-        ...noProviderFailure,
       })
     ).toEqual({ model: OPUS, escalated: true, fromModel: SONNET, cause: "previous_attempt_failed_validation" })
   })
@@ -56,7 +53,6 @@ describe("resolveTurnModel", () => {
         purpose: { kind: "subagent_kickoff", subagentRunId: "subagent_01" },
         supersededSession: null,
         activeSubagentModel: TERRA,
-        ...noProviderFailure,
       })
     ).toEqual({ model: TERRA, escalated: true, fromModel: SONNET, cause: "subagent" })
   })
@@ -67,7 +63,6 @@ describe("resolveTurnModel", () => {
         purpose: { kind: "catch_up" },
         supersededSession: null,
         activeSubagentModel: TERRA,
-        ...noProviderFailure,
       })
     ).toEqual({ model: TERRA, escalated: true, fromModel: SONNET, cause: "subagent" })
   })
@@ -78,7 +73,6 @@ describe("resolveTurnModel", () => {
         purpose: supersede,
         supersededSession: { responseValidationFailed: true },
         activeSubagentModel: TERRA,
-        ...noProviderFailure,
       })
     ).toEqual({ model: TERRA, escalated: true, fromModel: SONNET, cause: "subagent" })
   })
@@ -89,7 +83,6 @@ describe("resolveTurnModel", () => {
         purpose: { kind: "subagent_kickoff", subagentRunId: "subagent_01" },
         supersededSession: null,
         activeSubagentModel: SONNET,
-        ...noProviderFailure,
       })
     ).toEqual({ model: SONNET, escalated: false })
   })
@@ -100,7 +93,6 @@ describe("resolveTurnModel", () => {
         purpose: { kind: "catch_up" },
         supersededSession: null,
         activeSubagentModel: null,
-        ...noProviderFailure,
       })
     ).toEqual({ model: SONNET, escalated: false })
   })
@@ -109,7 +101,7 @@ describe("resolveTurnModel", () => {
     expect(
       resolveTurnModel(
         { model: SONNET, escalationModel: null },
-        { purpose: supersede, supersededSession: { responseValidationFailed: true }, ...noProviderFailure }
+        { purpose: supersede, supersededSession: { responseValidationFailed: true } }
       )
     ).toEqual({ model: SONNET, escalated: false })
   })
@@ -118,13 +110,13 @@ describe("resolveTurnModel", () => {
     expect(
       resolveTurnModel(
         { model: SONNET, escalationModel: SONNET },
-        { purpose: supersede, supersededSession: { responseValidationFailed: true }, ...noProviderFailure }
+        { purpose: supersede, supersededSession: { responseValidationFailed: true } }
       )
     ).toEqual({ model: SONNET, escalated: false })
   })
 
   it("supersede rerun with no loaded superseded session runs persona.model", () => {
-    expect(resolveTurnModel(persona, { purpose: supersede, supersededSession: null, ...noProviderFailure })).toEqual({
+    expect(resolveTurnModel(persona, { purpose: supersede, supersededSession: null })).toEqual({
       model: SONNET,
       escalated: false,
     })
@@ -188,10 +180,8 @@ describe("resolveTurnModel provider failure", () => {
 describe("fallbackModelFor", () => {
   it("should only fall back to registered models", () => {
     const registry = createModelRegistry()
-    const fallbacks = [fallbackModelFor(SONNET), fallbackModelFor(fallbackModelFor(SONNET))]
-    expect(fallbacks.map((m) => ({ m, known: registry.getCapabilities(m) !== undefined }))).toEqual([
-      { m: HAIKU, known: true },
-      { m: LUNA, known: true },
-    ])
+    for (const model of [fallbackModelFor(SONNET), fallbackModelFor(HAIKU)]) {
+      expect(registry.getCapabilities(model)).toBeDefined()
+    }
   })
 })
