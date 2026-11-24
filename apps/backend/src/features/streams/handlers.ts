@@ -757,13 +757,16 @@ export function createStreamHandlers({
 
       const types = type ? ((Array.isArray(type) ? type : [type]) as EventType[]) : undefined
 
-      const events = await eventService.listEvents(workspaceId, streamId, {
-        types,
-        limit,
-        afterSequence: after ? BigInt(after) : undefined,
-        beforeSequence: before ? BigInt(before) : undefined,
-        viewerId: userId,
-      })
+      const events = await eventService.refreshAttachmentState(
+        workspaceId,
+        await eventService.listEvents(workspaceId, streamId, {
+          types,
+          limit,
+          afterSequence: after ? BigInt(after) : undefined,
+          beforeSequence: before ? BigInt(before) : undefined,
+          viewerId: userId,
+        })
+      )
 
       const eventsWithLinkPreviews = await enrichEventsWithLinkPreviews(linkPreviewService, workspaceId, userId, events)
       const { slots, sharedMessages } = await hydrateSlotsForEvents(pool, workspaceId, userId, eventsWithLinkPreviews)
