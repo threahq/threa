@@ -19,9 +19,9 @@ export function buildModelOptions(
   available: PersonaModelOption[],
   extras: (string | null | undefined)[]
 ): PersonaModelOption[] {
-  const options: PersonaModelOption[] = available.map((option) => ({ id: option.id, label: option.label }))
+  const options = [...available]
   for (const id of extras) {
-    if (id && !options.some((option) => option.id === id)) options.unshift({ id, label: id })
+    if (id && !options.some((option) => option.id === id)) options.unshift({ id, label: id, singleRegion: false })
   }
   return options
 }

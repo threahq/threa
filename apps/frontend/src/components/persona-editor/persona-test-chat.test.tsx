@@ -66,7 +66,9 @@ function config(testStreamId: string | null): PersonaConfigResponse {
     resolved: r,
     draft: testStreamId ? { patch: {}, testStreamId, updatedAt: "2026-07-11T00:00:00Z" } : null,
     attachments: [],
-    availableModels: [{ id: "openrouter:anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6" }],
+    availableModels: [
+      { id: "openrouter:anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6", singleRegion: false },
+    ],
   }
 }
 

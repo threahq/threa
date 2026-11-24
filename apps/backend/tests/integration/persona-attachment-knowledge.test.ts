@@ -433,6 +433,9 @@ describe("PersonaConfigService.attachFromExisting → copy-on-attach (integratio
       streamService: { tryAccess: async () => null } as never,
       modelRegistry: {} as never,
       attachmentService,
+      loadGovernedModels: async () => [],
+      aiResidency: { isPinned: async () => false },
+      canRunModel: () => true,
     })
     return { service, attachmentService }
   }

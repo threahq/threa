@@ -429,6 +429,7 @@ export async function startServer(): Promise<ServerInstance> {
   const ai = createAI({
     openrouter: { apiKey: config.ai.openRouterApiKey },
     anthropic: config.ai.anthropicApiKey ? { apiKey: config.ai.anthropicApiKey } : undefined,
+    subq: config.ai.subqApiKey ? { apiKey: config.ai.subqApiKey } : undefined,
     // The enclave reports its own usage straight to `costService`, so wrapping
     // here is what keeps enclave AI calls out of PostHog.
     costRecorder: new AnalyticsCostRecorder(costService, analyticsReporter, modelRegistry),
@@ -732,6 +733,8 @@ export async function startServer(): Promise<ServerInstance> {
     attachmentService,
     loadGovernedModels: async (id: string) =>
       resolveSubagentModels({ workspaceSettings: await workspaceSettingsService.getSettings(id), modelRegistry }),
+    aiResidency,
+    canRunModel: (model) => ai.canRunModel(model),
   })
   const streamBriefService = new StreamBriefService({ pool })
   const docService = new DocService({ pool })

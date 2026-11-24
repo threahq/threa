@@ -4,9 +4,10 @@
 # This is the source of truth for model capabilities in the codebase, and it is
 # also what the persona model picker offers (`listAvailableModels`).
 #
-# Scope: current-generation models from Anthropic, Google and OpenAI only.
-# Restricted to those three so every model here can be run regionally, either
-# through OpenRouter or direct with the provider. Superseded generations are
+# Scope: current-generation models from Anthropic, Google and OpenAI, which can
+# be run regionally through OpenRouter or direct with the provider, plus models
+# marked `singleRegion: true`, which run in one region only and are offered only
+# to workspaces that have not pinned AI residency. Superseded generations are
 # removed rather than left selectable — an entry here is an offer.
 #
 # Removing an entry is not free: `supportsVision` returns false for an unknown
@@ -119,6 +120,13 @@ models:
     name: GPT-5.4 Nano
     inputModalities: [text, image]
     outputModalities: [text]
+
+  # SubQ
+  subq:subq-savant-1.4:
+    name: SubQ Savant 1.4
+    inputModalities: [text]
+    outputModalities: [text]
+    singleRegion: true
 
   # Embedding models (text-only)
   openrouter:openai/text-embedding-3-small:

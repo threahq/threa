@@ -90,6 +90,26 @@ describe("ModelRegistry", () => {
     })
   })
 
+  describe("isSingleRegion", () => {
+    test("marks only the models declared single-region", () => {
+      expect({
+        savant: registry.isSingleRegion("subq:subq-savant-1.4"),
+        sonnet: registry.isSingleRegion("openrouter:anthropic/claude-sonnet-5"),
+        unknown: registry.isSingleRegion("unknown:model"),
+      }).toEqual({ savant: true, sonnet: false, unknown: false })
+    })
+
+    test("offers Savant as a chat model", () => {
+      expect(registry.getCapabilities("subq:subq-savant-1.4")).toEqual({
+        name: "SubQ Savant 1.4",
+        inputModalities: ["text"],
+        outputModalities: ["text"],
+        singleRegion: true,
+      })
+      expect(registry.isChatModel("subq:subq-savant-1.4")).toBe(true)
+    })
+  })
+
   describe("getModelIds", () => {
     test("returns all registered model IDs", () => {
       const modelIds = registry.getModelIds()

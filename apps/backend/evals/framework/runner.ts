@@ -107,9 +107,11 @@ export function createEvalAI(): AI {
   }
 
   const anthropicApiKey = process.env.ANTHROPIC_API_KEY
+  const subqApiKey = process.env.SUBQ_API_KEY
   return createAI({
     openrouter: { apiKey },
     anthropic: anthropicApiKey ? { apiKey: anthropicApiKey } : undefined,
+    subq: subqApiKey ? { apiKey: subqApiKey } : undefined,
   })
 }
 

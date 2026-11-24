@@ -15,7 +15,7 @@
  * is caught when it is added, not by a reader.
  */
 
-const ACRONYMS: Record<string, string> = { gpt: "GPT", ai: "AI" }
+const ACRONYMS: Record<string, string> = { gpt: "GPT", ai: "AI", subq: "SubQ" }
 
 /** Tokens that brand as `NAME-<version>` rather than `Name <version>`. */
 const HYPHENATED = new Set(["GPT"])

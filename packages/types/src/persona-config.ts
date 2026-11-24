@@ -13,11 +13,13 @@ import { AGENT_TOOL_NAMES, TONE_PRESETS, BREVITY_PRESETS, PERSONA_MANAGED_BY, ty
  * One selectable chat model for the persona editor's model / escalation-model
  * pickers. The list is derived server-side from the model registry (the
  * text-in/text-out chat models) and delivered on the config response — the
- * client never hardcodes it. `label` is the registry's display name.
+ * client never hardcodes it. `label` is the registry's display name;
+ * `singleRegion` marks a model that runs in one region only.
  */
 export interface PersonaModelOption {
   id: string
   label: string
+  singleRegion: boolean
 }
 
 /**

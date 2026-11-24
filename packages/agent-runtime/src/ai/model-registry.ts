@@ -20,6 +20,8 @@ export interface ModelCapabilities {
   streaming?: StreamingCapability
   /** Billed audio price per hour in USD. Source of truth for audio cost recording (INV-33). */
   audioPricePerHour?: number
+  /** Runs in one region only, so it is never offered to a workspace that pins AI residency. */
+  singleRegion?: boolean
 }
 
 interface ModelsYaml {
@@ -68,6 +70,9 @@ export interface ModelRegistry {
    * realtime/streaming-transcription model. Returns false for unknown models.
    */
   isChatModel(modelId: string): boolean
+
+  /** Check if a model runs in one region only. Returns false for unknown models. */
+  isSingleRegion(modelId: string): boolean
 
   /**
    * Get all registered model IDs.
@@ -122,6 +127,10 @@ export function createModelRegistry(): ModelRegistry {
       return (
         caps.inputModalities.includes("text") && caps.outputModalities.includes("text") && caps.streaming === undefined
       )
+    },
+
+    isSingleRegion(modelId: string): boolean {
+      return models.get(modelId)?.singleRegion === true
     },
 
     getModelIds(): string[] {

@@ -33,7 +33,15 @@ const CALLER: PersonaCaller = { userId: CALLER_ID, isAdmin: true }
 
 // Minimal registry: two assignable chat models, plus an embedding and a realtime
 // STT model that isChatModel must exclude from `availableModels` and assignment.
+const SAVANT = "subq:subq-savant-1.4"
+
 const FAKE_MODEL_CAPS: Record<string, ModelCapabilities> = {
+  [SAVANT]: {
+    name: "SubQ Savant 1.4",
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    singleRegion: true,
+  },
   "openrouter:anthropic/claude-sonnet-5": {
     name: "Claude Sonnet 5",
     inputModalities: ["text", "image"],
@@ -69,7 +77,16 @@ const FAKE_MODEL_REGISTRY = {
       caps.streaming === undefined
     )
   },
+  isSingleRegion: (id: string) => FAKE_MODEL_CAPS[id]?.singleRegion === true,
 } as unknown as ModelRegistry
+
+/** A deployment without a SubQ key, serving an unpinned workspace, unless a test says otherwise. */
+function modelOfferDeps({ pinned = false, subqKey = false }: { pinned?: boolean; subqKey?: boolean } = {}) {
+  return {
+    aiResidency: { isPinned: async () => pinned },
+    canRunModel: (model: string) => subqKey || !model.startsWith("subq:"),
+  }
+}
 
 // The workspace's delegable set (`subagentModels`), which is also what a
 // built-in's escalation model must come from. Sonnet 5 is deliberately absent so
@@ -82,7 +99,7 @@ function setupTransaction() {
 
 function makeService(
   streamService: any = { getStreamById: mock(async (_workspaceId: string, id: string) => ({ id, archivedAt: null })) },
-  extra: { attachmentService?: any } = {}
+  extra: { attachmentService?: any; pinned?: boolean; subqKey?: boolean } = {}
 ) {
   return new PersonaConfigService({
     pool: {} as any,
@@ -90,6 +107,7 @@ function makeService(
     modelRegistry: FAKE_MODEL_REGISTRY,
     attachmentService: extra.attachmentService ?? ({} as any),
     loadGovernedModels: async () => GOVERNED_MODELS,
+    ...modelOfferDeps(extra),
   })
 }
 
@@ -275,9 +293,88 @@ describe("PersonaConfigService.getConfig", () => {
     const config = await makeService().getConfig(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
 
     expect(config!.availableModels).toEqual([
-      { id: "openrouter:anthropic/claude-sonnet-5", label: "Claude Sonnet 5" },
-      { id: "openrouter:anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5" },
+      { id: "openrouter:anthropic/claude-sonnet-5", label: "Claude Sonnet 5", singleRegion: false },
+      { id: "openrouter:anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5", singleRegion: false },
     ])
+  })
+})
+
+describe("PersonaConfigService single-region models", () => {
+  afterEach(() => mock.restore())
+
+  const cases = [
+    { pinned: false, subqKey: true, offered: true },
+    { pinned: true, subqKey: true, offered: false },
+    { pinned: false, subqKey: false, offered: false },
+    { pinned: true, subqKey: false, offered: false },
+  ]
+
+  for (const { pinned, subqKey, offered } of cases) {
+    const when = `pinned=${pinned}, SubQ key=${subqKey}`
+
+    it(`${offered ? "offers" : "withholds"} Savant in availableModels when ${when}`, async () => {
+      spyOn(AgentConfigOverrideRepository, "findActiveDetailByWorkspaceAndAgent").mockResolvedValue(null)
+      spyOn(PersonaConfigDraftRepository, "findByOwner").mockResolvedValue(null)
+
+      const config = await makeService(undefined, { pinned, subqKey }).getConfig(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
+
+      const savant = config!.availableModels.find((option) => option.id === SAVANT)
+      expect(savant).toEqual(offered ? { id: SAVANT, label: "SubQ Savant 1.4", singleRegion: true } : undefined)
+    })
+
+    it(`${offered ? "accepts" : "rejects"} Savant on a built-in override when ${when}`, async () => {
+      setupTransaction()
+      const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive").mockResolvedValue({
+        outcome: "written",
+        updatedAt: "2026-07-02T00:00:00.000Z",
+      })
+      spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
+      spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+      spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+      spyOn(AgentConfigOverrideRepository, "findActiveDetailByWorkspaceAndAgent").mockResolvedValue(null)
+
+      const write = makeService(undefined, { pinned, subqKey }).setOverride(
+        WORKSPACE_ID,
+        ARIADNE_AGENT_ID,
+        { model: SAVANT },
+        null,
+        CALLER_ID
+      )
+
+      if (offered) {
+        expect(await write).toMatchObject({ outcome: "written" })
+        expect(upsert).toHaveBeenCalled()
+      } else {
+        await expect(write).rejects.toMatchObject({ status: 400, code: "UNSUPPORTED_PERSONA_MODEL" })
+        expect(upsert).not.toHaveBeenCalled()
+      }
+    })
+  }
+
+  it("should keep an override that already holds Savant saveable after the workspace pins residency", async () => {
+    setupTransaction()
+    const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive").mockResolvedValue({
+      outcome: "written",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    })
+    spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 2 })
+    spyOn(AgentConfigOverrideRepository, "findActiveDetailByWorkspaceAndAgent").mockResolvedValue({
+      patch: { model: SAVANT },
+      updatedAt: "2026-07-01T00:00:00.000Z",
+    })
+
+    const write = makeService(undefined, { pinned: true, subqKey: true }).setOverride(
+      WORKSPACE_ID,
+      ARIADNE_AGENT_ID,
+      { model: SAVANT },
+      null,
+      CALLER_ID
+    )
+
+    expect(await write).toMatchObject({ outcome: "written" })
+    expect(upsert).toHaveBeenCalled()
   })
 })
 
@@ -414,6 +511,7 @@ describe("PersonaConfigService.setOverride", () => {
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
       loadGovernedModels: async () => GOVERNED_MODELS,
+      ...modelOfferDeps(),
     })
 
     const result = await service.setOverride(WORKSPACE_ID, ARIADNE_AGENT_ID, { tonePreset: "direct" }, null, CALLER_ID)
@@ -504,6 +602,7 @@ describe("PersonaConfigService.setOverride", () => {
       updatedAt: "2026-07-02T00:00:00.000Z",
     })
 
+    spyOn(AgentConfigOverrideRepository, "findActiveDetailByWorkspaceAndAgent").mockResolvedValue(null)
     await expect(
       makeService().setOverride(
         WORKSPACE_ID,
@@ -915,6 +1014,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       updatedAt: "2026-07-04T00:00:00.000Z",
     })
 
+    spyOn(AgentConfigOverrideRepository, "findActiveDetailByWorkspaceAndAgent").mockResolvedValue(null)
     await expect(
       makeService().saveDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER, {
         model: "openrouter:elevenlabs/scribe",
@@ -944,6 +1044,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
       loadGovernedModels: async () => GOVERNED_MODELS,
+      ...modelOfferDeps(),
     })
 
     await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -964,6 +1065,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
       loadGovernedModels: async () => GOVERNED_MODELS,
+      ...modelOfferDeps(),
     })
 
     await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -986,6 +1088,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
       loadGovernedModels: async () => GOVERNED_MODELS,
+      ...modelOfferDeps(),
     })
 
     await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -1008,6 +1111,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
       loadGovernedModels: async () => GOVERNED_MODELS,
+      ...modelOfferDeps(),
     })
 
     const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -1030,6 +1134,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
       loadGovernedModels: async () => GOVERNED_MODELS,
+      ...modelOfferDeps(),
     })
 
     const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -1073,6 +1178,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
       loadGovernedModels: async () => GOVERNED_MODELS,
+      ...modelOfferDeps(),
     })
 
     const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -1332,6 +1438,22 @@ describe("PersonaConfigService.updateCustom", () => {
       "agent_config:updated",
       expect.objectContaining({ agentId: "persona_custom_1" })
     )
+  })
+
+  it("rejects Savant on a custom persona in a workspace that pins AI residency", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    const update = spyOn(PersonaRepository, "updateWorkspacePersona")
+
+    await expect(
+      makeService(undefined, { pinned: true, subqKey: true }).updateCustom(
+        WORKSPACE_ID,
+        "persona_custom_1",
+        { ...validConfig, model: SAVANT },
+        "2026-02-02T00:00:00.000Z",
+        CALLER
+      )
+    ).rejects.toMatchObject({ status: 400, code: "UNSUPPORTED_PERSONA_MODEL" })
+    expect(update).not.toHaveBeenCalled()
   })
 
   it("refuses an escalation model outside the workspace's delegation set — a personal persona is no loophole", async () => {

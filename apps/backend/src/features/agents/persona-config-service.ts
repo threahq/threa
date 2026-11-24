@@ -44,6 +44,7 @@ import {
 } from "./persona-attachment-repository"
 import { planPersonaKnowledge, type PersonaKnowledgePlan } from "./companion/prompt/persona-knowledge-plan"
 import type { StreamService } from "../streams"
+import type { AIResidencyPolicy } from "../ai-usage"
 import { AgentConfigOverrideRepository, type AgentConfigOverrideDetail } from "./agent-config-override-repository"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { PersonaConfigRevisionRepository } from "./persona-config-revision-repository"
@@ -69,6 +70,9 @@ interface Dependencies {
    * validation, so the dependency only goes one way.
    */
   loadGovernedModels: (workspaceId: string) => Promise<string[]>
+  aiResidency: AIResidencyPolicy
+  /** Whether this deployment has the provider a model id needs (`AI.canRunModel`). */
+  canRunModel: (model: string) => boolean
 }
 
 /**
@@ -338,12 +342,29 @@ export class PersonaConfigService {
     return this.deps.attachmentService
   }
 
-  /** Registry-derived chat models an admin may assign (INV-16), labelled by the registry name. */
-  private listAvailableModels(): PersonaModelOption[] {
+  /**
+   * The workspace's offer rule (INV-16): a registry chat model this deployment
+   * can run, and single-region only while the workspace leaves AI residency
+   * unpinned.
+   */
+  private async loadModelOffer(workspaceId: string): Promise<(model: string) => boolean> {
+    const pinned = await this.deps.aiResidency.isPinned(workspaceId)
+    return (model) =>
+      this.modelRegistry.isChatModel(model) &&
+      this.deps.canRunModel(model) &&
+      !(pinned && this.modelRegistry.isSingleRegion(model))
+  }
+
+  private async listAvailableModels(workspaceId: string): Promise<PersonaModelOption[]> {
+    const isOffered = await this.loadModelOffer(workspaceId)
     return this.modelRegistry
       .getModelIds()
-      .filter((id) => this.modelRegistry.isChatModel(id))
-      .map((id) => ({ id, label: this.modelRegistry.getCapabilities(id)!.name }))
+      .filter(isOffered)
+      .map((id) => ({
+        id,
+        label: this.modelRegistry.getCapabilities(id)!.name,
+        singleRegion: this.modelRegistry.isSingleRegion(id),
+      }))
   }
 
   /**
@@ -352,9 +373,9 @@ export class PersonaConfigService {
    * lacks them — a code default is authoritative). Escalation-disabled (`null`)
    * is validated by the caller before reaching here.
    */
-  private isModelAssignable(model: string, base: BuiltInAgentConfig): boolean {
+  private isModelAssignable(model: string, base: BuiltInAgentConfig, isOffered: (model: string) => boolean): boolean {
     if (model === base.model || model === base.escalationModel) return true
-    return this.modelRegistry.isChatModel(model)
+    return isOffered(model)
   }
 
   /**
@@ -364,9 +385,10 @@ export class PersonaConfigService {
    * Escalation is the one persona field that spends money the admin did not
    * pick per turn, so it answers to the same list as subagent delegation
    * (`subagentModels`) rather than to the whole registry. The persona's current
-   * escalation stays legal whatever the list says — a workspace that narrows
-   * its set must still be able to save an unrelated toolset edit, and clearing
-   * escalation to `null` is always available as the way out.
+   * model and escalation stay legal whatever the offer and the list say — a
+   * workspace that pins residency or narrows its set must still be able to
+   * save an unrelated toolset edit, and clearing escalation to `null` is always
+   * available as the way out.
    */
   private async assertModelsAllowed(
     workspaceId: string,
@@ -374,7 +396,12 @@ export class PersonaConfigService {
     patch: PersonaConfigPatch,
     base: BuiltInAgentConfig
   ): Promise<void> {
-    if (patch.model !== undefined && !this.isModelAssignable(patch.model, base)) {
+    const isOffered = await this.loadModelOffer(workspaceId)
+    if (
+      patch.model !== undefined &&
+      !this.isModelAssignable(patch.model, base, isOffered) &&
+      patch.model !== (await this.resolveCurrentBuiltIn(workspaceId, agentId, base)).model
+    ) {
       throw new HttpError(`Model "${patch.model}" is not an assignable persona model`, {
         status: 400,
         code: "UNSUPPORTED_PERSONA_MODEL",
@@ -382,7 +409,10 @@ export class PersonaConfigService {
     }
     const escalation = patch.escalationModel
     if (escalation == null || escalation === base.escalationModel) return
-    if (!this.isModelAssignable(escalation, base)) {
+    if (
+      !this.isModelAssignable(escalation, base, isOffered) &&
+      escalation !== (await this.resolveCurrentBuiltIn(workspaceId, agentId, base)).escalationModel
+    ) {
       throw new HttpError(`Escalation model "${escalation}" is not an assignable persona model`, {
         status: 400,
         code: "UNSUPPORTED_PERSONA_MODEL",
@@ -390,28 +420,26 @@ export class PersonaConfigService {
     }
     const governed = await this.deps.loadGovernedModels(workspaceId)
     if (governed.includes(escalation)) return
-    if (escalation === (await this.resolveCurrentEscalationModel(workspaceId, agentId, base))) return
+    if (escalation === (await this.resolveCurrentBuiltIn(workspaceId, agentId, base)).escalationModel) return
     throw ungovernedEscalation(escalation)
   }
 
   /**
-   * The built-in's escalation model as it stands right now — the stored
-   * override's value, else the code default. Read outside the write
-   * transaction: it only widens what is legal, and the write itself is guarded
-   * by optimistic concurrency.
+   * The built-in as it stands right now — the stored override applied, else
+   * the code default. Read outside the write transaction: it only widens what
+   * is legal, and the write itself is guarded by optimistic concurrency.
    */
-  private async resolveCurrentEscalationModel(
+  private async resolveCurrentBuiltIn(
     workspaceId: string,
     agentId: string,
     base: BuiltInAgentConfig
-  ): Promise<string | null> {
+  ): Promise<BuiltInAgentConfig> {
     const detail = await AgentConfigOverrideRepository.findActiveDetailByWorkspaceAndAgent(
       this.pool,
       workspaceId,
       agentId
     )
-    if (!detail) return base.escalationModel
-    return applyBuiltInAgentPatch(base, detail.patch, { workspaceId, agentId }).escalationModel
+    return detail ? applyBuiltInAgentPatch(base, detail.patch, { workspaceId, agentId }) : base
   }
 
   /**
@@ -420,8 +448,8 @@ export class PersonaConfigService {
    * registry lacks them (a grandfathered value must remain saveable), mirroring
    * the built-in `base.model` allowance in {@link assertModelsAllowed}.
    */
-  private isCustomModelLegal(model: string, current: Persona): boolean {
-    return model === current.model || model === current.escalationModel || this.modelRegistry.isChatModel(model)
+  private isCustomModelLegal(model: string, current: Persona, isOffered: (model: string) => boolean): boolean {
+    return model === current.model || model === current.escalationModel || isOffered(model)
   }
 
   private async assertCustomModelsAllowed(
@@ -429,13 +457,14 @@ export class PersonaConfigService {
     config: PersonaCustomConfig,
     current: Persona
   ): Promise<void> {
-    if (!this.isCustomModelLegal(config.model, current)) {
+    const isOffered = await this.loadModelOffer(workspaceId)
+    if (!this.isCustomModelLegal(config.model, current, isOffered)) {
       throw new HttpError(`Model "${config.model}" is not an assignable persona model`, {
         status: 400,
         code: "UNSUPPORTED_PERSONA_MODEL",
       })
     }
-    await this.assertCustomEscalationAllowed(workspaceId, config.escalationModel, current)
+    await this.assertCustomEscalationAllowed(workspaceId, config.escalationModel, current, isOffered)
   }
 
   /**
@@ -447,10 +476,11 @@ export class PersonaConfigService {
   private async assertCustomEscalationAllowed(
     workspaceId: string,
     escalation: string | null | undefined,
-    current: Persona
+    current: Persona,
+    isOffered: (model: string) => boolean
   ): Promise<void> {
     if (escalation == null) return
-    if (!this.isCustomModelLegal(escalation, current)) {
+    if (!this.isCustomModelLegal(escalation, current, isOffered)) {
       throw new HttpError(`Escalation model "${escalation}" is not an assignable persona model`, {
         status: 400,
         code: "UNSUPPORTED_PERSONA_MODEL",
@@ -479,13 +509,14 @@ export class PersonaConfigService {
         code: "PERSONA_FIELD_LOCKED",
       })
     }
-    if (patch.model !== undefined && !this.isCustomModelLegal(patch.model, current)) {
+    const isOffered = await this.loadModelOffer(workspaceId)
+    if (patch.model !== undefined && !this.isCustomModelLegal(patch.model, current, isOffered)) {
       throw new HttpError(`Model "${patch.model}" is not an assignable persona model`, {
         status: 400,
         code: "UNSUPPORTED_PERSONA_MODEL",
       })
     }
-    await this.assertCustomEscalationAllowed(workspaceId, patch.escalationModel, current)
+    await this.assertCustomEscalationAllowed(workspaceId, patch.escalationModel, current, isOffered)
   }
 
   /** The bound test stream id when it still exists and is unarchived, else null. */
@@ -601,7 +632,7 @@ export class PersonaConfigService {
         overrideUpdatedAt: row.updatedAt.toISOString(),
         resolved: customRowToResolvedConfig(row),
         draft,
-        availableModels: this.listAvailableModels(),
+        availableModels: await this.listAvailableModels(workspaceId),
         attachments,
       }
     }
@@ -633,7 +664,7 @@ export class PersonaConfigService {
       overrideUpdatedAt: detail?.updatedAt ?? null,
       resolved,
       draft,
-      availableModels: this.listAvailableModels(),
+      availableModels: await this.listAvailableModels(workspaceId),
       // A built-in has no owned row to bind attachments to (persona-context-
       // attachments); always empty.
       attachments: [],

@@ -180,7 +180,9 @@ function config(overrides: Partial<PersonaConfigResponse> = {}): PersonaConfigRe
     resolved: resolved(),
     draft: null,
     attachments: [],
-    availableModels: [{ id: "openrouter:anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6" }],
+    availableModels: [
+      { id: "openrouter:anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6", singleRegion: false },
+    ],
     ...overrides,
   }
 }
@@ -235,8 +237,8 @@ describe("CustomPersonaEditor", () => {
     const user = userEvent.setup()
     const withTwoModels = config({
       availableModels: [
-        { id: "openrouter:anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6" },
-        { id: "openrouter:anthropic/claude-opus-5", label: "Claude Opus 5" },
+        { id: "openrouter:anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6", singleRegion: false },
+        { id: "openrouter:anthropic/claude-opus-5", label: "Claude Opus 5", singleRegion: false },
       ],
     })
     renderEditor(withTwoModels, ["openrouter:anthropic/claude-opus-5"])

@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { PersonaConfigResponse, PersonaResolvedConfig, WorkspaceBootstrap, WorkspaceSettings } from "@threahq/types"
+import type {
+  PersonaConfigResponse,
+  PersonaResolvedConfig,
+  WorkspaceBootstrap,
+  WorkspaceSettings,
+} from "@threahq/types"
 import { personasApi } from "@/api"
 import { ApiError } from "@/api/client"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -47,8 +52,8 @@ function config(overrides: Partial<PersonaConfigResponse> = {}): PersonaConfigRe
     draft: null,
     attachments: [],
     availableModels: [
-      { id: "openrouter:anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6" },
-      { id: "openrouter:anthropic/claude-opus-4.8", label: "Claude Opus 4.8" },
+      { id: "openrouter:anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6", singleRegion: false },
+      { id: "openrouter:anthropic/claude-opus-4.8", label: "Claude Opus 4.8", singleRegion: false },
     ],
     ...overrides,
   }
@@ -106,6 +111,27 @@ describe("PersonaEditorForm (restricted built-in editor)", () => {
       // The persona's current escalation stays selectable even though the
       // workspace's set no longer carries it.
       "Claude Opus 4.8",
+    ])
+  })
+
+  it("says a single-region model can only run in one region where the model is chosen", async () => {
+    const user = userEvent.setup()
+    const base = config()
+    renderForm({
+      ...base,
+      availableModels: [
+        ...base.availableModels,
+        { id: "subq:subq-savant-1.4", label: "SubQ Savant 1.4", singleRegion: true },
+      ],
+    })
+
+    await user.click(screen.getByRole("combobox", { name: "Model" }))
+
+    const options = await screen.findAllByRole("option")
+    expect(options.map((option) => option.textContent)).toEqual([
+      "Claude Sonnet 4.6",
+      "Claude Opus 4.8",
+      "SubQ Savant 1.4 · can only run in one region",
     ])
   })
 

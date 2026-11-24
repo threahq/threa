@@ -1,6 +1,6 @@
 # AI Model Reference
 
-**Last updated:** 2026-10-10
+**Last updated:** 2026-11-22
 
 This document provides a comprehensive reference for AI models including capabilities, pricing, and usage guidelines. Always verify against this file when working with AI integration.
 
@@ -35,8 +35,9 @@ curl -s https://openrouter.ai/api/v1/models -H "Authorization: Bearer $OPENROUTE
 | `google/gemini-3.5-flash-lite`  | $0.30 | $2.50  | $0.03      | $0.083      | 1M      |
 | `google/gemini-3.6-flash`       | $1.50 | $7.50  | $0.15      | $0.083      | 1M      |
 | `openai/text-embedding-3-small` | $0.02 | —      | —          | —           | —       |
+| `subq:subq-savant-1.4`          | $0.10 | $0.50  | $0.01      | $0.10       | 4M      |
 
-Anthropic, Google and OpenAI only. That is a deliberate constraint on the inference registry, not an accident of history: those three can be run regionally, through OpenRouter or direct with the provider, and that option has repeatedly mattered more than a cheaper per-token rate elsewhere. [Decision Models](#decision-models) sit outside it and give the option up in exchange for price and latency.
+The inference registry holds current models from Anthropic, Google and OpenAI, which can be run regionally through OpenRouter or direct with the provider, plus models marked `singleRegion: true` in `models.yaml`, which run in one region only. A single-region model is offered and accepted only for workspaces that have not pinned AI residency, and only on deployments that have its provider's key. [Decision Models](#decision-models) sit outside the registry and give the regional option up in exchange for price and latency.
 
 **Cache columns are not a footnote — they change which model is cheapest.**
 
@@ -367,6 +368,18 @@ runs the comparison; finish it before this entry claims anything about quality.
 **Typical cost:** ~$1.50 / ~$7.50 per 1M (cache read $0.15, cache write $0.083)
 
 **When to use:** not evaluated here yet. Note the cache-write rate is far below the read-heavy Anthropic/OpenAI premium tiers, so a stable prefix pays back quickly here.
+
+---
+
+### subq:subq-savant-1.4
+
+**Name:** SubQ Savant 1.4
+
+**Description:** SubQ's long-context model, called direct through SubQ's OpenAI-compatible API at `https://api.subq.ai/v1`. 4M context. Single-region: offered only to workspaces that have not pinned AI residency, and only when `SUBQ_API_KEY` is set. Early access, enabled per organization; until then requests return 403.
+
+**Typical cost:** $0.10 input, $0.01 cached input, $0.50 output per 1M tokens, at any prompt length. Reasoning tokens bill as output. SubQ returns token counts without a dollar amount, so `createAI` prices usage from `SUBQ_PRICES` (`packages/agent-runtime/src/ai/ai.ts`).
+
+**Notes:** temperature is fixed by the provider, so `createAI` omits it. Reasoning is always on.
 
 ---
 

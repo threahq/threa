@@ -77,6 +77,8 @@ export interface AIConfig {
   openrouter?: { apiKey: string }
   /** Direct Anthropic API for `anthropic:claude-*` language models; embeddings and decisions stay on OpenRouter. */
   anthropic?: { apiKey: string }
+  /** SubQ's OpenAI-compatible API for `subq:subq-savant-*` language models, which run in one region only. */
+  subq?: { apiKey: string }
   defaults?: {
     repair?: RepairFunction
   }
@@ -378,6 +380,8 @@ export interface AI {
   // Model access (for advanced use cases)
   getLanguageModel(modelString: string): LanguageModel
   getEmbeddingModel(modelString: string): EmbeddingModel
+  /** Whether this instance has the provider `modelString` needs configured. */
+  canRunModel(modelString: string): boolean
 
   // Parsing
   parseModel(modelString: string): ParsedModel
@@ -635,7 +639,9 @@ function generationProviderOptions(model: string, effort?: ReasoningEffort): Mod
  * PostHog, eval `--budget`) reads `cost` — an absent cost reads as $0, so the
  * price is computed here and an unpriced model is refused at model resolution.
  */
-const ANTHROPIC_PRICES: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }> = {
+type TokenPrice = { input: number; output: number; cacheRead: number; cacheWrite: number }
+
+const ANTHROPIC_PRICES: Record<string, TokenPrice> = {
   "claude-haiku-5-5": { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
   "claude-haiku-4-5": { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
   "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
@@ -645,17 +651,31 @@ const ANTHROPIC_PRICES: Record<string, { input: number; output: number; cacheRea
   "claude-opus-5": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
 }
 
-function anthropicPrice(modelId: string) {
-  const price = ANTHROPIC_PRICES[modelId]
+/** SubQ bills one flat rate at any prompt length and caches prompt prefixes on its own, so a cache write costs input. */
+const SUBQ_PRICES: Record<string, TokenPrice> = {
+  "subq-savant-1.4": { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.1 },
+}
+
+const LOCAL_PRICES: Record<string, Record<string, TokenPrice>> = { anthropic: ANTHROPIC_PRICES, subq: SUBQ_PRICES }
+
+/** Providers whose responses carry token counts and no dollar amount. */
+const isLocallyPriced = (provider: string) => provider in LOCAL_PRICES
+
+function localPrice(provider: string, modelId: string) {
+  const price = LOCAL_PRICES[provider]?.[modelId]
   if (!price) {
     throw new Error(
-      `No price for Anthropic model "${modelId}". Add it to ANTHROPIC_PRICES (packages/agent-runtime/src/ai/ai.ts) so its usage is costed.`
+      `No price for ${provider} model "${modelId}". Add it to the price tables in packages/agent-runtime/src/ai/ai.ts so its usage is costed.`
     )
   }
   return price
 }
 
-function anthropicUsage(
+/** Savant runs at a fixed temperature and rejects a request that sets any other. */
+const temperatureFor = (modelString: string, temperature: number | undefined) =>
+  parseModelId(modelString).provider === "subq" ? undefined : temperature
+
+function locallyPricedUsage(
   modelString: string,
   response: {
     usage?: {
@@ -669,9 +689,10 @@ function anthropicUsage(
 ): UsageWithCost {
   const usage = response.usage
   if (typeof usage?.inputTokens !== "number" || typeof usage.outputTokens !== "number") {
-    throw new Error(`Anthropic did not return token usage for ${modelString}`)
+    throw new Error(`The provider did not return token usage for ${modelString}`)
   }
-  const price = anthropicPrice(parseModelId(modelString).modelId)
+  const { provider, modelId } = parseModelId(modelString)
+  const price = localPrice(provider, modelId)
   const cacheRead = usage.inputTokenDetails?.cacheReadTokens ?? 0
   const cacheWrite = usage.inputTokenDetails?.cacheWriteTokens ?? 0
   const uncached = usage.inputTokenDetails?.noCacheTokens ?? usage.inputTokens - cacheRead - cacheWrite
@@ -737,12 +758,13 @@ export function createAI(config: AIConfig): AI {
       ? createOpenAI({ apiKey: config.openrouter.apiKey, baseURL: "https://openrouter.ai/api/v1" })
       : null,
     anthropic: config.anthropic ? createAnthropic({ apiKey: config.anthropic.apiKey }) : null,
+    subq: config.subq ? createOpenAI({ apiKey: config.subq.apiKey, baseURL: "https://api.subq.ai/v1" }) : null,
   }
 
   /** Dispatches usage extraction on the provider; Luna is special-cased at its call sites. */
   function usageFor(modelString: string, response: Parameters<typeof extractUsageWithCost>[0]): UsageWithCost {
-    return parseModelId(modelString).provider === "anthropic"
-      ? anthropicUsage(modelString, response as Parameters<typeof anthropicUsage>[1])
+    return isLocallyPriced(parseModelId(modelString).provider)
+      ? locallyPricedUsage(modelString, response as Parameters<typeof locallyPricedUsage>[1])
       : extractUsageWithCost(response)
   }
 
@@ -764,11 +786,18 @@ export function createAI(config: AIConfig): AI {
         if (!providers.anthropic) {
           throw new Error("Anthropic not configured. Set ANTHROPIC_API_KEY or provide anthropic.apiKey in config.")
         }
-        anthropicPrice(modelId)
+        localPrice(provider, modelId)
         logger.debug({ provider, modelId }, "Creating language model instance")
         return providers.anthropic(modelId)
+      case "subq":
+        if (!providers.subq) {
+          throw new Error("SubQ not configured. Set SUBQ_API_KEY or provide subq.apiKey in config.")
+        }
+        localPrice(provider, modelId)
+        logger.debug({ provider, modelId }, "Creating language model instance")
+        return providers.subq.chat(modelId)
       default:
-        throw new Error(`Unsupported provider: "${provider}". Currently supported: openrouter, anthropic`)
+        throw new Error(`Unsupported provider: "${provider}". Currently supported: openrouter, anthropic, subq`)
     }
   }
 
@@ -892,6 +921,12 @@ export function createAI(config: AIConfig): AI {
     parseModel: parseModelId,
     getLanguageModel,
     getEmbeddingModel,
+    canRunModel: (modelString) => {
+      const provider = parseModelId(modelString).provider
+      if (provider === "openrouter" || provider === "anthropic" || provider === "subq")
+        return providers[provider] !== null
+      return false
+    },
 
     async generateText(options) {
       await admit(options.context, options.telemetry?.functionId ?? "generateText")
@@ -918,7 +953,7 @@ export function createAI(config: AIConfig): AI {
         // our callers express system prompts as system-role messages.
         allowSystemInMessages: true,
         maxOutputTokens: options.maxTokens,
-        temperature: options.temperature,
+        temperature: temperatureFor(options.model, options.temperature),
         abortSignal: options.abortSignal,
         ...(options.reasoningEffort
           ? { providerOptions: reasoningProviderOptions(options.model, options.reasoningEffort) }
@@ -983,7 +1018,9 @@ export function createAI(config: AIConfig): AI {
         tools: options.tools,
         providerOptions: options.modelString === LUNA ? { openai: { store: false } } : undefined,
         maxOutputTokens: options.maxTokens,
-        ...(options.modelString === LUNA ? {} : { temperature: options.temperature }),
+        ...(options.modelString === LUNA
+          ? {}
+          : { temperature: temperatureFor(options.modelString, options.temperature) }),
         abortSignal: options.abortSignal,
         maxRetries: options.maxRetries,
         experimental_telemetry: buildTelemetry(options.telemetry),
@@ -1040,7 +1077,7 @@ export function createAI(config: AIConfig): AI {
         messages: options.messages as ModelMessage[],
         allowSystemInMessages: true,
         maxOutputTokens: options.maxTokens,
-        temperature: options.temperature,
+        temperature: temperatureFor(options.model, options.temperature),
         abortSignal: options.abortSignal,
         providerOptions: generationProviderOptions(options.model, options.reasoningEffort),
         experimental_repairText: repair,
