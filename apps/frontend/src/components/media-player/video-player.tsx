@@ -37,6 +37,7 @@ import {
 import { mediaKeyAction, type MediaKeyHandle } from "./media-keys"
 import { PLAYBACK_RATES, formatPlaybackRate } from "./preferences"
 import { ScrubBar } from "./scrub-bar"
+import type { LoadedStoryboard } from "./storyboard"
 import { SCRUB_SELECTOR } from "./use-scrub"
 import { useFullscreen } from "./use-fullscreen"
 import { useMediaPlayback } from "./use-media-playback"
@@ -53,6 +54,8 @@ export interface VideoPlayerProps {
   onChromeTap(): void
   /** Reports playback state on every change and on each chrome interaction. */
   onActivity(playing: boolean): void
+  /** Scrub-preview sprite; without one the scrub bar decodes preview frames itself. */
+  storyboard?: LoadedStoryboard | null
   ref?: React.Ref<MediaKeyHandle>
 }
 
@@ -171,7 +174,16 @@ function SpeedMenu({
   )
 }
 
-export function VideoPlayer({ src, poster, filename, chromeVisible, onChromeTap, onActivity, ref }: VideoPlayerProps) {
+export function VideoPlayer({
+  src,
+  poster,
+  filename,
+  chromeVisible,
+  onChromeTap,
+  onActivity,
+  storyboard,
+  ref,
+}: VideoPlayerProps) {
   const [root, setRoot] = useState<HTMLDivElement | null>(null)
   const [video, setVideo] = useState<HTMLVideoElement | null>(null)
   const [controls, setControls] = useState<HTMLDivElement | null>(null)
@@ -365,6 +377,7 @@ export function VideoPlayer({ src, poster, filename, chromeVisible, onChromeTap,
             buffered={playback.buffered}
             scrubbing={playback.scrubbing}
             touch={touch}
+            storyboard={storyboard}
             onScrubStart={playback.beginScrub}
             onScrub={playback.scrubTo}
             onScrubEnd={playback.endScrub}

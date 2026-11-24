@@ -30,6 +30,7 @@ import { ZoomableImage, type ZoomableImageHandle } from "@/components/gallery/zo
 import { isGiphyGalleryId } from "@/components/gallery/giphy-gallery-id"
 import { isLinkPreviewGalleryId } from "@/components/gallery/link-preview-gallery-id"
 import { isPendingGalleryId } from "@/components/gallery/pending-gallery-id"
+import { useStoryboard } from "@/components/media-player/use-storyboard"
 import { buildEmbedPlaybackSrc } from "@/components/gallery/video-embed"
 import type { AttachmentAudioSummary, VideoPreviewProvider } from "@threahq/types"
 import { DOUBLE_TAP_MS } from "@/hooks/use-zoom-pan"
@@ -128,6 +129,29 @@ interface GalleryVideoBindings {
   chromeVisible: boolean
   onChromeTap: () => void
   onActivity: (playing: boolean) => void
+  workspaceId: string
+}
+
+function GalleryVideoPlayer({
+  item,
+  bindings,
+}: {
+  item: Extract<GalleryItem, { type: "video" }>
+  bindings: GalleryVideoBindings
+}) {
+  const storyboard = useStoryboard(bindings.workspaceId, item.attachmentId)
+  return (
+    <VideoPlayer
+      ref={bindings.ref}
+      src={item.url}
+      poster={item.thumbnailUrl || undefined}
+      filename={item.filename}
+      chromeVisible={bindings.chromeVisible}
+      onChromeTap={bindings.onChromeTap}
+      onActivity={bindings.onActivity}
+      storyboard={storyboard}
+    />
+  )
 }
 
 interface GalleryMediaContentProps {
@@ -254,18 +278,7 @@ function GalleryMediaContent({
           <Loader2 className="h-4 w-4 animate-spin text-white/40" />
         </div>
       )
-    return (
-      <VideoPlayer
-        key={current.attachmentId}
-        ref={videoPlayer.ref}
-        src={current.url}
-        poster={current.thumbnailUrl || undefined}
-        filename={current.filename}
-        chromeVisible={videoPlayer.chromeVisible}
-        onChromeTap={videoPlayer.onChromeTap}
-        onActivity={videoPlayer.onActivity}
-      />
-    )
+    return <GalleryVideoPlayer key={current.attachmentId} item={current} bindings={videoPlayer} />
   }
   if (current.type === "video-embed") {
     // Only the exact current slide mounts the (autoplaying) iframe — a ±1 preload
@@ -1057,6 +1070,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     chromeVisible,
     onChromeTap: toggleChromeDeferred,
     onActivity: handlePlayerActivity,
+    workspaceId,
   }
   // The player renders the filename inside its own control stack.
   const showFilenameBar = current?.type !== "video" || !current.url

@@ -1,5 +1,5 @@
 import { api, API_BASE, ApiError, requestMultipart } from "./client"
-import type { Attachment, AttachmentCategory } from "@threahq/types"
+import type { Attachment, AttachmentCategory, VideoStoryboard } from "@threahq/types"
 
 export interface AttachmentSearchExtractionExcerpt {
   contentType: string
@@ -65,6 +65,10 @@ export function attachmentContentUrl(
 ): string {
   const params = options?.variant ? `?variant=${options.variant}` : ""
   return `${API_BASE}/api/workspaces/${workspaceId}/attachments/${attachmentId}/content${params}`
+}
+
+export function attachmentStoryboardSpriteUrl(workspaceId: string, attachmentId: string): string {
+  return `${API_BASE}/api/workspaces/${workspaceId}/attachments/${attachmentId}/storyboard/sprite`
 }
 
 export interface AttachmentReservationInput {
@@ -199,5 +203,10 @@ export const attachmentsApi = {
    */
   getExtraction(workspaceId: string, attachmentId: string): Promise<AttachmentExtractionContent> {
     return api.get<AttachmentExtractionContent>(`/api/workspaces/${workspaceId}/attachments/${attachmentId}/extraction`)
+  },
+
+  /** Asks for the video's scrub storyboard; the first ask queues its generation. */
+  ensureStoryboard(workspaceId: string, attachmentId: string): Promise<VideoStoryboard> {
+    return api.post<VideoStoryboard>(`/api/workspaces/${workspaceId}/attachments/${attachmentId}/storyboard`)
   },
 }

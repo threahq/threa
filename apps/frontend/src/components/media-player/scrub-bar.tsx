@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react"
 import { formatClock } from "@/lib/dates"
 import { clamp } from "@/lib/math-utils"
 import { cn } from "@/lib/utils"
+import { storyboardTileStyle, type LoadedStoryboard } from "./storyboard"
 import { previewSize, useFramePreview } from "./use-frame-preview"
 import type { BufferedRange } from "./use-media-playback"
 import { useScrub, type ScrubOptions } from "./use-scrub"
@@ -15,18 +16,30 @@ interface ScrubBarProps extends ScrubOptions {
   aspect: number
   buffered: BufferedRange[]
   touch: boolean
+  storyboard?: LoadedStoryboard | null
 }
 
-function percent(value: number, duration: number): string {
-  return `${duration > 0 ? clamp((value / duration) * 100, 0, 100) : 0}%`
+const frameClass = "relative overflow-hidden rounded-md bg-white/10 shadow-lg ring-1 ring-white/15"
+
+interface FrameSize {
+  width: number
+  height: number
 }
 
-export function ScrubBar({ src, aspect, buffered, touch, ...options }: ScrubBarProps) {
-  const { duration, scrubbing } = options
-  const scrub = useScrub(options)
+function DecoderFrame({
+  src,
+  aspect,
+  size,
+  hoverTime,
+  scrubbing,
+}: {
+  src: string
+  aspect: number
+  size: FrameSize
+  hoverTime: number | null
+  scrubbing: boolean
+}) {
   const preview = useFramePreview(src, aspect)
-  const thumbSize = previewSize(aspect)
-  const { hoverTime } = scrub
 
   // Held back during a drag; on release the bubble previews where the pointer rests.
   useEffect(() => {
@@ -34,8 +47,59 @@ export function ScrubBar({ src, aspect, buffered, touch, ...options }: ScrubBarP
   }, [hoverTime, scrubbing, preview.request])
 
   const showPreview = hoverTime !== null && !scrubbing
-  const bubbleWidth = showPreview ? thumbSize.width : TIME_BUBBLE_WIDTH
   const framePending = showPreview && preview.drawnTime !== hoverTime
+
+  return (
+    <div className={cn(frameClass, !showPreview && "hidden")} style={size}>
+      <canvas
+        ref={preview.canvasRef}
+        className={cn(
+          "h-full w-full transition-opacity duration-150",
+          preview.drawnTime === null && "invisible",
+          framePending && "opacity-50"
+        )}
+      />
+      {framePending && (
+        <Loader2 className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 animate-spin text-white/80" />
+      )}
+    </div>
+  )
+}
+
+function SpriteFrame({
+  storyboard,
+  size,
+  time,
+}: {
+  storyboard: LoadedStoryboard
+  size: FrameSize
+  time: number | null
+}) {
+  return (
+    <div
+      data-storyboard-frame=""
+      className={cn(frameClass, "bg-no-repeat", time === null && "hidden")}
+      style={{
+        ...size,
+        backgroundImage: `url("${storyboard.spriteUrl}")`,
+        ...storyboardTileStyle(storyboard, time ?? 0, size),
+      }}
+    />
+  )
+}
+
+function percent(value: number, duration: number): string {
+  return `${duration > 0 ? clamp((value / duration) * 100, 0, 100) : 0}%`
+}
+
+export function ScrubBar({ src, aspect, buffered, touch, storyboard, ...options }: ScrubBarProps) {
+  const { duration, scrubbing } = options
+  const scrub = useScrub(options)
+  const thumbSize = previewSize(storyboard ? storyboard.tileWidth / storyboard.tileHeight : aspect)
+  const { hoverTime } = scrub
+
+  const showPreview = storyboard ? scrub.bubbleTime !== null : hoverTime !== null && !scrubbing
+  const bubbleWidth = showPreview ? thumbSize.width : TIME_BUBBLE_WIDTH
 
   return (
     <div className="relative" {...scrub.wrapProps}>
@@ -47,26 +111,12 @@ export function ScrubBar({ src, aspect, buffered, touch, ...options }: ScrubBarP
         )}
         style={{ width: bubbleWidth, transform: `translateX(${scrub.bubbleOffset(bubbleWidth)}px)` }}
       >
-        {!touch && (
-          <div
-            className={cn(
-              "relative overflow-hidden rounded-md bg-white/10 shadow-lg ring-1 ring-white/15",
-              !showPreview && "hidden"
-            )}
-            style={{ width: thumbSize.width, height: thumbSize.height }}
-          >
-            <canvas
-              ref={preview.canvasRef}
-              className={cn(
-                "h-full w-full transition-opacity duration-150",
-                preview.drawnTime === null && "invisible",
-                framePending && "opacity-50"
-              )}
-            />
-            {framePending && (
-              <Loader2 className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 animate-spin text-white/80" />
-            )}
-          </div>
+        {storyboard ? (
+          <SpriteFrame storyboard={storyboard} size={thumbSize} time={scrub.bubbleTime} />
+        ) : (
+          !touch && (
+            <DecoderFrame src={src} aspect={aspect} size={thumbSize} hoverTime={hoverTime} scrubbing={scrubbing} />
+          )
         )}
         <span className="rounded bg-black/70 px-1.5 py-0.5 text-xs tabular-nums text-white">
           {formatClock(scrub.bubbleTime ?? 0, duration)}
