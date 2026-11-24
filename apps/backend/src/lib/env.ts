@@ -9,6 +9,8 @@ export interface AIConfig {
   openRouterApiKey: string
   /** Direct Anthropic API for `anthropic:` model ids. Empty string leaves them unconfigured. */
   anthropicApiKey: string
+  /** SubQ API for `subq:` model ids. Empty string leaves them unconfigured. */
+  subqApiKey: string
   /** Keys for the `web_search` engines; each key set runs its engine in parallel with the other. */
   webSearchKeys: WebSearchEngineKeys
   /** Browserbase key: `read_url` reads pages a plain request cannot in a real browser. Empty string disables it. */
@@ -283,6 +285,7 @@ export function loadConfig(): Config {
     ai: {
       openRouterApiKey: process.env.OPENROUTER_API_KEY || "",
       anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",
+      subqApiKey: process.env.SUBQ_API_KEY || "",
       webSearchKeys: {
         exa: process.env.EXA_API_KEY || undefined,
         serper: process.env.SERPER_API_KEY || undefined,

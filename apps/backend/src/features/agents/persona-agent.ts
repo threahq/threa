@@ -1048,6 +1048,9 @@ export class PersonaAgent {
           purpose: effectivePurpose,
           supersededSession: supersededMessagePlan?.supersededSession ?? null,
           activeSubagentModel: activeSubagentRun?.model ?? null,
+          residencyPinned: await this.deps.aiResidency.isPinned(workspaceId),
+          isSingleRegion: (model) => modelRegistry.isSingleRegion(model),
+          canRunModel: (model) => ai.canRunModel(model),
           providerFailedModel: session.providerFailedModel,
         })
         reportTurnModel(turnModel.model)

@@ -690,7 +690,7 @@ describe("direct Anthropic provider", () => {
 
   it("refuses an anthropic model with no price, so its usage can never read as free", () => {
     const ai = createAI({ anthropic: { apiKey: "test-key" } })
-    expect(() => ai.getLanguageModel("anthropic:claude-fable-5-1")).toThrow(/No price for Anthropic model/)
+    expect(() => ai.getLanguageModel("anthropic:claude-fable-5-1")).toThrow(/No price for anthropic model/)
   })
 
   it("keeps embeddings on OpenRouter", () => {
@@ -707,7 +707,7 @@ describe("direct Anthropic provider", () => {
         context: TEST_COST_CONTEXT,
         reasoningEffort: "medium",
       })
-    ).rejects.toThrow(/reasoningEffort is not supported for direct Anthropic models/)
+    ).rejects.toThrow(/reasoningEffort is only supported for OpenRouter models/)
   })
 
   it("calls api.anthropic.com and prices the usage from the per-model table", async () => {
@@ -783,6 +783,83 @@ describe("direct Anthropic provider", () => {
     } finally {
       fetchSpy.mockRestore()
     }
+  })
+})
+
+describe("SubQ provider", () => {
+  const SAVANT = "subq:subq-savant-1.4"
+
+  function subqResponse(text: string) {
+    return new Response(
+      JSON.stringify({
+        id: "chatcmpl_test",
+        object: "chat.completion",
+        created: 0,
+        model: "subq-savant-1.4",
+        choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 3000, completion_tokens: 500, prompt_tokens_details: { cached_tokens: 2000 } },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    )
+  }
+
+  it("refuses subq models until a key is configured", () => {
+    const ai = createAI({ openrouter: { apiKey: "test-key" } })
+    expect(() => ai.getLanguageModel(SAVANT)).toThrow(/SUBQ_API_KEY.*subq\.apiKey/)
+  })
+
+  it("calls api.subq.ai without a temperature and prices the usage from the per-model table", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      input: Parameters<typeof fetch>[0],
+      init: Parameters<typeof fetch>[1]
+    ) => {
+      calls.push({ url: String(input instanceof Request ? input.url : input), body: JSON.parse(String(init?.body)) })
+      return subqResponse("ok")
+    }) as unknown as typeof globalThis.fetch)
+    try {
+      const ai = createAI({ subq: { apiKey: "test-key" } })
+      const result = await ai.generateText({
+        model: SAVANT,
+        messages: [{ role: "user", content: "hi" }],
+        context: TEST_COST_CONTEXT,
+        temperature: 0.2,
+      })
+
+      expect(result.value).toBe("ok")
+      expect(calls.map((call) => call.url)).toEqual(["https://api.subq.ai/v1/chat/completions"])
+      expect(calls[0]!.body.temperature).toBeUndefined()
+      // 1000 × $0.10 + 2000 × $0.01 + 500 × $0.50, per 1M tokens
+      expect(result.usage.cost).toBeCloseTo(0.00037, 9)
+      expect(result.usage).toMatchObject({ promptTokens: 3000, completionTokens: 500, cachedPromptTokens: 2000 })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it("rejects reasoningEffort for a subq model instead of silently dropping it", async () => {
+    const ai = createAI({ subq: { apiKey: "test-key" } })
+    await expect(
+      ai.generateText({
+        model: SAVANT,
+        messages: [{ role: "user", content: "hi" }],
+        context: TEST_COST_CONTEXT,
+        reasoningEffort: "medium",
+      })
+    ).rejects.toThrow(/reasoningEffort is only supported for OpenRouter models/)
+  })
+})
+
+describe("canRunModel", () => {
+  it("answers from the providers this instance was configured with", () => {
+    const ai = createAI({ openrouter: { apiKey: "test-key" } })
+    expect({
+      openrouter: ai.canRunModel("openrouter:anthropic/claude-haiku-5.5"),
+      anthropic: ai.canRunModel("anthropic:claude-haiku-5-5"),
+      subq: ai.canRunModel("subq:subq-savant-1.4"),
+      unknown: ai.canRunModel("luna:gpt"),
+    }).toEqual({ openrouter: true, anthropic: false, subq: false, unknown: false })
+    expect(createAI({ subq: { apiKey: "test-key" } }).canRunModel("subq:subq-savant-1.4")).toBe(true)
   })
 })
 

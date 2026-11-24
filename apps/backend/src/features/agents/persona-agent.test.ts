@@ -274,6 +274,7 @@ async function runSupersedeRerun(params: {
   const capturedToolNames: string[][] = []
   const preferenceUserIds: string[] = []
   const ai = {
+    canRunModel: () => true,
     getLanguageModel: (id: string) => ({ id }),
     parseModel: (id: string) => ({ modelId: id, modelProvider: "openrouter", modelName: id }),
     generateTextWithTools: async (opts: {
@@ -338,7 +339,8 @@ async function runSupersedeRerun(params: {
     attachmentService: {},
     memoExplorerService: {},
     storage: {},
-    modelRegistry: { supportsVision: () => false },
+    modelRegistry: { supportsVision: () => false, isSingleRegion: () => false },
+    aiResidency: { isPinned: async () => false },
     createMessage,
     editMessage: async () => null,
     deleteMessage: async () => null,

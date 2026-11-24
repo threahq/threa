@@ -112,8 +112,8 @@ function config(): PersonaConfigResponse {
     draft: null,
     attachments: [],
     availableModels: [
-      { id: "openrouter:anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6" },
-      { id: "openrouter:anthropic/claude-opus-4.8", label: "Claude Opus 4.8" },
+      { id: "openrouter:anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6", singleRegion: false },
+      { id: "openrouter:anthropic/claude-opus-4.8", label: "Claude Opus 4.8", singleRegion: false },
     ],
   }
 }

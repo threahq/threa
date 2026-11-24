@@ -13,6 +13,7 @@ import { PersonaAvatar } from "@/components/persona-avatar"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { personaKeys, useUpdatePersonaOverride } from "@/hooks/use-personas"
+import { ModelSelectItem } from "./model-select-item"
 import { BUILTIN_EDITABLE_FIELDS, buildModelOptions, isFieldOverridden } from "./persona-form"
 import type { SyncState } from "./persona-form"
 import { usePersonaDraftEditor } from "./use-persona-draft-editor"
@@ -170,9 +171,7 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
           </SelectTrigger>
           <SelectContent>
             {modelOptions.map((option) => (
-              <SelectItem key={option.id} value={option.id}>
-                {option.label}
-              </SelectItem>
+              <ModelSelectItem key={option.id} option={option} />
             ))}
           </SelectContent>
         </Select>
@@ -196,9 +195,7 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
           <SelectContent>
             <SelectItem value={ESCALATION_NONE}>None (no escalation)</SelectItem>
             {escalationOptions.map((option) => (
-              <SelectItem key={option.id} value={option.id}>
-                {option.label}
-              </SelectItem>
+              <ModelSelectItem key={option.id} option={option} />
             ))}
           </SelectContent>
         </Select>

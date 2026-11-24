@@ -107,6 +107,56 @@ describe("TraceStep", () => {
     expect(screen.queryByText(/Switched to/)).not.toBeInTheDocument()
   })
 
+  it("labels a residency fallback and says why the single-region model was replaced", () => {
+    render(
+      <MemoryRouter>
+        <TraceStep
+          step={createStep({
+            stepType: "model_escalated",
+            content: JSON.stringify({
+              fromModel: "subq:subq-savant-1.4",
+              toModel: "openrouter:anthropic/claude-haiku-5.5",
+              cause: "residency_pinned",
+              personaId: "persona_ariadne",
+            }),
+          })}
+          workspaceId="ws_1"
+          streamId="stream_1"
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText("Fallback Model")).toBeInTheDocument()
+    expect(screen.queryByText("Stronger Model")).not.toBeInTheDocument()
+    expect(screen.getByText(/Switched to/)).toBeInTheDocument()
+    expect(
+      screen.getByText(/keeps AI on regionally-runnable models, and .+ can only run in one region/)
+    ).toBeInTheDocument()
+  })
+
+  it("should label a fallback from a model the deployment cannot run", () => {
+    render(
+      <MemoryRouter>
+        <TraceStep
+          step={createStep({
+            stepType: "model_escalated",
+            content: JSON.stringify({
+              fromModel: "subq:subq-savant-1.4",
+              toModel: "openrouter:anthropic/claude-haiku-5.5",
+              cause: "model_unavailable",
+              personaId: "persona_ariadne",
+            }),
+          })}
+          workspaceId="ws_1"
+          streamId="stream_1"
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText("Fallback Model")).toBeInTheDocument()
+    expect(screen.getByText(/is not set up on this deployment, so this turn ran on /)).toBeInTheDocument()
+  })
+
   it("should label a provider fallback and say which model's call failed", () => {
     render(
       <MemoryRouter>

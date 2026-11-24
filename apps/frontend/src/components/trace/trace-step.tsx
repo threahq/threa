@@ -74,6 +74,8 @@ interface TraceStepProps {
 
 const MODEL_SWITCH_CAUSE_LABELS = new Map<unknown, string>([
   ["subagent", "Delegated Model"],
+  ["residency_pinned", "Fallback Model"],
+  ["model_unavailable", "Fallback Model"],
   ["provider_failed", "Fallback Model"],
 ])
 
@@ -898,6 +900,16 @@ function renderStepContent(
               <div className="text-[11px] text-muted-foreground">
                 The previous attempt could not produce a response that passed validation, so this turn runs a stronger
                 model.
+              </div>
+            )}
+            {structured.cause === "residency_pinned" && from && (
+              <div className="text-[11px] text-muted-foreground">
+                This workspace keeps AI on regionally-runnable models, and {from} can only run in one region.
+              </div>
+            )}
+            {structured.cause === "model_unavailable" && from && (
+              <div className="text-[11px] text-muted-foreground">
+                {from} is not set up on this deployment, so this turn ran on {to}.
               </div>
             )}
             {structured.cause === "provider_failed" && from && (

@@ -57,6 +57,7 @@ import {
   useUploadPersonaAvatar,
 } from "@/hooks/use-personas"
 import { AttachExistingDialog } from "./attach-existing-dialog"
+import { ModelSelectItem } from "./model-select-item"
 import { buildModelOptions, toCustomConfig, CUSTOM_EDITABLE_FIELDS } from "./persona-form"
 import type { SyncState } from "./persona-form"
 import { usePersonaDraftEditor } from "./use-persona-draft-editor"
@@ -616,9 +617,7 @@ export function CustomPersonaEditor({
           </SelectTrigger>
           <SelectContent>
             {modelOptions.map((option) => (
-              <SelectItem key={option.id} value={option.id}>
-                {option.label}
-              </SelectItem>
+              <ModelSelectItem key={option.id} option={option} />
             ))}
           </SelectContent>
         </Select>
@@ -640,9 +639,7 @@ export function CustomPersonaEditor({
           <SelectContent>
             <SelectItem value={ESCALATION_NONE}>None (no escalation)</SelectItem>
             {escalationOptions.map((option) => (
-              <SelectItem key={option.id} value={option.id}>
-                {option.label}
-              </SelectItem>
+              <ModelSelectItem key={option.id} option={option} />
             ))}
           </SelectContent>
         </Select>
