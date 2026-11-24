@@ -38,6 +38,16 @@ describe("CI policy", () => {
     expect(missed).toEqual([])
   })
 
+  test("should select the audio player spec from the media player, attachment list and attachment backend", () => {
+    const sources = [
+      "apps/frontend/src/components/media-player/audio-player.tsx",
+      "apps/frontend/src/components/timeline/attachment-list.tsx",
+      "apps/backend/src/features/attachments/audio/worker.ts",
+    ]
+    const missed = sources.filter((source) => !pr(source).browser.includes("tests/browser/audio-player.spec.ts"))
+    expect(missed).toEqual([])
+  })
+
   test("should run a changed spec without its whole area", () => {
     expect(pr("tests/browser/doc-chips.spec.ts").browser).toEqual(["tests/browser/doc-chips.spec.ts", smokeSpec])
   })
