@@ -621,8 +621,8 @@ export function extractUsageWithCost(response: {
 const LUNA = "openrouter:openai/gpt-6-luna"
 
 function reasoningProviderOptions(model: string, effort: ReasoningEffort): ModelMessage["providerOptions"] {
-  if (parseModelId(model).provider === "anthropic") {
-    throw new Error(`reasoningEffort is not supported for direct Anthropic models (${model})`)
+  if (parseModelId(model).provider !== "openrouter") {
+    throw new Error(`reasoningEffort is only supported for OpenRouter models (${model})`)
   }
   return { openrouter: { reasoning: { effort, exclude: true } } }
 }

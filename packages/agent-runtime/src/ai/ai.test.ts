@@ -707,7 +707,7 @@ describe("direct Anthropic provider", () => {
         context: TEST_COST_CONTEXT,
         reasoningEffort: "medium",
       })
-    ).rejects.toThrow(/reasoningEffort is not supported for direct Anthropic models/)
+    ).rejects.toThrow(/reasoningEffort is only supported for OpenRouter models/)
   })
 
   it("calls api.anthropic.com and prices the usage from the per-model table", async () => {
@@ -835,6 +835,18 @@ describe("SubQ provider", () => {
     } finally {
       fetchSpy.mockRestore()
     }
+  })
+
+  it("rejects reasoningEffort for a subq model instead of silently dropping it", async () => {
+    const ai = createAI({ subq: { apiKey: "test-key" } })
+    await expect(
+      ai.generateText({
+        model: SAVANT,
+        messages: [{ role: "user", content: "hi" }],
+        context: TEST_COST_CONTEXT,
+        reasoningEffort: "medium",
+      })
+    ).rejects.toThrow(/reasoningEffort is only supported for OpenRouter models/)
   })
 })
 
