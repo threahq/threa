@@ -36,7 +36,8 @@ import {
 } from "./gestures"
 import { mediaKeyAction } from "./media-keys"
 import { PLAYBACK_RATES, formatPlaybackRate } from "./preferences"
-import { SCRUB_SELECTOR, ScrubBar } from "./scrub-bar"
+import { ScrubBar } from "./scrub-bar"
+import { SCRUB_SELECTOR } from "./use-scrub"
 import { useFullscreen } from "./use-fullscreen"
 import { useMediaPlayback } from "./use-media-playback"
 
@@ -204,6 +205,13 @@ export function VideoPlayer({ src, poster, filename, chromeVisible, onChromeTap,
   }, [chromeVisible])
 
   useEffect(() => () => onActivityRef.current(false), [])
+
+  useEffect(
+    () => () => {
+      if (video && !video.paused) video.pause()
+    },
+    [video]
+  )
 
   useImperativeHandle(
     ref,

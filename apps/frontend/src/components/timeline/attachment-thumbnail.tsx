@@ -3,7 +3,7 @@ import { Check, Copy, Download } from "lucide-react"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { attachmentsApi, attachmentContentUrl } from "@/api"
 import { cn } from "@/lib/utils"
-import { downloadImage, copyImage } from "@/lib/image-utils"
+import { downloadAttachment, copyImage } from "@/lib/image-utils"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useLongPress } from "@/hooks/use-long-press"
 
@@ -37,7 +37,7 @@ function ImageActionDrawer({
 }) {
   // Confirm in place: the row's icon swaps to a checkmark for a beat, then the
   // drawer dismisses itself — no toast (the source field stays visible on
-  // mobile). Failures fall back to closing; copyImage/downloadImage surface
+  // mobile). Failures fall back to closing; copyImage/downloadAttachment surface
   // their own error toast.
   const [downloadDone, setDownloadDone] = useState(false)
   const [copyDone, setCopyDone] = useState(false)
@@ -53,7 +53,7 @@ function ImageActionDrawer({
   }, [open])
 
   const handleDownload = useCallback(async () => {
-    const ok = await downloadImage(workspaceId, attachmentId, filename)
+    const ok = await downloadAttachment(workspaceId, attachmentId, filename)
     if (!ok) {
       onOpenChange(false)
       return

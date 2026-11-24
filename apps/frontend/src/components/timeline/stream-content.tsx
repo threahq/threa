@@ -175,6 +175,7 @@ import { ReadFrontierContext, type ReadFrontier } from "./read-frontier-context"
 import { StreamReadTracker } from "./stream-read-tracker"
 import { useReadMessageIds, useStreamInInbox, useUnreadActions } from "@/hooks/use-unread-counts"
 import { deepLinkDebug } from "./deep-link-debug"
+import { AudioScope } from "@/components/media-player/audio-session"
 import { VirtualizedScroller, useRenderedContentLatch } from "./virtualized-scroller"
 import {
   useScrollToMessage,
@@ -3170,7 +3171,11 @@ export function StreamContent({
       </EditLastMessageContext.Provider>
     </ReadFrontierContext.Provider>
   )
-  return <HostArchivedProvider value={isArchived}>{timeline}</HostArchivedProvider>
+  return (
+    <HostArchivedProvider value={isArchived}>
+      <AudioScope scope={streamId}>{timeline}</AudioScope>
+    </HostArchivedProvider>
+  )
 }
 
 interface RowCacheEntry {

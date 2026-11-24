@@ -1,9 +1,10 @@
 import { useState, useSyncExternalStore } from "react"
 import { toast } from "sonner"
 import { Download, FileLock2, Loader2 } from "lucide-react"
-import type { AttachmentSummary } from "@threahq/types"
+import { isAudioAttachment, type AttachmentSummary } from "@threahq/types"
 import { type AttachmentRef } from "@/lib/crypto/attachment-crypto"
-import { requestAttachmentBytes } from "@/lib/crypto/attachment-cache"
+import { getCachedAttachmentBytes, requestAttachmentBytes } from "@/lib/crypto/attachment-cache"
+import { AudioPlayer } from "@/components/media-player/audio-player"
 import { fetchAndDecryptAttachment, useDecryptedAttachment } from "@/hooks/use-decrypted-attachment"
 import { downloadBlob } from "@/lib/image-utils"
 import { Button } from "@/components/ui/button"
@@ -75,6 +76,40 @@ function E2eImageAttachment({ workspaceId, attachmentRef }: { workspaceId: strin
   )
 }
 
+async function decryptedBytes(workspaceId: string, attachmentRef: AttachmentRef): Promise<Blob> {
+  const entry = await requestAttachmentBytes(attachmentRef.attachmentId, () =>
+    fetchAndDecryptAttachment(workspaceId, attachmentRef)
+  )
+  if (!entry.value) throw new Error("decrypt failed")
+  return entry.value
+}
+
+async function downloadDecrypted(workspaceId: string, attachmentRef: AttachmentRef): Promise<void> {
+  try {
+    downloadBlob(await decryptedBytes(workspaceId, attachmentRef), attachmentRef.filename)
+  } catch {
+    toast.error("Couldn't decrypt this attachment")
+  }
+}
+
+/** Decrypts on first play; the session owns (and revokes) each blob URL it is handed. */
+function E2eAudioAttachment({ workspaceId, attachmentRef }: { workspaceId: string; attachmentRef: AttachmentRef }) {
+  const resolveSrc = () => {
+    const cached = getCachedAttachmentBytes(attachmentRef.attachmentId)?.value
+    if (cached) return URL.createObjectURL(cached)
+    return decryptedBytes(workspaceId, attachmentRef).then((blob) => URL.createObjectURL(blob))
+  }
+  return (
+    <AudioPlayer
+      trackKey={attachmentRef.attachmentId}
+      filename={attachmentRef.filename}
+      sizeBytes={attachmentRef.sizeBytes}
+      resolveSrc={resolveSrc}
+      onDownload={() => downloadDecrypted(workspaceId, attachmentRef)}
+    />
+  )
+}
+
 function E2eFileAttachment({ workspaceId, attachmentRef }: { workspaceId: string; attachmentRef: AttachmentRef }) {
   const [busy, setBusy] = useState(false)
 
@@ -82,13 +117,7 @@ function E2eFileAttachment({ workspaceId, attachmentRef }: { workspaceId: string
     if (busy) return
     setBusy(true)
     try {
-      const entry = await requestAttachmentBytes(attachmentRef.attachmentId, () =>
-        fetchAndDecryptAttachment(workspaceId, attachmentRef)
-      )
-      if (!entry.value) throw new Error("decrypt failed")
-      downloadBlob(entry.value, attachmentRef.filename)
-    } catch {
-      toast.error("Couldn't decrypt this attachment")
+      await downloadDecrypted(workspaceId, attachmentRef)
     } finally {
       setBusy(false)
     }
@@ -161,11 +190,13 @@ export function E2eAttachmentList({
             </div>
           )
         }
-        return ref.mimeType.startsWith("image/") ? (
-          <E2eImageAttachment key={ref.attachmentId} workspaceId={workspaceId} attachmentRef={ref} />
-        ) : (
-          <E2eFileAttachment key={ref.attachmentId} workspaceId={workspaceId} attachmentRef={ref} />
-        )
+        if (ref.mimeType.startsWith("image/")) {
+          return <E2eImageAttachment key={ref.attachmentId} workspaceId={workspaceId} attachmentRef={ref} />
+        }
+        if (isAudioAttachment(ref.mimeType, ref.filename)) {
+          return <E2eAudioAttachment key={ref.attachmentId} workspaceId={workspaceId} attachmentRef={ref} />
+        }
+        return <E2eFileAttachment key={ref.attachmentId} workspaceId={workspaceId} attachmentRef={ref} />
       })}
     </div>
   )

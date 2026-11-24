@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { useQuery, type UseQueryResult } from "@tanstack/react-query"
-import { categoryFromMime } from "@threahq/types"
+import { categoryFromMime, isAudioAttachment } from "@threahq/types"
 import { Check, ChevronDown, ChevronUp, Code2, Copy, Download, ExternalLink, Eye, Hash } from "lucide-react"
-import { attachmentsApi, type AttachmentExtractionContent, type AttachmentSearchItem } from "@/api/attachments"
+import {
+  attachmentContentUrl,
+  attachmentsApi,
+  type AttachmentExtractionContent,
+  type AttachmentSearchItem,
+} from "@/api/attachments"
+import { AudioPlayer, playableAudioVariant } from "@/components/media-player/audio-player"
+import { AudioScope } from "@/components/media-player/audio-session"
 import { Button } from "@/components/ui/button"
 import { HtmlViewer } from "@/components/gallery/html-viewer"
 import { MarkdownViewer } from "@/components/gallery/markdown-viewer"
@@ -11,6 +18,7 @@ import { PdfViewer } from "@/components/gallery/pdf-viewer"
 import { ProgressiveImage } from "@/components/ui/progressive-image"
 import { useFormattedDate } from "@/hooks"
 import { isHtmlAttachment, isMarkdownAttachment, isPdfAttachment } from "@/lib/attachment-kind"
+import { downloadAttachment } from "@/lib/image-utils"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { formatFileSize } from "@/lib/file-size"
 import { CATEGORY_META } from "./category"
@@ -202,6 +210,23 @@ export function ExplorerPreview({ workspaceId, item }: ExplorerPreviewProps) {
     if (isPdf && rawUrl) {
       return <PdfViewer url={rawUrl} filename={selected.filename} variant="inline" />
     }
+    if (isAudioAttachment(selected.mimeType, selected.filename)) {
+      return (
+        <AudioScope scope={selected.id}>
+          <AudioPlayer
+            trackKey={selected.id}
+            filename={selected.filename}
+            sizeBytes={selected.sizeBytes}
+            audio={{ status: selected.processingStatus }}
+            resolveSrc={() =>
+              attachmentContentUrl(workspaceId, selected.id, {
+                variant: playableAudioVariant(selected.processingStatus),
+              })
+            }
+          />
+        </AudioScope>
+      )
+    }
     if (!rawUrl) {
       return (
         <div className={`flex h-16 w-16 items-center justify-center rounded-card ${meta.accent}`}>
@@ -211,13 +236,6 @@ export function ExplorerPreview({ workspaceId, item }: ExplorerPreviewProps) {
     }
     if (category === "video") {
       return <video src={playbackUrl ?? undefined} controls className="block max-h-[50vh] min-w-0 max-w-full" />
-    }
-    if (category === "audio") {
-      return (
-        <div className="w-full px-6">
-          <audio src={rawUrl} controls className="w-full" />
-        </div>
-      )
     }
     return (
       <a
@@ -337,19 +355,27 @@ export function ExplorerPreview({ workspaceId, item }: ExplorerPreviewProps) {
               </Button>
             ) : null}
             {rawUrl ? (
-              <Button size="sm" variant="outline" asChild>
-                <a href={rawUrl} download={item.filename} className="gap-1">
-                  <Download className="h-3.5 w-3.5" />
-                  {processedUrl ? "Original" : "Download"}
-                </a>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1"
+                onClick={() => downloadAttachment(workspaceId, item.id, item.filename)}
+              >
+                <Download className="h-3.5 w-3.5" />
+                {processedUrl ? "Original" : "Download"}
               </Button>
             ) : null}
             {processedUrl ? (
-              <Button size="sm" variant="ghost" asChild>
-                <a href={processedUrl} download={item.filename.replace(/\.[^.]+$/, ".mp4")} className="gap-1">
-                  <Download className="h-3.5 w-3.5" />
-                  Processed (.mp4)
-                </a>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="gap-1"
+                onClick={() =>
+                  downloadAttachment(workspaceId, item.id, item.filename.replace(/\.[^.]+$/, ".mp4"), "processed")
+                }
+              >
+                <Download className="h-3.5 w-3.5" />
+                Processed (.mp4)
               </Button>
             ) : null}
           </div>

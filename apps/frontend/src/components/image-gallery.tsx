@@ -2,7 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   X,
@@ -21,7 +20,7 @@ import {
   Eye,
 } from "lucide-react"
 import { TopbarLoadingIndicator } from "@/components/layout/topbar-loading-indicator"
-import { downloadImage, copyImage } from "@/lib/image-utils"
+import { downloadAttachment, copyImage } from "@/lib/image-utils"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
@@ -41,7 +40,8 @@ import { HtmlViewer } from "@/components/gallery/html-viewer"
 import { PdfViewer } from "@/components/gallery/pdf-viewer"
 import { TextViewer } from "@/components/gallery/text-viewer"
 import { fetchTextContent } from "@/components/gallery/use-text-content"
-import { SCRUB_SELECTOR } from "@/components/media-player/scrub-bar"
+import { DownloadVariantsMenu } from "@/components/media-player/download-variants-menu"
+import { SCRUB_SELECTOR } from "@/components/media-player/use-scrub"
 import { VideoPlayer, type VideoPlayerHandle } from "@/components/media-player/video-player"
 
 export type GalleryItem =
@@ -691,7 +691,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
 
   const handleDownload = useCallback(async () => {
     if (!current) return
-    const ok = await downloadImage(workspaceId, current.attachmentId, current.filename)
+    const ok = await downloadAttachment(workspaceId, current.attachmentId, current.filename)
     if (!ok) return
     setDownloadDone(true)
     if (downloadResetRef.current) clearTimeout(downloadResetRef.current)
@@ -1060,18 +1060,12 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
         </span>
       )}
       {current?.type === "video" && canDownload ? (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-10 w-10 text-white hover:bg-white/20 rounded-full">
-              <Download className="h-5 w-5" />
-              <span className="sr-only">Download video</span>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-[160px]">
-            <DropdownMenuItem onClick={handleDownloadProcessed}>Download processed</DropdownMenuItem>
-            <DropdownMenuItem onClick={handleDownloadRaw}>Download original</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <DownloadVariantsMenu onProcessed={handleDownloadProcessed} onOriginal={handleDownloadRaw}>
+          <Button variant="ghost" size="icon" className="h-10 w-10 text-white hover:bg-white/20 rounded-full">
+            <Download className="h-5 w-5" />
+            <span className="sr-only">Download video</span>
+          </Button>
+        </DownloadVariantsMenu>
       ) : (
         <>
           {canToggleRaw && (
