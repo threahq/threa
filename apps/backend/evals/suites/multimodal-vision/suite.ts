@@ -139,6 +139,7 @@ function createMockStorage(images: Map<string, Buffer>): StorageProvider {
     async putObject(): Promise<void> {
       // No-op for mock
     },
+    async putObjectFile(): Promise<void> {},
     async delete(): Promise<void> {
       // No-op for mock
     },

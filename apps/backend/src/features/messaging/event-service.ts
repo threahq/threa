@@ -2791,7 +2791,11 @@ export class EventService {
         messageCreatedEvents.flatMap((e) =>
           ((e.payload as MessageCreatedPayload).attachments ?? [])
             .filter(
-              (a) => a.processingStatus !== undefined || a.safetyStatus !== undefined || a.uploadStatus !== undefined
+              (a) =>
+                a.processingStatus !== undefined ||
+                a.safetyStatus !== undefined ||
+                a.uploadStatus !== undefined ||
+                a.audio !== undefined
             )
             .map((a) => a.id)
         )
@@ -2923,6 +2927,17 @@ export class EventService {
           let next = a
           if (a.processingStatus !== undefined && row.processingStatus !== a.processingStatus) {
             next = { ...next, processingStatus: row.processingStatus }
+          }
+          if (a.audio !== undefined) {
+            const audio = toAttachmentSummary(row).audio
+            if (
+              audio &&
+              (audio.status !== a.audio.status ||
+                audio.durationMs !== a.audio.durationMs ||
+                audio.waveform !== a.audio.waveform)
+            ) {
+              next = { ...next, audio }
+            }
           }
           if (a.safetyStatus !== undefined || a.uploadStatus !== undefined) {
             const safetyStatus = isAttachmentSafeForSharing(row.safetyStatus) ? undefined : row.safetyStatus

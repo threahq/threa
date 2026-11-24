@@ -36,6 +36,7 @@ export {
   type LinkPreviewExtractJobData,
   type VideoTranscodeSubmitJobData,
   type VideoTranscodeCheckJobData,
+  type AudioProcessJobData,
   type SavedReminderFireJobData,
   type PushDeliverJobData,
   type PushSessionExpiredJobData,

@@ -30,6 +30,9 @@ interface AttachmentRow {
   thumbnail_storage_path: string | null
   width: number | null
   height: number | null
+  normalized_audio_storage_path: string | null
+  duration_ms: number | null
+  waveform: string | null
   created_at: Date
 }
 
@@ -57,6 +60,11 @@ export interface Attachment {
   /** Orientation-corrected intrinsic pixel dimensions (images only; null otherwise) */
   width: number | null
   height: number | null
+  /** S3 key of the AAC .m4a (audio only; null for passthrough codecs and until the worker runs) */
+  normalizedAudioStoragePath: string | null
+  durationMs: number | null
+  /** Base64 of 200 peak bytes, loudest bucket = 255 (audio only) */
+  waveform: string | null
   createdAt: Date
 }
 
@@ -122,6 +130,9 @@ function mapRowToAttachment(row: AttachmentRow): Attachment {
     thumbnailStoragePath: row.thumbnail_storage_path ?? null,
     width: row.width ?? null,
     height: row.height ?? null,
+    normalizedAudioStoragePath: row.normalized_audio_storage_path ?? null,
+    durationMs: row.duration_ms ?? null,
+    waveform: row.waveform ?? null,
     createdAt: row.created_at,
   }
 }
@@ -144,6 +155,7 @@ const SELECT_FIELDS = `
   filename, mime_type, size_bytes,
   storage_provider, storage_path, processing_status, safety_status, e2e_only,
   thumbnail_storage_path, width, height,
+  normalized_audio_storage_path, duration_ms, waveform,
   created_at
 `
 
@@ -271,6 +283,7 @@ export const AttachmentRepository = {
         a.filename, a.mime_type, a.size_bytes,
         a.storage_provider, a.storage_path, a.processing_status, a.safety_status, a.e2e_only,
         a.thumbnail_storage_path, a.width, a.height,
+        a.normalized_audio_storage_path, a.duration_ms, a.waveform,
         a.created_at,
         e.content_type AS extraction_content_type,
         e.summary AS extraction_summary,
@@ -515,6 +528,24 @@ export const AttachmentRepository = {
     return (result.rowCount ?? 0) > 0
   },
 
+  async updateAudioResult(
+    client: Querier,
+    workspaceId: string,
+    id: string,
+    params: { normalizedAudioStoragePath: string | null; durationMs: number; waveform: string }
+  ): Promise<boolean> {
+    const result = await client.query(sql`
+      UPDATE attachments
+      SET normalized_audio_storage_path = ${params.normalizedAudioStoragePath},
+          duration_ms = ${params.durationMs},
+          waveform = ${params.waveform},
+          processing_status = ${ProcessingStatuses.COMPLETED}
+      WHERE workspace_id = ${workspaceId} AND id = ${id}
+        AND processing_status = ${ProcessingStatuses.PROCESSING}
+    `)
+    return (result.rowCount ?? 0) > 0
+  },
+
   async updateSafetyStatus(
     client: Querier,
     workspaceId: string,
@@ -633,6 +664,7 @@ export const AttachmentRepository = {
           a.filename, a.mime_type, a.size_bytes,
           a.storage_provider, a.storage_path, a.processing_status, a.safety_status, a.e2e_only,
           a.thumbnail_storage_path, a.width, a.height,
+          a.normalized_audio_storage_path, a.duration_ms, a.waveform,
           a.created_at,
           e.content_type AS extraction_content_type,
           e.summary AS extraction_summary,
@@ -662,6 +694,7 @@ export const AttachmentRepository = {
         a.filename, a.mime_type, a.size_bytes,
         a.storage_provider, a.storage_path, a.processing_status, a.safety_status, a.e2e_only,
         a.thumbnail_storage_path, a.width, a.height,
+        a.normalized_audio_storage_path, a.duration_ms, a.waveform,
         a.created_at,
         e.content_type AS extraction_content_type,
         e.summary AS extraction_summary,
@@ -763,6 +796,7 @@ export const AttachmentRepository = {
         a.filename, a.mime_type, a.size_bytes,
         a.storage_provider, a.storage_path, a.processing_status, a.safety_status, a.e2e_only,
         a.thumbnail_storage_path, a.width, a.height,
+        a.normalized_audio_storage_path, a.duration_ms, a.waveform,
         a.created_at,
         e.content_type AS extraction_content_type,
         e.summary AS extraction_summary,

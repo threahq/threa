@@ -302,6 +302,11 @@ import {
   ThreaMediaConvertClient,
   createAttachmentFailedOnDLQ,
   createVideoTranscodeOnDLQ,
+  AudioProcessingService,
+  StubAudioProcessingService,
+  createAudioProcessWorker,
+  createAudioProcessOnDLQ,
+  resolveAudioTools,
   createMalwareScanner,
 } from "./features/attachments"
 import { JobQueues, type OnDLQHook, type AgentFollowUpFireJobData } from "./lib/queue"
@@ -1689,6 +1694,23 @@ export async function startServer(): Promise<ServerInstance> {
     hooks: { onDLQ: createVideoTranscodeOnDLQ("Check job moved to DLQ after exhausting retries") },
     tier: QueueTiers.HEAVY,
     fairness: QueueFairness.NONE,
+  })
+
+  const audioTools = resolveAudioTools()
+  if (!audioTools && isProduction) {
+    throw new Error("ffmpeg and ffprobe must be on PATH in production (audio attachment processing)")
+  }
+  if (!audioTools) {
+    logger.warn("ffmpeg/ffprobe not on PATH: audio attachments are marked skipped and play from the raw upload")
+  }
+  const audioProcessingService = audioTools
+    ? new AudioProcessingService({ pool, storage, tools: audioTools })
+    : new StubAudioProcessingService(pool)
+  jobQueue.registerHandler(JobQueues.AUDIO_PROCESS, createAudioProcessWorker({ audioProcessingService }), {
+    hooks: { onDLQ: createAudioProcessOnDLQ() },
+    tier: QueueTiers.HEAVY,
+    fairness: QueueFairness.NONE,
+    maxRetries: 3,
   })
 
   // Avatar processing worker — fast image resize, not LLM-bound

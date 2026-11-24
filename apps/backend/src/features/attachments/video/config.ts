@@ -26,6 +26,9 @@ export function isVideoAttachment(mimeType: string, filename: string): boolean {
   if (mimeType.startsWith("video/")) {
     return true
   }
+  if (mimeType.startsWith("audio/")) {
+    return false
+  }
 
   const lowerFilename = filename.toLowerCase()
   return VIDEO_EXTENSIONS.some((ext) => lowerFilename.endsWith(ext))

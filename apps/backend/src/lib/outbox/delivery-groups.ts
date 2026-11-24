@@ -25,6 +25,7 @@ import {
   type StreamUnarchivedOutboxPayload,
   type AttachmentTranscodedOutboxPayload,
   type AttachmentThumbnailedOutboxPayload,
+  type AttachmentAudioProcessedOutboxPayload,
   type AttachmentUploadStatusChangedOutboxPayload,
   type MessagesMovedOutboxPayload,
   type ConversationCreatedOutboxPayload,
@@ -370,6 +371,11 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
 
   if (isOutboxEventType(event, "attachment:thumbnailed")) {
     const payload = event.payload as AttachmentThumbnailedOutboxPayload
+    return payload.streamId ? [streamGroup(payload.streamId)] : [WORKSPACE_GROUP]
+  }
+
+  if (isOutboxEventType(event, "attachment:audio_processed")) {
+    const payload = event.payload as AttachmentAudioProcessedOutboxPayload
     return payload.streamId ? [streamGroup(payload.streamId)] : [WORKSPACE_GROUP]
   }
 

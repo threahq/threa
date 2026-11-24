@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test"
 import {
   categoryFromMime,
+  isAudioAttachment,
   mimePrefixesForCategory,
   ATTACHMENT_CATEGORIES,
   type AttachmentCategory,
@@ -109,5 +110,28 @@ describe("mimePrefixesForCategory", () => {
 
   test("'other' returns an empty list — caller handles the negative case", () => {
     expect(mimePrefixesForCategory("other")).toEqual([])
+  })
+})
+
+describe("isAudioAttachment", () => {
+  test("classifies by mime, falling back to extension only for generic mimes", () => {
+    const cases: Array<[string, string]> = [
+      ["audio/mpeg", "song.bin"],
+      ["audio/webm;codecs=opus", "voice.webm"],
+      ["application/octet-stream", "memo.M4A"],
+      ["", "take.flac"],
+      ["video/mp4", "clip.m4a"],
+      ["application/octet-stream", "data.bin"],
+      ["application/octet-stream", "mp3"],
+    ]
+    expect(cases.map(([mime, name]) => isAudioAttachment(mime, name))).toEqual([
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+    ])
   })
 })

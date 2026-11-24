@@ -33,6 +33,9 @@ function makeAttachment(overrides: Partial<Attachment> = {}): Attachment {
     thumbnailStoragePath: null,
     width: null,
     height: null,
+    normalizedAudioStoragePath: null,
+    durationMs: null,
+    waveform: null,
     createdAt: new Date(),
     ...overrides,
   }
@@ -235,6 +238,9 @@ describe("AttachmentService", () => {
       thumbnailStoragePath: null,
       width: null,
       height: null,
+      normalizedAudioStoragePath: null,
+      durationMs: null,
+      waveform: null,
       createdAt: new Date(),
     }))
     spyOn(AttachmentRepository, "updateSafetyStatus").mockResolvedValue(true)
@@ -304,6 +310,9 @@ describe("AttachmentService", () => {
         thumbnailStoragePath: null,
         width: null,
         height: null,
+        normalizedAudioStoragePath: null,
+        durationMs: null,
+        waveform: null,
         createdAt: new Date(),
       }))
     }
@@ -613,6 +622,9 @@ describe("AttachmentService.copyForPersona", () => {
     thumbnailStoragePath: null,
     width: null,
     height: null,
+    normalizedAudioStoragePath: null,
+    durationMs: null,
+    waveform: null,
   })
 
   it("server-side copies the object to the new key and inserts an unbound CLEAN row with copied processing status", async () => {
