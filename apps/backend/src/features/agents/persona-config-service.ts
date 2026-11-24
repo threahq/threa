@@ -49,6 +49,7 @@ import { AgentConfigOverrideRepository, type AgentConfigOverrideDetail } from ".
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { PersonaConfigRevisionRepository } from "./persona-config-revision-repository"
 import { PersonaRepository, type EditablePersona, type Persona } from "./persona-repository"
+import { modelBlockCause } from "./turn-model"
 import { COMPANION_MODEL_ID, resolvePersonaStyleSlots } from "./companion/config"
 import {
   applyBuiltInAgentPatch,
@@ -348,11 +349,12 @@ export class PersonaConfigService {
    * unpinned.
    */
   private async loadModelOffer(workspaceId: string): Promise<(model: string) => boolean> {
-    const pinned = await this.deps.aiResidency.isPinned(workspaceId)
-    return (model) =>
-      this.modelRegistry.isChatModel(model) &&
-      this.deps.canRunModel(model) &&
-      !(pinned && this.modelRegistry.isSingleRegion(model))
+    const placement = {
+      residencyPinned: await this.deps.aiResidency.isPinned(workspaceId),
+      isSingleRegion: (model: string) => this.modelRegistry.isSingleRegion(model),
+      canRunModel: this.deps.canRunModel,
+    }
+    return (model) => this.modelRegistry.isChatModel(model) && modelBlockCause(model, placement) === null
   }
 
   private async listAvailableModels(workspaceId: string): Promise<PersonaModelOption[]> {

@@ -671,7 +671,7 @@ function localPrice(provider: string, modelId: string) {
   return price
 }
 
-/** Savant runs at a fixed temperature and rejects a request that sets any other. */
+/** SubQ models run at a fixed temperature and reject a request that sets one. */
 const temperatureFor = (modelString: string, temperature: number | undefined) =>
   parseModelId(modelString).provider === "subq" ? undefined : temperature
 

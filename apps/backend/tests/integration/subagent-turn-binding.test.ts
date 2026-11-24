@@ -103,6 +103,9 @@ describe("pinned model", () => {
         purpose: kickoffPurpose,
         supersededSession: null,
         activeSubagentModel: kickoffRun?.model ?? null,
+        residencyPinned: false,
+        isSingleRegion: () => false,
+        canRunModel: () => true,
       })
     ).toEqual({ model: DELEGATED_MODEL, escalated: true, fromModel: PERSONA_MODEL, cause: "subagent" })
 
@@ -113,6 +116,9 @@ describe("pinned model", () => {
         purpose: { kind: "catch_up" },
         supersededSession: null,
         activeSubagentModel: replyRun?.model ?? null,
+        residencyPinned: false,
+        isSingleRegion: () => false,
+        canRunModel: () => true,
       })
     ).toEqual({ model: DELEGATED_MODEL, escalated: true, fromModel: PERSONA_MODEL, cause: "subagent" })
   })
@@ -133,6 +139,9 @@ describe("pinned model", () => {
         purpose: { kind: "catch_up" },
         supersededSession: null,
         activeSubagentModel: settledRun?.model ?? null,
+        residencyPinned: false,
+        isSingleRegion: () => false,
+        canRunModel: () => true,
       })
     ).toEqual({ model: PERSONA_MODEL, escalated: false })
   })
@@ -147,6 +156,9 @@ describe("pinned model", () => {
         purpose: { kind: "catch_up" },
         supersededSession: null,
         activeSubagentModel: run?.model ?? null,
+        residencyPinned: false,
+        isSingleRegion: () => false,
+        canRunModel: () => true,
       })
     ).toEqual({ model: PERSONA_MODEL, escalated: false })
   })
