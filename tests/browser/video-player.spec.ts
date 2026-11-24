@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test"
+import { test, expect, type Page, type Response } from "@playwright/test"
+import { spawnSync } from "child_process"
 import { fileURLToPath } from "url"
 import { loginAndCreateWorkspace, createChannelViaApi, workspaceIdFromUrl } from "./helpers"
 
@@ -8,7 +9,8 @@ import { loginAndCreateWorkspace, createChannelViaApi, workspaceIdFromUrl } from
  * gestures are all things jsdom's inert media element can't answer. Fixtures
  * are synthetic VP9 WebM (bundled Chromium has no H.264): 45s, a keyframe
  * every second, portrait 480x854 (taller than the desktop dialog) and landscape
- * 854x480.
+ * 854x480. With ffmpeg on PATH the backend builds a storyboard sprite and the
+ * bubble shows its tiles; without it (CI) the bubble decodes frames itself.
  */
 
 test.describe.configure({ timeout: 150_000 })
@@ -20,6 +22,41 @@ const fixture = (name: string) => fileURLToPath(new URL(`./fixtures/${name}`, im
 const player = (page: Page) => page.locator("[data-media-player]")
 const chrome = (page: Page) => page.locator("[data-media-chrome]")
 const scrub = (page: Page) => page.locator("[data-media-scrub]")
+const spriteFrame = (page: Page) => chrome(page).locator("[data-storyboard-frame]")
+
+const hasFfmpeg = spawnSync("ffmpeg", ["-version"]).status === 0
+
+const pathOf = (response: Response) => new URL(response.url()).pathname
+
+/** Resolves once the page's storyboard poll answers `ready`; register before opening the video. */
+const storyboardReady = (page: Page) =>
+  page.waitForResponse(
+    async (r) =>
+      r.request().method() === "POST" &&
+      /\/attachments\/[^/]+\/storyboard$/.test(pathOf(r)) &&
+      (await r.json().catch(() => null))?.status === "ready",
+    { timeout: 120_000 }
+  )
+
+/** The sprite image's final response, following any storage redirect. */
+const spriteResponse = (page: Page) =>
+  page.waitForResponse(
+    (r) => {
+      for (let req: ReturnType<Response["request"]> | null = r.request(); req; req = req.redirectedFrom()) {
+        if (/\/storyboard\/sprite$/.test(new URL(req.url()).pathname)) return r.status() < 300 || r.status() >= 400
+      }
+      return false
+    },
+    { timeout: 120_000 }
+  )
+
+async function expectSpriteServed(page: Page, sprite: Promise<Response>): Promise<void> {
+  const response = await sprite
+  expect({ status: response.status(), type: response.headers()["content-type"] }).toEqual({
+    status: 200,
+    type: "image/jpeg",
+  })
+}
 
 interface VideoState {
   time: number
@@ -167,6 +204,8 @@ test.describe("Video player — desktop", () => {
 
   test("speed choice applies and survives reopening the gallery; hover shows a preview bubble", async ({ page }) => {
     await seedVideos(page, "video-speed")
+    const ready = hasFfmpeg ? storyboardReady(page) : null
+    const sprite = hasFfmpeg ? spriteResponse(page) : null
     await openVideo(page, PORTRAIT)
 
     await page.getByRole("button", { name: "Playback speed 1×" }).click()
@@ -187,8 +226,25 @@ test.describe("Video player — desktop", () => {
     const bubble = chrome(page).locator(".bottom-full")
     await expect(bubble).toHaveCSS("opacity", "1")
     await expect(bubble.getByText(/^0:2\d$/)).toBeVisible()
-    await expect(bubble.locator("canvas")).toBeVisible()
-    await expect(bubble.locator("canvas"), "the frame under the pointer arrives").toHaveCSS("opacity", "1")
+    if (ready && sprite) {
+      await ready
+      await expectSpriteServed(page, sprite)
+      await expect(spriteFrame(page), "the bubble's frame is a sprite tile").toHaveCSS(
+        "background-image",
+        /\/storyboard\/sprite/
+      )
+      await expect(bubble.locator("canvas")).toHaveCount(0)
+
+      const y = bar.y + bar.height / 2
+      await page.mouse.down()
+      await page.mouse.move(bar.x + bar.width * 0.8, y, { steps: 10 })
+      await expect(spriteFrame(page), "the sprite frame follows a drag").toBeVisible()
+      await expect(bubble).toHaveCSS("opacity", "1")
+      await page.mouse.up()
+    } else {
+      await expect(bubble.locator("canvas")).toBeVisible()
+      await expect(bubble.locator("canvas"), "the frame under the pointer arrives").toHaveCSS("opacity", "1")
+    }
   })
 })
 
@@ -197,6 +253,8 @@ test.describe("Video player — touch", () => {
 
   test("double tap chains seeks; single tap hides the chrome; scrub swipe doesn't change slide", async ({ page }) => {
     await seedVideos(page, "video-touch")
+    const ready = hasFfmpeg ? storyboardReady(page) : null
+    const sprite = hasFfmpeg ? spriteResponse(page) : null
     await openVideo(page, PORTRAIT, true)
     await seekTo(page, 5)
 
@@ -210,6 +268,11 @@ test.describe("Video player — touch", () => {
     await expect.poll(async () => (await videoState(page)).time).toBeCloseTo(25, 0)
     await page.waitForTimeout(800)
     await expect(chrome(page), "a double tap never toggles the chrome").not.toHaveAttribute("inert")
+
+    if (ready && sprite) {
+      await ready
+      await expectSpriteServed(page, sprite)
+    }
 
     const { src, duration } = await videoState(page)
     const bar = await box(page, "[data-media-scrub]")
@@ -230,6 +293,7 @@ test.describe("Video player — touch", () => {
         await touch("touchMove", bar.x + bar.width * (from + ((to - from) * i) / 12))
         await page.waitForTimeout(20)
       }
+      if (hasFfmpeg) await expect(spriteFrame(page), "a touch drag shows the sprite frame").toBeVisible()
       await touch("touchEnd")
       await expect.poll(async () => Math.abs((await videoState(page)).time - duration * to) < 1.5).toBe(true)
       await page.waitForTimeout(500)
