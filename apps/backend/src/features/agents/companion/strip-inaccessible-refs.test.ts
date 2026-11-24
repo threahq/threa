@@ -150,36 +150,81 @@ describe("stripInaccessibleAgentRefs", () => {
     })
   })
 
-  it("validates cross-stream quoteReply but passes same-stream quoteReply through unchecked", async () => {
+  it("drops quotes whose message is unknown, same-stream included", async () => {
     const findSpy = spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
 
     const result = await stripInaccessibleAgentRefs({
       pool,
       workspaceId: "ws_1",
-      // Target stream IS the quote's source stream — same-stream quote.
       targetStreamId: "stream_target",
-      accessibleStreamIds: ["stream_target"],
+      accessibleStreamIds: [],
       contentJson: doc(
-        // Same-stream quote: target == source. Should not be validated.
         quoteReplyNode("stream_target", "msg_local", "local snippet"),
-        // Cross-stream quote pointing at a missing message: should be dropped.
-        quoteReplyNode("stream_other", "msg_phantom", "remote snippet")
+        quoteReplyNode("stream_other", "msg_phantom", "remote snippet"),
+        paragraph({ type: "text", text: "prose" })
       ),
     })
 
-    // Only the cross-stream quote was validated, and its msg id was looked up.
-    expect(findSpy.mock.calls[0]?.slice(1)).toEqual(["ws_1", ["msg_phantom"]])
-
-    expect(result.dropped).toHaveLength(1)
-    expect(result.dropped[0]).toMatchObject({
-      type: "quoteReply",
-      reason: "message-not-found",
-      ids: { messageId: "msg_phantom" },
+    expect(findSpy.mock.calls[0]?.slice(1)).toEqual(["ws_1", ["msg_local", "msg_phantom"]])
+    expect({ dropped: result.dropped, contentJson: result.contentJson }).toEqual({
+      dropped: [
+        {
+          type: "quoteReply",
+          reason: "message-not-found",
+          ids: { messageId: "msg_local", streamId: "stream_target" },
+        },
+        {
+          type: "quoteReply",
+          reason: "message-not-found",
+          ids: { messageId: "msg_phantom", streamId: "stream_other" },
+        },
+      ],
+      contentJson: doc(paragraph({ type: "text", text: "prose" })),
     })
-    // Same-stream quote survives.
-    expect(JSON.stringify(result.contentJson)).toContain("msg_local")
-    expect(JSON.stringify(result.contentJson)).toContain("local snippet")
+  })
+
+  it("widens a non-verbatim rangeless quote to the whole source and leaves verbatim or pinned quotes alone", async () => {
+    const sourceText = "We ship the migration on Friday after the freeze lifts."
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(
+      new Map([
+        [
+          "msg_src",
+          {
+            id: "msg_src",
+            streamId: "stream_target",
+            contentJson: doc(paragraph({ type: "text", text: sourceText })),
+          } as any,
+        ],
+      ])
+    )
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
+    const invented = quoteReplyNode("stream_target", "msg_src", "invented wording")
+    const pinned = { ...invented, attrs: { ...invented.attrs, version: 1, range: { from: 0, to: 5 } } }
+    const versionOnly = { ...invented, attrs: { ...invented.attrs, version: 1 } }
+
+    const result = await stripInaccessibleAgentRefs({
+      pool,
+      workspaceId: "ws_1",
+      targetStreamId: "stream_target",
+      accessibleStreamIds: [],
+      contentJson: doc(
+        quoteReplyNode("stream_target", "msg_src", "We ship it Friday"),
+        quoteReplyNode("stream_target", "msg_src", "the migration on Friday"),
+        pinned,
+        versionOnly
+      ),
+    })
+
+    expect({ dropped: result.dropped, contentJson: result.contentJson }).toEqual({
+      dropped: [],
+      contentJson: doc(
+        quoteReplyNode("stream_target", "msg_src", sourceText),
+        quoteReplyNode("stream_target", "msg_src", "the migration on Friday"),
+        pinned,
+        versionOnly
+      ),
+    })
   })
 
   it("drops attachmentReference when the workspace-scoped lookup does not find the attachment", async () => {

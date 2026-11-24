@@ -32,7 +32,7 @@ export type { Message, InsertMessageParams, InvocationSourceState } from "./repo
 export { MessageVersionRepository, messageVersionKey } from "./version-repository"
 export type { MessageVersion, MessageVersionKey } from "./version-repository"
 
-export { resolveMessageReferences, sliceReferenceContent } from "./references"
+export { resolveMessageReferences, sliceReferenceContent, locateSnippetRange } from "./references"
 export { registerMessageReferencePinsBackfill, MESSAGE_REFERENCE_PINS_BACKFILL_NAME } from "./references"
 export type { ResolveMessageReferencesResult, ReferenceContent } from "./references"
 export { registerMessageSearchConfigBackfill, MESSAGE_SEARCH_CONFIG_BACKFILL_NAME } from "./search-config-backfill"
