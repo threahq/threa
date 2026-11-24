@@ -5,8 +5,8 @@ import { join } from "node:path"
 import type { Pool } from "pg"
 import { ProcessingStatuses } from "@threahq/types"
 import { createTestStorage, setupTestDatabase } from "./setup"
-import { AttachmentRepository, AudioProcessingService, resolveAudioTools } from "../../src/features/attachments"
-import type { AudioTools } from "../../src/features/attachments"
+import { AttachmentRepository, AudioProcessingService, resolveMediaTools } from "../../src/features/attachments"
+import type { MediaTools } from "../../src/features/attachments"
 import type { StorageProvider } from "../../src/lib/storage/s3-client"
 import { attachmentId, userId, workspaceId } from "../../src/lib/id"
 
@@ -28,7 +28,7 @@ function noise(length: number): Buffer {
 describe("AudioProcessingService", () => {
   let pool: Pool
   let storage: StorageProvider
-  let tools: AudioTools
+  let tools: MediaTools
   let service: AudioProcessingService
   let scratch: string
   const ws = workspaceId()
@@ -99,7 +99,7 @@ describe("AudioProcessingService", () => {
   beforeAll(async () => {
     pool = await setupTestDatabase()
     storage = createTestStorage()
-    const resolved = resolveAudioTools()
+    const resolved = resolveMediaTools()
     if (!resolved) throw new Error("ffmpeg and ffprobe must be on PATH for audio integration tests")
     tools = resolved
     service = new AudioProcessingService({ pool, storage, tools })

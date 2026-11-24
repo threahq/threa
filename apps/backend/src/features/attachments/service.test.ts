@@ -6,6 +6,7 @@ import { AttachmentRepository, type Attachment } from "./repository"
 import { AttachmentReferenceRepository } from "./reference-repository"
 import { AttachmentExtractionRepository } from "./extraction-repository"
 import { AttachmentUploadRepository } from "./upload-repository"
+import { VideoStoryboardRepository } from "./storyboard"
 import {
   AttachmentService,
   buildUploadParams,
@@ -102,6 +103,9 @@ describe("AttachmentService", () => {
     spyOn(AttachmentRepository, "deletePersonaBindings").mockImplementation(async () => {
       steps.push("persona:unbind")
     })
+    spyOn(VideoStoryboardRepository, "deleteByAttachmentId").mockImplementation(async () => {
+      steps.push("storyboard:delete")
+    })
     spyOn(AttachmentRepository, "delete").mockImplementation(async () => {
       steps.push("attachment:delete")
       return true
@@ -121,6 +125,7 @@ describe("AttachmentService", () => {
       "extraction:delete",
       "upload:delete",
       "persona:unbind",
+      "storyboard:delete",
       "attachment:delete",
       "transaction:end",
       "storage:delete",
@@ -136,6 +141,7 @@ describe("AttachmentService", () => {
     const extraction = spyOn(AttachmentExtractionRepository, "deleteByAttachmentId").mockResolvedValue(true)
     const upload = spyOn(AttachmentUploadRepository, "deleteByAttachmentId").mockResolvedValue(undefined as never)
     const unbind = spyOn(AttachmentRepository, "deletePersonaBindings").mockResolvedValue(undefined as never)
+    const storyboard = spyOn(VideoStoryboardRepository, "deleteByAttachmentId").mockResolvedValue(undefined)
     spyOn(AttachmentRepository, "delete").mockResolvedValue(true)
 
     const { service } = createService()
@@ -146,11 +152,13 @@ describe("AttachmentService", () => {
       extractionDeletes: extraction.mock.calls.map((call) => call.slice(1)),
       uploadDeletes: upload.mock.calls.map((call) => call.slice(1)),
       personaUnbinds: unbind.mock.calls.map((call) => call.slice(1)),
+      storyboardDeletes: storyboard.mock.calls.map((call) => call.slice(1)),
     }).toEqual({
       deleted: true,
       extractionDeletes: [["ws_1", "attach_1"]],
       uploadDeletes: [["ws_1", "attach_1"]],
       personaUnbinds: [["ws_1", "attach_1"]],
+      storyboardDeletes: [["ws_1", "attach_1"]],
     })
   })
 
@@ -162,6 +170,7 @@ describe("AttachmentService", () => {
       const extraction = spyOn(AttachmentExtractionRepository, "deleteByAttachmentId").mockResolvedValue(true)
       const upload = spyOn(AttachmentUploadRepository, "deleteByAttachmentId").mockResolvedValue(undefined as never)
       const unbind = spyOn(AttachmentRepository, "deletePersonaBindings").mockResolvedValue(undefined as never)
+      const storyboard = spyOn(VideoStoryboardRepository, "deleteByAttachmentId").mockResolvedValue(undefined)
 
       const { service, storage } = createService()
       const result = await service.deleteIfUnbound("ws_1", "attach_1")
@@ -172,6 +181,7 @@ describe("AttachmentService", () => {
         extractionDeletes: extraction.mock.calls.map((call) => call.slice(1)),
         uploadDeletes: upload.mock.calls.map((call) => call.slice(1)),
         personaUnbinds: unbind.mock.calls.map((call) => call.slice(1)),
+        storyboardDeletes: storyboard.mock.calls.map((call) => call.slice(1)),
         storageDeletes: storage.delete.mock.calls,
       }).toEqual({
         result: { deleted: true },
@@ -179,6 +189,7 @@ describe("AttachmentService", () => {
         extractionDeletes: [["ws_1", "attach_1"]],
         uploadDeletes: [["ws_1", "attach_1"]],
         personaUnbinds: [["ws_1", "attach_1"]],
+        storyboardDeletes: [["ws_1", "attach_1"]],
         storageDeletes: [["ws_1/attach_1/f"]],
       })
     })

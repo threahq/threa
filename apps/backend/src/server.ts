@@ -306,7 +306,10 @@ import {
   StubAudioProcessingService,
   createAudioProcessWorker,
   createAudioProcessOnDLQ,
-  resolveAudioTools,
+  resolveMediaTools,
+  VideoStoryboardService,
+  createVideoStoryboardWorker,
+  createVideoStoryboardOnDLQ,
   createMalwareScanner,
 } from "./features/attachments"
 import { JobQueues, type OnDLQHook, type AgentFollowUpFireJobData } from "./lib/queue"
@@ -1000,6 +1003,17 @@ export async function startServer(): Promise<ServerInstance> {
     : createBoundaryExtractor({ ai, configResolver, aiResidency, decisionsAvailability })
   const boundaryExtractionService = new BoundaryExtractionService(pool, boundaryExtractor)
 
+  const mediaTools = resolveMediaTools()
+  if (!mediaTools && isProduction) {
+    throw new Error("ffmpeg and ffprobe must be on PATH in production (audio processing, video storyboards)")
+  }
+  if (!mediaTools) {
+    logger.warn(
+      "ffmpeg/ffprobe not on PATH: audio attachments are marked skipped and play from the raw upload, videos get no storyboard"
+    )
+  }
+  const videoStoryboardService = new VideoStoryboardService({ pool, storage, tools: mediaTools })
+
   registerRoutes(app, {
     pool,
     io,
@@ -1010,6 +1024,7 @@ export async function startServer(): Promise<ServerInstance> {
     streamService,
     eventService,
     attachmentService,
+    videoStoryboardService,
     searchService,
     searchQueryLogService,
     memoExplorerService,
@@ -1696,18 +1711,17 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
-  const audioTools = resolveAudioTools()
-  if (!audioTools && isProduction) {
-    throw new Error("ffmpeg and ffprobe must be on PATH in production (audio attachment processing)")
-  }
-  if (!audioTools) {
-    logger.warn("ffmpeg/ffprobe not on PATH: audio attachments are marked skipped and play from the raw upload")
-  }
-  const audioProcessingService = audioTools
-    ? new AudioProcessingService({ pool, storage, tools: audioTools })
+  const audioProcessingService = mediaTools
+    ? new AudioProcessingService({ pool, storage, tools: mediaTools })
     : new StubAudioProcessingService(pool)
   jobQueue.registerHandler(JobQueues.AUDIO_PROCESS, createAudioProcessWorker({ audioProcessingService }), {
     hooks: { onDLQ: createAudioProcessOnDLQ() },
+    tier: QueueTiers.HEAVY,
+    fairness: QueueFairness.NONE,
+    maxRetries: 3,
+  })
+  jobQueue.registerHandler(JobQueues.VIDEO_STORYBOARD, createVideoStoryboardWorker({ videoStoryboardService }), {
+    hooks: { onDLQ: createVideoStoryboardOnDLQ() },
     tier: QueueTiers.HEAVY,
     fairness: QueueFairness.NONE,
     maxRetries: 3,

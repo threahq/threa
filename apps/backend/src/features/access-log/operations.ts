@@ -173,6 +173,7 @@ export const ACCESS_LOG_OPERATIONS = [
   "attachments.presign",
   "attachments.content",
   "attachments.extraction",
+  "attachments.storyboard",
   "attachments.delete",
   // Conversations / board
   "conversations.list",

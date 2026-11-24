@@ -6,89 +6,11 @@ import {
   AUDIO_PROBE_TIMEOUT_MS,
   type AudioProbe,
 } from "./config"
-
-const INPUT_PROTOCOLS = "http,https,tcp,tls"
-const STDERR_TAIL_BYTES = 4096
-
-export interface AudioTools {
-  ffmpegPath: string
-  ffprobePath: string
-}
-
-/** The input is readable but is not audio ffmpeg can decode; retrying cannot help. */
-export class UndecodableAudioError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = "UndecodableAudioError"
-  }
-}
-
-export function resolveAudioTools(): AudioTools | null {
-  const ffmpegPath = Bun.which("ffmpeg")
-  const ffprobePath = Bun.which("ffprobe")
-  if (!ffmpegPath || !ffprobePath) return null
-  return { ffmpegPath, ffprobePath }
-}
-
-/** ffmpeg's fixed messages for input that matches no known format, or one outside the allowed list. */
-const UNDECODABLE_STDERR = /Invalid data found when processing input|Format not on whitelist/
-
-interface RunResult {
-  exitCode: number
-  stdout: string
-  stderrTail: string
-}
-
-async function readTail(stream: ReadableStream<Uint8Array>): Promise<string> {
-  let tail = Buffer.alloc(0)
-  for await (const chunk of stream) {
-    tail = Buffer.concat([tail, chunk])
-    if (tail.length > STDERR_TAIL_BYTES) tail = tail.subarray(tail.length - STDERR_TAIL_BYTES)
-  }
-  return tail.toString("utf8").trim()
-}
-
-/** The presigned input URL carries a live signature, so it never reaches error messages. */
-async function run(
-  cmd: string[],
-  inputUrl: string,
-  timeoutMs: number,
-  onStdout?: (chunk: Uint8Array) => void
-): Promise<RunResult> {
-  const proc = Bun.spawn(cmd, { stdin: "ignore", stdout: "pipe", stderr: "pipe" })
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    proc.kill("SIGKILL")
-  }, timeoutMs)
-  try {
-    const stderrTail = readTail(proc.stderr)
-    let stdout = ""
-    if (onStdout) {
-      for await (const chunk of proc.stdout) onStdout(chunk)
-    } else {
-      stdout = await new Response(proc.stdout).text()
-    }
-    const exitCode = await proc.exited
-    const tail = (await stderrTail).replaceAll(inputUrl, "<input>")
-    if (timedOut) throw new Error(`${cmd[0]} timed out after ${timeoutMs} ms: ${tail}`)
-    return { exitCode, stdout, stderrTail: tail }
-  } catch (error) {
-    proc.kill("SIGKILL")
-    throw error
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
-function failure(tool: string, result: RunResult): Error {
-  const message = `${tool} exited with ${result.exitCode}: ${result.stderrTail}`
-  return UNDECODABLE_STDERR.test(result.stderrTail) ? new UndecodableAudioError(message) : new Error(message)
-}
+import { INPUT_PROTOCOLS, runTool, toolFailure, type MediaTools } from "../ffmpeg"
 
 /** Returns null when the input has no audio stream. */
-export async function probeAudio(tools: AudioTools, inputUrl: string): Promise<AudioProbe | null> {
-  const result = await run(
+export async function probeAudio(tools: MediaTools, inputUrl: string): Promise<AudioProbe | null> {
+  const result = await runTool(
     [
       tools.ffprobePath,
       "-v",
@@ -108,7 +30,7 @@ export async function probeAudio(tools: AudioTools, inputUrl: string): Promise<A
     inputUrl,
     AUDIO_PROBE_TIMEOUT_MS
   )
-  if (result.exitCode !== 0) throw failure("ffprobe", result)
+  if (result.exitCode !== 0) throw toolFailure("ffprobe", result)
 
   const parsed = JSON.parse(result.stdout) as {
     streams?: { codec_name?: string; channels?: number }[]
@@ -133,7 +55,7 @@ export interface NormalizeParams {
 }
 
 /** One decode pass: the optional AAC output plus mono s16le PCM at {@link AUDIO_PCM_SAMPLE_RATE} on stdout. */
-export async function runNormalize(tools: AudioTools, params: NormalizeParams): Promise<void> {
+export async function runNormalize(tools: MediaTools, params: NormalizeParams): Promise<void> {
   const channels = Math.max(1, Math.min(AUDIO_MAX_CHANNELS, params.channels))
   const aacOutput = params.outputPath
     ? [
@@ -152,7 +74,7 @@ export async function runNormalize(tools: AudioTools, params: NormalizeParams): 
         params.outputPath,
       ]
     : []
-  const result = await run(
+  const result = await runTool(
     [
       tools.ffmpegPath,
       "-nostdin",
@@ -181,5 +103,5 @@ export async function runNormalize(tools: AudioTools, params: NormalizeParams): 
     params.timeoutMs,
     params.onPcm
   )
-  if (result.exitCode !== 0) throw failure("ffmpeg", result)
+  if (result.exitCode !== 0) throw toolFailure("ffmpeg", result)
 }

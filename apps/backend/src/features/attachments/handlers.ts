@@ -17,6 +17,7 @@ import { setAuditSubjects } from "../access-log"
 import { VideoTranscodeJobRepository } from "./video"
 import { AUDIO_NORMALIZED_EXTENSION, AUDIO_NORMALIZED_MIME_TYPE } from "./audio"
 import { isImageAttachment } from "./image-caption"
+import { STORYBOARD_MIME_TYPE, type VideoStoryboardService } from "./storyboard"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import { attachmentId as generateAttachmentId } from "../../lib/id"
 import { MAX_FILE_SIZE } from "../../middleware/upload"
@@ -39,6 +40,7 @@ declare module "express" {
 
 interface Dependencies {
   attachmentService: AttachmentService
+  videoStoryboardService: VideoStoryboardService
   streamService: StreamService
   storage: StorageProvider
   pool: Pool
@@ -61,7 +63,106 @@ const reportUploadFailureSchema = z.object({
   errorMessage: z.string().max(500).optional(),
 })
 
-export function createAttachmentHandlers({ attachmentService, streamService, storage, pool }: Dependencies) {
+export function createAttachmentHandlers({
+  attachmentService,
+  videoStoryboardService,
+  streamService,
+  storage,
+  pool,
+}: Dependencies) {
+  /**
+   * Loads an attachment the caller may read, or writes the 404/403 response
+   * (or throws the share-ended error) and returns null.
+   */
+  async function loadReadableAttachment(
+    req: Request,
+    res: Response,
+    options: { sharingGate: boolean }
+  ): Promise<Attachment | null> {
+    const userId = req.user!.id
+    const workspaceId = req.workspaceId!
+    const { attachmentId } = req.params
+    setAuditSubjects(res, [{ type: "attachment", id: attachmentId }])
+
+    const attachment = await attachmentService.getById(workspaceId, attachmentId)
+    if (!attachment) {
+      res.status(404).json({ error: "Attachment not found" })
+      return null
+    }
+
+    if (options.sharingGate) {
+      const sharingBlockReason = attachmentService.getSharingBlockReason(attachment)
+      if (sharingBlockReason) {
+        res.status(403).json({ error: sharingBlockReason })
+        return null
+      }
+    }
+
+    // Direct stream access first, then the share-grant + inline-reference
+    // fallback; the reusable rule lives in `access.ts`.
+    if (attachment.streamId) {
+      const accessible = await streamService.tryAccess(attachment.streamId, workspaceId, userId)
+      if (!accessible) {
+        const granted = await isAttachmentReadableViaShareOrReference(pool, attachment, workspaceId, userId)
+        if (!granted) {
+          res.status(403).json({ error: "Access denied" })
+          return null
+        }
+      }
+    } else if (unboundAttachmentBlockedForCaller(attachment, userId)) {
+      res.status(403).json({ error: "Access denied" })
+      return null
+    }
+    if (await attachmentService.isFromEndedShare(attachment)) {
+      throw shareEndedError()
+    }
+    return attachment
+  }
+
+  /**
+   * Streams a stored object. `ready` bytes never change for their URL, so they
+   * are served immutable with a path-derived ETag; fall-through bytes get
+   * `no-store` and no validator so a 304 never extends their life.
+   */
+  async function sendStoredObject(
+    req: Request,
+    res: Response,
+    object: { storagePath: string; contentType: string; ready: boolean }
+  ): Promise<void> {
+    const etag = `"${createHash("sha256").update(object.storagePath).digest("hex")}"`
+    res.set("Cache-Control", object.ready ? "private, max-age=31536000, immutable" : "private, no-store")
+    setUntrustedContentHeaders(res)
+    if (object.ready) res.set("ETag", etag)
+
+    if (object.ready && req.headers["if-none-match"] === etag) {
+      res.status(304).end()
+      return
+    }
+
+    const range = typeof req.headers.range === "string" ? req.headers.range : undefined
+    const content = await storage.getObjectContent(object.storagePath, { range })
+
+    res.set("Content-Type", object.contentType)
+    res.set("Accept-Ranges", "bytes")
+    if (content.contentLength !== undefined) res.set("Content-Length", String(content.contentLength))
+    if (content.contentRange) {
+      res.status(206)
+      res.set("Content-Range", content.contentRange)
+    }
+
+    content.stream.on("error", (err) => {
+      if (!res.headersSent) {
+        res.status(500).end()
+      } else {
+        // Headers (including Content-Length) are already on the wire — abort
+        // the socket so the client sees a failed transfer instead of a
+        // cleanly-terminated truncated 200 it would treat as complete.
+        res.destroy(err)
+      }
+    })
+    content.stream.pipe(res)
+  }
+
   return {
     /**
      * Reserve an attachment id before its bytes exist. The returned id is
@@ -236,39 +337,9 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
      * For pending files (not yet attached), workspace usership is sufficient.
      */
     async getDownloadUrl(req: Request, res: Response) {
-      const userId = req.user!.id
       const workspaceId = req.workspaceId!
-      const { attachmentId } = req.params
-      setAuditSubjects(res, [{ type: "attachment", id: attachmentId }])
-
-      const attachment = await attachmentService.getById(workspaceId, attachmentId)
-      if (!attachment) {
-        return res.status(404).json({ error: "Attachment not found" })
-      }
-
-      const sharingBlockReason = attachmentService.getSharingBlockReason(attachment)
-      if (sharingBlockReason) {
-        return res.status(403).json({ error: sharingBlockReason })
-      }
-
-      // Direct stream access first; if that fails, fall back to the
-      // share-grant + inline-reference chain. Splitting the fast path from
-      // the fallback lets the handler keep streamService injection (existing
-      // mock surface) while the reusable rule lives in `access.ts`.
-      if (attachment.streamId) {
-        const accessible = await streamService.tryAccess(attachment.streamId, workspaceId, userId)
-        if (!accessible) {
-          const granted = await isAttachmentReadableViaShareOrReference(pool, attachment, workspaceId, userId)
-          if (!granted) {
-            return res.status(403).json({ error: "Access denied" })
-          }
-        }
-      } else if (unboundAttachmentBlockedForCaller(attachment, userId)) {
-        return res.status(403).json({ error: "Access denied" })
-      }
-      if (await attachmentService.isFromEndedShare(attachment)) {
-        throw shareEndedError()
-      }
+      const attachment = await loadReadableAttachment(req, res, { sharingGate: true })
+      if (!attachment) return
 
       const parsed = z
         .object({
@@ -309,35 +380,9 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
      * variant URL would pin them and the real variant would never appear.
      */
     async getContent(req: Request, res: Response) {
-      const userId = req.user!.id
       const workspaceId = req.workspaceId!
-      const { attachmentId } = req.params
-      setAuditSubjects(res, [{ type: "attachment", id: attachmentId }])
-
-      const attachment = await attachmentService.getById(workspaceId, attachmentId)
-      if (!attachment) {
-        return res.status(404).json({ error: "Attachment not found" })
-      }
-
-      const sharingBlockReason = attachmentService.getSharingBlockReason(attachment)
-      if (sharingBlockReason) {
-        return res.status(403).json({ error: sharingBlockReason })
-      }
-
-      if (attachment.streamId) {
-        const accessible = await streamService.tryAccess(attachment.streamId, workspaceId, userId)
-        if (!accessible) {
-          const granted = await isAttachmentReadableViaShareOrReference(pool, attachment, workspaceId, userId)
-          if (!granted) {
-            return res.status(403).json({ error: "Access denied" })
-          }
-        }
-      } else if (unboundAttachmentBlockedForCaller(attachment, userId)) {
-        return res.status(403).json({ error: "Access denied" })
-      }
-      if (await attachmentService.isFromEndedShare(attachment)) {
-        throw shareEndedError()
-      }
+      const attachment = await loadReadableAttachment(req, res, { sharingGate: true })
+      if (!attachment) return
 
       const parsed = z
         .object({
@@ -349,43 +394,23 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
 
       const resolved = await resolveAttachmentVariant(pool, workspaceId, attachment, variant)
 
-      // The storage path uniquely identifies the served bytes (objects are
-      // written once), so a path-derived ETag is a valid validator. The
-      // fall-through gets no validator — a 304 must never extend the life of
-      // fallback bytes under the variant URL.
-      const etag = `"${createHash("sha256").update(resolved.storagePath).digest("hex")}"`
-      const cacheControl = resolved.ready ? "private, max-age=31536000, immutable" : "private, no-store"
+      await sendStoredObject(req, res, resolved)
+    },
 
-      res.set("Cache-Control", cacheControl)
-      setUntrustedContentHeaders(res)
-      if (resolved.ready) res.set("ETag", etag)
+    /** Returns the video's storyboard state, queueing its generation on the first ask. */
+    async ensureStoryboard(req: Request, res: Response) {
+      const attachment = await loadReadableAttachment(req, res, { sharingGate: true })
+      if (!attachment) return
+      res.json(await videoStoryboardService.ensure(attachment))
+    },
 
-      if (resolved.ready && req.headers["if-none-match"] === etag) {
-        return res.status(304).end()
-      }
-
-      const range = typeof req.headers.range === "string" ? req.headers.range : undefined
-      const object = await storage.getObjectContent(resolved.storagePath, { range })
-
-      res.set("Content-Type", resolved.contentType)
-      res.set("Accept-Ranges", "bytes")
-      if (object.contentLength !== undefined) res.set("Content-Length", String(object.contentLength))
-      if (object.contentRange) {
-        res.status(206)
-        res.set("Content-Range", object.contentRange)
-      }
-
-      object.stream.on("error", (err) => {
-        if (!res.headersSent) {
-          res.status(500).end()
-        } else {
-          // Headers (including Content-Length) are already on the wire — abort
-          // the socket so the client sees a failed transfer instead of a
-          // cleanly-terminated truncated 200 it would treat as complete.
-          res.destroy(err)
-        }
-      })
-      object.stream.pipe(res)
+    /** The storyboard sprite; never falls back to the upload's own bytes. */
+    async getStoryboardSprite(req: Request, res: Response) {
+      const attachment = await loadReadableAttachment(req, res, { sharingGate: true })
+      if (!attachment) return
+      const storagePath = await videoStoryboardService.findSpritePath(attachment.workspaceId, attachment.id)
+      if (!storagePath) return res.status(404).json({ error: "Storyboard not found" })
+      await sendStoredObject(req, res, { storagePath, contentType: STORYBOARD_MIME_TYPE, ready: true })
     },
 
     /**
@@ -422,32 +447,11 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
      * then share-grant + inline-reference fallback.
      */
     async getExtraction(req: Request, res: Response) {
-      const userId = req.user!.id
       const workspaceId = req.workspaceId!
-      const { attachmentId } = req.params
-      setAuditSubjects(res, [{ type: "attachment", id: attachmentId }])
+      const attachment = await loadReadableAttachment(req, res, { sharingGate: false })
+      if (!attachment) return
 
-      const attachment = await attachmentService.getById(workspaceId, attachmentId)
-      if (!attachment) {
-        return res.status(404).json({ error: "Attachment not found" })
-      }
-
-      if (attachment.streamId) {
-        const accessible = await streamService.tryAccess(attachment.streamId, workspaceId, userId)
-        if (!accessible) {
-          const granted = await isAttachmentReadableViaShareOrReference(pool, attachment, workspaceId, userId)
-          if (!granted) {
-            return res.status(403).json({ error: "Access denied" })
-          }
-        }
-      } else if (unboundAttachmentBlockedForCaller(attachment, userId)) {
-        return res.status(403).json({ error: "Access denied" })
-      }
-      if (await attachmentService.isFromEndedShare(attachment)) {
-        throw shareEndedError()
-      }
-
-      const extraction = await AttachmentExtractionRepository.findByAttachmentId(pool, workspaceId, attachmentId)
+      const extraction = await AttachmentExtractionRepository.findByAttachmentId(pool, workspaceId, attachment.id)
       if (!extraction) {
         return res.status(404).json({ error: "Extraction not found" })
       }

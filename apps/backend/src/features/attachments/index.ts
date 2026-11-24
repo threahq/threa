@@ -117,9 +117,11 @@ export {
   StubAudioProcessingService,
   createAudioProcessWorker,
   createAudioProcessOnDLQ,
-  resolveAudioTools,
 } from "./audio"
-export type { AudioProcessingServiceLike, AudioTools } from "./audio"
+export type { AudioProcessingServiceLike } from "./audio"
+export { VideoStoryboardService, createVideoStoryboardWorker, createVideoStoryboardOnDLQ } from "./storyboard"
+export { resolveMediaTools } from "./ffmpeg"
+export type { MediaTools } from "./ffmpeg"
 
 export { createAttachmentFailedOnDLQ } from "./on-dlq"
 export { createImageCaptionWorker } from "./image-caption/worker"

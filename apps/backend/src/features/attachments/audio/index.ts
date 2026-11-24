@@ -3,6 +3,4 @@ export type { AudioProcessingServiceDeps, AudioProcessingServiceLike } from "./s
 export { StubAudioProcessingService } from "./service.stub"
 export { createAudioProcessWorker } from "./worker"
 export { createAudioProcessOnDLQ } from "./on-dlq"
-export { resolveAudioTools } from "./ffmpeg"
-export type { AudioTools } from "./ffmpeg"
 export { AUDIO_NORMALIZED_EXTENSION, AUDIO_NORMALIZED_MIME_TYPE } from "./config"

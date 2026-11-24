@@ -6,6 +6,7 @@ import { AttachmentRepository, type Attachment } from "./repository"
 import { AttachmentUploadRepository } from "./upload-repository"
 import { AttachmentReferenceRepository } from "./reference-repository"
 import { AttachmentExtractionRepository } from "./extraction-repository"
+import { VideoStoryboardRepository } from "./storyboard"
 import type { ObjectContent, StorageProvider } from "../../lib/storage/s3-client"
 import {
   AttachmentSafetyStatuses,
@@ -915,6 +916,7 @@ export class AttachmentService {
     await AttachmentExtractionRepository.deleteByAttachmentId(client, workspaceId, id)
     await AttachmentUploadRepository.deleteByAttachmentId(client, workspaceId, id)
     await AttachmentRepository.deletePersonaBindings(client, workspaceId, id)
+    await VideoStoryboardRepository.deleteByAttachmentId(client, workspaceId, id)
   }
 
   async delete(workspaceId: string, id: string): Promise<boolean> {

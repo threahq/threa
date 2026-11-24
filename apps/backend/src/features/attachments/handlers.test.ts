@@ -62,7 +62,13 @@ describe("attachment handlers safety gating", () => {
       isMember: mock(() => Promise.resolve(true)),
     } as any
 
-    const handlers = createAttachmentHandlers({ attachmentService, streamService, storage: {} as any, pool: {} as any })
+    const handlers = createAttachmentHandlers({
+      attachmentService,
+      videoStoryboardService: {} as any,
+      streamService,
+      storage: {} as any,
+      pool: {} as any,
+    })
     const res = createResponse()
 
     await handlers.upload(
@@ -98,7 +104,13 @@ describe("attachment handlers safety gating", () => {
       isMember: mock(() => Promise.resolve(true)),
     } as any
 
-    const handlers = createAttachmentHandlers({ attachmentService, streamService, storage: {} as any, pool: {} as any })
+    const handlers = createAttachmentHandlers({
+      attachmentService,
+      videoStoryboardService: {} as any,
+      streamService,
+      storage: {} as any,
+      pool: {} as any,
+    })
     const res = createResponse()
 
     await handlers.upload(
@@ -130,6 +142,7 @@ describe("attachment handlers safety gating", () => {
     const attachmentService = { createForUpload } as any
     const handlers = createAttachmentHandlers({
       attachmentService,
+      videoStoryboardService: {} as any,
       streamService: {} as any,
       storage: {} as any,
       pool: {} as any,
@@ -170,6 +183,7 @@ describe("attachment handlers safety gating", () => {
     const attachmentService = { createForUpload } as any
     const handlers = createAttachmentHandlers({
       attachmentService,
+      videoStoryboardService: {} as any,
       streamService: {} as any,
       storage: {} as any,
       pool: {} as any,
@@ -205,7 +219,13 @@ describe("attachment handlers safety gating", () => {
       isMember: mock(() => Promise.resolve(true)),
     } as any
 
-    const handlers = createAttachmentHandlers({ attachmentService, streamService, storage: {} as any, pool: {} as any })
+    const handlers = createAttachmentHandlers({
+      attachmentService,
+      videoStoryboardService: {} as any,
+      streamService,
+      storage: {} as any,
+      pool: {} as any,
+    })
     const res = createResponse()
 
     await handlers.getDownloadUrl(
@@ -235,7 +255,13 @@ describe("attachment handlers safety gating", () => {
       isMember: mock(() => Promise.resolve(true)),
     } as any
 
-    const handlers = createAttachmentHandlers({ attachmentService, streamService, storage: {} as any, pool: {} as any })
+    const handlers = createAttachmentHandlers({
+      attachmentService,
+      videoStoryboardService: {} as any,
+      streamService,
+      storage: {} as any,
+      pool: {} as any,
+    })
     const res = createResponse()
 
     await handlers.getDownloadUrl(
@@ -266,6 +292,7 @@ describe("attachment handlers safety gating", () => {
       const streamService = { tryAccess: mock(() => Promise.resolve(true)) } as any
       const handlers = createAttachmentHandlers({
         attachmentService,
+        videoStoryboardService: {} as any,
         streamService,
         storage: {} as any,
         pool: {} as any,
@@ -293,7 +320,13 @@ describe("attachment handlers safety gating", () => {
       isMember: mock(() => Promise.resolve(true)),
     } as any
 
-    const handlers = createAttachmentHandlers({ attachmentService, streamService, storage: {} as any, pool: {} as any })
+    const handlers = createAttachmentHandlers({
+      attachmentService,
+      videoStoryboardService: {} as any,
+      streamService,
+      storage: {} as any,
+      pool: {} as any,
+    })
     const res = createResponse()
 
     await handlers.getDownloadUrl(
@@ -325,7 +358,13 @@ describe("attachment handlers safety gating", () => {
       getSignedDownloadUrl: mock(() => Promise.resolve("https://thumbnail")),
     } as any
 
-    const handlers = createAttachmentHandlers({ attachmentService, streamService: {} as any, storage, pool: {} as any })
+    const handlers = createAttachmentHandlers({
+      attachmentService,
+      videoStoryboardService: {} as any,
+      streamService: {} as any,
+      storage,
+      pool: {} as any,
+    })
     const res = createResponse()
 
     await handlers.getDownloadUrl(
@@ -364,7 +403,13 @@ describe("attachment handlers safety gating", () => {
     const grantSpy = spyOn(SharedMessageRepository, "listSourcesGrantedToViewer").mockResolvedValue(new Set())
     const refSpy = spyOn(AttachmentReferenceRepository, "hasViewerAccessByReference").mockResolvedValue(false)
 
-    const handlers = createAttachmentHandlers({ attachmentService, streamService, storage: {} as any, pool: {} as any })
+    const handlers = createAttachmentHandlers({
+      attachmentService,
+      videoStoryboardService: {} as any,
+      streamService,
+      storage: {} as any,
+      pool: {} as any,
+    })
     const res = createResponse()
 
     await handlers.getDownloadUrl(
@@ -402,7 +447,13 @@ describe("attachment handlers safety gating", () => {
     const grantSpy = spyOn(SharedMessageRepository, "listSourcesGrantedToViewer").mockResolvedValue(new Set())
     const refSpy = spyOn(AttachmentReferenceRepository, "hasViewerAccessByReference").mockResolvedValue(true)
 
-    const handlers = createAttachmentHandlers({ attachmentService, streamService, storage: {} as any, pool: {} as any })
+    const handlers = createAttachmentHandlers({
+      attachmentService,
+      videoStoryboardService: {} as any,
+      streamService,
+      storage: {} as any,
+      pool: {} as any,
+    })
     const res = createResponse()
 
     await handlers.getDownloadUrl(
@@ -439,7 +490,13 @@ describe("attachment handlers safety gating", () => {
       new Set(["msg_source"])
     )
 
-    const handlers = createAttachmentHandlers({ attachmentService, streamService, storage: {} as any, pool: {} as any })
+    const handlers = createAttachmentHandlers({
+      attachmentService,
+      videoStoryboardService: {} as any,
+      streamService,
+      storage: {} as any,
+      pool: {} as any,
+    })
     const res = createResponse()
 
     await handlers.getDownloadUrl(
@@ -471,6 +528,7 @@ describe("attachment handlers safety gating", () => {
     } as any
     const handlers = createAttachmentHandlers({
       attachmentService,
+      videoStoryboardService: {} as any,
       streamService: {} as any,
       storage: {} as any,
       pool: {} as any,
@@ -494,7 +552,13 @@ describe("attachment handlers safety gating", () => {
       isFromEndedShare: mock(() => Promise.resolve(false)),
       getSharingBlockReason: mock(() => null),
     } as any
-    const handlers = createAttachmentHandlers({ attachmentService, streamService: {} as any, storage, pool: {} as any })
+    const handlers = createAttachmentHandlers({
+      attachmentService,
+      videoStoryboardService: {} as any,
+      streamService: {} as any,
+      storage,
+      pool: {} as any,
+    })
     const res = createResponse()
 
     await handlers.getContent(
@@ -519,6 +583,7 @@ describe("attachment handlers safety gating", () => {
     } as any
     const handlers = createAttachmentHandlers({
       attachmentService,
+      videoStoryboardService: {} as any,
       streamService: {} as any,
       storage: {} as any,
       pool: {} as any,
@@ -543,6 +608,7 @@ describe("attachment handlers safety gating", () => {
     } as any
     const handlers = createAttachmentHandlers({
       attachmentService,
+      videoStoryboardService: {} as any,
       streamService: {} as any,
       storage: {} as any,
       pool: {} as any,
@@ -602,7 +668,13 @@ describe("attachment search handler", () => {
   function makeHandlers() {
     const attachmentService = {} as any
     const streamService = {} as any
-    return createAttachmentHandlers({ attachmentService, streamService, storage: {} as any, pool: {} as any })
+    return createAttachmentHandlers({
+      attachmentService,
+      videoStoryboardService: {} as any,
+      streamService,
+      storage: {} as any,
+      pool: {} as any,
+    })
   }
 
   it("rejects unknown body fields via strict zod schema", async () => {
@@ -869,7 +941,13 @@ describe("attachment content handler", () => {
       getSharingBlockReason: mock(() => null),
     } as any
     return {
-      handlers: createAttachmentHandlers({ attachmentService, streamService, storage, pool: {} as any }),
+      handlers: createAttachmentHandlers({
+        attachmentService,
+        videoStoryboardService: {} as any,
+        streamService,
+        storage,
+        pool: {} as any,
+      }),
       storage,
       attachmentService,
     }
@@ -1020,6 +1098,7 @@ describe("attachment content handler", () => {
     const storage = buildContentStorage()
     const handlers = createAttachmentHandlers({
       attachmentService,
+      videoStoryboardService: {} as any,
       streamService: {} as any,
       storage,
       pool: {} as any,
@@ -1129,6 +1208,7 @@ describe("attachment handlers delete", () => {
     } as any
     const handlers = createAttachmentHandlers({
       attachmentService,
+      videoStoryboardService: {} as any,
       streamService: {} as any,
       storage: {} as any,
       pool: {} as any,
@@ -1150,6 +1230,7 @@ describe("attachment handlers delete", () => {
     } as any
     const handlers = createAttachmentHandlers({
       attachmentService,
+      videoStoryboardService: {} as any,
       streamService: {} as any,
       storage: {} as any,
       pool: {} as any,

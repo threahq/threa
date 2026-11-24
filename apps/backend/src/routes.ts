@@ -117,7 +117,7 @@ import type { WorkspaceService } from "./features/workspaces"
 import type { StreamService } from "./features/streams"
 import { createDocHandlers, type DocAgentService, type DocService } from "./features/docs"
 import type { EventService } from "./features/messaging"
-import type { AttachmentService } from "./features/attachments"
+import type { AttachmentService, VideoStoryboardService } from "./features/attachments"
 import type { SearchService, SearchQueryLogService } from "./features/search"
 import type { MemoExplorerService } from "./features/memos"
 import type { ConversationService } from "./features/conversations"
@@ -179,6 +179,7 @@ interface Dependencies {
   streamService: StreamService
   eventService: EventService
   attachmentService: AttachmentService
+  videoStoryboardService: VideoStoryboardService
   searchService: SearchService
   searchQueryLogService: SearchQueryLogService
   memoExplorerService: MemoExplorerService
@@ -271,6 +272,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     streamService,
     eventService,
     attachmentService,
+    videoStoryboardService,
     searchService,
     searchQueryLogService,
     memoExplorerService,
@@ -420,7 +422,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     enqueuedMessageService,
     streamConnectionForwardService,
   })
-  const attachment = createAttachmentHandlers({ attachmentService, streamService, storage, pool })
+  const attachment = createAttachmentHandlers({
+    attachmentService,
+    videoStoryboardService,
+    streamService,
+    storage,
+    pool,
+  })
   const search = createSearchHandlers({ pool, searchService, searchQueryLogService, featureFlagService })
   const memo = createMemoHandlers({ pool, memoExplorerService })
   const emoji = createEmojiHandlers()
@@ -1328,6 +1336,18 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...authed,
     audit("attachments.content", "read"),
     attachment.getContent
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/attachments/:attachmentId/storyboard",
+    ...authed,
+    audit("attachments.storyboard", "read"),
+    attachment.ensureStoryboard
+  )
+  app.get(
+    "/api/workspaces/:workspaceId/attachments/:attachmentId/storyboard/sprite",
+    ...authed,
+    audit("attachments.storyboard", "read"),
+    attachment.getStoryboardSprite
   )
   app.get(
     "/api/workspaces/:workspaceId/attachments/:attachmentId/extraction",

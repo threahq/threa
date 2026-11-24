@@ -738,6 +738,15 @@ export const VideoTranscodeStatuses = {
   FAILED: "failed",
 } as const satisfies Record<string, VideoTranscodeStatus>
 
+export const VIDEO_STORYBOARD_STATUSES = ["pending", "unavailable", "ready"] as const
+export type VideoStoryboardStatus = (typeof VIDEO_STORYBOARD_STATUSES)[number]
+
+export const VideoStoryboardStatuses = {
+  PENDING: "pending",
+  UNAVAILABLE: "unavailable",
+  READY: "ready",
+} as const satisfies Record<string, VideoStoryboardStatus>
+
 // Extraction content types (for image/document analysis)
 export const EXTRACTION_CONTENT_TYPES = [
   "chart",
