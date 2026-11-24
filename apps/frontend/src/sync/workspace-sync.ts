@@ -139,7 +139,7 @@ import {
 } from "@threahq/types"
 import { workspacesApi } from "@/api/workspaces"
 import { hasPermission } from "@/lib/permissions"
-import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
+import { applyStreamBootstrapInCurrentTransaction, updateMessageEvent } from "./stream-sync"
 import { deleteStreamSlots, deleteSlotsForStreams } from "@/stores/slot-store"
 import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
 import { muteSources, refreshMutedStreams } from "./muted-streams"
@@ -2343,19 +2343,7 @@ export function registerWorkspaceSocketHandlers(
     // The message row may still be waiting in a background stream's write window.
     const pending = liveBatch()?.settle(streamId)
     if (pending) await pending
-    const events = await db.events
-      .where("[workspaceId+streamId+eventType]")
-      .equals([workspaceId, streamId, "message_created"])
-      .filter((e) => (e.payload as { messageId?: string })?.messageId === messageId)
-      .toArray()
-
-    if (events.length > 0) {
-      const event = events[0]
-      await db.events.update([workspaceId, event.id], {
-        payload: updatePayload(event.payload as Record<string, unknown>),
-        _cachedAt: Date.now(),
-      })
-    } else {
+    if (!(await updateMessageEvent(workspaceId, streamId, messageId, updatePayload))) {
       queryClient.invalidateQueries({
         queryKey: streamKeys.bootstrap(workspaceId, streamId),
         type: "active",
