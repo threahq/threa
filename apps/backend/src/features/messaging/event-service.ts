@@ -71,6 +71,7 @@ import {
   AuthorTypes,
   CompanionModes,
   ConversationIntents,
+  ProcessingStatuses,
   StreamTypes,
   Visibilities,
   THREAD_ANCHORABLE_EVENT_TYPES,
@@ -819,11 +820,11 @@ export class EventService {
       }
 
       // Bind fresh uploads BEFORE baking summaries into the event payload. The
-      // UPDATE takes the row locks a concurrent upload-settle also takes
-      // (`completeReservedUpload` locks FOR UPDATE), so re-reading pending rows
-      // afterwards observes any settle that committed first — otherwise the
-      // payload freezes "uploading" for an upload that already finished, and
-      // that settle's status event was skipped (the row was unbound then).
+      // UPDATE takes the row locks a concurrent upload-settle or processing
+      // worker also takes, so re-reading unsettled rows afterwards observes
+      // whichever committed first — otherwise the payload freezes "uploading"
+      // or "processing" for work that already finished, and that work's status
+      // event went nowhere (the row was unbound then).
       if (attachmentsToAttach.length > 0) {
         const attached = await AttachmentRepository.attachToMessage(
           client,
@@ -851,10 +852,17 @@ export class EventService {
       }
 
       let summaryRows = attachments
-      const pendingIds = attachments.filter((a) => !isAttachmentSafeForSharing(a.safetyStatus)).map((a) => a.id)
+      const unsettledIds = attachments
+        .filter(
+          (a) =>
+            !isAttachmentSafeForSharing(a.safetyStatus) ||
+            a.processingStatus === ProcessingStatuses.PENDING ||
+            a.processingStatus === ProcessingStatuses.PROCESSING
+        )
+        .map((a) => a.id)
       let uploadsByAttachmentId = new Map<string, AttachmentUpload>()
-      if (pendingIds.length > 0) {
-        const refreshed = await AttachmentRepository.findByIds(client, params.workspaceId, pendingIds)
+      if (unsettledIds.length > 0) {
+        const refreshed = await AttachmentRepository.findByIds(client, params.workspaceId, unsettledIds)
         const refreshedById = new Map(refreshed.map((a) => [a.id, a]))
         summaryRows = attachments.map((a) => refreshedById.get(a.id) ?? a)
         const stillPendingIds = summaryRows.filter((a) => !isAttachmentSafeForSharing(a.safetyStatus)).map((a) => a.id)
