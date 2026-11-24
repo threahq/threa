@@ -408,6 +408,15 @@ export function formatDuration(ms: number): string {
 
 const padTwo = (n: number) => String(n).padStart(2, "0")
 
+/** Elapsed-time clock: `m:ss`, or `h:mm:ss` when the value or `reference` (a total it sits beside) reaches an hour. */
+export function formatClock(seconds: number, reference = seconds): string {
+  const total = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const withHours = h > 0 || (Number.isFinite(reference) && reference >= 3600)
+  return withHours ? `${h}:${padTwo(m)}:${padTwo(total % 60)}` : `${m}:${padTwo(total % 60)}`
+}
+
 /** YYYY-MM-DD in local time — the shape `<input type="date">` expects. */
 export function toDateInputValue(date: Date): string {
   return `${date.getFullYear()}-${padTwo(date.getMonth() + 1)}-${padTwo(date.getDate())}`

@@ -9,6 +9,7 @@ import { useActiveCall } from "@/stores/active-calls-store"
 import { useCallLaunch } from "@/components/call/call-launch-context"
 import { useCallPhase, useCallStreamId } from "@/components/call/call-store-hooks"
 import { useCallOnAnotherDevice } from "@/components/call/use-call-on-another-device"
+import { formatClock } from "@/lib/dates"
 import { buildMessageLink } from "@/lib/stream-links"
 import { cn } from "@/lib/utils"
 import { ThreadSlot } from "./thread-slot"
@@ -40,17 +41,6 @@ interface CallCardProps {
   isThreadParent?: boolean
 }
 
-/** mm:ss, or h:mm:ss past an hour. */
-function formatDuration(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000))
-  const h = Math.floor(total / 3600)
-  const m = Math.floor((total % 3600) / 60)
-  const s = total % 60
-  const mm = h > 0 ? String(m).padStart(2, "0") : String(m)
-  const ss = String(s).padStart(2, "0")
-  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
-}
-
 /**
  * Self-ticking duration leaf (the RelativeTime pattern): owns its own 1s
  * interval and re-renders ONLY itself, so a live call never busts the memoized
@@ -65,7 +55,7 @@ function CallDurationTicker({ startedAt }: { startedAt: string }) {
     const id = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(id)
   }, [])
-  const value = Number.isNaN(start) ? "0:00" : formatDuration(now - start)
+  const value = Number.isNaN(start) ? "0:00" : formatClock((now - start) / 1000)
   return (
     <span className="inline-block min-w-[3.25rem] text-right tabular-nums" aria-label="Call duration">
       {value}
@@ -197,7 +187,7 @@ export function CallCard({ event, workspaceId, streamId, endedPatch, isThreadPar
 
   let subtitle = "Call ended"
   if (isLive) subtitle = "Call in progress"
-  else if (endedPatch) subtitle = `Call ended · ${formatDuration(endedPatch.durationMs)}`
+  else if (endedPatch) subtitle = `Call ended · ${formatClock(endedPatch.durationMs / 1000)}`
 
   const card = (
     <div
@@ -241,7 +231,7 @@ export function CallCard({ event, workspaceId, streamId, endedPatch, isThreadPar
           ) : (
             <>
               <p className="text-[13px] font-medium text-muted-foreground">
-                {endedPatch ? `Call ended · ${formatDuration(endedPatch.durationMs)}` : "Call ended"}
+                {endedPatch ? `Call ended · ${formatClock(endedPatch.durationMs / 1000)}` : "Call ended"}
               </p>
               {endedPatch && endedPatch.participantUserIds.length > 0 && (
                 <div className="mt-1">

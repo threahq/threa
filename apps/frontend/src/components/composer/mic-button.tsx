@@ -3,6 +3,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react"
 import { Mic, Loader2, AlertTriangle, Sparkles, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { formatClock } from "@/lib/dates"
 import { cn } from "@/lib/utils"
 import { useVoiceDictation, type VoiceDictationState } from "@/hooks/use-voice-dictation"
 import { DictationChunkInspector } from "./dictation-chunk-inspector"
@@ -22,13 +23,6 @@ export function recordingRingShadow(level: number): string {
     `0 0 0 ${(1 + l * 1).toFixed(2)}px hsl(var(--destructive) / ${(0.3 + l * 0.25).toFixed(3)})`,
     `0 0 0 ${(2.5 + l * 4).toFixed(2)}px hsl(var(--destructive) / ${(0.08 + l * 0.1).toFixed(3)})`,
   ].join(", ")
-}
-
-export function formatClock(ms: number): string {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000))
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`
 }
 
 function actionLabelFor(state: VoiceDictationState): string {
@@ -280,7 +274,7 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
             nearCap ? "bg-destructive text-destructive-foreground" : "bg-muted text-muted-foreground"
           )}
         >
-          {nearCap && remainingMs !== null ? `${formatClock(remainingMs)} left` : formatClock(elapsedMs)}
+          {nearCap && remainingMs !== null ? `${formatClock(remainingMs / 1000)} left` : formatClock(elapsedMs / 1000)}
         </span>
       )}
       {polishPillVisible && (
@@ -299,7 +293,9 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
                 nearCap ? "bg-destructive text-destructive-foreground" : "bg-muted text-muted-foreground"
               )}
             >
-              {nearCap && remainingMs !== null ? `${formatClock(remainingMs)} left` : formatClock(elapsedMs)}
+              {nearCap && remainingMs !== null
+                ? `${formatClock(remainingMs / 1000)} left`
+                : formatClock(elapsedMs / 1000)}
             </span>
           )}
           <button
