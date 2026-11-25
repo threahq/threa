@@ -26,8 +26,6 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { cn } from "@/lib/utils"
-import { attachmentsApi } from "@/api"
-import { triggerDownload } from "@/lib/image-utils"
 import { ZoomableImage, type ZoomableImageHandle } from "@/components/gallery/zoomable-image"
 import { isGiphyGalleryId } from "@/components/gallery/giphy-gallery-id"
 import { isLinkPreviewGalleryId } from "@/components/gallery/link-preview-gallery-id"
@@ -742,28 +740,13 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
 
   const handleDownloadRaw = useCallback(async () => {
     if (!current || (current.type !== "video" && current.type !== "audio")) return
-    try {
-      const url = await attachmentsApi.getDownloadUrl(workspaceId, current.attachmentId, {
-        download: true,
-        variant: "raw",
-      })
-      triggerDownload(url, current.filename)
-    } catch {
-      // Nothing actionable for the user here.
-    }
+    await downloadAttachment(workspaceId, current.attachmentId, current.filename, "raw")
   }, [workspaceId, current])
 
   const handleDownloadProcessed = useCallback(async () => {
     if (!current || (current.type !== "video" && current.type !== "audio")) return
-    try {
-      const url = await attachmentsApi.getDownloadUrl(workspaceId, current.attachmentId, {
-        download: true,
-        variant: "processed",
-      })
-      triggerDownload(url, current.filename.replace(/\.[^.]+$/, current.type === "video" ? ".mp4" : ".m4a"))
-    } catch {
-      // Nothing actionable for the user here.
-    }
+    const filename = current.filename.replace(/\.[^.]+$/, current.type === "video" ? ".mp4" : ".m4a")
+    await downloadAttachment(workspaceId, current.attachmentId, filename, "processed")
   }, [workspaceId, current])
 
   const handleCopy = useCallback(async () => {
