@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import type { Pool, PoolClient } from "pg"
+import { toOtlpAttributes } from "@threahq/backend-common"
 import { createDatabasePool } from "../../src/db"
 import { logger } from "../../src/lib/logger"
 import { PoolMonitor, type PoolHolder } from "../../src/lib/observability/pool-monitor"
@@ -21,12 +22,12 @@ describe("PoolMonitor holders on a saturated pool", () => {
     pool = null
   })
 
-  test("names each holder's checkout site and whether it is running a statement", async () => {
+  test("ships each holder's checkout site and whether it is running a statement", async () => {
     const saturating = createDatabasePool(getTestDatabaseTarget().connectionUrl, { max: 2 })
     pool = saturating
     const monitor = new PoolMonitor({ realtime: saturating }, { disableLogging: true })
-    const warnings: { data: { holders?: PoolHolder[] }; msg: string }[] = []
-    const warn = spyOn(logger, "warn").mockImplementation(((data: { holders?: PoolHolder[] }, msg: string) => {
+    const warnings: { data: Record<string, unknown>; msg: string }[] = []
+    const warn = spyOn(logger, "warn").mockImplementation(((data: Record<string, unknown>, msg: string) => {
       warnings.push({ data, msg })
     }) as never)
 
@@ -51,14 +52,24 @@ describe("PoolMonitor holders on a saturated pool", () => {
     }
 
     const saturated = warnings.find((w) => w.msg === "Pool 'realtime' has 1 waiting client(s)")
-    expect(
-      saturated?.data.holders?.map((holder) => ({
+    const shipped = toOtlpAttributes(saturated?.data ?? {})
+    const holders = shipped
+      .filter((attribute) => attribute.key.startsWith("holder"))
+      .map(
+        (attribute) => JSON.parse("stringValue" in attribute.value ? attribute.value.stringValue : "null") as PoolHolder
+      )
+    expect({
+      held: shipped.find((attribute) => attribute.key === "held")?.value,
+      holders: holders.map((holder) => ({
         running: holder.query !== null,
         checkedOutHere: holder.site[0]?.includes("tests/integration/pool-holders.test.ts") ?? false,
-      }))
-    ).toEqual([
-      { running: false, checkedOutHere: true },
-      { running: true, checkedOutHere: true },
-    ])
+      })),
+    }).toEqual({
+      held: { intValue: "2" },
+      holders: [
+        { running: false, checkedOutHere: true },
+        { running: true, checkedOutHere: true },
+      ],
+    })
   })
 })

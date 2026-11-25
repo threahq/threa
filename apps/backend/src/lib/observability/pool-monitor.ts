@@ -235,8 +235,15 @@ export class PoolMonitor {
 
       // Always log warnings/errors even if logging is disabled
       if (hasWaiting) {
-        const holders = describeHolders(this.checkouts.get(stats.poolName)!, Date.now())
-        logger.warn({ ...logData, holders }, `Pool '${stats.poolName}' has ${stats.waitingCount} waiting client(s)`)
+        const checkouts = this.checkouts.get(stats.poolName)!
+        // The PostHog log shipper truncates each attribute at 2 KB, so every holder ships as its own attribute.
+        const holders = Object.fromEntries(
+          describeHolders(checkouts, Date.now()).map((holder, index) => [`holder${index}`, holder])
+        )
+        logger.warn(
+          { ...logData, held: checkouts.size, ...holders },
+          `Pool '${stats.poolName}' has ${stats.waitingCount} waiting client(s)`
+        )
       } else if (isHighUtilization) {
         logger.warn(logData, `Pool '${stats.poolName}' utilization at ${stats.utilizationPercent}%`)
       } else if (!this.options.disableLogging) {
