@@ -1,3 +1,5 @@
+import { derivedStoragePath } from "../derived-storage"
+
 export const STORYBOARD_MAX_TILES = 100
 export const STORYBOARD_MIN_INTERVAL_MS = 500
 export const STORYBOARD_MAX_COLUMNS = 10
@@ -34,5 +36,5 @@ export function storyboardTileName(index: number): string {
 }
 
 export function storyboardStoragePath(workspaceId: string, attachmentId: string): string {
-  return `${workspaceId}/${attachmentId}/${STORYBOARD_FILENAME}`
+  return derivedStoragePath(workspaceId, attachmentId, STORYBOARD_FILENAME)
 }

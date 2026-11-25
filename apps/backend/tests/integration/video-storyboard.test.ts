@@ -210,7 +210,7 @@ describe("VideoStoryboardService", () => {
     const first = await call("ensureStoryboard", ownerId, id)
     await service.process(ws, id)
     const second = await call("ensureStoryboard", ownerId, id)
-    const sprite = await storage.getObject(`${ws}/${id}/storyboard.jpg`)
+    const sprite = await storage.getObject(`${ws}/derived/${id}/storyboard.jpg`)
 
     expect({ first: first.body, second: second.body, spriteSize: await probeSize(sprite) }).toEqual({
       first: { status: "pending" },
@@ -263,7 +263,7 @@ describe("VideoStoryboardService", () => {
     await service.process(ws, id)
 
     const ready = await call("ensureStoryboard", ownerId, id)
-    const sprite = await storage.getObject(`${ws}/${id}/storyboard.jpg`)
+    const sprite = await storage.getObject(`${ws}/derived/${id}/storyboard.jpg`)
     expect({ storyboard: ready.body, spriteSize: await probeSize(sprite) }).toEqual({
       storyboard: {
         status: "ready",
@@ -284,7 +284,7 @@ describe("VideoStoryboardService", () => {
 
     await service.process(ws, id)
 
-    const sprite = await storage.getObject(`${ws}/${id}/storyboard.jpg`)
+    const sprite = await storage.getObject(`${ws}/derived/${id}/storyboard.jpg`)
     expect({
       answer: (await call("ensureStoryboard", ownerId, id)).body,
       spriteSize: await probeSize(sprite),
