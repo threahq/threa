@@ -790,6 +790,14 @@ export async function joinWorkspace(browser: Browser, workspaceId: string, prefi
   return { ...user, email, name }
 }
 
+/** Adds the signed-in account to a stream through the dev stub route. Joining is idempotent, so a Wrangler restart is safe to retry. */
+export async function devJoinStream(page: Page, workspaceId: string, streamId: string): Promise<void> {
+  await sendApiOk(
+    () => page.request.post(`/api/dev/workspaces/${workspaceId}/streams/${streamId}/join`),
+    "Dev join stream"
+  )
+}
+
 export async function renameDoc(page: Page, workspaceId: string, docId: string, displayName: string): Promise<void> {
   await expectApiOk(
     await page.request.patch(`/api/workspaces/${workspaceId}/streams/${docId}`, { data: { displayName } }),
