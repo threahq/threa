@@ -1,4 +1,5 @@
-import { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
+import type { ConnectCallback } from "@threahq/backend-common"
 import { logger } from "../logger"
 import { poolConnectionsTotal, poolConnectionsIdle, poolConnectionsWaiting, poolUtilizationPercent } from "./metrics"
 
@@ -21,6 +22,77 @@ interface PoolInternals {
 function countConnected(pool: Pool): number | null {
   const clients = (pool as unknown as PoolInternals)._clients
   return clients ? clients.filter((client) => client._connected === true).length : null
+}
+
+interface Checkout {
+  acquiredAt: number
+  site: Error
+}
+
+export interface PoolHolder {
+  heldMs: number
+  /** Text of the statement the client is running now; null while the holder does other work between queries. */
+  query: string | null
+  site: string[]
+}
+
+interface ClientInternals {
+  _activeQuery?: { text?: string } | null
+}
+
+const MAX_REPORTED_HOLDERS = 10
+const MAX_QUERY_CHARS = 120
+const MAX_SITE_FRAMES = 3
+const ABSOLUTE_PREFIX_BEFORE_REPO_PATH = /[^\s(]*\/(?=(apps|packages)\/)/
+
+/**
+ * Wraps `pool.connect`, which `pool.query` goes through too, so every checkout
+ * records when and from where it was taken. Its stack is only formatted when a
+ * saturated pool is reported.
+ */
+function trackCheckouts(pool: Pool): Map<PoolClient, Checkout> {
+  const checkouts = new Map<PoolClient, Checkout>()
+  const connect = pool.connect.bind(pool) as (cb?: ConnectCallback) => Promise<PoolClient> | void
+  const remember = (client: PoolClient, site: Error) => checkouts.set(client, { acquiredAt: Date.now(), site })
+
+  pool.connect = ((cb?: ConnectCallback) => {
+    const site = new Error("pool checkout")
+    if (cb) {
+      return connect((err, client, done) => {
+        if (client) remember(client, site)
+        cb(err, client, done)
+      })
+    }
+    return (connect() as Promise<PoolClient>).then((client) => {
+      remember(client, site)
+      return client
+    })
+  }) as Pool["connect"]
+
+  pool.on("release", (_err: Error | undefined, client: PoolClient) => checkouts.delete(client))
+  pool.on("remove", (client: PoolClient) => checkouts.delete(client))
+  return checkouts
+}
+
+function callSite(site: Error): string[] {
+  return (site.stack ?? "")
+    .split("\n")
+    .slice(1)
+    .map((frame) => frame.trim())
+    .filter((frame) => !frame.includes("node_modules") && !frame.includes("observability/pool-monitor."))
+    .slice(0, MAX_SITE_FRAMES)
+    .map((frame) => frame.replace(ABSOLUTE_PREFIX_BEFORE_REPO_PATH, ""))
+}
+
+function describeHolders(checkouts: Map<PoolClient, Checkout>, now: number): PoolHolder[] {
+  return Array.from(checkouts)
+    .sort(([, a], [, b]) => a.acquiredAt - b.acquiredAt)
+    .slice(0, MAX_REPORTED_HOLDERS)
+    .map(([client, checkout]) => ({
+      heldMs: now - checkout.acquiredAt,
+      query: (client as unknown as ClientInternals)._activeQuery?.text?.slice(0, MAX_QUERY_CHARS) ?? null,
+      site: callSite(checkout.site),
+    }))
 }
 
 export interface PoolMonitorOptions {
@@ -48,9 +120,11 @@ export class PoolMonitor {
   private intervalId?: NodeJS.Timeout
   private options: Required<PoolMonitorOptions>
   private unconnectedSamples = new Map<string, number>()
+  private checkouts = new Map<string, Map<PoolClient, Checkout>>()
 
   constructor(pools: Record<string, Pool>, options: PoolMonitorOptions = {}) {
     this.pools = new Map(Object.entries(pools))
+    for (const [name, pool] of this.pools) this.checkouts.set(name, trackCheckouts(pool))
     this.options = {
       logIntervalMs: options.logIntervalMs ?? 30000,
       logLevel: options.logLevel ?? "debug",
@@ -161,7 +235,8 @@ export class PoolMonitor {
 
       // Always log warnings/errors even if logging is disabled
       if (hasWaiting) {
-        logger.warn(logData, `Pool '${stats.poolName}' has ${stats.waitingCount} waiting client(s)`)
+        const holders = describeHolders(this.checkouts.get(stats.poolName)!, Date.now())
+        logger.warn({ ...logData, holders }, `Pool '${stats.poolName}' has ${stats.waitingCount} waiting client(s)`)
       } else if (isHighUtilization) {
         logger.warn(logData, `Pool '${stats.poolName}' utilization at ${stats.utilizationPercent}%`)
       } else if (!this.options.disableLogging) {
