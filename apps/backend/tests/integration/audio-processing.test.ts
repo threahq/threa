@@ -117,7 +117,7 @@ describe("AudioProcessingService", () => {
     await service.process(ws, id)
 
     const { row, events } = await observe(id)
-    const normalizedPath = `${ws}/${id}/normalized.m4a`
+    const normalizedPath = `${ws}/derived/${id}/normalized.m4a`
     const normalizedFile = join(scratch, `${id}.m4a`)
     await writeFile(normalizedFile, await storage.getObject(normalizedPath))
     const codec = await exec([
@@ -162,6 +162,21 @@ describe("AudioProcessingService", () => {
         },
       ],
     })
+  })
+
+  test("should leave the upload's bytes alone when it is named like the normalized file", async () => {
+    const upload = await sine("named-like-output.wav", [])
+    const id = await seed("normalized.m4a", "audio/mp4", upload)
+
+    await service.process(ws, id)
+
+    const { row } = await observe(id)
+    const stored = await storage.getObject(`${ws}/${id}/normalized.m4a`)
+    expect({ status: row.processing_status, normalized: row.normalized_audio_storage_path !== null }).toEqual({
+      status: ProcessingStatuses.COMPLETED,
+      normalized: true,
+    })
+    expect(stored.equals(upload)).toBe(true)
   })
 
   test("should keep an MP3 as its own playable form and still store duration and waveform", async () => {

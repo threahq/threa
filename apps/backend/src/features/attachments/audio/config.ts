@@ -1,3 +1,5 @@
+import { derivedStoragePath } from "../derived-storage"
+
 export const AUDIO_WAVEFORM_BUCKETS = 200
 export const AUDIO_PCM_SAMPLE_RATE = 8000
 export const AUDIO_PROCESS_TIMEOUT_MS = 20 * 60 * 1000
@@ -27,5 +29,5 @@ export function isPassthroughAudio(probe: AudioProbe): boolean {
 }
 
 export function normalizedAudioStoragePath(workspaceId: string, attachmentId: string): string {
-  return `${workspaceId}/${attachmentId}/${AUDIO_NORMALIZED_FILENAME}`
+  return derivedStoragePath(workspaceId, attachmentId, AUDIO_NORMALIZED_FILENAME)
 }
