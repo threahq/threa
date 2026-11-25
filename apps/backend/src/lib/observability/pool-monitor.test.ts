@@ -10,6 +10,8 @@ function fakePool(totalCount: number, connected: number): Pool {
     waitingCount: 0,
     options: { max: 30 },
     _clients: Array.from({ length: totalCount }, (_, i) => ({ _connected: i < connected })),
+    connect: () => Promise.reject(new Error("fake pool")),
+    on: () => undefined,
   } as unknown as Pool
 }
 

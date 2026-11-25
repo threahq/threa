@@ -34,7 +34,7 @@ export class QueryCounter {
   }
 }
 
-type ConnectCallback = (
+export type ConnectCallback = (
   err: Error | undefined,
   client: PoolClient | undefined,
   done: (release?: unknown) => void

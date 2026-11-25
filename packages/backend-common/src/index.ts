@@ -40,7 +40,7 @@ export { createErrorHandler, sanitizeRoutePath } from "./middleware/error-handle
 export { createInternalAuthMiddleware, INTERNAL_API_KEY_HEADER } from "./middleware/internal-auth"
 export { createRateLimit, getClientIp } from "./middleware/rate-limit"
 export { createQueryTimingMiddleware, QUERY_COUNT_REQUEST_HEADER } from "./middleware/query-timing"
-export { QueryCounter } from "./db/query-scope"
+export { QueryCounter, type ConnectCallback } from "./db/query-scope"
 export { requestLogSerializers, requestLogLevel, redactHookSecret } from "./middleware/request-log"
 export type { RateLimitOptions, RateLimitRejection } from "./middleware/rate-limit"
 
@@ -48,7 +48,7 @@ export { loadPostHogConfig } from "./posthog/config"
 export type { PostHogConfig, PostHogLogsLevel } from "./posthog/config"
 export { PostHogAnalyticsReporter, DisabledAnalyticsReporter } from "./posthog/reporter"
 export type { AnalyticsReporter, AnalyticsEvent, ExceptionContext } from "./posthog/reporter"
-export { attachPostHogLogShipping, PostHogLogShipper } from "./posthog/otlp-logs"
+export { attachPostHogLogShipping, PostHogLogShipper, toOtlpAttributes } from "./posthog/otlp-logs"
 export type { PostHogLogShipperParams, PostHogLogShipperStats } from "./posthog/otlp-logs"
 
 export { logger, addLogDestination } from "./logger"
