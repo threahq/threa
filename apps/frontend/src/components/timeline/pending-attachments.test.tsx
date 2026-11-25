@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, fireEvent, within } from "@testing-library/react"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { attachmentsApi } from "@/api"
 import { PendingAttachments } from "./pending-attachments"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import * as uploadManager from "@/lib/uploads/upload-manager"
@@ -59,19 +61,24 @@ describe("PendingAttachments", () => {
   })
 
   it("opens the lightbox when a video chip is activated", () => {
+    // The video slide asks for the uploaded file's storyboard.
+    const storyboard = vi.spyOn(attachmentsApi, "ensureStoryboard").mockResolvedValue({ status: "pending" })
     render(
-      <PendingAttachments
-        attachments={[
-          attachment({ id: "attach_vid", filename: "clip.mp4", mimeType: "video/mp4", previewUrl: "blob:vid" }),
-        ]}
-        onRemove={vi.fn()}
-        workspaceId="ws_1"
-      />
+      <QueryClientProvider client={new QueryClient()}>
+        <PendingAttachments
+          attachments={[
+            attachment({ id: "attach_vid", filename: "clip.mp4", mimeType: "video/mp4", previewUrl: "blob:vid" }),
+          ]}
+          onRemove={vi.fn()}
+          workspaceId="ws_1"
+        />
+      </QueryClientProvider>
     )
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Preview clip.mp4" }))
     expect(screen.getByRole("dialog")).toBeInTheDocument()
+    storyboard.mockRestore()
   })
 
   it("offers an in-place retry on a retryable failed chip", () => {
