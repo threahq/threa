@@ -1,5 +1,5 @@
 import { test, expect, type BrowserContext, type Page } from "@playwright/test"
-import { loginInNewContext, switchToAllView, waitForWorkspaceProvisioned } from "./helpers"
+import { devJoinStream, loginInNewContext, switchToAllView, waitForWorkspaceProvisioned } from "./helpers"
 
 /**
  * Activity feed E2E tests.
@@ -108,7 +108,7 @@ test.describe("Activity Feed", () => {
       const { user: userB } = (await joinWsRes.json()) as { user: { id: string; slug: string } }
       const userBSlug = userB.slug
 
-      await ctxB.page.request.post(`/api/dev/workspaces/${workspaceId}/streams/${streamId}/join`)
+      await devJoinStream(ctxB.page, workspaceId, streamId)
 
       // Navigate User B to the workspace
       await ctxB.page.goto(`/w/${workspaceId}`)
@@ -214,7 +214,7 @@ test.describe("Activity Feed", () => {
       expect(joinWsRes.ok()).toBeTruthy()
       const { user: userB } = (await joinWsRes.json()) as { user: { id: string; slug: string } }
 
-      await ctxB.page.request.post(`/api/dev/workspaces/${workspaceId}/streams/${streamId}/join`)
+      await devJoinStream(ctxB.page, workspaceId, streamId)
 
       // ──── User B: Navigate directly to the channel (is actively viewing it) ────
 
@@ -293,7 +293,7 @@ test.describe("Activity Feed", () => {
       expect(joinWsRes.ok()).toBeTruthy()
       const { user: userB } = (await joinWsRes.json()) as { user: { id: string; slug: string } }
 
-      await ctxB.page.request.post(`/api/dev/workspaces/${workspaceId}/streams/${streamId}/join`)
+      await devJoinStream(ctxB.page, workspaceId, streamId)
 
       // Navigate User B to workspace, switch to All view
       await ctxB.page.goto(`/w/${workspaceId}`)

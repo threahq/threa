@@ -6,6 +6,7 @@ import {
   expectApiOk,
   generateTestId,
   editLastMessageViaArrowUp,
+  devJoinStream,
 } from "./helpers"
 
 /**
@@ -128,7 +129,7 @@ test.describe("Edit last message (ArrowUp)", () => {
     const userB = await loginInNewContext(browser, `elm-b-${testId}@example.com`, `ELM B ${testId}`)
 
     await userB.page.request.post(`/api/dev/workspaces/${workspaceId}/join`, { data: { role: "member" } })
-    await userB.page.request.post(`/api/dev/workspaces/${workspaceId}/streams/${streamId}/join`)
+    await devJoinStream(userB.page, workspaceId, streamId)
 
     // Send 20 messages via API (much faster than UI interactions)
     const fillerText = `Filler B ${testId}`
@@ -218,7 +219,7 @@ test.describe("Edit last message (ArrowUp)", () => {
     // Fillers must come from a different user so User A's only message remains the old one.
     const userB = await loginInNewContext(browser, `elm-win-b-${testId}@example.com`, `ELM Win B ${testId}`)
     await userB.page.request.post(`/api/dev/workspaces/${workspaceId}/join`, { data: { role: "member" } })
-    await userB.page.request.post(`/api/dev/workspaces/${workspaceId}/streams/${streamId}/join`)
+    await devJoinStream(userB.page, workspaceId, streamId)
 
     const fillerText = `Filler Win ${testId}`
     for (let i = 1; i <= 60; i++) {

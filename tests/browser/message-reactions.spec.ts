@@ -1,5 +1,11 @@
 import { test, expect, type BrowserContext, type Page } from "@playwright/test"
-import { expectApiOk, loginAndCreateWorkspace, loginInNewContext, waitForWorkspaceProvisioned } from "./helpers"
+import {
+  expectApiOk,
+  devJoinStream,
+  loginAndCreateWorkspace,
+  loginInNewContext,
+  waitForWorkspaceProvisioned,
+} from "./helpers"
 
 /**
  * Message reaction E2E tests.
@@ -225,8 +231,7 @@ test.describe("Message Reactions", () => {
       })
       expect(joinWsRes.ok()).toBeTruthy()
 
-      const joinStreamRes = await ctxB.page.request.post(`/api/dev/workspaces/${workspaceId}/streams/${streamId}/join`)
-      expect(joinStreamRes.ok()).toBeTruthy()
+      await devJoinStream(ctxB.page, workspaceId, streamId)
 
       // User A: send a message via API
       const messageContent = `React this ${testId}`
@@ -292,8 +297,7 @@ test.describe("Message Reactions", () => {
         data: { role: "member" },
       })
       expect(joinWsRes.ok()).toBeTruthy()
-      const joinStreamRes = await ctxB.page.request.post(`/api/dev/workspaces/${workspaceId}/streams/${streamId}/join`)
-      expect(joinStreamRes.ok()).toBeTruthy()
+      await devJoinStream(ctxB.page, workspaceId, streamId)
 
       // User B: send the message. A message you authored is never "unread" to
       // you, so it can't latch a divider on its own — which keeps this test

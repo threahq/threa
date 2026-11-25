@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
-import { createChannel, expectApiOk, loginInNewContext, waitForWorkspaceProvisioned } from "./helpers"
+import { createChannel, expectApiOk, devJoinStream, loginInNewContext, waitForWorkspaceProvisioned } from "./helpers"
 
 /**
  * Tests that newly created channels receive real-time socket events.
@@ -109,8 +109,7 @@ test.describe("New Channel Socket Subscription", () => {
       await userB.page.waitForURL(/\/w\//, { timeout: 10000 })
 
       // Join the channel via dev endpoint
-      const joinStreamRes = await userB.page.request.post(`/api/dev/workspaces/${workspaceId}/streams/${streamId}/join`)
-      expect(joinStreamRes.ok()).toBeTruthy()
+      await devJoinStream(userB.page, workspaceId, streamId)
       await waitForStreamAccessible(userB.page, workspaceId, streamId)
 
       // Navigate to the channel and send via UI to avoid API/session race edge-cases
@@ -209,8 +208,7 @@ test.describe("New Channel Socket Subscription", () => {
       await userB.page.goto(`/w/${workspaceId}`)
       await userB.page.waitForURL(/\/w\//, { timeout: 10000 })
 
-      const joinStreamRes = await userB.page.request.post(`/api/dev/workspaces/${workspaceId}/streams/${streamId}/join`)
-      await expectApiOk(joinStreamRes, "Join stream for preview subscription test")
+      await devJoinStream(userB.page, workspaceId, streamId)
       await waitForStreamAccessible(userB.page, workspaceId, streamId)
 
       await userB.page.goto(`/w/${workspaceId}/s/${streamId}`)

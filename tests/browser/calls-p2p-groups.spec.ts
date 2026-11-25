@@ -6,7 +6,14 @@ import {
   readMediaEdgeEvidence,
   expectMediaProgressOnEveryEdge,
 } from "./calls-media-evidence"
-import { enrollWorkspaceFlag, expectApiOk, generateTestId, loginAndCreateWorkspace, loginInNewContext } from "./helpers"
+import {
+  enrollWorkspaceFlag,
+  expectApiOk,
+  generateTestId,
+  devJoinStream,
+  loginAndCreateWorkspace,
+  loginInNewContext,
+} from "./helpers"
 import { CAMERA_PUBLISH_LADDER } from "../../apps/frontend/src/calls/config"
 
 const CALL_TILE = "[data-testid='call-tile']"
@@ -45,10 +52,7 @@ async function addGroupMember(browser: Browser, fixture: GroupFixture, index: nu
     await member.page.request.post(`/api/dev/workspaces/${fixture.workspaceId}/join`, { data: { role: "member" } }),
     `Join caller ${index} to workspace`
   )
-  await expectApiOk(
-    await member.page.request.post(`/api/dev/workspaces/${fixture.workspaceId}/streams/${fixture.streamId}/join`),
-    `Join caller ${index} to channel`
-  )
+  await devJoinStream(member.page, fixture.workspaceId, fixture.streamId)
   await member.page.goto(`/w/${fixture.workspaceId}/s/${fixture.streamId}`)
   await expect(member.page.getByRole("button", { name: "Start a call" })).toBeVisible({ timeout: 40_000 })
   fixture.contexts.push(member.context)
@@ -92,10 +96,7 @@ async function setUpGroup(browser: Browser, size: number): Promise<GroupFixture>
       await member.page.request.post(`/api/dev/workspaces/${workspaceId}/join`, { data: { role: "member" } }),
       `Join caller ${index} to workspace`
     )
-    await expectApiOk(
-      await member.page.request.post(`/api/dev/workspaces/${workspaceId}/streams/${streamId}/join`),
-      `Join caller ${index} to channel`
-    )
+    await devJoinStream(member.page, workspaceId, streamId)
     contexts.push(member.context)
     pages.push(member.page)
   }
