@@ -34,7 +34,7 @@ import {
   type NudgeDirection,
   type TapZone,
 } from "./gestures"
-import { mediaKeyAction } from "./media-keys"
+import { mediaKeyAction, type MediaKeyHandle } from "./media-keys"
 import { PLAYBACK_RATES, formatPlaybackRate } from "./preferences"
 import { ScrubBar } from "./scrub-bar"
 import { SCRUB_SELECTOR } from "./use-scrub"
@@ -42,11 +42,6 @@ import { useFullscreen } from "./use-fullscreen"
 import { useMediaPlayback } from "./use-media-playback"
 
 const NUDGE_SECONDS = 10
-
-export interface VideoPlayerHandle {
-  /** Applies a player shortcut; returns true when the key was consumed. */
-  handleKeyDown(e: KeyboardEvent): boolean
-}
 
 export interface VideoPlayerProps {
   src: string
@@ -58,7 +53,7 @@ export interface VideoPlayerProps {
   onChromeTap(): void
   /** Reports playback state on every change and on each chrome interaction. */
   onActivity(playing: boolean): void
-  ref?: React.Ref<VideoPlayerHandle>
+  ref?: React.Ref<MediaKeyHandle>
 }
 
 function volumeIcon(level: number) {

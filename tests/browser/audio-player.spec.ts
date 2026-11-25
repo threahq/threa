@@ -91,6 +91,9 @@ async function pickSpeed(page: Page, card: Locator, from: string, to: string): P
   await expect(card.getByRole("button", { name: `Playback speed ${to}` })).toBeVisible()
 }
 
+/** The audio slide of the open gallery; it carries no filename, so `cards` never matches it. */
+const gallerySlide = (page: Page) => page.locator("[data-media-gallery] [data-audio-player]")
+
 /** Seconds of track advanced per wall-clock second over `ms`. */
 async function advanceRate(page: Page, card: Locator, ms: number): Promise<number> {
   const t0 = await position(card)
@@ -251,10 +254,46 @@ test.describe("Audio player — desktop", () => {
   })
 })
 
+test.describe("Audio player — gallery", () => {
+  test.use({ viewport: { width: 1440, height: 900 } })
+
+  test("opens the playing track in the gallery, where the player keys drive it, and the card follows", async ({
+    page,
+  }) => {
+    await openNewChannel(page, "audio-gallery")
+    await sendTone(page)
+    const card = cards(page).first()
+    await ready(card)
+    await play(card)
+    await expect.poll(() => position(card)).toBeGreaterThan(0.5)
+
+    await card.getByRole("button", { name: `Open ${TONE}` }).click()
+    const slide = gallerySlide(page)
+    await expect(playButton(slide), "the slide joins the track already playing").toHaveAccessibleName("Pause")
+    await expect(page).toHaveURL(/[?&]media=/)
+    const opened = await position(slide)
+    expect(opened, "playback carried on, it did not restart").toBeGreaterThan(0.5)
+
+    // Focus is on the dialog, not in the player: the gallery dispatches these, as it does for video.
+    await page.keyboard.press("Space")
+    await expect(playButton(slide)).toHaveAccessibleName("Play")
+    const pausedAt = await position(slide)
+    await page.keyboard.press("ArrowRight")
+    await expect.poll(async () => (await position(slide)) - pausedAt, "→ seeks 5 s").toBeCloseTo(5, 0)
+
+    await page.keyboard.press("Escape")
+    await expect(page.locator("[data-media-gallery]")).toBeHidden()
+    await expect(playButton(card), "the card shows the same paused track").toHaveAccessibleName("Play")
+    expect((await position(card)) - pausedAt).toBeCloseTo(5, 0)
+  })
+})
+
 test.describe("Audio player — touch", () => {
   test.use({ hasTouch: true, viewport: { width: 390, height: 844 } })
 
-  test("tap plays and a touch drag on the waveform scrubs", async ({ page }) => {
+  test("tap plays, a touch drag on the waveform scrubs, and the gallery slide scrubs without closing", async ({
+    page,
+  }) => {
     await openNewChannel(page, "audio-touch")
     await sendTone(page)
     const card = cards(page).first()
@@ -264,23 +303,45 @@ test.describe("Audio player — touch", () => {
     await expect(playButton(card)).toHaveAccessibleName("Pause")
     await expect.poll(() => position(card)).toBeGreaterThan(0.3)
 
-    const bar = await scrubBar(card).boundingBox()
-    if (!bar) throw new Error("no scrub bar box")
-    const y = bar.y + bar.height / 2
     const cdp = await page.context().newCDPSession(page)
-    const touch = (type: string, fraction?: number) =>
-      cdp.send("Input.dispatchTouchEvent", {
-        type,
-        touchPoints: fraction === undefined ? [] : [{ x: bar.x + bar.width * fraction, y, id: 1 }],
-      })
-    await touch("touchStart", 0.2)
-    for (let i = 1; i <= 12; i++) {
-      await touch("touchMove", 0.2 + (0.5 * i) / 12)
-      await page.waitForTimeout(20)
+    /** Drags a finger along the player's waveform between two fractions of its width, drifting `driftY` px down. */
+    const touchDrag = async (player: Locator, from: number, to: number, driftY = 0) => {
+      const bar = await scrubBar(player).boundingBox()
+      if (!bar) throw new Error("no scrub bar box")
+      const touch = (type: string, step?: number) =>
+        cdp.send("Input.dispatchTouchEvent", {
+          type,
+          touchPoints:
+            step === undefined
+              ? []
+              : [
+                  {
+                    x: bar.x + bar.width * (from + ((to - from) * step) / 12),
+                    y: bar.y + bar.height / 2 + (driftY * step) / 12,
+                    id: 1,
+                  },
+                ],
+        })
+      await touch("touchStart", 0)
+      for (let i = 1; i <= 12; i++) {
+        await touch("touchMove", i)
+        await page.waitForTimeout(20)
+      }
+      await touch("touchEnd")
     }
-    await touch("touchEnd")
+
+    await touchDrag(card, 0.2, 0.7)
     await expect.poll(() => position(card)).toBeGreaterThan(TONE_SECONDS * 0.7 - 0.5)
     expect(await position(card)).toBeLessThan(TONE_SECONDS * 0.7 + 2.5)
     await expect(playButton(card), "release keeps playing").toHaveAccessibleName("Pause")
+
+    await playButton(card).tap()
+    await card.getByRole("button", { name: `Open ${TONE}` }).tap()
+    const slide = gallerySlide(page)
+    await expect(playButton(slide)).toHaveAccessibleName("Play")
+    // The gallery reads a downward drag as "close" and a sideways one as "next": the waveform owns both.
+    await touchDrag(slide, 0.8, 0.25, 120)
+    await expect.poll(() => position(slide)).toBeLessThan(TONE_SECONDS * 0.25 + 1)
+    await expect(slide, "the drag scrubbed, it did not dismiss the gallery").toBeVisible()
   })
 })

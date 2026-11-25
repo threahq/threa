@@ -6,14 +6,16 @@ import { isImageAttachment, isVideoAttachment } from "@/lib/attachment-kind"
 /**
  * The gallery item types an *uploaded file* can produce. Every `GalleryItem`
  * type except `video-embed`, which is a third-party link-preview iframe with no
- * attachment bytes — it can never originate from a file the user picks/pastes.
+ * attachment bytes — it can never originate from a file the user picks/pastes —
+ * and `audio`, which opens in the gallery only from a sent message: an upload
+ * keeps its plain chip.
  *
  * Written as `Exclude<…>` (not a hand-listed union) so adding a new
  * `GalleryItem["type"]` automatically widens this and forces {@link
  * buildPendingGalleryItem}'s exhaustive switch to handle it — the composer's
  * previewable set can't silently drift behind the gallery's.
  */
-export type UploadGalleryType = Exclude<GalleryItem["type"], "video-embed">
+export type UploadGalleryType = Exclude<GalleryItem["type"], "video-embed" | "audio">
 
 /**
  * Single source of truth for "does an uploaded file preview in the composer, and

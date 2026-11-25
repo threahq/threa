@@ -421,7 +421,16 @@ function FileAttachment({ attachment, workspaceId, isHighlighted }: AttachmentIt
   )
 }
 
-function AudioAttachment({ attachment, workspaceId, isHighlighted }: AttachmentItemProps) {
+function audioContentUrl(workspaceId: string, attachment: AttachmentSummary): string {
+  return attachmentContentUrl(workspaceId, attachment.id, { variant: playableAudioVariant(attachment.audio?.status) })
+}
+
+function AudioAttachment({
+  attachment,
+  workspaceId,
+  isHighlighted,
+  onOpen,
+}: AttachmentItemProps & { onOpen: (attachmentId: string) => void }) {
   const download = (variant: "raw" | "processed") =>
     downloadAttachment(workspaceId, attachment.id, attachment.filename, variant)
   return (
@@ -430,11 +439,10 @@ function AudioAttachment({ attachment, workspaceId, isHighlighted }: AttachmentI
       filename={attachment.filename}
       sizeBytes={attachment.sizeBytes}
       audio={attachment.audio}
-      resolveSrc={() =>
-        attachmentContentUrl(workspaceId, attachment.id, { variant: playableAudioVariant(attachment.audio?.status) })
-      }
+      resolveSrc={() => audioContentUrl(workspaceId, attachment)}
       onDownload={() => download("raw")}
       onDownloadProcessed={attachment.audio?.normalized ? () => download("processed") : undefined}
+      onExpand={() => onOpen(attachment.id)}
       isHighlighted={isHighlighted}
     />
   )
@@ -610,6 +618,15 @@ export function AttachmentList({
         }
       })
 
+    const audioItems: GalleryItem[] = audioAttachments.map((a) => ({
+      type: "audio" as const,
+      url: audioContentUrl(workspaceId, a),
+      filename: a.filename,
+      attachmentId: a.id,
+      sizeBytes: a.sizeBytes,
+      audio: a.audio,
+    }))
+
     const markdownItems: GalleryItem[] = markdownAttachments.map((a) => ({
       type: "markdown" as const,
       url: galleryUrls.get(a.id) ?? "",
@@ -641,6 +658,7 @@ export function AttachmentList({
     return [
       ...imageItems,
       ...videoItems,
+      ...audioItems,
       ...markdownItems,
       ...htmlItems,
       ...pdfItems,
@@ -651,6 +669,7 @@ export function AttachmentList({
     workspaceId,
     imageAttachments,
     videoAttachments,
+    audioAttachments,
     markdownAttachments,
     htmlAttachments,
     pdfAttachments,
@@ -737,6 +756,7 @@ export function AttachmentList({
               attachment={attachment}
               workspaceId={workspaceId}
               isHighlighted={attachment.id === hoveredAttachmentId}
+              onOpen={openMedia}
             />
           ))}
           {(allFileAttachments.length > 0 ||

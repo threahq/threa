@@ -419,29 +419,114 @@ describe("AudioPlayer card", () => {
     }).toEqual({ filename: null, download: null, speed: true })
   })
 
-  it("seeks with the arrow keys on the focused slider", async () => {
+  it("seeks with the arrow and End keys on the focused slider", async () => {
     const user = userEvent.setup()
     renderCards([audioAttachment()])
     await user.click(within(card("voice.m4a")).getByRole("button", { name: "Play" }))
+    const seeks = trackSeeks(playSpy.mock.contexts[0] as HTMLMediaElement, 83)
+    const slider = within(card("voice.m4a")).getByRole("slider", { name: "Seek" })
+
+    fireEvent.keyDown(slider, { key: "ArrowRight" })
+    fireEvent.keyDown(slider, { key: "ArrowRight" })
+    fireEvent.keyDown(slider, { key: "ArrowLeft" })
+    fireEvent.keyDown(slider, { key: "End" })
+
+    expect(seeks.times).toEqual([5, 10, 5, 83])
+    seeks.restore()
+  })
+
+  it("leaves keys pressed in its menus to the menu", async () => {
+    const user = userEvent.setup()
+    renderCards([audioAttachment()])
+    const voiceCard = card("voice.m4a")
+    await user.click(within(voiceCard).getByRole("button", { name: "Play" }))
     const element = playSpy.mock.contexts[0] as HTMLMediaElement
-    let time = 0
-    Object.defineProperty(element, "duration", { configurable: true, get: () => 83 })
-    Object.defineProperty(element, "currentTime", {
-      configurable: true,
-      get: () => time,
-      set: (t: number) => {
-        time = t
-      },
+    const seeks = trackSeeks(element, 83)
+
+    await user.click(within(voiceCard).getByRole("button", { name: "Playback speed 1×" }))
+    const menu = await screen.findByRole("menu")
+    fireEvent.keyDown(menu, { key: "ArrowRight" })
+    fireEvent.keyDown(menu, { key: "k" })
+
+    expect({ seeks: seeks.times, playing: sessionTrack()?.key, paused: paused.get(element) }).toEqual({
+      seeks: [],
+      playing: "att_voice",
+      paused: false,
     })
-    act(() => void element.dispatchEvent(new Event("durationchange")))
+    seeks.restore()
+  })
 
-    fireEvent.keyDown(within(card("voice.m4a")).getByRole("slider", { name: "Seek" }), { key: "End" })
+  it("opens in the gallery, where the same track keeps playing and takes the player keys", async () => {
+    const user = userEvent.setup()
+    renderCards([
+      audioAttachment(),
+      audioAttachment({
+        id: "att_song",
+        filename: "song.wav",
+        audio: { status: "completed", durationMs: 60_000, waveform: WAVEFORM, normalized: true },
+      }),
+    ])
+    const voiceCard = card("voice.m4a")
+    await user.click(within(voiceCard).getByRole("button", { name: "Play" }))
+    const seeks = trackSeeks(playSpy.mock.contexts[0] as HTMLMediaElement, 83)
 
-    expect(time).toBe(83)
-    delete (element as { duration?: number }).duration
-    delete (element as { currentTime?: number }).currentTime
+    await user.click(within(voiceCard).getByRole("button", { name: "Open voice.m4a" }))
+    const gallery = await screen.findByRole("dialog", { name: "voice.m4a" })
+    const slide = () =>
+      within(gallery).getByRole("slider", { name: "Seek" }).closest<HTMLElement>("[data-audio-player]")!
+    const opened = {
+      playing: within(slide()).getByRole("button", { name: "Pause" }).isConnected,
+      plays: playSpy.mock.calls.length,
+      download: within(gallery).getByRole("button", { name: "Download" }).isConnected,
+    }
+
+    fireEvent.keyDown(gallery, { key: "ArrowRight" })
+    fireEvent.keyDown(gallery, { key: " " })
+    const afterKeys = {
+      seeks: seeks.times,
+      slide: within(slide()).getByRole("button", { name: "Play" }).isConnected,
+      card: within(voiceCard)
+        .getByRole("button", { name: /^(Play|Pause)$/, hidden: true })
+        .getAttribute("aria-label"),
+      showing: screen.getByRole("dialog").textContent?.includes("voice.m4a"),
+    }
+
+    fireEvent.keyDown(gallery, { key: "ArrowDown" })
+    const next = await screen.findByRole("dialog", { name: "song.wav" })
+
+    expect({
+      opened,
+      afterKeys,
+      nextDownload: within(next).getByRole("button", { name: "Download audio" }).isConnected,
+      track: sessionTrack()?.key,
+    }).toEqual({
+      opened: { playing: true, plays: 1, download: true },
+      afterKeys: { seeks: [5], slide: true, card: "Play", showing: true },
+      nextDownload: true,
+      track: "att_voice",
+    })
+    seeks.restore()
   })
 })
+
+/** Gives the session's element a duration and records every position written to it. */
+function trackSeeks(element: HTMLMediaElement, duration: number) {
+  const times: number[] = []
+  Object.defineProperty(element, "duration", { configurable: true, get: () => duration })
+  Object.defineProperty(element, "currentTime", {
+    configurable: true,
+    get: () => times.at(-1) ?? 0,
+    set: (t: number) => void times.push(t),
+  })
+  act(() => void element.dispatchEvent(new Event("durationchange")))
+  return {
+    times,
+    restore() {
+      delete (element as { duration?: number }).duration
+      delete (element as { currentTime?: number }).currentTime
+    },
+  }
+}
 
 function BootstrapAttachments() {
   const { data } = useQuery<StreamBootstrap | null>({

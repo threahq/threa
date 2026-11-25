@@ -13,6 +13,8 @@ const FIXTURE_BY_TYPE: Record<GalleryItem["type"], { mimeType: string; filename:
   video: { mimeType: "video/mp4", filename: "clip.mp4" },
   // Link-preview iframe — no attachment bytes, so it can never come from an upload.
   "video-embed": null,
+  // Opens in the gallery only from a sent message; an upload keeps its plain chip.
+  audio: null,
   pdf: { mimeType: "application/pdf", filename: "report.pdf" },
   markdown: { mimeType: "text/markdown", filename: "notes.md" },
   html: { mimeType: "text/html", filename: "page.html" },

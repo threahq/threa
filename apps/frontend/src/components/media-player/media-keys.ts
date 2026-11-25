@@ -7,6 +7,12 @@ export type MediaKeyAction =
   | { type: "seek-fraction"; fraction: number }
   | { type: "step-rate"; direction: -1 | 1 }
 
+/** What a player hands a host that dispatches keys for it from outside the player's own subtree. */
+export interface MediaKeyHandle {
+  /** Applies a player shortcut; returns true when the key was consumed. */
+  handleKeyDown(e: KeyboardEvent): boolean
+}
+
 export interface MediaKeyEvent {
   key: string
   ctrlKey: boolean

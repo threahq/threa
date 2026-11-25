@@ -70,9 +70,11 @@ const WaveformBars = memo(function WaveformBars({ bars, className }: { bars: num
 interface WaveformScrubProps extends ScrubOptions {
   /** Base64 peaks; without them the track is a plain line of the same height. */
   waveform: string | undefined
+  /** The gallery's size: taller bars for finer seeking. */
+  tall?: boolean
 }
 
-export function WaveformScrub({ waveform, ...options }: WaveformScrubProps) {
+export function WaveformScrub({ waveform, tall = false, ...options }: WaveformScrubProps) {
   const { time, duration } = options
   const scrub = useScrub(options)
   const peaks = useMemo(() => decodeWaveform(waveform), [waveform])
@@ -95,10 +97,13 @@ export function WaveformScrub({ waveform, ...options }: WaveformScrubProps) {
       <SliderPrimitive.Root
         {...scrub.rootProps}
         data-waveform={bars ? "bars" : "plain"}
-        className="group/scrub relative flex h-10 w-full cursor-pointer touch-none select-none items-center data-[disabled]:cursor-default"
+        className={cn(
+          "group/scrub relative flex w-full cursor-pointer touch-none select-none items-center data-[disabled]:cursor-default",
+          tall ? "h-28" : "h-10"
+        )}
       >
         {bars ? (
-          <SliderPrimitive.Track ref={barsRef} className="relative h-7 w-full">
+          <SliderPrimitive.Track ref={barsRef} className={cn("relative w-full", tall ? "h-24" : "h-7")}>
             <WaveformBars bars={bars} className="bg-muted-foreground/35" />
             <div className="absolute inset-0" style={{ clipPath: `inset(0 ${100 - played}% 0 0)` }}>
               <WaveformBars bars={bars} className="bg-primary" />
@@ -115,7 +120,10 @@ export function WaveformScrub({ waveform, ...options }: WaveformScrubProps) {
             "block rounded-full bg-primary focus-visible:outline-none",
             // The played bars already mark the position, so their playhead shows only while it is being moved.
             bars
-              ? "h-9 w-0.5 opacity-0 transition-opacity duration-150 focus-visible:opacity-100 group-data-[scrubbing]/scrub:opacity-100"
+              ? cn(
+                  "w-0.5 opacity-0 transition-opacity duration-150 focus-visible:opacity-100 group-data-[scrubbing]/scrub:opacity-100",
+                  tall ? "h-[6.5rem]" : "h-9"
+                )
               : "h-3.5 w-3.5 shadow-sm ring-2 ring-background transition-transform duration-150 focus-visible:ring-ring group-data-[disabled]/scrub:scale-0"
           )}
         />
