@@ -138,18 +138,23 @@ test.describe("Audio player — desktop", () => {
     await expect(playButton(card)).toHaveAccessibleName("Play")
     await expect.poll(async () => (await sessionState(page)).playbackState).toBe("paused")
 
-    const downloadVia = async (item: string) => {
-      await card.getByRole("button", { name: `Download ${TONE}` }).click()
-      const [download] = await Promise.all([
-        page.waitForEvent("download"),
-        page.getByRole("menuitem", { name: item }).click(),
-      ])
-      return download.suggestedFilename()
+    // Only a re-encoded upload has two files to offer; without ffmpeg the button saves the original itself.
+    const downloadButton = card.getByRole("button", { name: `Download ${TONE}` })
+    const offersBoth = (await downloadButton.getAttribute("aria-haspopup")) === "menu"
+    const save = async (item?: string) => {
+      const downloading = page.waitForEvent("download")
+      await downloadButton.click()
+      if (item) await page.getByRole("menuitem", { name: item }).click()
+      return (await downloading).suggestedFilename()
     }
-    expect(await downloadVia("Download original"), "the original is saved, not navigated to").toBe(TONE)
-    expect(await downloadVia("Download processed"), "the processed file is the normalized one").toBe(
-      TONE.replace(/\.wav$/, ".m4a")
+    expect(await save(offersBoth ? "Download original" : undefined), "the original is saved, not navigated to").toBe(
+      TONE
     )
+    if (offersBoth) {
+      expect(await save("Download processed"), "the processed file is the normalized one").toBe(
+        TONE.replace(/\.wav$/, ".m4a")
+      )
+    }
 
     // A reload leaves the card idle; only a known duration lets the idle slider pick a start.
     await page.reload()
