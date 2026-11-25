@@ -8,6 +8,7 @@ import { MediaGalleryProvider } from "@/contexts"
 import { attachmentContentUrl, attachmentsApi } from "@/api"
 import { AttachmentList } from "@/components/timeline/attachment-list"
 import { streamKeys } from "@/hooks/use-streams"
+import { clearAllDecrypted } from "@/lib/crypto/decrypted-cache"
 import { registerWorkspaceSocketHandlers } from "@/sync/workspace-sync"
 import { AudioPlayer } from "./audio-player"
 import { AudioScope, audioSession } from "./audio-session"
@@ -256,6 +257,56 @@ describe("AudioPlayer card", () => {
       afterOvertaken: "att_b",
       afterClosed: null,
       revoked: ["blob:overtaken", "blob:closed"],
+    })
+    vi.unstubAllGlobals()
+  })
+
+  it("ends decrypted audio when the E2EE session locks: a playing track, and a decrypt still in flight", async () => {
+    const user = userEvent.setup()
+    const revoked = vi.fn()
+    vi.stubGlobal("URL", Object.assign(URL, { revokeObjectURL: revoked }))
+    const slow: Array<(src: string) => void> = []
+    const resolveSlow = () => new Promise<string>((resolve) => slow.push(resolve))
+    render(
+      <AudioScope scope={STREAM}>
+        <AudioPlayer
+          trackKey="att_e2e"
+          filename="e2e.m4a"
+          sizeBytes={1}
+          resolveSrc={resolveSlow}
+          onDownload={vi.fn()}
+        />
+        <AudioPlayer trackKey="att_b" filename="b.m4a" sizeBytes={1} resolveSrc={() => "/b"} onDownload={vi.fn()} />
+      </AudioScope>,
+      { wrapper: Providers }
+    )
+
+    await user.click(within(card("e2e.m4a")).getByRole("button", { name: "Play" }))
+    await act(async () => slow[0]("blob:playing"))
+    const beforeLock = sessionTrack()?.key
+    act(() => clearAllDecrypted())
+    const afterLock = sessionTrack()
+
+    await user.click(within(card("e2e.m4a")).getByRole("button", { name: "Play" }))
+    act(() => clearAllDecrypted())
+    await act(async () => slow[1]("blob:late"))
+    const afterLateDecrypt = sessionTrack()
+
+    await user.click(within(card("b.m4a")).getByRole("button", { name: "Play" }))
+    act(() => clearAllDecrypted())
+
+    expect({
+      beforeLock,
+      afterLock,
+      afterLateDecrypt,
+      plainTrackAfterLock: sessionTrack()?.key,
+      revoked: revoked.mock.calls.flat(),
+    }).toEqual({
+      beforeLock: "att_e2e",
+      afterLock: null,
+      afterLateDecrypt: null,
+      plainTrackAfterLock: "att_b",
+      revoked: ["blob:playing", "blob:late"],
     })
     vi.unstubAllGlobals()
   })

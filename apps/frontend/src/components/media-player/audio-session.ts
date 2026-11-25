@@ -1,4 +1,5 @@
 import { createContext, createElement, useContext, useEffect, useId, useSyncExternalStore } from "react"
+import { registerDecryptedCache } from "@/lib/crypto/decrypted-cache"
 import { clampPlaybackRate, loadMediaPreferences, saveMediaPreferences } from "./preferences"
 
 const SEEK_OFFSET_SECONDS = 10
@@ -189,6 +190,12 @@ export const audioSession = {
     setState({ playbackRate: next })
   },
 }
+
+// A `blob:` source is decrypted audio, and only a decrypt is ever pending: both end when the E2EE session locks.
+registerDecryptedCache(() => {
+  pending = null
+  if (getState().track?.src.startsWith("blob:")) audioSession.stop()
+})
 
 /** The session's element while it holds `key`, otherwise null: the card binds its playback state to it. */
 export function useAudioSessionElement(key: string): HTMLAudioElement | null {
