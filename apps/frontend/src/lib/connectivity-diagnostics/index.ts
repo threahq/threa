@@ -114,6 +114,13 @@ export interface DiagnosticFields {
   handleMinMs?: number
   handleMaxMs?: number
   handleSpanMs?: number
+  opfsRootMs?: number
+  opfsDirMs?: number
+  opfsFileMs?: number
+  opfsRemoveMs?: number
+  opfsListMs?: number
+  opfsHandleMs?: number
+  opfsSyncIoMs?: number
   connectMs?: number
   schemaMs?: number
   rangeP50Ms?: number
@@ -783,6 +790,13 @@ function projectFields(fields: DiagnosticFields): DiagnosticFields {
     "handleMinMs",
     "handleMaxMs",
     "handleSpanMs",
+    "opfsRootMs",
+    "opfsDirMs",
+    "opfsFileMs",
+    "opfsRemoveMs",
+    "opfsListMs",
+    "opfsHandleMs",
+    "opfsSyncIoMs",
     "connectMs",
     "schemaMs",
     "rangeP50Ms",

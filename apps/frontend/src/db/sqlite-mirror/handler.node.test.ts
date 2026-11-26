@@ -29,6 +29,13 @@ const timings = {
   handleMinMs: 3,
   handleMaxMs: 30,
   handleSpanMs: 31,
+  opfsRootMs: 2,
+  opfsDirMs: 4,
+  opfsFileMs: 1,
+  opfsRemoveMs: 1,
+  opfsListMs: 3,
+  opfsHandleMs: 20,
+  opfsSyncIoMs: 5,
   connectMs: 7,
 }
 const openDatabase = async () => ({ db, close: () => {}, timings })

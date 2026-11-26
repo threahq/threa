@@ -144,6 +144,13 @@ export function inProcessTransport(sqlite: Database, log: MirrorRequest["type"][
       handleMinMs: 0,
       handleMaxMs: 0,
       handleSpanMs: 0,
+      opfsRootMs: 0,
+      opfsDirMs: 0,
+      opfsFileMs: 0,
+      opfsRemoveMs: 0,
+      opfsListMs: 0,
+      opfsHandleMs: 0,
+      opfsSyncIoMs: 0,
       connectMs: 0,
     },
   }))
