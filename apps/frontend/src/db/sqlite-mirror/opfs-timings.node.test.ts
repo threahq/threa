@@ -1,11 +1,5 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { timeOpfsCalls, type OpfsApis } from "./opfs-timings"
-
-function busy(ms: number): number {
-  const until = performance.now() + ms
-  while (performance.now() < until);
-  return 0
-}
 
 const wait = <T>(ms: number, value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(value), ms))
 
@@ -27,7 +21,10 @@ function fakeOpfs(handleDelays: number[] = []) {
   }
   const storage = { getDirectory: () => wait(1, directory) }
   const syncHandle = {
-    read: () => busy(10),
+    read: () => {
+      vi.advanceTimersByTime(10)
+      return 0
+    },
     write: () => 0,
     flush: () => {},
     truncate: () => {},
@@ -50,6 +47,20 @@ async function install({ storage, file, syncHandle }: ReturnType<typeof fakeOpfs
   return names
 }
 
+// A controlled clock: every duration below is exact.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "performance"] })
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+async function settle<T>(promise: Promise<T>): Promise<T> {
+  await vi.runAllTimersAsync()
+  return promise
+}
+
 describe("timeOpfsCalls", () => {
   it("reports how long each kind of OPFS call took during an install, then restores the APIs", async () => {
     const opfs = fakeOpfs([1, 5, 60])
@@ -62,22 +73,23 @@ describe("timeOpfsCalls", () => {
       opfs.file.createSyncAccessHandle,
       opfs.syncHandle.read,
     ]
-    const { result, timings } = await timeOpfsCalls(opfs, () => install(opfs))
+    const { result, timings } = await settle(timeOpfsCalls(opfs, () => install(opfs)))
 
     expect(result).toEqual(["a", "b"])
-    expect(timings.handleCount).toBe(3)
-    expect(timings.handleMinMs).toBeLessThan(30)
-    expect(timings.handleMaxMs).toBeGreaterThanOrEqual(55)
-    expect(timings.handleSpanMs).toBeGreaterThanOrEqual(timings.handleMaxMs)
-    // The probe's 1ms handle plus the two concurrent ones (5ms, 60ms) cover about 61ms, not their 66ms sum.
-    expect(timings.opfsHandleMs).toBeGreaterThanOrEqual(timings.handleMaxMs)
-    expect(timings.opfsHandleMs).toBeLessThan(timings.handleSpanMs)
-    expect(timings.opfsSyncIoMs).toBeGreaterThanOrEqual(9)
-    expect(timings.opfsDirMs).toBeGreaterThanOrEqual(15)
-    expect(timings.opfsRemoveMs).toBeGreaterThanOrEqual(25)
-    expect(timings.opfsListMs).toBeGreaterThanOrEqual(15)
-    expect(timings.opfsRootMs).toBeLessThan(15)
-    expect(timings.opfsFileMs).toBeLessThan(15)
+    // The probe's 1ms handle and the concurrent 5ms and 60ms ones are pending for 61ms, not their 66ms sum.
+    expect(timings).toEqual({
+      handleCount: 3,
+      handleMinMs: 1,
+      handleMaxMs: 60,
+      handleSpanMs: 131,
+      opfsRootMs: 1,
+      opfsDirMs: 20,
+      opfsFileMs: 1,
+      opfsRemoveMs: 30,
+      opfsListMs: 20,
+      opfsHandleMs: 61,
+      opfsSyncIoMs: 10,
+    })
     expect([
       opfs.storage.getDirectory,
       opfs.directory.getDirectoryHandle,
@@ -109,12 +121,11 @@ describe("timeOpfsCalls", () => {
   it("restores the APIs when the install fails", async () => {
     const opfs = fakeOpfs([1])
     const original = opfs.file.createSyncAccessHandle
-    await expect(
-      timeOpfsCalls(opfs, async () => {
-        await opfs.file.createSyncAccessHandle()
-        throw new Error("locked")
-      })
-    ).rejects.toThrow("locked")
+    const failed = timeOpfsCalls(opfs, async () => {
+      await opfs.file.createSyncAccessHandle()
+      throw new Error("locked")
+    })
+    await expect(settle(failed)).rejects.toThrow("locked")
     expect(opfs.file.createSyncAccessHandle).toBe(original)
   })
 })
