@@ -212,6 +212,29 @@ describe("VideoPlayer in the gallery (touch)", () => {
     await waitFor(() => expect(chromeHidden()).toBe(true))
   })
 
+  it("offers play and pause in the centre: a tap on it keeps the chrome, and it leaves with the chrome", async () => {
+    const { video } = await openVideo()
+    const centre = () => within(dialog()).getByRole("button", { name: /^(Play|Pause)$/, hidden: true })
+
+    fireEvent.click(centre())
+    Object.defineProperty(video, "paused", { configurable: true, get: () => false })
+    fireEvent(video, new Event("play"))
+    await act(() => sleep(AFTER_WINDOW))
+    expect({
+      plays: vi.mocked(video.play).mock.calls.length,
+      label: centre().textContent,
+      chromeHidden: chromeHidden(),
+      inert: centre().hasAttribute("inert"),
+    }).toEqual({ plays: 1, label: "Pause", chromeHidden: false, inert: false })
+
+    fireEvent.click(surface(), { clientX: WIDTH / 2 })
+    await waitFor(() => expect(chromeHidden()).toBe(true))
+    expect({ pauses: vi.mocked(video.pause).mock.calls.length, inert: centre().hasAttribute("inert") }).toEqual({
+      pauses: 0,
+      inert: true,
+    })
+  })
+
   it("a double tap on a side seeks and never toggles the chrome, and edge taps don't navigate", async () => {
     const { video } = await openVideo()
     const root = surface()

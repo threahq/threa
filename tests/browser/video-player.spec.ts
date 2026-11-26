@@ -242,5 +242,21 @@ test.describe("Video player — touch", () => {
     await page.touchscreen.tap(surface.x + surface.width / 2, controls.y - 30)
     await expect(chrome(page)).toHaveAttribute("inert", "")
     await expect(scrub(page)).toBeAttached()
+
+    // Touch plays and pauses from one button in the middle of the video, which comes and goes with the chrome.
+    const centre = player(page).locator("button[data-gallery-chrome]")
+    const paused = async () => (await videoState(page)).paused
+    await seekTo(page, 5)
+    await centre.tap()
+    await expect.poll(paused).toBe(false)
+    await expect(centre, "it leaves with the chrome once the video plays").toHaveAttribute("inert", "")
+    await page.touchscreen.tap(surface.x + surface.width / 2, controls.y - 30)
+    await expect(centre).toHaveAccessibleName("Pause")
+    await expect(centre).not.toHaveAttribute("inert")
+    expect(await paused(), "the tap brought the controls up without pausing").toBe(false)
+    await centre.tap()
+    await expect.poll(paused).toBe(true)
+    await expect(centre, "a paused video keeps its controls").toHaveAccessibleName("Play")
+    await expect(chrome(page)).not.toHaveAttribute("inert")
   })
 })

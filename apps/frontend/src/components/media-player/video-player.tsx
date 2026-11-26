@@ -265,6 +265,10 @@ export function VideoPlayer({ src, poster, filename, chromeVisible, onChromeTap,
   }
 
   const chromeHidden = !chromeVisible
+  // Touch has no click-to-pause: its play/pause is the centre button, which comes and goes with the chrome.
+  const centerHidden = playback.started && chromeHidden
+  const buffering = playback.busy && playback.started && !playback.failed
+  const CenterIcon = playback.paused ? Play : Pause
   const durationLabel = formatClock(playback.duration)
   const VolumeIcon = volumeIcon(playback.muted ? 0 : playback.volume)
 
@@ -305,21 +309,30 @@ export function VideoPlayer({ src, poster, filename, chromeVisible, onChromeTap,
         </div>
       )}
 
-      {!playback.started && !playback.failed && (
+      {!playback.failed && (touch || !playback.started) && (
         <button
           type="button"
-          className="absolute left-1/2 top-1/2 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-sm transition-colors hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+          data-gallery-chrome=""
+          className={cn(
+            "absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-sm transition-[opacity,background-color] duration-200 hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60",
+            touch ? "h-20 w-20" : "h-16 w-16",
+            centerHidden && "pointer-events-none opacity-0"
+          )}
+          inert={centerHidden || undefined}
           onClick={(e) => {
             e.stopPropagation()
             playback.togglePlay()
           }}
         >
-          <Play className="ml-0.5 h-7 w-7" fill="currentColor" />
-          <span className="sr-only">Play</span>
+          {buffering && (
+            <Loader2 className="absolute inset-0 h-full w-full animate-spin text-white/70" strokeWidth={1} />
+          )}
+          <CenterIcon className={cn(touch ? "h-9 w-9" : "h-7 w-7", playback.paused && "ml-0.5")} fill="currentColor" />
+          <span className="sr-only">{playback.paused ? "Play" : "Pause"}</span>
         </button>
       )}
 
-      {playback.busy && playback.started && !playback.failed && (
+      {buffering && (!touch || centerHidden) && (
         <Loader2 className="pointer-events-none absolute left-1/2 top-1/2 h-9 w-9 -translate-x-1/2 -translate-y-1/2 animate-spin text-white/80" />
       )}
 
@@ -355,14 +368,16 @@ export function VideoPlayer({ src, poster, filename, chromeVisible, onChromeTap,
             onSeek={playback.seek}
           />
           <div className="-mx-2 flex items-center gap-0.5">
-            <ChromeButton label={playback.paused ? "Play" : "Pause"} onClick={playback.togglePlay}>
-              {playback.paused ? (
-                <Play className="h-5 w-5" fill="currentColor" />
-              ) : (
-                <Pause className="h-5 w-5" fill="currentColor" />
-              )}
-            </ChromeButton>
-            <span className="ml-1 whitespace-nowrap text-xs tabular-nums text-white/90">
+            {!touch && (
+              <ChromeButton label={playback.paused ? "Play" : "Pause"} onClick={playback.togglePlay}>
+                {playback.paused ? (
+                  <Play className="h-5 w-5" fill="currentColor" />
+                ) : (
+                  <Pause className="h-5 w-5" fill="currentColor" />
+                )}
+              </ChromeButton>
+            )}
+            <span className={cn("whitespace-nowrap text-xs tabular-nums text-white/90", touch ? "ml-2" : "ml-1")}>
               <span className="inline-block text-right" style={{ minWidth: `${durationLabel.length}ch` }}>
                 {formatClock(playback.time, playback.duration)}
               </span>
