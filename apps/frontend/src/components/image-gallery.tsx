@@ -1055,7 +1055,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
         />
       )}
       {isMultiple && (
-        <span className="text-xs text-white/70 mr-1 tabular-nums">
+        <span className="pl-2.5 text-xs tabular-nums text-white/70">
           {currentIndex + 1} / {items.length}
         </span>
       )}
