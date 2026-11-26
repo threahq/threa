@@ -174,6 +174,37 @@ function SpeedMenu({
   )
 }
 
+// The controls sit under the frame, not over it, in a strip of fixed height: filename, scrub bar, button row.
+// A slide that only shows the poster reserves the same strip, so its frame is where the player will draw it.
+function controlsStripClass(touch: boolean) {
+  return cn(
+    "box-content shrink-0 pt-2 pb-[max(0.25rem,env(safe-area-inset-bottom))]",
+    touch ? "h-[5.75rem]" : "h-[5.25rem]"
+  )
+}
+
+const stageClass = "relative min-h-0 flex-1"
+const frameClass = "h-full w-full object-contain"
+
+export function VideoPoster({ src, alt, loading = false }: { src?: string; alt: string; loading?: boolean }) {
+  const touch = useInputMode() === "touch"
+  return (
+    <div className="absolute inset-0 flex flex-col">
+      <div className={cn(stageClass, "flex flex-col items-center justify-center gap-3")}>
+        {src ? (
+          <img src={src} alt={alt} className={cn(frameClass, "select-none")} draggable={false} />
+        ) : (
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white/10 backdrop-blur-sm">
+            <Play className="ml-0.5 h-7 w-7 text-white/60" fill="currentColor" />
+          </div>
+        )}
+        {loading && <Loader2 className="h-4 w-4 animate-spin text-white/40" />}
+      </div>
+      <div aria-hidden className={controlsStripClass(touch)} />
+    </div>
+  )
+}
+
 export function VideoPlayer({
   src,
   poster,
@@ -293,74 +324,80 @@ export function VideoPlayer({
       data-media-player=""
       tabIndex={-1}
       className={cn(
-        "absolute inset-0 flex select-none items-center justify-center outline-none",
+        "absolute inset-0 flex select-none flex-col outline-none",
         chromeHidden && !playback.paused && !touch && "cursor-none"
       )}
       onClick={handleSurfaceClick}
     >
-      <video
-        ref={setVideo}
-        src={src}
-        poster={poster}
-        playsInline
-        preload="metadata"
-        className={cn(
-          // Sized by the stage, not the media: a poster and its video differ in pixels, so either one jumps on play.
-          "h-full w-full object-contain transition-opacity duration-150",
-          playback.scrubbing && playback.busy && "opacity-60"
-        )}
-        onLoadedMetadata={(e) => {
-          const v = e.currentTarget
-          if (v.videoWidth > 0 && v.videoHeight > 0) setAspect(v.videoWidth / v.videoHeight)
-        }}
-      />
-
-      {playback.failed && (
-        <div
-          role="alert"
-          className="pointer-events-none absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2 text-white/80"
-        >
-          <VideoOff className="h-9 w-9" />
-          <span className="text-sm">Can't play this video</span>
-        </div>
-      )}
-
-      {!playback.failed && (touch || !playback.started) && (
-        <button
-          type="button"
-          data-gallery-chrome=""
+      <div data-media-stage="" className={stageClass}>
+        <video
+          ref={setVideo}
+          src={src}
+          poster={poster}
+          playsInline
+          preload="metadata"
           className={cn(
-            "absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-sm transition-[opacity,background-color] duration-200 hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60",
-            touch ? "h-20 w-20" : "h-16 w-16",
-            centerHidden && "pointer-events-none opacity-0"
+            // Sized by the stage, not the media: a poster and its video differ in pixels, so either one jumps on play.
+            frameClass,
+            "transition-opacity duration-150",
+            playback.scrubbing && playback.busy && "opacity-60"
           )}
-          inert={centerHidden || undefined}
-          onClick={(e) => {
-            e.stopPropagation()
-            playback.togglePlay()
+          onLoadedMetadata={(e) => {
+            const v = e.currentTarget
+            if (v.videoWidth > 0 && v.videoHeight > 0) setAspect(v.videoWidth / v.videoHeight)
           }}
-        >
-          {buffering && (
-            <Loader2 className="absolute inset-0 h-full w-full animate-spin text-white/70" strokeWidth={1} />
-          )}
-          <CenterIcon className={cn(touch ? "h-9 w-9" : "h-7 w-7", playback.paused && "ml-0.5")} fill="currentColor" />
-          <span className="sr-only">{playback.paused ? "Play" : "Pause"}</span>
-        </button>
-      )}
+        />
 
-      {buffering && (!touch || centerHidden) && (
-        <Loader2 className="pointer-events-none absolute left-1/2 top-1/2 h-9 w-9 -translate-x-1/2 -translate-y-1/2 animate-spin text-white/80" />
-      )}
+        {playback.failed && (
+          <div
+            role="alert"
+            className="pointer-events-none absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2 text-white/80"
+          >
+            <VideoOff className="h-9 w-9" />
+            <span className="text-sm">Can't play this video</span>
+          </div>
+        )}
 
-      <NudgeIndicator side={-1} chain={playback.nudge} visible={playback.nudgeVisible} />
-      <NudgeIndicator side={1} chain={playback.nudge} visible={playback.nudgeVisible} />
+        {!playback.failed && (touch || !playback.started) && (
+          <button
+            type="button"
+            data-gallery-chrome=""
+            className={cn(
+              "absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-sm transition-[opacity,background-color] duration-200 hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60",
+              touch ? "h-20 w-20" : "h-16 w-16",
+              centerHidden && "pointer-events-none opacity-0"
+            )}
+            inert={centerHidden || undefined}
+            onClick={(e) => {
+              e.stopPropagation()
+              playback.togglePlay()
+            }}
+          >
+            {buffering && (
+              <Loader2 className="absolute inset-0 h-full w-full animate-spin text-white/70" strokeWidth={1} />
+            )}
+            <CenterIcon
+              className={cn(touch ? "h-9 w-9" : "h-7 w-7", playback.paused && "ml-0.5")}
+              fill="currentColor"
+            />
+            <span className="sr-only">{playback.paused ? "Play" : "Pause"}</span>
+          </button>
+        )}
+
+        {buffering && (!touch || centerHidden) && (
+          <Loader2 className="pointer-events-none absolute left-1/2 top-1/2 h-9 w-9 -translate-x-1/2 -translate-y-1/2 animate-spin text-white/80" />
+        )}
+
+        <NudgeIndicator side={-1} chain={playback.nudge} visible={playback.nudgeVisible} />
+        <NudgeIndicator side={1} chain={playback.nudge} visible={playback.nudgeVisible} />
+      </div>
 
       <div
         data-gallery-chrome=""
         data-media-chrome=""
         className={cn(
-          "absolute inset-x-0 bottom-0 z-10 flex flex-col bg-gradient-to-t from-black/85 via-black/50 to-transparent pt-12",
-          "pb-[max(0.25rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]",
+          controlsStripClass(touch),
+          "relative z-10 flex flex-col pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]",
           "transition-opacity duration-200",
           chromeHidden && "pointer-events-none opacity-0"
         )}
@@ -368,7 +405,7 @@ export function VideoPlayer({
         onPointerDown={() => onActivity(!playback.paused)}
       >
         <span className="truncate text-sm text-white">{filename}</span>
-        {/* Only the controls own touches and clicks; the gradient above them stays part of the video surface. */}
+        {/* Only the controls own touches and clicks; the filename stays part of the video surface. */}
         <div ref={setControls} data-gallery-owns-touch="" data-media-controls="" className="flex flex-col">
           <ScrubBar
             src={src}
