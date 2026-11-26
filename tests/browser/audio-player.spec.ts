@@ -310,7 +310,13 @@ test.describe("Audio player — touch", () => {
 
     const cdp = await page.context().newCDPSession(page)
     /** Drags a finger along the player's waveform between two fractions of its width, drifting `driftY` px down. */
-    const touchDrag = async (player: Locator, from: number, to: number, driftY = 0) => {
+    const touchDrag = async (
+      player: Locator,
+      from: number,
+      to: number,
+      driftY = 0,
+      whileHeld?: () => Promise<void>
+    ) => {
       const bar = await scrubBar(player).boundingBox()
       if (!bar) throw new Error("no scrub bar box")
       const touch = (type: string, step?: number) =>
@@ -332,13 +338,30 @@ test.describe("Audio player — touch", () => {
         await touch("touchMove", i)
         await page.waitForTimeout(20)
       }
+      await whileHeld?.()
       await touch("touchEnd")
     }
 
-    await touchDrag(card, 0.2, 0.7)
+    // Elsewhere on the page a rightward swipe pulls the sidebar in and a leftward one quotes the message.
+    // On the waveform both belong to the waveform.
+    const expectOnlyTheScrubMoved = async () => {
+      const moved = await page.evaluate(() => [
+        ...Array.from(document.querySelectorAll<HTMLElement>("aside"), (el) => el.style.transform),
+        ...Array.from(document.querySelectorAll<HTMLElement>("[data-swipe-follow]"), (el) =>
+          el.style.getPropertyValue("--swipe-x")
+        ),
+      ])
+      expect(moved.filter(Boolean), "neither the sidebar nor the message followed the finger").toEqual([])
+    }
+    await touchDrag(card, 0.2, 0.7, 0, expectOnlyTheScrubMoved)
     await expect.poll(() => position(card)).toBeGreaterThan(TONE_SECONDS * 0.7 - 0.5)
     expect(await position(card)).toBeLessThan(TONE_SECONDS * 0.7 + 2.5)
     await expect(playButton(card), "release keeps playing").toHaveAccessibleName("Pause")
+    await touchDrag(card, 0.7, 0.3, 0, expectOnlyTheScrubMoved)
+    await touchDrag(card, 0.3, 0.3, 0, async () => {
+      await page.waitForTimeout(700)
+      await expect(page.getByRole("dialog"), "a finger resting on the waveform is not a long press").toHaveCount(0)
+    })
 
     await playButton(card).tap()
     await card.getByRole("button", { name: `Open ${TONE}` }).tap()

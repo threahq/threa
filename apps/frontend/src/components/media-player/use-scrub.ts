@@ -77,6 +77,8 @@ export function useScrub({
     },
     rootProps: {
       "data-media-scrub": "",
+      // A finger resting on the bar is a scrub about to start, not a long press on the message around it.
+      "data-native-context": "true",
       "data-scrubbing": scrubbing || undefined,
       value: [Math.min(time, duration || 0)],
       min: 0,

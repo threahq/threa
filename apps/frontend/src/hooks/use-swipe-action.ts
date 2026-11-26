@@ -1,4 +1,5 @@
 import { useRef, useCallback, useState, useEffect, useLayoutEffect } from "react"
+import { startedOnTouchClaimingElement } from "@/lib/touch-claim"
 
 interface UseSwipeActionOptions {
   /** Minimum horizontal distance (px) to trigger the action (default: 80) */
@@ -206,7 +207,7 @@ export function useSwipeAction({
   const onTouchStart = useCallback(
     (e: React.TouchEvent) => {
       if (!enabled) return
-      if (startedInHorizontalScroller(e.target)) return
+      if (startedInHorizontalScroller(e.target) || startedOnTouchClaimingElement(e.target)) return
       const touch = e.touches[0]
       // A touchstart mid-gesture (a second finger) restarts from scratch: the
       // previous claim, lock and arm must not leak into the new stroke.

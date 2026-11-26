@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect } from "react"
+import { startedOnTouchClaimingElement } from "@/lib/touch-claim"
 
 /** Exclude touches from the very screen edge to avoid OS back-gesture conflicts (px) */
 const OS_GESTURE_ZONE = 8
@@ -138,6 +139,9 @@ export function useSidebarSwipe({ isOpen, isMobile, onOpen, onClose, onCloseStar
       // Don't capture swipes that start on horizontally scrollable elements
       // (e.g. editor style bar, code blocks inside the sidebar) — let them scroll natively
       if (hasHorizontalScroll(touch.target as Element | null)) return
+
+      // Don't capture swipes that start on a control dragging for itself (e.g. an audio card's scrub bar)
+      if (startedOnTouchClaimingElement(touch.target)) return
 
       // Don't capture swipes inside modal overlays (e.g. image gallery dialog)
       if (isInsideModalOverlay(touch.target as Element | null)) return
