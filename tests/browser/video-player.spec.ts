@@ -122,9 +122,10 @@ test.describe("Video player — desktop", () => {
     await seedVideos(page, "video-desk")
     await openVideo(page, PORTRAIT)
 
-    const video = await box(page, "[data-media-player] video")
-    const surface = await box(page, "[data-media-player]")
-    expect(video.height, "a portrait video fills the slide height").toBeGreaterThan(surface.height - 2)
+    const frame = await box(page, "[data-media-player] video")
+    const strip = await box(page, "[data-media-chrome]")
+    expect(frame, "the poster is drawn in the stage's box").toEqual(await box(page, "[data-media-stage]"))
+    expect(frame.y + frame.height, "the controls sit under the frame, not over it").toBeLessThanOrEqual(strip.y)
 
     const hit = await page.evaluate(() => {
       const owner = (selector: string, owns: string) => {
@@ -133,7 +134,7 @@ test.describe("Video player — desktop", () => {
         return !!document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest(owns)
       }
       return {
-        centerPlay: owner("[data-media-player] > button", "[data-media-player] > button"),
+        centerPlay: owner("[data-media-stage] > button", "[data-media-stage] > button"),
         scrub: owner("[data-media-scrub]", "[data-media-scrub]"),
         chromeButtons: [...document.querySelectorAll("[data-media-chrome] button")].every((b) => {
           const r = b.getBoundingClientRect()
@@ -143,9 +144,10 @@ test.describe("Video player — desktop", () => {
     })
     expect(hit).toEqual({ centerPlay: true, scrub: true, chromeButtons: true })
 
-    await page.locator("[data-media-player] > button").click()
+    await page.locator("[data-media-stage] > button").click()
     await expect.poll(async () => (await videoState(page)).paused).toBe(false)
     await expect.poll(async () => (await videoState(page)).time).toBeGreaterThan(0.5)
+    expect(await box(page, "[data-media-player] video"), "the playing video keeps the poster's box").toEqual(frame)
 
     const bar = await box(page, "[data-media-scrub]")
     const y = bar.y + bar.height / 2
@@ -301,11 +303,12 @@ test.describe("Video player — touch", () => {
       await expect(chrome(page).getByText(PORTRAIT)).toBeVisible()
     }
 
-    // The gradient above the controls is still the video: a tap there toggles the chrome.
-    const controls = await box(page, "[data-media-controls]")
-    await page.touchscreen.tap(surface.x + surface.width / 2, controls.y - 30)
+    const frame = await box(page, "[data-media-player] video")
+    const tapVideo = () => page.touchscreen.tap(frame.x + frame.width / 2, frame.y + frame.height * 0.8)
+    await tapVideo()
     await expect(chrome(page)).toHaveAttribute("inert", "")
     await expect(scrub(page)).toBeAttached()
+    expect(await box(page, "[data-media-player] video"), "hidden controls keep their strip").toEqual(frame)
 
     // Touch plays and pauses from one button in the middle of the video, which comes and goes with the chrome.
     const centre = player(page).locator("button[data-gallery-chrome]")
@@ -314,7 +317,7 @@ test.describe("Video player — touch", () => {
     await centre.tap()
     await expect.poll(paused).toBe(false)
     await expect(centre, "it leaves with the chrome once the video plays").toHaveAttribute("inert", "")
-    await page.touchscreen.tap(surface.x + surface.width / 2, controls.y - 30)
+    await tapVideo()
     await expect(centre).toHaveAccessibleName("Pause")
     await expect(centre).not.toHaveAttribute("inert")
     expect(await paused(), "the tap brought the controls up without pausing").toBe(false)

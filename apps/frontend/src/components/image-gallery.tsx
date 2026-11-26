@@ -44,7 +44,7 @@ import { DownloadVariantsMenu } from "@/components/media-player/download-variant
 import { SCRUB_SELECTOR } from "@/components/media-player/use-scrub"
 import { AudioPlayer } from "@/components/media-player/audio-player"
 import type { MediaKeyHandle } from "@/components/media-player/media-keys"
-import { VideoPlayer } from "@/components/media-player/video-player"
+import { VideoPlayer, VideoPoster } from "@/components/media-player/video-player"
 
 export type GalleryItem =
   | { type: "image"; url: string; thumbnailUrl: string; filename: string; attachmentId: string }
@@ -251,33 +251,8 @@ function GalleryMediaContent({
   if (current.type === "video") {
     // Only the viewed slide mounts the player; neighbors show the poster so no
     // <video> loads or plays off-screen.
-    if (!videoPlayer) {
-      return (
-        <div className="absolute inset-0 flex items-center justify-center">
-          {current.thumbnailUrl ? (
-            <img
-              src={current.thumbnailUrl}
-              alt={current.filename}
-              className="max-w-full max-h-full object-contain select-none"
-              draggable={false}
-            />
-          ) : (
-            <div className="h-16 w-16 rounded-full bg-white/10 backdrop-blur-sm flex items-center justify-center">
-              <Play className="h-7 w-7 text-white/60 ml-0.5" fill="currentColor" />
-            </div>
-          )}
-        </div>
-      )
-    }
-    if (!current.url)
-      return (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-          <div className="h-16 w-16 rounded-full bg-white/10 backdrop-blur-sm flex items-center justify-center">
-            <Play className="h-7 w-7 text-white/60 ml-0.5" fill="currentColor" />
-          </div>
-          <Loader2 className="h-4 w-4 animate-spin text-white/40" />
-        </div>
-      )
+    if (!videoPlayer) return <VideoPoster src={current.thumbnailUrl || undefined} alt={current.filename} />
+    if (!current.url) return <VideoPoster alt={current.filename} loading />
     return <GalleryVideoPlayer key={current.attachmentId} item={current} bindings={videoPlayer} />
   }
   if (current.type === "video-embed") {
