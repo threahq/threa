@@ -125,7 +125,9 @@ describe("timeOpfsCalls", () => {
       await opfs.file.createSyncAccessHandle()
       throw new Error("locked")
     })
-    await expect(settle(failed)).rejects.toThrow("locked")
+    const rejected = expect(failed).rejects.toThrow("locked")
+    await vi.runAllTimersAsync()
+    await rejected
     expect(opfs.file.createSyncAccessHandle).toBe(original)
   })
 })
