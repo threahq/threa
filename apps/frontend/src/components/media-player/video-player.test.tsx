@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { act, render, screen, waitFor, within, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createMemoryRouter, RouterProvider } from "react-router-dom"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MediaGalleryProvider } from "@/contexts"
 import { attachmentsApi } from "@/api"
 import { AttachmentList } from "@/components/timeline/attachment-list"
@@ -28,6 +29,7 @@ beforeEach(() => {
   vi.restoreAllMocks()
   localStorage.removeItem("threa:media-player:preferences")
   vi.spyOn(attachmentsApi, "getDownloadUrl").mockResolvedValue("https://example.com/media")
+  vi.spyOn(attachmentsApi, "ensureStoryboard").mockResolvedValue({ status: "unavailable" })
   offsetWidthDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth")
   Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, get: () => WIDTH })
 })
@@ -99,7 +101,11 @@ async function openVideo() {
     ],
     { initialEntries: ["/s"] }
   )
-  render(<RouterProvider router={router} />)
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
+  )
   await user.click(await screen.findByRole("button", { name: /clip\.mp4/i }))
   const video = await waitFor(() => {
     const el = dialog().querySelector("video")
@@ -249,5 +255,109 @@ describe("VideoPlayer in the gallery (touch)", () => {
 
     await act(() => sleep(AFTER_WINDOW))
     expect({ hidden: chromeHidden(), position: position() }).toEqual({ hidden: false, position: "2 / 2" })
+  })
+})
+
+const storyboard = {
+  status: "ready",
+  columns: 10,
+  rows: 3,
+  tileCount: 24,
+  intervalMs: 5000,
+  tileWidth: 240,
+  tileHeight: 180,
+} as const
+
+function serveStoryboard() {
+  vi.spyOn(attachmentsApi, "ensureStoryboard").mockResolvedValue(storyboard)
+  vi.spyOn(HTMLImageElement.prototype, "src", "set").mockImplementation(function (this: HTMLImageElement) {
+    queueMicrotask(() => this.dispatchEvent(new Event("load")))
+  })
+}
+
+function scrubWrap(): HTMLElement {
+  const wrap = within(dialog()).getByRole("slider", { name: "Seek" }).closest("[data-media-scrub]")?.parentElement
+  if (!wrap) throw new Error("scrub bar not mounted")
+  wrap.getBoundingClientRect = () => ({ left: 0, top: 0, width: WIDTH, height: 24 }) as DOMRect
+  return wrap
+}
+
+const spriteFrame = () => dialog().querySelector<HTMLElement>("[data-storyboard-frame]")
+const frameStyle = () => {
+  const frame = spriteFrame()
+  return frame && !frame.classList.contains("hidden")
+    ? { position: frame.style.backgroundPosition, size: frame.style.backgroundSize, width: frame.style.width }
+    : null
+}
+
+/** The scrub bar treats value changes as a drag while a pointer is down on it; End moves the value without one. */
+function startDrag() {
+  const thumb = within(dialog()).getByRole("slider", { name: "Seek" })
+  fireEvent.pointerDown(thumb.closest("[data-media-scrub]")!)
+  fireEvent.keyDown(thumb, { key: "End" })
+}
+
+describe("VideoPlayer scrub preview with a storyboard", () => {
+  it("hovering shows the sprite tile for that time and never creates a decoder video", async () => {
+    useInput("mouse")
+    serveStoryboard()
+    await openVideo()
+    await waitFor(() => expect(spriteFrame()).not.toBeNull())
+    const createElement = vi.spyOn(document, "createElement")
+    const wrap = scrubWrap()
+
+    fireEvent.pointerMove(wrap, { pointerType: "mouse", clientX: WIDTH / 2 })
+    const mid = frameStyle()
+    fireEvent.pointerMove(wrap, { pointerType: "mouse", clientX: WIDTH })
+    const last = frameStyle()
+
+    expect({
+      mid,
+      last,
+      decoders: createElement.mock.calls.filter(([tag]) => tag === "video").length,
+    }).toEqual({
+      mid: { position: "-320px -120px", size: "1600px 360px", width: "160px" },
+      last: { position: "-480px -240px", size: "1600px 360px", width: "160px" },
+      decoders: 0,
+    })
+  })
+
+  it("keeps the frame visible during a mouse drag", async () => {
+    useInput("mouse")
+    serveStoryboard()
+    await openVideo()
+    await waitFor(() => expect(spriteFrame()).not.toBeNull())
+    scrubWrap()
+
+    startDrag()
+    expect(frameStyle()).toEqual({ position: "-480px -240px", size: "1600px 360px", width: "160px" })
+  })
+
+  it("shows the frame during a touch drag", async () => {
+    useInput("touch")
+    serveStoryboard()
+    await openVideo()
+    await waitFor(() => expect(spriteFrame()).not.toBeNull())
+    scrubWrap()
+
+    expect(frameStyle()).toBeNull()
+    startDrag()
+    expect(frameStyle()).toEqual({ position: "-480px -240px", size: "1600px 360px", width: "160px" })
+  })
+})
+
+describe("VideoPlayer scrub preview without a storyboard", () => {
+  it("decodes preview frames on hover when the storyboard request fails", async () => {
+    useInput("mouse")
+    vi.spyOn(attachmentsApi, "ensureStoryboard").mockRejectedValue(new Error("offline"))
+    await openVideo()
+    await waitFor(() => expect(attachmentsApi.ensureStoryboard).toHaveBeenCalled())
+    const createElement = vi.spyOn(document, "createElement")
+
+    fireEvent.pointerMove(scrubWrap(), { pointerType: "mouse", clientX: WIDTH / 2 })
+    expect({
+      sprite: spriteFrame(),
+      decoders: createElement.mock.calls.filter(([tag]) => tag === "video").length,
+    }).toEqual({ sprite: null, decoders: 1 })
   })
 })

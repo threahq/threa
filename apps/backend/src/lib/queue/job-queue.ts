@@ -48,6 +48,7 @@ export const JobQueues = {
   VIDEO_TRANSCODE_SUBMIT: "video.transcode_submit",
   VIDEO_TRANSCODE_CHECK: "video.transcode_check",
   AUDIO_PROCESS: "audio.process",
+  VIDEO_STORYBOARD: "video.storyboard",
   SAVED_REMINDER_FIRE: "saved.reminder_fire",
   SCHEDULED_MESSAGE_SEND: "scheduled_message.send",
   AGENT_FOLLOW_UP_FIRE: "agent.follow_up_fire",
@@ -328,6 +329,12 @@ export interface AudioProcessJobData {
   storagePath: string
 }
 
+/** Video storyboard job - ffmpeg seeks frames over ranged HTTP and tiles them into one sprite */
+export interface VideoStoryboardJobData {
+  attachmentId: string
+  workspaceId: string
+}
+
 /** Video transcode check job - polls MediaConvert for completion */
 export interface VideoTranscodeCheckJobData {
   attachmentId: string
@@ -544,6 +551,7 @@ export interface JobDataMap {
   [JobQueues.VIDEO_TRANSCODE_SUBMIT]: VideoTranscodeSubmitJobData
   [JobQueues.VIDEO_TRANSCODE_CHECK]: VideoTranscodeCheckJobData
   [JobQueues.AUDIO_PROCESS]: AudioProcessJobData
+  [JobQueues.VIDEO_STORYBOARD]: VideoStoryboardJobData
   [JobQueues.SAVED_REMINDER_FIRE]: SavedReminderFireJobData
   [JobQueues.PUSH_DELIVER]: PushDeliverJobData
   [JobQueues.PUSH_SESSION_EXPIRED]: PushSessionExpiredJobData

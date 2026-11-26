@@ -10,6 +10,7 @@
  */
 
 import type {
+  VideoStoryboardStatuses,
   BotTrait,
   StreamType,
   Visibility,
@@ -804,6 +805,23 @@ export interface AttachmentAudioSummary {
   /** A re-encoded copy exists beside the upload. Absent when the upload already plays everywhere and is served as is. */
   normalized?: true
 }
+
+/**
+ * Hover-preview sprite for a video. Tile `i` (row-major) shows the frame at
+ * `i * intervalMs` and stands for `[i * intervalMs, (i + 1) * intervalMs)`.
+ */
+export type VideoStoryboard =
+  | { status: typeof VideoStoryboardStatuses.PENDING }
+  | { status: typeof VideoStoryboardStatuses.UNAVAILABLE }
+  | {
+      status: typeof VideoStoryboardStatuses.READY
+      columns: number
+      rows: number
+      tileWidth: number
+      tileHeight: number
+      tileCount: number
+      intervalMs: number
+    }
 
 /**
  * Source reference for message citations.

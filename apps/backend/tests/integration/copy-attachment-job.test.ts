@@ -29,6 +29,7 @@ import {
   AttachmentService,
   AttachmentUploadRepository,
   createAttachmentHandlers,
+  VideoStoryboardService,
 } from "../../src/features/attachments"
 import { EventService } from "../../src/features/messaging"
 import { StreamRepository, StreamService } from "../../src/features/streams"
@@ -777,6 +778,7 @@ describe("Copying a shared channel's files", () => {
     function downloadUrlRequest(world: World, caller: string, id: string) {
       const handlers = createAttachmentHandlers({
         attachmentService,
+        videoStoryboardService: new VideoStoryboardService({ pool, storage, tools: null }),
         streamService: new StreamService(pool),
         storage,
         pool,

@@ -18,7 +18,8 @@ import {
   isPassthroughAudio,
   normalizedAudioStoragePath,
 } from "./config"
-import { UndecodableAudioError, probeAudio, runNormalize, type AudioTools } from "./ffmpeg"
+import { UndecodableMediaError, type MediaTools } from "../ffmpeg"
+import { probeAudio, runNormalize } from "./ffmpeg"
 import { PeakReducer } from "./waveform"
 
 export interface AudioProcessingServiceLike {
@@ -28,7 +29,7 @@ export interface AudioProcessingServiceLike {
 export interface AudioProcessingServiceDeps {
   pool: Pool
   storage: StorageProvider
-  tools: AudioTools
+  tools: MediaTools
   timeoutMs?: number
 }
 
@@ -73,7 +74,7 @@ export async function settleAudioWithoutResult(
 export class AudioProcessingService implements AudioProcessingServiceLike {
   private readonly pool: Pool
   private readonly storage: StorageProvider
-  private readonly tools: AudioTools
+  private readonly tools: MediaTools
   private readonly timeoutMs: number
 
   constructor(deps: AudioProcessingServiceDeps) {
@@ -146,7 +147,7 @@ export class AudioProcessingService implements AudioProcessingServiceLike {
       }
       log.info({ codec: probe.codecName, passthrough: !storagePath, durationMs }, "Audio attachment processed")
     } catch (error) {
-      if (!(error instanceof UndecodableAudioError)) throw error
+      if (!(error instanceof UndecodableMediaError)) throw error
       log.warn({ error }, "Audio attachment is not decodable, marking failed")
       await this.markFailed(workspaceId, attachmentId)
     } finally {
