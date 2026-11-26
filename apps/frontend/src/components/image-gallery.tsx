@@ -258,7 +258,7 @@ function GalleryMediaContent({
             <img
               src={current.thumbnailUrl}
               alt={current.filename}
-              className="max-w-full max-h-full object-contain select-none"
+              className="h-full w-full object-contain select-none"
               draggable={false}
             />
           ) : (

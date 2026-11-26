@@ -305,7 +305,8 @@ export function VideoPlayer({
         playsInline
         preload="metadata"
         className={cn(
-          "max-h-full max-w-full object-contain transition-opacity duration-150",
+          // Sized by the stage, not the media: a poster and its video differ in pixels, so either one jumps on play.
+          "h-full w-full object-contain transition-opacity duration-150",
           playback.scrubbing && playback.busy && "opacity-60"
         )}
         onLoadedMetadata={(e) => {

@@ -122,9 +122,8 @@ test.describe("Video player — desktop", () => {
     await seedVideos(page, "video-desk")
     await openVideo(page, PORTRAIT)
 
-    const video = await box(page, "[data-media-player] video")
     const surface = await box(page, "[data-media-player]")
-    expect(video.height, "a portrait video fills the slide height").toBeGreaterThan(surface.height - 2)
+    expect(await box(page, "[data-media-player] video"), "the poster is drawn in the stage's box").toEqual(surface)
 
     const hit = await page.evaluate(() => {
       const owner = (selector: string, owns: string) => {
@@ -146,6 +145,7 @@ test.describe("Video player — desktop", () => {
     await page.locator("[data-media-player] > button").click()
     await expect.poll(async () => (await videoState(page)).paused).toBe(false)
     await expect.poll(async () => (await videoState(page)).time).toBeGreaterThan(0.5)
+    expect(await box(page, "[data-media-player] video"), "the playing video keeps the poster's box").toEqual(surface)
 
     const bar = await box(page, "[data-media-scrub]")
     const y = bar.y + bar.height / 2
