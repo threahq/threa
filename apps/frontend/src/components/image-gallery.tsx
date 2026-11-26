@@ -41,6 +41,8 @@ import { HtmlViewer } from "@/components/gallery/html-viewer"
 import { PdfViewer } from "@/components/gallery/pdf-viewer"
 import { TextViewer } from "@/components/gallery/text-viewer"
 import { fetchTextContent } from "@/components/gallery/use-text-content"
+import { SCRUB_SELECTOR } from "@/components/media-player/scrub-bar"
+import { VideoPlayer, type VideoPlayerHandle } from "@/components/media-player/video-player"
 
 export type GalleryItem =
   | { type: "image"; url: string; thumbnailUrl: string; filename: string; attachmentId: string }
@@ -74,6 +76,10 @@ const GALLERY_TYPE_LABELS: Record<GalleryItem["type"], string> = {
 
 const CHROME_IDLE_MS = 2500
 
+// Touches starting inside these own their own gesture (native scroll in text
+// panels, scrubbing on the video controls): no carousel swipe or drag-to-dismiss.
+const OWNS_TOUCH_SELECTOR = "[data-gallery-text-viewer],[data-gallery-owns-touch]"
+
 // Copy means different things per slide: the rendered image bytes vs. the
 // underlying text. Plain text isn't "source" the way markdown/html are.
 function copyLabelForType(type: GalleryItem["type"] | undefined): string {
@@ -105,29 +111,11 @@ interface MediaGalleryProps {
   onItemChange?: (attachmentId: string) => void
 }
 
-function GalleryVideo({ current }: { current: Extract<GalleryItem, { type: "video" }> }) {
-  const videoRef = useRef<HTMLVideoElement>(null)
-
-  // Focus the video on mount/URL-ready so keyboard controls (space to play,
-  // arrow keys for seek) work immediately. Without this the Dialog places
-  // initial focus on the first focusable child (download button), which
-  // steals space-bar toggling from the video.
-  useEffect(() => {
-    if (current.url) videoRef.current?.focus({ preventScroll: true })
-  }, [current.url, current.attachmentId])
-
-  return (
-    <video
-      ref={videoRef}
-      key={current.attachmentId}
-      src={current.url}
-      poster={current.thumbnailUrl || undefined}
-      controls
-      controlsList="nodownload"
-      tabIndex={-1}
-      className="max-w-full max-h-full object-contain select-none outline-none"
-    />
-  )
+interface GalleryVideoBindings {
+  ref: React.Ref<VideoPlayerHandle>
+  chromeVisible: boolean
+  onChromeTap: () => void
+  onActivity: (playing: boolean) => void
 }
 
 interface GalleryMediaContentProps {
@@ -144,6 +132,8 @@ interface GalleryMediaContentProps {
   onScaleChange?: (scale: number) => void
   /** Raw-source toggle; only consumed by markdown/html viewers. */
   rawMode?: boolean
+  /** Non-null only for the currently-displayed slide; a video mounts its player only then. */
+  videoPlayer?: GalleryVideoBindings
 }
 
 function GalleryMediaContent({
@@ -154,6 +144,7 @@ function GalleryMediaContent({
   onZoomChange,
   onScaleChange,
   rawMode = false,
+  videoPlayer,
 }: GalleryMediaContentProps) {
   if (current.type === "markdown") {
     if (!isActive) {
@@ -196,8 +187,9 @@ function GalleryMediaContent({
     return <TextViewer url={current.url} filename={current.filename} />
   }
   if (current.type === "video") {
-    // Non-active video slides show poster so the <video> element doesn't load
-    if (!isActive) {
+    // Only the viewed slide mounts the player; neighbors show the poster so no
+    // <video> loads or plays off-screen.
+    if (!videoPlayer) {
       return (
         <div className="absolute inset-0 flex items-center justify-center">
           {current.thumbnailUrl ? (
@@ -225,9 +217,16 @@ function GalleryMediaContent({
         </div>
       )
     return (
-      <div className="absolute inset-0 flex items-center justify-center">
-        <GalleryVideo current={current} />
-      </div>
+      <VideoPlayer
+        key={current.attachmentId}
+        ref={videoPlayer.ref}
+        src={current.url}
+        poster={current.thumbnailUrl || undefined}
+        filename={current.filename}
+        chromeVisible={videoPlayer.chromeVisible}
+        onChromeTap={videoPlayer.onChromeTap}
+        onActivity={videoPlayer.onActivity}
+      />
     )
   }
   if (current.type === "video-embed") {
@@ -437,7 +436,8 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     chromeIdleRef.current = setTimeout(() => {
       chromeIdleRef.current = null
       const bar = actionBarRef.current
-      if (pointerOnChromeRef.current || bar?.querySelector('[data-state="open"]')) return
+      const menuOpen = bar?.closest("[data-media-gallery]")?.querySelector('[data-gallery-chrome] [data-state="open"]')
+      if (pointerOnChromeRef.current || menuOpen) return
       const focusOnChrome = !!document.activeElement?.closest("[data-gallery-chrome]")
       if (focusOnChrome && keyboardDrivenRef.current) return
       // Same focus ejection hazard as the touch toggle below: inert would push
@@ -468,6 +468,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
 
   // Zoom/pan state for the current slide. Only reflects the active image.
   const zoomableRef = useRef<ZoomableImageHandle>(null)
+  const videoPlayerRef = useRef<VideoPlayerHandle>(null)
   const [isZoomed, setIsZoomed] = useState(false)
   // Ref mirror so touch handlers (which avoid re-rendering during gestures) can
   // read the current zoom state without stale closures.
@@ -774,17 +775,23 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
         setChromeVisible(true)
         scheduleChromeIdle()
       }
-      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      const isVideo = items[currentIndex]?.type === "video"
+      if (isVideo && videoPlayerRef.current?.handleKeyDown(e)) return
+      // Arrows on a slider adjust it, except the seek bar, which only takes ←/→.
+      // On a video slide ←/→ seek instead of flipping.
+      const slider = e.target instanceof Element ? e.target.closest('[role="slider"]') : null
+      if (slider && !slider.closest(SCRUB_SELECTOR)) return
+      if (e.key === "ArrowUp" || (e.key === "ArrowLeft" && !isVideo)) {
         e.preventDefault()
         goTo(currentIndex - 1)
-      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+      } else if (e.key === "ArrowDown" || (e.key === "ArrowRight" && !isVideo)) {
         e.preventDefault()
         goTo(currentIndex + 1)
       }
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [isOpen, currentIndex, goTo, inputModeTouch, scheduleChromeIdle])
+  }, [isOpen, currentIndex, items, goTo, inputModeTouch, scheduleChromeIdle])
 
   // All touch handlers manipulate the DOM directly (no setState) so the gesture
   // stays at 60fps without React rendering in the hot path.
@@ -799,8 +806,8 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     // the user is panning inside an image).
     if (isZoomedRef.current || e.touches.length > 1) return
     const target = e.target as HTMLElement | null
-    if (target?.closest("[data-gallery-text-viewer]")) {
-      // Yield to native scroll inside the text panel.
+    // A fullscreen player keeps its item: no swipe may flip or dismiss under it.
+    if (target?.closest(OWNS_TOUCH_SELECTOR) || document.fullscreenElement) {
       skipGesture.current = true
       return
     }
@@ -932,6 +939,35 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     [currentIndex, hasNext, hasPrev, items, onItemChange, onClose]
   )
 
+  const toggleChromeDeferred = useCallback(() => {
+    if (pendingChromeToggleRef.current) {
+      // Second tap of a double-tap that didn't zoom (text-slide margin, video):
+      // a double-tap is never a toggle, so drop both taps.
+      cancelPendingChromeToggle()
+      return
+    }
+    pendingChromeToggleRef.current = setTimeout(() => {
+      pendingChromeToggleRef.current = null
+      // Hiding makes the action bar inert; if focus is still on one of its
+      // buttons (Radix focuses the first one on open) the browser ejects
+      // focus to <body>, which the dialog's dismissable layer reads as
+      // focus-outside and closes the gallery. Park focus here first.
+      containerRef.current?.focus({ preventScroll: true })
+      setChromeVisible((v) => !v)
+    }, DOUBLE_TAP_MS)
+  }, [cancelPendingChromeToggle])
+
+  // Touch has no pointer to rest, so a playing video hides the chrome on the
+  // idle timer instead; paused video keeps it up. Mouse keeps its own idle path.
+  const handlePlayerActivity = useCallback(
+    (playing: boolean) => {
+      if (!inputModeTouch) return
+      if (playing) scheduleChromeIdle()
+      else cancelChromeIdle()
+    },
+    [inputModeTouch, scheduleChromeIdle, cancelChromeIdle]
+  )
+
   // Touch: tap left/right zones to navigate (when not zoomed); any other tap
   // toggles the gallery chrome, zoomed or not. Suppressed after a committed
   // swipe.
@@ -943,40 +979,37 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
       // navigate/toggle — that's the only way to flip between text slides on
       // mobile once swipe is relinquished to native scroll.
       const target = e.target as HTMLElement | null
-      if (target?.closest("[data-gallery-text-viewer]")) return
-      // Taps on the native <video> controls are play/pause/seek, not toggles.
-      if (target?.closest("video")) return
+      if (target?.closest(OWNS_TOUCH_SELECTOR)) return
       if (didSwipe.current) {
         didSwipe.current = false
         return
       }
       const rect = e.currentTarget.getBoundingClientRect()
       const zone = (e.clientX - rect.left) / rect.width
-      // While zoomed, taps never navigate — the whole surface is toggle.
-      const canNavigate = !isZoomedRef.current && isMultiple
+      // While zoomed, taps never navigate — the whole surface is toggle. Video
+      // slides keep their side zones for seek nudges; swipe still navigates.
+      const canNavigate = !isZoomedRef.current && isMultiple && current?.type !== "video"
       if (canNavigate && zone < 0.3 && hasPrev) {
         cancelPendingChromeToggle()
         goPrev()
       } else if (canNavigate && zone > 0.7 && hasNext) {
         cancelPendingChromeToggle()
         goNext()
-      } else if (pendingChromeToggleRef.current) {
-        // Second tap of a double-tap that didn't zoom (text-slide margin,
-        // video poster): a double-tap is never a toggle, so drop both taps.
-        cancelPendingChromeToggle()
       } else {
-        pendingChromeToggleRef.current = setTimeout(() => {
-          pendingChromeToggleRef.current = null
-          // Hiding makes the action bar inert; if focus is still on one of its
-          // buttons (Radix focuses the first one on open) the browser ejects
-          // focus to <body>, which the dialog's dismissable layer reads as
-          // focus-outside and closes the gallery. Park focus here first.
-          containerRef.current?.focus({ preventScroll: true })
-          setChromeVisible((v) => !v)
-        }, DOUBLE_TAP_MS)
+        toggleChromeDeferred()
       }
     },
-    [inputModeTouch, isMultiple, hasPrev, hasNext, goPrev, goNext, cancelPendingChromeToggle]
+    [
+      inputModeTouch,
+      isMultiple,
+      hasPrev,
+      hasNext,
+      goPrev,
+      goNext,
+      cancelPendingChromeToggle,
+      toggleChromeDeferred,
+      current?.type,
+    ]
   )
 
   const handleZoomIn = useCallback(() => zoomableRef.current?.zoomIn(), [])
@@ -991,6 +1024,14 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   // devices) give the pill visible breathing room from the screen edge instead
   // of kissing it.
   const chromeHidden = !chromeVisible
+  const videoPlayerBindings: GalleryVideoBindings = {
+    ref: videoPlayerRef,
+    chromeVisible,
+    onChromeTap: toggleChromeDeferred,
+    onActivity: handlePlayerActivity,
+  }
+  // The player renders the filename inside its own control stack.
+  const showFilenameBar = current?.type !== "video" || !current.url
   const actionBar = (
     <div
       ref={actionBarRef}
@@ -1014,7 +1055,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
         />
       )}
       {isMultiple && (
-        <span className="text-xs text-white/70 mr-1 tabular-nums">
+        <span className="pl-2.5 text-xs tabular-nums text-white/70">
           {currentIndex + 1} / {items.length}
         </span>
       )}
@@ -1105,6 +1146,12 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
             isMobile ? "sm:max-w-[95vw] sm:h-[90dvh]" : "sm:max-w-[90vw] sm:h-[90dvh]"
           )}
           hideCloseButton
+          onEscapeKeyDown={(e) => {
+            // Escape leaves a fullscreen player first; only the next one closes the gallery.
+            if (!document.fullscreenElement) return
+            e.preventDefault()
+            void document.exitFullscreen().catch(() => {})
+          }}
         >
           <DialogTitle className="sr-only">{current.filename}</DialogTitle>
           <DialogDescription className="sr-only">
@@ -1145,6 +1192,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                           onZoomChange={i === currentIndex && item.type === "image" ? handleZoomChange : undefined}
                           onScaleChange={i === currentIndex && item.type === "image" ? publishScale : undefined}
                           rawMode={i === currentIndex ? rawMode : false}
+                          videoPlayer={i === currentIndex && item.type === "video" ? videoPlayerBindings : undefined}
                         />
                       </div>
                     ))}
@@ -1152,16 +1200,18 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                 </div>
 
                 {/* Filename bar sits above the strip so it doesn't scroll with it */}
-                <div
-                  className={cn(
-                    "absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pointer-events-none z-10",
-                    "transition-opacity duration-200",
-                    chromeHidden && "opacity-0"
-                  )}
-                  aria-hidden={chromeHidden || undefined}
-                >
-                  <span className="text-sm text-white">{current.filename}</span>
-                </div>
+                {showFilenameBar && (
+                  <div
+                    className={cn(
+                      "absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pointer-events-none z-10",
+                      "transition-opacity duration-200",
+                      chromeHidden && "opacity-0"
+                    )}
+                    aria-hidden={chromeHidden || undefined}
+                  >
+                    <span className="text-sm text-white">{current.filename}</span>
+                  </div>
+                )}
               </div>
             ) : (
               <div
@@ -1183,6 +1233,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                     onZoomChange={current.type === "image" ? handleZoomChange : undefined}
                     onScaleChange={current.type === "image" ? publishScale : undefined}
                     rawMode={rawMode}
+                    videoPlayer={current.type === "video" ? videoPlayerBindings : undefined}
                   />
                 </div>
 
@@ -1225,16 +1276,18 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                   </>
                 )}
 
-                <div
-                  className={cn(
-                    "absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4",
-                    "transition-opacity duration-200",
-                    chromeHidden && "opacity-0"
-                  )}
-                  aria-hidden={chromeHidden || undefined}
-                >
-                  <span className="text-sm text-white">{current.filename}</span>
-                </div>
+                {showFilenameBar && (
+                  <div
+                    className={cn(
+                      "absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4",
+                      "transition-opacity duration-200",
+                      chromeHidden && "opacity-0"
+                    )}
+                    aria-hidden={chromeHidden || undefined}
+                  >
+                    <span className="text-sm text-white">{current.filename}</span>
+                  </div>
+                )}
               </div>
             )}
 

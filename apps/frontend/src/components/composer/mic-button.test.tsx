@@ -4,21 +4,7 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import * as voiceDictation from "@/hooks/use-voice-dictation"
-import { MicButton, formatClock, recordingRingShadow, type MicButtonHandle } from "./mic-button"
-
-describe("formatClock", () => {
-  it("renders m:ss with zero-padded seconds", () => {
-    expect(formatClock(0)).toBe("0:00")
-    expect(formatClock(5_000)).toBe("0:05")
-    expect(formatClock(65_000)).toBe("1:05")
-    expect(formatClock(600_000)).toBe("10:00")
-  })
-
-  it("floors sub-second remainders and clamps negatives to 0:00", () => {
-    expect(formatClock(1_999)).toBe("0:01")
-    expect(formatClock(-500)).toBe("0:00")
-  })
-})
+import { MicButton, recordingRingShadow, type MicButtonHandle } from "./mic-button"
 
 describe("recordingRingShadow", () => {
   it("layers a crisp inner ring and a soft outer ring", () => {

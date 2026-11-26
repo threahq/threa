@@ -2118,6 +2118,50 @@ describe("registerWorkspaceSocketHandlers", () => {
     refreshWorkspace: vi.fn(),
   }
 
+  it("should keep both results when two attachments of one message settle back to back", async () => {
+    await db.events.clear()
+    await db.events.put({
+      id: "evt_clips",
+      workspaceId: "ws_1",
+      streamId: "stream_clips",
+      sequence: "1",
+      _sequenceNum: 1,
+      eventType: "message_created",
+      payload: {
+        messageId: "msg_clips",
+        attachments: [
+          { id: "attach_a", processingStatus: "pending" },
+          { id: "attach_b", processingStatus: "pending" },
+        ],
+      },
+      actorId: "member_1",
+      actorType: "user",
+      createdAt: "2026-11-01T10:00:00.000Z",
+      _cachedAt: 1,
+    })
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", new QueryClient(), handlerRefs)
+    const settled = (attachmentId: string) => ({
+      workspaceId: "ws_1",
+      attachmentId,
+      processingStatus: "completed",
+      streamId: "stream_clips",
+      messageId: "msg_clips",
+    })
+
+    await Promise.all([
+      emitAsync("attachment:transcoded", settled("attach_a")),
+      emitAsync("attachment:transcoded", settled("attach_b")),
+    ])
+
+    const row = await db.events.get(["ws_1", "evt_clips"])
+    expect((row?.payload as { attachments?: unknown }).attachments).toEqual([
+      { id: "attach_a", processingStatus: "completed" },
+      { id: "attach_b", processingStatus: "completed" },
+    ])
+    cleanup()
+  })
+
   it("revision-orders stream title events and ignores another workspace", async () => {
     const queryClient = new QueryClient()
     const current = makeStream("stream_title", {

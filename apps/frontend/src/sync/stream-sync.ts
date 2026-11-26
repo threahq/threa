@@ -1160,12 +1160,14 @@ export async function updateMessageEvent(
   messageId: string,
   updater: (payload: Record<string, unknown>) => Record<string, unknown>,
   database: ThreaDatabase = getActiveDb()
-): Promise<void> {
+): Promise<boolean> {
   // modify() runs the callback inside a readwrite cursor so the read and write
   // are atomic. This prevents lost updates when multiple socket handlers
   // (messages:moved, stream:created, thread:updated) update the same parent
   // message concurrently — the second transaction sees the first's writes.
+  let patched = false
   const patch = (event: CachedEvent) => {
+    patched = true
     const updatedPayload = updater(event.payload as Record<string, unknown>)
     const now = Date.now()
     event.payload = updatedPayload
@@ -1194,6 +1196,7 @@ export async function updateMessageEvent(
       patch(event)
     })
     .finally(stop)
+  return patched
 }
 
 /**

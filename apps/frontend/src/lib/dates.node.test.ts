@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest"
 import {
+  formatClock,
   formatISODate,
   formatDisplayDate,
   formatTime24h,
@@ -306,6 +307,26 @@ describe("dates", () => {
       expect(localStartOfDayMs(new Date(2026, 5, 16, 23, 59, 0))).not.toBe(
         localStartOfDayMs(new Date(2026, 5, 17, 0, 1, 0))
       )
+    })
+  })
+
+  describe("formatClock", () => {
+    it("uses m:ss below an hour and h:mm:ss past it", () => {
+      expect([formatClock(0), formatClock(1.999), formatClock(65.9), formatClock(3725), formatClock(-5)]).toEqual([
+        "0:00",
+        "0:01",
+        "1:05",
+        "1:02:05",
+        "0:00",
+      ])
+    })
+
+    it("reads a non-finite value as zero", () => {
+      expect(formatClock(Number.NaN)).toBe("0:00")
+    })
+
+    it("matches the hour format of its reference duration", () => {
+      expect(formatClock(5, 3600)).toBe("0:00:05")
     })
   })
 })
