@@ -213,6 +213,7 @@ async function runPersonaStyleTask(input: PersonaStyleInput, ctx: EvalContext): 
         throw new Error("Not implemented in stub")
       },
       putObject: async () => {},
+      putObjectFile: async () => {},
       delete: async () => {},
       copyObject: async () => {},
     }

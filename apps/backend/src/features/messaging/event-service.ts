@@ -2757,6 +2757,98 @@ export class EventService {
   }
 
   /**
+   * Event payloads snapshot attachment state at send time, and processing and
+   * upload settling finish later without writing a stream event. The socket
+   * patch only reaches clients connected at that moment, so every read that
+   * serves stored events overlays current state from the attachments
+   * projection. The returned function answers undefined when nothing changed.
+   */
+  private async loadAttachmentRefresh(
+    messageCreatedEvents: StreamEvent[],
+    workspaceId: string
+  ): Promise<(attachments: AttachmentSummary[] | undefined) => AttachmentSummary[] | undefined> {
+    const refreshAttachmentIds = [
+      ...new Set(
+        messageCreatedEvents.flatMap((e) =>
+          ((e.payload as MessageCreatedPayload).attachments ?? [])
+            .filter(
+              (a) =>
+                a.processingStatus !== undefined ||
+                a.safetyStatus !== undefined ||
+                a.uploadStatus !== undefined ||
+                a.audio !== undefined
+            )
+            .map((a) => a.id)
+        )
+      ),
+    ]
+    let attachmentRowById = new Map<string, Attachment>()
+    let uploadRowByAttachmentId = new Map<string, AttachmentUpload>()
+    if (refreshAttachmentIds.length > 0) {
+      await withClient(this.pool, async (client) => {
+        const rows = await AttachmentRepository.findByIds(client, workspaceId, refreshAttachmentIds)
+        attachmentRowById = new Map(rows.map((a) => [a.id, a]))
+        const pendingRows = rows.filter((a) => !isAttachmentSafeForSharing(a.safetyStatus))
+        if (pendingRows.length > 0) {
+          uploadRowByAttachmentId = await AttachmentUploadRepository.findByAttachmentIds(
+            client,
+            workspaceId,
+            pendingRows.map((a) => a.id)
+          )
+        }
+      })
+    }
+
+    return (attachments) => {
+      const refreshed = attachments?.map((a) => {
+        const row = attachmentRowById.get(a.id)
+        if (!row) return a
+        let next = a
+        if (a.processingStatus !== undefined && row.processingStatus !== a.processingStatus) {
+          next = { ...next, processingStatus: row.processingStatus }
+        }
+        if (a.audio !== undefined) {
+          const audio = toAttachmentSummary(row).audio
+          if (
+            audio &&
+            (audio.status !== a.audio.status ||
+              audio.durationMs !== a.audio.durationMs ||
+              audio.waveform !== a.audio.waveform ||
+              audio.normalized !== a.audio.normalized)
+          ) {
+            next = { ...next, audio }
+          }
+        }
+        if (a.safetyStatus !== undefined || a.uploadStatus !== undefined) {
+          const safetyStatus = isAttachmentSafeForSharing(row.safetyStatus) ? undefined : row.safetyStatus
+          const uploadStatus = uploadRowByAttachmentId.get(a.id)?.status
+          if (safetyStatus !== a.safetyStatus || uploadStatus !== a.uploadStatus) {
+            // Settled fields are removed, not overwritten: absence means "safe, render normally".
+            const { safetyStatus: _staleSafety, uploadStatus: _staleUpload, ...rest } = next
+            next = { ...rest, ...(safetyStatus && { safetyStatus }), ...(uploadStatus && { uploadStatus }) }
+          }
+        }
+        return next
+      })
+      return refreshed?.some((a, i) => a !== attachments![i]) ? refreshed : undefined
+    }
+  }
+
+  /** Stored events with current attachment state: the overlay for reads that enrich nothing else. */
+  async refreshAttachmentState(workspaceId: string, events: StreamEvent[]): Promise<StreamEvent[]> {
+    const refresh = await this.loadAttachmentRefresh(
+      events.filter((e) => e.eventType === "message_created"),
+      workspaceId
+    )
+    return events.map((event) => {
+      if (event.eventType !== "message_created") return event
+      const payload = event.payload as MessageCreatedPayload
+      const attachments = refresh(payload.attachments)
+      return attachments ? { ...event, payload: { ...payload, attachments } } : event
+    })
+  }
+
+  /**
    * Enrich bootstrap events with projection state for display.
    *
    * Filters out operational events (message_edited, message_deleted) that are
@@ -2780,39 +2872,7 @@ export class EventService {
     const messagesMap =
       messageIds.length > 0 ? await this.getMessagesByIds(scope.workspaceId, messageIds) : new Map<string, Message>()
 
-    // Event payloads snapshot attachment state at send time. Video transcoding
-    // AND reserved-upload settling both complete asynchronously, so fresh-load
-    // bootstrap must overlay current state from the attachments projection —
-    // otherwise long-completed videos render as "Processing" and long-settled
-    // uploads render as "Uploading…" after a page refresh (the socket patch
-    // only reaches clients that were connected when the state changed).
-    const refreshAttachmentIds = [
-      ...new Set(
-        messageCreatedEvents.flatMap((e) =>
-          ((e.payload as MessageCreatedPayload).attachments ?? [])
-            .filter(
-              (a) => a.processingStatus !== undefined || a.safetyStatus !== undefined || a.uploadStatus !== undefined
-            )
-            .map((a) => a.id)
-        )
-      ),
-    ]
-    let attachmentRowById = new Map<string, Attachment>()
-    let uploadRowByAttachmentId = new Map<string, AttachmentUpload>()
-    if (refreshAttachmentIds.length > 0) {
-      await withClient(this.pool, async (client) => {
-        const rows = await AttachmentRepository.findByIds(client, scope.workspaceId, refreshAttachmentIds)
-        attachmentRowById = new Map(rows.map((a) => [a.id, a]))
-        const pendingRows = rows.filter((a) => !isAttachmentSafeForSharing(a.safetyStatus))
-        if (pendingRows.length > 0) {
-          uploadRowByAttachmentId = await AttachmentUploadRepository.findByAttachmentIds(
-            client,
-            scope.workspaceId,
-            pendingRows.map((a) => a.id)
-          )
-        }
-      })
-    }
+    const refreshAttachments = await this.loadAttachmentRefresh(messageCreatedEvents, scope.workspaceId)
 
     const startedSessionIds = events
       .filter((e) => e.eventType === "agent_session:started")
@@ -2917,28 +2977,8 @@ export class EventService {
           enrichments.sentVia = message.sentVia
         }
 
-        const refreshedAttachments = payload.attachments?.map((a) => {
-          const row = attachmentRowById.get(a.id)
-          if (!row) return a
-          let next = a
-          if (a.processingStatus !== undefined && row.processingStatus !== a.processingStatus) {
-            next = { ...next, processingStatus: row.processingStatus }
-          }
-          if (a.safetyStatus !== undefined || a.uploadStatus !== undefined) {
-            const safetyStatus = isAttachmentSafeForSharing(row.safetyStatus) ? undefined : row.safetyStatus
-            const uploadStatus = uploadRowByAttachmentId.get(a.id)?.status
-            if (safetyStatus !== a.safetyStatus || uploadStatus !== a.uploadStatus) {
-              // Settled fields are REMOVED, not overwritten — absence is the
-              // wire encoding for "safe, render normally" (see summary.ts).
-              const { safetyStatus: _staleSafety, uploadStatus: _staleUpload, ...rest } = next
-              next = { ...rest, ...(safetyStatus && { safetyStatus }), ...(uploadStatus && { uploadStatus }) }
-            }
-          }
-          return next
-        })
-        if (refreshedAttachments && refreshedAttachments.some((a, i) => a !== payload.attachments![i])) {
-          enrichments.attachments = refreshedAttachments
-        }
+        const refreshedAttachments = refreshAttachments(payload.attachments)
+        if (refreshedAttachments) enrichments.attachments = refreshedAttachments
 
         if (Object.keys(enrichments).length === 0) return event
         return { ...event, payload: { ...payload, ...enrichments } }

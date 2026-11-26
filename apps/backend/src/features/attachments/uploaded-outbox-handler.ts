@@ -9,6 +9,7 @@ import { isPdfAttachment } from "./pdf"
 import { isWordAttachment } from "./word"
 import { isExcelAttachment } from "./excel"
 import { isVideoAttachment } from "./video"
+import { isAudioAttachment } from "@threahq/types"
 
 export type AttachmentUploadedHandlerConfig = DebouncedOutboxHandlerConfig
 
@@ -81,6 +82,16 @@ export class AttachmentUploadedHandler extends DebouncedOutboxHandler {
           storagePath,
         })
         logger.info({ attachmentId, filename, mimeType }, "Excel processing job dispatched")
+        break
+
+      case isAudioAttachment(mimeType, filename):
+        await this.jobQueue.send(JobQueues.AUDIO_PROCESS, {
+          attachmentId,
+          workspaceId,
+          filename,
+          storagePath,
+        })
+        logger.info({ attachmentId, filename, mimeType }, "Audio processing job dispatched")
         break
 
       case isVideoAttachment(mimeType, filename):

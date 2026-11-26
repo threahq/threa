@@ -9,6 +9,7 @@ import {
   PdfPageExtractionRepository,
   PdfProcessingJobRepository,
   PdfProcessingService,
+  StubAudioProcessingService,
   StubExcelProcessingService,
   StubPdfProcessingService,
   StubTextProcessingService,
@@ -17,6 +18,7 @@ import {
   TextProcessingService,
   VideoTranscodeJobRepository,
   WordProcessingService,
+  createAudioProcessWorker,
   createExcelProcessingWorker,
   createImageThumbnailWorker,
   createPdfAssembleWorker,
@@ -25,6 +27,7 @@ import {
   createTextProcessingWorker,
   createVideoTranscodeCheckWorker,
   createVideoTranscodeOnDLQ,
+  createAudioProcessOnDLQ,
   createVideoTranscodeSubmitWorker,
   createWordProcessingWorker,
 } from "../../src/features/attachments"
@@ -200,6 +203,16 @@ describe("Attachment processing workers, services and DLQ hooks stay inside the 
         followUps: (data) => [{ queue: JobQueues.VIDEO_TRANSCODE_CHECK, data }],
       },
       {
+        name: "audio",
+        filename: "memo.wav",
+        mimeType: "audio/wav",
+        run: asJob(
+          JobQueues.AUDIO_PROCESS,
+          createAudioProcessWorker({ audioProcessingService: new StubAudioProcessingService(pool) })
+        ),
+        completed: { processingStatus: "skipped", events: [{ type: "attachment:audio_processed", workspaceId: wsA }] },
+      },
+      {
         name: "pdf prepare",
         filename: "report.pdf",
         mimeType: "application/pdf",
@@ -226,7 +239,7 @@ describe("Attachment processing workers, services and DLQ hooks stay inside the 
     await pool.end()
   })
 
-  const pipelineNames = ["text", "word", "excel", "video transcode submit", "pdf prepare"]
+  const pipelineNames = ["text", "word", "excel", "video transcode submit", "audio", "pdf prepare"]
   const pipelineNamed = (name: string) => pipelines.find((pipeline) => pipeline.name === name)!
 
   test.each(pipelineNames)(
@@ -588,6 +601,36 @@ describe("Attachment processing workers, services and DLQ hooks stay inside the 
         observed: UNTOUCHED,
         videoJobs: [{ workspace_id: wsA, status: "pending", error_message: null }],
       })
+    })
+
+    test("should fail the attachment and announce it in workspace A when the audio hook gets a workspace A job", async () => {
+      const id = await seedAttachment(wsA, "memo.wav", "audio/wav")
+
+      await runDlq(createAudioProcessOnDLQ(), {
+        workspaceId: wsA,
+        attachmentId: id,
+        filename: "memo.wav",
+        storagePath: `${wsA}/${id}/memo.wav`,
+      })
+
+      expect(await observe(id)).toEqual({
+        ...UNTOUCHED,
+        processingStatus: "failed",
+        events: [{ type: "attachment:audio_processed", workspaceId: wsA }],
+      })
+    })
+
+    test("should leave workspace A's attachment untouched and announce nothing when the audio hook gets a workspace B job with its id", async () => {
+      const id = await seedAttachment(wsA, "memo.wav", "audio/wav")
+
+      await runDlq(createAudioProcessOnDLQ(), {
+        workspaceId: wsB,
+        attachmentId: id,
+        filename: "memo.wav",
+        storagePath: `${wsA}/${id}/memo.wav`,
+      })
+
+      expect(await observe(id)).toEqual(UNTOUCHED)
     })
   })
 })

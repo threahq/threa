@@ -326,6 +326,23 @@ describe("resolveDeliveryGroups — workspace people and guest-safe events", () 
     }
   })
 
+  it("should route audio_processed to the stream when message-bound and the workspace otherwise", () => {
+    const audio = { status: "completed" }
+    expect([
+      resolveDeliveryGroups(
+        event("attachment:audio_processed", {
+          workspaceId: "ws_1",
+          attachmentId: "attach_1",
+          streamId: "stream_1",
+          audio,
+        })
+      ),
+      resolveDeliveryGroups(
+        event("attachment:audio_processed", { workspaceId: "ws_1", attachmentId: "attach_1", audio })
+      ),
+    ]).toEqual([[streamGroup("stream_1")], [WORKSPACE_GROUP]])
+  })
+
   it("should reach browsers only when an event has no explicit routing", () => {
     expect(resolveDeliveryGroups(event("attachment:uploaded", { workspaceId: "ws_1" }))).toEqual([BROWSE_GROUP])
   })

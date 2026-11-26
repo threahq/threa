@@ -1,4 +1,9 @@
-import type { AttachmentSummary, AttachmentUploadStatus } from "@threahq/types"
+import {
+  isAudioAttachment,
+  type AttachmentAudioSummary,
+  type AttachmentSummary,
+  type AttachmentUploadStatus,
+} from "@threahq/types"
 import type { Querier } from "../../db"
 import type { Attachment } from "./repository"
 import { AttachmentUploadRepository } from "./upload-repository"
@@ -49,7 +54,7 @@ export async function hydrateAttachmentSummaries(
  * Map a stored `Attachment` row to the lightweight `AttachmentSummary` wire
  * shape used in `message_created` event payloads and shared-message
  * hydration. The conditional carve-outs — `processingStatus` for videos,
- * `width`/`height` for images, and `safetyStatus`/`uploadStatus` for
+ * `audio` for audio, `width`/`height` for images, and `safetyStatus`/`uploadStatus` for
  * still-settling reserved uploads — are the only variable bits; keeping them
  * in one place avoids drift between the timeline and shared-message paths
  * (INV-37).
@@ -67,5 +72,15 @@ export function toAttachmentSummary(a: Attachment, uploadStatus?: AttachmentUplo
     ...(uploadStatus && { uploadStatus }),
     ...(isVideoAttachment(a.mimeType, a.filename) && { processingStatus: a.processingStatus }),
     ...(isImage && a.width != null && a.height != null && { width: a.width, height: a.height }),
+    ...(isAudioAttachment(a.mimeType, a.filename) && { audio: toAttachmentAudioSummary(a) }),
+  }
+}
+
+export function toAttachmentAudioSummary(a: Attachment): AttachmentAudioSummary {
+  return {
+    status: a.processingStatus,
+    ...(a.durationMs != null && { durationMs: a.durationMs }),
+    ...(a.waveform != null && { waveform: a.waveform }),
+    ...(a.normalizedAudioStoragePath != null && { normalized: true as const }),
   }
 }

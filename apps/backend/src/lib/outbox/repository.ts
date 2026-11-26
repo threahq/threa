@@ -32,6 +32,7 @@ import type {
   NotificationLevel,
   AttachmentSafetyStatus,
   AttachmentUploadStatus,
+  AttachmentAudioSummary,
   PersonaListItem,
   StreamReadFrontierSnapshot,
   CallTransferPhase,
@@ -140,6 +141,7 @@ export type OutboxEventType =
   | "link_preview:dismissed"
   | "attachment:transcoded"
   | "attachment:thumbnailed"
+  | "attachment:audio_processed"
   | "attachment:upload_status_changed"
   | "bot_invocation:available"
   | "bot_invocation:claimed"
@@ -239,6 +241,7 @@ export type WorkspaceScopedEventType =
   | "actor_copy:upserted"
   | "attachment:transcoded"
   | "attachment:thumbnailed"
+  | "attachment:audio_processed"
   | "attachment:upload_status_changed"
   | "agent_config:updated"
 
@@ -565,6 +568,14 @@ export interface AttachmentThumbnailedOutboxPayload extends WorkspaceScopedPaylo
   attachmentId: string
   width: number
   height: number
+  streamId?: string
+  messageId?: string
+}
+
+/** Fired when audio processing reaches a terminal state, so rendered cards pick up duration, waveform and playability. */
+export interface AttachmentAudioProcessedOutboxPayload extends WorkspaceScopedPayload {
+  attachmentId: string
+  audio: AttachmentAudioSummary
   streamId?: string
   messageId?: string
 }
@@ -1569,6 +1580,7 @@ export interface OutboxEventPayloadMap {
   "link_preview:dismissed": LinkPreviewDismissedOutboxPayload
   "attachment:transcoded": AttachmentTranscodedOutboxPayload
   "attachment:thumbnailed": AttachmentThumbnailedOutboxPayload
+  "attachment:audio_processed": AttachmentAudioProcessedOutboxPayload
   "attachment:upload_status_changed": AttachmentUploadStatusChangedOutboxPayload
   "attachment:extraction_completed": AttachmentExtractionCompletedOutboxPayload
   "bot_invocation:available": BotInvocationAvailableOutboxPayload

@@ -15,13 +15,20 @@ import { AttachmentExtractionRepository } from "./extraction-repository"
 import type { StreamService } from "../streams"
 import { setAuditSubjects } from "../access-log"
 import { VideoTranscodeJobRepository } from "./video"
+import { AUDIO_NORMALIZED_EXTENSION, AUDIO_NORMALIZED_MIME_TYPE } from "./audio"
 import { isImageAttachment } from "./image-caption"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import { attachmentId as generateAttachmentId } from "../../lib/id"
 import { MAX_FILE_SIZE } from "../../middleware/upload"
 import { HttpError } from "../../lib/errors"
 import { setUntrustedContentHeaders } from "../../lib/untrusted-content"
-import { ATTACHMENT_CATEGORIES, StreamConnectionErrorCodes, type AttachmentCategory } from "@threahq/types"
+import {
+  ATTACHMENT_CATEGORIES,
+  ProcessingStatuses,
+  StreamConnectionErrorCodes,
+  isAudioAttachment,
+  type AttachmentCategory,
+} from "@threahq/types"
 
 declare module "express" {
   interface Request {
@@ -539,13 +546,30 @@ interface ResolvedAttachmentVariant {
  * MediaConvert transcode job. Either may not exist yet, in which case the
  * raw original is the fall-through with `ready: false`.
  */
-async function resolveAttachmentVariant(
+export async function resolveAttachmentVariant(
   pool: Pool,
   workspaceId: string,
   attachment: Attachment,
   variant: "raw" | "processed" | "thumbnail" | undefined
 ): Promise<ResolvedAttachmentVariant> {
-  if (variant === "thumbnail" && isImageAttachment(attachment.mimeType, attachment.filename)) {
+  if (variant === "processed" && isAudioAttachment(attachment.mimeType, attachment.filename)) {
+    if (attachment.normalizedAudioStoragePath) {
+      return {
+        storagePath: attachment.normalizedAudioStoragePath,
+        contentType: AUDIO_NORMALIZED_MIME_TYPE,
+        filename: attachment.filename.replace(/\.[^.]+$/, `.${AUDIO_NORMALIZED_EXTENSION}`),
+        ready: true,
+      }
+    }
+    if (attachment.processingStatus === ProcessingStatuses.COMPLETED) {
+      return {
+        storagePath: attachment.storagePath,
+        contentType: attachment.mimeType,
+        filename: attachment.filename,
+        ready: true,
+      }
+    }
+  } else if (variant === "thumbnail" && isImageAttachment(attachment.mimeType, attachment.filename)) {
     if (attachment.thumbnailStoragePath) {
       return {
         storagePath: attachment.thumbnailStoragePath,

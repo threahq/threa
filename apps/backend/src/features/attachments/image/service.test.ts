@@ -24,6 +24,9 @@ function buildAttachment(overrides: Partial<Attachment> = {}): Attachment {
     thumbnailStoragePath: null,
     width: null,
     height: null,
+    normalizedAudioStoragePath: null,
+    durationMs: null,
+    waveform: null,
     createdAt: new Date(),
     ...overrides,
   }

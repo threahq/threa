@@ -103,6 +103,7 @@ import type {
   StreamConnectionUpdatedPayload,
   DocListResponse,
   CompanionMode,
+  AttachmentAudioSummary,
 } from "@threahq/types"
 import { cachedPersonaFromListItem } from "@/lib/personas"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
@@ -2401,6 +2402,22 @@ export function registerWorkspaceSocketHandlers(
     }))
   }
 
+  // Audio processing settled — the card turns playable and picks up its waveform and duration.
+  const handleAttachmentAudioProcessed = async (payload: {
+    workspaceId: string
+    attachmentId: string
+    streamId?: string
+    messageId?: string
+    audio: AttachmentAudioSummary
+  }) => {
+    if (payload.workspaceId !== workspaceId) return
+    if (!payload.streamId || !payload.messageId) return
+    await patchCachedMessageAttachment(payload.streamId, payload.messageId, payload.attachmentId, (a) => ({
+      ...a,
+      audio: payload.audio,
+    }))
+  }
+
   // Reserved upload state changed (settled clean/blocked, failed, abandoned) —
   // a message binds an attachment while its bytes are still uploading and the
   // stored content is never revisited, so this event is what flips an
@@ -2812,6 +2829,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("attachment:transcoded", handleAttachmentTranscoded)
   socket.on("attachment:upload_status_changed", handleAttachmentUploadStatusChanged)
   socket.on("attachment:thumbnailed", handleAttachmentThumbnailed)
+  socket.on("attachment:audio_processed", handleAttachmentAudioProcessed)
   socket.on("label:created", handleLabelUpserted)
   socket.on("label:updated", handleLabelUpserted)
   socket.on("label:deleted", handleLabelDeleted)
@@ -2890,6 +2908,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("attachment:transcoded", handleAttachmentTranscoded)
     socket.off("attachment:upload_status_changed", handleAttachmentUploadStatusChanged)
     socket.off("attachment:thumbnailed", handleAttachmentThumbnailed)
+    socket.off("attachment:audio_processed", handleAttachmentAudioProcessed)
     socket.off("label:created", handleLabelUpserted)
     socket.off("label:updated", handleLabelUpserted)
     socket.off("label:deleted", handleLabelDeleted)

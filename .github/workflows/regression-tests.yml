@@ -110,6 +110,10 @@ jobs:
           ready "curl -sf http://localhost:9000/healthz"
           PGPASSWORD=threa psql -h localhost -p 5454 -U threa -d postgres -c "CREATE DATABASE threa_control_plane_test;"
 
+      - name: Install ffmpeg
+        if: matrix.part == 'integration'
+        run: command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null || (sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg)
+
       - name: Run backend integration tests
         if: ${{ !cancelled() && steps.services.outcome == 'success' && matrix.part == 'integration' }}
         run: bun run --cwd apps/backend test:integration

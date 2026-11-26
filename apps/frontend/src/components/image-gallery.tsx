@@ -2,10 +2,10 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   X,
+  AudioLines,
   Download,
   Copy,
   Check,
@@ -21,19 +21,17 @@ import {
   Eye,
 } from "lucide-react"
 import { TopbarLoadingIndicator } from "@/components/layout/topbar-loading-indicator"
-import { downloadImage, copyImage } from "@/lib/image-utils"
+import { downloadAttachment, copyImage } from "@/lib/image-utils"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { cn } from "@/lib/utils"
-import { attachmentsApi } from "@/api"
-import { triggerDownload } from "@/lib/image-utils"
 import { ZoomableImage, type ZoomableImageHandle } from "@/components/gallery/zoomable-image"
 import { isGiphyGalleryId } from "@/components/gallery/giphy-gallery-id"
 import { isLinkPreviewGalleryId } from "@/components/gallery/link-preview-gallery-id"
 import { isPendingGalleryId } from "@/components/gallery/pending-gallery-id"
 import { buildEmbedPlaybackSrc } from "@/components/gallery/video-embed"
-import type { VideoPreviewProvider } from "@threahq/types"
+import type { AttachmentAudioSummary, VideoPreviewProvider } from "@threahq/types"
 import { DOUBLE_TAP_MS } from "@/hooks/use-zoom-pan"
 import { ZoomControls } from "@/components/gallery/zoom-controls"
 import { MarkdownViewer } from "@/components/gallery/markdown-viewer"
@@ -41,8 +39,11 @@ import { HtmlViewer } from "@/components/gallery/html-viewer"
 import { PdfViewer } from "@/components/gallery/pdf-viewer"
 import { TextViewer } from "@/components/gallery/text-viewer"
 import { fetchTextContent } from "@/components/gallery/use-text-content"
-import { SCRUB_SELECTOR } from "@/components/media-player/scrub-bar"
-import { VideoPlayer, type VideoPlayerHandle } from "@/components/media-player/video-player"
+import { DownloadVariantsMenu } from "@/components/media-player/download-variants-menu"
+import { SCRUB_SELECTOR } from "@/components/media-player/use-scrub"
+import { AudioPlayer } from "@/components/media-player/audio-player"
+import type { MediaKeyHandle } from "@/components/media-player/media-keys"
+import { VideoPlayer } from "@/components/media-player/video-player"
 
 export type GalleryItem =
   | { type: "image"; url: string; thumbnailUrl: string; filename: string; attachmentId: string }
@@ -59,6 +60,16 @@ export type GalleryItem =
       filename: string
       attachmentId: string
     }
+  // `url` is the playable same-origin content URL; the track is keyed by the attachment, so a
+  // card already playing it carries on here.
+  | {
+      type: "audio"
+      url: string
+      filename: string
+      attachmentId: string
+      sizeBytes: number
+      audio?: AttachmentAudioSummary
+    }
   | { type: "markdown"; url: string; filename: string; attachmentId: string }
   | { type: "html"; url: string; filename: string; attachmentId: string }
   | { type: "pdf"; url: string; filename: string; attachmentId: string }
@@ -68,6 +79,7 @@ const GALLERY_TYPE_LABELS: Record<GalleryItem["type"], string> = {
   image: "Image",
   video: "Video",
   "video-embed": "Video",
+  audio: "Audio",
   markdown: "Markdown document",
   html: "HTML document",
   pdf: "PDF document",
@@ -112,7 +124,7 @@ interface MediaGalleryProps {
 }
 
 interface GalleryVideoBindings {
-  ref: React.Ref<VideoPlayerHandle>
+  ref: React.Ref<MediaKeyHandle>
   chromeVisible: boolean
   onChromeTap: () => void
   onActivity: (playing: boolean) => void
@@ -134,6 +146,8 @@ interface GalleryMediaContentProps {
   rawMode?: boolean
   /** Non-null only for the currently-displayed slide; a video mounts its player only then. */
   videoPlayer?: GalleryVideoBindings
+  /** Non-null only for the currently-displayed slide: the gallery dispatches player keys through it. */
+  audioPlayerRef?: React.Ref<MediaKeyHandle>
 }
 
 function GalleryMediaContent({
@@ -145,7 +159,31 @@ function GalleryMediaContent({
   onScaleChange,
   rawMode = false,
   videoPlayer,
+  audioPlayerRef,
 }: GalleryMediaContentProps) {
+  if (current.type === "audio") {
+    // Only the viewed slide mounts the player: each one re-renders every frame while its track plays.
+    if (!isCurrent) {
+      return (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <AudioLines className="h-10 w-10 text-white/30" />
+        </div>
+      )
+    }
+    return (
+      <div className="absolute inset-0 flex items-center justify-center p-4">
+        <AudioPlayer
+          ref={audioPlayerRef}
+          stage
+          trackKey={current.attachmentId}
+          filename={current.filename}
+          sizeBytes={current.sizeBytes}
+          audio={current.audio}
+          resolveSrc={() => current.url}
+        />
+      </div>
+    )
+  }
   if (current.type === "markdown") {
     if (!isActive) {
       return (
@@ -324,9 +362,11 @@ function GalleryMediaContent({
   )
 }
 
+const THUMBNAIL_ICONS = { audio: AudioLines, markdown: FileText, html: Globe, pdf: FileText, text: FileText }
+
 function GalleryThumbnailContent({ item }: { item: GalleryItem }) {
-  if (item.type === "markdown" || item.type === "html" || item.type === "pdf" || item.type === "text") {
-    const Icon = item.type === "html" ? Globe : FileText
+  if (item.type !== "image" && item.type !== "video" && item.type !== "video-embed") {
+    const Icon = THUMBNAIL_ICONS[item.type]
     return (
       <div className="w-full h-20 min-w-0 flex flex-col items-center justify-center gap-1 bg-white/5 px-1">
         <Icon className="h-5 w-5 text-white/60" />
@@ -468,7 +508,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
 
   // Zoom/pan state for the current slide. Only reflects the active image.
   const zoomableRef = useRef<ZoomableImageHandle>(null)
-  const videoPlayerRef = useRef<VideoPlayerHandle>(null)
+  const playerRef = useRef<MediaKeyHandle>(null)
   const [isZoomed, setIsZoomed] = useState(false)
   // Ref mirror so touch handlers (which avoid re-rendering during gestures) can
   // read the current zoom state without stale closures.
@@ -691,7 +731,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
 
   const handleDownload = useCallback(async () => {
     if (!current) return
-    const ok = await downloadImage(workspaceId, current.attachmentId, current.filename)
+    const ok = await downloadAttachment(workspaceId, current.attachmentId, current.filename)
     if (!ok) return
     setDownloadDone(true)
     if (downloadResetRef.current) clearTimeout(downloadResetRef.current)
@@ -699,29 +739,14 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   }, [workspaceId, current])
 
   const handleDownloadRaw = useCallback(async () => {
-    if (!current || current.type !== "video") return
-    try {
-      const url = await attachmentsApi.getDownloadUrl(workspaceId, current.attachmentId, {
-        download: true,
-        variant: "raw",
-      })
-      triggerDownload(url, current.filename)
-    } catch {
-      // Nothing actionable for the user here.
-    }
+    if (!current || (current.type !== "video" && current.type !== "audio")) return
+    await downloadAttachment(workspaceId, current.attachmentId, current.filename, "raw")
   }, [workspaceId, current])
 
   const handleDownloadProcessed = useCallback(async () => {
-    if (!current || current.type !== "video") return
-    try {
-      const url = await attachmentsApi.getDownloadUrl(workspaceId, current.attachmentId, {
-        download: true,
-        variant: "processed",
-      })
-      triggerDownload(url, current.filename.replace(/\.[^.]+$/, ".mp4"))
-    } catch {
-      // Nothing actionable for the user here.
-    }
+    if (!current || (current.type !== "video" && current.type !== "audio")) return
+    const filename = current.filename.replace(/\.[^.]+$/, current.type === "video" ? ".mp4" : ".m4a")
+    await downloadAttachment(workspaceId, current.attachmentId, filename, "processed")
   }, [workspaceId, current])
 
   const handleCopy = useCallback(async () => {
@@ -761,6 +786,8 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     (current?.type === "image" || current?.type === "markdown" || current?.type === "html" || current?.type === "text")
   const copyLabel = copyLabelForType(current?.type)
   const canToggleRaw = current?.type === "markdown" || current?.type === "html"
+  // Media the backend re-encoded: the download offers that file and the upload.
+  const hasProcessedVariant = current?.type === "video" || (current?.type === "audio" && !!current.audio?.normalized)
 
   useEffect(() => {
     if (!isOpen) return
@@ -775,16 +802,17 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
         setChromeVisible(true)
         scheduleChromeIdle()
       }
-      const isVideo = items[currentIndex]?.type === "video"
-      if (isVideo && videoPlayerRef.current?.handleKeyDown(e)) return
+      const type = items[currentIndex]?.type
+      const isPlayer = type === "video" || type === "audio"
+      if (isPlayer && playerRef.current?.handleKeyDown(e)) return
       // Arrows on a slider adjust it, except the seek bar, which only takes ←/→.
-      // On a video slide ←/→ seek instead of flipping.
+      // On a video or audio slide ←/→ seek instead of flipping.
       const slider = e.target instanceof Element ? e.target.closest('[role="slider"]') : null
       if (slider && !slider.closest(SCRUB_SELECTOR)) return
-      if (e.key === "ArrowUp" || (e.key === "ArrowLeft" && !isVideo)) {
+      if (e.key === "ArrowUp" || (e.key === "ArrowLeft" && !isPlayer)) {
         e.preventDefault()
         goTo(currentIndex - 1)
-      } else if (e.key === "ArrowDown" || (e.key === "ArrowRight" && !isVideo)) {
+      } else if (e.key === "ArrowDown" || (e.key === "ArrowRight" && !isPlayer)) {
         e.preventDefault()
         goTo(currentIndex + 1)
       }
@@ -1025,7 +1053,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   // of kissing it.
   const chromeHidden = !chromeVisible
   const videoPlayerBindings: GalleryVideoBindings = {
-    ref: videoPlayerRef,
+    ref: playerRef,
     chromeVisible,
     onChromeTap: toggleChromeDeferred,
     onActivity: handlePlayerActivity,
@@ -1059,19 +1087,13 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
           {currentIndex + 1} / {items.length}
         </span>
       )}
-      {current?.type === "video" && canDownload ? (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-10 w-10 text-white hover:bg-white/20 rounded-full">
-              <Download className="h-5 w-5" />
-              <span className="sr-only">Download video</span>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-[160px]">
-            <DropdownMenuItem onClick={handleDownloadProcessed}>Download processed</DropdownMenuItem>
-            <DropdownMenuItem onClick={handleDownloadRaw}>Download original</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+      {hasProcessedVariant && canDownload ? (
+        <DownloadVariantsMenu onProcessed={handleDownloadProcessed} onOriginal={handleDownloadRaw}>
+          <Button variant="ghost" size="icon" className="h-10 w-10 text-white hover:bg-white/20 rounded-full">
+            <Download className="h-5 w-5" />
+            <span className="sr-only">Download {current?.type}</span>
+          </Button>
+        </DownloadVariantsMenu>
       ) : (
         <>
           {canToggleRaw && (
@@ -1142,10 +1164,16 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
             // <sm keeps the base DialogContent full-bleed layout (inset-0), which
             // tracks the dynamic viewport — a sized 90vh card measures the LARGE
             // viewport, so expanding mobile browser chrome covered the top row.
-            "p-0 max-sm:p-0 max-sm:gap-0 overflow-hidden max-sm:overflow-hidden bg-black/95 border-none",
+            "p-0 max-sm:p-0 max-sm:gap-0 overflow-hidden max-sm:overflow-hidden bg-black/95 border-none outline-none",
             isMobile ? "sm:max-w-[95vw] sm:h-[90dvh]" : "sm:max-w-[90vw] sm:h-[90dvh]"
           )}
           hideCloseButton
+          // Focus starts on the dialog, not its first control: Space then reaches a video or audio
+          // slide's player instead of pressing Download.
+          onOpenAutoFocus={(e) => {
+            e.preventDefault()
+            if (e.currentTarget instanceof HTMLElement) e.currentTarget.focus({ preventScroll: true })
+          }}
           onEscapeKeyDown={(e) => {
             // Escape leaves a fullscreen player first; only the next one closes the gallery.
             if (!document.fullscreenElement) return
@@ -1193,6 +1221,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                           onScaleChange={i === currentIndex && item.type === "image" ? publishScale : undefined}
                           rawMode={i === currentIndex ? rawMode : false}
                           videoPlayer={i === currentIndex && item.type === "video" ? videoPlayerBindings : undefined}
+                          audioPlayerRef={i === currentIndex && item.type === "audio" ? playerRef : undefined}
                         />
                       </div>
                     ))}
@@ -1234,6 +1263,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                     onScaleChange={current.type === "image" ? publishScale : undefined}
                     rawMode={rawMode}
                     videoPlayer={current.type === "video" ? videoPlayerBindings : undefined}
+                    audioPlayerRef={current.type === "audio" ? playerRef : undefined}
                   />
                 </div>
 

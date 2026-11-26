@@ -62,8 +62,16 @@ function startPlayback(media: HTMLMediaElement) {
   void media.play().catch(() => {})
 }
 
-export function useMediaPlayback(media: HTMLMediaElement | null): MediaPlayback {
-  const [prefs] = useState(loadMediaPreferences)
+export interface MediaPlaybackOptions {
+  /** False when something else owns the element's rate and volume: the hook then only observes them. */
+  appliesPreferences?: boolean
+}
+
+export function useMediaPlayback(
+  media: HTMLMediaElement | null,
+  { appliesPreferences = true }: MediaPlaybackOptions = {}
+): MediaPlayback {
+  const [initialPrefs] = useState(loadMediaPreferences)
   const [paused, setPaused] = useState(true)
   const [started, setStarted] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -74,9 +82,9 @@ export function useMediaPlayback(media: HTMLMediaElement | null): MediaPlayback 
   const [failed, setFailed] = useState(false)
   const [scrubTime, setScrubTime] = useState<number | null>(null)
   const [seekTarget, setSeekTarget] = useState<number | null>(null)
-  const [muted, setMuted] = useState(prefs.muted)
-  const [volume, setVolumeState] = useState(prefs.volume)
-  const [playbackRate, setRateState] = useState(prefs.playbackRate)
+  const [muted, setMuted] = useState(initialPrefs.muted)
+  const [volume, setVolumeState] = useState(initialPrefs.volume)
+  const [playbackRate, setRateState] = useState(initialPrefs.playbackRate)
   const [nudge, setNudge] = useState<NudgeChain | null>(null)
   const [nudgeVisible, setNudgeVisible] = useState(false)
 
@@ -88,10 +96,14 @@ export function useMediaPlayback(media: HTMLMediaElement | null): MediaPlayback 
 
   useEffect(() => {
     if (!media) return
-    media.defaultPlaybackRate = prefs.playbackRate
-    media.playbackRate = prefs.playbackRate
-    media.volume = prefs.volume
-    media.muted = prefs.muted
+    if (appliesPreferences) {
+      // Read at bind time: an element bound later than the hook mounted must not get stale preferences.
+      const prefs = loadMediaPreferences()
+      media.defaultPlaybackRate = prefs.playbackRate
+      media.playbackRate = prefs.playbackRate
+      media.volume = prefs.volume
+      media.muted = prefs.muted
+    }
     const coalescer = createSeekCoalescer(media)
     coalescerRef.current = coalescer
 
@@ -153,13 +165,17 @@ export function useMediaPlayback(media: HTMLMediaElement | null): MediaPlayback 
       ["error", onError],
     ]
     for (const [type, fn] of listeners) media.addEventListener(type, fn)
+    // The element can outlive this hook (a shared audio element), so bind to whatever state it is in.
+    setPaused(media.paused)
+    setFailed(Boolean(media.error))
+    onVolume()
+    onRate()
     syncTime()
     return () => {
       for (const [type, fn] of listeners) media.removeEventListener(type, fn)
       coalescerRef.current = null
-      if (!media.paused) media.pause()
     }
-  }, [media, prefs])
+  }, [media, appliesPreferences])
 
   useEffect(() => {
     if (!media || paused) return

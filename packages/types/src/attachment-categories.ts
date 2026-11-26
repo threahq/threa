@@ -147,3 +147,35 @@ const CATEGORY_TO_PREFIXES: Record<AttachmentCategory, string[]> = (() => {
 export function mimePrefixesForCategory(category: AttachmentCategory): string[] {
   return CATEGORY_TO_PREFIXES[category]
 }
+
+const AUDIO_EXTENSIONS = [
+  "mp3",
+  "m4a",
+  "m4b",
+  "aac",
+  "wav",
+  "flac",
+  "ogg",
+  "oga",
+  "opus",
+  "aif",
+  "aiff",
+  "aifc",
+  "wma",
+  "amr",
+  "caf",
+  "weba",
+  "mka",
+]
+
+/**
+ * Mime wins when it names audio; an empty or generic octet-stream mime falls
+ * back to the extension, since some clients upload audio without a type.
+ */
+export function isAudioAttachment(mimeType: string | null | undefined, filename: string): boolean {
+  const normalized = (mimeType ?? "").split(";")[0].trim().toLowerCase()
+  if (normalized.startsWith("audio/")) return true
+  if (normalized !== "" && normalized !== "application/octet-stream") return false
+  const ext = filename.toLowerCase().split(".").pop()
+  return ext !== undefined && filename.includes(".") && AUDIO_EXTENSIONS.includes(ext)
+}

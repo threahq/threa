@@ -25,6 +25,7 @@ import {
   uploadReservedContent,
   reportAttachmentUploadFailure,
   getBootstrap,
+  listEvents,
 } from "../client"
 
 const testRunId = Math.random().toString(36).substring(7)
@@ -468,6 +469,22 @@ describe("File Attachments E2E", () => {
       const url = await getAttachmentDownloadUrl(client, workspace.id, attachment.id)
       const response = await fetch(url)
       expect(await response.text()).toBe(fileContent)
+    })
+
+    test("should serve the settled summary on a paginated events read when the upload settled after the send", async () => {
+      const { client, workspace, stream } = await setup("reserve-page")
+      const { attachment } = await reserveAttachment(client, workspace.id, reserveInput)
+      const message = await sendMessageWithAttachments(client, workspace.id, stream.id, "file incoming", [
+        attachment.id,
+      ])
+      const { status } = await uploadReservedContent(client, workspace.id, attachment.id, reservedFile)
+      expect(status).toBe(201)
+
+      const events = await listEvents(client, workspace.id, stream.id, ["message_created"])
+      const sent = events.find((e) => (e.payload as { messageId?: string }).messageId === message.id)
+      expect((sent?.payload as { attachments?: unknown }).attachments).toEqual([
+        { id: attachment.id, filename: "reserved.txt", mimeType: "text/plain", sizeBytes: reserveInput.sizeBytes },
+      ])
     })
 
     test("rejects another user's pending reservation at send", async () => {

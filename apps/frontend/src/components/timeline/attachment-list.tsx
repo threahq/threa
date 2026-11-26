@@ -6,9 +6,9 @@ import { attachmentPendingState, PENDING_STATE_LABELS } from "@/lib/attachments/
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
 import { useGalleryAttachmentUrls, type GalleryUrlKind } from "@/components/gallery/use-gallery-attachment-urls"
 import { Skeleton } from "@/components/ui/skeleton"
-import { attachmentsApi, attachmentContentUrl } from "@/api"
+import { attachmentContentUrl } from "@/api"
 import { cn } from "@/lib/utils"
-import { triggerDownload } from "@/lib/image-utils"
+import { downloadAttachment } from "@/lib/image-utils"
 import { formatFileSize } from "@/lib/file-size"
 import { useAttachmentContext } from "@/lib/markdown/attachment-context"
 import { useMediaGallery } from "@/contexts"
@@ -19,7 +19,8 @@ import {
   isPdfAttachment,
   isTextPreviewableAttachment,
 } from "@/lib/attachment-kind"
-import type { AttachmentSummary } from "@threahq/types"
+import { isAudioAttachment, type AttachmentSummary } from "@threahq/types"
+import { AudioPlayer, playableAudioVariant } from "@/components/media-player/audio-player"
 import {
   subscribeUploads,
   getUploadsVersion,
@@ -398,10 +399,7 @@ function FileAttachment({ attachment, workspaceId, isHighlighted }: AttachmentIt
   const handleDownload = useCallback(async () => {
     setIsDownloading(true)
     try {
-      const url = await attachmentsApi.getDownloadUrl(workspaceId, attachment.id)
-      triggerDownload(url, attachment.filename)
-    } catch (error) {
-      console.error("Failed to download attachment:", error)
+      await downloadAttachment(workspaceId, attachment.id, attachment.filename)
     } finally {
       setIsDownloading(false)
     }
@@ -420,6 +418,33 @@ function FileAttachment({ attachment, workspaceId, isHighlighted }: AttachmentIt
       <span className="text-muted-foreground">{formatFileSize(attachment.sizeBytes)}</span>
       <Download className="h-3 w-3 opacity-50" />
     </Button>
+  )
+}
+
+function audioContentUrl(workspaceId: string, attachment: AttachmentSummary): string {
+  return attachmentContentUrl(workspaceId, attachment.id, { variant: playableAudioVariant(attachment.audio?.status) })
+}
+
+function AudioAttachment({
+  attachment,
+  workspaceId,
+  isHighlighted,
+  onOpen,
+}: AttachmentItemProps & { onOpen: (attachmentId: string) => void }) {
+  const download = (variant: "raw" | "processed") =>
+    downloadAttachment(workspaceId, attachment.id, attachment.filename, variant)
+  return (
+    <AudioPlayer
+      trackKey={attachment.id}
+      filename={attachment.filename}
+      sizeBytes={attachment.sizeBytes}
+      audio={attachment.audio}
+      resolveSrc={() => audioContentUrl(workspaceId, attachment)}
+      onDownload={() => download("raw")}
+      onDownloadProcessed={attachment.audio?.normalized ? () => download("processed") : undefined}
+      onExpand={() => onOpen(attachment.id)}
+      isHighlighted={isHighlighted}
+    />
   )
 }
 
@@ -529,12 +554,17 @@ export function AttachmentList({
     () => settledAttachments.filter((a) => !a.processingStatus && isTextPreviewableAttachment(a)),
     [settledAttachments]
   )
+  const audioAttachments = useMemo(
+    () => settledAttachments.filter((a) => !a.processingStatus && isAudioAttachment(a.mimeType, a.filename)),
+    [settledAttachments]
+  )
   const fileAttachments = useMemo(
     () =>
       settledAttachments.filter(
         (a) =>
           !a.mimeType.startsWith("image/") &&
           !a.processingStatus &&
+          !isAudioAttachment(a.mimeType, a.filename) &&
           !isMarkdownAttachment(a) &&
           !isHtmlAttachment(a) &&
           !isPdfAttachment(a) &&
@@ -588,6 +618,15 @@ export function AttachmentList({
         }
       })
 
+    const audioItems: GalleryItem[] = audioAttachments.map((a) => ({
+      type: "audio" as const,
+      url: audioContentUrl(workspaceId, a),
+      filename: a.filename,
+      attachmentId: a.id,
+      sizeBytes: a.sizeBytes,
+      audio: a.audio,
+    }))
+
     const markdownItems: GalleryItem[] = markdownAttachments.map((a) => ({
       type: "markdown" as const,
       url: galleryUrls.get(a.id) ?? "",
@@ -619,6 +658,7 @@ export function AttachmentList({
     return [
       ...imageItems,
       ...videoItems,
+      ...audioItems,
       ...markdownItems,
       ...htmlItems,
       ...pdfItems,
@@ -629,6 +669,7 @@ export function AttachmentList({
     workspaceId,
     imageAttachments,
     videoAttachments,
+    audioAttachments,
     markdownAttachments,
     htmlAttachments,
     pdfAttachments,
@@ -709,6 +750,15 @@ export function AttachmentList({
               ))}
             </div>
           )}
+          {audioAttachments.map((attachment) => (
+            <AudioAttachment
+              key={attachment.id}
+              attachment={attachment}
+              workspaceId={workspaceId}
+              isHighlighted={attachment.id === hoveredAttachmentId}
+              onOpen={openMedia}
+            />
+          ))}
           {(allFileAttachments.length > 0 ||
             markdownAttachments.length > 0 ||
             htmlAttachments.length > 0 ||

@@ -76,6 +76,9 @@ function makeAttachment(overrides: Partial<Attachment> = {}): Attachment {
     thumbnailStoragePath: null,
     width: null,
     height: null,
+    normalizedAudioStoragePath: null,
+    durationMs: null,
+    waveform: null,
     createdAt: new Date("2026-04-22T09:00:00Z"),
     ...overrides,
   }

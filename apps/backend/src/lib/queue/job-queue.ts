@@ -47,6 +47,7 @@ export const JobQueues = {
   LINK_PREVIEW_EXTRACT: "link_preview.extract",
   VIDEO_TRANSCODE_SUBMIT: "video.transcode_submit",
   VIDEO_TRANSCODE_CHECK: "video.transcode_check",
+  AUDIO_PROCESS: "audio.process",
   SAVED_REMINDER_FIRE: "saved.reminder_fire",
   SCHEDULED_MESSAGE_SEND: "scheduled_message.send",
   AGENT_FOLLOW_UP_FIRE: "agent.follow_up_fire",
@@ -319,6 +320,14 @@ export interface VideoTranscodeSubmitJobData {
   storagePath: string
 }
 
+/** Audio process job - ffmpeg probe, waveform, optional AAC normalization */
+export interface AudioProcessJobData {
+  attachmentId: string
+  workspaceId: string
+  filename: string
+  storagePath: string
+}
+
 /** Video transcode check job - polls MediaConvert for completion */
 export interface VideoTranscodeCheckJobData {
   attachmentId: string
@@ -534,6 +543,7 @@ export interface JobDataMap {
   [JobQueues.LINK_PREVIEW_EXTRACT]: LinkPreviewExtractJobData
   [JobQueues.VIDEO_TRANSCODE_SUBMIT]: VideoTranscodeSubmitJobData
   [JobQueues.VIDEO_TRANSCODE_CHECK]: VideoTranscodeCheckJobData
+  [JobQueues.AUDIO_PROCESS]: AudioProcessJobData
   [JobQueues.SAVED_REMINDER_FIRE]: SavedReminderFireJobData
   [JobQueues.PUSH_DELIVER]: PushDeliverJobData
   [JobQueues.PUSH_SESSION_EXPIRED]: PushSessionExpiredJobData

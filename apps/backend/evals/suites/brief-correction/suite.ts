@@ -232,6 +232,7 @@ async function runBriefCorrectionTask(input: BriefCorrectionInput, ctx: EvalCont
         throw new Error("Not implemented in stub")
       },
       putObject: async () => {},
+      putObjectFile: async () => {},
       delete: async () => {},
       copyObject: async () => {},
     }

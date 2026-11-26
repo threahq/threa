@@ -112,6 +112,15 @@ export {
 } from "./video"
 export type { VideoTranscodingServiceDeps, VideoTranscodingServiceLike } from "./video"
 
+export {
+  AudioProcessingService,
+  StubAudioProcessingService,
+  createAudioProcessWorker,
+  createAudioProcessOnDLQ,
+  resolveAudioTools,
+} from "./audio"
+export type { AudioProcessingServiceLike, AudioTools } from "./audio"
+
 export { createAttachmentFailedOnDLQ } from "./on-dlq"
 export { createImageCaptionWorker } from "./image-caption/worker"
 export { createImageThumbnailWorker } from "./image/worker"

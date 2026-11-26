@@ -20,7 +20,7 @@ export function downloadBlob(blob: Blob, filename: string): void {
 }
 
 /**
- * Downloads an image by requesting a presigned URL with Content-Disposition: attachment.
+ * Downloads an attachment by requesting a presigned URL with Content-Disposition: attachment.
  * This avoids cross-origin fetch — the browser navigates directly to the S3 URL which
  * triggers a download thanks to the Content-Disposition header.
  *
@@ -28,13 +28,18 @@ export function downloadBlob(blob: Blob, filename: string): void {
  * swap on the triggering button) rather than a toast. Failures still surface a
  * toast — there's no inline affordance to explain why a download didn't start.
  */
-export async function downloadImage(workspaceId: string, attachmentId: string, filename: string): Promise<boolean> {
+export async function downloadAttachment(
+  workspaceId: string,
+  attachmentId: string,
+  filename: string,
+  variant?: "raw" | "processed"
+): Promise<boolean> {
   try {
-    const url = await attachmentsApi.getDownloadUrl(workspaceId, attachmentId, { download: true })
+    const url = await attachmentsApi.getDownloadUrl(workspaceId, attachmentId, { download: true, variant })
     triggerDownload(url, filename)
     return true
   } catch {
-    toast.error("Failed to download image")
+    toast.error("Failed to download file")
     return false
   }
 }

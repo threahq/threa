@@ -792,6 +792,17 @@ export interface AttachmentSummary {
    */
   width?: number
   height?: number
+  /** Present for audio attachments (`isAudioAttachment`) */
+  audio?: AttachmentAudioSummary
+}
+
+export interface AttachmentAudioSummary {
+  status: ProcessingStatus
+  durationMs?: number
+  /** Base64 of 200 peak bytes, loudest bucket = 255 */
+  waveform?: string
+  /** A re-encoded copy exists beside the upload. Absent when the upload already plays everywhere and is served as is. */
+  normalized?: true
 }
 
 /**

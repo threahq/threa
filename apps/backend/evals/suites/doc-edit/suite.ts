@@ -330,6 +330,7 @@ async function runDocEditTask(input: DocEditInput, ctx: EvalContext): Promise<Do
         throw new Error("Not implemented in stub")
       },
       putObject: async () => {},
+      putObjectFile: async () => {},
       delete: async () => {},
       copyObject: async () => {},
     }

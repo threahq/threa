@@ -1,3 +1,6 @@
+import { createReadStream } from "node:fs"
+import { stat } from "node:fs/promises"
+import { crc32 } from "node:zlib"
 import { Readable } from "node:stream"
 import {
   S3Client,
@@ -39,6 +42,8 @@ export interface StorageProvider {
   /** Stream an object with the metadata needed to proxy it over HTTP (optionally a Range slice). */
   getObjectContent(key: string, options?: { range?: string }): Promise<ObjectContent>
   putObject(key: string, body: Buffer, contentType: string): Promise<void>
+  /** Streams a local file into `key` without buffering it in memory. */
+  putObjectFile(key: string, filePath: string, contentType: string): Promise<void>
   /**
    * Server-side copy of an existing object to a new key (no bytes transit the
    * app). Used by persona knowledge-by-reference: attaching an existing file to
@@ -190,6 +195,26 @@ export function createS3Storage(config: S3Config): StorageProvider {
           Key: key,
           Body: body,
           ContentType: contentType,
+        })
+      )
+    },
+
+    async putObjectFile(key: string, filePath: string, contentType: string): Promise<void> {
+      const { size } = await stat(filePath)
+      // A precomputed checksum keeps the SDK from wrapping the stream in aws-chunked
+      // trailer encoding, which S3-compatible stores intermittently reject with a 500.
+      let checksum = 0
+      for await (const chunk of createReadStream(filePath)) checksum = crc32(chunk as Buffer, checksum)
+      const checksumBytes = Buffer.alloc(4)
+      checksumBytes.writeUInt32BE(checksum >>> 0)
+      await client.send(
+        new PutObjectCommand({
+          Bucket: config.bucket,
+          Key: key,
+          Body: createReadStream(filePath),
+          ContentLength: size,
+          ContentType: contentType,
+          ChecksumCRC32: checksumBytes.toString("base64"),
         })
       )
     },

@@ -172,8 +172,13 @@ export const areas: Area[] = [
   },
   {
     name: "media",
-    sources: [`${fe}components/media-player/`, `${fe}components/image-gallery`],
-    specs: ["video-player"],
+    sources: [
+      `${fe}components/media-player/`,
+      `${fe}components/image-gallery`,
+      `${fe}components/timeline/attachment-list`,
+      `${be}attachments/`,
+    ],
+    specs: ["video-player", "audio-player"],
   },
   {
     name: "invitations",
