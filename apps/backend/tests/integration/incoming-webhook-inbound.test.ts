@@ -20,6 +20,7 @@ interface MessageDbRow {
   author_type: string
   content_markdown: string
   sent_via: string | null
+  metadata: Record<string, string>
 }
 
 interface AccessLogDbRow {
@@ -72,7 +73,7 @@ describe("incoming webhook inbound delivery", () => {
 
   async function latestMessage(streamId: string): Promise<MessageDbRow | null> {
     const { rows } = await pool.query<MessageDbRow>(
-      `SELECT id, author_id, author_type, content_markdown, sent_via
+      `SELECT id, author_id, author_type, content_markdown, sent_via, metadata
        FROM messages WHERE stream_id = $1 ORDER BY created_at DESC LIMIT 1`,
       [streamId]
     )
@@ -302,6 +303,26 @@ describe("incoming webhook inbound delivery", () => {
       content_markdown: "native **hello**",
       sent_via: `webhook:${hook.id}`,
     })
+  })
+
+  test("should stamp the body's metadata on the message and refuse a reserved key when given a native body", async () => {
+    const metadata = { "posthog.issue": "0199f1c2-aaaa", "posthog.event": "issue_created" }
+    const stamped = await fetch(hook.nativeUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "New issue", metadata }),
+    })
+    expect(stamped.status).toBe(201)
+    expect(await latestMessage(hook.streamId)).toMatchObject({ content_markdown: "New issue", metadata })
+
+    const reserved = await fetch(hook.nativeUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "spoof", metadata: { "threa.command": "spawn" } }),
+    })
+    expect(reserved.status).toBe(400)
+    expect(await reserved.json()).toMatchObject({ code: "VALIDATION_ERROR" })
+    expect(await latestMessage(hook.streamId)).toMatchObject({ content_markdown: "New issue" })
   })
 
   test("should answer 404 NOT_FOUND as JSON on the native route when given a wrong secret", async () => {
