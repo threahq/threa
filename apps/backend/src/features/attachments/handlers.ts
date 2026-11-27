@@ -27,6 +27,7 @@ import {
   ATTACHMENT_CATEGORIES,
   ProcessingStatuses,
   StreamConnectionErrorCodes,
+  audioMimeType,
   isAudioAttachment,
   type AttachmentCategory,
 } from "@threahq/types"
@@ -541,6 +542,11 @@ interface ResolvedAttachmentVariant {
   ready: boolean
 }
 
+/** A typeless audio upload is served as the audio type its extension names. */
+function originalContentType(attachment: Attachment): string {
+  return audioMimeType(attachment.mimeType, attachment.filename) ?? attachment.mimeType
+}
+
 /**
  * Resolve which stored object a (attachment, variant) pair maps to — the one
  * rule shared by `getDownloadUrl` (presign) and `getContent` (streaming).
@@ -568,7 +574,7 @@ export async function resolveAttachmentVariant(
     if (attachment.processingStatus === ProcessingStatuses.COMPLETED) {
       return {
         storagePath: attachment.storagePath,
-        contentType: attachment.mimeType,
+        contentType: originalContentType(attachment),
         filename: attachment.filename,
         ready: true,
       }
@@ -597,7 +603,7 @@ export async function resolveAttachmentVariant(
     // Raw (or no variant) requested — the original is always available.
     return {
       storagePath: attachment.storagePath,
-      contentType: attachment.mimeType,
+      contentType: originalContentType(attachment),
       filename: attachment.filename,
       ready: true,
     }
@@ -606,7 +612,7 @@ export async function resolveAttachmentVariant(
   // Requested variant not generated yet — raw fall-through.
   return {
     storagePath: attachment.storagePath,
-    contentType: attachment.mimeType,
+    contentType: originalContentType(attachment),
     filename: attachment.filename,
     ready: false,
   }

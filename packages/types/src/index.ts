@@ -601,6 +601,7 @@ export {
 export {
   ATTACHMENT_CATEGORIES,
   categoryFromMime,
+  audioMimeType,
   isAudioAttachment,
   mimePrefixesForCategory,
 } from "./attachment-categories"

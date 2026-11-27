@@ -148,34 +148,42 @@ export function mimePrefixesForCategory(category: AttachmentCategory): string[] 
   return CATEGORY_TO_PREFIXES[category]
 }
 
-const AUDIO_EXTENSIONS = [
-  "mp3",
-  "m4a",
-  "m4b",
-  "aac",
-  "wav",
-  "flac",
-  "ogg",
-  "oga",
-  "opus",
-  "aif",
-  "aiff",
-  "aifc",
-  "wma",
-  "amr",
-  "caf",
-  "weba",
-  "mka",
-]
+const AUDIO_EXTENSION_MIME_TYPES: Record<string, string> = {
+  mp3: "audio/mpeg",
+  m4a: "audio/mp4",
+  m4b: "audio/mp4",
+  aac: "audio/aac",
+  wav: "audio/wav",
+  flac: "audio/flac",
+  ogg: "audio/ogg",
+  oga: "audio/ogg",
+  opus: "audio/ogg",
+  aif: "audio/aiff",
+  aiff: "audio/aiff",
+  aifc: "audio/aiff",
+  wma: "audio/x-ms-wma",
+  amr: "audio/amr",
+  caf: "audio/x-caf",
+  weba: "audio/webm",
+  mka: "audio/x-matroska",
+}
 
 /**
- * Mime wins when it names audio; an empty or generic octet-stream mime falls
- * back to the extension, since some clients upload audio without a type.
+ * The audio mime an attachment should be treated and served as, or null when
+ * it is not audio. Mime wins when it names audio; an empty or generic
+ * octet-stream mime falls back to the extension, since some clients upload
+ * audio without a type.
  */
+export function audioMimeType(mimeType: string | null | undefined, filename: string): string | null {
+  const stored = (mimeType ?? "").trim()
+  const normalized = stored.split(";")[0].trim().toLowerCase()
+  if (normalized.startsWith("audio/")) return stored
+  if (normalized !== "" && normalized !== "application/octet-stream") return null
+  if (!filename.includes(".")) return null
+  const ext = filename.toLowerCase().split(".").pop() ?? ""
+  return Object.hasOwn(AUDIO_EXTENSION_MIME_TYPES, ext) ? AUDIO_EXTENSION_MIME_TYPES[ext] : null
+}
+
 export function isAudioAttachment(mimeType: string | null | undefined, filename: string): boolean {
-  const normalized = (mimeType ?? "").split(";")[0].trim().toLowerCase()
-  if (normalized.startsWith("audio/")) return true
-  if (normalized !== "" && normalized !== "application/octet-stream") return false
-  const ext = filename.toLowerCase().split(".").pop()
-  return ext !== undefined && filename.includes(".") && AUDIO_EXTENSIONS.includes(ext)
+  return audioMimeType(mimeType, filename) !== null
 }
