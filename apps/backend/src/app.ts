@@ -65,7 +65,9 @@ export function createApp(options: CreateAppOptions): Express {
   // are large JSON (full ProseMirror docs per message) and travel an extra
   // origin->edge hop through the Cloudflare workspace-router, which forwards our
   // Content-Encoding unchanged. The default 1KB threshold skips tiny responses.
-  app.use(compression())
+  // A range response is never compressed: the router asks for Brotli whatever
+  // the browser sent, and a media element cannot decode an encoded range.
+  app.use(compression({ filter: (req, res) => !res.getHeader("Content-Range") && compression.filter(req, res) }))
 
   app.use(
     helmet({

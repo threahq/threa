@@ -150,6 +150,46 @@ describe("File Attachments E2E", () => {
       const downloaded = await response.text()
       expect(downloaded).toBe(content)
     })
+
+    test("should serve range requests uncompressed, and a typeless audio upload as audio", async () => {
+      const client = new TestClient()
+      await loginAs(client, testEmail("content-range"), "Content Range Test")
+      const workspace = await createWorkspace(client, `Content Range WS ${testRunId}`)
+
+      // Repetitive and past the compression middleware's 1KB threshold.
+      const content = "synthetic stored bytes ".repeat(200)
+      const upload = (filename: string) =>
+        uploadAttachment(client, workspace.id, { content, filename, mimeType: "application/octet-stream" })
+      // What the edge router sends the origin for a media element's request.
+      const requestRange = async (attachmentId: string) => {
+        const response = await client.request<string>(
+          "GET",
+          `/api/workspaces/${workspace.id}/attachments/${attachmentId}/content`,
+          undefined,
+          { "Accept-Encoding": "br, gzip", Range: "bytes=0-" }
+        )
+        return {
+          status: response.status,
+          contentEncoding: response.headers.get("content-encoding"),
+          contentType: response.headers.get("content-type"),
+          contentRange: response.headers.get("content-range"),
+          body: response.data,
+        }
+      }
+
+      const [audio, binary] = await Promise.all([upload("voice-memo.m4a"), upload("clip.bin")])
+      const served = {
+        status: 206,
+        contentEncoding: null,
+        contentRange: `bytes 0-${content.length - 1}/${content.length}`,
+        body: content,
+      }
+
+      expect({ audio: await requestRange(audio.id), binary: await requestRange(binary.id) }).toEqual({
+        audio: { ...served, contentType: "audio/mp4" },
+        binary: { ...served, contentType: "application/octet-stream" },
+      })
+    })
   })
 
   describe("Attach to Message", () => {

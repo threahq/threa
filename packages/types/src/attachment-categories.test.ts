@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import {
+  audioMimeType,
   categoryFromMime,
   isAudioAttachment,
   mimePrefixesForCategory,
@@ -132,6 +133,31 @@ describe("isAudioAttachment", () => {
       false,
       false,
       false,
+    ])
+  })
+})
+
+describe("audioMimeType", () => {
+  test("keeps a stored audio mime and names one from the extension only for generic mimes", () => {
+    const cases: Array<[string | null, string]> = [
+      ["audio/webm;codecs=opus", "voice.webm"],
+      ["audio/x-m4a", "memo.m4a"],
+      ["application/octet-stream", "memo.M4A"],
+      [null, "song.mp3"],
+      ["", "take.opus"],
+      ["video/mp4", "clip.m4a"],
+      ["application/octet-stream", "data.bin"],
+      ["application/octet-stream", "constructor"],
+    ]
+    expect(cases.map(([mime, name]) => audioMimeType(mime, name))).toEqual([
+      "audio/webm;codecs=opus",
+      "audio/x-m4a",
+      "audio/mp4",
+      "audio/mpeg",
+      "audio/ogg",
+      null,
+      null,
+      null,
     ])
   })
 })
